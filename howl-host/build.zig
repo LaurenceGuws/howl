@@ -3,6 +3,9 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const measure = b.option(bool, "measure", "Enable private host performance counters") orelse false;
+    const options = b.addOptions();
+    options.addOption(bool, "measure", measure);
     const control = b.dependency("howl_control", .{ .target = target, .optimize = optimize });
     const render = b.dependency("howl_render", .{
         .target = target,
@@ -19,6 +22,7 @@ pub fn build(b: *std.Build) void {
     });
     module.addImport("howl_control", control.module("howl_control"));
     module.addImport("howl_render", render.module("howl_render"));
+    module.addOptions("host_options", options);
     configureNative(b, module, native);
 
     const executable = b.addExecutable(.{
@@ -31,7 +35,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .name = "howl-host",
-        .root_module = testModule(b, target, optimize, control, render, native),
+        .root_module = testModule(b, target, optimize, control, render, native, options),
         .use_llvm = false,
         .use_lld = false,
     });
@@ -57,6 +61,7 @@ fn testModule(
     control: *std.Build.Dependency,
     render: *std.Build.Dependency,
     native: NativeModules,
+    options: *std.Build.Step.Options,
 ) *std.Build.Module {
     const module = b.createModule(.{
         .root_source_file = b.path("src/test.zig"),
@@ -65,6 +70,7 @@ fn testModule(
     });
     module.addImport("howl_control", control.module("howl_control"));
     module.addImport("howl_render", render.module("howl_render"));
+    module.addOptions("host_options", options);
     configureNative(b, module, native);
     return module;
 }

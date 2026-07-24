@@ -10,6 +10,7 @@ const render = @import("howl_render");
 const terminal = render.terminal;
 const text = render.terminal_text;
 const viewport = @import("viewport.zig");
+const measure = @import("measure.zig");
 
 const c = @import("renderer_c");
 
@@ -21,6 +22,7 @@ const max_cells: usize = 512 * 256;
 const texture_capacity: usize = 2_048;
 // Bounds resident alpha bytes shared by every terminal glyph identity.
 const texture_byte_capacity: usize = 16 * 1024 * 1024;
+const clear_color = terminal.Rgb{ .r = 0x28, .g = 0x28, .b = 0x28 };
 
 /// Supplies one nonzero concrete EGL window extent.
 pub const PixelSize = struct {
@@ -44,6 +46,7 @@ pub const Init = struct {
     cols: u16,
     /// Borrows exact font configurations through synchronous startup only.
     fonts: []const text.FontConfig,
+    measurement: measure.Reference,
 };
 
 /// Borrows one complete immutable executable-retained visual grid for submit.
@@ -114,6 +117,7 @@ const Snapshot = struct {
     image_pixel_count: usize = 0,
     image_count: usize = 0,
     image_placement_count: usize = 0,
+    submitted_at: measure.Mark = if (measure.enabled) undefined else {},
 
     fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!Snapshot {
         const cells = try allocator.alloc(terminal.Cell, @as(usize, rows) * cols);
@@ -190,7 +194,7 @@ const Snapshot = struct {
         self.* = undefined;
     }
 
-    fn write(self: *Snapshot, submission: Submission) void {
+    fn write(self: *Snapshot, submission: Submission, submitted_at: measure.Mark) void {
         const count = @as(usize, submission.rows) * submission.cols;
         std.debug.assert(count <= self.cells.len);
         @memcpy(self.cells[0..count], submission.cells);
@@ -201,6 +205,7 @@ const Snapshot = struct {
         self.cursor = submission.cursor;
         self.size = submission.size;
         self.scrollbar = submission.scrollbar;
+        self.submitted_at = submitted_at;
         if (self.image_content_generation != submission.image_content_generation) {
             std.debug.assert(submission.image_pixels.len <= self.image_pixels.len);
             std.debug.assert(submission.images.len <= self.images.len);
@@ -266,7 +271,11 @@ const Mailbox = struct {
         return slot;
     }
 
-    fn write(self: *Mailbox, submission: Submission) std.mem.Allocator.Error!void {
+    fn write(
+        self: *Mailbox,
+        submission: Submission,
+        submitted_at: measure.Mark,
+    ) std.mem.Allocator.Error!void {
         if (self.writable()) |slot| {
             errdefer self.release(slot);
             try slot.ensureCapacity(submission.rows, submission.cols);
@@ -275,7 +284,7 @@ const Mailbox = struct {
                 submission.images.len,
                 submission.image_placements.len,
             );
-            slot.write(submission);
+            slot.write(submission, submitted_at);
             if (self.admit(slot)) |replaced| self.release(replaced);
             return;
         }
@@ -286,7 +295,7 @@ const Mailbox = struct {
             submission.images.len,
             submission.image_placements.len,
         );
-        slot.write(submission);
+        slot.write(submission, submitted_at);
     }
 
     fn admit(self: *Mailbox, slot: *Snapshot) ?*Snapshot {
@@ -335,6 +344,96 @@ const PixelRect = struct {
     height: u32,
 };
 
+const BackgroundSpan = struct {
+    rect: PixelRect,
+    color: terminal.Rgb,
+};
+
+const BackgroundSpans = struct {
+    work: Submission,
+    row: u16,
+    metrics: text.CellMetrics,
+    logical_cols: u16,
+    at: usize = 0,
+
+    fn next(self: *BackgroundSpans) error{InvalidSubmission}!?BackgroundSpan {
+        while (self.at < self.segmentCount()) {
+            var span = try self.segment(self.at);
+            self.at += 1;
+            if (std.meta.eql(span.color, clear_color)) continue;
+            while (self.at < self.segmentCount()) {
+                const following = try self.segment(self.at);
+                const right = @as(i64, span.rect.x) + span.rect.width;
+                if (!std.meta.eql(span.color, following.color) or right != following.rect.x) break;
+                span.rect.width = std.math.add(
+                    u32,
+                    span.rect.width,
+                    following.rect.width,
+                ) catch return error.InvalidSubmission;
+                self.at += 1;
+            }
+            return span;
+        }
+        return null;
+    }
+
+    fn segmentCount(self: BackgroundSpans) usize {
+        return @as(usize, self.logical_cols) + @intFromBool(self.tailWidth() != 0);
+    }
+
+    fn segment(self: BackgroundSpans, index: usize) error{InvalidSubmission}!BackgroundSpan {
+        if (index < self.logical_cols) {
+            const col: u16 = @intCast(index);
+            const cell = self.work.cells[@as(usize, self.row) * self.work.cols + col];
+            var rect = planCell(
+                self.row,
+                col,
+                self.work.row_geometry[self.row],
+                self.metrics,
+            ) orelse return error.InvalidSubmission;
+            const x: u32 = std.math.cast(u32, rect.x) orelse return error.InvalidSubmission;
+            if (x >= self.rowWidth()) return error.InvalidSubmission;
+            rect.width = @min(rect.width, self.rowWidth() - x);
+            return .{
+                .rect = rect,
+                .color = cellFill(
+                    cell,
+                    self.work.cursor,
+                    cursorBlockCovers(self.work, self.row, col),
+                ),
+            };
+        }
+        std.debug.assert(index == self.logical_cols and self.tailWidth() != 0);
+        const covered = self.coveredWidth();
+        const cell = self.work.cells[@as(usize, self.row) * self.work.cols + self.logical_cols];
+        return .{
+            .rect = .{
+                .x = std.math.cast(i32, covered) orelse return error.InvalidSubmission,
+                .y = std.math.cast(
+                    i32,
+                    @as(u64, self.row) * self.metrics.height_px,
+                ) orelse return error.InvalidSubmission,
+                .width = self.tailWidth(),
+                .height = self.metrics.height_px,
+            },
+            .color = cell.background,
+        };
+    }
+
+    fn coveredWidth(self: BackgroundSpans) u32 {
+        return @as(u32, self.logical_cols) * self.metrics.width_px *
+            lineScale(self.work.row_geometry[self.row]).x;
+    }
+
+    fn tailWidth(self: BackgroundSpans) u32 {
+        return self.rowWidth() -| self.coveredWidth();
+    }
+
+    fn rowWidth(self: BackgroundSpans) u32 {
+        return @as(u32, self.work.cols) * self.metrics.width_px;
+    }
+};
+
 const Scale = struct {
     x: u2,
     y: u2,
@@ -372,8 +471,10 @@ const Device = struct {
     image_texture_bytes: usize = 0,
     image_generation: u64 = 0,
     size: PixelSize,
+    io: std.Io,
+    measurement: measure.Reference,
 
-    fn init(allocator: std.mem.Allocator, values: Init) Error!Device {
+    fn init(allocator: std.mem.Allocator, io: std.Io, values: Init) Error!Device {
         try validateSize(values.size);
         var fonts = try text.FontMap.init(allocator, values.fonts);
         errdefer fonts.deinit();
@@ -435,6 +536,7 @@ const Device = struct {
         errdefer c.glDeleteTextures(1, &white);
         const pixel = [_]u8{255};
         configureTexture(white);
+        measure.State.textureBind(values.measurement);
         c.glTexImage2D(c.GL_TEXTURE_2D, 0, c.GL_ALPHA, 1, 1, 0, c.GL_ALPHA, c.GL_UNSIGNED_BYTE, &pixel);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
         c.glEnable(c.GL_BLEND);
@@ -453,10 +555,13 @@ const Device = struct {
             .fonts = fonts,
             .metrics = metrics,
             .size = values.size,
+            .io = io,
+            .measurement = values.measurement,
         };
     }
 
     fn draw(self: *Device, snapshot: *const Snapshot) Error!void {
+        const draw_started = measure.now(self.io);
         const work = snapshot.view();
         try self.syncImages(work);
         if (!std.meta.eql(self.size, work.size)) {
@@ -465,7 +570,7 @@ const Device = struct {
             self.size = work.size;
         }
         c.glViewport(0, 0, @intCast(self.size.width), @intCast(self.size.height));
-        const clear_component: f32 = @as(f32, @floatFromInt(0x28)) / 255.0;
+        const clear_component: f32 = @as(f32, @floatFromInt(clear_color.r)) / 255.0;
         c.glClearColor(clear_component, clear_component, clear_component, 1.0);
         c.glClear(c.GL_COLOR_BUFFER_BIT);
         c.glUseProgram(self.program);
@@ -480,12 +585,21 @@ const Device = struct {
         try self.drawCursor(work);
         try self.drawScrollbar(work.scrollbar);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        const draw_ns = measure.elapsed(draw_started, self.io);
+        const swap_started = measure.now(self.io);
         if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
+        measure.State.frame(
+            self.measurement,
+            draw_ns,
+            measure.elapsed(swap_started, self.io),
+            measure.elapsed(snapshot.submitted_at, self.io),
+        );
     }
 
     fn drawScrollbar(self: *Device, value: ?viewport.Scrollbar) Error!void {
         const scrollbar = value orelse return;
         try self.quad(
+            .scrollbar,
             @intCast(scrollbar.track.x),
             @intCast(scrollbar.track.y),
             scrollbar.track.width,
@@ -494,6 +608,7 @@ const Device = struct {
             self.white,
         );
         try self.quad(
+            .scrollbar,
             @intCast(scrollbar.thumb.x),
             @intCast(scrollbar.thumb.y),
             scrollbar.thumb.width,
@@ -531,6 +646,7 @@ const Device = struct {
             if (name == 0) return error.Texture;
             errdefer c.glDeleteTextures(1, &name);
             configureRgbaTexture(name);
+            measure.State.textureBind(self.measurement);
             c.glTexImage2D(
                 c.GL_TEXTURE_2D,
                 0,
@@ -543,6 +659,7 @@ const Device = struct {
                 work.image_pixels.ptr + image.pixel_offset,
             );
             if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+            measure.State.imageUpload(self.measurement, image.pixel_count);
             admitted[admitted_count] = .{
                 .identity = image.identity,
                 .name = name,
@@ -623,38 +740,29 @@ const Device = struct {
             c.glVertexAttribPointer(1, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(2 * @sizeOf(f32)));
             c.glVertexAttribPointer(2, 4, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(4 * @sizeOf(f32)));
             c.glDrawArrays(c.GL_TRIANGLES, 0, vertices.len);
+            measure.State.quad(self.measurement, .image, @sizeOf(@TypeOf(vertices)));
             if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
         }
     }
 
     fn drawRowBackground(self: *Device, work: Submission, row: u16) Error!void {
-        const start = @as(usize, row) * work.cols;
-        const cells = work.cells[start..][0..work.cols];
         const geometry = work.row_geometry[row];
         const logical_cols = rowColumns(geometry, work.cols);
-        for (cells[0..logical_cols], 0..) |cell, col| {
-            const cursor_block = cursorBlockCovers(work, row, @intCast(col));
-            const rect = planCell(row, @intCast(col), geometry, self.metrics) orelse
-                return error.InvalidSubmission;
+        measure.State.visitRow(self.measurement, logical_cols);
+        var spans = BackgroundSpans{
+            .work = work,
+            .row = row,
+            .metrics = self.metrics,
+            .logical_cols = logical_cols,
+        };
+        while (try spans.next()) |span| {
             try self.quad(
-                rect.x,
-                rect.y,
-                rect.width,
-                rect.height,
-                cellFill(cell, work.cursor, cursor_block),
-                self.white,
-            );
-        }
-        const row_width = @as(u32, work.cols) * self.metrics.width_px;
-        const covered = @as(u32, logical_cols) * self.metrics.width_px * lineScale(geometry).x;
-        if (covered < row_width) {
-            const tail = cells[logical_cols];
-            try self.quad(
-                @intCast(covered),
-                @as(i32, row) * self.metrics.height_px,
-                row_width - covered,
-                self.metrics.height_px,
-                tail.background,
+                .background,
+                span.rect.x,
+                span.rect.y,
+                span.rect.width,
+                span.rect.height,
+                span.color,
                 self.white,
             );
         }
@@ -667,6 +775,7 @@ const Device = struct {
         const logical_cols = rowColumns(geometry, work.cols);
         var at: u16 = 0;
         while (at < logical_cols) {
+            const prepare_started = measure.now(self.io);
             var prepared = try text.prepareNextRun(self.allocator, &self.fonts, .{
                 .cells = cells[0..logical_cols],
                 .affected_start = at,
@@ -675,6 +784,21 @@ const Device = struct {
                 .metrics = self.metrics,
             }, at);
             defer prepared.deinit();
+            const glyph_count: usize = switch (prepared.glyphs) {
+                .none => 0,
+                .generated => 1,
+                .native => |owned| owned.values.len,
+            };
+            measure.State.prepared(
+                self.measurement,
+                switch (prepared.glyphs) {
+                    .none => .empty,
+                    .generated => .generated,
+                    .native => .native,
+                },
+                glyph_count,
+                measure.elapsed(prepare_started, self.io),
+            );
             try self.drawPrepared(work, row, cells, prepared);
             std.debug.assert(prepared.end_cell > at);
             at = prepared.end_cell;
@@ -745,6 +869,7 @@ const Device = struct {
             ) orelse return;
             setScissor(clip, self.size);
             try self.quad(
+                .text,
                 rect.x,
                 rect.y,
                 rect.width,
@@ -763,6 +888,7 @@ const Device = struct {
             ) orelse continue;
             setScissor(clip, self.size);
             try self.quad(
+                .text,
                 rect.x,
                 rect.y,
                 rect.width,
@@ -876,7 +1002,7 @@ const Device = struct {
             return error.InvalidSubmission;
         const rect = planContent(row, col, geometry, baseline, self.metrics, sized) orelse
             return error.InvalidSubmission;
-        try self.quad(rect.x, rect.y, rect.width, rect.height, color, self.white);
+        try self.quad(.decoration, rect.x, rect.y, rect.width, rect.height, color, self.white);
     }
 
     fn drawCursor(self: *Device, work: Submission) Error!void {
@@ -932,6 +1058,7 @@ const Device = struct {
         defer c.glDisable(c.GL_SCISSOR_TEST);
         setScissor(clip, self.size);
         try self.quad(
+            .cursor,
             rect.x,
             rect.y,
             rect.width,
@@ -942,11 +1069,15 @@ const Device = struct {
     }
 
     fn texture(self: *Device, generation: u64, key: text.GlyphKey) Error!*Texture {
+        var comparisons: usize = 0;
         for (self.textures[0..self.texture_count]) |*entry| {
+            comparisons += 1;
             if (!std.meta.eql(entry.key, key)) continue;
             entry.used = generation;
+            measure.State.cache(self.measurement, comparisons, true);
             return entry;
         }
+        measure.State.cache(self.measurement, comparisons, false);
         var raster = try text.rasterizeGlyph(self.allocator, &self.fonts, key);
         defer raster.deinit();
         if (raster.pixels.len > texture_byte_capacity) return error.CacheFull;
@@ -962,6 +1093,7 @@ const Device = struct {
             if (name == 0) return error.Texture;
             errdefer c.glDeleteTextures(1, &name);
             configureTexture(name);
+            measure.State.textureBind(self.measurement);
             c.glTexImage2D(
                 c.GL_TEXTURE_2D,
                 0,
@@ -975,6 +1107,11 @@ const Device = struct {
             );
             if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
         }
+        measure.State.raster(
+            self.measurement,
+            raster.pixels.len,
+            raster.width != 0 and raster.height != 0,
+        );
         const entry = &self.textures[self.texture_count];
         entry.* = .{
             .key = key,
@@ -1010,6 +1147,7 @@ const Device = struct {
 
     fn quad(
         self: *Device,
+        kind: measure.QuadKind,
         x: i32,
         y: i32,
         width: u32,
@@ -1026,6 +1164,7 @@ const Device = struct {
         c.glVertexAttribPointer(1, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(2 * @sizeOf(f32)));
         c.glVertexAttribPointer(2, 4, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(4 * @sizeOf(f32)));
         c.glDrawArrays(c.GL_TRIANGLES, 0, vertices.len);
+        measure.State.quad(self.measurement, kind, @sizeOf(@TypeOf(vertices)));
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
     }
 
@@ -1140,12 +1279,20 @@ pub const Renderer = struct {
     /// Copies and coalesces one complete visual state without waiting for draw.
     pub fn submit(self: *Renderer, submission: Submission) Error!void {
         try validateSubmission(submission);
+        const submitted_at = measure.now(self.io);
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.failure) |failure| return failure;
         if (self.stopping) return error.Stopping;
         if (submission.generation <= self.submitted) return error.StaleGeneration;
-        try self.mailbox.write(submission);
+        const coalesced = self.mailbox.pending != null;
+        try self.mailbox.write(submission, submitted_at);
+        measure.State.snapshot(
+            self.init_values.measurement,
+            submission.rows,
+            @as(usize, submission.rows) * submission.cols,
+            coalesced,
+        );
         self.submitted = submission.generation;
         self.condition.signal(self.io);
     }
@@ -1186,7 +1333,7 @@ pub const Renderer = struct {
     }
 
     fn threadMain(self: *Renderer) void {
-        var device = Device.init(self.allocator, self.init_values) catch |failure| {
+        var device = Device.init(self.allocator, self.io, self.init_values) catch |failure| {
             self.mutex.lockUncancelable(self.io);
             self.startup_failure = failure;
             self.started = true;
@@ -1746,7 +1893,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .row_geometry = geometry[0..2],
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 20 },
-    }));
+    }, measure.now(std.testing.io)));
     try std.testing.expect(mailbox.pending == null);
     try std.testing.expect(mailbox.active == null);
     try std.testing.expect(mailbox.free_first == &slots[0]);
@@ -1761,7 +1908,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .row_geometry = geometry[0..2],
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 20 },
-    });
+    }, measure.now(std.testing.io));
     try std.testing.expect(mailbox.pending == &slots[1]);
     try std.testing.expect(mailbox.take() == &slots[1]);
     try mailbox.write(.{
@@ -1772,7 +1919,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .row_geometry = geometry[0..1],
         .cursor = testCursor(),
         .size = .{ .width = 10, .height = 10 },
-    });
+    }, measure.now(std.testing.io));
     const pending = mailbox.pending.?;
     const pending_generation = pending.generation;
     const pending_rows = pending.rows;
@@ -1786,7 +1933,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .row_geometry = &geometry,
         .cursor = testCursor(),
         .size = .{ .width = 30, .height = 30 },
-    }));
+    }, measure.now(std.testing.io)));
     try std.testing.expect(mailbox.active == &slots[1]);
     try std.testing.expect(mailbox.pending == pending);
     try std.testing.expect(mailbox.free_first == null);
@@ -1804,7 +1951,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .row_geometry = &geometry,
         .cursor = testCursor(),
         .size = .{ .width = 30, .height = 30 },
-    });
+    }, measure.now(std.testing.io));
     try std.testing.expect(mailbox.active == &slots[1]);
     try std.testing.expect(mailbox.pending == pending);
     try std.testing.expectEqual(@as(u64, 5), pending.generation);
@@ -1832,7 +1979,7 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 10 },
         .scrollbar = bar,
-    });
+    }, measure.now(std.testing.io));
     cells[0].codepoint = 'z';
     cells[0].baseline = .normal;
     geometry[0] = .single_width;
@@ -1907,6 +2054,7 @@ test "submission rejects hostile bounds before snapshot mutation" {
 }
 
 test "renderer construction rejects missing fonts before device work" {
+    var measurement = measure.State{};
     try std.testing.expectError(error.MissingDefaultConfiguration, validateInit(.{
         .display = @ptrFromInt(1),
         .surface = @ptrFromInt(1),
@@ -1914,6 +2062,7 @@ test "renderer construction rejects missing fonts before device work" {
         .rows = 1,
         .cols = 1,
         .fonts = &.{},
+        .measurement = measurement.ref(),
     }));
 }
 
@@ -1983,7 +2132,7 @@ test "snapshot retains complete image state and skips identical generation bytes
         .image_pixels = &pixels,
         .images = &images,
         .image_placements = &placements,
-    });
+    }, measure.now(std.testing.io));
     {
         const before = snapshot.image_pixels[0..4].*;
         const changed_source = [_]u8{ 9, 9, 9, 9 };
@@ -2000,7 +2149,7 @@ test "snapshot retains complete image state and skips identical generation bytes
             .image_pixels = &changed_source,
             .images = &images,
             .image_placements = &placements,
-        });
+        }, measure.now(std.testing.io));
         try std.testing.expectEqualSlices(u8, &before, snapshot.image_pixels[0..4]);
     }
     try std.testing.expectEqual(@as(u64, 2), snapshot.view().image_generation);
@@ -2048,6 +2197,142 @@ test "draw colors consume projected cell and cursor facts exactly" {
     try std.testing.expectEqual(cell.foreground, glyphColor(cell, cursor, false));
     try std.testing.expectEqual(cursor.color, cellFill(cell, cursor, true));
     try std.testing.expectEqual(cursor.text_color, glyphColor(cell, cursor, true));
+}
+
+test "background spans elide clear cells and retain exact alternating fills" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    var cells = [_]terminal.Cell{
+        testCell(' '), testCell(' '), testCell(' '), testCell(' '), testCell(' '),
+    };
+    for (&cells) |*cell| cell.background = clear_color;
+    const geometry = [_]terminal.LineGeometry{.single_width};
+    var spans = BackgroundSpans{
+        .work = testSubmission(&cells, &geometry, testCursor()),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = cells.len,
+    };
+    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+
+    const orange = terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
+    const green = terminal.Rgb{ .r = 0x98, .g = 0x97, .b = 0x1a };
+    cells[0].background = orange;
+    cells[1].background = green;
+    cells[2].background = orange;
+    cells[3].background = green;
+    spans = .{
+        .work = testSubmission(&cells, &geometry, testCursor()),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = cells.len,
+    };
+    for (0..4) |index| {
+        const span = (try spans.next()).?;
+        try std.testing.expectEqual(@as(i32, @intCast(index * 9)), span.rect.x);
+        try std.testing.expectEqual(@as(u32, 9), span.rect.width);
+        try std.testing.expectEqual(if (index % 2 == 0) orange else green, span.color);
+    }
+    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+}
+
+test "background spans merge adjacent resolved colors and preserve cursor clusters" {
+    const metrics = text.CellMetrics{ .width_px = 7, .height_px = 13, .baseline_px = 10 };
+    const orange = terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
+    const blue = terminal.Rgb{ .r = 0x45, .g = 0x85, .b = 0x88 };
+    var cells = [_]terminal.Cell{
+        testCell(' '), testCell(' '), testCell(' '), testCell(' '), testCell(' '),
+    };
+    for (&cells) |*cell| cell.background = clear_color;
+    cells[0].background = orange;
+    cells[1].background = orange;
+    cells[2].background = orange;
+    cells[3].background = blue;
+    cells[4].background = blue;
+    const geometry = [_]terminal.LineGeometry{.single_width};
+    var cursor = testCursor();
+    cursor.visible = false;
+    var spans = BackgroundSpans{
+        .work = testSubmission(&cells, &geometry, cursor),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = cells.len,
+    };
+    try std.testing.expectEqual(
+        BackgroundSpan{
+            .rect = .{ .x = 0, .y = 0, .width = 21, .height = 13 },
+            .color = orange,
+        },
+        (try spans.next()).?,
+    );
+    try std.testing.expectEqual(
+        BackgroundSpan{
+            .rect = .{ .x = 21, .y = 0, .width = 14, .height = 13 },
+            .color = blue,
+        },
+        (try spans.next()).?,
+    );
+
+    for (&cells) |*cell| cell.background = clear_color;
+    cells[0].sizing = .{ .width = 2, .height = 1, .x = 0, .y = 0 };
+    cells[1].sizing = .{ .width = 2, .height = 1, .x = 1, .y = 0 };
+    cursor.visible = true;
+    cursor.shape = .block;
+    cursor.row = 0;
+    cursor.col = 0;
+    cursor.color = orange;
+    spans = .{
+        .work = testSubmission(&cells, &geometry, cursor),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = cells.len,
+    };
+    try std.testing.expectEqual(@as(u32, 14), (try spans.next()).?.rect.width);
+    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+}
+
+test "background spans preserve resolved selection reverse differences and DEC odd tails" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const selected = terminal.Rgb{ .r = 0xee, .g = 0xee, .b = 0xee };
+    const reversed = terminal.Rgb{ .r = 0xeb, .g = 0xdb, .b = 0xb2 };
+    var cells = [_]terminal.Cell{
+        testCell(' '), testCell(' '), testCell(' '), testCell(' '), testCell(' '),
+    };
+    cells[0].background = selected;
+    cells[1].background = reversed;
+    cells[2].background = selected;
+    cells[3].background = clear_color;
+    cells[4].background = clear_color;
+    const geometry = [_]terminal.LineGeometry{.double_width};
+    var cursor = testCursor();
+    cursor.visible = false;
+    var spans = BackgroundSpans{
+        .work = testSubmission(&cells, &geometry, cursor),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = rowColumns(geometry[0], cells.len),
+    };
+    const first = (try spans.next()).?;
+    const second = (try spans.next()).?;
+    const tail = (try spans.next()).?;
+    try std.testing.expectEqual(PixelRect{ .x = 0, .y = 0, .width = 18, .height = 15 }, first.rect);
+    try std.testing.expectEqual(selected, first.color);
+    try std.testing.expectEqual(PixelRect{ .x = 18, .y = 0, .width = 18, .height = 15 }, second.rect);
+    try std.testing.expectEqual(reversed, second.color);
+    try std.testing.expectEqual(PixelRect{ .x = 36, .y = 0, .width = 9, .height = 15 }, tail.rect);
+    try std.testing.expectEqual(selected, tail.color);
+    try std.testing.expectEqual(@as(i64, 45), @as(i64, tail.rect.x) + tail.rect.width);
+    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+
+    var one = [_]terminal.Cell{testCell(' ')};
+    one[0].background = selected;
+    const one_geometry = [_]terminal.LineGeometry{.double_height_top};
+    spans = .{
+        .work = testSubmission(&one, &one_geometry, cursor),
+        .row = 0,
+        .metrics = metrics,
+        .logical_cols = rowColumns(one_geometry[0], one.len),
+    };
+    try std.testing.expectEqual(@as(u32, 9), (try spans.next()).?.rect.width);
 }
 
 test "decoration metrics use the exact projected font identity" {
@@ -2298,5 +2583,22 @@ fn testCursor() terminal.Cursor {
         .blink = false,
         .color = .{ .r = 0, .g = 0, .b = 0 },
         .text_color = .{ .r = 0, .g = 0, .b = 0 },
+    };
+}
+
+fn testSubmission(
+    cells: []const terminal.Cell,
+    geometry: []const terminal.LineGeometry,
+    cursor: terminal.Cursor,
+) Submission {
+    std.debug.assert(geometry.len != 0 and cells.len % geometry.len == 0);
+    return .{
+        .generation = 1,
+        .rows = @intCast(geometry.len),
+        .cols = @intCast(cells.len / geometry.len),
+        .cells = cells,
+        .row_geometry = geometry,
+        .cursor = cursor,
+        .size = .{ .width = 1_000, .height = 1_000 },
     };
 }

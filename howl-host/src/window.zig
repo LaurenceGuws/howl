@@ -5,6 +5,7 @@ const clipboard = @import("clipboard.zig");
 const drop = @import("drop.zig");
 const control = @import("howl_control");
 const howl_render = @import("howl_render");
+const measure = @import("measure.zig");
 const renderer = @import("renderer.zig");
 const pointer_shape = @import("pointer_shape.zig");
 const viewport = @import("viewport.zig");
@@ -358,6 +359,7 @@ const GridSize = struct { rows: u16, cols: u16 };
 const TerminalWake = struct {
     pending: std.atomic.Value(bool) = .init(true),
     fd: c_int,
+    measurement: measure.OptionalReference = if (measure.enabled) null else {},
 };
 
 const DrawProgress = struct {
@@ -420,6 +422,8 @@ const VisualStorage = struct {
     image_count: usize = 0,
     image_placements: [1024]terminal_render.ImagePlacement = undefined,
     image_placement_count: usize = 0,
+    projected_rows: if (measure.enabled) usize else void = if (measure.enabled) 0 else {},
+    projected_cells: if (measure.enabled) usize else void = if (measure.enabled) 0 else {},
     image_generation: u64 = 0,
     image_content_generation: u64 = 0,
 
@@ -470,6 +474,7 @@ const VisualStorage = struct {
             if (context.failure) |failure| return failure;
             if (context.projected) {
                 if (context.withheld) {
+                    self.recordProjection(context);
                     std.debug.assert(inspection == .declined);
                     self.withheld_change_pending =
                         self.withheld_change_pending or context.changed;
@@ -485,6 +490,7 @@ const VisualStorage = struct {
                 }
                 const changed = context.changed or self.withheld_change_pending;
                 self.withheld_change_pending = false;
+                self.recordProjection(context);
                 return .{ .changed = changed };
             }
             if (inspection == .stale) return error.StaleVisualInspection;
@@ -543,6 +549,7 @@ const VisualStorage = struct {
                 }
             }
             const previous = self.*;
+            replacement.recordProjection(replacement_context);
             self.* = replacement;
             self.withheld_change_pending = replacement_context.withheld;
             replacement = previous;
@@ -550,6 +557,18 @@ const VisualStorage = struct {
             return .{ .changed = true, .withheld = replacement_context.withheld };
         }
         return error.GeometryUnstable;
+    }
+
+    fn recordProjection(self: *VisualStorage, context: ProjectionContext) void {
+        if (comptime !measure.enabled) return;
+        self.projected_rows = context.projected_rows;
+        self.projected_cells = context.projected_cells;
+    }
+
+    fn projectionCounts(self: *const VisualStorage) struct { rows: usize, cells: usize } {
+        if (comptime measure.enabled)
+            return .{ .rows = self.projected_rows, .cells = self.projected_cells };
+        return .{ .rows = 0, .cells = 0 };
     }
 
     fn apply(self: *VisualStorage, update: terminal_render.Update) void {
@@ -644,6 +663,8 @@ const ProjectionContext = struct {
     projected: bool = false,
     changed: bool = false,
     withheld: bool = false,
+    projected_rows: usize = 0,
+    projected_cells: usize = 0,
     required_rows: ?u16 = null,
     required_cols: ?u16 = null,
     required_image_bytes: ?usize = null,
@@ -728,6 +749,7 @@ const Window = struct {
     draw: DrawProgress = .{},
     terminal_failure: ?control.ReaderError = null,
     presentation: PresentationState = .{},
+    measurement: measure.State = .{},
 
     fn init(
         allocator: std.mem.Allocator,
@@ -774,6 +796,7 @@ const Window = struct {
             .clipboard_transfers = clipboard.Transfers.init(allocator),
             .drop_transfers = clipboard.Transfers.init(allocator),
         };
+        self.wake.measurement = self.measurement.ref();
         display_owned = false;
         registry_owned = false;
         signal_owned = false;
@@ -816,9 +839,19 @@ const Window = struct {
             .rows = initial_rows,
             .cols = initial_cols,
             .fonts = &configs,
+            .measurement = self.measurement.ref(),
         });
         const metrics = self.render.?.metrics();
         const grid = gridSize(self.size, metrics);
+        measure.State.geometry(
+            self.measurement.ref(),
+            self.size.width,
+            self.size.height,
+            metrics.width_px,
+            metrics.height_px,
+            grid.rows,
+            grid.cols,
+        );
         self.terminal = try control.Terminal.init(allocator, io, .{
             .runtime_dir = runtime_dir,
             .shell = shell,
@@ -835,6 +868,7 @@ const Window = struct {
         while (true) {
             self.terminal.?.consumeWake();
             const capture = try self.visual.?.capture(self.terminal.?);
+            self.measureCapture(capture);
             if (capture.changed) captured = true;
             self.visual_withheld = capture.withheld;
             if (!self.wake.pending.swap(false, .acq_rel)) break;
@@ -905,8 +939,10 @@ const Window = struct {
                 if (resumed < 0 and std.posix.errno(resumed) != .AGAIN)
                     return error.WaylandFlush;
             }
-            if (fds[2].revents & std.posix.POLL.IN != 0)
+            if (fds[2].revents & std.posix.POLL.IN != 0) {
                 self.draw.complete(try self.render.?.completedGeneration());
+                measure.State.completion(self.measurement.ref());
+            }
             if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
             if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
             if (!self.closed and fds[4].revents & std.posix.POLL.IN != 0) try self.blinkCursor();
@@ -987,6 +1023,7 @@ const Window = struct {
     fn captureAndSubmit(self: *Window) Error!void {
         const terminal = self.terminal.?;
         const capture = try self.visual.?.capture(terminal);
+        self.measureCapture(capture);
         self.visual_withheld = capture.withheld;
         if (self.visual_withheld) {
             self.cursor_blink_armed = false;
@@ -1022,7 +1059,19 @@ const Window = struct {
             .images = visual.images[0..visual.image_count],
             .image_placements = visual.image_placements[0..visual.image_placement_count],
         });
+        measure.State.submit(self.measurement.ref());
         self.draw.admit(next);
+    }
+
+    fn measureCapture(self: *Window, capture: VisualCapture) void {
+        const projected = self.visual.?.projectionCounts();
+        measure.State.inspection(
+            self.measurement.ref(),
+            capture.changed,
+            capture.withheld,
+            projected.rows,
+            projected.cells,
+        );
     }
 
     fn applyResize(self: *Window) Error!void {
@@ -1044,12 +1093,23 @@ const Window = struct {
             }
         }
         const capture = try self.visual.?.capture(terminal);
+        self.measureCapture(capture);
         if (geometry_changed and !capture.changed) return error.GeometryUnstable;
         self.visual_withheld = capture.withheld;
         if (capture.presentable()) try self.resetCursorBlink();
         self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
         if (!self.visual_withheld) try self.submitVisual(target);
         self.size = target;
+        const metrics = self.render.?.metrics();
+        measure.State.geometry(
+            self.measurement.ref(),
+            target.width,
+            target.height,
+            metrics.width_px,
+            metrics.height_px,
+            grid.rows,
+            grid.cols,
+        );
         if (terminal.state() != .running) self.finishTerminal();
     }
 
@@ -1955,6 +2015,7 @@ const Window = struct {
         self.destroyProtocol();
         c.wl_registry_destroy(self.registry);
         c.wl_display_disconnect(self.display);
+        self.measurement.writeSummary(self.io);
         const allocator = self.allocator;
         self.* = undefined;
         allocator.destroy(self);
@@ -2139,6 +2200,8 @@ fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?cont
     }
     context.changed = context.storage.observed_token == null or
         context.storage.observed_token.? != source.dirty_token;
+    context.projected_rows = update.row_patches.len;
+    context.projected_cells = update.cells.len;
     context.storage.apply(update);
     context.storage.observed_token = source.dirty_token;
     context.projected = true;
@@ -2194,6 +2257,7 @@ fn configuredSize(current: Size, width: i32, height: i32) error{InvalidSize}!Siz
 
 fn terminalWake(context: ?*anyopaque) void {
     const wake: *TerminalWake = @ptrCast(@alignCast(context.?));
+    measure.State.optionalWake(wake.measurement);
     if (wake.pending.swap(true, .acq_rel)) return;
     signalEvent(wake.fd);
 }
