@@ -61,6 +61,8 @@ const RenderCounters = struct {
     rasterizations: u64 = 0,
     mask_uploads: u64 = 0,
     mask_upload_bytes: u64 = 0,
+    glyph_atlas_allocations: u64 = 0,
+    glyph_atlas_evictions: u64 = 0,
     image_uploads: u64 = 0,
     image_upload_bytes: u64 = 0,
     quads: [@typeInfo(QuadKind).@"enum".field_names.len]u64 = @splat(0),
@@ -188,7 +190,7 @@ pub const State = struct {
         reference.render.prepare_ns.record(nanoseconds);
     }
 
-    /// Counts one glyph-cache lookup and its linear comparisons.
+    /// Counts one glyph-cache lookup and exact probed identities.
     pub fn cache(reference: Reference, comparisons: usize, hit: bool) void {
         if (comptime !enabled) return;
         increment(
@@ -209,6 +211,13 @@ pub const State = struct {
                 std.math.cast(u64, bytes) orelse std.math.maxInt(u64),
             );
         }
+    }
+
+    /// Counts one admitted glyph-atlas texture and whether it replaced one.
+    pub fn glyphAtlas(reference: Reference, replaced: bool) void {
+        if (comptime !enabled) return;
+        increment(&reference.render.glyph_atlas_allocations, 1);
+        if (replaced) increment(&reference.render.glyph_atlas_evictions, 1);
     }
 
     /// Counts one retained RGBA image texture upload.
@@ -444,6 +453,7 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     State.stagedQuad(reference, .text);
     State.cpuClip(reference, true, false);
     State.cpuClip(reference, false, true);
+    State.glyphAtlas(reference, true);
     State.batch(reference, 1, 1, 384);
     State.frame(reference, 3_000, 4_000, 9_000);
     var bytes: [16 * 1024]u8 = undefined;
@@ -458,6 +468,8 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_merges=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.cpu_clipped_quads=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.cpu_discarded_quads=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.glyph_atlas_allocations=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.glyph_atlas_evictions=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_calls=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_bytes=384\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.draw_ns.count=1\n") != null);

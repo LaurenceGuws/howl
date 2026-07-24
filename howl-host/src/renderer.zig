@@ -29,10 +29,14 @@ const run_shaped_bytes = max_run_glyphs * @sizeOf(render.text.Glyph);
 const run_positioned_bytes = max_run_glyphs * @sizeOf(text.PositionedGlyph);
 const run_scratch_bytes =
     run_codepoint_bytes + run_cluster_bytes + run_shaped_bytes + run_positioned_bytes;
-// Bounds resident glyph masks independently of terminal dimensions.
-const texture_capacity: usize = 2_048;
-// Bounds resident alpha bytes shared by every terminal glyph identity.
-const texture_byte_capacity: usize = 16 * 1024 * 1024;
+// Bounds shared glyph identity and atlas storage independently of the grid.
+const glyph_capacity: usize = 2_048;
+const glyph_bucket_capacity: usize = glyph_capacity * 2;
+const glyph_atlas_capacity: usize = 8;
+const glyph_atlas_max_extent: u16 = 1_024;
+const glyph_atlas_byte_capacity: usize = glyph_atlas_capacity *
+    @as(usize, glyph_atlas_max_extent) * glyph_atlas_max_extent;
+const glyph_metadata_byte_capacity: usize = 128 * 1024;
 const clear_color = terminal.Rgb{ .r = 0x28, .g = 0x28, .b = 0x28 };
 
 /// Supplies one nonzero concrete EGL window extent.
@@ -331,16 +335,248 @@ const Mailbox = struct {
     }
 };
 
-const Texture = struct {
+const TextureUv = struct {
+    left: f32 = 0,
+    top: f32 = 0,
+    right: f32 = 1,
+    bottom: f32 = 1,
+};
+
+const Glyph = struct {
     key: text.GlyphKey,
-    name: c.GLuint,
+    atlas: ?u8,
+    rect: AtlasRect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
     width: u16,
     height: u16,
     left: i16,
     top: i16,
-    bytes: usize,
     used: u64,
 };
+
+const AtlasRect = struct {
+    x: u16,
+    y: u16,
+    width: u16,
+    height: u16,
+};
+
+const Atlas = struct {
+    name: c.GLuint,
+    x: u16 = 0,
+    y: u16 = 0,
+    row_height: u16 = 0,
+
+    fn plan(self: Atlas, extent: u16, width: u16, height: u16) ?AtlasRect {
+        if (width == 0 or height == 0 or width > extent or height > extent) return null;
+        if (@as(u32, self.x) + width <= extent and
+            @as(u32, self.y) + height <= extent)
+            return .{ .x = self.x, .y = self.y, .width = width, .height = height };
+        const next_y = @as(u32, self.y) + self.row_height;
+        if (next_y + height > extent) return null;
+        return .{ .x = 0, .y = @intCast(next_y), .width = width, .height = height };
+    }
+
+    fn admit(self: *Atlas, rect: AtlasRect) void {
+        self.x = rect.x + rect.width;
+        if (rect.y != self.y) self.row_height = 0;
+        self.y = rect.y;
+        self.row_height = @max(self.row_height, rect.height);
+    }
+};
+
+const AtlasAdmission = union(enum) {
+    existing: AtlasSelection,
+    grow: AtlasRect,
+    replace: AtlasSelection,
+};
+
+const AtlasSelection = struct { atlas: u8, rect: AtlasRect };
+
+const GlyphCache = struct {
+    extent: u16,
+    glyphs: [glyph_capacity]Glyph = undefined,
+    glyph_count: usize = 0,
+    buckets: [glyph_bucket_capacity]u16 = @splat(0),
+    atlases: [glyph_atlas_capacity]Atlas = undefined,
+    atlas_count: usize = 0,
+
+    fn find(self: *GlyphCache, key: text.GlyphKey, comparisons: *usize) ?*Glyph {
+        var bucket = glyphHash(key) % self.buckets.len;
+        for (0..self.buckets.len) |_| {
+            const encoded = self.buckets[bucket];
+            if (encoded == 0) return null;
+            comparisons.* += 1;
+            const glyph = &self.glyphs[encoded - 1];
+            if (std.meta.eql(glyph.key, key)) return glyph;
+            bucket = (bucket + 1) % self.buckets.len;
+        }
+        return null;
+    }
+
+    fn plan(self: *const GlyphCache, width: u16, height: u16, generation: u64) ?AtlasAdmission {
+        if (width == 0 or height == 0 or width > self.extent or height > self.extent) return null;
+        if (self.glyph_count < self.glyphs.len) {
+            for (self.atlases[0..self.atlas_count], 0..) |atlas, index|
+                if (atlas.plan(self.extent, width, height)) |rect|
+                    return .{ .existing = .{ .atlas = @intCast(index), .rect = rect } };
+            if (self.atlas_count < self.atlases.len) return .{
+                .grow = .{ .x = 0, .y = 0, .width = width, .height = height },
+            };
+        }
+        const victim = self.oldestAtlas(generation) orelse return null;
+        return .{ .replace = .{
+            .atlas = @intCast(victim),
+            .rect = .{ .x = 0, .y = 0, .width = width, .height = height },
+        } };
+    }
+
+    fn admit(
+        self: *GlyphCache,
+        admission: AtlasAdmission,
+        name: c.GLuint,
+        key: text.GlyphKey,
+        raster: text.Raster,
+        generation: u64,
+    ) *Glyph {
+        const selected = switch (admission) {
+            .existing => |value| value,
+            .grow => |rect| blk: {
+                const atlas: u8 = @intCast(self.atlas_count);
+                self.atlases[self.atlas_count] = .{ .name = name };
+                self.atlas_count += 1;
+                break :blk AtlasSelection{ .atlas = atlas, .rect = rect };
+            },
+            .replace => |value| blk: {
+                self.removeAtlasGlyphs(value.atlas);
+                self.atlases[value.atlas] = .{ .name = name };
+                break :blk value;
+            },
+        };
+        self.atlases[selected.atlas].admit(selected.rect);
+        std.debug.assert(self.glyph_count < self.glyphs.len);
+        const index = self.glyph_count;
+        self.glyphs[index] = .{
+            .key = key,
+            .atlas = selected.atlas,
+            .rect = selected.rect,
+            .width = raster.width,
+            .height = raster.height,
+            .left = raster.left,
+            .top = raster.top,
+            .used = generation,
+        };
+        self.glyph_count += 1;
+        self.insertBucket(index);
+        return &self.glyphs[index];
+    }
+
+    fn admitEmpty(self: *GlyphCache, key: text.GlyphKey, raster: text.Raster, generation: u64) ?*Glyph {
+        if (self.glyph_count == self.glyphs.len) return null;
+        const index = self.glyph_count;
+        self.glyphs[index] = .{
+            .key = key,
+            .atlas = null,
+            .width = raster.width,
+            .height = raster.height,
+            .left = raster.left,
+            .top = raster.top,
+            .used = generation,
+        };
+        self.glyph_count += 1;
+        self.insertBucket(index);
+        return &self.glyphs[index];
+    }
+
+    fn oldestAtlas(self: *const GlyphCache, generation: u64) ?usize {
+        var oldest: ?usize = null;
+        var oldest_use: u64 = std.math.maxInt(u64);
+        for (0..self.atlas_count) |atlas| {
+            var last_use: u64 = 0;
+            var current = false;
+            for (self.glyphs[0..self.glyph_count]) |glyph| {
+                if (glyph.atlas != @as(u8, @intCast(atlas))) continue;
+                if (glyph.used == generation) current = true;
+                last_use = @max(last_use, glyph.used);
+            }
+            if (!current and (oldest == null or last_use < oldest_use)) {
+                oldest = atlas;
+                oldest_use = last_use;
+            }
+        }
+        return oldest;
+    }
+
+    fn removeAtlasGlyphs(self: *GlyphCache, atlas: usize) void {
+        var write: usize = 0;
+        for (self.glyphs[0..self.glyph_count]) |glyph| {
+            if (glyph.atlas == @as(u8, @intCast(atlas))) continue;
+            self.glyphs[write] = glyph;
+            write += 1;
+        }
+        self.glyph_count = write;
+        self.rebuildBuckets();
+    }
+
+    fn rebuildBuckets(self: *GlyphCache) void {
+        self.buckets = @splat(0);
+        for (0..self.glyph_count) |index| self.insertBucket(index);
+    }
+
+    fn insertBucket(self: *GlyphCache, glyph: usize) void {
+        var bucket = glyphHash(self.glyphs[glyph].key) % self.buckets.len;
+        while (self.buckets[bucket] != 0) bucket = (bucket + 1) % self.buckets.len;
+        self.buckets[bucket] = @intCast(glyph + 1);
+    }
+};
+
+comptime {
+    std.debug.assert(@sizeOf(GlyphCache) <= glyph_metadata_byte_capacity);
+}
+
+fn glyphHash(key: text.GlyphKey) usize {
+    var hash: u64 = 0xcbf29ce484222325;
+    switch (key) {
+        .native => |native| {
+            hashByte(&hash, 0);
+            hashByte(&hash, native.font.slot);
+            hashByte(&hash, @backingInt(native.font.style));
+            hashByte(&hash, native.face_index);
+            hashU32(&hash, native.glyph_id);
+            hashU32(&hash, native.cell_span);
+        },
+        .generated => |generated| {
+            hashByte(&hash, 1);
+            hashU32(&hash, generated.codepoint);
+            hashU32(&hash, generated.width_px);
+            hashU32(&hash, generated.height_px);
+            hashU32(&hash, generated.baseline_px);
+        },
+    }
+    return @intCast(hash % glyph_bucket_capacity);
+}
+
+fn hashByte(hash: *u64, value: u8) void {
+    hash.* = (hash.* ^ value) *% 0x100000001b3;
+}
+
+fn hashU32(hash: *u64, value: u32) void {
+    var remaining = value;
+    for (0..@sizeOf(u32)) |_| {
+        hashByte(hash, @truncate(remaining));
+        remaining >>= 8;
+    }
+}
+
+fn glyphUv(glyph: Glyph, extent: u16) TextureUv {
+    std.debug.assert(glyph.atlas != null and glyph.rect.width != 0 and glyph.rect.height != 0);
+    const divisor: f32 = @floatFromInt(extent);
+    return .{
+        .left = @as(f32, @floatFromInt(glyph.rect.x)) / divisor,
+        .top = @as(f32, @floatFromInt(glyph.rect.y)) / divisor,
+        .right = @as(f32, @floatFromInt(glyph.rect.x + glyph.rect.width)) / divisor,
+        .bottom = @as(f32, @floatFromInt(glyph.rect.y + glyph.rect.height)) / divisor,
+    };
+}
 
 const ImageTexture = struct {
     identity: terminal.ImageIdentity,
@@ -600,9 +836,7 @@ const Device = struct {
     run_scratch: RunScratch,
     draw_batch: DrawBatch,
     metrics: text.CellMetrics,
-    textures: [texture_capacity]Texture = undefined,
-    texture_count: usize = 0,
-    texture_bytes: usize = 0,
+    glyph_cache: GlyphCache,
     image_textures: [256]ImageTexture = undefined,
     image_texture_count: usize = 0,
     image_texture_bytes: usize = 0,
@@ -667,6 +901,17 @@ const Device = struct {
         const texture_color_uniform = c.glGetUniformLocation(program, "texture_color");
         if (texture_color_uniform < 0) return error.Shader;
         c.glUniform1i(texture_color_uniform, 0);
+        var max_texture_size: c.GLint = 0;
+        c.glGetIntegerv(c.GL_MAX_TEXTURE_SIZE, &max_texture_size);
+        if (max_texture_size <= 0 or c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+        const atlas_extent: u16 = @intCast(@min(
+            max_texture_size,
+            @as(c.GLint, glyph_atlas_max_extent),
+        ));
+        std.debug.assert(
+            @as(usize, atlas_extent) * atlas_extent * glyph_atlas_capacity <=
+                glyph_atlas_byte_capacity,
+        );
         var buffer: c.GLuint = 0;
         c.glGenBuffers(1, &buffer);
         if (buffer == 0 or c.glGetError() != c.GL_NO_ERROR) return error.Draw;
@@ -706,6 +951,7 @@ const Device = struct {
             .run_scratch = run_scratch,
             .draw_batch = draw_batch,
             .metrics = metrics,
+            .glyph_cache = .{ .extent = atlas_extent },
             .size = values.size,
             .io = io,
             .measurement = values.measurement,
@@ -977,6 +1223,8 @@ const Device = struct {
         std.debug.assert(glyph.source_start < glyph.source_end and glyph.source_end <= cells.len);
         const cached = try self.texture(work.generation, glyph.key);
         if (cached.width == 0 or cached.height == 0) return;
+        const atlas = self.glyph_cache.atlases[cached.atlas.?];
+        const texture_uv = glyphUv(cached.*, self.glyph_cache.extent);
         const base_x = glyphPixelX(
             prepared.first_cell,
             self.metrics.width_px,
@@ -1017,7 +1265,8 @@ const Device = struct {
                 rect.width,
                 rect.height,
                 glyphColor(cells[glyph.source_start], work.cursor, cursor_block),
-                cached.name,
+                atlas.name,
+                texture_uv,
                 clip,
             );
             return;
@@ -1036,7 +1285,8 @@ const Device = struct {
                 rect.width,
                 rect.height,
                 glyphColor(cells[col], work.cursor, cursorBlockCovers(work, row, col)),
-                cached.name,
+                atlas.name,
+                texture_uv,
                 clip,
             );
         }
@@ -1187,6 +1437,7 @@ const Device = struct {
             rect.height,
             color,
             self.white,
+            .{},
             clip,
         );
     }
@@ -1248,15 +1499,14 @@ const Device = struct {
             rect.height,
             work.cursor.color,
             self.white,
+            .{},
             clip,
         );
     }
 
-    fn texture(self: *Device, generation: u64, key: text.GlyphKey) Error!*Texture {
+    fn texture(self: *Device, generation: u64, key: text.GlyphKey) Error!*Glyph {
         var comparisons: usize = 0;
-        for (self.textures[0..self.texture_count]) |*entry| {
-            comparisons += 1;
-            if (!std.meta.eql(entry.key, key)) continue;
+        if (self.glyph_cache.find(key, &comparisons)) |entry| {
             entry.used = generation;
             measure.State.cache(self.measurement, comparisons, true);
             return entry;
@@ -1264,69 +1514,90 @@ const Device = struct {
         measure.State.cache(self.measurement, comparisons, false);
         var raster = try text.rasterizeGlyph(self.allocator, &self.fonts, key);
         defer raster.deinit();
-        if (raster.pixels.len > texture_byte_capacity) return error.CacheFull;
-        while (self.texture_count == texture_capacity or
-            raster.pixels.len > texture_byte_capacity - self.texture_bytes)
-        {
-            const victim = self.oldestTexture(generation) orelse return error.CacheFull;
-            self.removeTexture(victim);
+        if (raster.width == 0 or raster.height == 0) {
+            const entry = self.glyph_cache.admitEmpty(key, raster, generation) orelse
+                return error.CacheFull;
+            measure.State.raster(self.measurement, raster.pixels.len, false);
+            return entry;
         }
-        var name: c.GLuint = 0;
-        if (raster.width != 0 and raster.height != 0) {
-            c.glGenTextures(1, &name);
-            if (name == 0) return error.Texture;
-            errdefer c.glDeleteTextures(1, &name);
-            configureTexture(name);
-            measure.State.textureBind(self.measurement);
-            c.glTexImage2D(
-                c.GL_TEXTURE_2D,
-                0,
-                c.GL_ALPHA,
-                raster.width,
-                raster.height,
-                0,
-                c.GL_ALPHA,
-                c.GL_UNSIGNED_BYTE,
-                raster.pixels.ptr,
-            );
-            if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
-        }
-        measure.State.raster(
-            self.measurement,
-            raster.pixels.len,
-            raster.width != 0 and raster.height != 0,
-        );
-        const entry = &self.textures[self.texture_count];
-        entry.* = .{
-            .key = key,
-            .name = name,
-            .width = raster.width,
-            .height = raster.height,
-            .left = raster.left,
-            .top = raster.top,
-            .bytes = raster.pixels.len,
-            .used = generation,
+        if (raster.pixels.len != @as(usize, raster.width) * raster.height)
+            return error.InvalidSubmission;
+        const admission = self.glyph_cache.plan(raster.width, raster.height, generation) orelse
+            return error.CacheFull;
+        const name = switch (admission) {
+            .existing => |value| blk: {
+                const retained = self.glyph_cache.atlases[value.atlas].name;
+                c.glBindTexture(c.GL_TEXTURE_2D, retained);
+                measure.State.textureBind(self.measurement);
+                c.glTexSubImage2D(
+                    c.GL_TEXTURE_2D,
+                    0,
+                    value.rect.x,
+                    value.rect.y,
+                    value.rect.width,
+                    value.rect.height,
+                    c.GL_ALPHA,
+                    c.GL_UNSIGNED_BYTE,
+                    raster.pixels.ptr,
+                );
+                if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+                break :blk retained;
+            },
+            .grow => |rect| try self.createGlyphAtlas(rect, raster.pixels),
+            .replace => |value| try self.createGlyphAtlas(value.rect, raster.pixels),
         };
-        self.texture_count += 1;
-        self.texture_bytes += raster.pixels.len;
-        return entry;
-    }
-
-    fn oldestTexture(self: *const Device, generation: u64) ?usize {
-        var oldest: ?usize = null;
-        for (self.textures[0..self.texture_count], 0..) |entry, index| {
-            if (entry.used == generation) continue;
-            if (oldest == null or entry.used < self.textures[oldest.?].used) oldest = index;
+        errdefer switch (admission) {
+            .grow, .replace => c.glDeleteTextures(1, &name),
+            .existing => {},
+        };
+        switch (admission) {
+            .replace => |value| c.glDeleteTextures(
+                1,
+                &self.glyph_cache.atlases[value.atlas].name,
+            ),
+            else => {},
         }
-        return oldest;
+        switch (admission) {
+            .grow => measure.State.glyphAtlas(self.measurement, false),
+            .replace => measure.State.glyphAtlas(self.measurement, true),
+            .existing => {},
+        }
+        measure.State.raster(self.measurement, raster.pixels.len, true);
+        return self.glyph_cache.admit(admission, name, key, raster, generation);
     }
 
-    fn removeTexture(self: *Device, index: usize) void {
-        const removed = self.textures[index];
-        c.glDeleteTextures(1, &removed.name);
-        self.texture_bytes -= removed.bytes;
-        self.texture_count -= 1;
-        if (index != self.texture_count) self.textures[index] = self.textures[self.texture_count];
+    fn createGlyphAtlas(self: *Device, rect: AtlasRect, pixels: []const u8) Error!c.GLuint {
+        var name: c.GLuint = 0;
+        c.glGenTextures(1, &name);
+        if (name == 0) return error.Texture;
+        errdefer c.glDeleteTextures(1, &name);
+        configureTexture(name);
+        measure.State.textureBind(self.measurement);
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
+            0,
+            c.GL_ALPHA,
+            self.glyph_cache.extent,
+            self.glyph_cache.extent,
+            0,
+            c.GL_ALPHA,
+            c.GL_UNSIGNED_BYTE,
+            null,
+        );
+        if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+        c.glTexSubImage2D(
+            c.GL_TEXTURE_2D,
+            0,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            c.GL_ALPHA,
+            c.GL_UNSIGNED_BYTE,
+            pixels.ptr,
+        );
+        if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+        return name;
     }
 
     fn quad(
@@ -1356,6 +1627,7 @@ const Device = struct {
         height: u32,
         color: terminal.Rgb,
         texture_name: c.GLuint,
+        texture_uv: TextureUv,
         clip: PixelRect,
     ) Error!void {
         if (width == 0 or height == 0) return;
@@ -1364,6 +1636,7 @@ const Device = struct {
             clip,
             self.size,
             color,
+            texture_uv,
         ) orelse {
             measure.State.cpuClip(self.measurement, false, true);
             return;
@@ -1476,7 +1749,10 @@ const Device = struct {
                 self.image_textures[self.image_texture_count].height * 4;
             c.glDeleteTextures(1, &self.image_textures[self.image_texture_count].name);
         }
-        while (self.texture_count != 0) self.removeTexture(self.texture_count - 1);
+        while (self.glyph_cache.atlas_count != 0) {
+            self.glyph_cache.atlas_count -= 1;
+            c.glDeleteTextures(1, &self.glyph_cache.atlases[self.glyph_cache.atlas_count].name);
+        }
         self.draw_batch.deinit();
         self.run_scratch.deinit();
         self.fonts.deinit();
@@ -1918,6 +2194,7 @@ fn clipQuad(
     clip: PixelRect,
     size: PixelSize,
     color: terminal.Rgb,
+    texture_uv: TextureUv,
 ) ?ClippedQuad {
     std.debug.assert(rect.width != 0 and rect.height != 0);
     const visible = intersectRect(rect, clip) orelse return null;
@@ -1928,6 +2205,8 @@ fn clipQuad(
     std.debug.assert(right <= rect.width and bottom <= rect.height);
     const width_f: f32 = @floatFromInt(rect.width);
     const height_f: f32 = @floatFromInt(rect.height);
+    const texture_width = texture_uv.right - texture_uv.left;
+    const texture_height = texture_uv.bottom - texture_uv.top;
     return .{
         .vertices = quadUvVertices(
             visible.x,
@@ -1936,10 +2215,10 @@ fn clipQuad(
             visible.height,
             size,
             color,
-            @as(f32, @floatFromInt(left)) / width_f,
-            @as(f32, @floatFromInt(top)) / height_f,
-            @as(f32, @floatFromInt(right)) / width_f,
-            @as(f32, @floatFromInt(bottom)) / height_f,
+            texture_uv.left + @as(f32, @floatFromInt(left)) / width_f * texture_width,
+            texture_uv.top + @as(f32, @floatFromInt(top)) / height_f * texture_height,
+            texture_uv.left + @as(f32, @floatFromInt(right)) / width_f * texture_width,
+            texture_uv.top + @as(f32, @floatFromInt(bottom)) / height_f * texture_height,
         ),
         .changed = !std.meta.eql(rect, visible),
     };
@@ -2485,6 +2764,150 @@ test "glyph cache identity includes exact font and generated raster facts" {
         .baseline_px = 13,
     } };
     try std.testing.expect(!std.meta.eql(generated_a, generated_b));
+}
+
+test "glyph atlas packs shelves and preserves exact UV identity" {
+    var cache = GlyphCache{ .extent = 8 };
+    var pixels: [64]u8 = @splat(255);
+    const first_key = testGlyphKey(0x2500);
+    const first_raster = testRaster(pixels[0..6], 3, 2);
+    const first_plan = cache.plan(3, 2, 1).?;
+    try std.testing.expectEqual(
+        AtlasAdmission{ .grow = .{ .x = 0, .y = 0, .width = 3, .height = 2 } },
+        first_plan,
+    );
+    const first = cache.admit(first_plan, 11, first_key, first_raster, 1);
+    try std.testing.expectEqual(@as(?u8, 0), first.atlas);
+    try std.testing.expectEqual(
+        TextureUv{ .left = 0, .top = 0, .right = 3.0 / 8.0, .bottom = 2.0 / 8.0 },
+        glyphUv(first.*, cache.extent),
+    );
+
+    const second_plan = cache.plan(4, 3, 1).?;
+    try std.testing.expectEqual(
+        AtlasAdmission{ .existing = .{
+            .atlas = 0,
+            .rect = .{ .x = 3, .y = 0, .width = 4, .height = 3 },
+        } },
+        second_plan,
+    );
+    const second = cache.admit(
+        second_plan,
+        11,
+        testGlyphKey(0x2501),
+        testRaster(pixels[0..12], 4, 3),
+        1,
+    );
+    try std.testing.expectEqual(@as(u16, 3), second.rect.x);
+    const next_row = cache.plan(8, 4, 2).?;
+    try std.testing.expectEqual(
+        AtlasAdmission{ .existing = .{
+            .atlas = 0,
+            .rect = .{ .x = 0, .y = 3, .width = 8, .height = 4 },
+        } },
+        next_row,
+    );
+    const third = cache.admit(
+        next_row,
+        11,
+        testGlyphKey(0x2502),
+        testRaster(pixels[0..32], 8, 4),
+        2,
+    );
+    try std.testing.expectEqual(@as(u16, 3), third.rect.y);
+    try std.testing.expectEqual(@as(usize, 3), cache.glyph_count);
+    try std.testing.expectEqual(@as(usize, 1), cache.atlas_count);
+}
+
+test "glyph atlas rejects oversize without mutation and grows transactionally" {
+    var cache = GlyphCache{ .extent = 4 };
+    try std.testing.expect(cache.plan(5, 1, 1) == null);
+    try std.testing.expect(cache.plan(1, 5, 1) == null);
+    try std.testing.expectEqual(@as(usize, 0), cache.glyph_count);
+    try std.testing.expectEqual(@as(usize, 0), cache.atlas_count);
+
+    var pixels: [16]u8 = @splat(255);
+    const planned = cache.plan(4, 4, 1).?;
+    // A failed GL upload leaves this pure plan and every cache owner untouched.
+    try std.testing.expectEqual(@as(usize, 0), cache.glyph_count);
+    try std.testing.expectEqual(@as(usize, 0), cache.atlas_count);
+    const admitted = cache.admit(
+        planned,
+        17,
+        testGlyphKey(0x2500),
+        testRaster(&pixels, 4, 4),
+        1,
+    );
+    try std.testing.expectEqual(@as(?u8, 0), admitted.atlas);
+    try std.testing.expectEqual(@as(usize, 1), cache.glyph_count);
+    try std.testing.expectEqual(@as(usize, 1), cache.atlas_count);
+    try std.testing.expectEqual(@as(c.GLuint, 17), cache.atlases[0].name);
+}
+
+test "glyph cache count bound rejects without overwriting retained identity" {
+    var cache = GlyphCache{ .extent = 4 };
+    var no_pixels: [0]u8 = .{};
+    const empty = testRaster(&no_pixels, 0, 0);
+    for (0..glyph_capacity) |index| {
+        const admitted = cache.admitEmpty(
+            testGlyphKey(@intCast(0x1_0000 + index)),
+            empty,
+            1,
+        ).?;
+        try std.testing.expectEqual(@as(?u8, null), admitted.atlas);
+    }
+    try std.testing.expect(cache.admitEmpty(testGlyphKey(0x1_1000), empty, 2) == null);
+    try std.testing.expectEqual(glyph_capacity, cache.glyph_count);
+    var comparisons: usize = 0;
+    try std.testing.expect(cache.find(testGlyphKey(0x1_0000), &comparisons) != null);
+}
+
+test "glyph atlas eviction protects current draws and rebuilds identity index" {
+    var cache = GlyphCache{ .extent = 2 };
+    var pixels: [4]u8 = @splat(255);
+    for (0..glyph_atlas_capacity) |index| {
+        const generation: u64 = @intCast(index + 1);
+        const plan = cache.plan(2, 2, generation).?;
+        const glyph = cache.admit(
+            plan,
+            @intCast(100 + index),
+            testGlyphKey(@intCast(0x2500 + index)),
+            testRaster(&pixels, 2, 2),
+            generation,
+        );
+        try std.testing.expectEqual(@as(?u8, @intCast(index)), glyph.atlas);
+    }
+    try std.testing.expectEqual(glyph_atlas_capacity, cache.atlas_count);
+    cache.glyphs[0].used = 20;
+    const replacement = cache.plan(2, 2, 20).?;
+    try std.testing.expectEqual(@as(u8, 1), replacement.replace.atlas);
+    const replacement_glyph = cache.admit(
+        replacement,
+        200,
+        testGlyphKey(0x2600),
+        testRaster(&pixels, 2, 2),
+        20,
+    );
+    try std.testing.expectEqual(@as(?u8, 1), replacement_glyph.atlas);
+    var comparisons: usize = 0;
+    try std.testing.expect(cache.find(testGlyphKey(0x2501), &comparisons) == null);
+    try std.testing.expect(cache.find(testGlyphKey(0x2500), &comparisons) != null);
+    try std.testing.expect(cache.find(testGlyphKey(0x2600), &comparisons) != null);
+    try std.testing.expectEqual(@as(c.GLuint, 200), cache.atlases[1].name);
+    for (cache.glyphs[0..cache.glyph_count]) |*glyph| glyph.used = 21;
+    try std.testing.expect(cache.plan(2, 2, 21) == null);
+}
+
+test "fresh glyph atlas reconstructs the same placement after context loss" {
+    var pixels: [15]u8 = @splat(255);
+    const key = testGlyphKey(0x2500);
+    const raster = testRaster(&pixels, 3, 5);
+    var before = GlyphCache{ .extent = 16 };
+    const first = before.admit(before.plan(3, 5, 1).?, 1, key, raster, 1).*;
+    var rebuilt = GlyphCache{ .extent = 16 };
+    const second = rebuilt.admit(rebuilt.plan(3, 5, 2).?, 2, key, raster, 2).*;
+    try std.testing.expectEqual(first.rect, second.rect);
+    try std.testing.expectEqual(glyphUv(first, 16), glyphUv(second, 16));
 }
 
 test "shaped glyph placement anchors the pen once at the run start" {
@@ -3107,7 +3530,7 @@ test "CPU clipping preserves complete quads and clips every odd pixel edge" {
     const size = PixelSize{ .width = 45, .height = 31 };
     const color = terminal.Rgb{ .r = 1, .g = 2, .b = 3 };
     const rect = PixelRect{ .x = 4, .y = 3, .width = 11, .height = 13 };
-    const complete = clipQuad(rect, rect, size, color).?;
+    const complete = clipQuad(rect, rect, size, color, .{}).?;
     try std.testing.expect(!complete.changed);
     try std.testing.expectEqualSlices(
         Vertex,
@@ -3128,15 +3551,25 @@ test "CPU clipping preserves complete quads and clips every odd pixel edge" {
         .{ .clip = .{ .x = 4, .y = 3, .width = 11, .height = 12 }, .u0 = 0, .v0 = 0, .u1 = 1, .v1 = 12.0 / 13.0 },
     };
     for (cases) |case| {
-        const clipped = clipQuad(rect, case.clip, size, color).?;
+        const clipped = clipQuad(rect, case.clip, size, color, .{}).?;
         try std.testing.expect(clipped.changed);
         try expectQuadUv(clipped.vertices, case.u0, case.v0, case.u1, case.v1);
     }
+    const atlas_uv = TextureUv{ .left = 0.25, .top = 0.125, .right = 0.75, .bottom = 0.625 };
+    const atlas_clipped = clipQuad(rect, cases[0].clip, size, color, atlas_uv).?;
+    try expectQuadUv(
+        atlas_clipped.vertices,
+        0.25 + 0.5 / 11.0,
+        0.125,
+        0.75,
+        0.625,
+    );
     try std.testing.expect(clipQuad(
         rect,
         .{ .x = 20, .y = 20, .width = 2, .height = 2 },
         size,
         color,
+        .{},
     ) == null);
 }
 
@@ -3154,7 +3587,7 @@ test "CPU clipping preserves DEC OSC 66 decoration and cursor geometry" {
         .{ .x = 9, .y = 2, .width = 7, .height = 9 },
     ).?;
     const dec_clip = planCell(2, 1, .double_height_bottom, metrics).?;
-    const clipped_dec = clipQuad(dec, dec_clip, size, color).?;
+    const clipped_dec = clipQuad(dec, dec_clip, size, color, .{}).?;
     try std.testing.expect(clipped_dec.changed);
     try std.testing.expect(clipped_dec.vertices[0].v > 0);
     try std.testing.expectEqual(@as(f32, 1), clipped_dec.vertices[1].v);
@@ -3172,7 +3605,7 @@ test "CPU clipping preserves DEC OSC 66 decoration and cursor geometry" {
         .{ .width = 3, .height = 2 },
         metrics,
     ).?;
-    const clipped_sized = clipQuad(sized, sized_clip, size, color).?;
+    const clipped_sized = clipQuad(sized, sized_clip, size, color, .{}).?;
     for (clipped_sized.vertices) |vertex| {
         try std.testing.expect(vertex.u >= 0 and vertex.u <= 1);
         try std.testing.expect(vertex.v >= 0 and vertex.v <= 1);
@@ -3187,9 +3620,9 @@ test "CPU clipping preserves DEC OSC 66 decoration and cursor geometry" {
         .{ .x = 9, .y = 12, .width = 9, .height = 1 },
     ).?;
     const cell_clip = planCell(0, 1, .double_width, metrics).?;
-    try std.testing.expect(clipQuad(decoration, cell_clip, size, color) != null);
+    try std.testing.expect(clipQuad(decoration, cell_clip, size, color, .{}) != null);
     const cursor = PixelRect{ .x = 18, .y = 0, .width = 2, .height = 15 };
-    try std.testing.expect(!clipQuad(cursor, cell_clip, size, color).?.changed);
+    try std.testing.expect(!clipQuad(cursor, cell_clip, size, color, .{}).?.changed);
 }
 
 test "CPU-clipped same-state quads merge while image crop scissor remains distinct" {
@@ -3202,12 +3635,14 @@ test "CPU-clipped same-state quads merge while image crop scissor remains distin
         .{ .x = 0, .y = 0, .width = 40, .height = 20 },
         size,
         color,
+        .{},
     ).?;
     const second = clipQuad(
         .{ .x = 8, .y = 0, .width = 10, .height = 10 },
         .{ .x = 0, .y = 0, .width = 40, .height = 20 },
         size,
         color,
+        .{},
     ).?;
     const text_state = DrawState{ .texture = 7, .texture_color = false, .scissor = null };
     try std.testing.expect(batch.stage(first.vertices, text_state));
@@ -3288,6 +3723,27 @@ fn testCell(codepoint: u21) terminal.Cell {
         .underline_style = .none,
         .selected = false,
         .link_id = 0,
+    };
+}
+
+fn testGlyphKey(codepoint: u21) text.GlyphKey {
+    return .{ .generated = .{
+        .codepoint = codepoint,
+        .width_px = 8,
+        .height_px = 16,
+        .baseline_px = 12,
+    } };
+}
+
+fn testRaster(pixels: []u8, width: u16, height: u16) text.Raster {
+    std.debug.assert(pixels.len == @as(usize, width) * height);
+    return .{
+        .allocator = std.testing.allocator,
+        .width = width,
+        .height = height,
+        .left = 0,
+        .top = @intCast(height),
+        .pixels = pixels,
     };
 }
 
