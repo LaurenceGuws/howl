@@ -2157,7 +2157,7 @@ fn inspectVisualProof(context: ?*anyopaque, view: VisualView) ?DirtyToken {
         },
     }
     if (!proof.accept) return null;
-    if (proof.stale) return @enumFromInt(@intFromEnum(view.dirty_token) + 1);
+    if (proof.stale) return @fromBackingInt(@intCast(@backingInt(view.dirty_token) + 1));
     return view.dirty_token;
 }
 

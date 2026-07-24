@@ -65,7 +65,7 @@ pub const State = struct {
 
     /// Return the Wayland cursor-shape value for one screen bank.
     pub fn current(self: *const State, alternate: bool) u32 {
-        return @intFromEnum(self.banks[@intFromBool(alternate)].current());
+        return @backingInt(self.banks[@intFromBool(alternate)].current());
     }
 
     /// Clear both screen-bank stacks after terminal reset.
@@ -198,20 +198,20 @@ test "pointer stacks retain banks eviction queries and rollback" {
     var reply: [64]u8 = undefined;
     try std.testing.expectEqual(@as(usize, 0), (try state.apply(">wait,pointer", false, &reply)).reply_len);
     try std.testing.expectEqual(@as(usize, 0), (try state.apply(">crosshair", true, &reply)).reply_len);
-    try std.testing.expectEqual(@intFromEnum(Shape.pointer), state.current(false));
+    try std.testing.expectEqual(@backingInt(Shape.pointer), state.current(false));
     const result = try state.apply("?__current__,wait,no-such", false, &reply);
     try std.testing.expectEqualStrings("pointer,1,0", reply[0..result.reply_len]);
     const before = state;
     try std.testing.expectError(error.InvalidPayload, state.apply(">wait,bad", false, &reply));
     try std.testing.expect(std.meta.eql(before, state));
     try std.testing.expectEqual(@as(usize, 0), (try state.apply("<", false, &reply)).reply_len);
-    try std.testing.expectEqual(@intFromEnum(Shape.wait), state.current(false));
+    try std.testing.expectEqual(@backingInt(Shape.wait), state.current(false));
     for (0..stack_capacity + 2) |_|
         try std.testing.expectEqual(@as(usize, 0), (try state.apply(">cell", false, &reply)).reply_len);
     try std.testing.expectEqual(stack_capacity, state.banks[0].count);
-    try std.testing.expectEqual(@intFromEnum(Shape.cell), state.current(false));
+    try std.testing.expectEqual(@backingInt(Shape.cell), state.current(false));
     try std.testing.expectEqual(@as(usize, 0), (try state.apply("", false, &reply)).reply_len);
-    try std.testing.expectEqual(@intFromEnum(Shape.default), state.current(false));
+    try std.testing.expectEqual(@backingInt(Shape.default), state.current(false));
     const empty = try state.apply("?__current__", false, &reply);
     try std.testing.expectEqualStrings("0", reply[0..empty.reply_len]);
 }
