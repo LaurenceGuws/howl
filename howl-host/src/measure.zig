@@ -13,6 +13,7 @@ pub const enabled = options.measure;
 /// Names the sole ignored orderly-shutdown receipt relative to the host CWD.
 pub const output_path = ".zig/work/howl-performance.txt";
 const bucket_count = 16;
+const cadence_bucket_count = 66;
 
 /// Borrows enabled state or becomes a zero-sized disabled fact.
 pub const Reference = if (enabled) *State else void;
@@ -31,6 +32,7 @@ pub const QuadKind = enum {
     image,
     cursor,
     scrollbar,
+    present,
 };
 
 const WindowCounters = struct {
@@ -45,12 +47,15 @@ const WindowCounters = struct {
     completions: u64 = 0,
     snapshot_cells: u64 = 0,
     snapshot_rows: u64 = 0,
+    snapshot_bytes: u64 = 0,
 };
 
 const RenderCounters = struct {
     frames: u64 = 0,
     rows_visited: u64 = 0,
     cells_visited: u64 = 0,
+    backing_full_repairs: u64 = 0,
+    backing_rows_repaired: u64 = 0,
     runs_native: u64 = 0,
     runs_generated: u64 = 0,
     runs_empty: u64 = 0,
@@ -76,10 +81,19 @@ const RenderCounters = struct {
     buffer_bytes: u64 = 0,
     texture_binds: u64 = 0,
     draw_calls: u64 = 0,
+    takes: u64 = 0,
+    take_generation_gaps: u64 = 0,
+    take_generation_gap_max: u64 = 0,
+    presented_generation_gaps: u64 = 0,
+    presented_generation_gap_max: u64 = 0,
+    present_interval_ns: CadenceHistogram = .{},
     prepare_ns: Histogram = .{},
     draw_ns: Histogram = .{},
     swap_ns: Histogram = .{},
     submit_to_complete_ns: Histogram = .{},
+    last_present: ?Mark = null,
+    last_taken_generation: u64 = 0,
+    last_presented_generation: u64 = 0,
 };
 
 /// Owns all fixed measurement state for one host window lifetime.
@@ -158,12 +172,41 @@ pub const State = struct {
         increment(&reference.window.completions, 1);
     }
 
-    /// Counts exact complete snapshot copies and pending replacement.
-    pub fn snapshot(reference: Reference, rows: usize, cells: usize, coalesced: bool) void {
+    /// Records one immutable snapshot taken by the render worker.
+    pub fn take(reference: Reference, generation: u64) void {
+        if (comptime !enabled) return;
+        recordGenerationGap(
+            &reference.render.take_generation_gaps,
+            &reference.render.take_generation_gap_max,
+            &reference.render.last_taken_generation,
+            generation,
+        );
+        increment(&reference.render.takes, 1);
+    }
+
+    /// Counts exact stale-row snapshot copies and pending replacement.
+    pub fn snapshot(
+        reference: Reference,
+        rows: usize,
+        cells: usize,
+        bytes: usize,
+        coalesced: bool,
+    ) void {
         if (comptime !enabled) return;
         increment(&reference.window.snapshot_rows, std.math.cast(u64, rows) orelse std.math.maxInt(u64));
         increment(&reference.window.snapshot_cells, std.math.cast(u64, cells) orelse std.math.maxInt(u64));
+        increment(&reference.window.snapshot_bytes, std.math.cast(u64, bytes) orelse std.math.maxInt(u64));
         if (coalesced) increment(&reference.window.coalesced, 1);
+    }
+
+    /// Counts one full or sparse retained-backing repair.
+    pub fn backing(reference: Reference, full: bool, rows: usize) void {
+        if (comptime !enabled) return;
+        if (full) increment(&reference.render.backing_full_repairs, 1);
+        increment(
+            &reference.render.backing_rows_repaired,
+            std.math.cast(u64, rows) orelse std.math.maxInt(u64),
+        );
     }
 
     /// Counts one background row scan and its logical cells.
@@ -268,11 +311,24 @@ pub const State = struct {
     /// Records one swapped frame and its bounded high-level latencies.
     pub fn frame(
         reference: Reference,
+        generation: u64,
+        presented_at: Mark,
         draw_ns: u64,
         swap_ns: u64,
         submit_to_complete_ns: u64,
     ) void {
         if (comptime !enabled) return;
+        recordCadence(
+            &reference.render.present_interval_ns,
+            &reference.render.last_present,
+            presented_at,
+        );
+        recordGenerationGap(
+            &reference.render.presented_generation_gaps,
+            &reference.render.presented_generation_gap_max,
+            &reference.render.last_presented_generation,
+            generation,
+        );
         increment(&reference.render.frames, 1);
         reference.render.draw_ns.record(draw_ns);
         reference.render.swap_ns.record(swap_ns);
@@ -338,6 +394,27 @@ pub const Histogram = struct {
     }
 };
 
+// Retains exact one-millisecond cadence buckets through 64 ms plus overflow.
+const CadenceHistogram = struct {
+    buckets: [cadence_bucket_count]u64 = @splat(0),
+    count: u64 = 0,
+    total_ns: u64 = 0,
+    max_ns: u64 = 0,
+
+    fn record(self: *CadenceHistogram, nanoseconds: u64) void {
+        const milliseconds = nanoseconds / std.time.ns_per_ms;
+        const bucket = @min(cadence_bucket_count - 1, std.math.cast(
+            usize,
+            milliseconds,
+        ) orelse cadence_bucket_count - 1);
+        increment(&self.buckets[bucket], 1);
+        increment(&self.count, 1);
+        self.total_ns = std.math.add(u64, self.total_ns, nanoseconds) catch
+            std.math.maxInt(u64);
+        self.max_ns = @max(self.max_ns, nanoseconds);
+    }
+};
+
 /// Takes one enabled monotonic timestamp or compiles to no disabled work.
 pub fn now(io: std.Io) Mark {
     if (comptime enabled) {
@@ -355,6 +432,30 @@ pub fn elapsed(start: Mark, io: std.Io) u64 {
     } else {
         return 0;
     }
+}
+
+fn elapsedBetween(start: Mark, finish: Mark) u64 {
+    if (comptime enabled) {
+        const value = start.durationTo(finish).raw.nanoseconds;
+        return if (value <= 0) 0 else std.math.cast(u64, value) orelse std.math.maxInt(u64);
+    } else {
+        return 0;
+    }
+}
+
+fn recordCadence(histogram: *CadenceHistogram, previous: *?Mark, current: Mark) void {
+    if (previous.*) |prior| histogram.record(elapsedBetween(prior, current));
+    previous.* = current;
+}
+
+fn recordGenerationGap(total: *u64, maximum: *u64, previous: *u64, current: u64) void {
+    std.debug.assert(current > previous.*);
+    if (previous.* != 0) {
+        const gap = current - previous.* - 1;
+        increment(total, gap);
+        maximum.* = @max(maximum.*, gap);
+    }
+    previous.* = current;
 }
 
 fn incrementAtomic(counter: *AtomicCounter, amount: usize) void {
@@ -375,7 +476,7 @@ fn bucketFor(nanoseconds: u64) usize {
 
 fn writeWindow(out: *std.Io.Writer, value: *const WindowCounters) !void {
     try out.print(
-        "window.wakes={d}\nwindow.inspections_changed={d}\nwindow.inspections_clean={d}\nwindow.inspections_withheld={d}\nwindow.projected_rows={d}\nwindow.projected_cells={d}\nwindow.submits={d}\nwindow.coalesced={d}\nwindow.completions={d}\nwindow.snapshot_rows={d}\nwindow.snapshot_cells={d}\n",
+        "window.wakes={d}\nwindow.inspections_changed={d}\nwindow.inspections_clean={d}\nwindow.inspections_withheld={d}\nwindow.projected_rows={d}\nwindow.projected_cells={d}\nwindow.submits={d}\nwindow.coalesced={d}\nwindow.completions={d}\nwindow.snapshot_rows={d}\nwindow.snapshot_cells={d}\nwindow.snapshot_bytes={d}\n",
         .{
             value.wakes.load(.monotonic),
             value.inspections_changed,
@@ -388,6 +489,7 @@ fn writeWindow(out: *std.Io.Writer, value: *const WindowCounters) !void {
             value.completions,
             value.snapshot_rows,
             value.snapshot_cells,
+            value.snapshot_bytes,
         },
     );
 }
@@ -403,6 +505,7 @@ fn writeRender(out: *std.Io.Writer, value: *const RenderCounters) !void {
     try writeHistogram(out, "draw_ns", &value.draw_ns);
     try writeHistogram(out, "swap_ns", &value.swap_ns);
     try writeHistogram(out, "submit_to_complete_ns", &value.submit_to_complete_ns);
+    try writeCadence(out, "render.present_interval_ns", &value.present_interval_ns);
 }
 
 fn writeHistogram(out: *std.Io.Writer, name: []const u8, value: *const Histogram) !void {
@@ -412,6 +515,15 @@ fn writeHistogram(out: *std.Io.Writer, name: []const u8, value: *const Histogram
     );
     for (value.buckets, 0..) |count, index|
         try out.print("render.{s}.bucket_{d}={d}\n", .{ name, index, count });
+}
+
+fn writeCadence(out: *std.Io.Writer, name: []const u8, value: *const CadenceHistogram) !void {
+    try out.print(
+        "{s}.count={d}\n{s}.total={d}\n{s}.max={d}\n",
+        .{ name, value.count, name, value.total_ns, name, value.max_ns },
+    );
+    for (value.buckets, 0..) |count, index|
+        try out.print("{s}.bucket_{d}={d}\n", .{ name, index, count });
 }
 
 test "histogram buckets and totals are exact at boundaries" {
@@ -426,6 +538,33 @@ test "histogram buckets and totals are exact at boundaries" {
     try std.testing.expectEqual(@as(u64, 1), value.buckets[1]);
     try std.testing.expectEqual(@as(u64, 1), value.buckets[2]);
     try std.testing.expectEqual(@as(u64, 2_001), value.max_ns);
+}
+
+test "cadence buckets retain millisecond boundaries and overflow" {
+    var value = CadenceHistogram{};
+    value.record(0);
+    value.record(std.time.ns_per_ms - 1);
+    value.record(std.time.ns_per_ms);
+    value.record(64 * std.time.ns_per_ms);
+    value.record(65 * std.time.ns_per_ms);
+    try std.testing.expectEqual(@as(u64, 5), value.count);
+    try std.testing.expectEqual(@as(u64, 2), value.buckets[0]);
+    try std.testing.expectEqual(@as(u64, 1), value.buckets[1]);
+    try std.testing.expectEqual(@as(u64, 1), value.buckets[64]);
+    try std.testing.expectEqual(@as(u64, 1), value.buckets[65]);
+    try std.testing.expectEqual(@as(u64, 65 * std.time.ns_per_ms), value.max_ns);
+}
+
+test "generation gaps count only superseded identities" {
+    var total: u64 = 0;
+    var maximum: u64 = 0;
+    var previous: u64 = 0;
+    recordGenerationGap(&total, &maximum, &previous, 4);
+    recordGenerationGap(&total, &maximum, &previous, 5);
+    recordGenerationGap(&total, &maximum, &previous, 9);
+    try std.testing.expectEqual(@as(u64, 3), total);
+    try std.testing.expectEqual(@as(u64, 3), maximum);
+    try std.testing.expectEqual(@as(u64, 9), previous);
 }
 
 test "disabled reference and producers have no retained runtime state" {
@@ -447,7 +586,7 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     const reference = state.ref();
     State.geometry(reference, 960, 600, 9, 23, 26, 106);
     State.inspection(reference, true, false, 2, 17);
-    State.snapshot(reference, 26, 2_756, true);
+    State.snapshot(reference, 26, 2_756, 44_096, true);
     State.prepared(reference, .native, 4, 2_000);
     State.stagedQuad(reference, .text);
     State.stagedQuad(reference, .text);
@@ -455,7 +594,9 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     State.cpuClip(reference, false, true);
     State.glyphAtlas(reference, true);
     State.batch(reference, 1, 1, 384);
-    State.frame(reference, 3_000, 4_000, 9_000);
+    const frame_at = now(std.testing.io);
+    State.take(reference, 1);
+    State.frame(reference, 1, frame_at, 3_000, 4_000, 9_000);
     var bytes: [16 * 1024]u8 = undefined;
     var writer = std.Io.Writer.fixed(&bytes);
     try state.writeTo(&writer);
@@ -463,6 +604,7 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     try std.testing.expect(std.mem.indexOf(u8, summary, "rows=26\ncols=106\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "window.projected_cells=17\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "window.coalesced=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "window.snapshot_bytes=44096\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.quad_text=2\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_commands=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_merges=1\n") != null);

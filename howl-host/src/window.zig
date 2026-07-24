@@ -50,6 +50,11 @@ const physical_key_count: usize = @as(usize, c.KEY_MAX) + 1;
 const max_wheel_steps: usize = 32;
 const max_bells_per_turn: u8 = 32;
 const cursor_blink_ns: u64 = 500 * std.time.ns_per_ms;
+// Program output often describes one visual update through adjacent PTY
+// writes. Delay only visual admission; the upper bound prevents continuous
+// output from postponing presentation beyond half a 60 Hz frame.
+const visual_quiet_ns: u64 = 5 * std.time.ns_per_ms;
+const visual_max_latency_ns: u64 = 8 * std.time.ns_per_ms;
 const default_title = "Howl";
 const clipboard_poll_count = 1 + clipboard.max_sends;
 const drop_poll_count = 1;
@@ -347,6 +352,7 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     KeyboardRepeat,
     CursorBlink,
     GraphicsTimer,
+    VisualPacing,
     KeyboardState,
     Pointer,
     TerminalSignal,
@@ -403,11 +409,49 @@ const VisualCapture = struct {
     }
 };
 
+const VisualPacing = struct {
+    first_ns: u64 = 0,
+    pending: bool = false,
+
+    const Decision = union(enum) {
+        wait_ns: u64,
+        flush,
+    };
+
+    fn observe(self: *VisualPacing, now_ns: u64) Decision {
+        if (!self.pending) {
+            self.first_ns = now_ns;
+            self.pending = true;
+        }
+        const maximum = addVisualNanoseconds(self.first_ns, visual_max_latency_ns);
+        if (now_ns >= maximum) return .flush;
+        const quiet = addVisualNanoseconds(now_ns, visual_quiet_ns);
+        const deadline = @min(quiet, maximum);
+        return .{ .wait_ns = deadline - now_ns };
+    }
+
+    fn flush(self: *VisualPacing) bool {
+        if (!self.pending) return false;
+        self.pending = false;
+        return true;
+    }
+
+    fn cancel(self: *VisualPacing) void {
+        self.pending = false;
+    }
+};
+
+fn addVisualNanoseconds(value: u64, amount: u64) u64 {
+    return std.math.add(u64, value, amount) catch
+        @panic("visual pacing monotonic deadline exhausted");
+}
+
 const VisualStorage = struct {
     allocator: std.mem.Allocator,
     cells: []terminal_render.Cell,
     scratch: []terminal_render.Cell,
     row_geometry: []terminal_render.LineGeometry,
+    row_versions: []u64,
     patches: []terminal_render.RowPatch,
     rows: u16,
     cols: u16,
@@ -434,6 +478,9 @@ const VisualStorage = struct {
         errdefer allocator.free(all_cells);
         const geometry = try allocator.alloc(terminal_render.LineGeometry, rows);
         errdefer allocator.free(geometry);
+        const row_versions = try allocator.alloc(u64, rows);
+        errdefer allocator.free(row_versions);
+        @memset(row_versions, 0);
         const patches = try allocator.alloc(terminal_render.RowPatch, rows);
         errdefer allocator.free(patches);
         const image_pixels = try allocator.alloc(u8, 0);
@@ -444,6 +491,7 @@ const VisualStorage = struct {
             .cells = all_cells[0..cell_count],
             .scratch = all_cells[cell_count..],
             .row_geometry = geometry,
+            .row_versions = row_versions,
             .patches = patches,
             .rows = rows,
             .cols = cols,
@@ -455,6 +503,7 @@ const VisualStorage = struct {
     fn deinit(self: *VisualStorage) void {
         self.allocator.free(self.cells.ptr[0 .. self.cells.len + self.scratch.len]);
         self.allocator.free(self.row_geometry);
+        self.allocator.free(self.row_versions);
         self.allocator.free(self.patches);
         self.allocator.free(self.image_pixels);
         self.allocator.free(self.image_scratch);
@@ -586,6 +635,7 @@ const VisualStorage = struct {
                 update.cells[patch.cell_offset..source_end],
             );
             self.row_geometry[patch.row] = patch.geometry;
+            self.row_versions[patch.row] = nextVisualVersion(self.row_versions[patch.row]);
         }
         self.baseline = update.next_baseline;
     }
@@ -671,6 +721,11 @@ const ProjectionContext = struct {
     required_image_bytes: ?usize = null,
 };
 
+fn nextVisualVersion(current: u64) u64 {
+    if (current == std.math.maxInt(u64)) @panic("visual row version exhausted");
+    return current + 1;
+}
+
 const Window = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
@@ -721,10 +776,12 @@ const Window = struct {
     repeat_signal: c_int,
     cursor_signal: c_int,
     graphics_signal: c_int,
+    visual_signal: c_int,
     repeat: Repeat = .{},
     cursor_visible: bool = true,
     cursor_blink_armed: bool = false,
     visual_withheld: bool = false,
+    visual_pacing: VisualPacing = .{},
     physical_keys: PhysicalKeys = .{},
     pointer_state: PointerState = .{},
     axis_frame: AxisFrame = .{},
@@ -783,6 +840,10 @@ const Window = struct {
         if (graphics_signal < 0) return error.GraphicsTimer;
         var graphics_owned = true;
         errdefer if (graphics_owned) closeOwned(graphics_signal);
+        const visual_signal = c.timerfd_create(c.CLOCK_MONOTONIC, c.TFD_CLOEXEC | c.TFD_NONBLOCK);
+        if (visual_signal < 0) return error.VisualPacing;
+        var visual_owned = true;
+        errdefer if (visual_owned) closeOwned(visual_signal);
         const self = try allocator.create(Window);
         self.* = .{
             .allocator = allocator,
@@ -793,6 +854,7 @@ const Window = struct {
             .repeat_signal = repeat_signal,
             .cursor_signal = cursor_signal,
             .graphics_signal = graphics_signal,
+            .visual_signal = visual_signal,
             .wake = .{ .fd = terminal_signal },
             .clipboard_transfers = clipboard.Transfers.init(allocator),
             .drop_transfers = clipboard.Transfers.init(allocator),
@@ -804,6 +866,7 @@ const Window = struct {
         repeat_owned = false;
         cursor_owned = false;
         graphics_owned = false;
+        visual_owned = false;
         errdefer self.rollback();
 
         if (c.wl_registry_add_listener(registry, &registry_listener, self) != 0)
@@ -908,7 +971,7 @@ const Window = struct {
             const flush = c.wl_display_flush(self.display);
             const flush_blocked = flush < 0 and std.posix.errno(flush) == .AGAIN;
             if (flush < 0 and !flush_blocked) return error.WaylandFlush;
-            var fds: [6 + clipboard_poll_count + drop_poll_count]std.posix.pollfd = undefined;
+            var fds: [7 + clipboard_poll_count + drop_poll_count]std.posix.pollfd = undefined;
             fds[0] = .{
                 .fd = c.wl_display_get_fd(self.display),
                 .events = std.posix.POLL.IN |
@@ -920,8 +983,9 @@ const Window = struct {
             fds[3] = .{ .fd = self.repeat_signal, .events = std.posix.POLL.IN, .revents = 0 };
             fds[4] = .{ .fd = self.cursor_signal, .events = std.posix.POLL.IN, .revents = 0 };
             fds[5] = .{ .fd = self.graphics_signal, .events = std.posix.POLL.IN, .revents = 0 };
-            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[6..]);
-            const drop_start = 6 + clipboard_count;
+            fds[6] = .{ .fd = self.visual_signal, .events = std.posix.POLL.IN, .revents = 0 };
+            const clipboard_count = self.clipboard_transfers.pollDescriptors(fds[7..]);
+            const drop_start = 7 + clipboard_count;
             const drop_count = self.drop_transfers.pollDescriptors(fds[drop_start..]);
             const active_fds = fds[0 .. drop_start + drop_count];
             const ready_count = std.posix.poll(active_fds, -1) catch return error.Poll;
@@ -933,6 +997,7 @@ const Window = struct {
             if (fds[3].revents & faults != 0) return error.KeyboardRepeat;
             if (fds[4].revents & faults != 0) return error.CursorBlink;
             if (fds[5].revents & faults != 0) return error.GraphicsTimer;
+            if (fds[6].revents & faults != 0) return error.VisualPacing;
 
             if (fds[0].revents & std.posix.POLL.IN != 0) {
                 if (c.wl_display_read_events(self.display) < 0) return error.WaylandDispatch;
@@ -951,11 +1016,16 @@ const Window = struct {
                 self.draw.complete(try self.render.?.completedGeneration());
                 measure.State.completion(self.measurement.ref());
             }
-            if (fds[1].revents & std.posix.POLL.IN != 0) try self.handleTerminalWake();
+            // An already-due visual precedes a simultaneous newer terminal
+            // wake; the wake then starts the next bounded admission interval.
+            if (!self.closed and fds[6].revents & std.posix.POLL.IN != 0)
+                try self.flushVisualTimer();
+            if (!self.closed and fds[1].revents & std.posix.POLL.IN != 0)
+                try self.handleTerminalWake();
             if (!self.closed and fds[3].revents & std.posix.POLL.IN != 0) try self.repeatKey();
             if (!self.closed and fds[4].revents & std.posix.POLL.IN != 0) try self.blinkCursor();
             if (!self.closed and fds[5].revents & std.posix.POLL.IN != 0) try self.animateGraphics();
-            for (fds[6 .. 6 + clipboard_count]) |descriptor|
+            for (fds[7 .. 7 + clipboard_count]) |descriptor|
                 if (descriptor.revents != 0)
                     try self.clipboard_transfers.service(descriptor.fd, descriptor.revents);
             for (fds[drop_start .. drop_start + drop_count]) |descriptor|
@@ -988,12 +1058,12 @@ const Window = struct {
 
     fn handleTerminalWake(self: *Window) Error!void {
         try drainEvent(self.terminal_signal);
+        var observed = false;
         while (self.wake.pending.swap(false, .acq_rel)) {
+            observed = true;
             const terminal = self.terminal.?;
             terminal.consumeWake();
             self.viewport_state.reconcile(viewportFacts(terminal.viewportFacts()));
-            try self.captureAndSubmit();
-            if (terminal.state() != .running) self.finishTerminal();
         }
         self.applyTerminalPresentation();
         try self.applyClipboardConsequences();
@@ -1004,6 +1074,14 @@ const Window = struct {
         try self.discardUnsupportedConsequences();
         self.applyCurrentPointerShape();
         try self.scheduleGraphics();
+        if (!observed) return;
+        if (self.terminal.?.state() != .running) {
+            try self.cancelVisualTimer();
+            try self.captureAndSubmit();
+            self.finishTerminal();
+            return;
+        }
+        try self.scheduleVisualCapture();
     }
 
     fn applyTerminalPresentation(self: *Window) void {
@@ -1043,6 +1121,27 @@ const Window = struct {
         try self.submitVisual(self.size);
     }
 
+    fn scheduleVisualCapture(self: *Window) Error!void {
+        switch (self.visual_pacing.observe(try visualMonotonicNanoseconds())) {
+            .flush => {
+                try self.cancelVisualTimer();
+                try self.captureAndSubmit();
+            },
+            .wait_ns => |delay| try setVisualTimer(self.visual_signal, delay),
+        }
+    }
+
+    fn flushVisualTimer(self: *Window) Error!void {
+        try readVisualTimer(self.visual_signal);
+        if (!self.visual_pacing.flush()) return;
+        try self.captureAndSubmit();
+    }
+
+    fn cancelVisualTimer(self: *Window) Error!void {
+        self.visual_pacing.cancel();
+        try setVisualTimer(self.visual_signal, null);
+    }
+
     fn submitVisual(self: *Window, size: Size) Error!void {
         const visual = &self.visual.?;
         const next = try self.draw.next();
@@ -1052,6 +1151,7 @@ const Window = struct {
             .cols = visual.cols,
             .cells = visual.cells,
             .row_geometry = visual.row_geometry,
+            .row_versions = visual.row_versions,
             .cursor = cursorForPresentation(visual.baseline.?.cursor, self.cursor_visible),
             .size = pixelSize(size),
             .scrollbar = viewport.scrollbar(
@@ -1083,6 +1183,7 @@ const Window = struct {
     }
 
     fn applyResize(self: *Window) Error!void {
+        try self.cancelVisualTimer();
         const target = self.pending_size;
         const terminal = self.terminal.?;
         const grid = gridSize(target, self.render.?.metrics());
@@ -1223,6 +1324,7 @@ const Window = struct {
 
     fn blinkCursor(self: *Window) Error!void {
         const expirations = try readCursorTimer(self.cursor_signal);
+        if (self.visual_pacing.pending) return;
         if (!self.cursor_blink_armed or self.visual_withheld) return;
         if (expirations & 1 != 0) self.cursor_visible = !self.cursor_visible;
         try self.submitVisual(self.size);
@@ -1851,14 +1953,20 @@ const Window = struct {
     }
 
     fn applyCurrentPointerShape(self: *Window) void {
-        const reset_generation = self.terminal.?.pointerShapeResetGeneration();
-        if (reset_generation != self.pointer_shape_reset_generation) {
-            self.pointer_shapes.reset();
-            self.pointer_shape_reset_generation = reset_generation;
+        const terminal = self.terminal;
+        if (terminal) |active| {
+            const reset_generation = active.pointerShapeResetGeneration();
+            if (reset_generation != self.pointer_shape_reset_generation) {
+                self.pointer_shapes.reset();
+                self.pointer_shape_reset_generation = reset_generation;
+            }
         }
         const device = self.cursor_shape_device orelse return;
         if (self.pointer_serial == 0) return;
-        const alternate = self.terminal.?.viewportFacts().alternate_screen;
+        const alternate = if (terminal) |active|
+            active.viewportFacts().alternate_screen
+        else
+            false;
         c.wp_cursor_shape_device_v1_set_shape(
             device,
             self.pointer_serial,
@@ -2006,6 +2114,8 @@ const Window = struct {
             retainCleanupFailure(&cleanup_failure, failure);
         setGraphicsTimer(self.graphics_signal, null) catch |failure|
             retainCleanupFailure(&cleanup_failure, failure);
+        self.cancelVisualTimer() catch |failure|
+            retainCleanupFailure(&cleanup_failure, failure);
         self.clipboard_transfers.deinit();
         self.drop_transfers.deinit();
         self.drop_state.reset();
@@ -2019,6 +2129,7 @@ const Window = struct {
         closeOwned(self.repeat_signal);
         closeOwned(self.cursor_signal);
         closeOwned(self.graphics_signal);
+        closeOwned(self.visual_signal);
         closeOwned(self.terminal_signal);
         self.destroyProtocol();
         c.wl_registry_destroy(self.registry);
@@ -2355,6 +2466,47 @@ fn readGraphicsTimer(fd: c_int) error{GraphicsTimer}!u64 {
         if (count < 0 and std.posix.errno(count) == .INTR) continue;
         return error.GraphicsTimer;
     }
+}
+
+fn setVisualTimer(fd: c_int, delay_ns: ?u64) error{VisualPacing}!void {
+    var timer: c.struct_itimerspec = std.mem.zeroes(c.struct_itimerspec);
+    if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.VisualPacing;
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64)) continue;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        if (count < 0 and std.posix.errno(count) == .AGAIN) break;
+        return error.VisualPacing;
+    }
+    if (delay_ns) |delay| {
+        std.debug.assert(delay != 0);
+        timer.it_value.tv_sec = @intCast(delay / std.time.ns_per_s);
+        timer.it_value.tv_nsec = @intCast(delay % std.time.ns_per_s);
+        if (c.timerfd_settime(fd, 0, &timer, null) != 0) return error.VisualPacing;
+    }
+}
+
+fn readVisualTimer(fd: c_int) error{VisualPacing}!void {
+    while (true) {
+        var expirations: u64 = 0;
+        const count = c.read(fd, &expirations, @sizeOf(u64));
+        if (count == @sizeOf(u64) and expirations != 0) return;
+        if (count < 0 and std.posix.errno(count) == .INTR) continue;
+        return error.VisualPacing;
+    }
+}
+
+fn visualMonotonicNanoseconds() error{VisualPacing}!u64 {
+    var now: c.struct_timespec = undefined;
+    if (c.clock_gettime(c.CLOCK_MONOTONIC, &now) != 0) return error.VisualPacing;
+    const seconds = std.math.mul(
+        u64,
+        @intCast(now.tv_sec),
+        std.time.ns_per_s,
+    ) catch @panic("visual pacing monotonic clock exhausted");
+    return std.math.add(u64, seconds, @intCast(now.tv_nsec)) catch
+        @panic("visual pacing monotonic clock exhausted");
 }
 
 fn monotonicMilliseconds() error{GraphicsTimer}!u64 {
@@ -3710,7 +3862,11 @@ test "visual storage admits complete and resized control observations" {
     for (visual.cells) |cell| try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
     for (visual.row_geometry) |geometry|
         try std.testing.expectEqual(terminal_render.LineGeometry.single_width, geometry);
+    const admitted_versions = try std.testing.allocator.dupe(u64, visual.row_versions);
+    defer std.testing.allocator.free(admitted_versions);
+    for (admitted_versions) |version| try std.testing.expect(version != 0);
     try std.testing.expectEqual(VisualCapture{ .changed = false }, try visual.capture(terminal));
+    try std.testing.expectEqualSlices(u64, admitted_versions, visual.row_versions);
 
     try std.testing.expect((try terminal.resize(5, 3)).changed);
     try std.testing.expectEqual(VisualCapture{ .changed = true }, try visual.capture(terminal));
@@ -3925,6 +4081,110 @@ fn captureAndExpectComplete(
     };
 }
 
+test "visual pacing joins adjacent mutations and bounds continuous output" {
+    var pacing = VisualPacing{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(100 * std.time.ns_per_ms),
+    );
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 4 * std.time.ns_per_ms },
+        pacing.observe(104 * std.time.ns_per_ms),
+    );
+    try std.testing.expectEqual(
+        VisualPacing.Decision.flush,
+        pacing.observe(108 * std.time.ns_per_ms),
+    );
+    try std.testing.expect(pacing.flush());
+    try std.testing.expect(!pacing.flush());
+}
+
+test "visual pacing cancellation leaves no delayed admission" {
+    var pacing = VisualPacing{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(7 * std.time.ns_per_ms),
+    );
+    pacing.cancel();
+    try std.testing.expect(!pacing.pending);
+    try std.testing.expect(!pacing.flush());
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(30 * std.time.ns_per_ms),
+    );
+}
+
+test "simultaneous due visual and terminal wake start distinct intervals" {
+    var pacing = VisualPacing{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(20 * std.time.ns_per_ms),
+    );
+    try std.testing.expect(pacing.flush());
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(25 * std.time.ns_per_ms),
+    );
+    try std.testing.expectEqual(@as(u64, 25 * std.time.ns_per_ms), pacing.first_ns);
+}
+
+test "one paced visual admission advances draw progress exactly once" {
+    var pacing = VisualPacing{};
+    var progress = DrawProgress{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(0),
+    );
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(1 * std.time.ns_per_ms),
+    );
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 4 * std.time.ns_per_ms },
+        pacing.observe(4 * std.time.ns_per_ms),
+    );
+    if (pacing.flush()) progress.admit(try progress.next());
+    if (pacing.flush()) progress.admit(try progress.next());
+    try std.testing.expectEqual(@as(u64, 1), progress.submitted);
+    progress.finish();
+    try std.testing.expect(!progress.done());
+    progress.complete(1);
+    try std.testing.expect(progress.done());
+}
+
+test "terminal consequence is observable while visual admission waits" {
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{ .command = "printf '\\033]2;paced-title\\007body'; sleep 30", .rows = 2, .cols = 16 },
+        .{},
+    );
+    defer terminal.deinit();
+
+    var presentation = PresentationState{};
+    var title_changed = false;
+    for (0..500) |_| {
+        terminal.consumeWake();
+        const change = presentation.apply(terminal.hostPresentation(), false);
+        if (change.title) {
+            title_changed = true;
+            break;
+        }
+        try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(1),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    var pacing = VisualPacing{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(100 * std.time.ns_per_ms),
+    );
+    try std.testing.expect(title_changed);
+    try std.testing.expectEqualStrings("paced-title", presentation.titleBytes());
+    try std.testing.expect(pacing.pending);
+}
+
 test "synchronized scroll retains exact incremental visual" {
     const terminal = try control.Terminal.init(
         std.testing.allocator,
@@ -3983,18 +4243,16 @@ test "terminal exit retains final visual until its admitted draw completes" {
     var visual = try VisualStorage.init(std.testing.allocator, 2, 16);
     defer visual.deinit();
     var progress = DrawProgress{};
-    var last_capture = VisualCapture{ .changed = false };
+    var pacing = VisualPacing{};
+    try std.testing.expectEqual(
+        VisualPacing.Decision{ .wait_ns = 5 * std.time.ns_per_ms },
+        pacing.observe(0),
+    );
 
     var attempts: u8 = 0;
     while (attempts < 100) : (attempts += 1) {
         terminal.consumeWake();
-        last_capture = try visual.capture(terminal);
-        if (last_capture.changed) {
-            const generation = try progress.next();
-            progress.admit(generation);
-        }
         if (terminal.state() != .running) {
-            progress.finish();
             break;
         }
         try (std.Io.Clock.Duration{
@@ -4003,8 +4261,13 @@ test "terminal exit retains final visual until its admitted draw completes" {
         }).sleep(std.testing.io);
     }
     try std.testing.expectEqual(control.State.stopped, terminal.state());
+    try std.testing.expect(pacing.flush());
+    const final_capture = try visual.capture(terminal);
+    try std.testing.expectEqual(VisualCapture{ .changed = true }, final_capture);
+    const generation = try progress.next();
+    progress.admit(generation);
+    progress.finish();
     try std.testing.expect(visualContains(&visual, "final-state"));
-    try std.testing.expectEqual(VisualCapture{ .changed = true }, last_capture);
     try std.testing.expect(progress.final != null);
     try std.testing.expect(!progress.done());
     progress.complete(progress.submitted);

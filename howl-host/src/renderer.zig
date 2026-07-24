@@ -1,9 +1,9 @@
 //! Owns one concrete EGL/GLES render thread for one retained terminal grid.
 //!
-//! Submission copies caller-owned visual state into one bounded pending slot.
-//! The render thread takes that slot before shaping, rasterization, texture
-//! upload, drawing, and swap, so no terminal borrow or caller storage crosses
-//! the thread boundary. New submissions replace only pending work.
+//! Submission refreshes stale rows in one bounded pending slot. The render
+//! thread takes that immutable slot, repairs a retained RGBA backing, and
+//! presents it, so no terminal borrow or caller storage crosses the thread
+//! boundary. New submissions replace only pending work.
 
 const std = @import("std");
 const render = @import("howl_render");
@@ -37,6 +37,9 @@ const glyph_atlas_max_extent: u16 = 1_024;
 const glyph_atlas_byte_capacity: usize = glyph_atlas_capacity *
     @as(usize, glyph_atlas_max_extent) * glyph_atlas_max_extent;
 const glyph_metadata_byte_capacity: usize = 128 * 1024;
+// Bounds the executable-owned RGBA8 retained surface independently of the
+// compositor and device-reported texture extent.
+const retained_backing_byte_capacity: usize = 256 * 1024 * 1024;
 const clear_color = terminal.Rgb{ .r = 0x28, .g = 0x28, .b = 0x28 };
 
 /// Supplies one nonzero concrete EGL window extent.
@@ -76,6 +79,8 @@ pub const Submission = struct {
     cells: []const terminal.Cell,
     /// Borrows exactly one DEC geometry fact per visible row for submit.
     row_geometry: []const terminal.LineGeometry,
+    /// Borrows one monotonic executable-owned revision per visible row.
+    row_versions: []const u64,
     /// Copies the current cursor overlay.
     cursor: terminal.Cursor,
     /// Sets the current nonzero presentation extent.
@@ -119,6 +124,7 @@ const Snapshot = struct {
     allocator: std.mem.Allocator,
     cells: []terminal.Cell,
     row_geometry: []terminal.LineGeometry,
+    row_versions: []u64,
     generation: u64 = 0,
     rows: u16 = 0,
     cols: u16 = 0,
@@ -139,12 +145,21 @@ const Snapshot = struct {
         const cells = try allocator.alloc(terminal.Cell, @as(usize, rows) * cols);
         errdefer allocator.free(cells);
         const row_geometry = try allocator.alloc(terminal.LineGeometry, rows);
-        return .{ .allocator = allocator, .cells = cells, .row_geometry = row_geometry };
+        errdefer allocator.free(row_geometry);
+        const row_versions = try allocator.alloc(u64, rows);
+        @memset(row_versions, 0);
+        return .{
+            .allocator = allocator,
+            .cells = cells,
+            .row_geometry = row_geometry,
+            .row_versions = row_versions,
+        };
     }
 
     fn ensureCapacity(self: *Snapshot, rows: u16, cols: u16) std.mem.Allocator.Error!void {
         const required_cells = @as(usize, rows) * cols;
-        if (required_cells <= self.cells.len and rows <= self.row_geometry.len) return;
+        if (required_cells <= self.cells.len and rows <= self.row_geometry.len and
+            rows <= self.row_versions.len) return;
         const cells = if (required_cells > self.cells.len)
             try self.allocator.alloc(terminal.Cell, required_cells)
         else
@@ -152,6 +167,11 @@ const Snapshot = struct {
         errdefer if (cells) |owned| self.allocator.free(owned);
         const geometry = if (rows > self.row_geometry.len)
             try self.allocator.alloc(terminal.LineGeometry, rows)
+        else
+            null;
+        errdefer if (geometry) |owned| self.allocator.free(owned);
+        const versions = if (rows > self.row_versions.len)
+            try self.allocator.alloc(u64, rows)
         else
             null;
         if (cells) |owned| {
@@ -162,6 +182,11 @@ const Snapshot = struct {
             self.allocator.free(self.row_geometry);
             self.row_geometry = owned;
         }
+        if (versions) |owned| {
+            self.allocator.free(self.row_versions);
+            self.row_versions = owned;
+        }
+        @memset(self.row_versions, 0);
         self.generation = 0;
         self.rows = 0;
         self.cols = 0;
@@ -204,17 +229,36 @@ const Snapshot = struct {
     fn deinit(self: *Snapshot) void {
         self.allocator.free(self.cells);
         self.allocator.free(self.row_geometry);
+        self.allocator.free(self.row_versions);
         self.allocator.free(self.image_pixels);
         self.allocator.free(self.images);
         self.allocator.free(self.image_placements);
         self.* = undefined;
     }
 
-    fn write(self: *Snapshot, submission: Submission, submitted_at: measure.Mark) void {
+    const CopyCounts = struct { rows: usize, cells: usize };
+
+    fn write(
+        self: *Snapshot,
+        submission: Submission,
+        submitted_at: measure.Mark,
+    ) CopyCounts {
         const count = @as(usize, submission.rows) * submission.cols;
         std.debug.assert(count <= self.cells.len);
-        @memcpy(self.cells[0..count], submission.cells);
-        @memcpy(self.row_geometry[0..submission.rows], submission.row_geometry);
+        const geometry_changed = self.rows != submission.rows or self.cols != submission.cols;
+        var copied_rows: usize = 0;
+        for (0..submission.rows) |row| {
+            if (!geometry_changed and
+                self.row_versions[row] == submission.row_versions[row]) continue;
+            const start = row * submission.cols;
+            @memcpy(
+                self.cells[start..][0..submission.cols],
+                submission.cells[start..][0..submission.cols],
+            );
+            self.row_geometry[row] = submission.row_geometry[row];
+            self.row_versions[row] = submission.row_versions[row];
+            copied_rows += 1;
+        }
         self.generation = submission.generation;
         self.rows = submission.rows;
         self.cols = submission.cols;
@@ -240,6 +284,7 @@ const Snapshot = struct {
             self.image_placement_count = submission.image_placements.len;
             self.image_generation = submission.image_generation;
         }
+        return .{ .rows = copied_rows, .cells = copied_rows * submission.cols };
     }
 
     fn view(self: *const Snapshot) Submission {
@@ -250,6 +295,7 @@ const Snapshot = struct {
             .cols = self.cols,
             .cells = self.cells[0..count],
             .row_geometry = self.row_geometry[0..self.rows],
+            .row_versions = self.row_versions[0..self.rows],
             .cursor = self.cursor,
             .size = self.size,
             .scrollbar = self.scrollbar,
@@ -291,7 +337,7 @@ const Mailbox = struct {
         self: *Mailbox,
         submission: Submission,
         submitted_at: measure.Mark,
-    ) std.mem.Allocator.Error!void {
+    ) std.mem.Allocator.Error!Snapshot.CopyCounts {
         if (self.writable()) |slot| {
             errdefer self.release(slot);
             try slot.ensureCapacity(submission.rows, submission.cols);
@@ -300,9 +346,9 @@ const Mailbox = struct {
                 submission.images.len,
                 submission.image_placements.len,
             );
-            slot.write(submission, submitted_at);
+            const copied = slot.write(submission, submitted_at);
             if (self.admit(slot)) |replaced| self.release(replaced);
-            return;
+            return copied;
         }
         const slot = self.pending.?;
         try slot.ensureCapacity(submission.rows, submission.cols);
@@ -311,7 +357,7 @@ const Mailbox = struct {
             submission.images.len,
             submission.image_placements.len,
         );
-        slot.write(submission, submitted_at);
+        return slot.write(submission, submitted_at);
     }
 
     fn admit(self: *Mailbox, slot: *Snapshot) ?*Snapshot {
@@ -822,6 +868,55 @@ const RunScratch = struct {
     }
 };
 
+const RetainedBacking = struct {
+    texture: c.GLuint,
+    framebuffer: c.GLuint,
+
+    fn init(size: PixelSize, max_extent: u32) Error!RetainedBacking {
+        const bytes = backingBytes(size) orelse return error.CacheFull;
+        if (size.width > max_extent or size.height > max_extent or
+            bytes > retained_backing_byte_capacity) return error.CacheFull;
+        var texture: c.GLuint = 0;
+        c.glGenTextures(1, &texture);
+        if (texture == 0) return error.Texture;
+        errdefer c.glDeleteTextures(1, &texture);
+        configureRgbaTexture(texture);
+        c.glTexImage2D(
+            c.GL_TEXTURE_2D,
+            0,
+            c.GL_RGBA,
+            @intCast(size.width),
+            @intCast(size.height),
+            0,
+            c.GL_RGBA,
+            c.GL_UNSIGNED_BYTE,
+            null,
+        );
+        if (c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+        var framebuffer: c.GLuint = 0;
+        c.glGenFramebuffers(1, &framebuffer);
+        if (framebuffer == 0) return error.Texture;
+        errdefer c.glDeleteFramebuffers(1, &framebuffer);
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, framebuffer);
+        c.glFramebufferTexture2D(
+            c.GL_FRAMEBUFFER,
+            c.GL_COLOR_ATTACHMENT0,
+            c.GL_TEXTURE_2D,
+            texture,
+            0,
+        );
+        if (c.glCheckFramebufferStatus(c.GL_FRAMEBUFFER) != c.GL_FRAMEBUFFER_COMPLETE or
+            c.glGetError() != c.GL_NO_ERROR) return error.Texture;
+        return .{ .texture = texture, .framebuffer = framebuffer };
+    }
+
+    fn deinit(self: *RetainedBacking) void {
+        c.glDeleteFramebuffers(1, &self.framebuffer);
+        c.glDeleteTextures(1, &self.texture);
+        self.* = undefined;
+    }
+};
+
 const Device = struct {
     allocator: std.mem.Allocator,
     display: c.EGLDisplay,
@@ -837,6 +932,15 @@ const Device = struct {
     draw_batch: DrawBatch,
     metrics: text.CellMetrics,
     glyph_cache: GlyphCache,
+    backing: RetainedBacking,
+    max_texture_extent: u32,
+    row_versions: [max_dimension]u64 = @splat(0),
+    retained_rows: u16 = 0,
+    retained_cols: u16 = 0,
+    retained_cursor: ?terminal.Cursor = null,
+    retained_scrollbar: ?viewport.Scrollbar = null,
+    retained_image_generation: u64 = 0,
+    damage_clip: ?PixelRect = null,
     image_textures: [256]ImageTexture = undefined,
     image_texture_count: usize = 0,
     image_texture_bytes: usize = 0,
@@ -928,9 +1032,13 @@ const Device = struct {
         c.glEnable(c.GL_BLEND);
         c.glBlendFunc(c.GL_SRC_ALPHA, c.GL_ONE_MINUS_SRC_ALPHA);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        var backing = try RetainedBacking.init(values.size, @intCast(max_texture_size));
+        errdefer backing.deinit();
         c.glViewport(0, 0, @intCast(values.size.width), @intCast(values.size.height));
         const clear_component: f32 = @as(f32, @floatFromInt(clear_color.r)) / 255.0;
         c.glClearColor(clear_component, clear_component, clear_component, 1.0);
+        c.glClear(c.GL_COLOR_BUFFER_BIT);
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
         c.glClear(c.GL_COLOR_BUFFER_BIT);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
         // The first swap maps the Wayland surface before PTY construction, so
@@ -952,6 +1060,8 @@ const Device = struct {
             .draw_batch = draw_batch,
             .metrics = metrics,
             .glyph_cache = .{ .extent = atlas_extent },
+            .backing = backing,
+            .max_texture_extent = @intCast(max_texture_size),
             .size = values.size,
             .io = io,
             .measurement = values.measurement,
@@ -962,26 +1072,94 @@ const Device = struct {
         const draw_started = measure.now(self.io);
         const work = snapshot.view();
         try self.syncImages(work);
+        var full = self.retained_rows != work.rows or self.retained_cols != work.cols or
+            self.retained_image_generation != work.image_generation or
+            !std.meta.eql(self.retained_scrollbar, work.scrollbar);
         if (!std.meta.eql(self.size, work.size)) {
             try validateSize(work.size);
+            var replacement = try RetainedBacking.init(work.size, self.max_texture_extent);
+            errdefer replacement.deinit();
+            self.backing.deinit();
+            self.backing = replacement;
             c.wl_egl_window_resize(self.window, @intCast(work.size.width), @intCast(work.size.height), 0, 0);
             self.size = work.size;
+            full = true;
         }
+        var dirty: [max_dimension]bool = @splat(false);
+        const dirty_count = planRepairs(
+            dirty[0..work.rows],
+            self.row_versions[0..work.rows],
+            work.row_versions,
+            self.retained_cursor,
+            work.cursor,
+            full,
+        );
+        measure.State.backing(self.measurement, full, dirty_count);
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, self.backing.framebuffer);
         c.glViewport(0, 0, @intCast(self.size.width), @intCast(self.size.height));
         const clear_component: f32 = @as(f32, @floatFromInt(clear_color.r)) / 255.0;
         c.glClearColor(clear_component, clear_component, clear_component, 1.0);
-        c.glClear(c.GL_COLOR_BUFFER_BIT);
         c.glUseProgram(self.program);
         c.glBindBuffer(c.GL_ARRAY_BUFFER, self.buffer);
         c.glEnableVertexAttribArray(0);
         c.glEnableVertexAttribArray(1);
         c.glEnableVertexAttribArray(2);
-        for (0..work.rows) |row| try self.drawRowBackground(work, @intCast(row));
-        try self.drawImages(work, .behind_text);
-        for (0..work.rows) |row| try self.drawRowContent(work, @intCast(row));
-        try self.drawImages(work, .above_text);
-        try self.drawCursor(work);
-        try self.drawScrollbar(work.scrollbar);
+        if (full) {
+            c.glClear(c.GL_COLOR_BUFFER_BIT);
+            self.damage_clip = null;
+            for (0..work.rows) |row| try self.drawRowBackground(work, @intCast(row));
+            try self.drawImages(work, .behind_text);
+            for (0..work.rows) |row| try self.drawRowContent(work, @intCast(row));
+            try self.drawImages(work, .above_text);
+            try self.drawCursor(work);
+            try self.drawScrollbar(work.scrollbar);
+        } else {
+            for (dirty[0..work.rows], 0..) |changed, row| {
+                if (!changed) continue;
+                if (rowPixelRect(@intCast(row), self.metrics, self.size) == null) continue;
+                self.damage_clip = null;
+                try self.quad(
+                    .background,
+                    0,
+                    @intCast(@as(u64, row) * self.metrics.height_px),
+                    self.size.width,
+                    self.metrics.height_px,
+                    clear_color,
+                    self.white,
+                );
+                try self.drawRowBackground(work, @intCast(row));
+            }
+            try self.drawImagesDamaged(work, .behind_text, &dirty);
+            for (dirty[0..work.rows], 0..) |changed, row| {
+                if (!changed) continue;
+                try self.drawContentForDamageRow(work, @intCast(row));
+            }
+            try self.drawImagesDamaged(work, .above_text, &dirty);
+            if (work.cursor.visible and dirty[work.cursor.row]) {
+                self.damage_clip = rowPixelRect(work.cursor.row, self.metrics, self.size) orelse
+                    return error.InvalidSubmission;
+                try self.drawCursor(work);
+            }
+            if (dirty_count != 0) {
+                self.damage_clip = null;
+                try self.drawScrollbar(work.scrollbar);
+            }
+        }
+        try self.flush();
+        self.damage_clip = null;
+        @memcpy(self.row_versions[0..work.rows], work.row_versions);
+        self.retained_rows = work.rows;
+        self.retained_cols = work.cols;
+        self.retained_cursor = work.cursor;
+        self.retained_scrollbar = work.scrollbar;
+        self.retained_image_generation = work.image_generation;
+        c.glBindFramebuffer(c.GL_FRAMEBUFFER, 0);
+        c.glViewport(0, 0, @intCast(self.size.width), @intCast(self.size.height));
+        try self.stage(.present, backingVertices(self.size), .{
+            .texture = self.backing.texture,
+            .texture_color = true,
+            .scissor = null,
+        });
         try self.flush();
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
         const draw_ns = measure.elapsed(draw_started, self.io);
@@ -989,6 +1167,8 @@ const Device = struct {
         if (c.eglSwapBuffers(self.display, self.surface) != c.EGL_TRUE) return error.Swap;
         measure.State.frame(
             self.measurement,
+            snapshot.generation,
+            measure.now(self.io),
             draw_ns,
             measure.elapsed(swap_started, self.io),
             measure.elapsed(snapshot.submitted_at, self.io),
@@ -1098,6 +1278,19 @@ const Device = struct {
 
     const ImageLayer = enum { behind_text, above_text };
 
+    fn drawImagesDamaged(
+        self: *Device,
+        work: Submission,
+        layer: ImageLayer,
+        dirty: *const [max_dimension]bool,
+    ) Error!void {
+        for (dirty[0..work.rows], 0..) |changed, row| {
+            if (!changed) continue;
+            self.damage_clip = rowPixelRect(@intCast(row), self.metrics, self.size) orelse continue;
+            try self.drawImages(work, layer);
+        }
+    }
+
     fn drawImages(self: *Device, work: Submission, layer: ImageLayer) Error!void {
         for (work.image_placements) |placement| {
             if (imageLayer(placement.z) != layer) continue;
@@ -1195,6 +1388,24 @@ const Device = struct {
             at = prepared.end_cell;
         }
         try self.drawDecorations(row, cells[0..logical_cols], geometry);
+    }
+
+    fn drawContentForDamageRow(self: *Device, work: Submission, row: u16) Error!void {
+        var anchors: [max_dimension]bool = @splat(false);
+        anchors[row] = true;
+        const start = @as(usize, row) * work.cols;
+        var target_spans_rows = false;
+        for (work.cells[start..][0..work.cols]) |cell| {
+            if (cell.sizing.y <= row) anchors[row - cell.sizing.y] = true;
+            target_spans_rows = target_spans_rows or
+                (cell.sizing.y == 0 and cell.sizing.height > 1);
+        }
+        const clip = rowPixelRect(row, self.metrics, self.size) orelse return;
+        for (anchors[0 .. row + 1], 0..) |needed, anchor| {
+            if (!needed) continue;
+            self.damage_clip = if (anchor != row or target_spans_rows) clip else null;
+            try self.drawRowContent(work, @intCast(anchor));
+        }
     }
 
     fn drawPrepared(
@@ -1653,11 +1864,18 @@ const Device = struct {
         self: *Device,
         kind: measure.QuadKind,
         vertices: [vertices_per_quad]Vertex,
-        state: DrawState,
+        original_state: DrawState,
     ) Error!void {
         // Glyph eviction excludes the current render generation, and image
         // reconciliation finishes before drawing, so every deferred texture
         // name remains alive until this batch is flushed.
+        var state = original_state;
+        if (self.damage_clip) |damage| {
+            state.scissor = if (state.scissor) |clip|
+                intersectRect(clip, damage) orelse return
+            else
+                damage;
+        }
         if (!self.draw_batch.stage(vertices, state)) {
             try self.flush();
             if (!self.draw_batch.stage(vertices, state)) @panic("empty draw batch rejected one quad");
@@ -1753,6 +1971,7 @@ const Device = struct {
             self.glyph_cache.atlas_count -= 1;
             c.glDeleteTextures(1, &self.glyph_cache.atlases[self.glyph_cache.atlas_count].name);
         }
+        self.backing.deinit();
         self.draw_batch.deinit();
         self.run_scratch.deinit();
         self.fonts.deinit();
@@ -1855,7 +2074,7 @@ pub const Renderer = struct {
         return self;
     }
 
-    /// Copies and coalesces one complete visual state without waiting for draw.
+    /// Refreshes stale immutable rows and coalesces pending work without waiting.
     pub fn submit(self: *Renderer, submission: Submission) Error!void {
         try validateSubmission(submission);
         const submitted_at = measure.now(self.io);
@@ -1865,11 +2084,14 @@ pub const Renderer = struct {
         if (self.stopping) return error.Stopping;
         if (submission.generation <= self.submitted) return error.StaleGeneration;
         const coalesced = self.mailbox.pending != null;
-        try self.mailbox.write(submission, submitted_at);
+        const copied = try self.mailbox.write(submission, submitted_at);
+        const copied_bytes = copied.cells * @sizeOf(terminal.Cell) +
+            copied.rows * (@sizeOf(terminal.LineGeometry) + @sizeOf(u64));
         measure.State.snapshot(
             self.init_values.measurement,
-            submission.rows,
-            @as(usize, submission.rows) * submission.cols,
+            copied.rows,
+            copied.cells,
+            copied_bytes,
             coalesced,
         );
         self.submitted = submission.generation;
@@ -1936,6 +2158,10 @@ pub const Renderer = struct {
             }
             const slot = self.mailbox.take().?;
             self.mutex.unlock(self.io);
+            measure.State.take(
+                self.init_values.measurement,
+                slot.generation,
+            );
 
             device.draw(slot) catch |failure| {
                 self.mutex.lockUncancelable(self.io);
@@ -1987,7 +2213,8 @@ fn validateSubmission(value: Submission) error{InvalidSubmission}!void {
         value.rows > max_dimension or value.cols > max_dimension)
         return error.InvalidSubmission;
     const count = @as(usize, value.rows) * value.cols;
-    if (count > max_cells or value.cells.len != count or value.row_geometry.len != value.rows)
+    if (count > max_cells or value.cells.len != count or
+        value.row_geometry.len != value.rows or value.row_versions.len != value.rows)
         return error.InvalidSubmission;
     if (value.cursor.visible and
         (value.cursor.row >= value.rows or value.cursor.col >= value.cols))
@@ -2150,6 +2377,68 @@ fn quadVertices(
     color: terminal.Rgb,
 ) [6]Vertex {
     return quadUvVertices(x, y, width, height, size, color, 0, 0, 1, 1);
+}
+
+fn backingVertices(size: PixelSize) [vertices_per_quad]Vertex {
+    // Render-to-texture storage uses GL's bottom-left origin. Presenting the
+    // backing flips V once so terminal pixel row zero remains at the top.
+    var vertices = quadUvVertices(
+        0,
+        0,
+        size.width,
+        size.height,
+        size,
+        .{ .r = 255, .g = 255, .b = 255 },
+        0,
+        0,
+        1,
+        1,
+    );
+    for (&vertices) |*vertex| vertex.v = 1 - vertex.v;
+    return vertices;
+}
+
+fn backingBytes(size: PixelSize) ?usize {
+    const pixels = std.math.mul(usize, size.width, size.height) catch return null;
+    return std.math.mul(usize, pixels, 4) catch null;
+}
+
+fn planRepairs(
+    repairs: []bool,
+    retained_versions: []const u64,
+    next_versions: []const u64,
+    retained_cursor: ?terminal.Cursor,
+    next_cursor: terminal.Cursor,
+    full: bool,
+) usize {
+    std.debug.assert(repairs.len == retained_versions.len and
+        repairs.len == next_versions.len);
+    if (full) {
+        @memset(repairs, true);
+        return repairs.len;
+    }
+    for (repairs, retained_versions, next_versions) |*repair, retained, next|
+        repair.* = retained != next;
+    if (retained_cursor) |cursor| {
+        if (cursor.visible and !std.meta.eql(cursor, next_cursor)) repairs[cursor.row] = true;
+    }
+    if (next_cursor.visible and
+        (retained_cursor == null or !std.meta.eql(retained_cursor.?, next_cursor)))
+        repairs[next_cursor.row] = true;
+    var count: usize = 0;
+    for (repairs) |repair| count += @intFromBool(repair);
+    return count;
+}
+
+fn rowPixelRect(row: u16, metrics: text.CellMetrics, size: PixelSize) ?PixelRect {
+    const y = @as(u64, row) * metrics.height_px;
+    if (y > std.math.maxInt(i32)) return null;
+    return clipToSurface(.{
+        .x = 0,
+        .y = @intCast(y),
+        .width = size.width,
+        .height = metrics.height_px,
+    }, size);
 }
 
 fn quadUvVertices(
@@ -2554,6 +2843,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
     const geometry = [_]terminal.LineGeometry{
         .single_width, .single_width, .single_width,
     };
+    const versions = [_]u64{ 1, 1, 1 };
 
     failing.fail_index = failing.alloc_index;
     try std.testing.expectError(error.OutOfMemory, mailbox.write(.{
@@ -2562,6 +2852,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .cols = 2,
         .cells = cells[0..4],
         .row_geometry = geometry[0..2],
+        .row_versions = versions[0..2],
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 20 },
     }, measure.now(std.testing.io)));
@@ -2571,26 +2862,30 @@ test "mailbox growth failure preserves every slot owner and pending work" {
     try std.testing.expect(mailbox.free_second == &slots[1]);
 
     failing.fail_index = std.math.maxInt(usize);
-    try mailbox.write(.{
+    const initial_copy = try mailbox.write(.{
         .generation = 2,
         .rows = 2,
         .cols = 2,
         .cells = cells[0..4],
         .row_geometry = geometry[0..2],
+        .row_versions = versions[0..2],
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 20 },
     }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 2, .cells = 4 }, initial_copy);
     try std.testing.expect(mailbox.pending == &slots[1]);
     try std.testing.expect(mailbox.take() == &slots[1]);
-    try mailbox.write(.{
+    const pending_copy = try mailbox.write(.{
         .generation = 3,
         .rows = 1,
         .cols = 1,
         .cells = cells[0..1],
         .row_geometry = geometry[0..1],
+        .row_versions = versions[0..1],
         .cursor = testCursor(),
         .size = .{ .width = 10, .height = 10 },
     }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 1, .cells = 1 }, pending_copy);
     const pending = mailbox.pending.?;
     const pending_generation = pending.generation;
     const pending_rows = pending.rows;
@@ -2602,6 +2897,7 @@ test "mailbox growth failure preserves every slot owner and pending work" {
         .cols = 3,
         .cells = &cells,
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 30, .height = 30 },
     }, measure.now(std.testing.io)));
@@ -2614,15 +2910,17 @@ test "mailbox growth failure preserves every slot owner and pending work" {
     try std.testing.expectEqual(pending_cols, pending.cols);
 
     failing.fail_index = std.math.maxInt(usize);
-    try mailbox.write(.{
+    const recovered_copy = try mailbox.write(.{
         .generation = 5,
         .rows = 3,
         .cols = 3,
         .cells = &cells,
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 30, .height = 30 },
     }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 3, .cells = 9 }, recovered_copy);
     try std.testing.expect(mailbox.active == &slots[1]);
     try std.testing.expect(mailbox.pending == pending);
     try std.testing.expectEqual(@as(u64, 5), pending.generation);
@@ -2634,6 +2932,7 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
     var cells = [_]terminal.Cell{ testCell('a'), testCell('b') };
     cells[0].baseline = .raised;
     var geometry = [_]terminal.LineGeometry{.double_width};
+    const versions = [_]u64{1};
     const bar = viewport.scrollbar(
         .{ .history_count = 20, .offset = 4, .rows = 1 },
         20,
@@ -2641,16 +2940,18 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
         10,
         10,
     ).?;
-    snapshot.write(.{
+    const copied = snapshot.write(.{
         .generation = 7,
         .rows = 1,
         .cols = 2,
         .cells = &cells,
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 20, .height = 10 },
         .scrollbar = bar,
     }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 1, .cells = 2 }, copied);
     cells[0].codepoint = 'z';
     cells[0].baseline = .normal;
     geometry[0] = .single_width;
@@ -2660,6 +2961,58 @@ test "snapshot copy has no caller lifetime and preserves newest identity" {
     try std.testing.expectEqual(terminal.LineGeometry.double_width, copy.row_geometry[0]);
     try std.testing.expectEqual(@as(u64, 7), copy.generation);
     try std.testing.expectEqual(bar, copy.scrollbar.?);
+}
+
+test "snapshot refreshes only stale rows and preserves cumulative slot state" {
+    var snapshot = try Snapshot.init(std.testing.allocator, 2, 3);
+    defer snapshot.deinit();
+    var cells = [_]terminal.Cell{
+        testCell('a'), testCell('b'), testCell('c'),
+        testCell('d'), testCell('e'), testCell('f'),
+    };
+    const geometry = [_]terminal.LineGeometry{ .single_width, .double_width };
+    var versions = [_]u64{ 1, 1 };
+    const first = snapshot.write(.{
+        .generation = 1,
+        .rows = 2,
+        .cols = 3,
+        .cells = &cells,
+        .row_geometry = &geometry,
+        .row_versions = &versions,
+        .cursor = testCursor(),
+        .size = .{ .width = 30, .height = 20 },
+    }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 2, .cells = 6 }, first);
+
+    cells[0].codepoint = 'x';
+    const clean = snapshot.write(.{
+        .generation = 2,
+        .rows = 2,
+        .cols = 3,
+        .cells = &cells,
+        .row_geometry = &geometry,
+        .row_versions = &versions,
+        .cursor = testCursor(),
+        .size = .{ .width = 30, .height = 20 },
+    }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 0, .cells = 0 }, clean);
+    try std.testing.expectEqual(@as(u21, 'a'), snapshot.cells[0].codepoint);
+
+    cells[4].codepoint = 'y';
+    versions[1] = 2;
+    const sparse = snapshot.write(.{
+        .generation = 3,
+        .rows = 2,
+        .cols = 3,
+        .cells = &cells,
+        .row_geometry = &geometry,
+        .row_versions = &versions,
+        .cursor = testCursor(),
+        .size = .{ .width = 30, .height = 20 },
+    }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 1, .cells = 3 }, sparse);
+    try std.testing.expectEqual(@as(u21, 'a'), snapshot.cells[0].codepoint);
+    try std.testing.expectEqual(@as(u21, 'y'), snapshot.cells[4].codepoint);
 }
 
 test "snapshot growth is transactional and unchanged geometry allocates nothing" {
@@ -2696,12 +3049,14 @@ test "submission rejects hostile bounds before snapshot mutation" {
     snapshot.generation = 19;
     const cell = testCell('x');
     const geometry = [_]terminal.LineGeometry{.single_width};
+    const versions = [_]u64{1};
     try std.testing.expectError(error.InvalidSubmission, validateSubmission(.{
         .generation = 1,
         .rows = 1,
         .cols = 2,
         .cells = (&cell)[0..1],
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 1, .height = 1 },
     }));
@@ -2713,6 +3068,7 @@ test "submission rejects hostile bounds before snapshot mutation" {
         .cols = 1,
         .cells = (&cell)[0..1],
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 10, .height = 10 },
         .scrollbar = .{
@@ -2919,6 +3275,7 @@ test "snapshot retains complete image state and skips identical generation bytes
     defer snapshot.deinit();
     const cells = [_]terminal.Cell{testCell(' ')};
     const geometry = [_]terminal.LineGeometry{.single_width};
+    const versions = [_]u64{1};
     const pixels = [_]u8{ 1, 2, 3, 4 };
     const images = [_]terminal.ImageUpload{.{
         .identity = .{ .id = 7, .generation = 1 },
@@ -2934,12 +3291,13 @@ test "snapshot retains complete image state and skips identical generation bytes
         .col = 0,
     }};
     try snapshot.ensureImageCapacity(4, 1, 1);
-    snapshot.write(.{
+    const initial_copy = snapshot.write(.{
         .generation = 1,
         .rows = 1,
         .cols = 1,
         .cells = &cells,
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = testCursor(),
         .size = .{ .width = 10, .height = 10 },
         .image_generation = 1,
@@ -2948,15 +3306,17 @@ test "snapshot retains complete image state and skips identical generation bytes
         .images = &images,
         .image_placements = &placements,
     }, measure.now(std.testing.io));
+    try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 1, .cells = 1 }, initial_copy);
     {
         const before = snapshot.image_pixels[0..4].*;
         const changed_source = [_]u8{ 9, 9, 9, 9 };
-        snapshot.write(.{
+        const unchanged_copy = snapshot.write(.{
             .generation = 2,
             .rows = 1,
             .cols = 1,
             .cells = &cells,
             .row_geometry = &geometry,
+            .row_versions = &versions,
             .cursor = testCursor(),
             .size = .{ .width = 10, .height = 10 },
             .image_generation = 2,
@@ -2965,6 +3325,7 @@ test "snapshot retains complete image state and skips identical generation bytes
             .images = &images,
             .image_placements = &placements,
         }, measure.now(std.testing.io));
+        try std.testing.expectEqual(Snapshot.CopyCounts{ .rows = 0, .cells = 0 }, unchanged_copy);
         try std.testing.expectEqualSlices(u8, &before, snapshot.image_pixels[0..4]);
     }
     try std.testing.expectEqual(@as(u64, 2), snapshot.view().image_generation);
@@ -2999,6 +3360,72 @@ test "image vertices preserve exact cropped texture and scaled destination bound
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), vertices[0].y, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].x, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].y, 0.0001);
+}
+
+test "retained backing presentation flips only texture vertical orientation" {
+    const vertices = backingVertices(.{ .width = 80, .height = 40 });
+    try std.testing.expectApproxEqAbs(@as(f32, -1), vertices[0].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), vertices[0].y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), vertices[0].u, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), vertices[0].v, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), vertices[1].x, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, -1), vertices[1].y, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 1), vertices[1].u, 0.0001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), vertices[1].v, 0.0001);
+}
+
+test "retained backing row damage exactly clips odd final pixels" {
+    const metrics = text.CellMetrics{ .width_px = 7, .height_px = 9, .baseline_px = 7 };
+    const size = PixelSize{ .width = 53, .height = 23 };
+    try std.testing.expectEqual(
+        PixelRect{ .x = 0, .y = 0, .width = 53, .height = 9 },
+        rowPixelRect(0, metrics, size).?,
+    );
+    try std.testing.expectEqual(
+        PixelRect{ .x = 0, .y = 18, .width = 53, .height = 5 },
+        rowPixelRect(2, metrics, size).?,
+    );
+    try std.testing.expect(rowPixelRect(3, metrics, size) == null);
+    try std.testing.expectEqual(
+        @as(?usize, 53 * 23 * 4),
+        backingBytes(size),
+    );
+}
+
+test "retained backing repairs sparse rows and both cursor overlay locations" {
+    const retained_versions = [_]u64{ 4, 7, 9, 12 };
+    const next_versions = [_]u64{ 4, 8, 9, 12 };
+    var retained_cursor = testCursor();
+    retained_cursor.visible = true;
+    retained_cursor.shape = .block;
+    retained_cursor.row = 2;
+    var next_cursor = retained_cursor;
+    next_cursor.row = 3;
+    var repairs: [4]bool = undefined;
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        planRepairs(
+            &repairs,
+            &retained_versions,
+            &next_versions,
+            retained_cursor,
+            next_cursor,
+            false,
+        ),
+    );
+    try std.testing.expectEqualSlices(bool, &.{ false, true, true, true }, &repairs);
+    try std.testing.expectEqual(
+        @as(usize, 4),
+        planRepairs(
+            &repairs,
+            &next_versions,
+            &next_versions,
+            next_cursor,
+            next_cursor,
+            true,
+        ),
+    );
+    try std.testing.expectEqualSlices(bool, &.{ true, true, true, true }, &repairs);
 }
 
 test "draw batch owns exact fixed storage and rolls back both allocations" {
@@ -3482,12 +3909,14 @@ test "OSC 66 draw planning scales and aligns within the exact cell block" {
     cursor.row = 1;
     cursor.col = 2;
     const geometry = [_]terminal.LineGeometry{ .single_width, .single_width };
+    const versions = [_]u64{ 1, 1 };
     const work = Submission{
         .generation = 1,
         .rows = 2,
         .cols = 4,
         .cells = &cells,
         .row_geometry = &geometry,
+        .row_versions = &versions,
         .cursor = cursor,
         .size = .{ .width = 32, .height = 32 },
     };
@@ -3771,7 +4200,10 @@ fn testSubmission(
         .cols = @intCast(cells.len / geometry.len),
         .cells = cells,
         .row_geometry = geometry,
+        .row_versions = test_row_versions[0..geometry.len],
         .cursor = cursor,
         .size = .{ .width = 1_000, .height = 1_000 },
     };
 }
+
+const test_row_versions: [max_dimension]u64 = @splat(1);
