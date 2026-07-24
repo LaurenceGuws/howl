@@ -68,6 +68,8 @@ const RenderCounters = struct {
     staged_commands: u64 = 0,
     staged_merges: u64 = 0,
     staged_flushes: u64 = 0,
+    cpu_clipped_quads: u64 = 0,
+    cpu_discarded_quads: u64 = 0,
     buffer_calls: u64 = 0,
     buffer_bytes: u64 = 0,
     texture_binds: u64 = 0,
@@ -230,6 +232,14 @@ pub const State = struct {
         if (comptime !enabled) return;
         increment(&reference.render.quads[@backingInt(kind)], 1);
         increment(&reference.render.staged_quads, 1);
+    }
+
+    /// Counts exact CPU clipping that changed or fully discarded one quad.
+    pub fn cpuClip(reference: Reference, changed: bool, discarded: bool) void {
+        if (comptime !enabled) return;
+        std.debug.assert(!discarded or !changed);
+        if (changed) increment(&reference.render.cpu_clipped_quads, 1);
+        if (discarded) increment(&reference.render.cpu_discarded_quads, 1);
     }
 
     /// Counts one staged upload and its exact resulting commands and merges.
@@ -432,6 +442,8 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     State.prepared(reference, .native, 4, 2_000);
     State.stagedQuad(reference, .text);
     State.stagedQuad(reference, .text);
+    State.cpuClip(reference, true, false);
+    State.cpuClip(reference, false, true);
     State.batch(reference, 1, 1, 384);
     State.frame(reference, 3_000, 4_000, 9_000);
     var bytes: [16 * 1024]u8 = undefined;
@@ -444,6 +456,8 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.quad_text=2\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_commands=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_merges=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.cpu_clipped_quads=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.cpu_discarded_quads=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_calls=1\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_bytes=384\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.draw_ns.count=1\n") != null);

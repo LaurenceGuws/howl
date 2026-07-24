@@ -1339,7 +1339,12 @@ const Device = struct {
         color: terminal.Rgb,
         texture_name: c.GLuint,
     ) Error!void {
-        try self.quadClipped(kind, x, y, width, height, color, texture_name, null);
+        if (width == 0 or height == 0) return;
+        try self.stage(kind, quadVertices(x, y, width, height, self.size, color), .{
+            .texture = texture_name,
+            .texture_color = false,
+            .scissor = null,
+        });
     }
 
     fn quadClipped(
@@ -1351,14 +1356,23 @@ const Device = struct {
         height: u32,
         color: terminal.Rgb,
         texture_name: c.GLuint,
-        scissor: ?PixelRect,
+        clip: PixelRect,
     ) Error!void {
         if (width == 0 or height == 0) return;
-        const vertices = quadVertices(x, y, width, height, self.size, color);
-        try self.stage(kind, vertices, .{
+        const clipped = clipQuad(
+            .{ .x = x, .y = y, .width = width, .height = height },
+            clip,
+            self.size,
+            color,
+        ) orelse {
+            measure.State.cpuClip(self.measurement, false, true);
+            return;
+        };
+        measure.State.cpuClip(self.measurement, clipped.changed, false);
+        try self.stage(kind, clipped.vertices, .{
             .texture = texture_name,
             .texture_color = false,
-            .scissor = scissor,
+            .scissor = null,
         });
     }
 
@@ -1859,7 +1873,24 @@ fn quadVertices(
     size: PixelSize,
     color: terminal.Rgb,
 ) [6]Vertex {
+    return quadUvVertices(x, y, width, height, size, color, 0, 0, 1, 1);
+}
+
+fn quadUvVertices(
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    size: PixelSize,
+    color: terminal.Rgb,
+    texture_left: f32,
+    texture_top: f32,
+    texture_right: f32,
+    texture_bottom: f32,
+) [6]Vertex {
     std.debug.assert(width != 0 and height != 0);
+    std.debug.assert(texture_left >= 0 and texture_left <= texture_right and texture_right <= 1);
+    std.debug.assert(texture_top >= 0 and texture_top <= texture_bottom and texture_bottom <= 1);
     const left = pixelToNdc(x, size.width);
     const right = pixelToNdc(@as(i64, x) + width, size.width);
     const top = -pixelToNdc(y, size.height);
@@ -1868,12 +1899,49 @@ fn quadVertices(
     const green = @as(f32, @floatFromInt(color.g)) / 255.0;
     const blue = @as(f32, @floatFromInt(color.b)) / 255.0;
     return .{
-        .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-        .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-        .{ .x = left, .y = bottom, .u = 0, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
-        .{ .x = left, .y = top, .u = 0, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-        .{ .x = right, .y = top, .u = 1, .v = 0, .r = red, .g = green, .b = blue, .a = 1 },
-        .{ .x = right, .y = bottom, .u = 1, .v = 1, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = left, .y = top, .u = texture_left, .v = texture_top, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = bottom, .u = texture_right, .v = texture_bottom, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = left, .y = bottom, .u = texture_left, .v = texture_bottom, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = left, .y = top, .u = texture_left, .v = texture_top, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = top, .u = texture_right, .v = texture_top, .r = red, .g = green, .b = blue, .a = 1 },
+        .{ .x = right, .y = bottom, .u = texture_right, .v = texture_bottom, .r = red, .g = green, .b = blue, .a = 1 },
+    };
+}
+
+const ClippedQuad = struct {
+    vertices: [vertices_per_quad]Vertex,
+    changed: bool,
+};
+
+fn clipQuad(
+    rect: PixelRect,
+    clip: PixelRect,
+    size: PixelSize,
+    color: terminal.Rgb,
+) ?ClippedQuad {
+    std.debug.assert(rect.width != 0 and rect.height != 0);
+    const visible = intersectRect(rect, clip) orelse return null;
+    const left: u32 = @intCast(@as(i64, visible.x) - rect.x);
+    const top: u32 = @intCast(@as(i64, visible.y) - rect.y);
+    const right = left + visible.width;
+    const bottom = top + visible.height;
+    std.debug.assert(right <= rect.width and bottom <= rect.height);
+    const width_f: f32 = @floatFromInt(rect.width);
+    const height_f: f32 = @floatFromInt(rect.height);
+    return .{
+        .vertices = quadUvVertices(
+            visible.x,
+            visible.y,
+            visible.width,
+            visible.height,
+            size,
+            color,
+            @as(f32, @floatFromInt(left)) / width_f,
+            @as(f32, @floatFromInt(top)) / height_f,
+            @as(f32, @floatFromInt(right)) / width_f,
+            @as(f32, @floatFromInt(bottom)) / height_f,
+        ),
+        .changed = !std.meta.eql(rect, visible),
     };
 }
 
@@ -2139,6 +2207,28 @@ fn decorationRise(style: terminal.UnderlineStyle, x: u16, unit: u16) ?u16 {
         .dashed => if (x % (unit *| 4) < unit *| 3) 0 else null,
         else => null,
     };
+}
+
+fn expectQuadUv(
+    vertices: [vertices_per_quad]Vertex,
+    texture_left: f32,
+    texture_top: f32,
+    texture_right: f32,
+    texture_bottom: f32,
+) !void {
+    const epsilon: f32 = 0.000_001;
+    try std.testing.expectApproxEqAbs(texture_left, vertices[0].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_top, vertices[0].v, epsilon);
+    try std.testing.expectApproxEqAbs(texture_right, vertices[1].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_bottom, vertices[1].v, epsilon);
+    try std.testing.expectApproxEqAbs(texture_left, vertices[2].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_bottom, vertices[2].v, epsilon);
+    try std.testing.expectApproxEqAbs(texture_left, vertices[3].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_top, vertices[3].v, epsilon);
+    try std.testing.expectApproxEqAbs(texture_right, vertices[4].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_top, vertices[4].v, epsilon);
+    try std.testing.expectApproxEqAbs(texture_right, vertices[5].u, epsilon);
+    try std.testing.expectApproxEqAbs(texture_bottom, vertices[5].v, epsilon);
 }
 
 test "mailbox replaces only pending work while active ownership remains exact" {
@@ -3013,21 +3103,126 @@ test "decoration patterns are bounded and deterministic" {
     try std.testing.expectEqual(@as(?u16, null), decorationRise(.single, 0, 2));
 }
 
-test "scaled quads retain complete texture coordinates for scissor cropping" {
-    const vertices = quadVertices(
-        -4,
-        3,
-        18,
-        30,
-        .{ .width = 45, .height = 30 },
-        .{ .r = 1, .g = 2, .b = 3 },
+test "CPU clipping preserves complete quads and clips every odd pixel edge" {
+    const size = PixelSize{ .width = 45, .height = 31 };
+    const color = terminal.Rgb{ .r = 1, .g = 2, .b = 3 };
+    const rect = PixelRect{ .x = 4, .y = 3, .width = 11, .height = 13 };
+    const complete = clipQuad(rect, rect, size, color).?;
+    try std.testing.expect(!complete.changed);
+    try std.testing.expectEqualSlices(
+        Vertex,
+        &quadVertices(rect.x, rect.y, rect.width, rect.height, size, color),
+        &complete.vertices,
     );
-    try std.testing.expectEqual(@as(f32, 0), vertices[0].u);
-    try std.testing.expectEqual(@as(f32, 0), vertices[0].v);
-    try std.testing.expectEqual(@as(f32, 1), vertices[1].u);
-    try std.testing.expectEqual(@as(f32, 1), vertices[1].v);
-    try std.testing.expect(vertices[0].x < vertices[1].x);
-    try std.testing.expect(vertices[0].y > vertices[1].y);
+
+    const cases = [_]struct {
+        clip: PixelRect,
+        u0: f32,
+        v0: f32,
+        u1: f32,
+        v1: f32,
+    }{
+        .{ .clip = .{ .x = 5, .y = 3, .width = 10, .height = 13 }, .u0 = 1.0 / 11.0, .v0 = 0, .u1 = 1, .v1 = 1 },
+        .{ .clip = .{ .x = 4, .y = 4, .width = 11, .height = 12 }, .u0 = 0, .v0 = 1.0 / 13.0, .u1 = 1, .v1 = 1 },
+        .{ .clip = .{ .x = 4, .y = 3, .width = 10, .height = 13 }, .u0 = 0, .v0 = 0, .u1 = 10.0 / 11.0, .v1 = 1 },
+        .{ .clip = .{ .x = 4, .y = 3, .width = 11, .height = 12 }, .u0 = 0, .v0 = 0, .u1 = 1, .v1 = 12.0 / 13.0 },
+    };
+    for (cases) |case| {
+        const clipped = clipQuad(rect, case.clip, size, color).?;
+        try std.testing.expect(clipped.changed);
+        try expectQuadUv(clipped.vertices, case.u0, case.v0, case.u1, case.v1);
+    }
+    try std.testing.expect(clipQuad(
+        rect,
+        .{ .x = 20, .y = 20, .width = 2, .height = 2 },
+        size,
+        color,
+    ) == null);
+}
+
+test "CPU clipping preserves DEC OSC 66 decoration and cursor geometry" {
+    const size = PixelSize{ .width = 90, .height = 75 };
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const color = terminal.Rgb{ .r = 4, .g = 5, .b = 6 };
+
+    const dec = planContent(
+        2,
+        1,
+        .double_height_bottom,
+        .normal,
+        metrics,
+        .{ .x = 9, .y = 2, .width = 7, .height = 9 },
+    ).?;
+    const dec_clip = planCell(2, 1, .double_height_bottom, metrics).?;
+    const clipped_dec = clipQuad(dec, dec_clip, size, color).?;
+    try std.testing.expect(clipped_dec.changed);
+    try std.testing.expect(clipped_dec.vertices[0].v > 0);
+    try std.testing.expectEqual(@as(f32, 1), clipped_dec.vertices[1].v);
+
+    const sized = planTextSizing(
+        1,
+        .{ .width = 3, .height = 2 },
+        metrics,
+        .{ .x = 10, .y = 4, .width = 8, .height = 10 },
+    ).?;
+    const sized_clip = clusterCellRect(
+        0,
+        1,
+        .single_width,
+        .{ .width = 3, .height = 2 },
+        metrics,
+    ).?;
+    const clipped_sized = clipQuad(sized, sized_clip, size, color).?;
+    for (clipped_sized.vertices) |vertex| {
+        try std.testing.expect(vertex.u >= 0 and vertex.u <= 1);
+        try std.testing.expect(vertex.v >= 0 and vertex.v <= 1);
+    }
+
+    const decoration = planContent(
+        0,
+        1,
+        .double_width,
+        .raised,
+        metrics,
+        .{ .x = 9, .y = 12, .width = 9, .height = 1 },
+    ).?;
+    const cell_clip = planCell(0, 1, .double_width, metrics).?;
+    try std.testing.expect(clipQuad(decoration, cell_clip, size, color) != null);
+    const cursor = PixelRect{ .x = 18, .y = 0, .width = 2, .height = 15 };
+    try std.testing.expect(!clipQuad(cursor, cell_clip, size, color).?.changed);
+}
+
+test "CPU-clipped same-state quads merge while image crop scissor remains distinct" {
+    var batch = try DrawBatch.init(std.testing.allocator);
+    defer batch.deinit();
+    const size = PixelSize{ .width = 40, .height = 20 };
+    const color = terminal.Rgb{ .r = 1, .g = 2, .b = 3 };
+    const first = clipQuad(
+        .{ .x = -2, .y = 0, .width = 10, .height = 10 },
+        .{ .x = 0, .y = 0, .width = 40, .height = 20 },
+        size,
+        color,
+    ).?;
+    const second = clipQuad(
+        .{ .x = 8, .y = 0, .width = 10, .height = 10 },
+        .{ .x = 0, .y = 0, .width = 40, .height = 20 },
+        size,
+        color,
+    ).?;
+    const text_state = DrawState{ .texture = 7, .texture_color = false, .scissor = null };
+    try std.testing.expect(batch.stage(first.vertices, text_state));
+    try std.testing.expect(batch.stage(second.vertices, text_state));
+    try std.testing.expectEqual(@as(usize, 1), batch.command_count);
+    try std.testing.expectEqual(@as(usize, 12), batch.commands[0].count);
+
+    const image_clip = PixelRect{ .x = 2, .y = 3, .width = 4, .height = 5 };
+    try std.testing.expect(batch.stage(second.vertices, .{
+        .texture = 7,
+        .texture_color = true,
+        .scissor = image_clip,
+    }));
+    try std.testing.expectEqual(@as(usize, 2), batch.command_count);
+    try std.testing.expectEqual(image_clip, batch.commands[1].state.scissor.?);
 }
 
 test "surface clipping rejects empty and bounds hostile rectangles" {
