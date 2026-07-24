@@ -607,6 +607,15 @@ const Device = struct {
         c.glEnable(c.GL_BLEND);
         c.glBlendFunc(c.GL_SRC_ALPHA, c.GL_ONE_MINUS_SRC_ALPHA);
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        c.glViewport(0, 0, @intCast(values.size.width), @intCast(values.size.height));
+        const clear_component: f32 = @as(f32, @floatFromInt(clear_color.r)) / 255.0;
+        c.glClearColor(clear_component, clear_component, clear_component, 1.0);
+        c.glClear(c.GL_COLOR_BUFFER_BIT);
+        if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+        // The first swap maps the Wayland surface before PTY construction, so
+        // a tiling compositor can supply the child's initial grid. It is not a
+        // terminal workload frame and remains outside `measure.State.frame`.
+        if (c.eglSwapBuffers(display, surface) != c.EGL_TRUE) return error.Swap;
         return .{
             .allocator = allocator,
             .display = display,

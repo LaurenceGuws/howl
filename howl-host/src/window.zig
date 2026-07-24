@@ -339,6 +339,7 @@ pub const Error = std.mem.Allocator.Error || clipboard.Error || control.InitErro
     WaylandProtocol,
     WaylandDispatch,
     WaylandFlush,
+    WindowClosed,
     Poll,
     InputIncomplete,
     KeyboardContext,
@@ -826,10 +827,11 @@ const Window = struct {
             return error.WaylandProtocol;
         c.xdg_toplevel_set_title(toplevel, default_title);
         c.wl_surface_commit(surface);
-        while (!self.configured and self.failure == null) {
+        while (!self.configured and !self.closed and self.failure == null) {
             if (c.wl_display_dispatch(display) < 0) return error.WaylandDispatch;
         }
         if (self.failure) |failure| return failure;
+        if (self.closed) return error.WindowClosed;
 
         const configs = fontConfigs(font_path);
         self.render = try renderer.Renderer.start(allocator, io, .{
@@ -841,6 +843,12 @@ const Window = struct {
             .fonts = &configs,
             .measurement = self.measurement.ref(),
         });
+        // Renderer startup maps one clear surface. A finite roundtrip admits
+        // any resulting tiled configure without waiting for one to exist.
+        if (c.wl_display_roundtrip(display) < 0) return error.WaylandDispatch;
+        if (self.failure) |failure| return failure;
+        if (self.closed) return error.WindowClosed;
+        self.size = self.pending_size;
         const metrics = self.render.?.metrics();
         const grid = gridSize(self.size, metrics);
         measure.State.geometry(
@@ -3517,6 +3525,14 @@ test "window dimensions and grid conversion preserve exact bounds" {
         Size{ .width = 90, .height = 24 },
         try configuredSize(.{ .width = 80, .height = 24 }, 90, 0),
     );
+    var configured = Size{ .width = 960, .height = 600 };
+    configured = try configuredSize(configured, 0, 0);
+    try std.testing.expectEqual(Size{ .width = 960, .height = 600 }, configured);
+    configured = try configuredSize(configured, 1900, 1040);
+    try std.testing.expectEqual(Size{ .width = 1900, .height = 1040 }, configured);
+    configured = try configuredSize(configured, 1880, 0);
+    try std.testing.expectEqual(Size{ .width = 1880, .height = 1040 }, configured);
+    try std.testing.expectError(error.InvalidSize, configuredSize(configured, -1, 900));
     try std.testing.expectEqual(
         GridSize{ .rows = 2, .cols = 4 },
         gridSize(.{ .width = 43, .height = 41 }, .{
@@ -3533,6 +3549,49 @@ test "window dimensions and grid conversion preserve exact bounds" {
             .baseline_px = 15,
         }),
     );
+}
+
+test "Control propagates admitted geometry to child and complete snapshot" {
+    const rows: u16 = 3;
+    const cols: u16 = 7;
+    const terminal = try control.Terminal.init(
+        std.testing.allocator,
+        std.testing.io,
+        .{
+            .command = "size=$(stty size); printf '\\033]2;%s\\007\\033[2J\\033[H' \"$size\"; " ++
+                "i=0; while [ \"$i\" -lt 21 ]; do printf X; i=$((i + 1)); done; sleep 30",
+            .rows = rows,
+            .cols = cols,
+        },
+        .{},
+    );
+    defer terminal.deinit();
+    var visual = try VisualStorage.init(std.testing.allocator, rows, cols);
+    defer visual.deinit();
+
+    var complete = false;
+    var attempts: u8 = 0;
+    while (attempts < 100 and !complete) : (attempts += 1) {
+        terminal.consumeWake();
+        const capture = try visual.capture(terminal);
+        const presentation = terminal.hostPresentation();
+        complete = if (presentation.titleBytes()) |title|
+            std.mem.eql(u8, title, "3 7")
+        else
+            false;
+        if (complete) for (visual.cells) |cell| {
+            if (cell.codepoint != 'X') {
+                complete = false;
+                break;
+            }
+        };
+        if (!capture.changed and terminal.state() != .running and !complete) break;
+        if (!complete) try (std.Io.Clock.Duration{
+            .raw = .fromMilliseconds(5),
+            .clock = .awake,
+        }).sleep(std.testing.io);
+    }
+    try std.testing.expect(complete);
 }
 
 test "visual storage applies placement churn without recopying retained image source" {
