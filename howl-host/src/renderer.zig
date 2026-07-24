@@ -643,91 +643,6 @@ const BackgroundSpan = struct {
     color: terminal.Rgb,
 };
 
-const BackgroundSpans = struct {
-    work: Submission,
-    row: u16,
-    metrics: text.CellMetrics,
-    logical_cols: u16,
-    at: usize = 0,
-
-    fn next(self: *BackgroundSpans) error{InvalidSubmission}!?BackgroundSpan {
-        while (self.at < self.segmentCount()) {
-            var span = try self.segment(self.at);
-            self.at += 1;
-            if (std.meta.eql(span.color, clear_color)) continue;
-            while (self.at < self.segmentCount()) {
-                const following = try self.segment(self.at);
-                const right = @as(i64, span.rect.x) + span.rect.width;
-                if (!std.meta.eql(span.color, following.color) or right != following.rect.x) break;
-                span.rect.width = std.math.add(
-                    u32,
-                    span.rect.width,
-                    following.rect.width,
-                ) catch return error.InvalidSubmission;
-                self.at += 1;
-            }
-            return span;
-        }
-        return null;
-    }
-
-    fn segmentCount(self: BackgroundSpans) usize {
-        return @as(usize, self.logical_cols) + @intFromBool(self.tailWidth() != 0);
-    }
-
-    fn segment(self: BackgroundSpans, index: usize) error{InvalidSubmission}!BackgroundSpan {
-        if (index < self.logical_cols) {
-            const col: u16 = @intCast(index);
-            const cell = self.work.cells[@as(usize, self.row) * self.work.cols + col];
-            var rect = planCell(
-                self.row,
-                col,
-                self.work.row_geometry[self.row],
-                self.metrics,
-            ) orelse return error.InvalidSubmission;
-            const x: u32 = std.math.cast(u32, rect.x) orelse return error.InvalidSubmission;
-            if (x >= self.rowWidth()) return error.InvalidSubmission;
-            rect.width = @min(rect.width, self.rowWidth() - x);
-            return .{
-                .rect = rect,
-                .color = cellFill(
-                    cell,
-                    self.work.cursor,
-                    cursorBlockCovers(self.work, self.row, col),
-                ),
-            };
-        }
-        std.debug.assert(index == self.logical_cols and self.tailWidth() != 0);
-        const covered = self.coveredWidth();
-        const cell = self.work.cells[@as(usize, self.row) * self.work.cols + self.logical_cols];
-        return .{
-            .rect = .{
-                .x = std.math.cast(i32, covered) orelse return error.InvalidSubmission,
-                .y = std.math.cast(
-                    i32,
-                    @as(u64, self.row) * self.metrics.height_px,
-                ) orelse return error.InvalidSubmission,
-                .width = self.tailWidth(),
-                .height = self.metrics.height_px,
-            },
-            .color = cell.background,
-        };
-    }
-
-    fn coveredWidth(self: BackgroundSpans) u32 {
-        return @as(u32, self.logical_cols) * self.metrics.width_px *
-            lineScale(self.work.row_geometry[self.row]).x;
-    }
-
-    fn tailWidth(self: BackgroundSpans) u32 {
-        return self.rowWidth() -| self.coveredWidth();
-    }
-
-    fn rowWidth(self: BackgroundSpans) u32 {
-        return @as(u32, self.work.cols) * self.metrics.width_px;
-    }
-};
-
 const Scale = struct {
     x: u2,
     y: u2,
@@ -1331,16 +1246,10 @@ const Device = struct {
     }
 
     fn drawRowBackground(self: *Device, work: Submission, row: u16) Error!void {
-        const geometry = work.row_geometry[row];
-        const logical_cols = rowColumns(geometry, work.cols);
-        measure.State.visitRow(self.measurement, logical_cols);
-        var spans = BackgroundSpans{
-            .work = work,
-            .row = row,
-            .metrics = self.metrics,
-            .logical_cols = logical_cols,
-        };
-        while (try spans.next()) |span| {
+        var storage: [max_dimension + 1]BackgroundSpan = undefined;
+        const spans = try planBackgroundRow(&storage, work, row, self.metrics);
+        measure.State.visitRow(self.measurement, rowColumns(work.row_geometry[row], work.cols));
+        for (spans) |span| {
             try self.quad(
                 .background,
                 span.rect.x,
@@ -2561,6 +2470,129 @@ fn rowColumns(geometry: terminal.LineGeometry, cols: u16) u16 {
     };
 }
 
+fn planBackgroundRow(
+    output: []BackgroundSpan,
+    work: Submission,
+    row: u16,
+    metrics: text.CellMetrics,
+) error{InvalidSubmission}![]const BackgroundSpan {
+    if (row >= work.rows or metrics.width_px == 0 or metrics.height_px == 0)
+        return error.InvalidSubmission;
+    const geometry = work.row_geometry[row];
+    const logical_cols = rowColumns(geometry, work.cols);
+    const scale = lineScale(geometry);
+    const row_width = std.math.mul(u32, work.cols, metrics.width_px) catch
+        return error.InvalidSubmission;
+    const cell_width = std.math.mul(u32, metrics.width_px, scale.x) catch
+        return error.InvalidSubmission;
+    const nominal_covered_width = std.math.mul(u32, logical_cols, cell_width) catch
+        return error.InvalidSubmission;
+    const covered_width = @min(row_width, nominal_covered_width);
+    const tail_width = row_width - covered_width;
+    if (output.len < @as(usize, logical_cols) + @intFromBool(tail_width != 0))
+        return error.InvalidSubmission;
+    const row_y = std.math.mul(u64, row, metrics.height_px) catch
+        return error.InvalidSubmission;
+    if (row_y > std.math.maxInt(i32)) return error.InvalidSubmission;
+    const row_start = std.math.mul(usize, row, work.cols) catch
+        return error.InvalidSubmission;
+    if (row_start > work.cells.len or logical_cols > work.cells.len - row_start)
+        return error.InvalidSubmission;
+
+    var count: usize = 0;
+    var pending: ?BackgroundSpan = null;
+    var x: u32 = 0;
+    for (work.cells[row_start..][0..logical_cols], 0..) |cell, index| {
+        const col: u16 = @intCast(index);
+        const width = @min(cell_width, row_width - x);
+        const color = cellFill(
+            cell,
+            work.cursor,
+            cursorBlockCovers(work, row, col),
+        );
+        if (std.meta.eql(color, clear_color)) {
+            if (pending) |span| {
+                output[count] = span;
+                count += 1;
+                pending = null;
+            }
+        } else if (pending) |*span| {
+            const right = std.math.add(i64, span.rect.x, span.rect.width) catch
+                return error.InvalidSubmission;
+            if (std.meta.eql(span.color, color) and right == @as(i64, x)) {
+                span.rect.width = std.math.add(u32, span.rect.width, width) catch
+                    return error.InvalidSubmission;
+            } else {
+                output[count] = span.*;
+                count += 1;
+                pending = .{
+                    .rect = .{
+                        .x = std.math.cast(i32, x) orelse return error.InvalidSubmission,
+                        .y = @intCast(row_y),
+                        .width = width,
+                        .height = metrics.height_px,
+                    },
+                    .color = color,
+                };
+            }
+        } else {
+            pending = .{
+                .rect = .{
+                    .x = std.math.cast(i32, x) orelse return error.InvalidSubmission,
+                    .y = @intCast(row_y),
+                    .width = width,
+                    .height = metrics.height_px,
+                },
+                .color = color,
+            };
+        }
+        x = std.math.add(u32, x, width) catch return error.InvalidSubmission;
+    }
+    std.debug.assert(x == covered_width);
+
+    if (tail_width != 0) {
+        if (row_start + logical_cols >= work.cells.len) return error.InvalidSubmission;
+        const color = work.cells[row_start + logical_cols].background;
+        if (!std.meta.eql(color, clear_color)) {
+            if (pending) |*span| {
+                const right = std.math.add(i64, span.rect.x, span.rect.width) catch
+                    return error.InvalidSubmission;
+                if (std.meta.eql(span.color, color) and right == @as(i64, covered_width)) {
+                    span.rect.width = std.math.add(u32, span.rect.width, tail_width) catch
+                        return error.InvalidSubmission;
+                } else {
+                    output[count] = span.*;
+                    count += 1;
+                    pending = .{
+                        .rect = .{
+                            .x = @intCast(covered_width),
+                            .y = @intCast(row_y),
+                            .width = tail_width,
+                            .height = metrics.height_px,
+                        },
+                        .color = color,
+                    };
+                }
+            } else {
+                pending = .{
+                    .rect = .{
+                        .x = @intCast(covered_width),
+                        .y = @intCast(row_y),
+                        .width = tail_width,
+                        .height = metrics.height_px,
+                    },
+                    .color = color,
+                };
+            }
+        }
+    }
+    if (pending) |span| {
+        output[count] = span;
+        count += 1;
+    }
+    return output[0..count];
+}
+
 fn planCell(
     row: u16,
     col: u16,
@@ -3633,20 +3665,21 @@ test "draw colors consume projected cell and cursor facts exactly" {
     try std.testing.expectEqual(cursor.text_color, glyphColor(cell, cursor, true));
 }
 
-test "background spans elide clear cells and retain exact alternating fills" {
+test "direct background row elides clear cells and retains alternating fills" {
     const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
     var cells = [_]terminal.Cell{
         testCell(' '), testCell(' '), testCell(' '), testCell(' '), testCell(' '),
     };
     for (&cells) |*cell| cell.background = clear_color;
     const geometry = [_]terminal.LineGeometry{.single_width};
-    var spans = BackgroundSpans{
-        .work = testSubmission(&cells, &geometry, testCursor()),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = cells.len,
-    };
-    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+    var storage: [max_dimension + 1]BackgroundSpan = undefined;
+    const clear = try planBackgroundRow(
+        &storage,
+        testSubmission(&cells, &geometry, testCursor()),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 0), clear.len);
 
     const orange = terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
     const green = terminal.Rgb{ .r = 0x98, .g = 0x97, .b = 0x1a };
@@ -3654,22 +3687,33 @@ test "background spans elide clear cells and retain exact alternating fills" {
     cells[1].background = green;
     cells[2].background = orange;
     cells[3].background = green;
-    spans = .{
-        .work = testSubmission(&cells, &geometry, testCursor()),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = cells.len,
-    };
+    const spans = try planBackgroundRow(
+        &storage,
+        testSubmission(&cells, &geometry, testCursor()),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 4), spans.len);
     for (0..4) |index| {
-        const span = (try spans.next()).?;
+        const span = spans[index];
         try std.testing.expectEqual(@as(i32, @intCast(index * 9)), span.rect.x);
         try std.testing.expectEqual(@as(u32, 9), span.rect.width);
         try std.testing.expectEqual(if (index % 2 == 0) orange else green, span.color);
     }
-    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+    try std.testing.expectEqual(
+        quadVertices(0, 0, 9, 15, .{ .width = 45, .height = 15 }, orange),
+        quadVertices(
+            spans[0].rect.x,
+            spans[0].rect.y,
+            spans[0].rect.width,
+            spans[0].rect.height,
+            .{ .width = 45, .height = 15 },
+            spans[0].color,
+        ),
+    );
 }
 
-test "background spans merge adjacent resolved colors and preserve cursor clusters" {
+test "direct background row merges colors and preserves cursor clusters" {
     const metrics = text.CellMetrics{ .width_px = 7, .height_px = 13, .baseline_px = 10 };
     const orange = terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
     const blue = terminal.Rgb{ .r = 0x45, .g = 0x85, .b = 0x88 };
@@ -3685,25 +3729,27 @@ test "background spans merge adjacent resolved colors and preserve cursor cluste
     const geometry = [_]terminal.LineGeometry{.single_width};
     var cursor = testCursor();
     cursor.visible = false;
-    var spans = BackgroundSpans{
-        .work = testSubmission(&cells, &geometry, cursor),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = cells.len,
-    };
+    var storage: [max_dimension + 1]BackgroundSpan = undefined;
+    var spans = try planBackgroundRow(
+        &storage,
+        testSubmission(&cells, &geometry, cursor),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 2), spans.len);
     try std.testing.expectEqual(
         BackgroundSpan{
             .rect = .{ .x = 0, .y = 0, .width = 21, .height = 13 },
             .color = orange,
         },
-        (try spans.next()).?,
+        spans[0],
     );
     try std.testing.expectEqual(
         BackgroundSpan{
             .rect = .{ .x = 21, .y = 0, .width = 14, .height = 13 },
             .color = blue,
         },
-        (try spans.next()).?,
+        spans[1],
     );
 
     for (&cells) |*cell| cell.background = clear_color;
@@ -3714,17 +3760,18 @@ test "background spans merge adjacent resolved colors and preserve cursor cluste
     cursor.row = 0;
     cursor.col = 0;
     cursor.color = orange;
-    spans = .{
-        .work = testSubmission(&cells, &geometry, cursor),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = cells.len,
-    };
-    try std.testing.expectEqual(@as(u32, 14), (try spans.next()).?.rect.width);
-    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
+    spans = try planBackgroundRow(
+        &storage,
+        testSubmission(&cells, &geometry, cursor),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 1), spans.len);
+    try std.testing.expectEqual(@as(u32, 14), spans[0].rect.width);
+    try std.testing.expectEqual(orange, spans[0].color);
 }
 
-test "background spans preserve resolved selection reverse differences and DEC odd tails" {
+test "direct background row preserves resolved colors DEC scale and odd tails" {
     const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
     const selected = terminal.Rgb{ .r = 0xee, .g = 0xee, .b = 0xee };
     const reversed = terminal.Rgb{ .r = 0xeb, .g = 0xdb, .b = 0xb2 };
@@ -3739,15 +3786,17 @@ test "background spans preserve resolved selection reverse differences and DEC o
     const geometry = [_]terminal.LineGeometry{.double_width};
     var cursor = testCursor();
     cursor.visible = false;
-    var spans = BackgroundSpans{
-        .work = testSubmission(&cells, &geometry, cursor),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = rowColumns(geometry[0], cells.len),
-    };
-    const first = (try spans.next()).?;
-    const second = (try spans.next()).?;
-    const tail = (try spans.next()).?;
+    var storage: [max_dimension + 1]BackgroundSpan = undefined;
+    var spans = try planBackgroundRow(
+        &storage,
+        testSubmission(&cells, &geometry, cursor),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 3), spans.len);
+    const first = spans[0];
+    const second = spans[1];
+    const tail = spans[2];
     try std.testing.expectEqual(PixelRect{ .x = 0, .y = 0, .width = 18, .height = 15 }, first.rect);
     try std.testing.expectEqual(selected, first.color);
     try std.testing.expectEqual(PixelRect{ .x = 18, .y = 0, .width = 18, .height = 15 }, second.rect);
@@ -3755,18 +3804,57 @@ test "background spans preserve resolved selection reverse differences and DEC o
     try std.testing.expectEqual(PixelRect{ .x = 36, .y = 0, .width = 9, .height = 15 }, tail.rect);
     try std.testing.expectEqual(selected, tail.color);
     try std.testing.expectEqual(@as(i64, 45), @as(i64, tail.rect.x) + tail.rect.width);
-    try std.testing.expectEqual(@as(?BackgroundSpan, null), try spans.next());
 
     var one = [_]terminal.Cell{testCell(' ')};
     one[0].background = selected;
     const one_geometry = [_]terminal.LineGeometry{.double_height_top};
-    spans = .{
-        .work = testSubmission(&one, &one_geometry, cursor),
-        .row = 0,
-        .metrics = metrics,
-        .logical_cols = rowColumns(one_geometry[0], one.len),
-    };
-    try std.testing.expectEqual(@as(u32, 9), (try spans.next()).?.rect.width);
+    spans = try planBackgroundRow(
+        &storage,
+        testSubmission(&one, &one_geometry, cursor),
+        0,
+        metrics,
+    );
+    try std.testing.expectEqual(@as(usize, 1), spans.len);
+    try std.testing.expectEqual(PixelRect{ .x = 0, .y = 0, .width = 9, .height = 15 }, spans[0].rect);
+}
+
+test "direct background row retains row origin partial edge and rejects hostile facts" {
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const orange = terminal.Rgb{ .r = 0xd6, .g = 0x5d, .b = 0x0e };
+    var cells: [10]terminal.Cell = @splat(testCell(' '));
+    for (&cells) |*cell| cell.background = clear_color;
+    cells[7].background = orange;
+    cells[8].background = orange;
+    const geometry = [_]terminal.LineGeometry{ .single_width, .double_height_bottom };
+    const work = testSubmission(&cells, &geometry, testCursor());
+    var storage: [max_dimension + 1]BackgroundSpan = undefined;
+    const spans = try planBackgroundRow(&storage, work, 1, metrics);
+    try std.testing.expectEqual(@as(usize, 1), spans.len);
+    try std.testing.expectEqual(
+        BackgroundSpan{
+            .rect = .{ .x = 36, .y = 15, .width = 9, .height = 15 },
+            .color = orange,
+        },
+        spans[0],
+    );
+    try std.testing.expectError(error.InvalidSubmission, planBackgroundRow(
+        storage[0..0],
+        work,
+        1,
+        metrics,
+    ));
+    try std.testing.expectError(error.InvalidSubmission, planBackgroundRow(
+        &storage,
+        work,
+        2,
+        metrics,
+    ));
+    try std.testing.expectError(error.InvalidSubmission, planBackgroundRow(
+        &storage,
+        work,
+        1,
+        .{ .width_px = 0, .height_px = 15, .baseline_px = 11 },
+    ));
 }
 
 test "decoration metrics use the exact projected font identity" {
