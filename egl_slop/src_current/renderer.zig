@@ -6,11 +6,14 @@
 //! boundary. New submissions replace only pending work.
 
 const std = @import("std");
+const control = @import("howl_control");
 const render = @import("howl_render");
 const terminal = render.terminal;
 const text = render.terminal_text;
 const viewport = @import("viewport.zig");
 const measure = @import("measure.zig");
+const screen_module = @import("screen.zig");
+const terminal_pane = @import("terminal_pane.zig");
 
 const c = @import("renderer_c");
 
@@ -64,6 +67,10 @@ pub const Init = struct {
     cols: u16,
     /// Borrows exact font configurations through synchronous startup only.
     fonts: []const text.FontConfig,
+    /// Supplies one Control terminal launch configuration retained by Runtime.
+    terminal: control.Config = .{},
+    /// Supplies the initial nonempty tab name copied by Screen.
+    tab_name: []const u8 = "one",
     measurement: measure.Reference,
 };
 
@@ -101,6 +108,7 @@ pub const Submission = struct {
 
 /// Reports exact construction, admission, preparation, or device failure.
 pub const Error = std.mem.Allocator.Error || std.Thread.SpawnError ||
+    terminal_pane.Error || control.ResizeError ||
     render.text.ShapeBufferInitError || text.FontMapInitError ||
     text.PrepareError || text.RasterError || error{
     InvalidSubmission,
@@ -118,6 +126,253 @@ pub const Error = std.mem.Allocator.Error || std.Thread.SpawnError ||
     Swap,
     Signal,
     Cleanup,
+    InvalidName,
+    InvalidSize,
+    StaleTab,
+    StalePane,
+    LastTab,
+    LastPane,
+    TabLimit,
+    PaneLimit,
+    GeometryLimit,
+    IdExhausted,
+};
+
+const RuntimeCommand = union(enum) {
+    resize: struct {
+        grid: terminal_pane.GridSize,
+        pixels: PixelSize,
+    },
+    create_tab: []const u8,
+    split: struct {
+        tab: terminal_pane.TabId,
+        pane: terminal_pane.PaneId,
+        axis: terminal_pane.SplitAxis,
+    },
+    close_pane: struct {
+        tab: terminal_pane.TabId,
+        pane: terminal_pane.PaneId,
+    },
+    close_tab: terminal_pane.TabId,
+};
+
+/// Routes focused runtime facts and consequences without exposing Control ownership.
+pub const RuntimeAccess = struct {
+    owner: *Renderer,
+
+    fn terminal(self: RuntimeAccess) *control.Terminal {
+        return self.owner.registry.?.focused().terminal;
+    }
+
+    pub fn send(
+        self: RuntimeAccess,
+        events: []const control.BatchEvent,
+    ) control.InputError!control.SendResult {
+        return self.terminal().send(events);
+    }
+
+    pub fn select(self: RuntimeAccess, operation: control.SelectionOperation) void {
+        self.terminal().select(operation);
+    }
+
+    pub fn viewportFacts(self: RuntimeAccess) control.ViewportFacts {
+        return self.terminal().viewportFacts();
+    }
+
+    pub fn setViewport(self: RuntimeAccess, offset: u32) control.ViewportFacts {
+        return self.terminal().setViewport(offset);
+    }
+
+    pub fn hostPresentation(self: RuntimeAccess) control.HostPresentation {
+        return self.terminal().hostPresentation();
+    }
+
+    pub fn acknowledgeNotification(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleNotification}!void {
+        return self.terminal().acknowledgeNotification(generation);
+    }
+
+    pub fn clipboardHead(self: RuntimeAccess) ?control.ClipboardHead {
+        return self.terminal().clipboardHead();
+    }
+
+    pub fn copyClipboardSet(
+        self: RuntimeAccess,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) control.ClipboardSetError![]u8 {
+        return self.terminal().copyClipboardSet(generation, allocator, max_bytes);
+    }
+
+    pub fn acknowledgeClipboardSet(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{ StaleClipboardRequest, ClipboardSetMismatch }!void {
+        return self.terminal().acknowledgeClipboardSet(generation);
+    }
+
+    pub fn replyClipboard(
+        self: RuntimeAccess,
+        generation: u64,
+        bytes: []const u8,
+    ) control.ClipboardReplyError!control.ClipboardReplyTransfer {
+        return self.terminal().replyClipboard(generation, bytes);
+    }
+
+    pub fn copyKittyClipboardPacket(
+        self: RuntimeAccess,
+        generation: u64,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) control.KittyClipboardPacketError![]u8 {
+        return self.terminal().copyKittyClipboardPacket(generation, allocator, max_bytes);
+    }
+
+    pub fn replyKittyClipboard(
+        self: RuntimeAccess,
+        generation: u64,
+        reply: []const u8,
+    ) control.KittyClipboardReplyError!control.ClipboardReplyTransfer {
+        return self.terminal().replyKittyClipboard(generation, reply);
+    }
+
+    pub fn copySelection(
+        self: RuntimeAccess,
+        allocator: std.mem.Allocator,
+        max_bytes: usize,
+    ) control.SelectionError![]const u8 {
+        return self.terminal().copySelection(allocator, max_bytes);
+    }
+
+    pub fn pasteEvents(self: RuntimeAccess) bool {
+        return self.terminal().pasteEvents();
+    }
+
+    pub fn windowRequestHead(self: RuntimeAccess) ?control.WindowHead {
+        return self.terminal().windowRequestHead();
+    }
+
+    pub fn acknowledgeWindowRequest(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{ StaleWindowRequest, WindowReplyRequired }!void {
+        return self.terminal().acknowledgeWindowRequest(generation);
+    }
+
+    pub fn replyWindowRequest(
+        self: RuntimeAccess,
+        generation: u64,
+        reply: control.WindowReply,
+    ) control.WindowReplyError!control.WindowReplyTransfer {
+        return self.terminal().replyWindowRequest(generation, reply);
+    }
+
+    pub fn colorPreferenceQueryHead(self: RuntimeAccess) ?u64 {
+        return self.terminal().colorPreferenceQueryHead();
+    }
+
+    pub fn replyColorPreferenceQuery(
+        self: RuntimeAccess,
+        generation: u64,
+        preference: control.ColorPreference,
+    ) control.ColorPreferenceReplyError!control.ColorPreferenceReplyTransfer {
+        return self.terminal().replyColorPreferenceQuery(generation, preference);
+    }
+
+    pub fn pointerShapeHead(self: RuntimeAccess) ?control.PointerShapeHead {
+        return self.terminal().pointerShapeHead();
+    }
+
+    pub fn pointerShapeResetGeneration(self: RuntimeAccess) u64 {
+        return self.terminal().pointerShapeResetGeneration();
+    }
+
+    pub fn acknowledgePointerShape(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StalePointerShape}!void {
+        return self.terminal().acknowledgePointerShape(generation);
+    }
+
+    pub fn replyPointerShape(
+        self: RuntimeAccess,
+        generation: u64,
+        payload: []const u8,
+    ) control.PointerShapeReplyError!control.PointerShapeReplyTransfer {
+        return self.terminal().replyPointerShape(generation, payload);
+    }
+
+    pub fn dragDropHead(self: RuntimeAccess) ?control.DragDropHead {
+        return self.terminal().dragDropHead();
+    }
+
+    pub fn acknowledgeDragDrop(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleDragDrop}!void {
+        return self.terminal().acknowledgeDragDrop(generation);
+    }
+
+    pub fn sendDragDrop(
+        self: RuntimeAccess,
+        event: control.DragDropEvent,
+    ) @TypeOf(@as(*control.Terminal, undefined).sendDragDrop(undefined)) {
+        return self.terminal().sendDragDrop(event);
+    }
+
+    pub fn fileTransferGeneration(self: RuntimeAccess) ?u64 {
+        return self.terminal().fileTransferGeneration();
+    }
+
+    pub fn acknowledgeFileTransfer(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleFileTransfer}!void {
+        return self.terminal().acknowledgeFileTransfer(generation);
+    }
+
+    pub fn mediaCopyGeneration(self: RuntimeAccess) ?u64 {
+        return self.terminal().mediaCopyGeneration();
+    }
+
+    pub fn acknowledgeMediaCopy(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleMediaCopy}!void {
+        return self.terminal().acknowledgeMediaCopy(generation);
+    }
+
+    pub fn dcsPayloadGeneration(self: RuntimeAccess) ?u64 {
+        return self.terminal().dcsPayloadGeneration();
+    }
+
+    pub fn acknowledgeDcsPayload(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleDcsPayload}!void {
+        return self.terminal().acknowledgeDcsPayload(generation);
+    }
+
+    pub fn stringPayloadGeneration(self: RuntimeAccess) ?u64 {
+        return self.terminal().stringPayloadGeneration();
+    }
+
+    pub fn acknowledgeStringPayload(
+        self: RuntimeAccess,
+        generation: u64,
+    ) error{StaleStringPayload}!void {
+        return self.terminal().acknowledgeStringPayload(generation);
+    }
+
+    pub fn advanceGraphics(
+        self: RuntimeAccess,
+        now_ms: u64,
+    ) @TypeOf(@as(*control.Terminal, undefined).advanceGraphics(0)) {
+        return self.terminal().advanceGraphics(now_ms);
+    }
 };
 
 const Snapshot = struct {
@@ -1913,6 +2168,8 @@ pub const Renderer = struct {
     thread: std.Thread,
     /// Signals coalesced draw completion or failure to the Wayland loop.
     signal_fd: c_int,
+    /// Wakes render ownership for commands, terminal progress, and shutdown.
+    work_fd: c_int,
     /// Borrows native startup values only until `start` returns.
     init_values: Init,
     /// Owns exactly two independently growable immutable snapshots.
@@ -1933,6 +2190,20 @@ pub const Renderer = struct {
     completed: u64 = 0,
     /// Copies immutable cell metrics established during startup.
     metrics_value: text.CellMetrics = undefined,
+    /// Render-thread-owned Screen and Control terminal registry.
+    registry: ?*terminal_pane.Registry = null,
+    /// Render-owned current Wayland surface extent used for presentation.
+    runtime_size: PixelSize,
+    /// Holds at most one synchronous typed Window-to-runtime command.
+    command: ?RuntimeCommand = null,
+    /// Retains the exact command failure until its caller resumes.
+    command_failure: ?Error = null,
+    /// Returns one command-created stable identity.
+    command_pane: ?terminal_pane.PaneId = null,
+    /// Returns one command-created tab and pane identity.
+    command_tab: ?screen_module.CreatedTab = null,
+    /// Returns one command mutation disposition.
+    command_changed: bool = false,
 
     /// Allocates two geometry-sized snapshots and starts the sole EGL/GLES owner.
     pub fn start(allocator: std.mem.Allocator, io: std.Io, values: Init) Error!*Renderer {
@@ -1942,6 +2213,9 @@ pub const Renderer = struct {
         const signal_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (signal_fd < 0) return error.Signal;
         errdefer closeSignal(signal_fd);
+        const work_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (work_fd < 0) return error.Signal;
+        errdefer closeSignal(work_fd);
         var first = try Snapshot.init(allocator, values.rows, values.cols);
         var first_owned = true;
         errdefer if (first_owned) first.deinit();
@@ -1953,6 +2227,8 @@ pub const Renderer = struct {
             .io = io,
             .thread = undefined,
             .signal_fd = signal_fd,
+            .work_fd = work_fd,
+            .runtime_size = values.size,
             .init_values = values,
             .slots = .{ first, second },
             .mailbox = .{
@@ -2004,7 +2280,7 @@ pub const Renderer = struct {
             coalesced,
         );
         self.submitted = submission.generation;
-        self.condition.signal(self.io);
+        signal(self.work_fd);
     }
 
     /// Returns the immutable cell metrics established during synchronous startup.
@@ -2026,20 +2302,90 @@ pub const Renderer = struct {
         return self.completed;
     }
 
+    /// Return the typed focused runtime boundary without exposing its terminal owner.
+    pub fn focusedRuntime(self: *Renderer) RuntimeAccess {
+        return .{ .owner = self };
+    }
+
+    /// Resize all terminal owners on the render thread transactionally.
+    pub fn resizeTerminals(
+        self: *Renderer,
+        grid: terminal_pane.GridSize,
+        pixels: PixelSize,
+    ) Error!bool {
+        try validateSize(pixels);
+        try self.runCommand(.{ .resize = .{ .grid = grid, .pixels = pixels } });
+        return self.command_changed;
+    }
+
+    /// Construct and publish one named tab on the render thread.
+    pub fn createTab(
+        self: *Renderer,
+        name: []const u8,
+    ) Error!screen_module.CreatedTab {
+        try self.runCommand(.{ .create_tab = name });
+        return self.command_tab.?;
+    }
+
+    /// Construct and publish one split terminal on the render thread.
+    pub fn splitPane(
+        self: *Renderer,
+        tab: terminal_pane.TabId,
+        pane: terminal_pane.PaneId,
+        axis: terminal_pane.SplitAxis,
+    ) Error!terminal_pane.PaneId {
+        try self.runCommand(.{ .split = .{ .tab = tab, .pane = pane, .axis = axis } });
+        return self.command_pane.?;
+    }
+
+    /// Close one pane on the render thread after survivor admission.
+    pub fn closePane(
+        self: *Renderer,
+        tab: terminal_pane.TabId,
+        pane: terminal_pane.PaneId,
+    ) Error!void {
+        try self.runCommand(.{ .close_pane = .{ .tab = tab, .pane = pane } });
+    }
+
+    /// Close one tab and retire its terminals in reverse order.
+    pub fn closeTab(self: *Renderer, tab: terminal_pane.TabId) Error!void {
+        try self.runCommand(.{ .close_tab = tab });
+    }
+
     /// Revokes submission, joins the thread, and releases every owner.
     pub fn deinit(self: *Renderer) Error!void {
         self.mutex.lockUncancelable(self.io);
         self.stopping = true;
-        self.condition.broadcast(self.io);
         self.mutex.unlock(self.io);
+        signal(self.work_fd);
         self.thread.join();
         const failure = self.failure;
         self.slots[1].deinit();
         self.slots[0].deinit();
         closeSignal(self.signal_fd);
+        closeSignal(self.work_fd);
         const allocator = self.allocator;
         allocator.destroy(self);
         if (failure) |cause| return cause;
+    }
+
+    fn runCommand(self: *Renderer, command: RuntimeCommand) Error!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        while (self.command != null and !self.stopping)
+            self.condition.waitUncancelable(self.io, &self.mutex);
+        if (self.failure) |failure| return failure;
+        if (self.stopping) return error.Stopping;
+        self.command_failure = null;
+        self.command_pane = null;
+        self.command_tab = null;
+        self.command_changed = false;
+        self.command = command;
+        signal(self.work_fd);
+        while (self.command != null and self.failure == null)
+            self.condition.waitUncancelable(self.io, &self.mutex);
+        if (self.failure) |failure| return failure;
+        if (self.command_failure) |failure| return failure;
     }
 
     fn threadMain(self: *Renderer) void {
@@ -2051,6 +2397,38 @@ pub const Renderer = struct {
             self.mutex.unlock(self.io);
             return;
         };
+        const registry = self.allocator.create(terminal_pane.Registry) catch |failure| {
+            device.deinit() catch @panic("GPU cleanup failed after terminal registry allocation failure");
+            self.mutex.lockUncancelable(self.io);
+            self.startup_failure = failure;
+            self.started = true;
+            self.condition.broadcast(self.io);
+            self.mutex.unlock(self.io);
+            return;
+        };
+        var terminal_config = self.init_values.terminal;
+        terminal_config.cell_pixels = .{
+            .width = device.metrics.width_px,
+            .height = device.metrics.height_px,
+        };
+        registry.* = terminal_pane.Registry.init(
+            self.allocator,
+            self.io,
+            self.init_values.tab_name,
+            .{ .cols = self.init_values.cols, .rows = self.init_values.rows },
+            terminal_config,
+            self.work_fd,
+        ) catch |failure| {
+            self.allocator.destroy(registry);
+            device.deinit() catch @panic("GPU cleanup failed after terminal registry startup failure");
+            self.mutex.lockUncancelable(self.io);
+            self.startup_failure = failure;
+            self.started = true;
+            self.condition.broadcast(self.io);
+            self.mutex.unlock(self.io);
+            return;
+        };
+        self.registry = registry;
         self.mutex.lockUncancelable(self.io);
         self.metrics_value = device.metrics;
         self.started = true;
@@ -2058,14 +2436,120 @@ pub const Renderer = struct {
         self.mutex.unlock(self.io);
 
         while (true) {
+            var descriptor = c.struct_pollfd{
+                .fd = self.work_fd,
+                .events = c.POLLIN,
+                .revents = 0,
+            };
+            while (c.poll(&descriptor, 1, -1) < 0) {
+                if (std.posix.errno(-1) != .INTR) {
+                    self.mutex.lockUncancelable(self.io);
+                    self.failure = error.Signal;
+                    self.mutex.unlock(self.io);
+                    signal(self.signal_fd);
+                    break;
+                }
+            }
+            drainSignal(self.work_fd) catch {
+                self.mutex.lockUncancelable(self.io);
+                self.failure = error.Signal;
+                self.mutex.unlock(self.io);
+                signal(self.signal_fd);
+                break;
+            };
+            var changed: [64]terminal_pane.PaneId = undefined;
+            const changed_panes = registry.consumeWakes(&changed) catch |failure| {
+                self.mutex.lockUncancelable(self.io);
+                self.failure = failure;
+                self.mutex.unlock(self.io);
+                signal(self.signal_fd);
+                break;
+            };
+            std.debug.assert(changed_panes.len <= changed.len);
+            var focused_changed = false;
+            const focused_id = registry.screen.focusedPane();
+            for (changed_panes) |id| {
+                if (id == focused_id) {
+                    focused_changed = true;
+                    break;
+                }
+            }
+            if (focused_changed) self.admitFocused(registry) catch |failure| {
+                self.mutex.lockUncancelable(self.io);
+                self.failure = failure;
+                self.mutex.unlock(self.io);
+                signal(self.signal_fd);
+                break;
+            };
             self.mutex.lockUncancelable(self.io);
-            while (self.mailbox.pending == null and !self.stopping)
-                self.condition.waitUncancelable(self.io, &self.mutex);
             if (self.stopping) {
                 self.mutex.unlock(self.io);
                 break;
             }
-            const slot = self.mailbox.take().?;
+            if (self.command) |command| {
+                self.mutex.unlock(self.io);
+                var command_failure: ?Error = null;
+                var command_pane: ?terminal_pane.PaneId = null;
+                var command_tab: ?screen_module.CreatedTab = null;
+                var command_changed = false;
+                var command_draw = false;
+                switch (command) {
+                    .resize => |values| {
+                        command_changed = registry.resize(values.grid) catch |failure| failed: {
+                            command_failure = failure;
+                            break :failed false;
+                        };
+                        if (command_failure == null) {
+                            self.runtime_size = values.pixels;
+                            command_draw = true;
+                        }
+                    },
+                    .create_tab => |name| {
+                        command_tab = registry.createTab(name) catch |failure| failed: {
+                            command_failure = failure;
+                            break :failed null;
+                        };
+                        command_draw = command_failure == null;
+                    },
+                    .split => |values| {
+                        command_pane = registry.splitPane(
+                            values.tab,
+                            values.pane,
+                            values.axis,
+                        ) catch |failure| failed: {
+                            command_failure = failure;
+                            break :failed null;
+                        };
+                        command_draw = command_failure == null;
+                    },
+                    .close_pane => |values| {
+                        registry.closePane(values.tab, values.pane) catch |failure| {
+                            command_failure = failure;
+                        };
+                        command_draw = command_failure == null;
+                    },
+                    .close_tab => |tab| {
+                        registry.closeTab(tab) catch |failure| {
+                            command_failure = failure;
+                        };
+                        command_draw = command_failure == null;
+                    },
+                }
+                if (command_draw) self.admitFocused(registry) catch |failure| {
+                    command_failure = failure;
+                };
+                self.mutex.lockUncancelable(self.io);
+                self.command_failure = command_failure;
+                self.command_pane = command_pane;
+                self.command_tab = command_tab;
+                self.command_changed = command_changed;
+                self.command = null;
+                self.condition.broadcast(self.io);
+            }
+            const slot = self.mailbox.take() orelse {
+                self.mutex.unlock(self.io);
+                continue;
+            };
             self.mutex.unlock(self.io);
             measure.State.take(
                 self.init_values.measurement,
@@ -2088,6 +2572,9 @@ pub const Renderer = struct {
             self.mutex.unlock(self.io);
             signal(self.signal_fd);
         }
+        registry.deinit();
+        self.allocator.destroy(registry);
+        self.registry = null;
         device.deinit() catch |failure| {
             self.mutex.lockUncancelable(self.io);
             if (self.failure) |prior| {
@@ -2099,6 +2586,30 @@ pub const Renderer = struct {
             self.mutex.unlock(self.io);
             signal(self.signal_fd);
         };
+    }
+
+    fn admitFocused(
+        self: *Renderer,
+        registry: *terminal_pane.Registry,
+    ) (std.mem.Allocator.Error || error{ InvalidSubmission, StaleGeneration })!void {
+        const pane = registry.focused();
+        const baseline = pane.visual.baseline orelse
+            @panic("captured focused visual has no baseline");
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const generation = self.submitted + 1;
+        const copied = try self.mailbox.write(.{
+            .generation = generation,
+            .rows = pane.visual.rows,
+            .cols = pane.visual.cols,
+            .cells = pane.visual.cells,
+            .row_geometry = pane.visual.geometry,
+            .row_versions = pane.visual.versions,
+            .cursor = baseline.cursor,
+            .size = self.runtime_size,
+        }, measure.now(self.io));
+        std.debug.assert(copied.rows <= pane.visual.rows);
+        self.submitted = generation;
     }
 };
 

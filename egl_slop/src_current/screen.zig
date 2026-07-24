@@ -116,6 +116,18 @@ pub const Screen = struct {
         return self.tabs[self.active_index].tab.tiled_panes.focused();
     }
 
+    /// Return the next PaneId reserved for construction before publication.
+    pub fn candidatePaneId(self: *const Screen) error{IdExhausted}!PaneId {
+        if (self.next_pane == 0 or self.next_pane == std.math.maxInt(u64)) return error.IdExhausted;
+        return paneId(self.next_pane);
+    }
+
+    /// Return the next TabId reserved for construction before publication.
+    pub fn candidateTabId(self: *const Screen) error{IdExhausted}!TabId {
+        if (self.next_tab == 0 or self.next_tab == std.math.maxInt(u64)) return error.IdExhausted;
+        return tabId(self.next_tab);
+    }
+
     /// Write current stable tab order into caller-owned fixed storage.
     pub fn tabOrder(self: *const Screen, output: *[tab_limit]TabId) []const TabId {
         for (self.tabs[0..self.tab_count], output[0..self.tab_count]) |entry, *destination| {
