@@ -1,0 +1,392 @@
+marathon:
+  name: host_multiplexing
+  status: active
+  approval: operator_directed
+  implementation_authorized: true
+  active_scratch: scratch_host_multiplexing.yml
+
+objective: >-
+  Build a direct, bounded, first-party terminal multiplexer on top of the optimized howl-host/src_current code.
+  Preserve src_latest as a compile-time-selectable comparison and use src_deleted only as historical evidence.
+
+baseline:
+  repository:
+    commit: 36541c1464cb0f56328b0c1277982f093d627a10
+    subject: restart host
+  implementation:
+    path: howl-host/src_current
+    role: sole tree changed for multiplexing
+  comparison:
+    path: howl-host/src_latest
+    role: unchanged optimized single-terminal compile-time selection
+  history:
+    path: howl-host/src_deleted
+    provenance: byte-exact dc6c00f^ howl-window source
+    role: >-
+      implementation experience: behavior, algorithms, state transitions, geometry, cleanup order, edge cases,
+      failure evidence, and proof scenarios; old signatures, ownership boundaries, and vocabulary carry no authority
+  regression: >-
+    The current host owns one terminal end to end. Prior working behavior included tabs, tiled terminal panes,
+    directional focus, divider resizing, a tab bar, hidden live terminals, and shared rendering. Those capabilities are
+    absent from the current executable and are being rescued from outright deletion.
+  capability_reset_record: >-
+    marathon_capability_reset.yml records the intervention that produced this regression. It is retained as evidence
+    of the mistake and is neither operator acceptance of the single-terminal result nor a gate on this rescue.
+
+reference_evidence:
+  zellij_root: /home/home/personal/projects/dev_references/terminals/zellij
+  vocabulary:
+    screen:
+      source: zellij-server/src/screen.rs
+      symbol: Screen
+      facts:
+        - owns ordered tabs and active-tab identity
+        - routes pane-addressed PTY bytes and interaction instructions
+        - debounces render requests before rendering client-visible state
+    tab:
+      source: zellij-server/src/tab/mod.rs
+      symbol: Tab
+      facts:
+        - owns tiled panes, active pane, viewport/display geometry, and tab-local presentation state
+        - routes PTY bytes by pane identity
+        - composes tiled pane contents and cursor facts
+    tiled_panes:
+      source: zellij-server/src/panes/tiled_panes/mod.rs
+      symbol: TiledPanes
+      facts:
+        - owns pane geometry, focus, split insertion, directional movement, and resize
+        - stores panes by stable PaneId and derives adjacency from concrete rectangles
+        - renders only admitted visible pane geometry
+    terminal_pane:
+      source: zellij-server/src/panes/terminal_pane.rs
+      symbol: TerminalPane
+      facts:
+        - is the pane-local terminal state and presentation boundary
+        - receives bytes by terminal identity
+    active_panes:
+      source: zellij-server/src/panes/active_panes.rs
+      symbol: ActivePanes
+      facts:
+        - focus identity is explicit and separate from pane storage
+        - focus changes emit terminal focus transitions through the terminal owner
+    render_debounce:
+      source: zellij-server/src/screen.rs
+      symbols:
+        - Screen.render
+        - Screen.render_to_clients
+      fact: mutation and rendering are distinct; render requests are bounded and coalesced
+    tab_bar:
+      source: default-plugins/tab-bar/src
+      symbols:
+        - main.rs
+        - tab.rs
+        - line.rs
+      facts:
+        - tab order, active state, names, and activity are deliberate user-visible multiplexing state
+        - the bar occupies layout space rather than being incidental text over terminal contents
+    pane_boundaries:
+      source: zellij-server/src/ui/pane_boundaries_frame.rs
+      symbol: PaneFrame
+      facts:
+        - focused identity and pane edges are explicit presentation facts
+        - pane content geometry accounts for owned boundary space
+  corrected_noun_fact: >-
+    Product source has no Workspace owner. Repository Cargo workspace hits and the package marketing description do
+    not establish a multiplexing state-machine noun.
+  lesson_boundary: >-
+    Zellij supplies recognizable ownership, lifecycle, focus, geometry, and rendering behavior. Howl retains its own
+    direct Zig implementation, bounded storage, one local Wayland client, Control terminals, and GLES renderer.
+  deleted_source_boundary: >-
+    src_deleted may donate proven implementation substance when it fits the settled Howl ownership model. Copying and
+    hardening that substance is preferred to relearning solved behavior. Its public and private signatures, aggregate
+    shapes, module boundaries, and nouns are historical accidents and must be derived again at the current ownership
+    boundary rather than preserved for compatibility.
+
+settled_howl_ownership:
+  vt: terminal semantics, retained history, dirty facts, input encoding, replies, graphics, and consequences
+  pty: Linux PTY transport and child process-group lifecycle
+  control: one independently addressable PTY+VT composition per terminal pane
+  render: backend-neutral terminal visual projection and text preparation
+  screen: ordered tabs, active tab, stable pane identities, and host-level multiplexing policy
+  tab: tiled terminal panes, active pane, name, geometry, and tab-local visible state
+  tiled_panes: concrete pane rectangles, split insertion, resize, adjacency, and directional focus
+  terminal_pane: >-
+    one Control Terminal plus wake identity, retained projected visual, viewport intent, selection presentation,
+    consequence cursors, availability, and renderer admission identity
+  window: Wayland objects, input callbacks, clipboard/drop protocol, timers, and application of focused policy
+  renderer: one thread and one EGL/GLES device, FontMap, text scratch, glyph atlas, image textures, pane backings,
+    bounded immutable admission, composition, draw, swap, and completion
+
+source_shape:
+  root: howl-host/src_current
+  files:
+    main.zig:
+      owner: CLI, shell selection, serve, and window entry
+    screen.zig:
+      owner: ordered tabs, active tab, stable identities, and multiplexing policy
+      reason: screen lifetime and tab routing are independent of Wayland callbacks and GPU execution
+    tab.zig:
+      owner: one tab, tiled terminal pane membership, active pane, name, geometry, and focus fallback
+      reason: tab-local mutation and geometry invariants form one independently testable owner
+    tiled_panes.zig:
+      owner: rectangle-based split insertion, adjacency, directional focus, and divider resize
+      reason: geometry mutation has dense bounds and rollback proofs independent of terminal or platform lifecycle
+    terminal_pane.zig:
+      owner: pane-local Control terminal and executable presentation state
+      reason: terminal lifecycle, wake identity, retained visual, viewport, and consequences share one PaneId lifetime
+    tab_bar.zig:
+      owner: bounded top-row tab presentation, overflow, truncation, activity state, and exact hit geometry
+      reason: the bar is a persistent multiplexing control surface with geometry independent of terminal cells
+    window.zig:
+      owner: Wayland loop, callbacks, timers, focused routing, clipboard/drop, and screen orchestration
+    renderer.zig:
+      owner: shared render thread/device, N-pane admission, retained pane backings, and composition
+    viewport.zig:
+      owner: existing pure viewport intent and scrollbar geometry
+    clipboard.zig:
+      owner: existing bounded nonblocking Wayland clipboard transfers
+    drop.zig:
+      owner: existing bounded copy-only incoming drop state
+    pointer_shape.zig:
+      owner: existing bounded pointer-shape stacks and mapping
+    measure.zig:
+      owner: existing private aggregate host measurement
+    test.zig:
+      owner: package proof root
+  compile_time_selection:
+    owner: howl-host/build.zig
+    values:
+      current: build src_current with the evolving multiplexer
+      latest: build src_latest as the unchanged single-terminal comparison
+    contract:
+      - selection occurs in the child build graph
+      - selected sources have no runtime variant branch
+      - root remains a curator and reconstructs neither graph
+      - every receipt records the selected source
+
+capability_whitelist:
+  topology:
+    - one Screen
+    - ordered named Tabs
+    - tiled terminal Panes only
+    - stable nonzero TabId and PaneId
+    - horizontal and vertical split insertion
+    - integer divider resize
+    - direct pointer focus and directional keyboard focus
+    - deterministic close and focus fallback
+  bounds:
+    tabs: 16
+    visible_panes_per_tab: 16
+    live_terminal_panes: 64
+    tab_name_bytes: 128
+    screen_cols: 512
+    screen_rows: 256
+    minimum_pane_cols: 2
+    minimum_pane_rows: 1
+  lifecycle:
+    - one live Control Terminal and wake identity per PaneId
+    - hidden-tab terminals continue consuming PTY output and retaining cumulative VT truth
+    - pane failure is isolated and retains its last admitted visual
+    - child process groups terminate on pane retirement and application shutdown
+    - terminal creation, geometry change, topology mutation, and retirement are transactional
+  rendering:
+    - one shared render thread, EGL/GLES device, FontMap, text scratch, batch, glyph atlas, and image texture owner
+    - one retained sparse backing per admitted visible pane identity
+    - one immutable visible composition containing pane rectangles, focused identity, tab bar, scrollbars, and deltas
+    - pending composition replacement preserves exact active, pending, superseded, and free ownership
+    - hidden panes cause no GPU work and reconstruct from cumulative visual truth when shown
+    - existing CPU clipping, batching, atlas, sparse rows, host pacing, DEC, OSC 66, Sixel, and Kitty graphics survive
+  interaction:
+    - focused-pane keyboard, repeat, pointer, terminal mouse, viewport, selection, copy, paste, and drop
+    - tab-label click switches active tab
+    - pointer press retains its admitted destination PaneId through focus churn
+    - host-owned key press retains its physical release and destination PaneId
+    - pane-local cell and pixel coordinates exclude the tab bar, pane boundaries, and neighboring panes
+  operator_control:
+    - every live terminal pane retains its independent same-user Control endpoint under XDG_RUNTIME_DIR
+    - howl-host list reports every canonical live Control terminal identity
+    - one deliberate exact host chord copies the focused pane's canonical 32-character hexadecimal Control ID
+    - the user can hand that ID to a Codex CLI worker without exposing Screen, Tab, Pane, renderer, or Wayland internals
+    - the worker uses existing status, screen, output, send, resize, and signal commands against that exact endpoint
+    - closing a pane removes its endpoint; a stale ID fails exactly and cannot address a replacement pane
+    - terminal ID discovery and remote operations retain current explicit bounds, allocation ownership, and cleanup
+  mappings:
+    Ctrl+Shift+T: create tab
+    Ctrl+Shift+Enter: split horizontally
+    Ctrl+Shift+Backslash: split vertically
+    Ctrl+Shift+W: close focused pane
+    Ctrl+Shift+Q: close active tab
+    Ctrl+Tab: next tab
+    Ctrl+Shift+Tab: previous tab
+    Alt+Left: focus left
+    Alt+Right: focus right
+    Alt+Up: focus up
+    Alt+Down: focus down
+    Ctrl+Shift+Left: resize left
+    Ctrl+Shift+Right: resize right
+    Ctrl+Shift+Up: resize up
+    Ctrl+Shift+Down: resize down
+    Ctrl+Shift+Comma: reorder tab left
+    Ctrl+Shift+Period: reorder tab right
+    Ctrl+Shift+I: copy focused pane Control terminal ID
+  tab_bar:
+    - one physically reserved top cell row that is never part of a terminal pane
+    - ordered tabs with active, inactive, activity, bell, and unavailable states
+    - deterministic names, truncation, and narrow-width overflow
+    - exact paint and pointer-hit inverse across every admitted pixel
+    - click activation and focused-tab reorder feedback
+  pane_boundaries:
+    - exact non-overlapping pane edges and focused-pane indication
+    - every content rectangle begins below the tab bar and excludes owned boundary pixels
+    - adjacent pane edges meet without gaps or double-owned pixels
+  scrollbars:
+    - one independent primary-history scrollbar per visible terminal pane when useful
+    - pane-local track and thumb derived from VT-owned viewport/history facts
+    - exact paint, click, and drag inverse under tiny, split, and odd-pixel rectangles
+    - wheel, keyboard, track click, and thumb drag update only the addressed pane viewport intent
+    - reviewing history remains stable; follow resumes only through explicit bottom admission
+    - alternate screen, unavailable pane, and no-history states expose no scrollbar target
+    - scrollbar presentation does not change the PTY cell grid
+  host_policy:
+    title: focused pane title
+    pointer_shape: focused pane stack
+    window_operations: focused pane requests
+    color_preference: application-wide fixed host policy with pane-addressed replies
+    bells: every pane occurrence remains ordered; tab bar and pane boundary retain pending indication
+    notifications: every pane occurrence remains ordered and identifies its source tab and pane
+    clipboard: focused pane owns interactive copy, paste, OSC 52, and paste-event policy
+    drop: focused hit pane receives admitted incoming copy-only drop
+    graphics_timers: only visible placements schedule redraw; hidden animation state advances from VT truth on reveal
+    terminal_exit: mark pane unavailable, retain final admitted visual, and permit deliberate close
+
+transactions:
+  create_tab: >-
+    Allocate candidate TabId and first PaneId; solve initial geometry; construct the terminal pane at that geometry;
+    then insert the complete tab into Screen. Failure releases the candidate pane in reverse order and changes no
+    Screen identity, order, or focus.
+  split: >-
+    Solve candidate TiledPanes rectangles without mutation; construct and size the new terminal pane; resize affected
+    live terminals; commit pane membership, rectangles, and focus only after every admission succeeds. Failure rolls
+    back performed terminal sizes and destroys the candidate.
+  resize: >-
+    Solve all candidate rectangles first. Resize only live affected terminals. Commit rectangles and render
+    composition after complete admission; an exact rollback failure remains attached to its pane and first failure.
+  close_pane: >-
+    Solve survivor rectangles and resize them before removing the pane. Admit a composition without the retiring
+    identity, revoke its wake identity, then terminate and release its terminal pane in reverse order.
+  close_tab: >-
+    Select deterministic neighboring active tab, prepare its complete visible composition, revoke all retiring pane
+    wake identities, then terminate tab panes in reverse creation order.
+  tab_switch: >-
+    Inspect cumulative visual truth for every pane becoming visible, apply row/image deltas to pane-local retained
+    state, acknowledge only admitted truth, then submit one complete composition.
+  render: >-
+    Window copies bounded pane metadata and changed visual facts into renderer-owned pending storage. Renderer never
+    borrows Control or VT and never mutates terminal state.
+  failure: >-
+    Terminal, render, Wayland, input cleanup, and child cleanup retain the first runtime failure. A pane-local failure
+    does not stop unrelated terminal consumption or poison visible composition.
+
+checkpoints:
+  - id: screen_tab_tiled_model
+    status: queued_after_approval
+    commit: Build bounded terminal screen model
+    implementation:
+      - add Screen, Tab, TiledPanes, TerminalPane identity vocabulary under src_current
+      - wire compile-time current/latest source selection
+      - implement topology, geometry, focus, names, order, and exact invariants without platform or terminal creation
+    proof:
+      - every mutation is valid or byte-exact no-op/rollback
+      - bounds, stale identities, odd rectangles, resize saturation, adjacency, close fallback, and allocation failure
+
+  - id: terminal_pane_lifecycle
+    status: queued_after_approval
+    commit: Own pane terminal lifecycles
+    implementation:
+      - bind one Control terminal, wake identity, retained visual, viewport, and consequence cursors to each PaneId
+      - consume simultaneous visible and hidden wakes
+      - implement transactional create, split, resize, close, exit, and shutdown
+    proof:
+      - 64 live panes, identity churn, stale wakes, hidden progress, failure isolation, rollback, and process cleanup
+
+  - id: shared_compositor
+    status: queued_after_approval
+    commit: Compose tiled terminal panes
+    implementation:
+      - generalize current sparse Snapshot and Mailbox into bounded N-pane immutable composition
+      - retain one shared optimized Device and pane-addressed backings/images
+      - preserve exact draw phases, clipping, pacing, completion, context reconstruction, and cleanup
+    proof:
+      - two, four, and sixteen visible panes; sparse updates; pending replacement; saturation; context loss; no VT borrow
+
+  - id: focused_interaction
+    status: queued_after_approval
+    commit: Route focused pane interaction
+    implementation:
+      - exact mappings, physical release capture, repeat destination, pointer focus, pane-local coordinates
+      - focused viewport, mouse, selection, clipboard, paste, drop, and pointer shape
+      - pane-local wheel, scrollbar track click, thumb drag, and history-follow transitions
+      - focused Control ID copy and unchanged endpoint-backed primitive debug CLI
+    proof:
+      - modifier tables, focus churn, failed admissions, stale identities, ID handoff, drag capture, scrollbar inverse
+
+  - id: tab_bar_scrollbars_and_policy
+    status: queued_after_approval
+    commit: Present multiplexed terminal state
+    implementation:
+      - reserved top-row tab bar, overflow, state, and hit geometry
+      - focused pane boundaries and independent visible-pane scrollbars
+      - focused title/window/color policy
+      - ordered pane-attributed bells and notifications
+      - pane-addressed graphics and cursor timers
+    proof:
+      - no collapsed occurrence, exact source identity, hidden behavior, tab/bar state, scrollbar state, timers, shutdown
+
+  - id: parity_and_performance
+    status: queued_after_approval
+    commit: Prove terminal multiplexer parity
+    implementation:
+      - run every accepted single-terminal fixture against current
+      - compare compile-time latest and current at matched single-pane geometry
+      - exercise deterministic multi-pane casts and manual Wayland receipts
+      - update permanent authorities only after accepted behavior exists
+    proof:
+      - full package/root/QAgent gates
+      - one, two, four, and sixteen-pane CPU, RSS, copied cells, uploads, draws, swap, and cadence receipts
+      - clean source audit, protocol catalogue, YAML, extraction, and repository status
+
+proof_matrix:
+  deterministic:
+    - Screen tab order, active tab, stable IDs, rename, reorder, switch, and last-tab policy
+    - TiledPanes split, resize, focus, hit, close, minimum geometry, hostile bounds, and rollback
+    - TerminalPane construction, wake routing, hidden progress, final state, failure, and retirement
+    - renderer pane identity, sparse copy, composition order, backing ownership, coalescing, and failure cleanup
+    - exact mappings, release symmetry, pointer capture, tab bar, boundaries, scrollbars, selection, and consequences
+    - focused Control ID clipboard handoff, endpoint removal, stale-ID rejection, and CLI operation byte stability
+  dogfood:
+    - bash, rain, btop, and Neovim in tiled panes
+    - tab switch while hidden terminals produce output
+    - resize, focus, reorder, pane exit, tab close, and compositor close
+    - tracked geometry, clipboard, pointer, OSC 66, Sixel, Kitty graphics, animation, and drop fixtures
+    - open Howl, copy focused Control ID, hand it to a separate CLI process, inspect output, send input, and close pane
+  performance:
+    workloads:
+      - matched single-pane latest versus current
+      - two-pane rain plus Neovim
+      - four-pane rain, btop, Neovim, and shell
+      - sixteen-pane bounded synthetic output
+    facts:
+      - rows, columns, visible panes, changed rows/cells, frame count, and duration
+      - process and named-thread CPU, RSS, copied bytes, prepared runs, uploads, draws, swaps, and cadence percentiles
+      - hidden-pane wake and CPU facts with zero hidden-pane GPU work
+
+settled_rescue_decisions:
+  resource_bounds: >-
+    Enforce the fixed 16-visible and 64-live pane limits plus each existing VT, image, snapshot, atlas, and backing
+    owner limit. Measure aggregate cost at the proof gate; do not invent one global byte budget before the concrete
+    owners and allocation lifetimes exist. Zellij likewise constrains pane admission and layout rather than defining
+    one universal retained-visual or GPU byte ceiling.
+  unavailable_close_policy: >-
+    Retain a normally exited pane and its last admitted visual as unavailable until deliberate close. Zellij models
+    this established behavior explicitly through hold_on_close and its inverse close_on_exit; Howl needs no new policy
+    noun or approval question for it.

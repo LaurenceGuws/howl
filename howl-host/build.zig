@@ -1,8 +1,15 @@
 const std = @import("std");
 
+const Source = enum {
+    current,
+    latest,
+};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const source = b.option(Source, "source", "Select current or latest host source") orelse .current;
+    const source_directory = b.fmt("src_{s}", .{@tagName(source)});
     const measure = b.option(bool, "measure", "Enable private host performance counters") orelse false;
     const options = b.addOptions();
     options.addOption(bool, "measure", measure);
@@ -16,7 +23,7 @@ pub fn build(b: *std.Build) void {
     });
     const native = nativeModules(b, target, optimize);
     const module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path(b.fmt("{s}/main.zig", .{source_directory})),
         .target = target,
         .optimize = optimize,
     });
@@ -35,7 +42,7 @@ pub fn build(b: *std.Build) void {
 
     const tests = b.addTest(.{
         .name = "howl-host",
-        .root_module = testModule(b, target, optimize, control, render, native, options),
+        .root_module = testModule(b, target, optimize, control, render, native, options, source_directory),
         .use_llvm = false,
         .use_lld = false,
     });
@@ -62,9 +69,10 @@ fn testModule(
     render: *std.Build.Dependency,
     native: NativeModules,
     options: *std.Build.Step.Options,
+    source_directory: []const u8,
 ) *std.Build.Module {
     const module = b.createModule(.{
-        .root_source_file = b.path("src/test.zig"),
+        .root_source_file = b.path(b.fmt("{s}/test.zig", .{source_directory})),
         .target = target,
         .optimize = optimize,
     });
