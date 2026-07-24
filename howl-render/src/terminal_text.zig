@@ -140,7 +140,7 @@ pub const NativeScratch = if (features.native_text) struct {
     shaper: *native.ShapeBuffer,
     /// Stages flattened base and combining Unicode scalars.
     codepoints: []u32,
-    /// Stages one run-local source cell for every flattened scalar.
+    /// Stages scalar source cells, then cluster coverage after synchronous shaping.
     clusters: []u32,
     /// Receives the complete bounded native shaping result.
     shaped: []native.Glyph,
@@ -471,11 +471,17 @@ fn nativeRun(
     if (shaped.glyphs.len > scratch.positioned.len)
         return error.InsufficientPositionedGlyphs;
     const positioned = scratch.positioned[0..shaped.glyphs.len];
+    // Synchronous shaping has released scalar staging; reuse it for unordered cluster coverage.
+    const cluster_ends = clusterEnds(
+        shaped.glyphs,
+        bounds.end - bounds.first,
+        scratch.clusters,
+    );
     var pen_x: i64 = 0;
     var pen_y: i64 = 0;
     for (shaped.glyphs, positioned) |glyph, *output| {
         const local_start: u16 = @intCast(glyph.cluster);
-        const local_end = clusterEnd(shaped.glyphs, glyph.cluster, bounds.end - bounds.first);
+        const local_end: u16 = @intCast(cluster_ends[local_start]);
         const source_start = bounds.first + local_start;
         const source_end = bounds.first + local_end;
         const x = pen_x + glyph.x_offset;
@@ -510,23 +516,61 @@ fn nativeRun(
     };
 }
 
-fn clusterEnd(glyphs: []const native.Glyph, cluster: u32, run_len: u16) u16 {
+fn clusterEnds(glyphs: []const native.Glyph, run_len: u16, storage: []u32) []const u32 {
     std.debug.assert(run_len > 0);
-    std.debug.assert(cluster < run_len);
-    for (glyphs) |glyph| std.debug.assert(glyph.cluster < run_len);
-    if (glyphs.len == 0) return run_len;
-    const ascending = glyphs[0].cluster <= glyphs[glyphs.len - 1].cluster;
-    if (ascending) {
-        for (glyphs) |glyph| if (glyph.cluster > cluster) return @intCast(glyph.cluster);
-        return run_len;
-    }
-    var previous: ?u32 = null;
+    std.debug.assert(storage.len >= run_len);
+    const ends = storage[0..run_len];
+    @memset(ends, std.math.maxInt(u32));
     for (glyphs) |glyph| {
-        if (glyph.cluster == cluster) return @intCast(previous orelse run_len);
-        previous = glyph.cluster;
+        std.debug.assert(glyph.cluster < run_len);
+        ends[glyph.cluster] = run_len;
     }
-    std.debug.assert(false);
-    return run_len;
+    var next: u32 = run_len;
+    var index: usize = run_len;
+    while (index > 0) {
+        index -= 1;
+        if (ends[index] != std.math.maxInt(u32)) {
+            ends[index] = next;
+            next = @intCast(index);
+        }
+    }
+    for (glyphs) |glyph| std.debug.assert(ends[glyph.cluster] > glyph.cluster);
+    return ends;
+}
+
+test "cluster ends are independent of shaped glyph order and repetition" {
+    if (comptime !features.native_text) return error.SkipZigTest;
+    const empty = native.Glyph{
+        .id = 1,
+        .cluster = 0,
+        .x_advance = 0,
+        .y_advance = 0,
+        .x_offset = 0,
+        .y_offset = 0,
+    };
+    var storage: [4]u32 = undefined;
+
+    var ascending = [_]native.Glyph{ empty, empty, empty };
+    ascending[2].cluster = 2;
+    const ascending_ends = clusterEnds(&ascending, 4, &storage);
+    try std.testing.expectEqual(@as(u32, 2), ascending_ends[0]);
+    try std.testing.expectEqual(@as(u32, 4), ascending_ends[2]);
+
+    var descending = [_]native.Glyph{ empty, empty, empty, empty };
+    descending[0].cluster = 3;
+    descending[1].cluster = 1;
+    descending[2].cluster = 1;
+    const descending_ends = clusterEnds(&descending, 4, &storage);
+    try std.testing.expectEqual(@as(u32, 4), descending_ends[3]);
+    try std.testing.expectEqual(@as(u32, 3), descending_ends[1]);
+    try std.testing.expectEqual(@as(u32, 1), descending_ends[0]);
+
+    var unordered = [_]native.Glyph{ empty, empty, empty, empty, empty };
+    unordered[0].cluster = 2;
+    unordered[2].cluster = 3;
+    unordered[4].cluster = 1;
+    const unordered_ends = clusterEnds(&unordered, 4, &storage);
+    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4 }, unordered_ends);
 }
 
 fn nativeRaster(allocator: std.mem.Allocator, fonts: *FontMap, key: NativeGlyphKey) RasterError!Raster {

@@ -243,6 +243,7 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
         scratch.borrow(),
     );
     try std.testing.expectEqual(@as(u16, 8), run.first_cell);
+    try std.testing.expect(run.first_cell > 4);
     try std.testing.expectEqual(@as(u16, 11), run.end_cell);
     try std.testing.expectEqual(terminal.CellBaseline.raised, run.baseline);
     try std.testing.expectEqual(terminal.LineGeometry.double_height_top, run.geometry);
@@ -345,19 +346,25 @@ test "native combining clusters reuse caller storage" {
     var scratch = try TestScratch.init();
     defer scratch.deinit();
     var cells = [_]terminal.Cell{ cell('A'), cell('B') };
-    cells[0].combining_len = 1;
+    cells[0].combining_len = 2;
     cells[0].combining[0] = 0x0301;
+    cells[0].combining[1] = 0x0302;
     const run = try terminal_text.prepareNextRun(
         &map,
         input(&cells, 0, 1),
         0,
         scratch.borrow(),
     );
-    try std.testing.expect(run.glyphs.native.len >= 2);
+    try std.testing.expect(run.glyphs.native.len >= 3);
+    var repeated_coverage = false;
+    var previous_start: ?u16 = null;
     for (run.glyphs.native) |glyph| {
         try std.testing.expect(glyph.source_start < glyph.source_end);
         try std.testing.expect(glyph.source_end <= 2);
+        repeated_coverage = repeated_coverage or previous_start == glyph.source_start;
+        previous_start = glyph.source_start;
     }
+    try std.testing.expect(repeated_coverage);
 
     const first_pointer = run.glyphs.native.ptr;
     const first_key = run.glyphs.native[0].key;
