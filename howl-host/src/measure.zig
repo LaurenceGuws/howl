@@ -64,6 +64,10 @@ const RenderCounters = struct {
     image_uploads: u64 = 0,
     image_upload_bytes: u64 = 0,
     quads: [@typeInfo(QuadKind).@"enum".field_names.len]u64 = @splat(0),
+    staged_quads: u64 = 0,
+    staged_commands: u64 = 0,
+    staged_merges: u64 = 0,
+    staged_flushes: u64 = 0,
     buffer_calls: u64 = 0,
     buffer_bytes: u64 = 0,
     texture_binds: u64 = 0,
@@ -221,14 +225,25 @@ pub const State = struct {
         increment(&reference.render.texture_binds, 1);
     }
 
-    /// Counts one quad's buffer upload, texture bind, and draw call.
-    pub fn quad(reference: Reference, kind: QuadKind, bytes: usize) void {
+    /// Counts one quad admitted to the bounded renderer staging storage.
+    pub fn stagedQuad(reference: Reference, kind: QuadKind) void {
         if (comptime !enabled) return;
         increment(&reference.render.quads[@backingInt(kind)], 1);
+        increment(&reference.render.staged_quads, 1);
+    }
+
+    /// Counts one staged upload and its exact resulting commands and merges.
+    pub fn batch(reference: Reference, commands: usize, merges: usize, bytes: usize) void {
+        if (comptime !enabled) return;
+        increment(&reference.render.staged_commands, std.math.cast(u64, commands) orelse
+            std.math.maxInt(u64));
+        increment(&reference.render.staged_merges, std.math.cast(u64, merges) orelse
+            std.math.maxInt(u64));
+        increment(&reference.render.staged_flushes, 1);
         increment(&reference.render.buffer_calls, 1);
         increment(&reference.render.buffer_bytes, std.math.cast(u64, bytes) orelse std.math.maxInt(u64));
-        State.textureBind(reference);
-        increment(&reference.render.draw_calls, 1);
+        increment(&reference.render.draw_calls, std.math.cast(u64, commands) orelse
+            std.math.maxInt(u64));
     }
 
     /// Records one swapped frame and its bounded high-level latencies.
@@ -415,7 +430,9 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     State.inspection(reference, true, false, 2, 17);
     State.snapshot(reference, 26, 2_756, true);
     State.prepared(reference, .native, 4, 2_000);
-    State.quad(reference, .text, 192);
+    State.stagedQuad(reference, .text);
+    State.stagedQuad(reference, .text);
+    State.batch(reference, 1, 1, 384);
     State.frame(reference, 3_000, 4_000, 9_000);
     var bytes: [16 * 1024]u8 = undefined;
     var writer = std.Io.Writer.fixed(&bytes);
@@ -424,6 +441,10 @@ test "enabled summary exposes fixed geometry counters and histogram vocabulary" 
     try std.testing.expect(std.mem.indexOf(u8, summary, "rows=26\ncols=106\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "window.projected_cells=17\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "window.coalesced=1\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, summary, "render.quad_text=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.quad_text=2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_commands=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.staged_merges=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_calls=1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, summary, "render.buffer_bytes=384\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, summary, "render.draw_ns.count=1\n") != null);
 }

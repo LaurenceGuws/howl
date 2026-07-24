@@ -463,6 +463,79 @@ const Vertex = extern struct {
     a: f32,
 };
 
+const batch_quad_capacity = 4096;
+const vertices_per_quad = 6;
+
+const DrawState = struct {
+    texture: c.GLuint,
+    texture_color: bool,
+    scissor: ?PixelRect,
+};
+
+const DrawCommand = struct {
+    state: DrawState,
+    first: u32,
+    count: u32,
+};
+
+const DrawBatch = struct {
+    allocator: std.mem.Allocator,
+    vertices: []Vertex,
+    commands: []DrawCommand,
+    vertex_count: usize = 0,
+    command_count: usize = 0,
+
+    fn init(allocator: std.mem.Allocator) std.mem.Allocator.Error!DrawBatch {
+        const vertices = try allocator.alloc(Vertex, batch_quad_capacity * vertices_per_quad);
+        errdefer allocator.free(vertices);
+        const commands = try allocator.alloc(DrawCommand, batch_quad_capacity);
+        return .{
+            .allocator = allocator,
+            .vertices = vertices,
+            .commands = commands,
+        };
+    }
+
+    fn stage(self: *DrawBatch, vertices: [vertices_per_quad]Vertex, state: DrawState) bool {
+        if (self.vertex_count > self.vertices.len - vertices.len) return false;
+        const first = self.vertex_count;
+        const previous = if (self.command_count == 0)
+            null
+        else
+            &self.commands[self.command_count - 1];
+        const merge = if (previous) |command|
+            std.meta.eql(command.state, state) and
+                @as(usize, command.first) + command.count == first
+        else
+            false;
+        if (!merge and self.command_count == self.commands.len) return false;
+        @memcpy(self.vertices[first..][0..vertices.len], &vertices);
+        self.vertex_count += vertices.len;
+        if (merge) {
+            previous.?.count += vertices.len;
+        } else {
+            self.commands[self.command_count] = .{
+                .state = state,
+                .first = @intCast(first),
+                .count = vertices.len,
+            };
+            self.command_count += 1;
+        }
+        return true;
+    }
+
+    fn reset(self: *DrawBatch) void {
+        self.vertex_count = 0;
+        self.command_count = 0;
+    }
+
+    fn deinit(self: *DrawBatch) void {
+        self.allocator.free(self.commands);
+        self.allocator.free(self.vertices);
+        self.* = undefined;
+    }
+};
+
 const RunScratch = struct {
     allocator: std.mem.Allocator,
     shaper: render.text.ShapeBuffer,
@@ -525,6 +598,7 @@ const Device = struct {
     white: c.GLuint,
     fonts: text.FontMap,
     run_scratch: RunScratch,
+    draw_batch: DrawBatch,
     metrics: text.CellMetrics,
     textures: [texture_capacity]Texture = undefined,
     texture_count: usize = 0,
@@ -543,6 +617,8 @@ const Device = struct {
         errdefer fonts.deinit();
         var run_scratch = try RunScratch.init(allocator);
         errdefer run_scratch.deinit();
+        var draw_batch = try DrawBatch.init(allocator);
+        errdefer draw_batch.deinit();
         const default_key = text.FontKey{ .slot = 0, .style = .normal };
         const metrics = fonts.cellMetrics(default_key) orelse return error.InvalidSubmission;
         const window = c.wl_egl_window_create(
@@ -628,6 +704,7 @@ const Device = struct {
             .white = white,
             .fonts = fonts,
             .run_scratch = run_scratch,
+            .draw_batch = draw_batch,
             .metrics = metrics,
             .size = values.size,
             .io = io,
@@ -659,6 +736,7 @@ const Device = struct {
         try self.drawImages(work, .above_text);
         try self.drawCursor(work);
         try self.drawScrollbar(work.scrollbar);
+        try self.flush();
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
         const draw_ns = measure.elapsed(draw_started, self.io);
         const swap_started = measure.now(self.io);
@@ -776,7 +854,7 @@ const Device = struct {
 
     fn drawImages(self: *Device, work: Submission, layer: ImageLayer) Error!void {
         for (work.image_placements) |placement| {
-            if ((placement.z < 0) != (layer == .behind_text)) continue;
+            if (imageLayer(placement.z) != layer) continue;
             const image = for (self.image_textures[0..self.image_texture_count]) |*candidate| {
                 if (candidate.identity.id == placement.image_id) break candidate;
             } else continue;
@@ -795,10 +873,6 @@ const Device = struct {
                 .width = placement.pixel_width,
                 .height = placement.pixel_height,
             }, self.size) orelse continue;
-            c.glEnable(c.GL_SCISSOR_TEST);
-            setScissor(clip, self.size);
-            defer c.glDisable(c.GL_SCISSOR_TEST);
-            c.glUniform1i(self.texture_color_uniform, 1);
             const vertices = imageVertices(
                 @intCast(x64),
                 @intCast(y64),
@@ -809,14 +883,11 @@ const Device = struct {
                 image.width,
                 image.height,
             );
-            c.glBindTexture(c.GL_TEXTURE_2D, image.name);
-            c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
-            c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(0));
-            c.glVertexAttribPointer(1, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(2 * @sizeOf(f32)));
-            c.glVertexAttribPointer(2, 4, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(4 * @sizeOf(f32)));
-            c.glDrawArrays(c.GL_TRIANGLES, 0, vertices.len);
-            measure.State.quad(self.measurement, .image, @sizeOf(@TypeOf(vertices)));
-            if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
+            try self.stage(.image, vertices, .{
+                .texture = image.name,
+                .texture_color = true,
+                .scissor = clip,
+            });
         }
     }
 
@@ -927,8 +998,6 @@ const Device = struct {
                 .height = cached.height,
             }) orelse return error.InvalidSubmission,
         ) orelse return error.InvalidSubmission;
-        c.glEnable(c.GL_SCISSOR_TEST);
-        defer c.glDisable(c.GL_SCISSOR_TEST);
         const cursor_block = cursorBlockCovers(work, row, prepared.first_cell);
         if (prepared.sizing.width > 1 or prepared.sizing.height > 1) {
             const clip = clipToSurface(
@@ -941,8 +1010,7 @@ const Device = struct {
                 ) orelse return error.InvalidSubmission,
                 self.size,
             ) orelse return;
-            setScissor(clip, self.size);
-            try self.quad(
+            try self.quadClipped(
                 .text,
                 rect.x,
                 rect.y,
@@ -950,6 +1018,7 @@ const Device = struct {
                 rect.height,
                 glyphColor(cells[glyph.source_start], work.cursor, cursor_block),
                 cached.name,
+                clip,
             );
             return;
         }
@@ -960,8 +1029,7 @@ const Device = struct {
                     return error.InvalidSubmission,
                 self.size,
             ) orelse continue;
-            setScissor(clip, self.size);
-            try self.quad(
+            try self.quadClipped(
                 .text,
                 rect.x,
                 rect.y,
@@ -969,6 +1037,7 @@ const Device = struct {
                 rect.height,
                 glyphColor(cells[col], work.cursor, cursorBlockCovers(work, row, col)),
                 cached.name,
+                clip,
             );
         }
     }
@@ -1027,9 +1096,6 @@ const Device = struct {
                 return error.InvalidSubmission,
             self.size,
         ) orelse return;
-        c.glEnable(c.GL_SCISSOR_TEST);
-        defer c.glDisable(c.GL_SCISSOR_TEST);
-        setScissor(clip, self.size);
         const base = PixelRect{
             .x = @as(i32, col) * self.metrics.width_px,
             .y = y,
@@ -1039,13 +1105,40 @@ const Device = struct {
         };
         switch (style) {
             .none => {},
-            .single => try self.drawDecorationRect(row, col, geometry, baseline, sizing, base, color),
+            .single => try self.drawDecorationRect(
+                row,
+                col,
+                geometry,
+                baseline,
+                sizing,
+                base,
+                color,
+                clip,
+            ),
             .double => {
                 const upper_y = y -| (height + 1);
                 var upper = base;
                 upper.y = upper_y;
-                try self.drawDecorationRect(row, col, geometry, baseline, sizing, upper, color);
-                try self.drawDecorationRect(row, col, geometry, baseline, sizing, base, color);
+                try self.drawDecorationRect(
+                    row,
+                    col,
+                    geometry,
+                    baseline,
+                    sizing,
+                    upper,
+                    color,
+                    clip,
+                );
+                try self.drawDecorationRect(
+                    row,
+                    col,
+                    geometry,
+                    baseline,
+                    sizing,
+                    base,
+                    color,
+                    clip,
+                );
             },
             .curly, .dotted, .dashed => {
                 const unit = @max(@as(u16, 1), height);
@@ -1056,7 +1149,16 @@ const Device = struct {
                     segment.x += x;
                     segment.width = 1;
                     segment.y -|= @min(segment.y, rise);
-                    try self.drawDecorationRect(row, col, geometry, baseline, sizing, segment, color);
+                    try self.drawDecorationRect(
+                        row,
+                        col,
+                        geometry,
+                        baseline,
+                        sizing,
+                        segment,
+                        color,
+                        clip,
+                    );
                 }
             },
         }
@@ -1071,12 +1173,22 @@ const Device = struct {
         sizing: terminal.TextSizing,
         base: PixelRect,
         color: terminal.Rgb,
+        clip: PixelRect,
     ) Error!void {
         const sized = planTextSizing(col, sizing, self.metrics, base) orelse
             return error.InvalidSubmission;
         const rect = planContent(row, col, geometry, baseline, self.metrics, sized) orelse
             return error.InvalidSubmission;
-        try self.quad(.decoration, rect.x, rect.y, rect.width, rect.height, color, self.white);
+        try self.quadClipped(
+            .decoration,
+            rect.x,
+            rect.y,
+            rect.width,
+            rect.height,
+            color,
+            self.white,
+            clip,
+        );
     }
 
     fn drawCursor(self: *Device, work: Submission) Error!void {
@@ -1128,10 +1240,7 @@ const Device = struct {
         cluster.width = @intCast(cluster_width);
         cluster.height = @intCast(cluster_height_u64);
         const clip = clipToSurface(cluster, self.size) orelse return;
-        c.glEnable(c.GL_SCISSOR_TEST);
-        defer c.glDisable(c.GL_SCISSOR_TEST);
-        setScissor(clip, self.size);
-        try self.quad(
+        try self.quadClipped(
             .cursor,
             rect.x,
             rect.y,
@@ -1139,6 +1248,7 @@ const Device = struct {
             rect.height,
             work.cursor.color,
             self.white,
+            clip,
         );
     }
 
@@ -1229,16 +1339,119 @@ const Device = struct {
         color: terminal.Rgb,
         texture_name: c.GLuint,
     ) Error!void {
+        try self.quadClipped(kind, x, y, width, height, color, texture_name, null);
+    }
+
+    fn quadClipped(
+        self: *Device,
+        kind: measure.QuadKind,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+        color: terminal.Rgb,
+        texture_name: c.GLuint,
+        scissor: ?PixelRect,
+    ) Error!void {
         if (width == 0 or height == 0) return;
         const vertices = quadVertices(x, y, width, height, self.size, color);
-        c.glUniform1i(self.texture_color_uniform, 0);
-        c.glBindTexture(c.GL_TEXTURE_2D, texture_name);
-        c.glBufferData(c.GL_ARRAY_BUFFER, @sizeOf(@TypeOf(vertices)), &vertices, c.GL_STREAM_DRAW);
+        try self.stage(kind, vertices, .{
+            .texture = texture_name,
+            .texture_color = false,
+            .scissor = scissor,
+        });
+    }
+
+    fn stage(
+        self: *Device,
+        kind: measure.QuadKind,
+        vertices: [vertices_per_quad]Vertex,
+        state: DrawState,
+    ) Error!void {
+        // Glyph eviction excludes the current render generation, and image
+        // reconciliation finishes before drawing, so every deferred texture
+        // name remains alive until this batch is flushed.
+        if (!self.draw_batch.stage(vertices, state)) {
+            try self.flush();
+            if (!self.draw_batch.stage(vertices, state)) @panic("empty draw batch rejected one quad");
+        }
+        measure.State.stagedQuad(self.measurement, kind);
+    }
+
+    fn flush(self: *Device) Error!void {
+        if (self.draw_batch.vertex_count == 0) return;
+        defer self.draw_batch.reset();
+        const vertex_bytes = std.math.mul(
+            usize,
+            self.draw_batch.vertex_count,
+            @sizeOf(Vertex),
+        ) catch return error.Draw;
+        const gl_bytes = std.math.cast(c.GLsizeiptr, vertex_bytes) orelse return error.Draw;
+        for (self.draw_batch.commands[0..self.draw_batch.command_count]) |command|
+            if (!validDrawRange(command, self.draw_batch.vertex_count)) return error.Draw;
+        c.glBufferData(
+            c.GL_ARRAY_BUFFER,
+            gl_bytes,
+            self.draw_batch.vertices.ptr,
+            c.GL_STREAM_DRAW,
+        );
         c.glVertexAttribPointer(0, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(0));
-        c.glVertexAttribPointer(1, 2, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(2 * @sizeOf(f32)));
-        c.glVertexAttribPointer(2, 4, c.GL_FLOAT, c.GL_FALSE, @sizeOf(Vertex), @ptrFromInt(4 * @sizeOf(f32)));
-        c.glDrawArrays(c.GL_TRIANGLES, 0, vertices.len);
-        measure.State.quad(self.measurement, kind, @sizeOf(@TypeOf(vertices)));
+        c.glVertexAttribPointer(
+            1,
+            2,
+            c.GL_FLOAT,
+            c.GL_FALSE,
+            @sizeOf(Vertex),
+            @ptrFromInt(2 * @sizeOf(f32)),
+        );
+        c.glVertexAttribPointer(
+            2,
+            4,
+            c.GL_FLOAT,
+            c.GL_FALSE,
+            @sizeOf(Vertex),
+            @ptrFromInt(4 * @sizeOf(f32)),
+        );
+        var bound_texture: ?c.GLuint = null;
+        var texture_color: ?bool = null;
+        var scissor: ?PixelRect = null;
+        var scissor_enabled = false;
+        for (self.draw_batch.commands[0..self.draw_batch.command_count]) |command| {
+            if (bound_texture == null or bound_texture.? != command.state.texture) {
+                c.glBindTexture(c.GL_TEXTURE_2D, command.state.texture);
+                measure.State.textureBind(self.measurement);
+                bound_texture = command.state.texture;
+            }
+            if (texture_color == null or texture_color.? != command.state.texture_color) {
+                c.glUniform1i(self.texture_color_uniform, @intFromBool(command.state.texture_color));
+                texture_color = command.state.texture_color;
+            }
+            if (!std.meta.eql(scissor, command.state.scissor)) {
+                if (command.state.scissor) |rect| {
+                    if (!scissor_enabled) {
+                        c.glEnable(c.GL_SCISSOR_TEST);
+                        scissor_enabled = true;
+                    }
+                    setScissor(rect, self.size);
+                } else if (scissor_enabled) {
+                    c.glDisable(c.GL_SCISSOR_TEST);
+                    scissor_enabled = false;
+                }
+                scissor = command.state.scissor;
+            }
+            const first: c.GLint = @intCast(command.first);
+            const count: c.GLsizei = @intCast(command.count);
+            c.glDrawArrays(c.GL_TRIANGLES, first, count);
+        }
+        if (scissor_enabled) c.glDisable(c.GL_SCISSOR_TEST);
+        const quad_count = self.draw_batch.vertex_count / vertices_per_quad;
+        std.debug.assert(self.draw_batch.command_count <= quad_count);
+        measure.State.batch(
+            self.measurement,
+            self.draw_batch.command_count,
+            quad_count - self.draw_batch.command_count,
+            vertex_bytes,
+        );
         if (c.glGetError() != c.GL_NO_ERROR) return error.Draw;
     }
 
@@ -1250,6 +1463,7 @@ const Device = struct {
             c.glDeleteTextures(1, &self.image_textures[self.image_texture_count].name);
         }
         while (self.texture_count != 0) self.removeTexture(self.texture_count - 1);
+        self.draw_batch.deinit();
         self.run_scratch.deinit();
         self.fonts.deinit();
         c.glDeleteTextures(1, &self.white);
@@ -1841,6 +2055,19 @@ fn clipToSurface(rect: PixelRect, size: PixelSize) ?PixelRect {
     };
 }
 
+fn imageLayer(z: i32) Device.ImageLayer {
+    return if (z < 0) .behind_text else .above_text;
+}
+
+fn validDrawRange(command: DrawCommand, vertex_count: usize) bool {
+    if (command.first > std.math.maxInt(c.GLint) or
+        command.count > std.math.maxInt(c.GLsizei))
+        return false;
+    const first: usize = command.first;
+    const count: usize = command.count;
+    return first <= vertex_count and count <= vertex_count - first;
+}
+
 fn intersectRect(a: PixelRect, b: PixelRect) ?PixelRect {
     const left = @max(@as(i64, a.x), b.x);
     const top = @max(@as(i64, a.y), b.y);
@@ -2259,6 +2486,198 @@ test "image vertices preserve exact cropped texture and scaled destination bound
     try std.testing.expectApproxEqAbs(@as(f32, 0.6), vertices[0].y, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].x, 0.0001);
     try std.testing.expectApproxEqAbs(@as(f32, -0.2), vertices[1].y, 0.0001);
+}
+
+test "draw batch owns exact fixed storage and rolls back both allocations" {
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(Vertex));
+    try std.testing.expectEqual(
+        @as(usize, 786_432),
+        batch_quad_capacity * vertices_per_quad * @sizeOf(Vertex),
+    );
+    try std.testing.expectEqual(
+        @as(usize, batch_quad_capacity * @sizeOf(DrawCommand)),
+        147_456,
+    );
+    inline for (0..2) |fail_index| {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
+            .fail_index = fail_index,
+        });
+        try std.testing.expectError(error.OutOfMemory, DrawBatch.init(failing.allocator()));
+    }
+    var batch = try DrawBatch.init(std.testing.allocator);
+    batch.deinit();
+}
+
+test "draw batch preserves exact vertices and merges only identical contiguous state" {
+    var batch = try DrawBatch.init(std.testing.allocator);
+    defer batch.deinit();
+    const first = quadVertices(
+        1,
+        2,
+        3,
+        4,
+        .{ .width = 100, .height = 80 },
+        .{ .r = 1, .g = 2, .b = 3 },
+    );
+    const second = quadVertices(
+        5,
+        6,
+        7,
+        8,
+        .{ .width = 100, .height = 80 },
+        .{ .r = 4, .g = 5, .b = 6 },
+    );
+    const state = DrawState{
+        .texture = 9,
+        .texture_color = false,
+        .scissor = .{ .x = 0, .y = 0, .width = 10, .height = 10 },
+    };
+    try std.testing.expect(batch.stage(first, state));
+    try std.testing.expect(batch.stage(second, state));
+    try std.testing.expectEqual(@as(usize, 1), batch.command_count);
+    try std.testing.expectEqual(@as(u32, 12), batch.commands[0].count);
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&first),
+        std.mem.sliceAsBytes(batch.vertices[0..vertices_per_quad]),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&second),
+        std.mem.sliceAsBytes(batch.vertices[vertices_per_quad..][0..vertices_per_quad]),
+    );
+
+    var changed = state;
+    changed.texture = 10;
+    try std.testing.expect(batch.stage(first, changed));
+    changed.texture_color = true;
+    try std.testing.expect(batch.stage(first, changed));
+    changed.scissor.?.x = 1;
+    try std.testing.expect(batch.stage(first, changed));
+    changed.scissor = null;
+    try std.testing.expect(batch.stage(first, changed));
+    try std.testing.expectEqual(@as(usize, 5), batch.command_count);
+    for (batch.commands[0 .. batch.command_count - 1], batch.commands[1..batch.command_count]) |
+        before,
+        after,
+    | try std.testing.expectEqual(before.first + before.count, after.first);
+}
+
+test "draw batch capacity rejects one quad without mutation and is reusable after reset" {
+    var batch = try DrawBatch.init(std.testing.allocator);
+    defer batch.deinit();
+    const vertices = quadVertices(
+        0,
+        0,
+        1,
+        1,
+        .{ .width = 1, .height = 1 },
+        .{ .r = 0, .g = 0, .b = 0 },
+    );
+    var state = DrawState{ .texture = 1, .texture_color = false, .scissor = null };
+    for (0..batch_quad_capacity) |index| {
+        state.texture = @intCast(index + 1);
+        try std.testing.expect(batch.stage(vertices, state));
+    }
+    const last = batch.commands[batch.command_count - 1];
+    try std.testing.expect(!batch.stage(vertices, state));
+    try std.testing.expectEqual(@as(usize, batch_quad_capacity * vertices_per_quad), batch.vertex_count);
+    try std.testing.expectEqual(@as(usize, batch_quad_capacity), batch.command_count);
+    try std.testing.expectEqual(last, batch.commands[batch.command_count - 1]);
+    batch.reset();
+    try std.testing.expect(batch.stage(vertices, state));
+    try std.testing.expectEqual(@as(usize, vertices_per_quad), batch.vertex_count);
+    try std.testing.expectEqual(@as(usize, 1), batch.command_count);
+}
+
+test "draw command range rejects host and GLES overflow before execution" {
+    const state = DrawState{ .texture = 1, .texture_color = false, .scissor = null };
+    try std.testing.expect(validDrawRange(.{
+        .state = state,
+        .first = 6,
+        .count = 12,
+    }, 18));
+    try std.testing.expect(!validDrawRange(.{
+        .state = state,
+        .first = 7,
+        .count = 12,
+    }, 18));
+    try std.testing.expect(!validDrawRange(.{
+        .state = state,
+        .first = std.math.maxInt(u32),
+        .count = 1,
+    }, batch_quad_capacity * vertices_per_quad));
+    try std.testing.expect(!validDrawRange(.{
+        .state = state,
+        .first = 0,
+        .count = std.math.maxInt(u32),
+    }, batch_quad_capacity * vertices_per_quad));
+}
+
+test "draw batch retains ordered image text decoration cursor and scrollbar states" {
+    var batch = try DrawBatch.init(std.testing.allocator);
+    defer batch.deinit();
+    const vertices = quadVertices(
+        0,
+        0,
+        1,
+        1,
+        .{ .width = 1, .height = 1 },
+        .{ .r = 0, .g = 0, .b = 0 },
+    );
+    const clip_a = PixelRect{ .x = 0, .y = 0, .width = 1, .height = 1 };
+    const clip_b = PixelRect{ .x = 1, .y = 2, .width = 3, .height = 4 };
+    const states = [_]DrawState{
+        .{ .texture = 1, .texture_color = false, .scissor = null },
+        .{ .texture = 2, .texture_color = true, .scissor = clip_a },
+        .{ .texture = 3, .texture_color = false, .scissor = clip_b },
+        .{ .texture = 1, .texture_color = false, .scissor = clip_b },
+        .{ .texture = 4, .texture_color = true, .scissor = clip_a },
+        .{ .texture = 1, .texture_color = false, .scissor = clip_a },
+        .{ .texture = 1, .texture_color = false, .scissor = null },
+    };
+    for (states) |state| try std.testing.expect(batch.stage(vertices, state));
+    try std.testing.expectEqual(states.len, batch.command_count);
+    for (states, batch.commands[0..batch.command_count]) |expected, command|
+        try std.testing.expectEqual(expected, command.state);
+}
+
+test "draw batch retains OSC 66 and DEC clips and exact image z phases" {
+    var batch = try DrawBatch.init(std.testing.allocator);
+    defer batch.deinit();
+    const metrics = text.CellMetrics{ .width_px = 9, .height_px = 15, .baseline_px = 11 };
+    const size = PixelSize{ .width = 90, .height = 75 };
+    const osc_clip = clipToSurface(
+        clusterCellRect(1, 2, .single_width, .{
+            .width = 3,
+            .height = 2,
+            .x = 0,
+            .y = 0,
+        }, metrics).?,
+        size,
+    ).?;
+    const dec_clip = clipToSurface(
+        planCell(3, 1, .double_height_bottom, metrics).?,
+        size,
+    ).?;
+    const osc_vertices = quadVertices(18, 15, 27, 30, size, .{ .r = 1, .g = 2, .b = 3 });
+    const dec_vertices = quadVertices(18, 30, 18, 30, size, .{ .r = 4, .g = 5, .b = 6 });
+    try std.testing.expect(batch.stage(osc_vertices, .{
+        .texture = 1,
+        .texture_color = false,
+        .scissor = osc_clip,
+    }));
+    try std.testing.expect(batch.stage(dec_vertices, .{
+        .texture = 1,
+        .texture_color = false,
+        .scissor = dec_clip,
+    }));
+    try std.testing.expectEqual(@as(usize, 2), batch.command_count);
+    try std.testing.expectEqual(osc_clip, batch.commands[0].state.scissor.?);
+    try std.testing.expectEqual(dec_clip, batch.commands[1].state.scissor.?);
+    try std.testing.expectEqual(Device.ImageLayer.behind_text, imageLayer(-1));
+    try std.testing.expectEqual(Device.ImageLayer.above_text, imageLayer(0));
+    try std.testing.expectEqual(Device.ImageLayer.above_text, imageLayer(1));
 }
 
 test "draw colors consume projected cell and cursor facts exactly" {

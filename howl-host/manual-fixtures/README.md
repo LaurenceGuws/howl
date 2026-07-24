@@ -19,7 +19,7 @@ are not installed, and contain no product policy or reusable fixture framework.
 From `howl-host`, run a receipt with:
 
 ```text
-zig build run -- window FONT ./manual-fixtures/RECEIPT.sh
+../.zig/zig build run -- window FONT ./manual-fixtures/RECEIPT.sh
 ```
 
 Python receipts use the same command with their `.py` filename.
