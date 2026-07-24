@@ -17,7 +17,7 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontStyle"));
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontKey"));
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "NativeGlyphKey"));
-    try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "NativeGlyphs"));
+    try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "NativeScratch"));
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontMap"));
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontConfig"));
     try std.testing.expectEqual(
@@ -49,6 +49,8 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
     if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var cells = [_]terminal.Cell{
         cell(0),
         cell(0),
@@ -56,13 +58,11 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
         cell('A'),
     };
     cells[1].invisible = true;
-    var first = try prepare(&map, input(&cells, 1, 3), 1);
-    defer first.deinit();
+    const first = try prepare(&scratch, &map, input(&cells, 1, 3), 1);
     try std.testing.expectEqual(@as(u16, 0), first.first_cell);
     try std.testing.expectEqual(@as(u16, 2), first.end_cell);
     try std.testing.expect(first.glyphs == .none);
-    var second = try prepare(&map, input(&cells, 1, 3), first.end_cell);
-    defer second.deinit();
+    const second = try prepare(&scratch, &map, input(&cells, 1, 3), first.end_cell);
     try std.testing.expectEqual(@as(u16, 2), second.first_cell);
     try std.testing.expectEqual(@as(u16, 3), second.end_cell);
     try std.testing.expect(second.glyphs == .generated);
@@ -73,8 +73,7 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
     try std.testing.expectEqual(terminal.CellBaseline.normal, second.baseline);
 
     if (comptime !selected.native_text) {
-        var third = try prepare(&map, input(&cells, 1, 3), second.end_cell);
-        defer third.deinit();
+        const third = try prepare(&scratch, &map, input(&cells, 1, 3), second.end_cell);
         try std.testing.expectEqual(@as(u16, 3), third.first_cell);
         try std.testing.expectEqual(@as(u16, 4), third.end_cell);
         try std.testing.expect(third.glyphs == .none);
@@ -84,6 +83,8 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
 test "multicell anchor prepares once and continuations are no-glyph coverage" {
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     const codepoint: u21 = if (selected.native_text) 'A' else 0x2500;
     var cells = [_]terminal.Cell{ cell(codepoint), cell(codepoint), cell(codepoint), cell(codepoint) };
     const sizing = terminal.TextSizing{
@@ -99,8 +100,7 @@ test "multicell anchor prepares once and continuations are no-glyph coverage" {
         continuation.sizing = sizing;
         continuation.sizing.x = @intCast(x);
     }
-    var anchor = try prepare(&map, input(&cells, 0, 3), 0);
-    defer anchor.deinit();
+    const anchor = try prepare(&scratch, &map, input(&cells, 0, 3), 0);
     try std.testing.expectEqual(@as(u16, 0), anchor.first_cell);
     try std.testing.expectEqual(@as(u16, 1), anchor.end_cell);
     try std.testing.expectEqual(sizing, anchor.sizing);
@@ -109,8 +109,7 @@ test "multicell anchor prepares once and continuations are no-glyph coverage" {
     } else {
         try std.testing.expect(anchor.glyphs == .generated);
     }
-    var continuation = try prepare(&map, input(&cells, 0, 3), 1);
-    defer continuation.deinit();
+    const continuation = try prepare(&scratch, &map, input(&cells, 0, 3), 1);
     try std.testing.expectEqual(@as(u16, 1), continuation.first_cell);
     try std.testing.expectEqual(@as(u16, 4), continuation.end_cell);
     try std.testing.expect(continuation.glyphs == .none);
@@ -119,23 +118,25 @@ test "multicell anchor prepares once and continuations are no-glyph coverage" {
 test "run discovery rejects malformed spans and metrics before ownership" {
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var cells = [_]terminal.Cell{cell(0x2500)};
     try std.testing.expectError(
         error.InvalidSpan,
-        prepare(&map, input(&cells, 1, 0), 0),
+        prepare(&scratch, &map, input(&cells, 1, 0), 0),
     );
     var invalid = input(&cells, 0, 0);
     invalid.metrics.height_px = 0;
     try std.testing.expectError(
         error.InvalidMetrics,
-        prepare(&map, invalid, 0),
+        prepare(&scratch, &map, invalid, 0),
     );
     if (comptime selected.generated_glyphs) {
         invalid.metrics.height_px = std.math.maxInt(u16);
         invalid.metrics.baseline_px = 12;
         try std.testing.expectError(
             error.InvalidMetrics,
-            prepare(&map, invalid, 0),
+            prepare(&scratch, &map, invalid, 0),
         );
     }
 }
@@ -145,26 +146,27 @@ test "generated extent validation does not reject native or blank mixed runs" {
         return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var cells = [_]terminal.Cell{ cell('A'), cell(0), cell(0x2500) };
     var oversized = input(&cells, 0, 2);
     oversized.metrics = .{ .width_px = 257, .height_px = 257, .baseline_px = 12 };
 
-    var native_run = try prepare(&map, oversized, 0);
-    defer native_run.deinit();
+    const native_run = try prepare(&scratch, &map, oversized, 0);
     try std.testing.expect(native_run.glyphs == .native);
-    var blank_run = try prepare(&map, oversized, 1);
-    defer blank_run.deinit();
+    const blank_run = try prepare(&scratch, &map, oversized, 1);
     try std.testing.expect(blank_run.glyphs == .none);
-    try std.testing.expectError(error.InvalidMetrics, prepare(&map, oversized, 2));
+    try std.testing.expectError(error.InvalidMetrics, prepare(&scratch, &map, oversized, 2));
 }
 
 test "generated raster owns exact alpha and allocation rollback" {
     if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var cells = [_]terminal.Cell{cell(0x2500)};
-    var run = try prepare(&map, input(&cells, 0, 0), 0);
-    defer run.deinit();
+    const run = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
     const key = run.glyphs.generated.key;
     try std.testing.expectEqual(@as(u16, 12), key.generated.baseline_px);
     try std.testing.expectError(
@@ -180,8 +182,7 @@ test "generated raster owns exact alpha and allocation rollback" {
 
     var alternate_input = input(&cells, 0, 0);
     alternate_input.metrics.baseline_px = 10;
-    var alternate_run = try prepare(&map, alternate_input, 0);
-    defer alternate_run.deinit();
+    const alternate_run = try prepare(&scratch, &map, alternate_input, 0);
     const alternate_key = alternate_run.glyphs.generated.key;
     try std.testing.expect(!std.meta.eql(key, alternate_key));
     var alternate_raster = try rasterize(&map, std.testing.allocator, alternate_key);
@@ -210,6 +211,8 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     };
     var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
     defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     const configured_metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
     try std.testing.expect(configured_metrics.width_px > 0);
     try std.testing.expect(configured_metrics.height_px > 0);
@@ -233,22 +236,21 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
         value.italic = true;
         value.baseline = .raised;
     }
-    var run = try terminal_text.prepareNextRun(
-        std.testing.allocator,
+    const run = try terminal_text.prepareNextRun(
         &map,
         input(&cells, 9, 10),
         9,
+        scratch.borrow(),
     );
-    defer run.deinit();
     try std.testing.expectEqual(@as(u16, 8), run.first_cell);
     try std.testing.expectEqual(@as(u16, 11), run.end_cell);
     try std.testing.expectEqual(terminal.CellBaseline.raised, run.baseline);
     try std.testing.expectEqual(terminal.LineGeometry.double_height_top, run.geometry);
     try std.testing.expect(run.glyphs == .native);
-    try std.testing.expect(run.glyphs.native.values.len > 0);
+    try std.testing.expect(run.glyphs.native.len > 0);
     var joined_cells = false;
     var combined_cell = false;
-    for (run.glyphs.native.values) |glyph| {
+    for (run.glyphs.native) |glyph| {
         try std.testing.expect(glyph.key == .native);
         try std.testing.expectEqual(@as(u4, 3), glyph.key.native.font.slot);
         try std.testing.expectEqual(terminal_text.FontStyle.bold_italic, glyph.key.native.font.style);
@@ -265,7 +267,7 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     }
     try std.testing.expect(joined_cells);
     try std.testing.expect(combined_cell);
-    const key = run.glyphs.native.values[0].key;
+    const key = run.glyphs.native[0].key;
     var raster = try terminal_text.rasterizeGlyph(std.testing.allocator, &map, key);
     defer raster.deinit();
     try std.testing.expect(raster.pixels.len <= render.text.max_raster_bytes);
@@ -278,48 +280,41 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     );
 }
 
-test "native missing tuple glyph and allocation failure are transactional" {
+test "native missing tuple and glyph failures preserve reusable scratch" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var styled = [_]terminal.Cell{cell('A')};
     styled[0].bold = true;
     try std.testing.expectError(
         error.MissingFontConfiguration,
         terminal_text.prepareNextRun(
-            std.testing.allocator,
             &map,
             input(&styled, 0, 0),
             0,
+            scratch.borrow(),
         ),
     );
     var missing = [_]terminal.Cell{cell(0x10ffff)};
     try std.testing.expectError(
         error.MissingGlyph,
         terminal_text.prepareNextRun(
-            std.testing.allocator,
             &map,
             input(&missing, 0, 0),
             0,
+            scratch.borrow(),
         ),
     );
     var ordinary = [_]terminal.Cell{cell('A')};
-    try std.testing.expectError(
-        error.OutOfMemory,
-        terminal_text.prepareNextRun(
-            std.testing.failing_allocator,
-            &map,
-            input(&ordinary, 0, 0),
-            0,
-        ),
-    );
-    var reusable = try terminal_text.prepareNextRun(
-        std.testing.allocator,
+    const reusable = try terminal_text.prepareNextRun(
         &map,
         input(&ordinary, 0, 0),
         0,
+        scratch.borrow(),
     );
-    reusable.deinit();
+    try std.testing.expect(reusable.glyphs.native.len > 0);
 }
 
 test "font map validates complete tuple set before native ownership" {
@@ -343,33 +338,175 @@ test "font map validates complete tuple set before native ownership" {
     );
 }
 
-test "native combining clusters and all three allocations preserve reusable owners" {
+test "native combining clusters reuse caller storage" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
     var cells = [_]terminal.Cell{ cell('A'), cell('B') };
     cells[0].combining_len = 1;
     cells[0].combining[0] = 0x0301;
-    var run = try terminal_text.prepareNextRun(
-        std.testing.allocator,
+    const run = try terminal_text.prepareNextRun(
         &map,
         input(&cells, 0, 1),
         0,
+        scratch.borrow(),
     );
-    defer run.deinit();
-    try std.testing.expect(run.glyphs.native.values.len >= 2);
-    for (run.glyphs.native.values) |glyph| {
+    try std.testing.expect(run.glyphs.native.len >= 2);
+    for (run.glyphs.native) |glyph| {
         try std.testing.expect(glyph.source_start < glyph.source_end);
         try std.testing.expect(glyph.source_end <= 2);
     }
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        prepareNative,
-        .{&map},
+
+    const first_pointer = run.glyphs.native.ptr;
+    const first_key = run.glyphs.native[0].key;
+    cells[0] = cell('C');
+    cells[1] = cell('D');
+    const reused = try terminal_text.prepareNextRun(
+        &map,
+        input(&cells, 0, 1),
+        0,
+        scratch.borrow(),
     );
+    try std.testing.expectEqual(first_pointer, reused.glyphs.native.ptr);
+    try std.testing.expect(!std.meta.eql(first_key, reused.glyphs.native[0].key));
+}
+
+test "native scratch capacity failures preserve unwritten destinations" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{cell('A')};
+    cells[0].combining_len = 1;
+    cells[0].combining[0] = 0x0301;
+    const row = input(&cells, 0, 0);
+    const scalar_sentinel = [_]u32{ 0xaaaaaaaa, 0xbbbbbbbb };
+    const glyph_sentinel = render.text.Glyph{
+        .id = 0xaaaaaaaa,
+        .cluster = 0xbbbbbbbb,
+        .x_advance = -1,
+        .y_advance = -2,
+        .x_offset = -3,
+        .y_offset = -4,
+    };
+    const positioned_sentinel = terminal_text.PositionedGlyph{
+        .key = .{ .native = .{
+            .font = .{ .slot = 0, .style = .normal },
+            .face_index = 7,
+            .glyph_id = 0xaaaaaaaa,
+            .cell_span = 9,
+        } },
+        .source_start = 7,
+        .source_end = 9,
+        .x_26_6 = -1,
+        .y_26_6 = -2,
+        .x_advance_26_6 = -3,
+        .y_advance_26_6 = -4,
+    };
+    var codepoints = scalar_sentinel;
+    var clusters = scalar_sentinel;
+    var shaped = [_]render.text.Glyph{glyph_sentinel};
+    var positioned = [_]terminal_text.PositionedGlyph{positioned_sentinel};
+    try std.testing.expectError(error.InsufficientCodepoints, terminal_text.prepareNextRun(
+        &map,
+        row,
+        0,
+        .{
+            .shaper = &scratch.shaper,
+            .codepoints = codepoints[0..1],
+            .clusters = &clusters,
+            .shaped = &shaped,
+            .positioned = &positioned,
+        },
+    ));
+    try std.testing.expectEqualSlices(u32, &scalar_sentinel, &codepoints);
+    try std.testing.expectEqualSlices(u32, &scalar_sentinel, &clusters);
+    try std.testing.expectEqual(glyph_sentinel, shaped[0]);
+    try std.testing.expectEqual(positioned_sentinel, positioned[0]);
+
+    try std.testing.expectError(error.InsufficientClusters, terminal_text.prepareNextRun(
+        &map,
+        row,
+        0,
+        .{
+            .shaper = &scratch.shaper,
+            .codepoints = &codepoints,
+            .clusters = clusters[0..1],
+            .shaped = &shaped,
+            .positioned = &positioned,
+        },
+    ));
+    try std.testing.expectEqualSlices(u32, &scalar_sentinel, &codepoints);
+    try std.testing.expectEqualSlices(u32, &scalar_sentinel, &clusters);
+    try std.testing.expectEqual(glyph_sentinel, shaped[0]);
+    try std.testing.expectEqual(positioned_sentinel, positioned[0]);
+
+    try std.testing.expectError(error.InsufficientGlyphs, terminal_text.prepareNextRun(
+        &map,
+        row,
+        0,
+        .{
+            .shaper = &scratch.shaper,
+            .codepoints = &codepoints,
+            .clusters = &clusters,
+            .shaped = shaped[0..0],
+            .positioned = &positioned,
+        },
+    ));
+    try std.testing.expectEqual(glyph_sentinel, shaped[0]);
+    try std.testing.expectEqual(positioned_sentinel, positioned[0]);
+
+    try std.testing.expectError(error.InsufficientPositionedGlyphs, terminal_text.prepareNextRun(
+        &map,
+        row,
+        0,
+        .{
+            .shaper = &scratch.shaper,
+            .codepoints = &codepoints,
+            .clusters = &clusters,
+            .shaped = &shaped,
+            .positioned = positioned[0..0],
+        },
+    ));
+    try std.testing.expectEqual(positioned_sentinel, positioned[0]);
 }
 
 const Map = if (selected.native_text) terminal_text.FontMap else void;
+const TestScratch = if (selected.native_text) struct {
+    shaper: render.text.ShapeBuffer,
+    codepoints: [64]u32 = undefined,
+    clusters: [64]u32 = undefined,
+    shaped: [64]render.text.Glyph = undefined,
+    positioned: [64]terminal_text.PositionedGlyph = undefined,
+
+    fn init() !@This() {
+        return .{ .shaper = try render.text.ShapeBuffer.init(64) };
+    }
+
+    fn deinit(self: *@This()) void {
+        self.shaper.deinit();
+        self.* = undefined;
+    }
+
+    fn borrow(self: *@This()) terminal_text.NativeScratch {
+        return .{
+            .shaper = &self.shaper,
+            .codepoints = &self.codepoints,
+            .clusters = &self.clusters,
+            .shaped = &self.shaped,
+            .positioned = &self.positioned,
+        };
+    }
+} else struct {
+    fn init() !@This() {
+        return .{};
+    }
+
+    fn deinit(_: *@This()) void {}
+};
 
 fn initMap() !Map {
     if (comptime selected.native_text) {
@@ -387,12 +524,13 @@ fn deinitMap(map: *Map) void {
 }
 
 fn prepare(
+    scratch: *TestScratch,
     map: *Map,
     row: terminal_text.RowInput,
     at: u16,
 ) terminal_text.PrepareError!terminal_text.PreparedRun {
     if (comptime selected.native_text)
-        return terminal_text.prepareNextRun(std.testing.allocator, map, row, at);
+        return terminal_text.prepareNextRun(map, row, at, scratch.borrow());
     return terminal_text.prepareNextRun(row, at);
 }
 
@@ -413,17 +551,6 @@ fn constructMap(allocator: std.mem.Allocator) !void {
     }};
     var map = try terminal_text.FontMap.init(allocator, &configs);
     map.deinit();
-}
-
-fn prepareNative(allocator: std.mem.Allocator, map: *terminal_text.FontMap) !void {
-    var cells = [_]terminal.Cell{ cell('f'), cell('i') };
-    var run = try terminal_text.prepareNextRun(
-        allocator,
-        map,
-        input(&cells, 0, 1),
-        0,
-    );
-    run.deinit();
 }
 
 fn input(cells: []const terminal.Cell, start: u16, end: u16) terminal_text.RowInput {

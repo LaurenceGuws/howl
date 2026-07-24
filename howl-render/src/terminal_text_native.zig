@@ -18,11 +18,11 @@ pub const NativeGlyphKey = impl.NativeGlyphKey;
 pub const GlyphKey = impl.GlyphKey;
 /// Places one glyph and records its source-cell coverage.
 pub const PositionedGlyph = impl.PositionedGlyph;
-/// Owns one native shaping call's positioned output.
-pub const NativeGlyphs = impl.NativeGlyphs;
-/// Stores an owned native glyph slice or absent glyph output.
+/// Borrows caller-owned native staging, shaping, and positioned output storage.
+pub const NativeScratch = impl.NativeScratch;
+/// Stores a borrowed native glyph slice or absent glyph output.
 pub const PreparedGlyphs = impl.PreparedGlyphs;
-/// Owns one homogeneous run and its unresolved visual facts.
+/// Borrows one homogeneous run and preserves its unresolved visual facts.
 pub const PreparedRun = impl.PreparedRun;
 /// Owns one tightly packed alpha mask.
 pub const Raster = impl.Raster;

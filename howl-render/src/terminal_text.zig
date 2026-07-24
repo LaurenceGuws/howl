@@ -107,23 +107,16 @@ pub const PositionedGlyph = struct {
     y_advance_26_6: i32,
 };
 
-/// Owns the positioned output of one native shaping call.
-pub const NativeGlyphs = struct {
-    /// Retains the allocator that owns `values`.
-    allocator: std.mem.Allocator,
-    /// Owns at most `native_text.max_glyphs` positioned glyphs.
-    values: []PositionedGlyph,
-};
-
 /// Stores the exact ownership form of one homogeneous prepared run.
 pub const PreparedGlyphs = if (features.native_text and features.generated_glyphs)
-    union(enum) { native: NativeGlyphs, generated: PositionedGlyph, none }
+    union(enum) { native: []const PositionedGlyph, generated: PositionedGlyph, none }
 else if (features.native_text)
-    union(enum) { native: NativeGlyphs, none }
+    union(enum) { native: []const PositionedGlyph, none }
 else
     union(enum) { generated: PositionedGlyph, none };
 
-/// Owns at most one native glyph slice and preserves unresolved visual facts.
+/// Borrows at most one native scratch prefix and preserves unresolved visual facts.
+/// Native glyphs remain valid only until their caller storage is written again.
 pub const PreparedRun = struct {
     /// Identifies the first source cell in the complete run.
     first_cell: u16,
@@ -135,20 +128,25 @@ pub const PreparedRun = struct {
     geometry: terminal.LineGeometry,
     /// Preserves ordinary or Kitty multicell sizing for draw preparation.
     sizing: terminal.TextSizing,
-    /// Stores native ownership, one inline generated glyph, or no glyph.
+    /// Borrows native scratch output, stores one generated glyph, or has no glyph.
     glyphs: PreparedGlyphs,
-
-    /// Releases only an owned native slice and invalidates the complete result.
-    pub fn deinit(self: *PreparedRun) void {
-        if (comptime features.native_text) {
-            switch (self.glyphs) {
-                .native => |owned| owned.allocator.free(owned.values),
-                else => {},
-            }
-        }
-        self.* = undefined;
-    }
 };
+
+/// Borrows all caller-owned storage used by one synchronous native preparation.
+/// Every slice must outlive the returned run and may be reused after that run
+/// has been consumed.
+pub const NativeScratch = if (features.native_text) struct {
+    /// Owns native shaping capacity outside this borrowed scratch view.
+    shaper: *native.ShapeBuffer,
+    /// Stages flattened base and combining Unicode scalars.
+    codepoints: []u32,
+    /// Stages one run-local source cell for every flattened scalar.
+    clusters: []u32,
+    /// Receives the complete bounded native shaping result.
+    shaped: []native.Glyph,
+    /// Receives final terminal-positioned glyph facts.
+    positioned: []PositionedGlyph,
+} else void;
 
 /// Owns one tightly packed alpha mask produced only after a raster miss.
 pub const Raster = struct {
@@ -255,12 +253,18 @@ pub const FontMap = if (features.native_text) struct {
     }
 } else opaque {};
 
-/// Reports exact span, metric, placement, configuration, shaping, or allocation failure.
+/// Reports exact span, metric, caller capacity, placement, configuration, or shaping failure.
 pub const PrepareError = error{
     InvalidSpan,
     InvalidMetrics,
 } || if (features.native_text)
-    native.ShapeError || error{ InvalidPlacement, MissingFontConfiguration }
+    native.ShapeError || error{
+        InvalidPlacement,
+        MissingFontConfiguration,
+        InsufficientCodepoints,
+        InsufficientClusters,
+        InsufficientPositionedGlyphs,
+    }
 else
     error{};
 
@@ -281,13 +285,12 @@ const RunKind = union(enum) {
 
 const Bounds = struct { first: u16, end: u16, kind: RunKind };
 
-/// Discovers one run, stages flattened native text and one shaped run when
-/// needed, and returns only the final owned positioned output.
+/// Discovers one run and prepares it into caller-owned native scratch.
 pub fn prepareNextRunNative(
-    allocator: std.mem.Allocator,
     fonts: *FontMap,
     input: RowInput,
     cell: u16,
+    scratch: NativeScratch,
 ) PrepareError!PreparedRun {
     comptime std.debug.assert(features.native_text);
     const bounds = try runBounds(input, cell);
@@ -297,7 +300,7 @@ pub fn prepareNextRunNative(
             try generatedRun(input, bounds)
         else
             noGlyphRun(input, bounds),
-        .native => |facts| nativeRun(allocator, fonts, input, bounds, facts.font),
+        .native => |facts| nativeRun(fonts, input, bounds, facts.font, scratch),
     };
 }
 
@@ -428,11 +431,11 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
 }
 
 fn nativeRun(
-    allocator: std.mem.Allocator,
     fonts: *FontMap,
     input: RowInput,
     bounds: Bounds,
     font_key: FontKey,
+    scratch: NativeScratch,
 ) PrepareError!PreparedRun {
     const set = fonts.get(font_key) orelse return error.MissingFontConfiguration;
     var scalar_count: usize = 0;
@@ -441,12 +444,10 @@ fn nativeRun(
         scalar_count += 1 + cell.combining_len;
     }
     if (scalar_count > native.max_codepoints) return error.TextTooLong;
-    // `native.Text` borrows two contiguous scalar-length slices, while terminal
-    // cells interleave base and combining scalars. One allocation stages both.
-    const staging = allocator.alloc(u32, scalar_count * 2) catch return error.OutOfMemory;
-    defer allocator.free(staging);
-    const codepoints = staging[0..scalar_count];
-    const clusters = staging[scalar_count..];
+    if (scalar_count > scratch.codepoints.len) return error.InsufficientCodepoints;
+    if (scalar_count > scratch.clusters.len) return error.InsufficientClusters;
+    const codepoints = scratch.codepoints[0..scalar_count];
+    const clusters = scratch.clusters[0..scalar_count];
     var used: usize = 0;
     var col = bounds.first;
     while (col < bounds.end) : (col += 1) {
@@ -462,15 +463,14 @@ fn nativeRun(
     }
     std.debug.assert(used == scalar_count);
 
-    var shaped = try set.shape(allocator, .{
+    const shaped = try set.shape(scratch.shaper, .{
         .codepoints = codepoints,
         .clusters = clusters,
         .cell_span = bounds.end - bounds.first,
-    });
-    defer shaped.deinit();
-    const positioned = allocator.alloc(PositionedGlyph, shaped.glyphs.len) catch
-        return error.OutOfMemory;
-    errdefer allocator.free(positioned);
+    }, scratch.shaped);
+    if (shaped.glyphs.len > scratch.positioned.len)
+        return error.InsufficientPositionedGlyphs;
+    const positioned = scratch.positioned[0..shaped.glyphs.len];
     var pen_x: i64 = 0;
     var pen_y: i64 = 0;
     for (shaped.glyphs, positioned) |glyph, *output| {
@@ -506,7 +506,7 @@ fn nativeRun(
             .native => |facts| facts.sizing,
             else => .{},
         },
-        .glyphs = .{ .native = .{ .allocator = allocator, .values = positioned } },
+        .glyphs = .{ .native = positioned },
     };
 }
 

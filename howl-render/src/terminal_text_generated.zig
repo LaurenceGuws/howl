@@ -14,7 +14,7 @@ pub const GlyphKey = impl.GlyphKey;
 pub const PositionedGlyph = impl.PositionedGlyph;
 /// Stores one inline generated glyph or absent glyph output.
 pub const PreparedGlyphs = impl.PreparedGlyphs;
-/// Owns one homogeneous run and its unresolved visual facts.
+/// Stores one homogeneous run and its unresolved visual facts.
 pub const PreparedRun = impl.PreparedRun;
 /// Owns one tightly packed alpha mask.
 pub const Raster = impl.Raster;

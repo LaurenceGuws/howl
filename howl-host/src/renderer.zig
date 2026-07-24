@@ -18,6 +18,17 @@ const c = @import("renderer_c");
 const max_dimension: u16 = 512;
 // Bounds retained visual cells for the initial one-terminal owner.
 const max_cells: usize = 512 * 256;
+// One row stages each base scalar and every bounded combining scalar.
+const max_run_scalars: usize = @as(usize, max_dimension) * (terminal.max_combining + 1);
+// HarfBuzz substitutions may expand beyond the input scalar count, so output
+// storage follows the render capability's public glyph ceiling.
+const max_run_glyphs: usize = render.text.max_glyphs;
+const run_codepoint_bytes = max_run_scalars * @sizeOf(u32);
+const run_cluster_bytes = max_run_scalars * @sizeOf(u32);
+const run_shaped_bytes = max_run_glyphs * @sizeOf(render.text.Glyph);
+const run_positioned_bytes = max_run_glyphs * @sizeOf(text.PositionedGlyph);
+const run_scratch_bytes =
+    run_codepoint_bytes + run_cluster_bytes + run_shaped_bytes + run_positioned_bytes;
 // Bounds resident glyph masks independently of terminal dimensions.
 const texture_capacity: usize = 2_048;
 // Bounds resident alpha bytes shared by every terminal glyph identity.
@@ -81,7 +92,8 @@ pub const Submission = struct {
 
 /// Reports exact construction, admission, preparation, or device failure.
 pub const Error = std.mem.Allocator.Error || std.Thread.SpawnError ||
-    text.FontMapInitError || text.PrepareError || text.RasterError || error{
+    render.text.ShapeBufferInitError || text.FontMapInitError ||
+    text.PrepareError || text.RasterError || error{
     InvalidSubmission,
     StaleGeneration,
     Stopping,
@@ -451,6 +463,56 @@ const Vertex = extern struct {
     a: f32,
 };
 
+const RunScratch = struct {
+    allocator: std.mem.Allocator,
+    shaper: render.text.ShapeBuffer,
+    codepoints: []u32,
+    clusters: []u32,
+    shaped: []render.text.Glyph,
+    positioned: []text.PositionedGlyph,
+
+    fn init(
+        allocator: std.mem.Allocator,
+    ) (std.mem.Allocator.Error || render.text.ShapeBufferInitError)!RunScratch {
+        const codepoints = try allocator.alloc(u32, max_run_scalars);
+        errdefer allocator.free(codepoints);
+        const clusters = try allocator.alloc(u32, max_run_scalars);
+        errdefer allocator.free(clusters);
+        const shaped = try allocator.alloc(render.text.Glyph, max_run_glyphs);
+        errdefer allocator.free(shaped);
+        const positioned = try allocator.alloc(text.PositionedGlyph, max_run_glyphs);
+        errdefer allocator.free(positioned);
+        const shaper = try render.text.ShapeBuffer.init(max_run_glyphs);
+        return .{
+            .allocator = allocator,
+            .shaper = shaper,
+            .codepoints = codepoints,
+            .clusters = clusters,
+            .shaped = shaped,
+            .positioned = positioned,
+        };
+    }
+
+    fn borrow(self: *RunScratch) text.NativeScratch {
+        return .{
+            .shaper = &self.shaper,
+            .codepoints = self.codepoints,
+            .clusters = self.clusters,
+            .shaped = self.shaped,
+            .positioned = self.positioned,
+        };
+    }
+
+    fn deinit(self: *RunScratch) void {
+        self.shaper.deinit();
+        self.allocator.free(self.positioned);
+        self.allocator.free(self.shaped);
+        self.allocator.free(self.clusters);
+        self.allocator.free(self.codepoints);
+        self.* = undefined;
+    }
+};
+
 const Device = struct {
     allocator: std.mem.Allocator,
     display: c.EGLDisplay,
@@ -462,6 +524,7 @@ const Device = struct {
     buffer: c.GLuint,
     white: c.GLuint,
     fonts: text.FontMap,
+    run_scratch: RunScratch,
     metrics: text.CellMetrics,
     textures: [texture_capacity]Texture = undefined,
     texture_count: usize = 0,
@@ -478,6 +541,8 @@ const Device = struct {
         try validateSize(values.size);
         var fonts = try text.FontMap.init(allocator, values.fonts);
         errdefer fonts.deinit();
+        var run_scratch = try RunScratch.init(allocator);
+        errdefer run_scratch.deinit();
         const default_key = text.FontKey{ .slot = 0, .style = .normal };
         const metrics = fonts.cellMetrics(default_key) orelse return error.InvalidSubmission;
         const window = c.wl_egl_window_create(
@@ -553,6 +618,7 @@ const Device = struct {
             .buffer = buffer,
             .white = white,
             .fonts = fonts,
+            .run_scratch = run_scratch,
             .metrics = metrics,
             .size = values.size,
             .io = io,
@@ -776,18 +842,17 @@ const Device = struct {
         var at: u16 = 0;
         while (at < logical_cols) {
             const prepare_started = measure.now(self.io);
-            var prepared = try text.prepareNextRun(self.allocator, &self.fonts, .{
+            const prepared = try text.prepareNextRun(&self.fonts, .{
                 .cells = cells[0..logical_cols],
                 .affected_start = at,
                 .affected_end = logical_cols - 1,
                 .geometry = geometry,
                 .metrics = self.metrics,
-            }, at);
-            defer prepared.deinit();
+            }, at, self.run_scratch.borrow());
             const glyph_count: usize = switch (prepared.glyphs) {
                 .none => 0,
                 .generated => 1,
-                .native => |owned| owned.values.len,
+                .native => |glyphs| glyphs.len,
             };
             measure.State.prepared(
                 self.measurement,
@@ -816,7 +881,7 @@ const Device = struct {
         switch (prepared.glyphs) {
             .none => {},
             .generated => |glyph| try self.drawGlyph(work, row, cells, prepared, glyph),
-            .native => |owned| for (owned.values) |glyph|
+            .native => |glyphs| for (glyphs) |glyph|
                 try self.drawGlyph(work, row, cells, prepared, glyph),
         }
     }
@@ -1176,6 +1241,7 @@ const Device = struct {
             c.glDeleteTextures(1, &self.image_textures[self.image_texture_count].name);
         }
         while (self.texture_count != 0) self.removeTexture(self.texture_count - 1);
+        self.run_scratch.deinit();
         self.fonts.deinit();
         c.glDeleteTextures(1, &self.white);
         c.glDeleteBuffers(1, &self.buffer);
@@ -2548,6 +2614,34 @@ test "surface clipping rejects empty and bounds hostile rectangles" {
             .{ .width = 40, .height = 30 },
         ).?,
     );
+}
+
+test "run scratch owns exact bounds and rolls back every allocation" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        constructRunScratch,
+        .{},
+    );
+    var scratch = try RunScratch.init(std.testing.allocator);
+    defer scratch.deinit();
+    try std.testing.expectEqual(max_run_scalars, scratch.codepoints.len);
+    try std.testing.expectEqual(max_run_scalars, scratch.clusters.len);
+    try std.testing.expectEqual(max_run_glyphs, scratch.shaped.len);
+    try std.testing.expectEqual(max_run_glyphs, scratch.positioned.len);
+    try std.testing.expectEqual(@as(usize, 8_192), run_codepoint_bytes);
+    try std.testing.expectEqual(@as(usize, 8_192), run_cluster_bytes);
+    try std.testing.expectEqual(@as(usize, 1_572_864), run_shaped_bytes);
+    try std.testing.expectEqual(@as(usize, 2_359_296), run_positioned_bytes);
+    try std.testing.expectEqual(@as(usize, 3_948_544), run_scratch_bytes);
+    try std.testing.expectEqual(max_run_glyphs, scratch.shaper.capacity);
+    const borrowed = scratch.borrow();
+    try std.testing.expectEqual(@intFromPtr(scratch.codepoints.ptr), @intFromPtr(borrowed.codepoints.ptr));
+    try std.testing.expectEqual(@intFromPtr(scratch.positioned.ptr), @intFromPtr(borrowed.positioned.ptr));
+}
+
+fn constructRunScratch(allocator: std.mem.Allocator) !void {
+    var scratch = try RunScratch.init(allocator);
+    scratch.deinit();
 }
 
 fn testCell(codepoint: u21) terminal.Cell {

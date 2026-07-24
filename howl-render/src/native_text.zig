@@ -35,15 +35,19 @@ pub const InitError = error{
 
 /// Names failures while shaping one borrowed Unicode sequence.
 pub const ShapeError = error{
-    OutOfMemory,
     FontState,
     InvalidText,
     TextTooLong,
     GlyphLimit,
+    InsufficientShapeBuffer,
+    InsufficientGlyphs,
     HarfBuzzBuffer,
     InvalidShapeResult,
     MissingGlyph,
 };
+
+/// Names invalid or unavailable reusable native shaping storage.
+pub const ShapeBufferInitError = error{ InvalidCapacity, HarfBuzzBuffer };
 
 /// Names failures while producing one owned native glyph alpha mask.
 pub const RasterError = error{
@@ -117,22 +121,40 @@ pub const Glyph = struct {
     y_offset: i32,
 };
 
-/// Owns at most 65,536 glyphs and identifies the selected configured face.
+/// Owns one bounded reusable HarfBuzz buffer for synchronous shaping.
+pub const ShapeBuffer = struct {
+    /// Owns the nonempty native buffer until `deinit`.
+    handle: *c.hb_buffer_t,
+    /// Bounds both admitted input scalars and retained shaping output.
+    capacity: u32,
+
+    /// Requests native storage once for up to `capacity` shaped glyphs.
+    /// HarfBuzz owns its internal allocation behavior; Howl rejects input or
+    /// output beyond this accepted ceiling.
+    pub fn init(capacity: u32) ShapeBufferInitError!ShapeBuffer {
+        if (capacity == 0 or capacity > max_glyphs) return error.InvalidCapacity;
+        const handle = try createHbBuffer();
+        errdefer c.hb_buffer_destroy(handle);
+        if (c.hb_buffer_pre_allocate(handle, capacity) == 0)
+            return error.HarfBuzzBuffer;
+        return .{ .handle = handle, .capacity = capacity };
+    }
+
+    /// Releases the sole native buffer and invalidates the owner.
+    pub fn deinit(self: *ShapeBuffer) void {
+        c.hb_buffer_destroy(self.handle);
+        self.* = undefined;
+    }
+};
+
+/// Borrows caller storage containing one complete bounded shaping result.
 pub const Run = struct {
-    /// Retains the allocator that owns `glyphs`.
-    allocator: std.mem.Allocator,
     /// Identifies the primary or ordered fallback face used for the whole run.
     face_index: u8,
     /// Retains the caller-assigned nonzero terminal-cell width.
     cell_span: u16,
-    /// Owns the bounded shaped glyph sequence.
-    glyphs: []Glyph,
-
-    /// Releases the owned glyph slice exactly once.
-    pub fn deinit(self: *Run) void {
-        self.allocator.free(self.glyphs);
-        self.* = undefined;
-    }
+    /// Borrows the initialized prefix of caller-owned glyph storage.
+    glyphs: []const Glyph,
 };
 
 /// Owns one tightly packed alpha mask of at most sixteen MiB and validated
@@ -246,47 +268,53 @@ pub const FontSet = struct {
     }
 
     /// Exclusively borrows the native faces to shape one validated sequence
-    /// with the first face covering every scalar. The returned run owns its
-    /// glyphs; invalid input, missing coverage, malformed or bounded HB output,
-    /// and allocation failure are reported exactly.
-    pub fn shape(self: *FontSet, allocator: std.mem.Allocator, text: Text) ShapeError!Run {
+    /// with the first face covering every scalar. The returned run borrows the
+    /// initialized prefix of `glyph_storage`; insufficient storage leaves that
+    /// destination unchanged.
+    pub fn shape(
+        self: *FontSet,
+        buffer: *ShapeBuffer,
+        text: Text,
+        glyph_storage: []Glyph,
+    ) ShapeError!Run {
         if (!self.usable) return error.FontState;
         try validateText(text);
+        if (text.codepoints.len > buffer.capacity)
+            return error.InsufficientShapeBuffer;
         const face_index = self.selectFace(text.codepoints) orelse return error.MissingGlyph;
         const face = self.faces[face_index];
-        const buffer = try createHbBuffer();
-        defer c.hb_buffer_destroy(buffer);
-        if (c.hb_buffer_pre_allocate(buffer, @intCast(text.codepoints.len)) == 0)
-            return error.HarfBuzzBuffer;
+        c.hb_buffer_clear_contents(buffer.handle);
+        try requireHbBuffer(buffer.handle);
         c.hb_buffer_add_utf32(
-            buffer,
+            buffer.handle,
             text.codepoints.ptr,
             @intCast(text.codepoints.len),
             0,
             @intCast(text.codepoints.len),
         );
-        try requireHbBuffer(buffer);
-        c.hb_buffer_guess_segment_properties(buffer);
-        try requireHbBuffer(buffer);
-        c.hb_shape(face.hb, buffer, null, 0);
-        try requireHbBuffer(buffer);
+        try requireHbBuffer(buffer.handle);
+        c.hb_buffer_guess_segment_properties(buffer.handle);
+        try requireHbBuffer(buffer.handle);
+        c.hb_shape(face.hb, buffer.handle, null, 0);
+        try requireHbBuffer(buffer.handle);
 
         var info_count: c_uint = 0;
-        const infos = c.hb_buffer_get_glyph_infos(buffer, &info_count);
-        try requireHbBuffer(buffer);
+        const infos = c.hb_buffer_get_glyph_infos(buffer.handle, &info_count);
+        try requireHbBuffer(buffer.handle);
         var position_count: c_uint = 0;
-        const positions = c.hb_buffer_get_glyph_positions(buffer, &position_count);
-        try requireHbBuffer(buffer);
+        const positions = c.hb_buffer_get_glyph_positions(buffer.handle, &position_count);
+        try requireHbBuffer(buffer.handle);
         if (info_count != position_count) return error.InvalidShapeResult;
-        if (info_count > max_glyphs) return error.GlyphLimit;
         if (info_count > 0 and (infos == null or positions == null))
             return error.HarfBuzzBuffer;
         for (0..info_count) |i| {
             try validateGlyphInfo(infos[i], text.clusters.len);
         }
-        const glyphs = allocator.alloc(Glyph, info_count) catch
-            return error.OutOfMemory;
-        errdefer allocator.free(glyphs);
+        const glyphs = try shapeDestination(
+            info_count,
+            buffer.capacity,
+            glyph_storage,
+        );
         for (glyphs, 0..) |*glyph, i| {
             const cp_index: usize = infos[i].cluster;
             glyph.* = .{
@@ -299,7 +327,6 @@ pub const FontSet = struct {
             };
         }
         return .{
-            .allocator = allocator,
             .face_index = @intCast(face_index),
             .cell_span = text.cell_span,
             .glyphs = glyphs,
@@ -481,6 +508,34 @@ fn validateGlyphInfo(
 ) error{ MissingGlyph, InvalidShapeResult }!void {
     if (info.codepoint == 0) return error.MissingGlyph;
     if (info.cluster >= cluster_count) return error.InvalidShapeResult;
+}
+
+fn shapeDestination(
+    count: usize,
+    capacity: u32,
+    glyph_storage: []Glyph,
+) error{ GlyphLimit, InsufficientShapeBuffer, InsufficientGlyphs }![]Glyph {
+    if (count > max_glyphs) return error.GlyphLimit;
+    if (count > capacity) return error.InsufficientShapeBuffer;
+    if (count > glyph_storage.len) return error.InsufficientGlyphs;
+    return glyph_storage[0..count];
+}
+
+test "shape output ceiling rejects before caller storage" {
+    const sentinel = Glyph{
+        .id = 0xaaaaaaaa,
+        .cluster = 0xbbbbbbbb,
+        .x_advance = -1,
+        .y_advance = -2,
+        .x_offset = -3,
+        .y_offset = -4,
+    };
+    var output = [_]Glyph{ sentinel, sentinel };
+    try std.testing.expectError(
+        error.InsufficientShapeBuffer,
+        shapeDestination(2, 1, &output),
+    );
+    try std.testing.expectEqualSlices(Glyph, &.{ sentinel, sentinel }, &output);
 }
 
 fn validateText(text: Text) error{ InvalidText, TextTooLong }!void {
@@ -1049,13 +1104,17 @@ test "failed size restoration invalidates native use and preserves cleanup" {
         set.finishTemporaryRaster(fitted, 1),
     );
     try std.testing.expect(!set.usable);
+    var shaper = try ShapeBuffer.init(1);
+    defer shaper.deinit();
+    var glyphs: [1]Glyph = undefined;
     try std.testing.expectError(error.FontState, set.shape(
-        std.testing.allocator,
+        &shaper,
         .{
             .codepoints = &.{'A'},
             .clusters = &.{0},
             .cell_span = 1,
         },
+        &glyphs,
     ));
     try std.testing.expectError(
         error.FontState,
