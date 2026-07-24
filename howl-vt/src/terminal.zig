@@ -1126,6 +1126,21 @@ pub const Screen = struct {
         return h[@intCast(slot * @as(u32, self.cols) + @as(u32, col))];
     }
 
+    fn visibleRowCells(self: *const Screen, row: u16) []const Cell {
+        std.debug.assert(row < self.rows);
+        const cells = self.cells orelse unreachable;
+        const start: usize = @intCast(self.rowStart(row));
+        return cells[start..][0..self.cols];
+    }
+
+    fn historyRowCells(self: *const Screen, history_idx: u32) []const Cell {
+        std.debug.assert(history_idx < self.history_count);
+        const cells = self.history orelse unreachable;
+        const slot = self.historySlotForRecency(history_idx) orelse unreachable;
+        const start: usize = @intCast(slot * @as(u32, self.cols));
+        return cells[start..][0..self.cols];
+    }
+
     /// Return retained history row count.
     pub fn historyCount(self: *const Screen) u32 {
         return self.history_count;
@@ -10007,17 +10022,22 @@ pub const View = struct {
         return .{ .screen = @intCast(@min(src_row - self.history_count, rowIndex(self.rows -| 1))) };
     }
 
-    /// Returns a copied cell from an already resolved row source.
-    pub fn sourceCellInfoAt(self: *const View, source: RowSource, col: u16) Screen.Cell {
-        return switch (source) {
-            .history => |recency| self.screen.historyCellAt(recency, col),
-            .screen => |screen_row| self.screen.cellInfoAt(screen_row, col),
+    /// Borrows one complete visible row until the terminal is mutated.
+    ///
+    /// `row` must be in bounds. History and active-screen storage remain
+    /// private; the returned cells share this view's mutation lifetime.
+    pub fn rowCells(self: *const View, row: u16) []const Terminal.VisualCell {
+        std.debug.assert(row < self.rows);
+        return switch (self.rowSource(row)) {
+            .history => |recency| self.screen.historyRowCells(recency),
+            .screen => |screen_row| self.screen.visibleRowCells(screen_row),
         };
     }
 
-    /// Returns a copied viewport cell, clamping an invalid row to screen row zero.
+    /// Returns a copied viewport cell or the default cell for invalid coordinates.
     pub fn cellInfoAt(self: *const View, row: u16, col: u16) Screen.Cell {
-        return self.sourceCellInfoAt(self.rowSource(row), col);
+        if (self.rows == 0 or row >= self.rows or col >= self.cols) return Screen.default_cell;
+        return self.rowCells(row)[col];
     }
 
     /// Returns the codepoint of one visible cell.
@@ -13775,6 +13795,8 @@ pub const Terminal = struct {
     pub const Color = Screen.Color;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = Screen.CellAttrs;
+    /// Borrows one complete terminal visual cell through `VisualView`.
+    pub const VisualCell = Screen.Cell;
     /// Uses the canonical terminal underline style.
     pub const UnderlineStyle = Screen.UnderlineStyle;
     /// Uses the canonical terminal baseline displacement.

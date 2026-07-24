@@ -322,7 +322,9 @@ test "visual view marks selection geometry and source-wide discontinuities exact
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+    const initial = terminal.visualView();
+    try std.testing.expectEqual(@as(usize, 8), initial.view.rowCells(0).len);
+    try std.testing.expect(terminal.ackVisual(initial.dirty_token));
     try std.testing.expect((try terminal.feed("abcdef")).state_changed);
     try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
 
@@ -351,6 +353,12 @@ test "visual view marks selection geometry and source-wide discontinuities exact
     try std.testing.expect(resized.dirty == .full);
     try std.testing.expectEqual(@as(u16, 4), resized.view.rows);
     try std.testing.expectEqual(@as(u16, 10), resized.view.cols);
+    try std.testing.expectEqual(@as(usize, 10), resized.view.rowCells(0).len);
+
+    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    const reset = terminal.visualView();
+    try std.testing.expect(reset.dirty == .full);
+    try std.testing.expectEqual(@as(usize, 10), reset.view.rowCells(0).len);
 }
 
 test "visual view remains cumulative across fragmented stream mutation" {
@@ -489,7 +497,17 @@ test "visual dirty rows resolve a mixed history and screen viewport" {
     const history = "111111\r\n222222\r\n333333\r\n444444\r\n555555\r\n666666";
     try std.testing.expect((try terminal.feed(history)).state_changed);
     try std.testing.expect(terminal.scrollViewport(.{ .absolute = 2 }));
-    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
+    const mixed = terminal.visualView();
+    const expected_rows = [_]u21{ '1', '2', '3', '4' };
+    for (expected_rows, 0..) |expected, row| {
+        const cells = mixed.view.rowCells(@intCast(row));
+        try std.testing.expectEqual(@as(usize, 6), cells.len);
+        try std.testing.expectEqual(expected, cells[0].codepoint);
+        for (cells, 0..) |cell, col| {
+            try std.testing.expectEqual(cell, mixed.view.cellInfoAt(@intCast(row), @intCast(col)));
+        }
+    }
+    try std.testing.expect(terminal.ackVisual(mixed.dirty_token));
 
     try std.testing.expect((try terminal.feed("\x1b[1;2HX\x1b[4;5HY")).state_changed);
     const visual = terminal.visualView();

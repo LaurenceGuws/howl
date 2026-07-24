@@ -590,6 +590,7 @@ pub fn project(
     while (writer.next()) |work| {
         const cell_offset = cell_used;
         if (work.cells) |span| {
+            const row_cells = source.view.rowCells(work.row);
             const selected_span = source.selectedSpan(work.row);
             var col = span.start;
             while (col <= span.end) : (col += 1) {
@@ -599,6 +600,7 @@ pub fn project(
                     false;
                 buffers.cells[cell_used] = projectCell(
                     source_ref,
+                    &row_cells[col],
                     work.row,
                     col,
                     selected,
@@ -677,12 +679,12 @@ fn projectCursor(source: *const VtTerminal.VisualView) Cursor {
 
 fn projectCell(
     source: *const VtTerminal.VisualView,
+    cell: *const VtTerminal.VisualCell,
     row: u16,
     col: u16,
     selected_direct: bool,
     selection_style: SelectionStyle,
 ) Cell {
-    const cell = source.view.cellInfoAt(row, col);
     std.debug.assert(cell.width > 0 and cell.height > 0);
     std.debug.assert(cell.x < cell.width and cell.y < cell.height);
     std.debug.assert(cell.combining_len <= max_combining);
@@ -690,13 +692,16 @@ fn projectCell(
     const codepoint: u21 = @intCast(cell.codepoint);
     std.debug.assert(std.unicode.utf8ValidCodepoint(codepoint));
     var selected = selected_direct;
-    const cluster_top = row - cell.y;
-    const cluster_left = col - cell.x;
-    var cluster_row = cluster_top;
-    while (!selected and cluster_row < @min(source.view.rows, cluster_top + cell.height)) : (cluster_row += 1) {
-        if (source.selectedSpan(cluster_row)) |span| {
-            selected = span.start < cluster_left + cell.width and
-                span.end_exclusive > cluster_left;
+    if (!selected and (cell.width != 1 or cell.height != 1)) {
+        const cluster_top = row - cell.y;
+        const cluster_left = col - cell.x;
+        var cluster_row = cluster_top;
+        while (cluster_row < @min(source.view.rows, cluster_top + cell.height)) : (cluster_row += 1) {
+            if (source.selectedSpan(cluster_row)) |span| {
+                selected = span.start < cluster_left + cell.width and
+                    span.end_exclusive > cluster_left;
+                if (selected) break;
+            }
         }
     }
     var foreground = cell.attrs.fg.resolve(

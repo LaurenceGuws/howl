@@ -436,9 +436,11 @@ fn digestTerminal(terminal: *Terminal) VtDigest {
     hashValue(&hasher, history_count);
     var history_idx: u32 = 0;
     while (history_idx < history_count) : (history_idx += 1) {
-        var col: u16 = 0;
-        while (col < view.cols) : (col += 1) {
-            hashCell(&hasher, view.sourceCellInfoAt(.{ .history = history_idx }, col));
+        // Rebase a copied view to each history row without exposing terminal storage.
+        var history_view = view;
+        history_view.start = history_count - 1 - history_idx;
+        for (history_view.rowCells(0)) |cell| {
+            hashCell(&hasher, cell);
         }
     }
 
