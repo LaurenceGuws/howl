@@ -109,9 +109,16 @@ protocol; it is not a host failure.
 - `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,
   retained history, logical-line retention, SGR application, and transactional
   reflow. Its owner proofs live in `src/screen/`.
-- `src/terminal.zig` owns terminal composition, parser-to-screen narrowing,
-  modes, input encoding, replies, consequences, extraction, two-bank resize,
-  and reset.
+- `src/modes.zig` owns ANSI/DEC mode state, saved DEC slots, and per-screen
+  Kitty keyboard stacks. Kitty report serialization and all protocol routing
+  remain in `src/terminal.zig`.
+- `src/input.zig` owns mode-directed key, mouse, focus, and paste encoding.
+- `src/replies.zig` owns bounded retained reply bytes and framing.
+- `src/properties.zig` owns retained terminal metadata and presentation
+  properties.
+- `src/consequences.zig` owns bounded globally ordered semantic occurrences.
+- `src/terminal.zig` owns terminal composition, parser-to-domain narrowing,
+  protocol routing and serialization, extraction, two-bank resize, and reset.
 - `src/graphics.zig` owns bounded terminal images, animation frames, and
   cell-relative placements.
 - `src/sixel.zig` decodes bounded Sixel payloads into caller-owned pixels.

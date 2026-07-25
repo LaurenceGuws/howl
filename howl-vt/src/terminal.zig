@@ -8,6 +8,7 @@ const replies = @import("replies.zig");
 const properties = @import("properties.zig");
 const consequences = @import("consequences.zig");
 const input = @import("input.zig");
+const modes_mod = @import("modes.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -122,50 +123,6 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
 const KeyFormatChange = struct {
     resource: ?u8,
     value: ?u16,
-};
-
-// Enumerates DEC modes whose state participates in parameterized XTSAVE and XTRESTORE.
-const savable_dec_modes = [_]u16{
-    1,    3,    5,    6,    7,    8,    9,    12,   25,   40,
-    41,   45,   47,   66,   69,   80,   95,   1045, 1047, 1049,
-    1000, 1002, 1003, 1004, 1005, 1006, 1015, 1016, 2004, 2026,
-    2031, 2048, 5522,
-};
-
-// Stores terminal modes that affect screen mutation, input encoding, and reports.
-const ModeState = struct {
-    keyboard_action_mode: bool = false,
-    application_cursor_keys: bool = false,
-    application_keypad: bool = false,
-    column_mode_132: bool = false,
-    // Howl historically admits DECCOLM while the embedding host owns physical geometry.
-    allow_column_mode: bool = true,
-    preserve_screen_on_column_mode: bool = false,
-    more_fix: bool = false,
-    auto_repeat: bool = true,
-    reverse_screen_mode: bool = false,
-    send_receive_mode: bool = false,
-    newline_mode: bool = false,
-    modify_other_keys: i8 = 0,
-    key_format: [8]u16 = @as([8]u16, @splat(0)),
-    focus_reporting: bool = false,
-    alternate_scroll: bool = false,
-    meta_sends_escape: bool = false,
-    report_key_up: bool = false,
-    bracketed_paste: bool = false,
-    synchronized_output: bool = false,
-    inband_resize_notifications: bool = false,
-    color_preference_notifications: bool = false,
-    paste_events: bool = false,
-    termios_signals: bool = false,
-    sixel_display_mode: bool = false,
-    reverse_wraparound_mode: bool = false,
-    extended_reverse_wraparound_mode: bool = false,
-    mouse_tracking: input.MouseTrackingMode = .off,
-    mouse_protocol: input.MouseProtocol = .none,
-    pointer_mode: u2 = 1,
-    saved_dec_modes: [savable_dec_modes.len]u8 = @as([savable_dec_modes.len]u8, @splat(2)),
-    saved_all_modes: SavedAllModes = .{},
 };
 
 // Retains the exact mode set selected by Kitty's parameterless XTSAVE extension.
@@ -286,21 +243,6 @@ fn replaceBool(target: *bool, value: bool) bool {
     if (target.* == value) return false;
     target.* = value;
     return true;
-}
-
-// Resolves one implemented DEC mode to its fixed saved-state slot.
-fn savedDecModeIndex(mode: u16) ?usize {
-    for (savable_dec_modes, 0..) |supported, index| {
-        if (supported == mode) return index;
-    }
-    return null;
-}
-
-test "saved DEC mode slots cover each reviewed savable mode exactly once" {
-    for (savable_dec_modes, 0..) |mode, index| {
-        try std.testing.expectEqual(@as(?usize, index), savedDecModeIndex(mode));
-    }
-    try std.testing.expectEqual(@as(?usize, null), savedDecModeIndex(9999));
 }
 
 const locator_report_max_bytes = 40;
@@ -892,110 +834,6 @@ fn appendKittyQueryReply(
 }
 
 const key_report_max_bytes = 16;
-const kitty_keyboard_flag_mask: u8 = 0x7f;
-const kitty_keyboard_stack_capacity = 8;
-
-// Stores Kitty's current keyboard flags and seven predecessors: eight active
-// protocol stack slots in total.
-const KittyKeyStack = struct {
-    flags: u8 = 0,
-    stack: [kitty_keyboard_stack_capacity - 1]u8 =
-        @as([(kitty_keyboard_stack_capacity - 1)]u8, @splat(0)),
-    len: u8 = 0,
-
-    /// Replaces, sets, or clears the current seven-bit Kitty flag set.
-    pub fn set(self: *KittyKeyStack, requested: u8, mode: u8) bool {
-        const before = self.flags;
-        const flags = requested & kitty_keyboard_flag_mask;
-        switch (mode) {
-            1 => self.flags = flags,
-            2 => self.flags |= flags,
-            3 => self.flags &= ~flags,
-            else => return false,
-        }
-        return self.flags != before;
-    }
-
-    /// Pushes flags into Kitty's eight-slot stack, dropping the oldest at capacity.
-    pub fn push(self: *KittyKeyStack, requested: u8) bool {
-        const before = self.*;
-        const flags = requested & kitty_keyboard_flag_mask;
-        if (self.len == self.stack.len) {
-            std.mem.copyForwards(u8, self.stack[0 .. self.stack.len - 1], self.stack[1..self.stack.len]);
-            self.len -= 1;
-        }
-        self.stack[self.len] = self.flags;
-        self.len += 1;
-        self.flags = flags;
-        return !std.meta.eql(before, self.*);
-    }
-
-    /// Pops up to count active slots; exhausting the stack restores zero flags.
-    pub fn pop(self: *KittyKeyStack, count: u16) bool {
-        const before = self.*;
-        var remaining = count;
-        while (remaining > 0 and self.len > 0) : (remaining -= 1) {
-            self.len -= 1;
-            self.flags = self.stack[self.len];
-        }
-        if (remaining > 0) self.flags = 0;
-        return !std.meta.eql(before, self.*);
-    }
-
-    /// Appends the current keyboard flags as one bounded Kitty reply.
-    pub fn appendReport(
-        self: *const KittyKeyStack,
-        _: std.mem.Allocator,
-        output: *replies.Buffer,
-        encode_buf: []u8,
-    ) ApplyError!void {
-        std.debug.assert(encode_buf.len >= key_report_max_bytes);
-        const payload = std.fmt.bufPrint(encode_buf, "?{d}u", .{self.flags}) catch unreachable;
-        try output.appendCsi(.kitty, payload);
-    }
-};
-
-test "keyboard stack retains seven-bit flags and reports exact mutation" {
-    var stack: KittyKeyStack = .{};
-    try std.testing.expect(stack.set(0x7f, 1));
-    try std.testing.expectEqual(@as(u8, 0x7f), stack.flags);
-    try std.testing.expect(stack.push(8));
-    try std.testing.expectEqual(@as(u8, 8), stack.flags);
-    try std.testing.expect(stack.pop(1));
-    try std.testing.expectEqual(@as(u8, 0x7f), stack.flags);
-    try std.testing.expect(stack.set(8, 3));
-    try std.testing.expectEqual(@as(u8, 0x77), stack.flags);
-    try std.testing.expect(!stack.set(0, 4));
-    try std.testing.expectEqual(@as(u8, 0x77), stack.flags);
-    try std.testing.expect(stack.pop(1));
-    try std.testing.expectEqual(@as(u8, 0), stack.flags);
-}
-
-const ScreenState = struct {
-    keyboard: KittyKeyStack = .{},
-};
-
-// Combines per-screen keyboard stacks with the terminal color stack.
-const KittyState = struct {
-    main: ScreenState = .{},
-    alt: ScreenState = .{},
-
-    /// Returns mutable Kitty state for the currently selected screen.
-    pub fn activeScreen(self: *KittyState, alt_active: bool) *ScreenState {
-        return if (alt_active) &self.alt else &self.main;
-    }
-
-    /// Returns borrowed read-only Kitty state for the selected screen.
-    pub fn activeScreenConst(self: *const KittyState, alt_active: bool) *const ScreenState {
-        return if (alt_active) &self.alt else &self.main;
-    }
-
-    /// Resets Kitty state governed by terminal reset.
-    fn resetTerminalState(self: *KittyState) void {
-        self.main.keyboard = .{};
-        self.alt.keyboard = .{};
-    }
-};
 
 /// Projects the consequence owner's DCS classification.
 pub const DcsPayloadKind = consequences.DcsPayloadKind;
@@ -1600,7 +1438,7 @@ fn decodeKittyKeyboardSet(params: []const i32) ?SemanticEvent {
 
 fn keyboardFlags(params: []const i32) u8 {
     const raw: u32 = @intCast(@max(if (params.len != 0) params[0] else 0, 0));
-    return @intCast(raw & kitty_keyboard_flag_mask);
+    return @intCast(raw & modes_mod.kitty_keyboard_flag_mask);
 }
 
 fn keyFormatChange(params: []const i32) SemanticEvent {
@@ -4564,7 +4402,6 @@ test "cursor color control mutates semantic cursor owner through screen apply" {
 // Apply one Kitty-directed semantic event and report exact state or output mutation.
 fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     var scratch: input.Scratch = .{};
-    const allocator = vt.allocator;
     const active_screen = vt.kitty.activeScreen(vt.screen_state.alt_active);
     const active_screen_const = vt.kitty.activeScreenConst(vt.screen_state.alt_active);
     switch (event) {
@@ -4572,7 +4409,13 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             return active_screen.keyboard.set(req.flags, req.mode);
         },
         .kitty_keyboard_query => {
-            try active_screen_const.keyboard.appendReport(allocator, &vt.reply_buffer, scratch.buf[0..]);
+            std.debug.assert(scratch.buf.len >= key_report_max_bytes);
+            const payload = std.fmt.bufPrint(
+                scratch.buf[0..],
+                "?{d}u",
+                .{active_screen_const.keyboard.flags},
+            ) catch unreachable;
+            try vt.reply_buffer.appendCsi(.kitty, payload);
             return true;
         },
         .kitty_keyboard_push => |flags| {
@@ -6468,8 +6311,9 @@ pub const Terminal = struct {
     stream_state: TerminalStreamState,
     screen_state: ScreenSet,
     graphics: graphics_mod.Plane,
-    modes: ModeState = .{},
-    kitty: KittyState = .{},
+    modes: modes_mod.State = .{},
+    saved_all_modes: SavedAllModes = .{},
+    kitty: modes_mod.KeyboardState = .{},
     sgr_stack: [sgr_stack_capacity]SgrStackEntry = @splat(.{}),
     sgr_stack_len: u8 = 0,
     xtchecksum_flags: u16 = 0,
@@ -6662,6 +6506,7 @@ pub const Terminal = struct {
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
         self.modes = .{};
+        self.saved_all_modes = .{};
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
         self.gl_index = 0;
@@ -7050,7 +6895,7 @@ pub const Terminal = struct {
         if (mode_numbers.len == 0) return self.saveAllModes();
         var changed = false;
         for (mode_numbers) |mode_number| {
-            const index = savedDecModeIndex(mode_number) orelse continue;
+            const index = modes_mod.savedDecModeIndex(mode_number) orelse continue;
             const state = self.decModeState(mode_number);
             if (self.modes.saved_dec_modes[index] == state) continue;
             self.modes.saved_dec_modes[index] = state;
@@ -7063,7 +6908,7 @@ pub const Terminal = struct {
         if (mode_numbers.len == 0) return self.restoreAllModes();
         var changed = false;
         for (mode_numbers) |mode_number| {
-            const index = savedDecModeIndex(mode_number) orelse continue;
+            const index = modes_mod.savedDecModeIndex(mode_number) orelse continue;
             const state = self.modes.saved_dec_modes[index];
             switch (state) {
                 1 => changed = self.setDecMode(mode_number, true) or changed,
@@ -7092,13 +6937,13 @@ pub const Terminal = struct {
             .mouse_protocol = self.modes.mouse_protocol,
             .reverse_screen_mode = self.modes.reverse_screen_mode,
         };
-        if (std.meta.eql(self.modes.saved_all_modes, saved)) return false;
-        self.modes.saved_all_modes = saved;
+        if (std.meta.eql(self.saved_all_modes, saved)) return false;
+        self.saved_all_modes = saved;
         return true;
     }
 
     fn restoreAllModes(self: *Terminal) bool {
-        const saved = self.modes.saved_all_modes;
+        const saved = self.saved_all_modes;
         var changed = self.setAnsiModes(&.{20}, saved.newline_mode);
         changed = self.setAnsiModes(&.{4}, saved.insert_mode) or changed;
         changed = self.setDecMode(8, saved.auto_repeat) or changed;
