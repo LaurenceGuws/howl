@@ -635,6 +635,25 @@ test "terminal: G0 G1 designation maps implemented repertoires across split feed
     try std.testing.expectEqual(@as(u21, '_'), terminal.semanticView(0).cellAt(0, 1));
 }
 
+test "terminal: repeated locking shifts are stable and real selection advances once" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b)0")).state_changed);
+    const before_gl = terminal.semanticSequence();
+    try std.testing.expect((try terminal.feed("\x0e")).state_changed);
+    try std.testing.expectEqual(before_gl + 1, terminal.semanticSequence());
+    const after_gl = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x0e")).state_changed);
+    try std.testing.expectEqual(after_gl, terminal.semanticSequence());
+
+    try std.testing.expect((try terminal.feed("\x0f")).state_changed);
+    try std.testing.expectEqual(after_gl + 1, terminal.semanticSequence());
+    const after_gr = terminal.semanticSequence();
+    try std.testing.expect(!(try terminal.feed("\x0f")).state_changed);
+    try std.testing.expectEqual(after_gr, terminal.semanticSequence());
+}
+
 test "terminal: four charset slots share locking single-shift save and reset ownership" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 32);
     defer terminal.deinit();

@@ -112,6 +112,9 @@ protocol; it is not a host failure.
 - `src/modes.zig` owns ANSI/DEC mode state, saved DEC slots, and per-screen
   Kitty keyboard stacks. Kitty report serialization and all protocol routing
   remain in `src/terminal.zig`.
+- `src/charset.zig` owns G0-G3 designations, GL/GR invocation, single shift,
+  and the implemented character-set mappings. Parser dispatch and savepoint
+  composition remain in `src/terminal.zig`.
 - `src/input.zig` owns mode-directed key, mouse, focus, and paste encoding.
 - `src/replies.zig` owns bounded retained reply bytes and framing.
 - `src/properties.zig` owns retained terminal metadata and presentation

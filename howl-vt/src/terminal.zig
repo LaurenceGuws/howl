@@ -9,6 +9,7 @@ const properties = @import("properties.zig");
 const consequences = @import("consequences.zig");
 const input = @import("input.zig");
 const modes_mod = @import("modes.zig");
+const charset_mod = @import("charset.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -4484,11 +4485,11 @@ fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
 fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
     switch (event) {
         .invoke_charset => |slot| {
-            vt.gl_index = slot;
-            return .{ .changed = true, .title_changed = false, .icon_changed = false };
+            const changed = vt.charset.selectGl(slot);
+            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
         },
         .configure_charset => |cfg| {
-            const changed = configureCharset(vt, cfg.slot, cfg.designation);
+            const changed = vt.charset.configureCharset(cfg.slot, cfg.designation);
             return .{ .changed = changed, .title_changed = false, .icon_changed = false };
         },
         else => {},
@@ -5328,9 +5329,9 @@ const TerminalStream = struct {
                     else => unreachable,
                 };
                 const changed = if (ctrl == 0x8E or ctrl == 0x8F)
-                    selectSingleShift(self.terminal, slot)
+                    self.terminal.charset.selectSingleShift(slot)
                 else
-                    selectGl(self.terminal, slot);
+                    self.terminal.charset.selectGl(slot);
                 return .{
                     .changed = changed,
                     .title_changed = false,
@@ -5352,7 +5353,7 @@ const TerminalStream = struct {
                         '+' => 3,
                         else => unreachable,
                     };
-                    const changed = configureCharset(self.terminal, slot, esc.final);
+                    const changed = self.terminal.charset.configureCharset(slot, esc.final);
                     return .{
                         .changed = changed,
                         .title_changed = false,
@@ -5388,13 +5389,13 @@ const TerminalStream = struct {
         }
         if (esc.intermediates_len == 0) {
             const changed = switch (esc.final) {
-                'n' => selectGl(self.terminal, 2),
-                'o' => selectGl(self.terminal, 3),
-                '~' => selectGr(self.terminal, 1),
-                '}' => selectGr(self.terminal, 2),
-                '|' => selectGr(self.terminal, 3),
-                'N' => selectSingleShift(self.terminal, 2),
-                'O' => selectSingleShift(self.terminal, 3),
+                'n' => self.terminal.charset.selectGl(2),
+                'o' => self.terminal.charset.selectGl(3),
+                '~' => self.terminal.charset.selectGr(1),
+                '}' => self.terminal.charset.selectGr(2),
+                '|' => self.terminal.charset.selectGr(3),
+                'N' => self.terminal.charset.selectSingleShift(2),
+                'O' => self.terminal.charset.selectSingleShift(3),
                 else => return try self.applyEvent(.{ .esc_dispatch = esc }),
             };
             return .{ .changed = changed, .title_changed = false, .icon_changed = false };
@@ -5550,14 +5551,7 @@ const TerminalStream = struct {
     }
 
     fn mapCodepoint(self: *TerminalStream, cp: u21) u21 {
-        if (cp >= 0x20 and cp <= 0x7e) {
-            const slot = self.terminal.single_shift orelse self.terminal.gl_index;
-            self.terminal.single_shift = null;
-            return mapCharset(self.terminal, slot, @intCast(cp), false);
-        }
-        if (cp >= 0xA0 and cp <= 0xFE)
-            return mapCharset(self.terminal, self.terminal.gr_index, @intCast(cp - 0x80), true);
-        return cp;
+        return self.terminal.charset.mapCodepoint(cp);
     }
 };
 
@@ -5629,135 +5623,6 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
     }
 
     return result.changed or (respond and !suppressed);
-}
-
-fn configureCharset(terminal: *Terminal, slot: u8, designation: u8) bool {
-    // Unsupported repertoires leave the selected slot unchanged.
-    if (std.mem.indexOfScalar(u8, "0ABUV", designation) == null) return false;
-    if (slot >= terminal.designations.len) return false;
-    const target = &terminal.designations[slot];
-    if (target.* == designation) return false;
-    target.* = designation;
-    return true;
-}
-
-fn selectGl(terminal: *Terminal, slot: u8) bool {
-    std.debug.assert(slot < terminal.designations.len);
-    if (terminal.gl_index == slot and terminal.single_shift == null) return false;
-    terminal.gl_index = slot;
-    terminal.single_shift = null;
-    return true;
-}
-
-fn selectGr(terminal: *Terminal, slot: u8) bool {
-    std.debug.assert(slot > 0 and slot < terminal.designations.len);
-    if (terminal.gr_index == slot) return false;
-    terminal.gr_index = slot;
-    return true;
-}
-
-fn selectSingleShift(terminal: *Terminal, slot: u8) bool {
-    std.debug.assert(slot == 2 or slot == 3);
-    if (terminal.single_shift == slot) return false;
-    terminal.single_shift = slot;
-    return true;
-}
-
-fn mapCharset(terminal: *const Terminal, slot: u8, byte: u8, gr: bool) u21 {
-    std.debug.assert(slot < terminal.designations.len);
-    const designation = terminal.designations[slot];
-    return switch (designation) {
-        '0' => mapDecSpecial(byte),
-        'A' => if (byte == '#') 0x00A3 else charsetIdentity(byte, gr),
-        'U' => mapCp437(byte, gr),
-        'V' => mapVax42(byte, gr),
-        else => charsetIdentity(byte, gr),
-    };
-}
-
-fn charsetIdentity(byte: u8, gr: bool) u21 {
-    return if (gr) @as(u21, byte) + 0x80 else byte;
-}
-
-// Maps the printable GR range shared by Kitty's CP437 and VAX-42 tables.
-// CP437 GL is identity; C0 and C1 remain parser transport rather than glyphs.
-const cp437_printable_gr = [95]u21{
-    0x00E1, 0x00ED, 0x00F3, 0x00FA, 0x00F1, 0x00D1, 0x00AA, 0x00BA,
-    0x00BF, 0x2310, 0x00AC, 0x00BD, 0x00BC, 0x00A1, 0x00AB, 0x00BB,
-    0x2591, 0x2592, 0x2593, 0x2502, 0x2524, 0x2561, 0x2562, 0x2556,
-    0x2555, 0x2563, 0x2551, 0x2557, 0x255D, 0x255C, 0x255B, 0x2510,
-    0x2514, 0x2534, 0x252C, 0x251C, 0x2500, 0x253C, 0x255E, 0x255F,
-    0x255A, 0x2554, 0x2569, 0x2566, 0x2560, 0x2550, 0x256C, 0x2567,
-    0x2568, 0x2564, 0x2565, 0x2559, 0x2558, 0x2552, 0x2553, 0x256B,
-    0x256A, 0x2518, 0x250C, 0x2588, 0x2584, 0x258C, 0x2590, 0x2580,
-    0x03B1, 0x00DF, 0x0393, 0x03C0, 0x03A3, 0x03C3, 0x00B5, 0x03C4,
-    0x03A6, 0x0398, 0x03A9, 0x03B4, 0x221E, 0x03C6, 0x03B5, 0x2229,
-    0x2261, 0x00B1, 0x2265, 0x2264, 0x2320, 0x2321, 0x00F7, 0x2248,
-    0x00B0, 0x2219, 0x00B7, 0x221A, 0x207F, 0x00B2, 0x25A0,
-};
-
-fn mapCp437(byte: u8, gr: bool) u21 {
-    if (!gr) return byte;
-    std.debug.assert(byte >= 0x20 and byte <= 0x7E);
-    return cp437_printable_gr[byte - 0x20];
-}
-
-fn mapVax42(byte: u8, gr: bool) u21 {
-    if (gr) return mapCp437(byte, true);
-    return switch (byte) {
-        '!' => 0x043B,
-        '?' => 0x0435,
-        'a' => 0x0441,
-        'h' => 0x0435,
-        'o' => 0x043A,
-        'r' => 0x0442,
-        't' => 0x043B,
-        'u' => 0x0435,
-        else => byte,
-    };
-}
-
-fn mapDecSpecial(byte: u8) u21 {
-    return switch (byte) {
-        '+' => 0x2192,
-        ',' => 0x2190,
-        '-' => 0x2191,
-        '.' => 0x2193,
-        '0' => 0x2588,
-        '_' => 0x00A0,
-        '`' => 0x25C6,
-        'a' => 0x2592,
-        'b' => 0x2409,
-        'c' => 0x240C,
-        'd' => 0x240D,
-        'e' => 0x240A,
-        'f' => 0x00B0,
-        'g' => 0x00B1,
-        'h' => 0x2591,
-        'i' => 0x240B,
-        'j' => 0x2518,
-        'k' => 0x2510,
-        'l' => 0x250C,
-        'm' => 0x2514,
-        'n' => 0x253C,
-        'o' => 0x23BA,
-        'p' => 0x23BB,
-        'q' => 0x2500,
-        'r' => 0x23BC,
-        's' => 0x23BD,
-        't' => 0x251C,
-        'u' => 0x2524,
-        'v' => 0x2534,
-        'w' => 0x252C,
-        'x' => 0x2502,
-        'y' => 0x2264,
-        'z' => 0x2265,
-        '{' => 0x03C0,
-        '|' => 0x2260,
-        '}' => 0x00A3,
-        '~' => 0x00B7,
-        else => byte,
-    };
 }
 
 test "stream state initialization reports parser allocation failure" {
@@ -6321,10 +6186,7 @@ pub const Terminal = struct {
     reply_buffer: replies.Buffer,
     consequences: consequences.State,
     locator: Locator = .{},
-    gl_index: u8 = 0,
-    gr_index: u8 = 1,
-    single_shift: ?u8 = null,
-    designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
+    charset: charset_mod.State = .{},
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
@@ -6509,10 +6371,7 @@ pub const Terminal = struct {
         self.saved_all_modes = .{};
         self.primary_savepoint.clear();
         self.alternate_savepoint.clear();
-        self.gl_index = 0;
-        self.gr_index = 1;
-        self.single_shift = null;
-        self.designations = .{ 'B', 'B', 'B', 'B' };
+        self.charset = .{};
         self.stream_state.parser.resetTextEncoding();
         self.reply_buffer.resetFraming();
         self.kitty.resetTerminalState();
@@ -6552,12 +6411,7 @@ pub const Terminal = struct {
         if (self.modes.mouse_protocol != .none) changed = true;
         self.modes.mouse_protocol = .none;
         changed = self.reply_buffer.setEightBitControls(false) or changed;
-        if (self.gl_index != 0 or self.gr_index != 1 or self.single_shift != null or
-            !std.mem.eql(u8, self.designations[0..], &.{ 'B', 'B', 'B', 'B' })) changed = true;
-        self.gl_index = 0;
-        self.gr_index = 1;
-        self.single_shift = null;
-        self.designations = .{ 'B', 'B', 'B', 'B' };
+        changed = self.charset.reset() or changed;
         return changed;
     }
 
@@ -6616,7 +6470,7 @@ pub const Terminal = struct {
         active.current_attrs.bold = info.bold;
         active.wrap_pending = info.wrap_pending and active.auto_wrap and col == active.lineRightBoundary(row);
         active.origin_mode = info.origin_mode;
-        const designation_changed = configureCharset(self, 0, info.g0_designation);
+        const designation_changed = self.charset.configureCharset(0, info.g0_designation);
 
         return !std.meta.eql(cursor_before, active.cursor) or
             !std.meta.eql(attrs_before, active.current_attrs) or
@@ -6679,9 +6533,9 @@ pub const Terminal = struct {
             .origin_mode = active.origin_mode,
             .auto_wrap = active.auto_wrap,
             .wrap_pending = active.wrap_pending,
-            .gl_index = self.gl_index,
-            .gr_index = self.gr_index,
-            .designations = self.designations,
+            .gl_index = self.charset.gl_index,
+            .gr_index = self.charset.gr_index,
+            .designations = self.charset.designations,
         };
     }
 
@@ -6701,10 +6555,7 @@ pub const Terminal = struct {
         const auto_wrap_before = active.auto_wrap;
         const origin_before = active.origin_mode;
         const reverse_before = self.modes.reverse_screen_mode;
-        const gl_before = self.gl_index;
-        const gr_before = self.gr_index;
-        const single_shift_before = self.single_shift;
-        const designations_before = self.designations;
+        const charset_before = self.charset;
 
         self.restoreCursorState();
         const changed = !std.meta.eql(cursor_before, active.cursor) or
@@ -6717,9 +6568,7 @@ pub const Terminal = struct {
             auto_wrap_before != active.auto_wrap or
             origin_before != active.origin_mode or
             reverse_before != self.modes.reverse_screen_mode or
-            gl_before != self.gl_index or gr_before != self.gr_index or
-            single_shift_before != self.single_shift or
-            !std.mem.eql(u8, designations_before[0..], self.designations[0..]);
+            !std.meta.eql(charset_before, self.charset);
 
         return changed;
     }
@@ -6732,10 +6581,7 @@ pub const Terminal = struct {
             active.cursor.setPositionStructural(0, 0);
             self.modes.reverse_screen_mode = false;
             active.origin_mode = false;
-            self.gl_index = 0;
-            self.gr_index = 1;
-            self.single_shift = null;
-            self.designations = .{ 'B', 'B', 'B', 'B' };
+            self.charset = .{};
             return;
         }
 
@@ -6748,10 +6594,10 @@ pub const Terminal = struct {
         self.screen_state.alternate.cursor.visible = savepoint.cursor.visible;
         restoreCursorPosition(active, savepoint.cursor.row, savepoint.cursor.col);
         active.wrap_pending = savepoint.wrap_pending and active.cursor.col == active.rightBoundary();
-        self.gl_index = savepoint.gl_index;
-        self.gr_index = savepoint.gr_index;
-        self.single_shift = null;
-        self.designations = savepoint.designations;
+        self.charset.gl_index = savepoint.gl_index;
+        self.charset.gr_index = savepoint.gr_index;
+        self.charset.single_shift = null;
+        self.charset.designations = savepoint.designations;
     }
 
     /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
