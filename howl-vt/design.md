@@ -19,13 +19,12 @@ VT owns:
 
 VT never owns:
 
-- PTY or child-process lifetime;
-- threads, wakeups, event loops, or scheduling;
-- endpoints, remote transport, serialization, waits, or Control identities;
-- renderer projection, shaping, damage, admission, or acknowledgement;
+- process lifetime or byte-stream descriptors;
+- caller scheduling, wakeups, event loops, or execution;
+- endpoint publication, serialization, waits, or external identities;
+- caller projection, shaping, damage, admission, or acknowledgement;
 - retained viewport position, follow mode, or scrollbar policy;
-- selection gestures or platform clipboard policy;
-- window-system policy;
+- caller selection gestures, clipboard policy, or container policy;
 - panes, tabs, layout, or application navigation.
 
 An embedder may choose a history offset when borrowing a semantic view and may
@@ -81,10 +80,10 @@ occurrence receives a nonzero monotonic identity shared across protocol
 families. Identity exhaustion is an exact failure; identities never wrap or
 restart silently. Fixed count and byte bounds prevent unbounded retention.
 
-The embedder chooses policy for clipboard requests, notifications, window
+The embedder chooses policy for clipboard requests, notifications, container
 requests, pointer shapes, file transfers, drag and drop, media-copy requests,
 legacy terminal transitions, bells, and delegated control payloads. VT retains
-their protocol meaning and ordering but performs no platform action.
+their protocol meaning and ordering but performs no external action.
 
 Stale consequence identity changes nothing. Consequences requiring a reply
 remain retained until the corresponding typed reply operation serializes the
@@ -99,7 +98,7 @@ validate candidates before committing observable mutation.
 
 Resize and reflow either commit coherent screen state or preserve the previous
 terminal. Malformed child input is rejected or ignored according to the
-protocol; it is not a host failure.
+protocol; it is not an embedder failure.
 
 ## Source ownership
 
@@ -133,5 +132,5 @@ that unrelated terminal domains will remain in one file.
 
 `examples/0.1.4-dev` is an independent Zig package depending only on the public
 `howl-vt` package. Its executable and tests are the versioned embedding proof.
-They must remain small and must not become a PTY, renderer, window, or policy
-simulation.
+They must remain small and must not become a PTY, caller-policy, or external
+integration simulation.

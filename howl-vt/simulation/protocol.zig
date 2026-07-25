@@ -4,6 +4,8 @@ const parser_mod = @import("../src/parser.zig");
 const terminal_mod = @import("../src/howl_vt.zig");
 
 const Terminal = terminal_mod.Terminal;
+const Cell = Terminal.Cell;
+const Color = Terminal.Color;
 
 const OscTerminator = parser_mod.OscTerminator;
 const xterm_ctlseqs = @embedFile("assets/xterm-ctlseqs.ms");
@@ -429,9 +431,9 @@ fn digestTerminal(terminal: *Terminal) VtDigest {
     var hasher = std.hash.Fnv1a_64.init();
     const view = terminal.semanticView(0);
 
-    hashValue(&hasher, view.rows);
-    hashValue(&hasher, view.cols);
-    hashValue(&hasher, view.is_alternate_screen);
+    hashU16(&hasher, view.rows);
+    hashU16(&hasher, view.cols);
+    hashBool(&hasher, view.is_alternate_screen);
 
     var row: u16 = 0;
     while (row < view.rows) : (row += 1) {
@@ -442,7 +444,7 @@ fn digestTerminal(terminal: *Terminal) VtDigest {
     }
 
     const history_count = view.history_count;
-    hashValue(&hasher, history_count);
+    hashU32(&hasher, history_count);
     var history_idx: u32 = 0;
     while (history_idx < history_count) : (history_idx += 1) {
         // Rebase a copied view to each history row without exposing terminal storage.
@@ -462,34 +464,50 @@ fn digestTerminal(terminal: *Terminal) VtDigest {
     };
 }
 
-fn hashCell(hasher: *std.hash.Fnv1a_64, cell: anytype) void {
-    hashValue(hasher, cell.codepoint);
-    hashValue(hasher, cell.combining_len);
-    for (cell.combining) |cp| hashValue(hasher, cp);
-    hashValue(hasher, cell.width);
-    hashValue(hasher, cell.height);
-    hashValue(hasher, cell.x);
-    hashValue(hasher, cell.y);
+fn hashCell(hasher: *std.hash.Fnv1a_64, cell: Cell) void {
+    hashU32(hasher, cell.codepoint);
+    hashU8(hasher, cell.combining_len);
+    for (cell.combining) |cp| hashU32(hasher, cp);
+    hashU8(hasher, cell.width);
+    hashU8(hasher, cell.height);
+    hashU8(hasher, cell.x);
+    hashU8(hasher, cell.y);
     hashColor(hasher, cell.attrs.fg);
     hashColor(hasher, cell.attrs.bg);
-    hashValue(hasher, cell.attrs.bold);
-    hashValue(hasher, cell.attrs.blink);
-    hashValue(hasher, cell.attrs.blink_fast);
-    hashValue(hasher, cell.attrs.reverse);
-    hashValue(hasher, cell.attrs.underline);
-    hashValue(hasher, @backingInt(cell.attrs.underline_style));
+    hashBool(hasher, cell.attrs.bold);
+    hashBool(hasher, cell.attrs.blink);
+    hashBool(hasher, cell.attrs.blink_fast);
+    hashBool(hasher, cell.attrs.reverse);
+    hashBool(hasher, cell.attrs.underline);
+    hashU8(hasher, @intFromEnum(cell.attrs.underline_style));
     hashColor(hasher, cell.attrs.underline_color);
-    hashValue(hasher, cell.attrs.link_id);
+    hashU32(hasher, cell.attrs.link_id);
 }
 
-fn hashColor(hasher: *std.hash.Fnv1a_64, color: anytype) void {
-    hashValue(hasher, color.kind);
-    hashValue(hasher, color.value);
+fn hashColor(hasher: *std.hash.Fnv1a_64, color: Color) void {
+    hashU8(hasher, @intFromEnum(color.kind));
+    hashU32(hasher, color.value);
 }
 
-fn hashValue(hasher: *std.hash.Fnv1a_64, value: anytype) void {
-    const bytes = std.mem.asBytes(&value);
+fn hashScalar(hasher: *std.hash.Fnv1a_64, bytes: []const u8) void {
     hasher.update(bytes);
+}
+
+fn hashU8(hasher: *std.hash.Fnv1a_64, value: u8) void {
+    hashScalar(hasher, std.mem.asBytes(&value));
+}
+
+fn hashU16(hasher: *std.hash.Fnv1a_64, value: u16) void {
+    hashScalar(hasher, std.mem.asBytes(&value));
+}
+
+fn hashU32(hasher: *std.hash.Fnv1a_64, value: u32) void {
+    hashScalar(hasher, std.mem.asBytes(&value));
+}
+
+fn hashBool(hasher: *std.hash.Fnv1a_64, value: bool) void {
+    const bytes = std.mem.asBytes(&value);
+    hashScalar(hasher, bytes);
 }
 
 fn appendCsi(allocator: std.mem.Allocator, bytes: *std.ArrayList(u8), rand: std.Random) !void {

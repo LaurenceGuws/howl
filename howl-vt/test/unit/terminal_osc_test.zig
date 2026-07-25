@@ -1,14 +1,18 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/howl_vt.zig");
-const parser_mod = @import("../../src/parser.zig");
 const reply_fill = @import("../support/reply_fill.zig");
-const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
 const Rgb = Terminal.Rgb;
-const StreamHarness = stream_harness.Harness;
+
+fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 const expected_metadata_bytes: usize = 1024;
+// Exact bounded payload ceiling for ordinary string controls in the parser.
+const expected_string_control_bytes: usize = 2 * 1024;
 const expected_clipboard_reply_bytes: usize = ((64 * 1024 - 12 - 8) / 4) * 3;
 const expected_clipboard_request_bytes: usize = 1024 * 1024;
 const expected_clipboard_packet_bytes: usize = 8 * 1024;
@@ -30,9 +34,8 @@ test "OSC title updates terminal title under stream path" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]0;My Title\x07");
+    try feed(&terminal, "\x1b]0;My Title\x07");
     try std.testing.expectEqualStrings("My Title", terminal.title().?);
 }
 
@@ -196,13 +199,13 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.title());
     try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 
-    const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes - 2);
+    const payload = try std.testing.allocator.alloc(u8, expected_string_control_bytes - 2);
     defer std.testing.allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(std.testing.allocator);
     try sequence.appendSlice(std.testing.allocator, "\x1b]46;");
-    try sequence.appendSlice(std.testing.allocator, payload[0 .. parser_mod.max_metadata_control_bytes - 3]);
+    try sequence.appendSlice(std.testing.allocator, payload[0 .. expected_string_control_bytes - 3]);
     try sequence.append(std.testing.allocator, 0x07);
     try std.testing.expect(!(try terminal.feed(sequence.items)).state_changed);
     sequence.clearRetainingCapacity();
@@ -294,9 +297,8 @@ test "raw OSC title updates terminal title through OSC owner path" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]Raw Title\x07");
+    try feed(&terminal, "\x1b]Raw Title\x07");
     try std.testing.expectEqualStrings("Raw Title", terminal.title().?);
 }
 
@@ -304,9 +306,8 @@ test "OSC title limit fails without dropping current title" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]0;ok\x07");
+    try feed(&terminal, "\x1b]0;ok\x07");
 
     const title_len = expected_metadata_bytes + 1;
     const payload = try allocator.alloc(u8, title_len);
@@ -319,7 +320,7 @@ test "OSC title limit fails without dropping current title" {
     try seq.appendSlice(allocator, payload);
     try seq.appendSlice(allocator, "\x07");
 
-    try std.testing.expectError(error.PropertyLimit, stream.nextSlice(seq.items));
+    try std.testing.expectError(error.PropertyLimit, feed(&terminal, seq.items));
     try std.testing.expectEqualStrings("ok", terminal.title().?);
 }
 
@@ -397,11 +398,10 @@ test "OSC 8 retains explicit identity separately from URI and exact active mutat
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 20);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]8;id=one;https://example.com\x07a");
-    try stream.nextSlice("\x1b]8;id=two;https://example.com\x1b\\b");
-    try stream.nextSlice("\x1b]8;target=_blank:id=one;https://example.com\x07c");
+    try feed(&terminal, "\x1b]8;id=one;https://example.com\x07a");
+    try feed(&terminal, "\x1b]8;id=two;https://example.com\x1b\\b");
+    try feed(&terminal, "\x1b]8;target=_blank:id=one;https://example.com\x07c");
 
     const view = terminal.semanticView(0);
     const first = view.cellInfoAt(0, 0).attrs.link_id;
@@ -460,9 +460,8 @@ test "OSC 52 produces pending clipboard request" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]52;c;Zm9v\x07");
+    try feed(&terminal, "\x1b]52;c;Zm9v\x07");
     const request = terminal.consequenceHead().?.clipboard;
     try std.testing.expect(request.kind == .set);
     try std.testing.expectEqualStrings("c", request.selection);
@@ -476,9 +475,8 @@ test "OSC 52 decoded clipboard drain clears pending request" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]52;c;SG93bA==\x07");
+    try feed(&terminal, "\x1b]52;c;SG93bA==\x07");
 
     const request = terminal.consequenceHead().?.clipboard;
     const text = (try terminal.takeClipboard(request.generation, allocator)).?;
@@ -487,7 +485,7 @@ test "OSC 52 decoded clipboard drain clears pending request" {
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
-test "OSC 52 query is retained for exact transactional host reply" {
+test "OSC 52 query is retained for exact transactional caller reply" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
@@ -519,7 +517,7 @@ test "OSC 52 query is retained for exact transactional host reply" {
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
-test "OSC 52 host copy preserves FIFO until exact consumption" {
+test "OSC 52 caller copy preserves FIFO until exact consumption" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
@@ -689,7 +687,7 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try terminal.consumeConsequence(11);
 }
 
-test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
+test "Kitty OSC 5522 shares ordered clipboard admission without caller policy" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 16);
     defer terminal.deinit();
 
@@ -895,9 +893,8 @@ test "shell integration OSC 133 records latest mark" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]133;C;cmdline=ls\x07\x1b]133;D;2\x07");
+    try feed(&terminal, "\x1b]133;C;cmdline=ls\x07\x1b]133;D;2\x07");
 
     const mark = terminal.shellMark();
     try std.testing.expectEqual(@as(u64, 2), mark.generation);
@@ -905,7 +902,7 @@ test "shell integration OSC 133 records latest mark" {
     try std.testing.expectEqual(@as(?i32, 2), mark.status);
     try std.testing.expectEqualStrings("2", mark.metadata);
 
-    try stream.nextSlice("\x1b]133;Z;ignored\x07");
+    try feed(&terminal, "\x1b]133;Z;ignored\x07");
     try std.testing.expectEqual(@as(u64, 2), terminal.shellMark().generation);
 }
 
@@ -947,7 +944,7 @@ test "OSC 133 retains exact metadata and finds positional exit status" {
     try std.testing.expectEqualStrings("cmdline=exit 7", mark.metadata);
 }
 
-test "OSC notifications retain ordered bounded host-neutral occurrences" {
+test "OSC notifications retain ordered bounded caller-neutral occurrences" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -1057,7 +1054,7 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(10));
 }
 
-test "OSC 22 retains ordered bounded host-neutral requests" {
+test "OSC 22 retains ordered bounded caller-neutral requests" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
 
@@ -1298,7 +1295,7 @@ test "unsupported SetMark and Kitty context metadata remain exact no-ops" {
     try std.testing.expectEqual(@as(u64, 0), terminal.shellMark().generation);
     try std.testing.expect(!(try terminal.feed("\x9d3008;key=value\x9c")).state_changed);
 
-    const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes);
+    const payload = try std.testing.allocator.alloc(u8, expected_metadata_bytes);
     defer std.testing.allocator.free(payload);
     @memset(payload, 'm');
     var sequence = std.ArrayList(u8).empty;
@@ -1381,9 +1378,9 @@ test "kitty color stack OSC 30001 and 30101 restore colors" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice(
+    try feed(
+        &terminal,
         "\x1b]21;foreground=#010203\x1b\\\x1b]30001\x1b\\" ++
             "\x1b]21;foreground=#040506\x1b\\\x1b]30101\x1b\\",
     );
@@ -1394,10 +1391,9 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]21;foreground=#112233;background=rgb:44/55/66;cursor=\x1b\\");
-    try stream.nextSlice("\x1b]21;foreground=?;background=?;cursor=?;no_such=?\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground=#112233;background=rgb:44/55/66;cursor=\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground=?;background=?;cursor=?;no_such=?\x1b\\");
 
     const colors = terminal.presentation();
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.foreground);
@@ -1411,7 +1407,7 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
         terminal.replyBytes(),
     );
 
-    try stream.nextSlice("\x1b]21;foreground;background\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground;background\x1b\\");
     try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
 }
@@ -1420,10 +1416,9 @@ test "xterm OSC colors set query and reset palette and dynamic colors" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]4;1;#010203\x1b\\\x1b]10;#aabbcc\x1b\\\x1b]11;rgb:0d/0e/0f\x1b\\\x1b]12;red\x1b\\");
-    try stream.nextSlice("\x1b]4;1;?\x1b\\\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\");
+    try feed(&terminal, "\x1b]4;1;#010203\x1b\\\x1b]10;#aabbcc\x1b\\\x1b]11;rgb:0d/0e/0f\x1b\\\x1b]12;red\x1b\\");
+    try feed(&terminal, "\x1b]4;1;?\x1b\\\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\");
 
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().palette[1]);
     try std.testing.expectEqualStrings(
@@ -1434,7 +1429,7 @@ test "xterm OSC colors set query and reset palette and dynamic colors" {
         terminal.replyBytes(),
     );
 
-    try stream.nextSlice("\x1b]104;1\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\");
+    try feed(&terminal, "\x1b]104;1\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\");
     try std.testing.expectEqual(Rgb{ .r = 205, .g = 49, .b = 49 }, terminal.presentation().palette[1]);
     try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
@@ -1465,14 +1460,13 @@ test "OSC color grammar scales short components and rejects trailing components"
     );
 }
 
-test "xterm extra dynamic colors set query and reset host-neutral state" {
+test "xterm extra dynamic colors set query and reset caller-neutral state" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]13;#010203\x1b\\\x1b]14;#040506\x1b\\\x1b]15;#070809\x1b\\\x1b]16;#0a0b0c\x1b\\\x1b]17;#0d0e0f\x1b\\\x1b]18;#101112\x1b\\\x1b]19;#131415\x1b\\");
-    try stream.nextSlice("\x1b]13;?\x1b\\\x1b]14;?\x1b\\\x1b]15;?\x1b\\\x1b]16;?\x1b\\\x1b]17;?\x1b\\\x1b]18;?\x1b\\\x1b]19;?\x1b\\");
+    try feed(&terminal, "\x1b]13;#010203\x1b\\\x1b]14;#040506\x1b\\\x1b]15;#070809\x1b\\\x1b]16;#0a0b0c\x1b\\\x1b]17;#0d0e0f\x1b\\\x1b]18;#101112\x1b\\\x1b]19;#131415\x1b\\");
+    try feed(&terminal, "\x1b]13;?\x1b\\\x1b]14;?\x1b\\\x1b]15;?\x1b\\\x1b]16;?\x1b\\\x1b]17;?\x1b\\\x1b]18;?\x1b\\\x1b]19;?\x1b\\");
 
     try std.testing.expectEqualStrings(
         "\x1b]13;rgb:0101/0202/0303\x1b\\" ++
@@ -1505,10 +1499,9 @@ test "xterm special colors via OSC 5 and OSC 4 special offsets" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]5;0;#010203;1;#040506\x1b\\\x1b]4;258;#070809;260;#0a0b0c\x1b\\");
-    try stream.nextSlice("\x1b]5;0;?;1;?\x1b\\\x1b]4;258;?;260;?\x1b\\");
+    try feed(&terminal, "\x1b]5;0;#010203;1;#040506\x1b\\\x1b]4;258;#070809;260;#0a0b0c\x1b\\");
+    try feed(&terminal, "\x1b]5;0;?;1;?\x1b\\\x1b]4;258;?;260;?\x1b\\");
 
     try std.testing.expectEqualStrings(
         "\x1b]5;0;rgb:0101/0202/0303\x1b\\" ++
@@ -1589,10 +1582,9 @@ test "kitty color stack restores terminal color snapshots" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b]30001\x1b\\");
-    try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b]30101\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b]30001\x1b\\");
+    try feed(&terminal, "\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b]30101\x1b\\");
 
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
@@ -1602,10 +1594,9 @@ test "kitty tui CSI save and restore colors use the same stack" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b[#P");
-    try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b[#Q");
+    try feed(&terminal, "\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b[#P");
+    try feed(&terminal, "\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b[#Q");
 
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
@@ -1745,7 +1736,7 @@ test "OSC 72 aggregate payload budget rejects a valid ninth chunk transactionall
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
 }
 
-test "OSC 72 host events use exact framing bounds and opaque base64" {
+test "OSC 72 caller events use exact framing bounds and opaque base64" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
     const query = try terminal.encodeDragDropEvent(

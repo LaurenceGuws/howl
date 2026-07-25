@@ -1,7 +1,11 @@
 const std = @import("std");
 const terminal_mod = @import("../src/howl_vt.zig");
 const pty_feed_record = @import("pty_feed_record.zig");
-const stream_harness = @import("../test/support/stream_harness.zig");
+
+fn feed(terminal: *terminal_mod.Terminal, bytes: []const u8) terminal_mod.Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 const RunCount = u32;
 
@@ -53,8 +57,6 @@ const RunObservation = struct {
     alloc_bytes: u64,
     peak_live_bytes: u64,
 };
-
-const StreamHarness = stream_harness.Harness;
 
 const CountingAllocator = struct {
     child: std.mem.Allocator,
@@ -173,13 +175,14 @@ fn nowNs(io: std.Io) u64 {
     return @intCast(std.Io.Clock.awake.now(io).toNanoseconds());
 }
 
-fn paramCount32(items: anytype) u32 {
+fn observationCount32(items: []const RunObservation) u32 {
     std.debug.assert(items.len <= std.math.maxInt(u32));
     return @intCast(items.len);
 }
 
-fn count64(items: anytype) u64 {
-    return paramCount32(items);
+fn byteCount64(bytes: []const u8) u64 {
+    std.debug.assert(bytes.len <= std.math.maxInt(u64));
+    return @intCast(bytes.len);
 }
 
 fn buildAsciiFixture(allocator: std.mem.Allocator) ![]u8 {
@@ -235,7 +238,7 @@ fn buildScrollFixture(allocator: std.mem.Allocator) ![]u8 {
 }
 
 fn summarizeObservations(base_allocator: std.mem.Allocator, name: []const u8, bytes_per_run: u64, observations: []const RunObservation) !WorkloadResult {
-    const runs = paramCount32(observations);
+    const runs = observationCount32(observations);
     const ns_values = try base_allocator.alloc(u64, @intCast(runs));
     defer base_allocator.free(ns_values);
     const alloc_count_values = try base_allocator.alloc(u64, @intCast(runs));
@@ -277,10 +280,9 @@ fn runStreamWorkload(io: std.Io, base_allocator: std.mem.Allocator, name: []cons
             history_capacity,
         );
         defer terminal.deinit();
-        var stream = try StreamHarness.init(&terminal);
         counting.resetWindow();
         const start = nowNs(io);
-        try stream.nextSlice(fixture);
+        try feed(&terminal, fixture);
         const end = nowNs(io);
         observations[@intCast(i)] = .{
             .ns = end - start,
@@ -289,7 +291,7 @@ fn runStreamWorkload(io: std.Io, base_allocator: std.mem.Allocator, name: []cons
             .peak_live_bytes = counting.window_peak_live_bytes,
         };
     }
-    return try summarizeObservations(base_allocator, name, count64(fixture), observations);
+    return try summarizeObservations(base_allocator, name, byteCount64(fixture), observations);
 }
 
 fn runMixedInteractiveWorkload(io: std.Io, base_allocator: std.mem.Allocator, runs: RunCount) !WorkloadResult {
@@ -308,12 +310,11 @@ fn runMixedInteractiveWorkload(io: std.Io, base_allocator: std.mem.Allocator, ru
             1_000,
         );
         defer terminal.deinit();
-        var stream = try StreamHarness.init(&terminal);
         counting.resetWindow();
         const start = nowNs(io);
         var j: RunCount = 0;
         while (j < bursts_per_run) : (j += 1) {
-            try stream.nextSlice(burst);
+            try feed(&terminal, burst);
         }
         const end = nowNs(io);
         observations[@intCast(i)] = .{
@@ -323,7 +324,7 @@ fn runMixedInteractiveWorkload(io: std.Io, base_allocator: std.mem.Allocator, ru
             .peak_live_bytes = counting.window_peak_live_bytes,
         };
     }
-    return try summarizeObservations(base_allocator, "mixed_interactive", @as(u64, bursts_per_run) * count64(burst), observations);
+    return try summarizeObservations(base_allocator, "mixed_interactive", @as(u64, bursts_per_run) * byteCount64(burst), observations);
 }
 
 fn runReplayRecordWorkload(
@@ -348,12 +349,11 @@ fn runReplayRecordWorkload(
             history_capacity,
         );
         defer terminal.deinit();
-        var stream = try StreamHarness.init(&terminal);
 
         counting.resetWindow();
         const start = nowNs(io);
         for (record.chunks.items) |chunk| {
-            try stream.nextSlice(chunk);
+            try feed(&terminal, chunk);
         }
         const end = nowNs(io);
         obs.* = .{
@@ -503,7 +503,7 @@ fn usage() void {
 
 fn parseOptions(allocator: std.mem.Allocator, args_vector: std.process.Args.Vector) !Options {
     var args = std.process.Args.Iterator.init(.{ .vector = args_vector });
-    _ = args.next();
+    std.debug.assert(args.next() != null);
     var options = Options{};
     errdefer options.deinit(allocator);
     while (args.next()) |arg| {

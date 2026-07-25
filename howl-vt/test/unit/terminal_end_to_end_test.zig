@@ -1,10 +1,13 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/howl_vt.zig");
 const reply_fill = @import("../support/reply_fill.zig");
-const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
-const StreamHarness = stream_harness.Harness;
+
+fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 fn consumeReplies(terminal: *Terminal) !void {
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
@@ -14,11 +17,10 @@ test "terminal: stream applies bytes to grid state deterministically" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("ab");
-    try stream.next('c');
-    try stream.nextSlice("\r\nxy");
+    try feed(&terminal, "ab");
+    try feed(&terminal, "c");
+    try feed(&terminal, "\r\nxy");
 
     const s = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'a'), s.cellAt(0, 0));
@@ -365,7 +367,7 @@ test "terminal: ISO and DEC protection retain distinct erase semantics" {
     try std.testing.expect(!(try terminal.feed("\x1b[0\"q")).state_changed);
 }
 
-test "terminal: erase mutation owns pending wrap and published continuation" {
+test "terminal: erase mutation owns pending wrap and retained continuation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("ABCD")).state_changed);
@@ -756,24 +758,24 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#5")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
-    var surface = terminal.semanticView(0);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, surface.lineGeometry(2));
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, view.lineGeometry(2));
     try terminal.resize(5, 12);
-    surface = terminal.semanticView(0);
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, surface.lineGeometry(2));
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
 
     const cursor_row_before_alignment = terminal.semanticView(0).cursor_row;
     const cursor_col_before_alignment = terminal.semanticView(0).cursor_col;
     try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
-    surface = terminal.semanticView(0);
-    for (0..surface.rows) |row| for (0..surface.cols) |col| {
+    view = terminal.semanticView(0);
+    for (0..view.rows) |row| for (0..view.cols) |col| {
         const expected: u21 = if (row == 2 and col >= 6) 0 else 'E';
-        try std.testing.expectEqual(expected, surface.cellAt(@intCast(row), @intCast(col)));
+        try std.testing.expectEqual(expected, view.cellAt(@intCast(row), @intCast(col)));
     };
     try std.testing.expectEqual(cursor_row_before_alignment, terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(cursor_col_before_alignment, terminal.semanticView(0).cursor_col);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, surface.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, view.lineGeometry(2));
 
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
     try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(2));
@@ -794,8 +796,8 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
         history_terminal.semanticView(history_terminal.semanticView(0).history_count).lineGeometry(0),
     );
     try history_terminal.resize(4, 12);
-    surface = history_terminal.semanticView(0);
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, surface.lineGeometry(0));
+    view = history_terminal.semanticView(0);
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(0));
 }
 
 test "terminal: DECALN owns exact retained grid and mutation truth" {
@@ -1550,9 +1552,8 @@ test "terminal: OSC cursor colors route into semantic cursor owner" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b]12;#010203\x1b\\\x1b]21;cursor_text=#040506\x1b\\");
+    try feed(&terminal, "\x1b]12;#010203\x1b\\\x1b]21;cursor_text=#040506\x1b\\");
 
     const presentation = terminal.presentation();
     try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 1, .g = 2, .b = 3 }), presentation.cursor);

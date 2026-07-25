@@ -23,7 +23,7 @@ const Output = struct {
 
     fn clear(self: *Output) void {
         self.actions.clearRetainingCapacity();
-        _ = self.arena.reset(.retain_capacity);
+        std.debug.assert(self.arena.reset(.retain_capacity));
     }
 
     fn appendPhases(self: *Output, phases: parser_mod.PhaseActions) void {
@@ -33,6 +33,10 @@ const Output = struct {
 
 fn expectActionCount(actions: []const Action, count: usize) !void {
     try std.testing.expectEqual(count, actions.len);
+}
+
+fn expectNoActions(phases: parser_mod.PhaseActions) !void {
+    for (phases) |phase| try std.testing.expectEqual(@as(?Action, null), phase);
 }
 
 test "parser: nextStep returns ordered phase actions directly" {
@@ -261,8 +265,8 @@ test "parser: C1 string controls replace active DCS passthrough control" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
 
-    _ = parser.next(0x1B);
-    _ = parser.next('P');
+    try expectNoActions(parser.next(0x1B));
+    try expectNoActions(parser.next('P'));
     const dcs_hook = parser.next('q');
     try std.testing.expectEqual(Action.dcs_hook, std.meta.activeTag(dcs_hook[2].?));
 
@@ -272,8 +276,8 @@ test "parser: C1 string controls replace active DCS passthrough control" {
 
     parser.reset();
 
-    _ = parser.next(0x1B);
-    _ = parser.next('P');
+    try expectNoActions(parser.next(0x1B));
+    try expectNoActions(parser.next('P'));
     const second_dcs_hook = parser.next('q');
     try std.testing.expectEqual(Action.dcs_hook, std.meta.activeTag(second_dcs_hook[2].?));
 

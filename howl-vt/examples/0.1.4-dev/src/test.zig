@@ -61,6 +61,26 @@ test "ordered consequences are borrowed and consumed by exact identity" {
     try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
 }
 
+test "container request and reply use the typed terminal contract" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[11t")).state_changed);
+    const consequence = terminal.consequenceHead() orelse
+        return error.MissingContainerRequest;
+    const request: howl_vt.Terminal.ContainerRequest = switch (consequence) {
+        .container => |occurrence| occurrence.request,
+        else => return error.UnexpectedContainerRequest,
+    };
+    try std.testing.expectEqual(.report_state, std.meta.activeTag(request));
+
+    const reply: howl_vt.Terminal.ContainerReply = .{ .state = .normal };
+    try terminal.replyContainer(consequence.id(), reply);
+    try std.testing.expectEqualStrings("\x1b[1t", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
 test "terminal modes determine key and paste encoding" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();

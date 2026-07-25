@@ -12,12 +12,6 @@ const BufferedControlKind = enum {
     sos,
 };
 
-const DeccirCharsetState = struct {
-    g0_designation: u8,
-    g1_designation: u8,
-    gl_index: u8,
-};
-
 // Ghostty raised this from 16 to 24 after hitting real 17-parameter SGR input
 // from Kakoune. Howl now matches 24 because queued CSI and DCS events no longer
 // carry this bound inline in the parsed-event union. Keep this aligned with the
@@ -32,7 +26,7 @@ const control_init_capacity = 256;
 // in 2 KiB. Howl uses that scale for controls whose complete value is metadata.
 const metadata_control_max_bytes = 2 * 1024;
 // OSC 52 is an unchunked clipboard protocol, so parser acceptance remains
-// larger than metadata while host retention applies the same explicit bound.
+// larger than metadata while caller retention applies the same explicit bound.
 const clipboard_control_max_bytes = 1024 * 1024;
 // Kitty clipboard and file-transfer protocols send binary data in chunks no
 // larger than 4096 decoded bytes. 8 KiB covers base64 expansion and command
@@ -47,8 +41,6 @@ pub const max_intermediates = csi_max_intermediates;
 pub const CsiSeparatorList = std.StaticBitSet(csi_max_params);
 /// Maximum complete payload accepted for one ordinary metadata control.
 pub const max_metadata_control_bytes = metadata_control_max_bytes;
-/// Maximum complete payload accepted for one unchunked OSC 52 control.
-const max_clipboard_control_bytes = clipboard_control_max_bytes;
 /// Maximum complete payload accepted for one chunked Kitty control.
 pub const max_chunk_control_bytes = chunk_control_max_bytes;
 
@@ -788,11 +780,11 @@ test "parser control spine orders populated phase slots in one next call" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
 
-    _ = parser.next(0x1B);
-    _ = parser.next('P');
-    _ = parser.next('1');
-    _ = parser.next(';');
-    _ = parser.next('2');
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try expectPhaseTags(parser.next('P'), null, null, null);
+    try expectPhaseTags(parser.next('1'), null, null, null);
+    try expectPhaseTags(parser.next(';'), null, null, null);
+    try expectPhaseTags(parser.next('2'), null, null, null);
 
     const hook = parser.next('q');
     try expectPhaseTags(hook, null, null, .dcs_hook);
@@ -817,8 +809,8 @@ test "parser keeps active string controls exclusive" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
 
-    _ = parser.next(0x1B);
-    _ = parser.next(']');
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try expectPhaseTags(parser.next(']'), null, null, null);
     try std.testing.expectEqual(@as(u3, 1), parser.activeControlCount());
     try std.testing.expect(parser.osc.active());
     try std.testing.expect(!parser.apc.active());
@@ -826,7 +818,7 @@ test "parser keeps active string controls exclusive" {
     try std.testing.expect(!parser.pm.active());
 
     parser.state = .escape;
-    _ = parser.entryPhase(.escape, 0x1B);
+    try std.testing.expectEqual(@as(?Action, null), parser.entryPhase(.escape, 0x1B));
     try std.testing.expectEqual(@as(u3, 0), parser.activeControlCount());
     try std.testing.expect(!parser.osc.active());
     try std.testing.expect(!parser.apc.active());
@@ -834,8 +826,8 @@ test "parser keeps active string controls exclusive" {
     try std.testing.expect(!parser.pm.active());
 
     parser.reset();
-    _ = parser.next(0x1B);
-    _ = parser.next('_');
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try expectPhaseTags(parser.next('_'), null, null, .apc_start);
     try std.testing.expectEqual(@as(u3, 1), parser.activeControlCount());
     try std.testing.expect(!parser.osc.active());
     try std.testing.expect(parser.apc.active());
@@ -847,13 +839,13 @@ test "parser assembles CSI params and separators" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
 
-    _ = parser.next(0x1B);
-    _ = parser.next('[');
-    _ = parser.next('1');
-    _ = parser.next(':');
-    _ = parser.next('2');
-    _ = parser.next(';');
-    _ = parser.next('3');
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try expectPhaseTags(parser.next('['), null, null, null);
+    try expectPhaseTags(parser.next('1'), null, null, null);
+    try expectPhaseTags(parser.next(':'), null, null, null);
+    try expectPhaseTags(parser.next('2'), null, null, null);
+    try expectPhaseTags(parser.next(';'), null, null, null);
+    try expectPhaseTags(parser.next('3'), null, null, null);
 
     const phases = parser.next('m');
     try expectPhaseTags(phases, null, .csi_dispatch, null);
@@ -874,10 +866,10 @@ test "parser DCS hook stays on the hook boundary" {
     var parser = try Parser.init(std.testing.allocator);
     defer parser.deinit();
 
-    _ = parser.next(0x1B);
-    _ = parser.next('P');
-    _ = parser.next('1');
-    _ = parser.next('$');
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
+    try expectPhaseTags(parser.next('P'), null, null, null);
+    try expectPhaseTags(parser.next('1'), null, null, null);
+    try expectPhaseTags(parser.next('$'), null, null, null);
 
     const hook_phases = parser.next('q');
     try expectPhaseTags(hook_phases, null, null, .dcs_hook);
@@ -895,7 +887,7 @@ test "parser DCS hook stays on the hook boundary" {
     try expectPhaseTags(put, null, .dcs_put, null);
     try std.testing.expectEqual(@as(u8, 'x'), put[1].?.dcs_put);
 
-    _ = parser.next(0x1B);
+    try expectPhaseTags(parser.next(0x1B), null, null, null);
     const unhook = parser.next('\\');
     try expectPhaseTags(unhook, .dcs_unhook, null, null);
 }
@@ -1454,7 +1446,7 @@ pub const OscControl = struct {
     }
 
     /// Reports whether a buffered control consumed ESC while awaiting ST or payload continuation.
-    pub fn escaping(self: *const OscControl) bool {
+    fn escaping(self: *const OscControl) bool {
         return switch (self.state) {
             .prefix_esc, .payload_esc, .raw_esc, .screen_title_esc => true,
             else => false,
@@ -2056,7 +2048,7 @@ const PassthroughControl = struct {
     }
 
     /// Reports whether a delimited control is awaiting ST completion.
-    pub fn escaping(self: *const PassthroughControl) bool {
+    fn escaping(self: *const PassthroughControl) bool {
         return stateEscaping(self.state);
     }
 

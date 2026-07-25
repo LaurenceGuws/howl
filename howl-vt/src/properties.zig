@@ -36,13 +36,13 @@ pub const ColorStack = struct {
 };
 
 /// Maximum retained property metadata bytes.
-pub const max_metadata_bytes: u32 = 1024;
+const max_metadata_bytes: u32 = 1024;
 /// Maximum retained title-stack depth.
-pub const title_stack_limit: u8 = 10;
+const title_stack_limit: u8 = 10;
 /// Maximum bytes in one retained hyperlink target.
-pub const hyperlink_target_max_bytes: u32 = 2 * 1024;
+const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Maximum retained hyperlink identities.
-pub const hyperlink_target_max_count: u32 = 4096;
+const hyperlink_target_max_count: u32 = 4096;
 
 /// Owns one bounded shell mark.
 pub const ShellMark = struct {
@@ -56,7 +56,7 @@ pub const ShellMark = struct {
 pub const ShellIntegration = struct { version: u32, shell: ?[]u8 };
 /// Borrows one child-reported working directory.
 /// Identifies URI versus filesystem-path directory reports.
-pub const WorkingDirectoryKind = enum { uri, path };
+const WorkingDirectoryKind = enum { uri, path };
 /// Borrows one child-reported working directory.
 pub const WorkingDirectory = struct { kind: WorkingDirectoryKind, value: []const u8 };
 /// Borrows one parsed hyperlink specification.
@@ -75,7 +75,7 @@ pub const HyperlinkTarget = struct {
         return self.storage[self.uri_len..];
     }
     /// Reports whether this target exactly matches a parsed specification.
-    pub fn matches(self: HyperlinkTarget, spec: HyperlinkSpec) bool {
+    fn matches(self: HyperlinkTarget, spec: HyperlinkSpec) bool {
         if (!std.mem.eql(u8, self.uri(), spec.uri)) return false;
         const retained = self.id();
         if (retained == null or spec.id == null) return retained == null and spec.id == null;

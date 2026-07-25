@@ -86,7 +86,7 @@ fn charsetIdentity(byte: u8, gr: bool) u21 {
 }
 
 // Maps the printable GR range shared by Kitty's CP437 and VAX-42 tables.
-// CP437 GL is identity; C0 and C1 remain parser transport rather than glyphs.
+// CP437 GL is identity; C0 and C1 remain parser controls rather than glyphs.
 const cp437_printable_gr = [95]u21{
     0x00e1, 0x00ed, 0x00f3, 0x00fa, 0x00f1, 0x00d1, 0x00aa, 0x00ba,
     0x00bf, 0x2310, 0x00ac, 0x00bd, 0x00bc, 0x00a1, 0x00ab, 0x00bb,

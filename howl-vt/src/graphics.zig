@@ -3,15 +3,15 @@
 const std = @import("std");
 
 /// Bounds decoded image bytes retained by one terminal.
-pub const max_storage_bytes: usize = 64 * 1024 * 1024;
+const max_storage_bytes: usize = 64 * 1024 * 1024;
 /// Bounds one decoded RGBA image.
 pub const max_image_bytes: usize = 16 * 1024 * 1024;
 /// Bounds retained image identities.
-pub const max_images: usize = 256;
+const max_images: usize = 256;
 /// Bounds retained image placements.
-pub const max_placements: usize = 1024;
+const max_placements: usize = 1024;
 /// Bounds retained animation frames across one terminal.
-pub const max_frames: usize = 256;
+const max_frames: usize = 256;
 /// Bounds either image dimension before byte-count validation.
 pub const max_dimension: u32 = 4096;
 /// Bounds one encoded Kitty APC command chunk.
@@ -28,14 +28,14 @@ pub const ImageView = struct {
     width: u32,
     /// Pixel height.
     height: u32,
-    /// Monotonic content identity used by retained render storage.
+    /// Monotonic content identity used by retained image storage.
     generation: u64,
     /// Exact row-major RGBA8 pixels.
     pixels: []const u8,
 };
 
 /// Copies one ordinary cell-relative placement.
-pub const Placement = struct {
+const Placement = struct {
     /// Image identity resolved by the plane.
     image_id: u32,
     /// Optional application-selected Kitty placement identity.
@@ -121,7 +121,7 @@ const Loading = struct {
 };
 
 /// Reports exact bounded Kitty graphics admission.
-pub const Result = struct {
+const Result = struct {
     /// True when retained images or placements changed.
     changed: bool = false,
     /// True when a semantic change alters the currently visible image plane.
@@ -157,7 +157,7 @@ pub const Failure = enum {
 };
 
 /// Reports one monotonic animation service result.
-pub const AnimationTick = struct {
+const AnimationTick = struct {
     /// True when a currently displayed frame changed.
     changed: bool,
     /// True when frame or run-state mutation was accepted.
@@ -1201,7 +1201,7 @@ pub const Plane = struct {
     }
 
     /// Advances running Kitty animations against caller monotonic milliseconds.
-    pub fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
+    fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
         var changed = false;
         var semantic_changed = false;
         var next_ms: ?u32 = null;

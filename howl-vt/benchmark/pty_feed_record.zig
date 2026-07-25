@@ -1,10 +1,13 @@
 const std = @import("std");
 const terminal_mod = @import("../src/howl_vt.zig");
-const stream_harness = @import("../test/support/stream_harness.zig");
 
 const record_header = "howl-pty-vt-hex-v1";
 const Terminal = terminal_mod.Terminal;
-const StreamHarness = stream_harness.Harness;
+
+fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 pub const Record = struct {
     allocator: std.mem.Allocator,
@@ -36,15 +39,15 @@ pub fn parse(allocator: std.mem.Allocator, text: []const u8) !Record {
         if (hex.len == 0) continue;
         const chunk = try allocator.alloc(u8, hex.len / 2);
         errdefer allocator.free(chunk);
-        _ = try std.fmt.hexToBytes(chunk, hex);
+        const decoded = try std.fmt.hexToBytes(chunk, hex);
+        std.debug.assert(decoded.len == chunk.len);
         try record.chunks.append(allocator, chunk);
     }
     return record;
 }
 
 pub fn replay(terminal: *Terminal, record: *const Record) !void {
-    var stream = try StreamHarness.init(terminal);
-    for (record.chunks.items) |chunk| try stream.nextSlice(chunk);
+    for (record.chunks.items) |chunk| try feed(terminal, chunk);
 }
 
 pub fn byteLen(record: *const Record) u64 {
@@ -79,8 +82,7 @@ test "pty feed replay matches whole feed" {
 
     var whole = try Terminal.init(gpa, 4, 16);
     defer whole.deinit();
-    var whole_stream = try StreamHarness.init(&whole);
-    try whole_stream.nextSlice(fixture);
+    try feed(&whole, fixture);
 
     var record = try parse(
         gpa,

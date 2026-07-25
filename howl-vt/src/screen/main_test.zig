@@ -387,7 +387,7 @@ test "screen: DECSCA protects cells from selective erase" {
     try std.testing.expectEqual(@as(u21, 0), s.cellAt(1, 0));
 }
 
-test "screen: DECERA clips rectangle to viewport" {
+test "screen: DECERA clips rectangle to the active grid" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCells(gpa, 3, 3);
     defer s.deinit(gpa);

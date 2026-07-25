@@ -78,7 +78,7 @@ test "screen write: sgr applies colors and resets for later writes" {
     try std.testing.expect(r.applySgr(operands(reset_params[0..])));
     apply(&r, Action{ .write_text = "B" });
     try std.testing.expectEqual(Grid.Color.indexed(1), r.cellInfoAt(0, 0).attrs.fg);
-    try std.testing.expectEqual(Screen.default_fg, r.cellInfoAt(0, 1).attrs.fg);
+    try std.testing.expectEqual(Screen.default_cell_attrs.fg, r.cellInfoAt(0, 1).attrs.fg);
 }
 
 test "screen write: style attrs and kitty underline forms apply correctly" {

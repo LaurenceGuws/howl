@@ -116,7 +116,8 @@ test "CSI parser preserves colon subparameter separators" {
 }
 
 test "CSI parser: empty params stay defaulted after reset" {
-    _ = try feedCsiBytes("99m");
+    const reset = try feedCsiBytes("99m");
+    try std.testing.expectEqual(@as(u8, 'm'), reset.final);
     const action = try feedCsiBytes(";H");
     try std.testing.expectEqual(@as(u8, 'H'), action.final);
     try std.testing.expectEqual(@as(u8, 1), action.count);

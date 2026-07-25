@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-// Host-to-child input encoding.
+// Caller-to-child input encoding.
 
 /// Caller-owned fixed storage for nonallocating input encodings.
 pub const Scratch = struct {
@@ -112,13 +112,13 @@ pub const KeyEvent = struct {
     text: []const u8 = "",
 };
 
-/// Identifies host focus gained or lost for terminal focus reporting.
+/// Identifies caller focus gained or lost for terminal focus reporting.
 pub const FocusEvent = enum {
     in,
     out,
 };
 
-/// Host input borrowed by one terminal encoding call.
+/// Caller input borrowed by one terminal encoding call.
 ///
 /// `bytes` carries committed text, while `key` carries a named or validated
 /// Unicode physical-key event for terminal keyboard protocol encoding. Byte
@@ -229,7 +229,7 @@ pub const InputKey = union(enum) {
 pub const Action = enum(u2) { press = 1, repeat = 2, release = 3 };
 
 /// Bounds committed key text before decimal Kitty encoding.
-pub const max_text_bytes: u8 = 64;
+const max_text_bytes: u8 = 64;
 
 /// Complete modifier state accepted by terminal keyboard and mouse protocols.
 ///
@@ -269,7 +269,7 @@ const max_associated_encoded_bytes: usize = @as(usize, max_text_bytes) * 4;
 pub const max_kitty_encoded_bytes: usize = 2 + 7 + 1 + 7 + 1 + 7 +
     1 + 3 + 1 + 1 + max_associated_encoded_bytes + 1;
 
-/// Encode one host key for the active terminal keyboard modes.
+/// Encode one caller key for the active terminal keyboard modes.
 pub fn encodeKey(
     buf: []u8,
     key: InputKey,
@@ -789,12 +789,6 @@ fn legacyControlByte(codepoint: u21) ?u8 {
     };
 }
 
-fn singleByte(buf: []u8, byte: u8) ?[]const u8 {
-    std.debug.assert(buf.len >= 1);
-    buf[0] = byte;
-    return buf[0..1];
-}
-
 fn fixed3(buf: []u8, a: u8, b: u8, c: u8) []const u8 {
     std.debug.assert(buf.len >= 3);
     buf[0] = a;
@@ -1070,7 +1064,7 @@ pub const MouseEventKind = enum(u8) {
     wheel,
 };
 
-/// Host mouse event payload.
+/// Caller mouse event payload.
 pub const MouseEvent = struct {
     kind: MouseEventKind,
     button: MouseButton,
@@ -1082,7 +1076,7 @@ pub const MouseEvent = struct {
     buttons_down: u8,
 };
 
-/// Selects which host mouse events the terminal has requested.
+/// Selects which caller mouse events the terminal has requested.
 pub const MouseTrackingMode = enum(u8) {
     off,
     x10,
@@ -1131,7 +1125,7 @@ fn wouldEncodeMouse(event: MouseEvent, tracking: MouseTrackingMode, protocol: Mo
     return cb <= 223 and col1 <= 223 and row1 <= 223;
 }
 
-// Host rows are signed so callers can report positions above the viewport.
+// Caller rows are signed so callers can report positions above the visible grid.
 // Normalizing in u32 preserves that policy and makes maxInt(i32) + 1 exact.
 fn mouseRow1(row: i32) u32 {
     return if (row < 0) 1 else @as(u32, @intCast(row)) + 1;
@@ -1141,7 +1135,7 @@ fn validMouseCodepoint(value: u32) bool {
     return value <= 0x10FFFF and std.unicode.utf8ValidCodepoint(@intCast(value));
 }
 
-/// Encode one host mouse event for the active terminal mouse protocol.
+/// Encode one caller mouse event for the active terminal mouse protocol.
 pub fn encodeMouse(buf: []u8, event: MouseEvent, tracking: MouseTrackingMode, protocol: MouseProtocol) []const u8 {
     if (!wouldEncodeMouse(event, tracking, protocol)) return buf[0..0];
 

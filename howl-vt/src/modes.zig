@@ -17,7 +17,7 @@ pub const State = struct {
     application_cursor_keys: bool = false,
     application_keypad: bool = false,
     column_mode_132: bool = false,
-    // Howl historically admits DECCOLM while the embedding host owns physical geometry.
+    // Howl historically admits DECCOLM while the embedding caller owns physical geometry.
     allow_column_mode: bool = true,
     preserve_screen_on_column_mode: bool = false,
     more_fix: bool = false,
@@ -69,7 +69,7 @@ pub const kitty_keyboard_flag_mask: u8 = 0x7f;
 const kitty_keyboard_stack_capacity = 8;
 
 /// Stores Kitty's current keyboard flags and seven predecessors.
-pub const KittyKeyStack = struct {
+const KittyKeyStack = struct {
     flags: u8 = 0,
     stack: [kitty_keyboard_stack_capacity - 1]u8 =
         @as([(kitty_keyboard_stack_capacity - 1)]u8, @splat(0)),
@@ -143,7 +143,7 @@ test "keyboard stack drops oldest predecessor at exact saturation" {
 }
 
 /// Per-screen keyboard state retained while Terminal switches primary/alternate screens.
-pub const KeyboardScreenState = struct {
+const KeyboardScreenState = struct {
     keyboard: KittyKeyStack = .{},
 };
 

@@ -57,7 +57,7 @@ pub const Buffer = struct {
     }
 
     /// Returns the current terminal-family framing selection.
-    pub fn usesEightBitControls(self: *const Buffer) bool {
+    fn usesEightBitControls(self: *const Buffer) bool {
         return self.eight_bit_controls;
     }
 

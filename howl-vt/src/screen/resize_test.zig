@@ -69,7 +69,7 @@ test "screen resize: row-only resize preserves live bottom and restores from his
     try std.testing.expectEqual(@as(u16, 3), s.cursor.row);
 }
 
-test "screen resize: column resize reflows wrapped content into history and viewport" {
+test "screen resize: column resize reflows wrapped content into history and visible rows" {
     const gpa = std.testing.allocator;
     var s = try Grid.initWithCellsAndHistory(gpa, 2, 4, 8);
     defer s.deinit(gpa);

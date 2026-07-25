@@ -88,7 +88,6 @@ pub const Screen = struct {
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = ScreenCellAttrs;
     /// Distinguishes unprotected, ISO guarded-area, and DEC selective-erase cells.
-    pub const Protection = ScreenProtection;
     /// Uses the canonical terminal cell value.
     pub const Cell = ScreenCell;
     /// Uses the canonical cursor shape.
@@ -99,7 +98,6 @@ pub const Screen = struct {
     /// Provides the canonical default cursor style.
     pub const default_cursor_style = initial_cursor_style;
     /// Provides the canonical default foreground color.
-    pub const default_fg = default_cell_foreground;
     const default_bg = default_cell_background;
     /// Provides the canonical default underline color.
     pub const default_underline_color = default_cell_underline_color;
@@ -107,7 +105,7 @@ pub const Screen = struct {
     pub const default_cell_attrs = initial_cell_attrs;
     /// Provides the canonical blank terminal cell.
     pub const default_cell = blank_cell;
-    /// Describes one row's DEC presentation geometry without prescribing host rendering.
+    /// Describes one row's DEC presentation geometry without prescribing caller presentation.
     pub const LineGeometry = enum(u2) {
         single_width,
         double_width,
@@ -1615,14 +1613,14 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Stores one nonzero host cell-pixel fact for terminal protocol reports.
+    /// Stores one nonzero caller cell-pixel fact for terminal protocol reports.
     pub fn setCellPixelSize(self: *Screen, width: u32, height: u32) void {
         std.debug.assert(width > 0);
         std.debug.assert(height > 0);
         self.cell_pixel_size = .{ .width = width, .height = height };
     }
 
-    /// Returns configured nonzero cell pixels, when supplied by the embedding host.
+    /// Returns configured nonzero cell pixels, when supplied by the embedding caller.
     pub fn cellPixelSize(self: *const Screen) ?CellPixelSize {
         return self.cell_pixel_size;
     }
@@ -1666,7 +1664,7 @@ pub const Screen = struct {
 
     /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
     /// Returns false when the retained protection fact is already identical.
-    pub fn setCharacterProtection(self: *Screen, protection: Protection) bool {
+    pub fn setCharacterProtection(self: *Screen, protection: ScreenProtection) bool {
         if (self.current_attrs.protected == protection) return false;
         self.current_attrs.protected = protection;
         return true;
@@ -3487,7 +3485,7 @@ fn isTrailingCombiningCodepoint(cp: u21) bool {
     };
 }
 
-// Identifies the supported terminal underline rendering styles.
+// Identifies the supported terminal underline presentation styles.
 const ScreenUnderlineStyle = enum(u3) {
     straight,
     double,
@@ -3703,7 +3701,7 @@ const ScreenSemanticCursor = struct {
     }
 
     /// Returns position and pending wrap to the alternate-screen origin.
-    pub fn resetForAltEntry(self: *ScreenSemanticCursor) void {
+    fn resetForAltEntry(self: *ScreenSemanticCursor) void {
         self.row = 0;
         self.col = 0;
         self.effective_shape = .none;
@@ -3730,7 +3728,7 @@ const ScreenSemanticCursor = struct {
     }
 
     /// Replaces only the program-selected shape while preserving blink intent.
-    pub fn setProgramShape(self: *ScreenSemanticCursor, shape: ScreenCursorShape) void {
+    fn setProgramShape(self: *ScreenSemanticCursor, shape: ScreenCursorShape) void {
         self.setProgramStyle(.{ .shape = shape, .blink = self.blink_intent });
     }
 
@@ -3884,7 +3882,7 @@ const OutputLine = struct {
     }
 };
 
-// Borrows one row window from a reflowed logical line.
+// Borrows one row range from a reflowed logical line.
 const RewrappedRow = struct {
     start: u32,
     len: u16,
@@ -3947,7 +3945,7 @@ const ReflowState = struct {
     }
 };
 
-// Derived projection window into complete reflow output.
+// Derived projection range into complete reflow output.
 const ResizeProjection = struct {
     total_rows: u32,
     visible_rows_kept: u16,
@@ -4390,7 +4388,7 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
     return !std.meta.eql(before, target.*);
 }
 
-test "history allocation failures publish loss and preserve paired state" {
+test "history allocation failures record loss and preserve paired state" {
     inline for (0..4) |fail_offset| {
         var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
         var screen = try Screen.initWithCellsAndHistory(failing.allocator(), 1, 2, 4);

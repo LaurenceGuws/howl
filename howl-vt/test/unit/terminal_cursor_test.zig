@@ -1,9 +1,12 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/howl_vt.zig");
-const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
-const StreamHarness = stream_harness.Harness;
+
+fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 fn view(terminal: *const Terminal) Terminal.SemanticView {
     return terminal.semanticView(0);
@@ -13,9 +16,8 @@ test "terminal cursor: save restore is terminal-owned per active bank" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b[2;6H\x1b[4 q\x1b7\x1b[1;1H\x1b[1 q\x1b8");
+    try feed(&terminal, "\x1b[2;6H\x1b[4 q\x1b7\x1b[1;1H\x1b[1 q\x1b8");
     try std.testing.expectEqual(@as(u16, 1), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 5), view(&terminal).cursor_col);
     try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);
@@ -26,9 +28,8 @@ test "terminal cursor: restore without prior save homes the cursor" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b[?5h\x1b[?6h\x1b[?7l\x1b)0\x1b8");
+    try feed(&terminal, "\x1b[?5h\x1b[?6h\x1b[?7l\x1b)0\x1b8");
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_col);
 }
@@ -37,9 +38,8 @@ test "terminal cursor: alt screen enter resets alt cursor instead of copying pri
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b[3;4H\x1b[6 q\x1b[?47h");
+    try feed(&terminal, "\x1b[3;4H\x1b[6 q\x1b[?47h");
     try std.testing.expect(view(&terminal).is_alternate_screen);
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_col);
@@ -122,7 +122,7 @@ test "terminal cursor: Kitty DCS restores each bank default across fragmented in
     try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|x\x1b\\")).state_changed);
 }
 
-test "terminal cursor: savepoint restores presentation while host colors remain current" {
+test "terminal cursor: savepoint restores presentation while caller colors remain current" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
@@ -151,15 +151,14 @@ test "terminal cursor: 1049 restores primary bank and 47 leaves banks independen
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
 
-    try stream.nextSlice("\x1b[3;4H\x1b[4 q\x1b[?1049h\x1b[2;2H\x1b[?1049l");
+    try feed(&terminal, "\x1b[3;4H\x1b[4 q\x1b[?1049h\x1b[2;2H\x1b[?1049l");
     try std.testing.expectEqual(@as(u16, 2), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 3), view(&terminal).cursor_col);
     try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);
     try std.testing.expect(!view(&terminal).cursor_blink);
 
-    try stream.nextSlice("\x1b[?47h\x1b[2;2H\x1b[1 q\x1b[?47l");
+    try feed(&terminal, "\x1b[?47h\x1b[2;2H\x1b[1 q\x1b[?47l");
     try std.testing.expectEqual(@as(u16, 2), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 3), view(&terminal).cursor_col);
     try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);

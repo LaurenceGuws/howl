@@ -29,9 +29,9 @@ pub const ClipboardProtocol = enum { osc52, kitty_5522 };
 pub const ClipboardRequestView = struct {
     /// Monotonic identity advancing for every accepted operation, including repeated bytes.
     generation: u64,
-    /// Borrows exact OSC 52 selection bytes; empty selection leaves the choice to host policy.
+    /// Borrows exact OSC 52 selection bytes; empty selection leaves the choice to embedder policy.
     selection: []const u8,
-    /// Borrows the exact protocol payload for host parsing and policy.
+    /// Borrows the exact protocol payload for caller parsing and policy.
     payload: []const u8,
     /// Distinguishes OSC 52 replacement/query operations from one Kitty packet.
     kind: ClipboardRequestKind,
@@ -42,40 +42,40 @@ pub const ClipboardRequestView = struct {
 /// Reports allocation failure or an exact family bound.
 pub const Error = error{ OutOfMemory, ConsequenceLimit };
 /// Reports an identity that is not the current global head.
-pub const ConsumeError = error{StaleIdentity};
+const ConsumeError = error{StaleIdentity};
 
 /// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
 const clipboard_max_bytes: u32 = 1024 * 1024;
 /// Maximum retained packet accepted by Kitty clipboard and file-transfer owners.
 /// Terminal proves this remains equal to the parser's chunk-control boundary.
 pub const retained_packet_bytes_max: u32 = 8 * 1024;
-/// Bounds one ordered clipboard burst while the host applies access policy.
+/// Bounds one ordered clipboard burst while the caller applies access policy.
 const clipboard_capacity: u8 = 8;
-/// Bounds aggregate bytes retained across configuration, delegated transport, and host-directed DCS consequences.
+/// Bounds aggregate bytes retained across configuration, delegated protocol, and caller-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
-// Holds the nine-command Kitty family, three iTerm2 transports, and a bounded mixed-family burst.
+// Holds the nine-command Kitty family, three iTerm2 protocol families, and a bounded mixed-family burst.
 const dcs_payload_capacity: u8 = 16;
 // Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
 const string_payload_capacity: u8 = 32;
 /// Bounds one retained consequence payload owned by this composition state.
 const consequence_payload_max_bytes: u32 = 1024;
-// Bounds one notification, focus, or attention burst while a host applies policy.
+// Bounds one notification, focus, or attention burst while a caller applies policy.
 const notification_capacity: u8 = 8;
 const bell_capacity: u8 = 32;
 const legacy_control_capacity: u8 = 16;
-// Bounds one pointer-request burst while a host applies validation and presentation policy.
+// Bounds one pointer-request burst while a caller applies validation and presentation policy.
 const pointer_shape_capacity: u8 = 8;
-// Bounds one opaque file-transfer burst while its host applies policy and storage.
+// Bounds one opaque file-transfer burst while its caller applies policy and storage.
 const file_transfer_capacity: u8 = 8;
 
-/// Identifies one ordered host-neutral notification consequence.
+/// Identifies one ordered caller-neutral notification consequence.
 pub const NotificationKind = enum {
     message,
     steal_focus,
     request_attention,
 };
 
-/// Borrows one host-neutral notification, focus, or attention occurrence until terminal mutation.
+/// Borrows one caller-neutral notification, focus, or attention occurrence until terminal mutation.
 pub const Notification = struct {
     /// Monotonic identity advancing for every accepted occurrence, including repeated values.
     generation: u64,
@@ -83,7 +83,7 @@ pub const Notification = struct {
     kind: NotificationKind,
     /// Original OSC command identifying the protocol family.
     command: u16,
-    /// Raw bounded message body or attention argument; interpretation belongs to the host.
+    /// Raw bounded message body or attention argument; interpretation belongs to the caller.
     payload: []const u8,
 };
 
@@ -113,7 +113,7 @@ pub const PointerShapeRequest = struct {
     reset_generation: u64,
     /// Retains the screen bank active when this ordered request was accepted.
     alternate_screen: bool,
-    /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the host.
+    /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the caller.
     payload: []const u8,
 };
 
@@ -142,9 +142,9 @@ pub const FileTransferProtocol = enum { iterm2_1337, kitty_5113 };
 pub const FileTransferPacket = struct {
     /// Monotonic identity advancing for every retained packet, including repeated bytes.
     generation: u64,
-    /// Selects the protocol whose host layer interprets `payload`.
+    /// Selects the protocol whose caller layer interprets `payload`.
     protocol: FileTransferProtocol,
-    /// Preserves the exact bounded command payload without executing host policy.
+    /// Preserves the exact bounded command payload without executing embedder policy.
     payload: []const u8,
 };
 
@@ -222,8 +222,8 @@ const DragDropCommandOwned = struct {
     }
 };
 
-/// Names one host-neutral request from the child to manipulate its containing window.
-pub const WindowRequest = union(enum) {
+/// Names one caller-neutral CSI-t request for an embedder to interpret.
+pub const ContainerRequest = union(enum) {
     deiconify,
     iconify,
     move: struct { x: u32, y: u32 },
@@ -239,21 +239,21 @@ pub const WindowRequest = union(enum) {
     report_icon_title,
 };
 
-// Bounds one FIFO burst while a host applies policy or supplies query facts.
-const window_request_capacity: u8 = 32;
+// Bounds one FIFO burst while a caller applies policy or supplies query facts.
+const container_request_capacity: u8 = 32;
 
-/// Borrows one accepted window request until head consumption.
-pub const WindowRequestOccurrence = struct {
+/// Borrows one accepted container request until head consumption.
+pub const ContainerOccurrence = struct {
     /// Monotonic identity advancing for every accepted request, including repeated values.
     generation: u64,
-    /// Exact bounded operation and arguments; execution and authorization belong to the host.
-    request: WindowRequest,
+    /// Exact bounded operation and arguments; execution and authorization belong to the caller.
+    request: ContainerRequest,
 };
 
-// Bounds one burst of identical host color-preference queries without allocation.
+// Bounds one burst of identical caller color-preference queries without allocation.
 const color_preference_query_capacity: u8 = 16;
 
-/// Preserves one ANSI or DEC media-copy command for host printing policy.
+/// Preserves one ANSI or DEC media-copy command for caller printing policy.
 pub const MediaCopyRequest = struct {
     /// Distinguishes `CSI ? Ps i` from the ordinary ANSI command.
     private: bool,
@@ -261,14 +261,14 @@ pub const MediaCopyRequest = struct {
     parameter: u16,
 };
 
-// Bounds one print-command burst while a host performs potentially slow policy.
+// Bounds one print-command burst while a caller performs potentially slow policy.
 const media_copy_capacity: u8 = 8;
 
 /// Borrows one accepted media-copy command until its queue head is consumed.
 pub const MediaCopyOccurrence = struct {
     /// Monotonic identity advancing for every command, including repeated values.
     generation: u64,
-    /// Exact command family and parameter retained for host interpretation.
+    /// Exact command family and parameter retained for caller interpretation.
     request: MediaCopyRequest,
 };
 
@@ -282,7 +282,7 @@ comptime {
     std.debug.assert(dcs_payload_max_bytes > 0);
     const total_capacity: u16 =
         clipboard_capacity + notification_capacity + pointer_shape_capacity +
-        file_transfer_capacity + drag_drop_capacity + window_request_capacity +
+        file_transfer_capacity + drag_drop_capacity + container_request_capacity +
         color_preference_query_capacity + media_copy_capacity + bell_capacity +
         legacy_control_capacity + dcs_payload_capacity + string_payload_capacity;
     std.debug.assert(total_capacity <= std.math.maxInt(u16));
@@ -298,7 +298,7 @@ fn ensureRetainedBound(len: u32, max_len: u32) Error!void {
     if (len > max_len) return error.ConsequenceLimit;
 }
 
-/// Identifies one retained configuration, delegated transport, or host-directed DCS consequence family.
+/// Identifies one retained configuration, delegated protocol, or caller-directed DCS consequence family.
 pub const DcsPayloadKind = enum {
     xtsettcap,
     decudk,
@@ -317,7 +317,7 @@ pub const DcsPayloadKind = enum {
     kitty_edit,
 };
 
-/// Borrows the FIFO-head configuration, delegated transport, or host-directed DCS consequence.
+/// Borrows the FIFO-head configuration, delegated protocol, or caller-directed DCS consequence.
 /// Its payload remains valid until terminal mutation or matching consumption.
 pub const DcsPayloadOccurrence = struct {
     /// Monotonic identity advancing for every retained consequence, including repeated bytes.
@@ -328,7 +328,7 @@ pub const DcsPayloadOccurrence = struct {
     payload: []const u8,
 };
 
-/// Identifies one generic string-control family delegated to the embedding host.
+/// Identifies one generic string-control family delegated to the embedding caller.
 pub const StringPayloadKind = enum { apc, pm, sos };
 
 /// Borrows one ordered generic string-control payload until consumption.
@@ -353,7 +353,7 @@ pub const DcsInput = struct {
     payload: []const u8,
 };
 
-/// Identifies a legacy terminal mode transition retained for host observation.
+/// Identifies a legacy terminal mode transition retained for caller observation.
 pub const LegacyControlKind = enum {
     tek_point_plot,
     tek_graph,
@@ -374,7 +374,7 @@ pub const LegacyControlOccurrence = struct {
 };
 
 /// Admits one parsed Kitty drag-and-drop command.
-pub const DragDropInput = struct { kind: DragDropCommandKind, command: u8, client_id: ?u32 = null, more: bool = false, operation: ?u2 = null, index: ?u32 = null, remote: bool = false, payload: []const u8 };
+const DragDropInput = struct { kind: DragDropCommandKind, command: u8, client_id: ?u32 = null, more: bool = false, operation: ?u2 = null, index: ?u32 = null, remote: bool = false, payload: []const u8 };
 
 /// Borrows the global FIFO head across every consequence family.
 pub const Consequence = union(enum) {
@@ -383,7 +383,7 @@ pub const Consequence = union(enum) {
     pointer_shape: PointerShapeRequest,
     file_transfer: FileTransferPacket,
     drag_drop: DragDropCommandView,
-    window: WindowRequestOccurrence,
+    container: ContainerOccurrence,
     color_preference: u64,
     media_copy: MediaCopyOccurrence,
     bell: u64,
@@ -403,7 +403,7 @@ pub const Consequence = union(enum) {
 /// Owns bounded per-family queues under one monotonic identity sequence.
 pub const State = struct {
     // Heap-backed consequences are bounded before allocation. Configuration,
-    // delegated transport, and host-directed DCS families share count and aggregate-byte bounds.
+    // delegated protocol, and caller-directed DCS families share count and aggregate-byte bounds.
     const DcsPayloadOwned = struct {
         generation: u64,
         kind: DcsPayloadKind,
@@ -444,9 +444,9 @@ pub const State = struct {
     drag_drop_start: u8 = 0,
     drag_drop_count: u8 = 0,
     drag_drop_retained_bytes: u32 = 0,
-    window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
-    window_requests_start: u8 = 0,
-    window_requests_count: u8 = 0,
+    container_requests: [container_request_capacity]ContainerOccurrence = undefined,
+    container_requests_start: u8 = 0,
+    container_requests_count: u8 = 0,
     color_preference_queries: [color_preference_query_capacity]u64 = undefined,
     color_preference_query_start: u8 = 0,
     color_preference_query_count: u8 = 0,
@@ -511,7 +511,7 @@ pub const State = struct {
         considerHead(&result, if (self.pointerShapeView()) |value| .{ .pointer_shape = value } else null);
         considerHead(&result, if (self.fileTransferHead()) |value| .{ .file_transfer = value } else null);
         considerHead(&result, if (self.dragDropHead()) |value| .{ .drag_drop = value } else null);
-        considerHead(&result, if (self.windowRequestHead()) |value| .{ .window = value } else null);
+        considerHead(&result, if (self.containerRequestHead()) |value| .{ .container = value } else null);
         considerHead(&result, if (self.colorPreferenceQueryGeneration()) |value| .{ .color_preference = value } else null);
         considerHead(&result, if (self.mediaCopyHead()) |value| .{ .media_copy = value } else null);
         considerHead(&result, if (self.bellHead()) |value| .{ .bell = value } else null);
@@ -526,7 +526,7 @@ pub const State = struct {
         var result: u16 = 0;
         inline for (.{
             self.clipboard_requests_count,     self.notifications_count, self.pointer_shapes_count,
-            self.file_transfer_count,          self.drag_drop_count,     self.window_requests_count,
+            self.file_transfer_count,          self.drag_drop_count,     self.container_requests_count,
             self.color_preference_query_count, self.media_copy_count,    self.bells_count,
             self.legacy_controls_count,        self.dcs_payloads_count,  self.string_payloads_count,
         }) |value| result += value;
@@ -543,7 +543,7 @@ pub const State = struct {
             .pointer_shape => self.consumePointerShape(),
             .file_transfer => self.consumeFileTransfer(),
             .drag_drop => self.consumeDragDrop(),
-            .window => self.consumeWindowRequestHead(),
+            .container => self.consumeContainerRequestHead(),
             .color_preference => self.consumeColorPreferenceQuery(),
             .media_copy => self.consumeMediaCopy(),
             .bell => self.consumeBell(),
@@ -563,7 +563,7 @@ pub const State = struct {
         self.consequence_generation = id;
     }
 
-    /// Retain one notification, focus, or attention occurrence without choosing host policy.
+    /// Retain one notification, focus, or attention occurrence without choosing embedder policy.
     pub fn retainNotification(
         self: *State,
         kind: NotificationKind,
@@ -584,7 +584,7 @@ pub const State = struct {
         self.notifications_count += 1;
     }
 
-    /// Retain one OSC 22 request without selecting a host pointer or answering queries.
+    /// Retain one OSC 22 request without selecting a caller pointer or answering queries.
     pub fn retainPointerShape(
         self: *State,
         payload: []const u8,
@@ -678,25 +678,25 @@ pub const State = struct {
         self.drag_drop_count -= 1;
     }
 
-    /// Retain one window request occurrence without executing host policy.
-    pub fn retainWindowRequest(self: *State, request: WindowRequest) Error!void {
-        if (self.window_requests_count == window_request_capacity) return error.ConsequenceLimit;
+    /// Retain one container request occurrence without executing embedder policy.
+    pub fn retainContainerRequest(self: *State, request: ContainerRequest) Error!void {
+        if (self.container_requests_count == container_request_capacity) return error.ConsequenceLimit;
         const occurrence_id = try self.nextConsequenceId();
         self.commitConsequenceId(occurrence_id);
-        const index = (self.window_requests_start + self.window_requests_count) % window_request_capacity;
-        self.window_requests[index] = .{ .generation = occurrence_id, .request = request };
-        self.window_requests_count += 1;
+        const index = (self.container_requests_start + self.container_requests_count) % container_request_capacity;
+        self.container_requests[index] = .{ .generation = occurrence_id, .request = request };
+        self.container_requests_count += 1;
     }
 
-    fn windowRequestHead(self: *const State) ?WindowRequestOccurrence {
-        if (self.window_requests_count == 0) return null;
-        return self.window_requests[self.window_requests_start];
+    fn containerRequestHead(self: *const State) ?ContainerOccurrence {
+        if (self.container_requests_count == 0) return null;
+        return self.container_requests[self.container_requests_start];
     }
 
-    fn consumeWindowRequestHead(self: *State) void {
-        std.debug.assert(self.window_requests_count > 0);
-        self.window_requests_start = (self.window_requests_start + 1) % window_request_capacity;
-        self.window_requests_count -= 1;
+    fn consumeContainerRequestHead(self: *State) void {
+        std.debug.assert(self.container_requests_count > 0);
+        self.container_requests_start = (self.container_requests_start + 1) % container_request_capacity;
+        self.container_requests_count -= 1;
     }
 
     /// Retains one ordered color-preference query.
@@ -810,9 +810,9 @@ pub const State = struct {
         self.legacy_controls_count -= 1;
     }
 
-    /// Retain one valid clipboard occurrence transactionally without choosing host access policy.
+    /// Retain one valid clipboard occurrence transactionally without choosing caller access policy.
 
-    // Retain one exact Kitty OSC 5522 packet for ordered host parsing and policy.
+    // Retain one exact Kitty OSC 5522 packet for ordered caller parsing and policy.
     /// Retains one exact Kitty clipboard packet.
     pub fn retainKittyClipboard(self: *State, payload: []const u8) Error!void {
         try ensureRetainedBound(byteCount(payload), retained_packet_bytes_max);
@@ -846,7 +846,7 @@ pub const State = struct {
         self.clipboard_retained_bytes = retained_bytes;
     }
 
-    /// Retain one ordered configuration, delegated transport, or host-directed DCS consequence.
+    /// Retain one ordered configuration, delegated protocol, or caller-directed DCS consequence.
     /// Count, byte, generation, and allocation bounds succeed before queue mutation.
     pub fn retainDcsPayload(self: *State, payload: DcsInput) Error!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
@@ -937,7 +937,7 @@ pub const State = struct {
         return &self.clipboard_requests[self.clipboard_requests_start];
     }
 
-    // Release and consume only the FIFO head after its host operation completes.
+    // Release and consume only the FIFO head after its caller operation completes.
     fn consumeClipboardRequest(self: *State) void {
         std.debug.assert(self.clipboard_requests_count > 0);
         const request = &self.clipboard_requests[self.clipboard_requests_start];
@@ -1014,8 +1014,8 @@ test "every family rejects its exact queue saturation" {
     {
         var state = State.init(std.testing.allocator);
         defer state.deinit();
-        for (0..window_request_capacity) |_| try state.retainWindowRequest(.report_state);
-        try std.testing.expectError(error.ConsequenceLimit, state.retainWindowRequest(.report_state));
+        for (0..container_request_capacity) |_| try state.retainContainerRequest(.report_state);
+        try std.testing.expectError(error.ConsequenceLimit, state.retainContainerRequest(.report_state));
     }
     {
         var state = State.init(std.testing.allocator);

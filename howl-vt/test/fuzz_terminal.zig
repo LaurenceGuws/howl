@@ -71,11 +71,11 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
                 try std.testing.expectEqual(before.cols, after.cols);
                 try std.testing.expectEqual(before.history_count, after.history_count);
                 try std.testing.expectEqual(before.is_alternate_screen, after.is_alternate_screen);
-                _ = try terminal.feed("R");
+                try std.testing.expect((try terminal.feed("R")).state_changed);
             },
             .reset_and_reuse => {
                 terminal.hardReset();
-                _ = try terminal.feed("R");
+                try std.testing.expect((try terminal.feed("R")).state_changed);
             },
             .input_bytes => try encodeBytes(&terminal, smith),
             .keyboard => try encodeKeyboard(&terminal, smith),
@@ -94,18 +94,19 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
 }
 
 fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
-    _ = terminal.feed(bytes) catch |err| switch (err) {
+    const summary = terminal.feed(bytes) catch |err| switch (err) {
         error.ConsequenceLimit,
         error.PropertyLimit,
         error.ReplyLimit,
         error.ParsedEventLimit,
         error.StringControlLimit,
         => {
-            _ = try terminal.feed("R");
+            try std.testing.expect((try terminal.feed("R")).state_changed);
             return;
         },
         error.OutOfMemory => return err,
     };
+    std.debug.assert(!summary.history_lost or summary.state_changed);
 }
 
 fn encodeBytes(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
@@ -247,7 +248,7 @@ fn extractText(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
     // known cell without weakening the generated live-terminal mutation.
     var proof = try howl_vt.Terminal.init(std.testing.allocator, 1, 1);
     defer proof.deinit();
-    _ = try proof.feed("S");
+    try std.testing.expect((try proof.feed("S")).state_changed);
     const range: howl_vt.Terminal.TextRange = .{
         .start = .{ .row = 0, .col = 0 },
         .end = .{ .row = 0, .col = 0 },
@@ -326,7 +327,8 @@ fn assertPublicInvariants(terminal: *howl_vt.Terminal, history_capacity: u16) !v
     while (row < view.rows) : (row += 1) {
         var col: u16 = 0;
         while (col < view.cols) : (col += 1) {
-            _ = view.cellInfoAt(row, col);
+            const cell = view.cellInfoAt(row, col);
+            try std.testing.expect(cell.width <= 2);
         }
     }
 }

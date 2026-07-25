@@ -1,8 +1,12 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/howl_vt.zig");
-const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
+
+fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
+}
 
 const expected_logical_output_bytes: usize = 1024 * 1024;
 
@@ -116,7 +120,7 @@ test "logical output identity advances only after retained text allocation succe
     try std.testing.expectEqual(@as(u64, 1), terminal.logicalOutputRange().newest);
 }
 
-test "oversized finalized line records loss and terminal continues rendering" {
+test "oversized finalized line records loss and terminal continues mutating" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, std.math.maxInt(u16), 32);
     defer terminal.deinit();
     var chunk: [64 * 1024]u8 = @splat('x');
@@ -216,12 +220,11 @@ test "terminal rejects zero resize without changing dimensions" {
 test "terminal tracks synchronized output private mode" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
-    var stream = try stream_harness.Harness.init(&vt);
 
-    try stream.nextSlice("\x1b[?2026h");
+    try feed(&vt, "\x1b[?2026h");
     try std.testing.expect(vt.synchronizedOutput());
 
-    try stream.nextSlice("\x1b[?2026l");
+    try feed(&vt, "\x1b[?2026l");
     try std.testing.expect(!vt.synchronizedOutput());
 }
 
@@ -273,9 +276,8 @@ test "synchronized update DCS shares exact bounded mode state" {
 test "terminal visible view projects scrollback rows" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 2, 4);
     defer vt.deinit();
-    var stream = try stream_harness.Harness.init(&vt);
 
-    try stream.nextSlice("aa\r\nbb\r\ncc");
+    try feed(&vt, "aa\r\nbb\r\ncc");
 
     const live = vt.semanticView(0);
     try std.testing.expectEqual(0, live.history_offset);
@@ -440,10 +442,9 @@ test "terminal RIS delegates hard-reset owners" {
 test "terminal DECSTR preserves text and position while resetting terminal state" {
     var vt = try Terminal.init(std.testing.allocator, 4, 16);
     defer vt.deinit();
-    var stream = try stream_harness.Harness.init(&vt);
 
-    try stream.nextSlice("kept\x1b[2;9H\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h\x1b#6");
-    try stream.nextSlice("\x1b[4;20h\x1b(B\x1b)0\x1b G");
+    try feed(&vt, "kept\x1b[2;9H\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h\x1b#6");
+    try feed(&vt, "\x1b[4;20h\x1b(B\x1b)0\x1b G");
     const row_before = vt.semanticView(0).cursor_row;
     const col_before = vt.semanticView(0).cursor_col;
     try std.testing.expect(vt.semanticView(0).lineGeometry(row_before) == .double_width);

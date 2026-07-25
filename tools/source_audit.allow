@@ -1,58 +1,9 @@
 howl-render/src/generated_geometry.zig|anytype|comptime inside: anytype,
 howl-render/src/generated_geometry.zig|anytype|context: anytype,
-howl-vt/benchmark/pty_feed_record.zig|discard|_ = try std.fmt.hexToBytes(chunk, hex);
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
-howl-vt/benchmark/terminal_benchmark.zig|anytype|fn count64(items: anytype) u64 {
-howl-vt/benchmark/terminal_benchmark.zig|anytype|fn paramCount32(items: anytype) u32 {
-howl-vt/benchmark/terminal_benchmark.zig|discard|_ = args.next();
-howl-vt/simulation/protocol.zig|anytype|fn hashCell(hasher: *std.hash.Fnv1a_64, cell: anytype) void {
-howl-vt/simulation/protocol.zig|anytype|fn hashColor(hasher: *std.hash.Fnv1a_64, color: anytype) void {
-howl-vt/simulation/protocol.zig|anytype|fn hashValue(hasher: *std.hash.Fnv1a_64, value: anytype) void {
-howl-vt/src/parser.zig|discard|_ = parser.entryPhase(.escape, 0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next('$');
-howl-vt/src/parser.zig|discard|_ = parser.next('1');
-howl-vt/src/parser.zig|discard|_ = parser.next('1');
-howl-vt/src/parser.zig|discard|_ = parser.next('1');
-howl-vt/src/parser.zig|discard|_ = parser.next('2');
-howl-vt/src/parser.zig|discard|_ = parser.next('2');
-howl-vt/src/parser.zig|discard|_ = parser.next('3');
-howl-vt/src/parser.zig|discard|_ = parser.next(':');
-howl-vt/src/parser.zig|discard|_ = parser.next(';');
-howl-vt/src/parser.zig|discard|_ = parser.next(';');
-howl-vt/src/parser.zig|discard|_ = parser.next('P');
-howl-vt/src/parser.zig|discard|_ = parser.next('P');
-howl-vt/src/parser.zig|discard|_ = parser.next('[');
-howl-vt/src/parser.zig|discard|_ = parser.next(']');
-howl-vt/src/parser.zig|discard|_ = parser.next('_');
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/test/fuzz_terminal.zig|discard|_ = terminal.feed(bytes) catch |err| switch (err) {
-howl-vt/test/fuzz_terminal.zig|discard|_ = try proof.feed("S");
-howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
-howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
-howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
-howl-vt/test/fuzz_terminal.zig|discard|_ = view.cellInfoAt(row, col);
-howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[5n");
-howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[?2004h");
-howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b]52;c;SG93bA==\x07");
-howl-vt/test/unit/parser/csi_test.zig|discard|_ = try feedCsiBytes("99m");
-howl-vt/test/unit/parser/events_test.zig|anytype|fn paramCount32(items: anytype) u32 {
-howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next('P');
-howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next('P');
-howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next(0x1B);
-howl-vt/test/unit/parser/main_test.zig|discard|_ = parser.next(0x1B);
-howl-vt/test/unit/parser/main_test.zig|discard|_ = self.arena.reset(.retain_capacity);
-howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 2, .col = 3, .mod = .{}, .buttons_down = 1 });
-howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 0 });
-howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 });
-howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .release, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 });
 howl-vt/test_unit.zig|discard|_ = @import("src/howl_vt.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/cursor_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/history_test.zig");
@@ -61,7 +12,6 @@ howl-vt/test_unit.zig|discard|_ = @import("src/screen/resize_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/tabs_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/write_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/csi_test.zig");
-howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/events_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/main_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/string_control_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_cursor_test.zig");

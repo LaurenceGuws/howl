@@ -8,7 +8,7 @@ objective: >-
 
 settled_capabilities:
   - name: vt
-    acceptance: owns terminal semantics, state, dirty facts, input encoding, replies, and consequences
+    acceptance: owns terminal semantics, state, input encoding, replies, consequences, and borrowed semantic views
   - name: pty
     acceptance: owns exact Linux PTY transport and child-process lifecycle
   - name: control
@@ -36,11 +36,11 @@ accepted_implementation:
     keyboard and pointer admission, title, bell, and ordered notification presentation, exact terminal completion,
     and cleanup.
   - >-
-    Howl-host owns primary-history viewport intent and exact scrollbar presentation while VT retains history,
-    projection, eviction, reflow, and alternate-screen truth.
+    Howl-host owns primary-history view intent and exact scrollbar presentation while VT retains history,
+    semantic row facts, eviction, reflow, and alternate-screen truth.
   - >-
-    VT owns projected selection and copied-text semantics; Control exposes bounded local operations; Howl-host owns
-    pointer gestures, exact clipboard chords, nonblocking Wayland UTF-8 clipboard transfer, ordered OSC 52
+    VT owns bounded text extraction; Control exposes bounded local operations; Howl-host owns pointer gestures,
+    exact clipboard chords, nonblocking Wayland UTF-8 clipboard transfer, ordered OSC 52
     system-clipboard set/query policy, and one-time Kitty paste-event reads.
   - >-
     Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
