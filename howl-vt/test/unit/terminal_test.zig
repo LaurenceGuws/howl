@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../../src/terminal.zig");
+const terminal_mod = @import("../../src/howl_vt.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
@@ -153,230 +153,8 @@ test "oversized finalized line records loss and terminal continues rendering" {
     try std.testing.expectEqual(Terminal.LogicalOutputLossReason.line_too_long, output.losses[0].reason);
 }
 
-test "terminal history retention is transactional at every allocation failure" {
-    var probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
-    var terminal = try Terminal.initWithHistory(probe.allocator(), 2, 4, 8);
-    defer terminal.deinit();
-    try feedChanged(&terminal, "AAAA\r\nBBBB");
-    const first_history_allocation = probe.alloc_index;
-    try feedChanged(&terminal, "\r\nCCCC");
-    const allocation_limit = probe.alloc_index;
-    try std.testing.expect(allocation_limit > first_history_allocation);
-
-    var fail_index = first_history_allocation;
-    while (fail_index < allocation_limit) : (fail_index += 1) {
-        try historyRetentionFailure(fail_index);
-    }
-
-    var wrapped_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
-    var wrapped_terminal = try Terminal.initWithHistory(wrapped_probe.allocator(), 2, 4, 8);
-    defer wrapped_terminal.deinit();
-    try feedChanged(&wrapped_terminal, "ABCDEFGHIJKL");
-    const first_wrapped_allocation = wrapped_probe.alloc_index;
-    try feedChanged(&wrapped_terminal, "M");
-    const wrapped_allocation_limit = wrapped_probe.alloc_index;
-    try std.testing.expect(wrapped_allocation_limit > first_wrapped_allocation);
-
-    fail_index = first_wrapped_allocation;
-    while (fail_index < wrapped_allocation_limit) : (fail_index += 1) {
-        try openHistoryRetentionFailure(fail_index);
-    }
-
-    var full_probe = std.testing.FailingAllocator.init(std.testing.allocator, .{ .resize_fail_index = 0 });
-    var full_terminal = try Terminal.initWithHistory(full_probe.allocator(), 2, 4, 2);
-    defer full_terminal.deinit();
-    try feedChanged(&full_terminal, "AAAA\r\nBBBB\r\nCCCC\r\nDDDD");
-    const first_full_allocation = full_probe.alloc_index;
-    try feedChanged(&full_terminal, "\r\nEEEE");
-    const full_allocation_limit = full_probe.alloc_index;
-    try std.testing.expect(full_allocation_limit > first_full_allocation);
-
-    fail_index = first_full_allocation;
-    while (fail_index < full_allocation_limit) : (fail_index += 1) {
-        try fullHistoryRetentionFailure(fail_index);
-    }
-}
-
-fn historyRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
-        .fail_index = fail_index,
-        .resize_fail_index = 0,
-    });
-    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
-    defer terminal.deinit();
-    try feedChanged(&terminal, "AAAA\r\nBBBB");
-
-    feedChanged(&terminal, "\r\nCCCC") catch |failure| {
-        try std.testing.expectEqual(error.OutOfMemory, failure);
-        try std.testing.expect(failing.has_induced_failure);
-        failing.fail_index = std.math.maxInt(usize);
-        try feedChanged(&terminal, "\r\nCCCC");
-        return;
-    };
-    try std.testing.expect(failing.has_induced_failure);
-    try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 0), terminal.screen_state.primary.history_lines.items.len);
-    try std.testing.expect(terminal.screen_state.primary.open_history_line == null);
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.primary.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'C'), terminal.screen_state.primary.cellAt(1, 0));
-
-    failing.fail_index = std.math.maxInt(usize);
-    try feedChanged(&terminal, "\r\nDDDD");
-    try std.testing.expectEqual(@as(u32, 1), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 1), terminal.screen_state.primary.history_lines.items.len);
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.primary.historyRowAt(0, 0));
-}
-
-fn openHistoryRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
-        .fail_index = fail_index,
-        .resize_fail_index = 0,
-    });
-    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 8);
-    defer terminal.deinit();
-    try feedChanged(&terminal, "ABCDEFGHIJKL");
-
-    try feedChanged(&terminal, "M");
-    try std.testing.expect(failing.has_induced_failure);
-    try std.testing.expectEqual(@as(u32, 1), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 0), terminal.screen_state.primary.history_lines.items.len);
-    try std.testing.expectEqual(@as(usize, 4), terminal.screen_state.primary.open_history_line.?.cells.items.len);
-    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'I'), terminal.screen_state.primary.cellAt(0, 0));
-
-    failing.fail_index = std.math.maxInt(usize);
-    try feedChanged(&terminal, "NOPQ");
-    try std.testing.expectEqual(@as(u32, 2), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 8), terminal.screen_state.primary.open_history_line.?.cells.items.len);
-    try std.testing.expectEqual(@as(u21, 'I'), terminal.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.primary.historyRowAt(1, 0));
-}
-
-fn fullHistoryRetentionFailure(fail_index: usize) !void {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
-        .fail_index = fail_index,
-        .resize_fail_index = 0,
-    });
-    var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 4, 2);
-    defer terminal.deinit();
-    try feedChanged(&terminal, "AAAA\r\nBBBB\r\nCCCC\r\nDDDD");
-
-    feedChanged(&terminal, "\r\nEEEE") catch |failure| {
-        try std.testing.expectEqual(error.OutOfMemory, failure);
-        try std.testing.expect(failing.has_induced_failure);
-        failing.fail_index = std.math.maxInt(usize);
-        try feedChanged(&terminal, "\r\nEEEE");
-        return;
-    };
-    try std.testing.expect(failing.has_induced_failure);
-    try std.testing.expectEqual(@as(u32, 2), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 2), terminal.screen_state.primary.history_lines.items.len);
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.primary.historyRowAt(1, 0));
-
-    failing.fail_index = std.math.maxInt(usize);
-    try feedChanged(&terminal, "\r\nFFFF");
-    try std.testing.expectEqual(@as(u32, 2), terminal.screen_state.primary.historyCount());
-    try std.testing.expectEqual(@as(usize, 2), terminal.screen_state.primary.history_lines.items.len);
-    try std.testing.expectEqual(@as(u21, 'D'), terminal.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.primary.historyRowAt(1, 0));
-}
-
-test "terminal resize is transactional in both active-screen modes" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
-}
-
-fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
-    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
-    defer terminal.deinit();
-    try terminal.setCellPixelSize(9, 17);
-    const enabled = try terminal.feed("\x1b[?2048h");
-    try std.testing.expect(enabled.state_changed);
-
-    terminal.resize(3, 5) catch |failure| {
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
-        try std.testing.expectEqualStrings("", terminal.replyBytes());
-        return failure;
-    };
-    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
-}
-
-fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
-    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
-    defer terminal.deinit();
-
-    terminal.screen_state.primary.cells.?[0].codepoint = 'P';
-    terminal.screen_state.primary.cells.?[1].codepoint = 'R';
-    terminal.screen_state.alternate.cells.?[0].codepoint = 'A';
-    terminal.screen_state.alternate.cells.?[1].codepoint = 'L';
-    terminal.screen_state.alt_active = alternate_active;
-    terminal.screen_state.primary.cursor.setDefaultStyle(.{ .shape = .bar, .blink = false });
-    terminal.screen_state.alternate.cursor.setDefaultStyle(.{ .shape = .underline, .blink = true });
-    terminal.screen_state.primary.left_right_margin_mode = true;
-    terminal.screen_state.primary.left_margin = 1;
-    terminal.screen_state.primary.right_margin = 2;
-    const primary_history_count = terminal.screen_state.primary.historyCount();
-    const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
-    const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
-    const semantic_sequence_before = terminal.semanticSequence();
-
-    terminal.resize(3, 3) catch |err| {
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
-        try std.testing.expectEqual(primary_history_count, terminal.screen_state.primary.historyCount());
-        try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
-        try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
-        try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-        try std.testing.expectEqual(semantic_sequence_before, terminal.semanticSequence());
-        try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
-        try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
-        try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
-        try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-        terminal.screen_state.active().writeText("Z");
-        return err;
-    };
-
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.rows);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.cols);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.rows);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.cols);
-    try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-    try std.testing.expect(!terminal.screen_state.primary.left_right_margin_mode);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.left_margin);
-    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
-    try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
-    try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
-}
-
-test "text extraction owns exact allocation and codepoint failures" {
+test "text extraction owns exact allocation failures" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, copyTextAllocation, .{});
-
-    var terminal = try Terminal.init(std.testing.allocator, 1, 1);
-    defer terminal.deinit();
-    const range: Terminal.TextRange = .{
-        .start = .{ .row = 0, .col = 0 },
-        .end = .{ .row = 0, .col = 0 },
-    };
-
-    terminal.screen_state.primary.cells.?[0].codepoint = 0x110000;
-    try std.testing.expectError(
-        error.CodepointTooLarge,
-        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
-    );
-    terminal.screen_state.primary.cells.?[0].codepoint = 0xD800;
-    try std.testing.expectError(
-        error.Utf8CannotEncodeSurrogateHalf,
-        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
-    );
 }
 
 test "text extraction resolves projected history reverse ranges and bounded copy" {
@@ -412,13 +190,13 @@ test "text extraction joins soft-wrapped rows without inventing a newline" {
 fn copyTextAllocation(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.init(allocator, 1, 4);
     defer terminal.deinit();
-    terminal.screen_state.primary.writeText("COPY");
+    try std.testing.expect((try terminal.feed("COPY")).state_changed);
     const range: Terminal.TextRange = .{
         .start = .{ .row = 0, .col = 0 },
         .end = .{ .row = 0, .col = 3 },
     };
     const copied = terminal.copyText(allocator, range, std.math.maxInt(usize)) catch |err| {
-        try std.testing.expectEqual(@as(u21, 'C'), terminal.screen_state.primary.cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 0));
         return err;
     };
     defer allocator.free(copied);
@@ -441,10 +219,10 @@ test "terminal tracks synchronized output private mode" {
     var stream = try stream_harness.Harness.init(&vt);
 
     try stream.nextSlice("\x1b[?2026h");
-    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(vt.synchronizedOutput());
 
     try stream.nextSlice("\x1b[?2026l");
-    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.synchronizedOutput());
 }
 
 test "stationary cursor movement advances semantic identity" {
@@ -468,28 +246,28 @@ test "synchronized update DCS shares exact bounded mode state" {
     defer vt.deinit();
 
     try std.testing.expect(!(try vt.feed("\x1bP=1sbody")).state_changed);
-    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.synchronizedOutput());
     try std.testing.expect((try vt.feed("\x1b\\")).state_changed);
-    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(vt.synchronizedOutput());
     try std.testing.expect(!(try vt.feed("\x90=1s\x9c")).state_changed);
 
     try std.testing.expect(!(try vt.feed(
         "\x1bP=3s\x1b\\\x1bP=1;2s\x1b\\\x1bP=s\x1b\\\x1bP=1q\x1b\\\x1bP?1s\x1b\\",
     )).state_changed);
-    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(vt.synchronizedOutput());
     try std.testing.expect((try vt.feed("\x90=2signored\x9c")).state_changed);
-    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.synchronizedOutput());
     try std.testing.expect(!(try vt.feed("\x1bP=2s\x1b\\")).state_changed);
 
     try std.testing.expect((try vt.feed("\x1b[?2026h\x1b[?2026s\x1bP=2s\x1b\\")).state_changed);
-    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.synchronizedOutput());
     try std.testing.expect((try vt.feed("\x1b[?2026r")).state_changed);
-    try std.testing.expect(vt.modes.synchronized_output);
+    try std.testing.expect(vt.synchronizedOutput());
     try std.testing.expect((try vt.feed("\x1b[?2026$p")).state_changed);
     try std.testing.expectEqualStrings("\x1b[?2026;1$y", vt.replyBytes());
     try vt.consumeReplyBytes(vt.replyBytes().len);
     try std.testing.expect((try vt.feed("\x1bc")).state_changed);
-    try std.testing.expect(!vt.modes.synchronized_output);
+    try std.testing.expect(!vt.synchronizedOutput());
 }
 
 test "terminal visible view projects scrollback rows" {
@@ -518,21 +296,21 @@ test "terminal Kitty unscroll consumes primary history in row order" {
 
     try std.testing.expect((try vt.feed("aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee")).state_changed);
     try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
-    vt.screen_state.active().cursor.setPositionByClient(1, 2);
+    try feedChanged(&vt, "\x1b[2;3H");
 
     try std.testing.expect((try vt.feed("\x1b[2+T")).state_changed);
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.activeConst().cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.activeConst().cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.activeConst().cellAt(2, 0));
-    try std.testing.expectEqual(@as(u16, 1), vt.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 2), vt.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u21, 'a'), vt.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'c'), vt.semanticView(0).cellAt(2, 0));
+    try std.testing.expectEqual(@as(u16, 1), vt.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), vt.semanticView(0).cursor_col);
 
     try vt.resize(3, 2);
     try std.testing.expectEqual(@as(u32, 3), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.historyRowAt(2, 0));
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
+    const resized = vt.semanticView(3);
+    try std.testing.expectEqual(@as(u21, 'a'), resized.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), resized.cellAt(2, 0));
 }
 
 test "terminal Kitty unscroll fragments and preserves alternate history" {
@@ -544,12 +322,11 @@ test "terminal Kitty unscroll fragments and preserves alternate history" {
     try feedChanged(&vt, "\x1b[?1049hxxx");
     try std.testing.expect(!(try vt.feed("\x1b[")).state_changed);
     try std.testing.expect((try vt.feed("+T")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u32, 1), vt.screen_state.primary.historyCount());
+    try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
     try feedChanged(&vt, "\x1b[?1049l\x1b[999999+T");
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.primary.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'a'), vt.semanticView(0).cellAt(1, 0));
 }
 
 test "terminal Kitty unscroll preserves logical authority and cell facts" {
@@ -558,19 +335,20 @@ test "terminal Kitty unscroll preserves logical authority and cell facts" {
 
     try feedChanged(&vt, "\x1b[31mAAAA\r\n1111\r\n2222");
     try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), vt.semanticView(1).cellAt(0, 0));
     try std.testing.expect((try vt.feed("\x1b[+T")).state_changed);
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), vt.semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(
-        terminal_mod.Screen.Color.indexed(1),
-        vt.screen_state.primary.cellInfoAt(0, 0).attrs.fg,
+        Terminal.Color.indexed(1),
+        vt.semanticView(0).cellInfoAt(0, 0).attrs.fg,
     );
 
     try vt.resize(2, 2);
     try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 1));
+    const resized = vt.semanticView(2);
+    try std.testing.expectEqual(@as(u21, 'A'), resized.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), resized.cellAt(1, 1));
 }
 
 test "terminal Kitty unscroll consumes wrapped history ring authority" {
@@ -579,8 +357,9 @@ test "terminal Kitty unscroll consumes wrapped history ring authority" {
 
     try feedChanged(&vt, "aa\r\nbb\r\ncc\r\ndd\r\nee");
     try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.historyRowAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
+    const retained = vt.semanticView(2);
+    try std.testing.expectEqual(@as(u21, 'b'), retained.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'c'), retained.cellAt(1, 0));
 
     try feedChanged(&vt, "\x1b[+T");
     try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
@@ -589,13 +368,14 @@ test "terminal Kitty unscroll consumes wrapped history ring authority" {
 
     try feedChanged(&vt, "\x1b[2+T");
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), vt.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'c'), vt.semanticView(0).cellAt(1, 0));
 
     try vt.resize(2, 1);
     try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
+    const resized = vt.semanticView(2);
+    try std.testing.expectEqual(@as(u21, 'b'), resized.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'b'), resized.cellAt(1, 0));
 }
 
 test "terminal Kitty unscroll consumes newest rows of one wrapped line" {
@@ -607,19 +387,18 @@ test "terminal Kitty unscroll consumes newest rows of one wrapped line" {
 
     try feedChanged(&vt, "\x1b[+T");
     try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'd'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'd'), vt.semanticView(0).cellAt(0, 0));
 
     try feedChanged(&vt, "\x1b[+T");
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
-    try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'a'), vt.semanticView(0).cellAt(0, 0));
 }
 
 test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
 
-    vt.screen_state.active().writeText("ab");
-    try std.testing.expect((try vt.feed("\x1b[1;0'z\x1b[1'*{")).state_changed);
+    try std.testing.expect((try vt.feed("ab\x1b[1;0'z\x1b[1'*{")).state_changed);
     var scratch: Terminal.InputScratch = .{};
     var before = try vt.encodeInput(
         std.testing.allocator,
@@ -640,7 +419,7 @@ test "terminal RIS delegates hard-reset owners" {
 
     try std.testing.expect((try vt.feed("\x1bc")).state_changed);
 
-    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.activeConst().cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
     var after = try vt.encodeInput(
         std.testing.allocator,
         &scratch,
@@ -665,10 +444,9 @@ test "terminal DECSTR preserves text and position while resetting terminal state
 
     try stream.nextSlice("kept\x1b[2;9H\x1b[3g\x1b[?1;6;25;1000;1004;1006;2004h\x1b#6");
     try stream.nextSlice("\x1b[4;20h\x1b(B\x1b)0\x1b G");
-    const row_before = vt.screen_state.activeConst().cursor.row;
-    const col_before = vt.screen_state.activeConst().cursor.col;
-    try std.testing.expect(vt.screen_state.activeConst().lineGeometry(row_before) == .double_width);
-    try std.testing.expect(!vt.screen_state.activeConst().tabStopAt(8));
+    const row_before = vt.semanticView(0).cursor_row;
+    const col_before = vt.semanticView(0).cursor_col;
+    try std.testing.expect(vt.semanticView(0).lineGeometry(row_before) == .double_width);
     try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
     try std.testing.expectEqualStrings("\x9b0n", vt.replyBytes());
     try vt.consumeReplyBytes(vt.replyBytes().len);
@@ -678,58 +456,44 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     const reset = try vt.feed("p");
     try std.testing.expect(reset.state_changed);
 
-    const active = vt.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u21, 'k'), active.cellAt(0, 0));
-    try std.testing.expectEqual(row_before, active.cursor.row);
-    try std.testing.expectEqual(col_before, active.cursor.col);
-    try std.testing.expect(active.lineGeometry(row_before) == .single_width);
-    try std.testing.expect(active.tabStopAt(8));
-    try std.testing.expect(active.auto_wrap);
-    try std.testing.expect(!active.origin_mode);
-    try std.testing.expect(!active.insert_mode);
-    try std.testing.expect(active.cursor.visible);
-    try std.testing.expect(!vt.modes.application_cursor_keys);
-    try std.testing.expect(!vt.modes.application_keypad);
-    try std.testing.expect(!vt.modes.newline_mode);
-    try std.testing.expect(!vt.modes.focus_reporting);
-    try std.testing.expect(!vt.modes.bracketed_paste);
-    try std.testing.expect(vt.modes.mouse_tracking == .off);
-    try std.testing.expect(vt.modes.mouse_protocol == .none);
+    var view = vt.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 0));
+    try std.testing.expectEqual(row_before, view.cursor_row);
+    try std.testing.expectEqual(col_before, view.cursor_col);
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(row_before));
+    try std.testing.expect(view.cursor_visible);
     try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
     try std.testing.expectEqualStrings("\x1b[0n", vt.replyBytes());
-    try std.testing.expectEqual(@as(u8, 0), vt.gl_index);
-    try std.testing.expectEqual(@as(u8, 1), vt.gr_index);
-    try std.testing.expectEqual([_]u8{ 'B', 'B', 'B', 'B' }, vt.designations);
-
     const repeated = try vt.feed("\x1b[!p");
     try std.testing.expect(!repeated.state_changed);
+
+    try std.testing.expect((try vt.feed("\x0eq")).state_changed);
+    view = vt.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'q'), view.cellAt(row_before, col_before));
 }
 
 test "terminal DECSTR resets mirrored modes across alternate-screen banks" {
     var vt = try Terminal.init(std.testing.allocator, 3, 12);
     defer vt.deinit();
 
-    try std.testing.expect((try vt.feed("\x1b[4h\x1b[?69h\x1b[?25l\x1b[?47h")).state_changed);
-    try std.testing.expect(vt.screen_state.primary.insert_mode);
-    try std.testing.expect(vt.screen_state.alternate.insert_mode);
-    try std.testing.expect(vt.screen_state.primary.left_right_margin_mode);
-    try std.testing.expect(vt.screen_state.alternate.left_right_margin_mode);
-    try std.testing.expect(!vt.screen_state.primary.cursor.visible);
-    try std.testing.expect(!vt.screen_state.alternate.cursor.visible);
+    try std.testing.expect((try vt.feed(
+        "ABC\x1b[1;1H\x1b[4h\x1b[?69h\x1b[?25l\x1b[?47hDEF\x1b[1;1H",
+    )).state_changed);
+    try std.testing.expect(!vt.semanticView(0).cursor_visible);
 
     try std.testing.expect((try vt.feed("\x1b[!p")).state_changed);
-    try std.testing.expect(!vt.screen_state.primary.insert_mode);
-    try std.testing.expect(!vt.screen_state.alternate.insert_mode);
-    try std.testing.expect(!vt.screen_state.primary.left_right_margin_mode);
-    try std.testing.expect(!vt.screen_state.alternate.left_right_margin_mode);
-    try std.testing.expect(vt.screen_state.primary.cursor.visible);
-    try std.testing.expect(vt.screen_state.alternate.cursor.visible);
+    try std.testing.expect(vt.semanticView(0).cursor_visible);
     try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
 
-    try std.testing.expect((try vt.feed("\x1b[?47l")).state_changed);
-    try std.testing.expect(!vt.screen_state.activeConst().insert_mode);
-    try std.testing.expect(!vt.screen_state.activeConst().left_right_margin_mode);
-    try std.testing.expect(vt.screen_state.activeConst().cursor.visible);
+    try std.testing.expect((try vt.feed("X\x1b[?47l\x1b[1;1HX")).state_changed);
+    var view = vt.semanticView(0);
+    try std.testing.expect(view.cursor_visible);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
+    try std.testing.expect((try vt.feed("\x1b[?47h")).state_changed);
+    view = vt.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'E'), view.cellAt(0, 1));
 }
 
 test "terminal save reset and alternate lifecycle stays coherent across resize and bank changes" {
@@ -741,51 +505,51 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     try std.testing.expect((try vt.feed(
         "PRIMARY\x1b[4;8H\x1b[1;3m\x1b)0\x0e\x1b[?5h\x1b[?1049h",
     )).state_changed);
-    try std.testing.expect(vt.screen_state.alt_active);
-    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expect(vt.semanticView(0).is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
 
     // DECSTR is active-bank-local for row state and terminal-global for the
     // mirrored input, margin, and visibility facts owned by Terminal.
     try std.testing.expect((try vt.feed(
         "ALT\x1b[4h\x1b[?25l\x1b[?69h\x1b[2;5s\x1b[3;4H\x1b[!p",
     )).state_changed);
-    try std.testing.expect(vt.screen_state.alt_active);
-    try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.alternate.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u16, 2), vt.screen_state.alternate.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), vt.screen_state.alternate.cursor.col);
-    try std.testing.expect(!vt.screen_state.primary.insert_mode);
-    try std.testing.expect(!vt.screen_state.alternate.insert_mode);
-    try std.testing.expect(!vt.screen_state.primary.left_right_margin_mode);
-    try std.testing.expect(!vt.screen_state.alternate.left_right_margin_mode);
-    try std.testing.expect(vt.screen_state.primary.cursor.visible);
-    try std.testing.expect(vt.screen_state.alternate.cursor.visible);
+    var view = vt.semanticView(0);
+    try std.testing.expect(view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+    try std.testing.expect(view.cursor_visible);
     try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
 
     try vt.resize(2, 4);
     try std.testing.expect((try vt.feed("\x1b[?1049l")).state_changed);
-    try std.testing.expect(!vt.screen_state.alt_active);
-    try std.testing.expectEqual(@as(u16, 1), vt.screen_state.primary.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), vt.screen_state.primary.cursor.col);
-    try std.testing.expect(vt.screen_state.primary.current_attrs.bold);
-    try std.testing.expect(vt.screen_state.primary.current_attrs.italic);
-    try std.testing.expect(vt.modes.reverse_screen_mode);
-    try std.testing.expectEqual(@as(u8, 1), vt.gl_index);
-    try std.testing.expectEqual(@as(u8, '0'), vt.designations[1]);
+    view = vt.semanticView(0);
+    try std.testing.expect(!view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+    try std.testing.expect(vt.presentation().reverse_screen);
+    try std.testing.expect((try vt.feed("q")).state_changed);
+    const saved = vt.semanticView(0).cellInfoAt(1, 3);
+    try std.testing.expectEqual(@as(u21, 0x2500), @as(u21, @intCast(saved.codepoint)));
+    try std.testing.expect(saved.attrs.bold);
+    try std.testing.expect(saved.attrs.italic);
 
     // RIS resets the selected bank and all terminal-global save state without
     // inventing an implicit screen switch or erasing the inactive bank.
     try std.testing.expect((try vt.feed("\x1b[HKEEP\x1b[?47hALT2\x1b7\x1bc")).state_changed);
-    try std.testing.expect(vt.screen_state.alt_active);
-    try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'K'), vt.screen_state.primary.cellAt(0, 0));
-    try std.testing.expect(!vt.modes.reverse_screen_mode);
-    try std.testing.expectEqual(@as(u8, 0), vt.gl_index);
-    try std.testing.expectEqual([_]u8{ 'B', 'B', 'B', 'B' }, vt.designations);
+    view = vt.semanticView(0);
+    try std.testing.expect(view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
+    try std.testing.expect(!vt.presentation().reverse_screen);
 
     try std.testing.expect((try vt.feed("\x1b[?47l\x1b8")).state_changed);
-    try std.testing.expect(!vt.screen_state.alt_active);
-    try std.testing.expectEqual(@as(u16, 0), vt.screen_state.primary.cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), vt.screen_state.primary.cursor.col);
-    try std.testing.expect(vt.screen_state.primary.current_attrs.bold);
-    try std.testing.expect(vt.screen_state.primary.current_attrs.italic);
+    view = vt.semanticView(0);
+    try std.testing.expect(!view.is_alternate_screen);
+    try std.testing.expectEqual(@as(u21, 'K'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+    try std.testing.expect((try vt.feed("X")).state_changed);
+    const restored = vt.semanticView(0).cellInfoAt(0, 0);
+    try std.testing.expect(restored.attrs.bold);
+    try std.testing.expect(restored.attrs.italic);
 }

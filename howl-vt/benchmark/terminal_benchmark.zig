@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../src/terminal.zig");
+const terminal_mod = @import("../src/howl_vt.zig");
 const pty_feed_record = @import("pty_feed_record.zig");
 const stream_harness = @import("../test/support/stream_harness.zig");
 

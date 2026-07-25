@@ -4116,6 +4116,81 @@ fn resizeBuffersAllocation(allocator: std.mem.Allocator) !void {
     buffers.deinit(allocator);
 }
 
+test "terminal resize commits both screen banks or preserves both exactly" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
+}
+
+fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 17);
+    const enabled = try terminal.feed("\x1b[?2048h");
+    try std.testing.expect(enabled.state_changed);
+
+    terminal.resize(3, 5) catch |failure| {
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        return failure;
+    };
+    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
+}
+
+fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+
+    terminal.screen_state.primary.cells.?[0].codepoint = 'P';
+    terminal.screen_state.primary.cells.?[1].codepoint = 'R';
+    terminal.screen_state.alternate.cells.?[0].codepoint = 'A';
+    terminal.screen_state.alternate.cells.?[1].codepoint = 'L';
+    terminal.screen_state.alt_active = alternate_active;
+    terminal.screen_state.primary.cursor.setDefaultStyle(.{ .shape = .bar, .blink = false });
+    terminal.screen_state.alternate.cursor.setDefaultStyle(.{ .shape = .underline, .blink = true });
+    terminal.screen_state.primary.left_right_margin_mode = true;
+    terminal.screen_state.primary.left_margin = 1;
+    terminal.screen_state.primary.right_margin = 2;
+    const primary_history_count = terminal.screen_state.primary.historyCount();
+    const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
+    const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
+    const semantic_sequence_before = terminal.semanticSequence();
+
+    terminal.resize(3, 3) catch |err| {
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
+        try std.testing.expectEqual(primary_history_count, terminal.screen_state.primary.historyCount());
+        try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
+        try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
+        try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
+        try std.testing.expectEqual(semantic_sequence_before, terminal.semanticSequence());
+        try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
+        try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
+        try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
+        try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
+        terminal.screen_state.active().writeText("Z");
+        return err;
+    };
+
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.rows);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.cols);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.rows);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.cols);
+    try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
+    try std.testing.expect(!terminal.screen_state.primary.left_right_margin_mode);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.left_margin);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
+    try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
+    try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
+    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
+}
+
 fn canonicalLogicalStream(allocator: std.mem.Allocator, screen: *const Screen) ![]u21 {
     var snapshot = try screen.collectLogicalSnapshot(allocator);
     defer snapshot.deinit(allocator);
@@ -13141,6 +13216,26 @@ test "xterm pointer mode retains the clamped protocol resource value" {
     try std.testing.expectEqual(@as(u2, 3), terminal.modes.pointer_mode);
     try std.testing.expect((try terminal.feed("\x1b[>p")).state_changed);
     try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
+}
+
+test "text extraction reports impossible retained codepoints exactly" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 1);
+    defer terminal.deinit();
+    const range: Terminal.TextRange = .{
+        .start = .{ .row = 0, .col = 0 },
+        .end = .{ .row = 0, .col = 0 },
+    };
+
+    terminal.screen_state.primary.cells.?[0].codepoint = 0x110000;
+    try std.testing.expectError(
+        error.CodepointTooLarge,
+        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
+    );
+    terminal.screen_state.primary.cells.?[0].codepoint = 0xD800;
+    try std.testing.expectError(
+        error.Utf8CannotEncodeSurrogateHalf,
+        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
+    );
 }
 
 const RestoredCursorInformation = struct {

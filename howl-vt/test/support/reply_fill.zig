@@ -1,7 +1,7 @@
 //! Fills the bounded reply queue through real terminal protocol reports.
 
 const std = @import("std");
-const terminal_mod = @import("../../src/terminal.zig");
+const terminal_mod = @import("../../src/howl_vt.zig");
 
 /// Returns a copy of exactly `count` retained reply bytes.
 pub fn fill(

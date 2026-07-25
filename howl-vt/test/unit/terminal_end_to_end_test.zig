@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../../src/terminal.zig");
+const terminal_mod = @import("../../src/howl_vt.zig");
 const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
@@ -20,14 +20,14 @@ test "terminal: stream applies bytes to grid state deterministically" {
     try stream.next('c');
     try stream.nextSlice("\r\nxy");
 
-    const s = terminal.screen_state.activeConst();
+    const s = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'a'), s.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), s.cellAt(0, 1));
     try std.testing.expectEqual(@as(u21, 'c'), s.cellAt(0, 2));
     try std.testing.expectEqual(@as(u21, 'x'), s.cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'y'), s.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u16, 1), s.cursor.row);
-    try std.testing.expectEqual(@as(u16, 2), s.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), s.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), s.cursor_col);
 }
 
 test "terminal: VT52 exit escape is an exact fragmented no-op" {
@@ -35,31 +35,30 @@ test "terminal: VT52 exit escape is an exact fragmented no-op" {
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("\x1b[31;1m\x1b[?1hABCD")).state_changed);
-    const before = terminal.screen_state.activeConst();
-    try std.testing.expect(before.wrap_pending);
-    try std.testing.expect(before.current_attrs.bold);
-    try std.testing.expectEqual(Terminal.Color.indexed(1), before.current_attrs.fg);
-    try std.testing.expect(terminal.modes.application_cursor_keys);
+    const sequence_before = terminal.semanticSequence();
+    const before = terminal.semanticView(0).cellInfoAt(0, 3);
+    try std.testing.expect(before.attrs.bold);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), before.attrs.fg);
 
     try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
     try std.testing.expect(!(try terminal.feed("<")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b<\x1b<")).state_changed);
-    const after = terminal.screen_state.activeConst();
-    try std.testing.expect(after.wrap_pending);
-    try std.testing.expectEqual(@as(u16, 0), after.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), after.cursor.col);
-    try std.testing.expect(after.current_attrs.bold);
-    try std.testing.expectEqual(Terminal.Color.indexed(1), after.current_attrs.fg);
-    try std.testing.expect(terminal.modes.application_cursor_keys);
+    try std.testing.expectEqual(sequence_before, terminal.semanticSequence());
+    const after = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 0), after.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), after.cursor_col);
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
+    try std.testing.expect((try terminal.feed("\x1b[?1$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?1;1$y", terminal.replyBytes());
+    try consumeReplies(&terminal);
     try std.testing.expectEqualStrings("", terminal.replyBytes());
 
     try std.testing.expect((try terminal.feed("E\x1b<\x1b[2;3HF")).state_changed);
-    const completed = terminal.screen_state.activeConst();
+    const completed = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'E'), completed.cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'F'), completed.cellAt(1, 2));
-    try std.testing.expectEqual(@as(u16, 1), completed.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), completed.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), completed.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), completed.cursor_col);
 }
 
 test "terminal: REP retains bounded glyph state and exact lifetime" {
@@ -71,16 +70,15 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
     try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
     try std.testing.expect((try terminal.feed("2b")).state_changed);
 
-    const primary = terminal.screen_state.activeConst();
     for (0..3) |col| {
-        const cell = primary.cellInfoAt(0, @intCast(col));
+        const cell = terminal.semanticView(0).cellInfoAt(0, @intCast(col));
         try std.testing.expectEqual(@as(u21, 'A'), cell.codepoint);
         try std.testing.expectEqual(@as(u8, 3), cell.combining_len);
         try std.testing.expectEqualSlices(u32, &.{ 0x301, 0x327, 0x308 }, cell.combining[0..3]);
     }
 
     try std.testing.expect((try terminal.feed("\x1b[32;4m\x1b[0b")).state_changed);
-    const defaulted = primary.cellInfoAt(0, 3);
+    const defaulted = terminal.semanticView(0).cellInfoAt(0, 3);
     try std.testing.expectEqual(@as(u21, 'A'), defaulted.codepoint);
     try std.testing.expectEqual(@as(u8, 3), defaulted.combining_len);
     try std.testing.expectEqual(Terminal.Color.indexed(2), defaulted.attrs.fg);
@@ -89,18 +87,18 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
     // Parser-bounded counts remain allocation-free and use the ordinary
     // wrapping path rather than constructing a repeated glyph buffer.
     try std.testing.expect((try terminal.feed("\x1b[?7l\x1b[999999b")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'A'), primary.cellAt(0, 7));
-    try std.testing.expect(primary.cellInfoAt(0, 7).attrs.underline);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 7));
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 7).attrs.underline);
     try std.testing.expect((try terminal.feed("\x1b[?7h")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[3b")).state_changed);
     try std.testing.expect((try terminal.feed("B\x1b[b")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.activeConst().cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
 
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[b")).state_changed);
-    const repeated = terminal.screen_state.activeConst().cellInfoAt(0, 3);
+    const repeated = terminal.semanticView(0).cellInfoAt(0, 3);
     try std.testing.expectEqual(@as(u21, 'A'), repeated.codepoint);
     try std.testing.expectEqual(@as(u8, 3), repeated.combining_len);
 
@@ -117,16 +115,15 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(!(try terminal.feed("\x1b8")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[31;1m\x1b)0\x0e\x1b[?5h\x1b[3;4H")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b8")).state_changed);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
-    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.bold);
-    try std.testing.expectEqual(
-        Terminal.Color.indexed(1),
-        terminal.screen_state.activeConst().current_attrs.fg,
-    );
-    try std.testing.expect(!terminal.modes.reverse_screen_mode);
-    try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
-    try std.testing.expectEqual([4]u8{ 'B', 'B', 'B', 'B' }, terminal.designations);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+    try std.testing.expect((try terminal.feed("q")).state_changed);
+    const default_savepoint_cell = terminal.semanticView(0).cellInfoAt(0, 0);
+    try std.testing.expectEqual(@as(u21, 'q'), default_savepoint_cell.codepoint);
+    try std.testing.expect(default_savepoint_cell.attrs.bold);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), default_savepoint_cell.attrs.fg);
+    try std.testing.expect(!terminal.presentation().reverse_screen);
+    terminal.hardReset();
     try std.testing.expect((try terminal.feed(
         "\x1b[31;1;3m" ++
             "\x1b[1\"q" ++
@@ -134,7 +131,6 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
             "\x1b[?5h\x1b[?6h\x1b[?7h\x1b[?25l" ++
             "\x1b[2;8HZ",
     )).state_changed);
-    try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
     try std.testing.expect((try terminal.feed("7")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b7")).state_changed);
@@ -145,42 +141,44 @@ test "terminal: cursor savepoints retain exact bank reset and resize state" {
     try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
     try std.testing.expect((try terminal.feed("u")).state_changed);
 
-    const primary = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u16, 1), primary.cursor.row);
-    try std.testing.expectEqual(@as(u16, 7), primary.cursor.col);
-    try std.testing.expect(primary.wrap_pending);
-    try std.testing.expect(primary.auto_wrap);
-    try std.testing.expect(primary.origin_mode);
-    try std.testing.expect(!terminal.screen_state.primary.cursor.visible);
-    try std.testing.expect(!terminal.screen_state.alternate.cursor.visible);
-    try std.testing.expect(terminal.modes.reverse_screen_mode);
-    try std.testing.expect(primary.current_attrs.bold);
-    try std.testing.expect(primary.current_attrs.italic);
-    try std.testing.expect(primary.current_attrs.protected == .dec);
-    try std.testing.expectEqual(@as(u8, 1), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[1]);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
+    try std.testing.expect(!terminal.semanticView(0).cursor_visible);
+    try std.testing.expect(terminal.presentation().reverse_screen);
+    try std.testing.expect((try terminal.feed("q")).state_changed);
+    const restored_cell = terminal.semanticView(0).cellInfoAt(2, 0);
+    try std.testing.expectEqual(@as(u21, 0x2500), restored_cell.codepoint);
+    try std.testing.expect(restored_cell.attrs.bold);
+    try std.testing.expect(restored_cell.attrs.italic);
+    try std.testing.expect(restored_cell.attrs.protected == .dec);
+    try std.testing.expect((try terminal.feed("\x1b[?6$p\x1b[?7$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[?6;1$y\x1b[?7;1$y", terminal.replyBytes());
+    try consumeReplies(&terminal);
+    try std.testing.expect((try terminal.feed("\x1b[u")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[s")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[u")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[?47hB\x1b[s\x1b[1;4HC\x1b[u")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
-    try std.testing.expectEqual(@as(u16, 7), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_col);
 
     try terminal.resize(4, 5);
     try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[u")).state_changed);
-    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
-    try std.testing.expect(terminal.screen_state.activeConst().wrap_pending);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(2, 0));
 
     try std.testing.expect((try terminal.feed("\x1b[?1;1000;1004;1006;2004h\x1b[2;4;20h")).state_changed);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expect(!terminal.modes.application_cursor_keys);
-    try std.testing.expect(!terminal.modes.focus_reporting);
-    try std.testing.expect(!terminal.modes.bracketed_paste);
-    try std.testing.expect(terminal.modes.mouse_tracking == .off);
-    try std.testing.expect(terminal.modes.mouse_protocol == .none);
-    try std.testing.expect(!terminal.modes.keyboard_action_mode);
-    try std.testing.expect(!terminal.modes.newline_mode);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[?1$p\x1b[?1000$p\x1b[?1004$p\x1b[?1006$p\x1b[?2004$p\x1b[2$p\x1b[4$p\x1b[20$p",
+    )).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b[?1;2$y\x1b[?1000;2$y\x1b[?1004;2$y\x1b[?1006;2$y\x1b[?2004;2$y" ++
+            "\x1b[2;2$y\x1b[4;2$y\x1b[20;2$y",
+        terminal.replyBytes(),
+    );
     try std.testing.expect(!(try terminal.feed("\x1b8")).state_changed);
 }
 
@@ -192,28 +190,28 @@ test "terminal: ISO-8859-1 and UTF-8 selection own exact decoding lifetime" {
     try std.testing.expect((try terminal.feed("@")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b%@")).state_changed);
     try std.testing.expect((try terminal.feed("\xe9\xc3\xa9")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0xC3), terminal.screen_state.activeConst().cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 0xA9), terminal.screen_state.activeConst().cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0xC3), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0xA9), terminal.semanticView(0).cellAt(0, 2));
 
     try std.testing.expect(!(try terminal.feed("\x1b%X")).state_changed);
     try std.testing.expect((try terminal.feed("\xe9")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(0, 3));
 
     try std.testing.expect((try terminal.feed("\x9b2;1H")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expect(!(try terminal.feed("\x1b%")).state_changed);
     try std.testing.expect((try terminal.feed("G")).state_changed);
     try std.testing.expect(!(try terminal.feed("\xc3")).state_changed);
     try std.testing.expect((try terminal.feed("\xa9")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(1, 0));
     try std.testing.expect(!(try terminal.feed("\x1b%G")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b%@\xe9\x1bc")).state_changed);
     try std.testing.expect(!(try terminal.feed("\xe9")).state_changed);
     try std.testing.expect(!(try terminal.feed("X")).state_changed);
     try std.testing.expect((try terminal.feed("\xc3\xa9")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0xE9), terminal.screen_state.activeConst().cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0xE9), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "terminal: erase families retain exact ranges protection geometry and mutation" {
@@ -221,114 +219,117 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("ABCDEFGH" ++ "I")).state_changed);
-    var screen = terminal.screen_state.active();
-    try std.testing.expect(screen.rowWrapped(0));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[1\"qP\x1b[0\"qqrs")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[48;2;40;44;52m\x1b[2;2H")).state_changed);
-    const cursor_before = screen.cursor;
+    const cursor_row_before = terminal.semanticView(0).cursor_row;
+    const cursor_col_before = terminal.semanticView(0).cursor_col;
     try std.testing.expect(!(try terminal.feed("\x1b[?0")).state_changed);
     try std.testing.expect((try terminal.feed("K")).state_changed);
-    try std.testing.expectEqual(cursor_before, screen.cursor);
-    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(cursor_row_before, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(cursor_col_before, terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(1, 0));
     for (1..8) |col| {
-        const cell = screen.cellInfoAt(1, @intCast(col));
+        const cell = terminal.semanticView(0).cellInfoAt(1, @intCast(col));
         try std.testing.expectEqual(@as(u21, 0), cell.codepoint);
         try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), cell.attrs.bg);
     }
 
     try std.testing.expect((try terminal.feed("\x1b[2;2Hqr\x1b[2;2H\x1b[?1K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 'r'), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'r'), terminal.semanticView(0).cellAt(1, 2));
     try std.testing.expect((try terminal.feed("\x1b[?2K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 2));
     try std.testing.expect(!(try terminal.feed("\x1b[?2K")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[2K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
     try std.testing.expect(!(try terminal.feed("\x1b[2K")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[1;4H\x1b[0K")).state_changed);
-    try std.testing.expect(!screen.rowWrapped(0));
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 2));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 3));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1Habc\x1b[2;2H\x1b[1K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'c'), terminal.semanticView(0).cellAt(1, 2));
     try std.testing.expect((try terminal.feed("\x1b[1;1HZ\x1b[2;1Habc\x1b[2;2H\x1b[1J")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'c'), terminal.semanticView(0).cellAt(1, 2));
 
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#6WXYZ\x1b[3;2H")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
-    const ech_cursor = screen.cursor;
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(2));
+    const ech_cursor_row = terminal.semanticView(0).cursor_row;
+    const ech_cursor_col = terminal.semanticView(0).cursor_col;
     try std.testing.expect(!(try terminal.feed("\x1b[999")).state_changed);
     try std.testing.expect((try terminal.feed("X")).state_changed);
-    try std.testing.expectEqual(ech_cursor, screen.cursor);
-    try std.testing.expectEqual(@as(u21, 'W'), screen.cellAt(2, 0));
+    try std.testing.expectEqual(ech_cursor_row, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(ech_cursor_col, terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 'W'), terminal.semanticView(0).cellAt(2, 0));
     for (1..4) |col| {
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, @intCast(col)));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(2, @intCast(col)));
     }
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(2));
     try std.testing.expect((try terminal.feed("Q\x1b[3;2H\x1b[X")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(2, 1));
     try std.testing.expect(!(try terminal.feed("\x1b[X")).state_changed);
 
-    const invalid_cursor = screen.cursor;
+    const invalid_cursor_row = terminal.semanticView(0).cursor_row;
+    const invalid_cursor_col = terminal.semanticView(0).cursor_col;
     try std.testing.expect(!(try terminal.feed("\x1b[9K\x1b[?9K\x1b[9J\x1b[?9J")).state_changed);
-    try std.testing.expectEqual(invalid_cursor, screen.cursor);
+    try std.testing.expectEqual(invalid_cursor_row, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(invalid_cursor_col, terminal.semanticView(0).cursor_col);
 
     try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b#6L\x1b[2;1Hline\x1b[2;3H\x1b[0J")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(0));
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(2));
-    try std.testing.expectEqual(@as(u21, 'l'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'i'), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(2));
+    try std.testing.expectEqual(@as(u21, 'l'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'i'), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 2));
     try std.testing.expect(!(try terminal.feed("\x1b[0J")).state_changed);
 
     try std.testing.expect((try terminal.feed(
         "\x1b[2J\x1b[1;1H\x1b[1\"qA\x1b[0\"qB" ++
             "\x1b[2;1H\x1b[1\"qC\x1b[0\"qD\x1b[1;2H\x1b[?0J",
     )).state_changed);
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
     try std.testing.expect((try terminal.feed("\x1b[1;2HB\x1b[2;2HD\x1b[2;2H\x1b[?1J")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
     try std.testing.expect(!(try terminal.feed("\x1b[?2J")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[1;2HT\x1b[?2J")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
     try std.testing.expect((try terminal.feed("\x1b[2J")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[2J")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[1\"qS\x1b[0\"qT\x1b[?2J")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'S'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'S'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
     try std.testing.expect((try terminal.feed("\x1b[2J")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[2J")).state_changed);
 
     try std.testing.expect((try terminal.feed("one\r\ntwo\r\nthree\r\nfour")).state_changed);
-    try std.testing.expect(screen.historyCount() > 0);
+    try std.testing.expect(terminal.semanticView(0).history_count > 0);
     try std.testing.expect((try terminal.feed("\x1b[3J")).state_changed);
-    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
     try std.testing.expect(!(try terminal.feed("\x1b[3J")).state_changed);
     try std.testing.expect((try terminal.feed("five\r\nsix\r\nseven\r\neight")).state_changed);
-    try std.testing.expect(screen.historyCount() > 0);
+    try std.testing.expect(terminal.semanticView(0).history_count > 0);
     try std.testing.expect((try terminal.feed("\x1b[?3J")).state_changed);
-    try std.testing.expectEqual(@as(u32, 0), screen.historyCount());
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).history_count);
 }
 
 test "terminal: ISO and DEC protection retain distinct erase semantics" {
@@ -339,28 +340,27 @@ test "terminal: ISO and DEC protection retain distinct erase semantics" {
     try std.testing.expect((try terminal.feed("V")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1bV")).state_changed);
     try std.testing.expect((try terminal.feed("A\x1b[0mB\x1bWC")).state_changed);
-    const screen = terminal.screen_state.activeConst();
-    try std.testing.expect(screen.cellInfoAt(0, 0).attrs.protected == .iso);
-    try std.testing.expect(screen.cellInfoAt(0, 1).attrs.protected == .iso);
-    try std.testing.expect(screen.cellInfoAt(0, 2).attrs.protected == .none);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 0).attrs.protected == .iso);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 1).attrs.protected == .iso);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 2).attrs.protected == .none);
 
     try std.testing.expect((try terminal.feed("\r\x1b[2K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 2));
     try std.testing.expect(!(try terminal.feed("\x1b[2K")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[1\"qD\x1b[0mE\x1b[2\"qF")).state_changed);
-    try std.testing.expect(screen.cellInfoAt(1, 0).attrs.protected == .dec);
-    try std.testing.expect(screen.cellInfoAt(1, 1).attrs.protected == .dec);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 0).attrs.protected == .dec);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 1).attrs.protected == .dec);
     try std.testing.expect((try terminal.feed("\r\x1b[2K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
 
     try std.testing.expect((try terminal.feed("\x96D\x1b[0mE\x97F\r\x1b[?2K")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(@as(u21, 'E'), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 'E'), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 2));
     try std.testing.expect(!(try terminal.feed("\x97")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[0\"q")).state_changed);
 }
@@ -368,49 +368,36 @@ test "terminal: ISO and DEC protection retain distinct erase semantics" {
 test "terminal: erase mutation owns pending wrap and published continuation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
-    const screen = terminal.screen_state.active();
-
-    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("ABCD")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[0J")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[0J")).state_changed);
 
-    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("\x1b[1;4HX")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[0K")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[0K")).state_changed);
 
-    screen.wrap_pending = true;
+    try std.testing.expect((try terminal.feed("\x1b[1;4HX")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[X")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[X")).state_changed);
 
+    terminal.hardReset();
     try std.testing.expect((try terminal.feed("\x1b[1\"qABCDE\x1b[1;1H")).state_changed);
-    try std.testing.expect(screen.rowWrapped(0));
     try std.testing.expect((try terminal.feed("\x1b[?2K")).state_changed);
-    try std.testing.expect(!screen.rowWrapped(0));
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(0, 3));
     try std.testing.expect(!(try terminal.feed("\x1b[?2K")).state_changed);
 }
 
 test "terminal: rectangle erase owns exact pending wrap mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 1, 4);
     defer terminal.deinit();
-    const screen = terminal.screen_state.active();
-
     try std.testing.expect((try terminal.feed("\x1bV    ")).state_changed);
-    try std.testing.expect(screen.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1bW")).state_changed);
-    try std.testing.expect(screen.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1b[1;1;1;4$z")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;4$z")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[1\"q ")).state_changed);
-    try std.testing.expect(screen.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1b[1;1;1;4${")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;4${")).state_changed);
 }
 
@@ -422,10 +409,9 @@ test "terminal: rendition protection and rectangle owners report exact mutation"
     try std.testing.expect(!(try terminal.feed("\x1b[31m")).state_changed);
     try std.testing.expect((try terminal.feed("ABCD\x1b[2;1HEFGH\x1b[3;1HIJKL")).state_changed);
 
-    var screen = terminal.screen_state.active();
     try std.testing.expect((try terminal.feed("\x1b[1;1;2;2;1$r")).state_changed);
-    try std.testing.expect(screen.cellInfoAt(0, 0).attrs.bold);
-    try std.testing.expect(screen.cellInfoAt(1, 1).attrs.bold);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 0).attrs.bold);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(1, 1).attrs.bold);
     try std.testing.expect(!(try terminal.feed("\x1b[1;1;2;2;1$r")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[2*x")).state_changed);
@@ -435,14 +421,14 @@ test "terminal: rendition protection and rectangle owners report exact mutation"
 
     try std.testing.expect((try terminal.feed("\x1b[88;1;1;1")).state_changed == false);
     try std.testing.expect((try terminal.feed(";2$x")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 1));
     try std.testing.expect(!(try terminal.feed("\x1b[88;1;1;1;2$x")).state_changed);
 
     try std.testing.expect(!(try terminal.feed("\x1b[1;1;1;2;1;1;1;1$v")).state_changed);
-    const before = screen.cellInfoAt(2, 3);
+    const before = terminal.semanticView(0).cellInfoAt(2, 3);
     try std.testing.expect(!(try terminal.feed("\x1b[3;4;2;1;1$r")).state_changed);
-    try std.testing.expectEqualDeep(before, screen.cellInfoAt(2, 3));
+    try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(2, 3));
 }
 
 test "terminal: ANSI insert and newline modes retain exact global lifetime" {
@@ -454,45 +440,39 @@ test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     try std.testing.expect((try terminal.feed("h")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[4;20h")).state_changed);
     try std.testing.expect((try terminal.feed("X")).state_changed);
-    const primary = &terminal.screen_state.primary;
-    try std.testing.expectEqual(@as(u21, 'A'), primary.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'X'), primary.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 'B'), primary.cellAt(0, 2));
-    try std.testing.expectEqual(@as(u21, 'C'), primary.cellAt(0, 3));
-    try std.testing.expectEqual(@as(u21, 'D'), primary.cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(0, 4));
 
     try std.testing.expect((try terminal.feed("\x1b[1;5H\n")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[2;5H\x0b")).state_changed);
-    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[3;5H\x0c")).state_changed);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect((try terminal.feed("\x1b[?47hAB\x1b[1GZ")).state_changed);
-    try std.testing.expect(terminal.screen_state.alternate.insert_mode);
-    try std.testing.expectEqual(@as(u21, 'Z'), terminal.screen_state.alternate.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.alternate.cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 2));
     try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
-    try std.testing.expect(terminal.screen_state.primary.insert_mode);
 
     try terminal.resize(5, 10);
-    try std.testing.expect(terminal.screen_state.primary.insert_mode);
-    try std.testing.expect(terminal.screen_state.alternate.insert_mode);
     try std.testing.expect((try terminal.feed("\x1b[4$p\x1b[20$p")).state_changed);
     try std.testing.expectEqualStrings("\x1b[4;1$y\x1b[20;1$y", terminal.replyBytes());
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     try std.testing.expect((try terminal.feed("\x1b[20l\x1b[1;5H\n")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expect(!terminal.modes.newline_mode);
-    try std.testing.expect(!terminal.screen_state.primary.insert_mode);
-    try std.testing.expect(!terminal.screen_state.alternate.insert_mode);
+    try std.testing.expect((try terminal.feed("\x1b[4$p\x1b[20$p")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[4;2$y\x1b[20;2$y", terminal.replyBytes());
 }
 
 test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" {
@@ -505,15 +485,15 @@ test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" 
     try std.testing.expect((try terminal.feed("{")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[3;32;45m\x1b[#qA")).state_changed);
 
-    const saved = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
-    const selected = terminal.screen_state.activeConst().cellInfoAt(0, 1).attrs;
+    const saved = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    const selected = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
     try std.testing.expect(selected.bold);
     try std.testing.expect(selected.italic);
     try std.testing.expectEqual(saved.fg, selected.fg);
     try std.testing.expect(!std.meta.eql(selected.bg, saved.bg));
 
     try std.testing.expect((try terminal.feed("\x1b[#{\x1b[#{\x1b[22;23;39;49m\x1b[#}\x1b[#}B")).state_changed);
-    const nested = terminal.screen_state.activeConst().cellInfoAt(0, 2).attrs;
+    const nested = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
     try std.testing.expect(selected.bold == nested.bold);
     try std.testing.expect(selected.italic == nested.italic);
     try std.testing.expectEqual(selected.fg, nested.fg);
@@ -523,7 +503,7 @@ test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" 
         "\x1b[1;2;3;4:2;5;7;8;9;38:2::1:2:3;48:2::4:5:6m" ++
             "\x1b[#p\x1b[0m\x1b[#}C",
     )).state_changed);
-    const complete = terminal.screen_state.activeConst().cellInfoAt(0, 3).attrs;
+    const complete = terminal.semanticView(0).cellInfoAt(0, 3).attrs;
     try std.testing.expect(complete.bold);
     try std.testing.expect(complete.dim);
     try std.testing.expect(complete.italic);
@@ -537,7 +517,7 @@ test "terminal: XTPUSHSGR restores selected rendition with bounded stack truth" 
     try std.testing.expectEqual(Terminal.Color.rgbComponents(4, 5, 6), complete.bg);
 
     try std.testing.expect((try terminal.feed("\x1b[4m\x1b[21#{\x1b[24m\x1b[#}D")).state_changed);
-    try std.testing.expect(!terminal.screen_state.activeConst().cellInfoAt(0, 4).attrs.underline);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 4).attrs.underline);
 
     var pushes: u8 = 0;
     while (pushes < 10) : (pushes += 1)
@@ -555,19 +535,18 @@ test "terminal: XTPUSHSGR stack spans resize screen switches and reset" {
     try std.testing.expect((try terminal.feed("\x1b[1;38;2;1;2;3m\x1b[#{\x1b[22;39m")).state_changed);
     try terminal.resize(3, 12);
     try std.testing.expect((try terminal.feed("\x1b[#}R")).state_changed);
-    const restored = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    const restored = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
     try std.testing.expect(restored.bold);
     try std.testing.expectEqual(Terminal.Color.rgbComponents(1, 2, 3), restored.fg);
 
     try std.testing.expect((try terminal.feed("\x1b[31mP\x1b[#{\x1b[?1049h\x1b[32m\x1b[#}A")).state_changed);
-    const primary = terminal.screen_state.primary.cellInfoAt(0, 1).attrs;
-    const alternate = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
-    try std.testing.expectEqual(primary.fg, alternate.fg);
+    const alternate = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    try std.testing.expectEqual(Terminal.Color.indexed(1), alternate.fg);
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[31m\x1b[#{\x1bc")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[#}S")).state_changed);
-    const reset_restored = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    const reset_restored = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
     try std.testing.expect(!std.meta.eql(Terminal.default_cell_attrs.fg, reset_restored.fg));
 }
 
@@ -584,34 +563,34 @@ test "terminal: C0 controls retain exact stream effects" {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("ab\x08X")).history_lost);
-        try std.testing.expectEqual(@as(u21, 'a'), terminal.screen_state.activeConst().cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'X'), terminal.screen_state.activeConst().cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'a'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 1));
     }
     {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("\x1b[3gABC\x1bH\r\x09X")).history_lost);
-        try std.testing.expectEqual(@as(u21, 'X'), terminal.screen_state.activeConst().cellAt(0, 3));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 3));
     }
     for ([_]u8{ 0x0A, 0x0B, 0x0C }) |control| {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed(&.{ 'A', control, 'B' })).history_lost);
-        try std.testing.expectEqual(@as(u21, 'B'), terminal.screen_state.activeConst().cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 1));
     }
     {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("ab\x0dX")).history_lost);
-        try std.testing.expectEqual(@as(u21, 'X'), terminal.screen_state.activeConst().cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'b'), terminal.screen_state.activeConst().cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'b'), terminal.semanticView(0).cellAt(0, 1));
     }
     {
         var terminal = try Terminal.init(allocator, 3, 16);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("\x1b)0\x0eq\x0fq")).history_lost);
-        try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'q'), terminal.screen_state.activeConst().cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'q'), terminal.semanticView(0).cellAt(0, 1));
     }
 }
 
@@ -634,27 +613,26 @@ test "terminal: G0 G1 designation maps implemented repertoires across split feed
         0x00A3, 0x00B7,
     };
     for (dec, 0..) |expected, col|
-        try std.testing.expectEqual(expected, terminal.screen_state.activeConst().cellAt(0, @intCast(col)));
+        try std.testing.expectEqual(expected, terminal.semanticView(0).cellAt(0, @intCast(col)));
 
     try std.testing.expect(!(try terminal.feed("\x1b)")).state_changed);
     try std.testing.expect((try terminal.feed("A\x0e#A\x0f#")).state_changed);
-    const screen = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u21, 0x00A3), screen.cellAt(0, 37));
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 38));
-    try std.testing.expectEqual(@as(u21, '#'), screen.cellAt(0, 39));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 37));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 38));
+    try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 39));
 
     try std.testing.expect((try terminal.feed("\x1b(U")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b(0")).state_changed);
     try std.testing.expect((try terminal.feed("_")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x00A0), screen.cellAt(0, 40));
+    try std.testing.expectEqual(@as(u21, 0x00A0), terminal.semanticView(0).cellAt(0, 40));
 
     try terminal.resize(2, 64);
     try std.testing.expect(!(try terminal.feed("\r\n\r\nq")).history_lost);
-    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(1, 0));
 
     try std.testing.expect((try terminal.feed("\x1bc#_")).state_changed);
-    try std.testing.expectEqual(@as(u21, '#'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, '_'), screen.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, '_'), terminal.semanticView(0).cellAt(0, 1));
 }
 
 test "terminal: four charset slots share locking single-shift save and reset ownership" {
@@ -663,48 +641,40 @@ test "terminal: four charset slots share locking single-shift save and reset own
 
     try std.testing.expect(!(try terminal.feed("\x1b*")).state_changed);
     try std.testing.expect((try terminal.feed("0\x1b+A")).state_changed);
-    try std.testing.expectEqual(@as(u8, '0'), terminal.designations[2]);
-    try std.testing.expectEqual(@as(u8, 'A'), terminal.designations[3]);
 
     try std.testing.expect((try terminal.feed("\x1bnq\x1bo#")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 1));
 
     try std.testing.expect((try terminal.feed("\x0f")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b")).state_changed);
     try std.testing.expect((try terminal.feed("N\x07qz\x8f#x")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 2));
-    try std.testing.expectEqual(@as(u21, 'z'), terminal.screen_state.activeConst().cellAt(0, 3));
-    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 4));
-    try std.testing.expectEqual(@as(u21, 'x'), terminal.screen_state.activeConst().cellAt(0, 5));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 'z'), terminal.semanticView(0).cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 'x'), terminal.semanticView(0).cellAt(0, 5));
 
     try std.testing.expect((try terminal.feed("\x1bO#\x8eq")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 6));
-    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 7));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 6));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 7));
 
     try std.testing.expect((try terminal.feed("\x1b}ñ")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x2500), terminal.screen_state.activeConst().cellAt(0, 8));
+    try std.testing.expectEqual(@as(u21, 0x2500), terminal.semanticView(0).cellAt(0, 8));
     try std.testing.expect((try terminal.feed("\x1b)A\x1b~£")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.screen_state.activeConst().cellAt(0, 9));
+    try std.testing.expectEqual(@as(u21, 0x00A3), terminal.semanticView(0).cellAt(0, 9));
 
     try std.testing.expect((try terminal.feed("\x1b|ñ")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x00F1), terminal.screen_state.activeConst().cellAt(0, 10));
+    try std.testing.expectEqual(@as(u21, 0x00F1), terminal.semanticView(0).cellAt(0, 10));
 
     try std.testing.expect((try terminal.feed("\x1bo\x1b7\x1b(B\x1b)B\x1b*B\x1b+B\x0f\x1bN")).state_changed);
-    try std.testing.expectEqual(@as(?u8, 2), terminal.single_shift);
     try std.testing.expect((try terminal.feed("\x1b8")).state_changed);
-    try std.testing.expectEqual(@as(u8, 3), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, 3), terminal.gr_index);
-    try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
-    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', '0', 'A' }, &terminal.designations);
+    try std.testing.expect((try terminal.feed("#")).state_changed);
+    try std.testing.expectEqual(@as(u21, 0x00a3), terminal.semanticView(0).cellAt(0, 11));
 
     try std.testing.expect((try terminal.feed("\x1b*U\x1b+V")).state_changed);
-    try std.testing.expectEqualSlices(u8, &.{ 'B', 'A', 'U', 'V' }, &terminal.designations);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expectEqual(@as(u8, 0), terminal.gl_index);
-    try std.testing.expectEqual(@as(u8, 1), terminal.gr_index);
-    try std.testing.expectEqual(@as(?u8, null), terminal.single_shift);
-    try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
+    try std.testing.expect((try terminal.feed("#")).state_changed);
+    try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
@@ -715,33 +685,26 @@ test "terminal: Kitty CP437 and VAX42 share existing charset lifetime" {
     try std.testing.expect((try terminal.feed("U")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b)U")).state_changed);
     try std.testing.expect((try terminal.feed("\xC2\xA0³àþÿ")).state_changed);
-    var screen = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u21, 0x00E1), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 0x2502), screen.cellAt(0, 1));
-    try std.testing.expectEqual(@as(u21, 0x03B1), screen.cellAt(0, 2));
-    try std.testing.expectEqual(@as(u21, 0x25A0), screen.cellAt(0, 3));
-    try std.testing.expectEqual(@as(u21, 0x00FF), screen.cellAt(0, 4));
+    try std.testing.expectEqual(@as(u21, 0x00E1), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0x2502), terminal.semanticView(0).cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 0x03B1), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0x25A0), terminal.semanticView(0).cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0x00FF), terminal.semanticView(0).cellAt(0, 4));
 
     try std.testing.expect((try terminal.feed("\x1b*V\x1bN!?")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x043B), screen.cellAt(0, 5));
-    try std.testing.expectEqual(@as(u21, '?'), screen.cellAt(0, 6));
+    try std.testing.expectEqual(@as(u21, 0x043B), terminal.semanticView(0).cellAt(0, 5));
+    try std.testing.expectEqual(@as(u21, '?'), terminal.semanticView(0).cellAt(0, 6));
 
     try std.testing.expect((try terminal.feed("\x1b(V\x1b7\x1b(B\x1b8!?ahortu")).state_changed);
     const vax = [_]u21{ 0x043B, 0x0435, 0x0441, 0x0435, 0x043A, 0x0442, 0x043B, 0x0435 };
     for (vax, 0..) |expected, index|
-        try std.testing.expectEqual(expected, screen.cellAt(0, @intCast(index + 7)));
-    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[0]);
-    try std.testing.expectEqual(@as(u8, 'U'), terminal.designations[1]);
-    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[2]);
+        try std.testing.expectEqual(expected, terminal.semanticView(0).cellAt(0, @intCast(index + 7)));
     try std.testing.expect((try terminal.feed("\x1b)V³")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0x2502), screen.cellAt(0, 15));
+    try std.testing.expectEqual(@as(u21, 0x2502), terminal.semanticView(0).cellAt(0, 15));
 
     try std.testing.expect(!(try terminal.feed("\x1b(X")).state_changed);
-    try std.testing.expectEqual(@as(u8, 'V'), terminal.designations[0]);
     try std.testing.expect((try terminal.feed("\x1bc!")).state_changed);
-    screen = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u21, '!'), screen.cellAt(0, 0));
-    try std.testing.expectEqualSlices(u8, &.{ 'B', 'B', 'B', 'B' }, &terminal.designations);
+    try std.testing.expectEqual(@as(u21, '!'), terminal.semanticView(0).cellAt(0, 0));
 }
 
 test "terminal: DEC line geometry owns width movement scroll resize reset and visual observation" {
@@ -749,30 +712,27 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("abcdef\x1b#6")).state_changed);
-    var active = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(0));
-    try std.testing.expectEqual(@as(u16, 4), active.cursor.col);
-    try std.testing.expectEqual(@as(u21, 0), active.cellAt(0, 5));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 5));
 
     try std.testing.expect((try terminal.feed("\r\x1b[99CX")).state_changed);
-    active = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u21, 'X'), active.cellAt(0, 4));
-    try std.testing.expect(active.wrap_pending);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 4));
     try std.testing.expect((try terminal.feed("\x1b[2K")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
     try std.testing.expect((try terminal.feed("\x1b#5\x1b[99GZ")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, active.lineGeometry(0));
-    try std.testing.expectEqual(@as(u21, 'Z'), active.cellAt(0, 9));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(0, 9));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#6\x1b[3;1H\x1b#3\x1b[4;1H\x1b#4")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, active.lineGeometry(2));
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, active.lineGeometry(3));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, terminal.semanticView(0).lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, terminal.semanticView(0).lineGeometry(3));
 
     try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[4;1H\x1bD")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, active.lineGeometry(1));
-    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, active.lineGeometry(2));
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, active.lineGeometry(3));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, terminal.semanticView(0).lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, terminal.semanticView(0).lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(3));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#5")).state_changed);
 
@@ -784,25 +744,26 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     try std.testing.expectEqual(Terminal.LineGeometry.single_width, surface.lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
 
-    const cursor_before_alignment = terminal.screen_state.activeConst().cursor;
+    const cursor_row_before_alignment = terminal.semanticView(0).cursor_row;
+    const cursor_col_before_alignment = terminal.semanticView(0).cursor_col;
     try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
     surface = terminal.semanticView(0);
     for (0..surface.rows) |row| for (0..surface.cols) |col| {
         const expected: u21 = if (row == 2 and col >= 6) 0 else 'E';
         try std.testing.expectEqual(expected, surface.cellAt(@intCast(row), @intCast(col)));
     };
-    try std.testing.expectEqual(cursor_before_alignment.row, terminal.screen_state.activeConst().cursor.row);
-    try std.testing.expectEqual(cursor_before_alignment.col, terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(cursor_row_before_alignment, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(cursor_col_before_alignment, terminal.semanticView(0).cursor_col);
     try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, surface.lineGeometry(2));
 
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.screen_state.activeConst().lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(2));
     try std.testing.expect(!(try terminal.feed("\x1b#6")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[?69l\x1b#6\x1bc")).state_changed);
-    for (0..terminal.screen_state.activeConst().rows) |row|
+    for (0..terminal.semanticView(0).rows) |row|
         try std.testing.expectEqual(
             Terminal.LineGeometry.single_width,
-            terminal.screen_state.activeConst().lineGeometry(@intCast(row)),
+            terminal.semanticView(0).lineGeometry(@intCast(row)),
         );
 
     var history_terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 10, 4);
@@ -824,35 +785,31 @@ test "terminal: DECALN owns exact retained grid and mutation truth" {
 
     try std.testing.expect((try terminal.feed("\x1b[31;44;1mABCDEFx\x1b[2;1H\x1b#6")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[2;3r\x1b[2;3H")).state_changed);
-    const active = terminal.screen_state.active();
-    const cursor_before = active.cursor;
-    const attrs_before = active.current_attrs;
-    try std.testing.expect(active.rowWrapped(0));
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
+    const cursor_row_before = terminal.semanticView(0).cursor_row;
+    const cursor_col_before = terminal.semanticView(0).cursor_col;
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(1));
 
     try std.testing.expect(!(try terminal.feed("\x1b#")).state_changed);
     try std.testing.expect((try terminal.feed("8")).state_changed);
-    try std.testing.expectEqual(cursor_before.row, active.cursor.row);
-    try std.testing.expectEqual(cursor_before.col, active.cursor.col);
-    try std.testing.expectEqual(@as(u16, 1), active.scroll_top);
-    try std.testing.expectEqual(@as(u16, 2), active.scroll_bottom);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
-    try std.testing.expect(!active.rowWrapped(0));
-    for (0..active.rows) |row| {
+    try std.testing.expectEqual(cursor_row_before, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(cursor_col_before, terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(1));
+    const aligned = terminal.semanticView(0);
+    for (0..aligned.rows) |row| {
         const line_cols: usize = if (row == 1) 3 else 6;
-        for (0..active.cols) |col| {
-            const cell = active.cellInfoAt(@intCast(row), @intCast(col));
+        for (0..aligned.cols) |col| {
+            const cell = aligned.cellInfoAt(@intCast(row), @intCast(col));
             try std.testing.expectEqual(if (col < line_cols) @as(u21, 'E') else 0, cell.codepoint);
-            try std.testing.expect(std.meta.eql(attrs_before, cell.attrs));
+            try std.testing.expect(cell.attrs.bold);
+            try std.testing.expectEqual(Terminal.Color.indexed(1), cell.attrs.fg);
+            try std.testing.expectEqual(Terminal.Color.indexed(4), cell.attrs.bg);
         }
     }
 
     try std.testing.expect(!(try terminal.feed("\x1b#8")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[1;6HE")).state_changed);
-    try std.testing.expect(active.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1b#8")).state_changed);
-    try std.testing.expect(!active.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b#8")).state_changed);
 }
 
@@ -884,19 +841,19 @@ test "terminal: repeated DECLRMM set reports alternate-bank geometry reset" {
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("\x1b[?47h\x1b#6\x1b[?47l")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.screen_state.alternate.lineGeometry(0));
-    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
-    try std.testing.expect(terminal.screen_state.alternate.left_right_margin_mode);
     try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
-    try std.testing.expect(terminal.screen_state.activeConst().left_right_margin_mode);
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
     try std.testing.expectEqual(
         Terminal.LineGeometry.double_width,
-        terminal.screen_state.activeConst().lineGeometry(0),
+        terminal.semanticView(0).lineGeometry(0),
     );
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
     try std.testing.expectEqual(
         Terminal.LineGeometry.single_width,
-        terminal.screen_state.activeConst().lineGeometry(0),
+        terminal.semanticView(0).lineGeometry(0),
     );
 }
 
@@ -906,28 +863,28 @@ test "terminal: tab controls share exact stored-stop and clamping behavior" {
     defer terminal.deinit();
 
     try std.testing.expect(!(try terminal.feed("\x1b[3g\x1b[6G\x1bH\x1b[11G\x1bH\r\x1b[I")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0I")).history_lost);
-    try std.testing.expectEqual(@as(u16, 10), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0Z")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[999999I")).history_lost);
-    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[2Z")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[g\r\x09")).history_lost);
-    try std.testing.expectEqual(@as(u16, 10), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[5g\r\x09")).history_lost);
-    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[6G\x1bH\x1b[3g\r\x09")).history_lost);
-    try std.testing.expectEqual(@as(u16, 19), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 19), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[?5W\r\x09\x1b[I\x1b[999999Z")).history_lost);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[6G\x88\r\x09")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), terminal.screen_state.activeConst().cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
 }
 
 test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
@@ -947,27 +904,27 @@ test "terminal: 7-bit and C1 index controls preserve scroll-region effects" {
 
         try std.testing.expect(!(try terminal.feed("\x1b[2;3r\x1b[2;1HA\x1b[3;1HB\x1b[3;6H")).history_lost);
         try std.testing.expect(!(try terminal.feed(control.ind)).history_lost);
-        const after_ind = terminal.screen_state.activeConst();
+        const after_ind = terminal.semanticView(0);
         try std.testing.expectEqual(@as(u21, 'B'), after_ind.cellAt(1, 0));
         try std.testing.expectEqual(@as(u21, 0), after_ind.cellAt(2, 0));
-        try std.testing.expectEqual(@as(u16, 2), after_ind.cursor.row);
-        try std.testing.expectEqual(@as(u16, 5), after_ind.cursor.col);
+        try std.testing.expectEqual(@as(u16, 2), after_ind.cursor_row);
+        try std.testing.expectEqual(@as(u16, 5), after_ind.cursor_col);
 
         try std.testing.expect(!(try terminal.feed("\x1b[2;6H")).history_lost);
         try std.testing.expect(!(try terminal.feed(control.ri)).history_lost);
-        const after_ri = terminal.screen_state.activeConst();
+        const after_ri = terminal.semanticView(0);
         try std.testing.expectEqual(@as(u21, 0), after_ri.cellAt(1, 0));
         try std.testing.expectEqual(@as(u21, 'B'), after_ri.cellAt(2, 0));
-        try std.testing.expectEqual(@as(u16, 1), after_ri.cursor.row);
-        try std.testing.expectEqual(@as(u16, 5), after_ri.cursor.col);
+        try std.testing.expectEqual(@as(u16, 1), after_ri.cursor_row);
+        try std.testing.expectEqual(@as(u16, 5), after_ri.cursor_col);
 
         try std.testing.expect(!(try terminal.feed("\x1b[3;6H")).history_lost);
         try std.testing.expect(!(try terminal.feed(control.nel)).history_lost);
-        const after_nel = terminal.screen_state.activeConst();
+        const after_nel = terminal.semanticView(0);
         try std.testing.expectEqual(@as(u21, 'B'), after_nel.cellAt(1, 0));
         try std.testing.expectEqual(@as(u21, 0), after_nel.cellAt(2, 0));
-        try std.testing.expectEqual(@as(u16, 2), after_nel.cursor.row);
-        try std.testing.expectEqual(@as(u16, 0), after_nel.cursor.col);
+        try std.testing.expectEqual(@as(u16, 2), after_nel.cursor_row);
+        try std.testing.expectEqual(@as(u16, 0), after_nel.cursor_col);
     }
 }
 
@@ -981,42 +938,35 @@ test "terminal: parameterless CSI s remains a savepoint under DECLRMM" {
     try std.testing.expect(!(try terminal.feed("\x1b[s")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[3;8s\x1b[1;3H\x1b[u")).state_changed);
-    const active = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(@as(u16, 1), active.cursor.row);
-    try std.testing.expectEqual(@as(u16, 4), active.cursor.col);
-    try std.testing.expectEqual(@as(u16, 2), active.left_margin);
-    try std.testing.expectEqual(@as(u16, 7), active.right_margin);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[u")).state_changed);
 }
 
 test "terminal: HPB and VPB retain bounded cursor movement and exact mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    const screen = terminal.screen_state.activeConst();
-
     try std.testing.expect((try terminal.feed("\x1b[4;8H\x1b[0j")).state_changed);
-    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 6), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[j")).state_changed);
-    try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[999999j")).state_changed);
-    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[j")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[0k")).state_changed);
-    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
     try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
     try std.testing.expect((try terminal.feed("k")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expect((try terminal.feed("\x1b[999999k")).state_changed);
-    try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expect(!(try terminal.feed("\x1b[k")).state_changed);
 }
 
 test "terminal: DECFI and DECBI shift exact active margin rows at horizontal edges" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 6);
     defer terminal.deinit();
-    const screen = terminal.screen_state.active();
-
     try std.testing.expect((try terminal.feed(
         "\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[3;1HMNOPQR" ++
             "\x1b[2;3r\x1b[?69h\x1b[2;5s\x1b[2;5H",
@@ -1025,18 +975,18 @@ test "terminal: DECFI and DECBI shift exact active margin rows at horizontal edg
     try std.testing.expect((try terminal.feed("9")).state_changed);
     const after_left = [_][]const u8{ "ABCDEF", "GIJK\x00L", "MOPQ\x00R" };
     for (after_left, 0..) |expected, row| for (expected, 0..) |ch, col| {
-        try std.testing.expectEqual(@as(u21, ch), screen.cellAt(@intCast(row), @intCast(col)));
+        try std.testing.expectEqual(@as(u21, ch), terminal.semanticView(0).cellAt(@intCast(row), @intCast(col)));
     };
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 4), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect((try terminal.feed("\x1b[2;2H\x1b6")).state_changed);
     const after_right = [_][]const u8{ "ABCDEF", "G\x00IJKL", "M\x00OPQR" };
     for (after_right, 0..) |expected, row| for (expected, 0..) |ch, col| {
-        try std.testing.expectEqual(@as(u21, ch), screen.cellAt(@intCast(row), @intCast(col)));
+        try std.testing.expectEqual(@as(u21, ch), terminal.semanticView(0).cellAt(@intCast(row), @intCast(col)));
     };
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?69h\x1b[2;5s\x1b[2;5H")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b9")).state_changed);
@@ -1047,58 +997,57 @@ test "terminal: CSI cursor positioning shares parameter, margin, and origin boun
     var terminal = try Terminal.init(allocator, 8, 12);
     defer terminal.deinit();
 
-    const cursor = &terminal.screen_state.active().cursor;
     try std.testing.expect(!(try terminal.feed("\x1b[4;6H\x1b[A\x1b[0B\x1b[999999C")).history_lost);
-    try std.testing.expectEqual(@as(u16, 3), cursor.row);
-    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 11), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0D\x1b[999999D\x1b[0E")).history_lost);
-    try std.testing.expectEqual(@as(u16, 4), cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), cursor.col);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[999999F\x1b[999999B")).history_lost);
-    try std.testing.expectEqual(@as(u16, 7), cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), cursor.col);
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[0G\x1b[999999`\x1b[0d\x1b[999999e")).history_lost);
-    try std.testing.expectEqual(@as(u16, 7), cursor.row);
-    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 11), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0;0f\x1b[999999;999999H")).history_lost);
-    try std.testing.expectEqual(@as(u16, 7), cursor.row);
-    try std.testing.expectEqual(@as(u16, 11), cursor.col);
+    try std.testing.expectEqual(@as(u16, 7), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 11), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[3;6r\x1b[?69h\x1b[4;9s\x1b[?6h")).history_lost);
-    try std.testing.expectEqual(@as(u16, 2), cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[999999B\x1b[999999C")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), cursor.row);
-    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[999999A\x1b[999999D")).history_lost);
-    try std.testing.expectEqual(@as(u16, 2), cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[2;2H\x1b[999999d")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), cursor.row);
-    try std.testing.expectEqual(@as(u16, 4), cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0d\x1b[d")).history_lost);
-    try std.testing.expectEqual(@as(u16, 2), cursor.row);
-    try std.testing.expectEqual(@as(u16, 4), cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[2;2H\x1b[0E\x1b[0F")).history_lost);
-    try std.testing.expectEqual(@as(u16, 3), cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[999999d\x1b[999999G")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), cursor.row);
-    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[0;0H\x1b[999999;999999f")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), cursor.row);
-    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[?6l\x1b[1;1H\x1b[999999B\x1b[999999C")).history_lost);
-    try std.testing.expectEqual(@as(u16, 5), cursor.row);
-    try std.testing.expectEqual(@as(u16, 8), cursor.col);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[8;12H\x1b[999999A\x1b[999999D")).history_lost);
-    try std.testing.expectEqual(@as(u16, 2), cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[4;6H\x1b[E")).history_lost);
-    try std.testing.expectEqual(@as(u16, 4), cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), cursor.col);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
 }
 
 test "terminal: cursor origin margins own exact aliases geometry wrap and resize" {
@@ -1106,71 +1055,58 @@ test "terminal: cursor origin margins own exact aliases geometry wrap and resize
     var terminal = try Terminal.init(allocator, 6, 12);
     defer terminal.deinit();
 
-    const screen = terminal.screen_state.active();
-
     // Missing and zero counts are one; aliases share the same directional owner.
     try std.testing.expect((try terminal.feed("\x1b[4;7H\x1b[A\x1b[0B\x1b[a\x1b[0D")).state_changed);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 6), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[k\x1b[e\x1b[0C\x1b[j")).state_changed);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 6), terminal.semanticView(0).cursor_col);
 
     // A cursor command cancels pending wrap even when its resolved position is unchanged.
     try std.testing.expect((try terminal.feed("\x1b[1;12HX")).state_changed);
-    try std.testing.expect(screen.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1b[999999C")).state_changed);
-    try std.testing.expect(!screen.wrap_pending);
     try std.testing.expect(!(try terminal.feed("\x1b[999999C")).state_changed);
 
     // Invalid margins preserve the complete cursor/margin/wrap state.
     try std.testing.expect((try terminal.feed("Y")).state_changed);
-    try std.testing.expect(screen.wrap_pending);
-    const cursor_before = screen.cursor;
+    const sequence_before_invalid = terminal.semanticSequence();
     try std.testing.expect(!(try terminal.feed("\x1b[6;2r\x1b[12;2s")).state_changed);
-    try std.testing.expect(std.meta.eql(cursor_before, screen.cursor));
-    try std.testing.expect(screen.wrap_pending);
-    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 5), screen.scroll_bottom);
+    try std.testing.expectEqual(sequence_before_invalid, terminal.semanticSequence());
 
     // Fragmented valid margins home once. Directional aliases clamp into a region from
     // either side, and line-relative movement returns to the active left margin.
     try std.testing.expect(!(try terminal.feed("\x1b[2;")).state_changed);
     try std.testing.expect((try terminal.feed("5r\x1b[?69h\x1b[4;9s")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[1;12H\x1b[999B\x1b[0E")).state_changed);
-    try std.testing.expectEqual(@as(u16, 4), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[6;12H\x1b[999A\x1b[0F")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[?6h")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
     try std.testing.expect(!(try terminal.feed("\x1b[2;5r\x1b[4;9s")).state_changed);
 
     // Line geometry and horizontal margins are mutually exclusive; absolute aliases still
     // resolve vertical origin and clamp against the addressed row's logical width.
     try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[2;2H\x1b#6")).state_changed);
-    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[2;999999f")).state_changed);
-    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
     try std.testing.expect((try terminal.feed("\x1b[0G\x1b[0d")).state_changed);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
 
     // Resize is transactional at Terminal and resets physical margins and row geometry.
     try terminal.resize(4, 7);
-    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
-    try std.testing.expect(!screen.left_right_margin_mode);
-    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
-    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
-    try std.testing.expect(screen.cursor.row < 4);
-    try std.testing.expect(screen.cursor.col < 7);
+    try std.testing.expect(terminal.semanticView(0).cursor_row < 4);
+    try std.testing.expect(terminal.semanticView(0).cursor_col < 7);
     for (0..4) |row| try std.testing.expectEqual(
         Terminal.LineGeometry.single_width,
-        screen.lineGeometry(@intCast(row)),
+        terminal.semanticView(0).lineGeometry(@intCast(row)),
     );
 }
 
@@ -1186,68 +1122,44 @@ test "terminal: DEC margins bound rectangles and reject inverted coordinates" {
     try std.testing.expect(!(try terminal.feed("\x1b[3;3H\x1b[1\"qP\x1b[2\"q")).history_lost);
     try std.testing.expect(!(try terminal.feed("\x1b[2;4r\x1b[?69h\x1b[2;7s\x1b[?6h")).history_lost);
 
-    const screen = terminal.screen_state.active();
-    try std.testing.expectEqual(@as(u16, 1), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
-    try std.testing.expectEqual(@as(u16, 1), screen.left_margin);
-    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[4;2r\x1b[999;999r\x1b[7;2s\x1b[999;999s")).history_lost);
-    try std.testing.expectEqual(@as(u16, 1), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
-    try std.testing.expectEqual(@as(u16, 1), screen.left_margin);
-    try std.testing.expectEqual(@as(u16, 6), screen.right_margin);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[r")).history_lost);
-    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 4), screen.scroll_bottom);
     try std.testing.expect(!(try terminal.feed("\x1b[0;0s")).history_lost);
-    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
-    try std.testing.expectEqual(@as(u16, 7), screen.right_margin);
     try std.testing.expect(!(try terminal.feed("\x1b[2;4r\x1b[2;7s\x1b[2;3H")).history_lost);
 
     try std.testing.expect((try terminal.feed("\x1b[1;1;2;2${")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 2));
-    try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(2, 2));
+    try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
 
     try std.testing.expect(!(try terminal.feed("\x1b[999;999;998;998$z")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 2));
+    try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(2, 2));
 
     try std.testing.expect(!(try terminal.feed("\x1b[48;2;40;44;52m")).history_lost);
     try std.testing.expect((try terminal.feed("\x1b[88;0;0;999;999$x")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 'X'), screen.cellAt(3, 6));
-    try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(1, 0));
-    try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(1, 1).attrs.bg);
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(3, 6));
+    try std.testing.expectEqual(@as(u21, 'I'), terminal.semanticView(0).cellAt(1, 0));
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), terminal.semanticView(0).cellInfoAt(1, 1).attrs.bg);
 
     try std.testing.expect((try terminal.feed("\x1b[$z")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 6));
-    try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(1, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(3, 6));
+    try std.testing.expectEqual(@as(u21, 'I'), terminal.semanticView(0).cellAt(1, 0));
     try std.testing.expect((try terminal.feed("\x1b[2*x")).state_changed);
-    try std.testing.expect(screen.attr_change_extent_rect);
     try std.testing.expect(!(try terminal.feed("\x1b[3*x")).history_lost);
-    try std.testing.expect(screen.attr_change_extent_rect);
     try std.testing.expect((try terminal.feed("\x1b[0*x")).state_changed);
-    try std.testing.expect(!screen.attr_change_extent_rect);
 
     try terminal.resize(4, 6);
-    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
-    try std.testing.expect(!screen.left_right_margin_mode);
-    try std.testing.expectEqual(@as(u16, 0), screen.left_margin);
-    try std.testing.expectEqual(@as(u16, 5), screen.right_margin);
     try std.testing.expect(!(try terminal.feed("\x1b[2;3r\x1b[?69h\x1b[2;5s")).history_lost);
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expectEqual(@as(u16, 0), screen.scroll_top);
-    try std.testing.expectEqual(@as(u16, 3), screen.scroll_bottom);
-    try std.testing.expect(!screen.left_right_margin_mode);
 }
 
 test "terminal: DECCRA preserves cursor and overlapping source bytes" {
@@ -1259,14 +1171,13 @@ test "terminal: DECCRA preserves cursor and overlapping source bytes" {
         try std.testing.expect(!(try terminal.feed(
             "\x1b[1;1HABCDEF\x1b[2;1HGHIJKL\x1b[3;1HMNOPQR\x1b[4;1HSTUVWX\x1b[4;6H",
         )).history_lost);
-        const screen = terminal.screen_state.active();
         try std.testing.expect((try terminal.feed("\x1b[1;1;2;3;1;2;2;1$v")).state_changed);
-        try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
-        try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(1, 1));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(1, 3));
-        try std.testing.expectEqual(@as(u21, 'G'), screen.cellAt(2, 1));
-        try std.testing.expectEqual(@as(u21, 'I'), screen.cellAt(2, 3));
+        try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 3));
+        try std.testing.expectEqual(@as(u21, 'G'), terminal.semanticView(0).cellAt(2, 1));
+        try std.testing.expectEqual(@as(u21, 'I'), terminal.semanticView(0).cellAt(2, 3));
     }
 
     {
@@ -1277,18 +1188,17 @@ test "terminal: DECCRA preserves cursor and overlapping source bytes" {
             "abcdefgh\r\nABCDEFGH\r\nIJKLMNOP\r\nQRSTUVWX\r\nyz012345" ++
                 "\x1b[2;4r\x1b[?69h\x1b[2;7s\x1b[?6h\x1b[3;6H",
         )).history_lost);
-        const screen = terminal.screen_state.active();
         try std.testing.expect((try terminal.feed("\x1b[1;1;3;3;1;2;5;1$v")).state_changed);
 
-        try std.testing.expectEqual(@as(u16, 3), screen.cursor.row);
-        try std.testing.expectEqual(@as(u16, 6), screen.cursor.col);
-        try std.testing.expectEqual(@as(u21, 'M'), screen.cellAt(2, 4));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 5));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 6));
-        try std.testing.expectEqual(@as(u21, 'P'), screen.cellAt(2, 7));
-        try std.testing.expectEqual(@as(u21, 'J'), screen.cellAt(3, 5));
-        try std.testing.expectEqual(@as(u21, 'K'), screen.cellAt(3, 6));
-        try std.testing.expectEqual(@as(u21, '3'), screen.cellAt(4, 5));
+        try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(@as(u16, 6), terminal.semanticView(0).cursor_col);
+        try std.testing.expectEqual(@as(u21, 'M'), terminal.semanticView(0).cellAt(2, 4));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(2, 5));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(2, 6));
+        try std.testing.expectEqual(@as(u21, 'P'), terminal.semanticView(0).cellAt(2, 7));
+        try std.testing.expectEqual(@as(u21, 'J'), terminal.semanticView(0).cellAt(3, 5));
+        try std.testing.expectEqual(@as(u21, 'K'), terminal.semanticView(0).cellAt(3, 6));
+        try std.testing.expectEqual(@as(u21, '3'), terminal.semanticView(0).cellAt(4, 5));
     }
 }
 
@@ -1306,9 +1216,7 @@ test "terminal: SGR retains exact rendition and colon color state" {
             "\x1b[4:0mF\x1b[4:1mG\x1b[4:2mH\x1b[4:4mI\x1b[4:5mJ\x1b[4:3mK" ++
             "\x1b[25;39m\x1b[38:5mL",
     )).history_lost);
-    const screen = terminal.screen_state.activeConst();
-
-    const set = screen.cellInfoAt(0, 0).attrs;
+    const set = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
     try std.testing.expect(set.bold);
     try std.testing.expect(set.dim);
     try std.testing.expect(set.italic);
@@ -1321,7 +1229,7 @@ test "terminal: SGR retains exact rendition and colon color state" {
     try std.testing.expectEqual(Terminal.Color.indexed(1), set.fg);
     try std.testing.expectEqual(Terminal.Color.indexed(4), set.bg);
 
-    const cleared = screen.cellInfoAt(0, 1).attrs;
+    const cleared = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
     try std.testing.expect(!cleared.bold);
     try std.testing.expect(!cleared.dim);
     try std.testing.expect(!cleared.italic);
@@ -1333,30 +1241,30 @@ test "terminal: SGR retains exact rendition and colon color state" {
     try std.testing.expectEqual(Terminal.default_cell_attrs.fg, cleared.fg);
     try std.testing.expectEqual(Terminal.default_cell_attrs.bg, cleared.bg);
 
-    const bright = screen.cellInfoAt(0, 2).attrs;
+    const bright = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
     try std.testing.expect(bright.underline);
     try std.testing.expectEqual(Terminal.UnderlineStyle.double, bright.underline_style);
     try std.testing.expectEqual(Terminal.Color.indexed(8), bright.fg);
     try std.testing.expectEqual(Terminal.Color.indexed(15), bright.bg);
 
-    const semicolon = screen.cellInfoAt(0, 3).attrs;
+    const semicolon = terminal.semanticView(0).cellInfoAt(0, 3).attrs;
     try std.testing.expectEqual(Terminal.Color.indexed(196), semicolon.fg);
     try std.testing.expectEqual(Terminal.Color.rgbComponents(1, 2, 3), semicolon.bg);
     try std.testing.expectEqual(Terminal.Color.indexed(45), semicolon.underline_color);
 
-    const colon = screen.cellInfoAt(0, 4).attrs;
+    const colon = terminal.semanticView(0).cellInfoAt(0, 4).attrs;
     try std.testing.expectEqual(Terminal.Color.rgbComponents(10, 20, 30), colon.fg);
     try std.testing.expectEqual(Terminal.Color.indexed(200), colon.bg);
     try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 50, 60), colon.underline_color);
 
-    try std.testing.expect(!screen.cellInfoAt(0, 5).attrs.underline);
-    try std.testing.expectEqual(Terminal.UnderlineStyle.straight, screen.cellInfoAt(0, 6).attrs.underline_style);
-    try std.testing.expectEqual(Terminal.UnderlineStyle.double, screen.cellInfoAt(0, 7).attrs.underline_style);
-    try std.testing.expectEqual(Terminal.UnderlineStyle.dotted, screen.cellInfoAt(1, 0).attrs.underline_style);
-    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, screen.cellInfoAt(1, 1).attrs.underline_style);
-    try std.testing.expectEqual(Terminal.UnderlineStyle.curly, screen.cellInfoAt(1, 2).attrs.underline_style);
-    try std.testing.expect(!screen.cellInfoAt(1, 3).attrs.blink);
-    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, screen.cellInfoAt(1, 3).attrs.fg);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 5).attrs.underline);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.straight, terminal.semanticView(0).cellInfoAt(0, 6).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.double, terminal.semanticView(0).cellInfoAt(0, 7).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dotted, terminal.semanticView(0).cellInfoAt(1, 0).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, terminal.semanticView(0).cellInfoAt(1, 1).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.curly, terminal.semanticView(0).cellInfoAt(1, 2).attrs.underline_style);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(1, 3).attrs.blink);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, terminal.semanticView(0).cellInfoAt(1, 3).attrs.fg);
 }
 
 test "terminal: SGR color mutation is exact fragmented and malformed-transactional" {
@@ -1369,12 +1277,15 @@ test "terminal: SGR color mutation is exact fragmented and malformed-transaction
     try std.testing.expect((try terminal.feed(";2;3;48;5;196;58:2::4:5:6m")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[38;2;1;2;3;48;5;196;58:2::4:5:6m")).state_changed);
 
-    const before = terminal.screen_state.activeConst().current_attrs;
+    try std.testing.expect((try terminal.feed("A")).state_changed);
+    const before = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
     try std.testing.expect(!(try terminal.feed("\x1b[38;2;1m")).state_changed);
-    try std.testing.expectEqualDeep(before, terminal.screen_state.activeConst().current_attrs);
-    try std.testing.expect((try terminal.feed("\x1b[1;38;2;1m")).state_changed);
-    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.bold);
-    try std.testing.expectEqual(before.fg, terminal.screen_state.activeConst().current_attrs.fg);
+    try std.testing.expect((try terminal.feed("B")).state_changed);
+    try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 1).attrs);
+    try std.testing.expect((try terminal.feed("\x1b[1;38;2;1mC")).state_changed);
+    const malformed_with_bold = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
+    try std.testing.expect(malformed_with_bold.bold);
+    try std.testing.expectEqual(before.fg, malformed_with_bold.fg);
 
     try std.testing.expect((try terminal.feed("\x1b[31;104m")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[31;104m")).state_changed);
@@ -1392,13 +1303,15 @@ test "terminal: SGR rapid blink is an exact fragmented no-op" {
 
     try std.testing.expect(!(try terminal.feed("\x1b[")).state_changed);
     try std.testing.expect(!(try terminal.feed("6m")).state_changed);
-    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink);
-    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink_fast);
+    try std.testing.expect((try terminal.feed("A")).state_changed);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 0).attrs.blink);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 0).attrs.blink_fast);
 
     try std.testing.expect((try terminal.feed("\x1b[5m")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[6m")).state_changed);
-    try std.testing.expect(terminal.screen_state.activeConst().current_attrs.blink);
-    try std.testing.expect(!terminal.screen_state.activeConst().current_attrs.blink_fast);
+    try std.testing.expect((try terminal.feed("B")).state_changed);
+    try std.testing.expect(terminal.semanticView(0).cellInfoAt(0, 1).attrs.blink);
+    try std.testing.expect(!terminal.semanticView(0).cellInfoAt(0, 1).attrs.blink_fast);
 
     try std.testing.expect((try terminal.feed("\x1b[25m")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[6m")).state_changed);
@@ -1413,10 +1326,9 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expect(!(try terminal.feed("\x1b[19;73m")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b7\x1b[10;74mB\x1b8\x1b[1;3HC")).state_changed);
-    const primary = terminal.screen_state.activeConst();
-    const raised = primary.cellInfoAt(0, 0).attrs;
-    const lowered = primary.cellInfoAt(0, 1).attrs;
-    const restored = primary.cellInfoAt(0, 2).attrs;
+    const raised = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
+    const lowered = terminal.semanticView(0).cellInfoAt(0, 1).attrs;
+    const restored = terminal.semanticView(0).cellInfoAt(0, 2).attrs;
     try std.testing.expectEqual(@as(u4, 9), raised.font);
     try std.testing.expectEqual(Terminal.Baseline.raised, raised.baseline);
     try std.testing.expectEqual(@as(u4, 0), lowered.font);
@@ -1424,13 +1336,13 @@ test "terminal: SGR font and baseline retain exact cell save resize and bank sta
     try std.testing.expectEqual(raised, restored);
 
     try terminal.resize(3, 8);
-    try std.testing.expectEqual(raised, terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs);
+    try std.testing.expectEqual(raised, terminal.semanticView(0).cellInfoAt(0, 0).attrs);
     try std.testing.expect((try terminal.feed("\x1b[?47hD")).state_changed);
-    const alternate = terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs;
+    const alternate = terminal.semanticView(0).cellInfoAt(0, 0).attrs;
     try std.testing.expectEqual(@as(u4, 0), alternate.font);
     try std.testing.expectEqual(Terminal.Baseline.normal, alternate.baseline);
     try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
-    try std.testing.expectEqual(raised, terminal.screen_state.activeConst().cellInfoAt(0, 0).attrs);
+    try std.testing.expectEqual(raised, terminal.semanticView(0).cellInfoAt(0, 0).attrs);
 
     try std.testing.expect((try terminal.feed("\x1b[75m")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[75m")).state_changed);
@@ -1445,26 +1357,25 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
         var terminal = try Terminal.init(allocator, 2, 8);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("ABCDEFGH\x1b[?69h\x1b[3;6s\x1b[1;4H\x1b[@")).history_lost);
-        const screen = terminal.screen_state.activeConst();
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 2));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 3));
-        try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(0, 4));
-        try std.testing.expectEqual(@as(u21, 'E'), screen.cellAt(0, 5));
-        try std.testing.expectEqual(@as(u21, 'G'), screen.cellAt(0, 6));
-        try std.testing.expectEqual(@as(u21, 'H'), screen.cellAt(0, 7));
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 3));
+        try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(0, 4));
+        try std.testing.expectEqual(@as(u21, 'E'), terminal.semanticView(0).cellAt(0, 5));
+        try std.testing.expectEqual(@as(u21, 'G'), terminal.semanticView(0).cellAt(0, 6));
+        try std.testing.expectEqual(@as(u21, 'H'), terminal.semanticView(0).cellAt(0, 7));
 
         try std.testing.expect(!(try terminal.feed("\x1b[1;1H\x1b[999999P")).history_lost);
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
         try std.testing.expect(!(try terminal.feed(
             "\x1b[1\"qZ\x1b[48;2;40;44;52m\x1b[1;1H\x1b[999999X",
         )).history_lost);
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 7));
-        try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(0, 7).attrs.bg);
-        try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 7));
+        try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), terminal.semanticView(0).cellInfoAt(0, 7).attrs.bg);
+        try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     }
 
     {
@@ -1474,22 +1385,21 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
             "\x1b[1;1HAAAAAA\x1b[2;1HBBBBBB\x1b[3;1HCCCCCC\x1b[4;1HDDDDDD" ++
                 "\x1b[2;4r\x1b[?69h\x1b[2;5s\x1b[2;3H\x1b[L",
         )).history_lost);
-        const screen = terminal.screen_state.activeConst();
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 5));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 0));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 1));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 4));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 5));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 4));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 5));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(2, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(2, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(2, 4));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(2, 5));
 
         try std.testing.expect(!(try terminal.feed("\x1b[2;1H\x1b[999999M")).history_lost);
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(2, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(2, 1));
         try std.testing.expect(!(try terminal.feed("\x1b[2;3H\x1b[999999M")).history_lost);
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 4));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(3, 4));
     }
 
     {
@@ -1499,29 +1409,28 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
             "\x1b[1;1HAAAAA\x1b[2;1HBBBBB\x1b[3;1HCCCCC\x1b[4;1HDDDDD" ++
                 "\x1b[2;4r\x1b[?69h\x1b[2;4s\x1b[999999S",
         )).history_lost);
-        const screen = terminal.screen_state.activeConst();
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 2));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 1));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 3));
-        try std.testing.expectEqual(@as(u21, 'D'), screen.cellAt(3, 4));
-        const cursor = screen.cursor;
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 1));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(3, 3));
+        try std.testing.expectEqual(@as(u21, 'D'), terminal.semanticView(0).cellAt(3, 4));
+        const cursor_row_before = terminal.semanticView(0).cursor_row;
+        const cursor_col_before = terminal.semanticView(0).cursor_col;
         try std.testing.expect(!(try terminal.feed("\x1b[0T")).history_lost);
-        try std.testing.expectEqual(cursor.row, screen.cursor.row);
-        try std.testing.expectEqual(cursor.col, screen.cursor.col);
+        try std.testing.expectEqual(cursor_row_before, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(cursor_col_before, terminal.semanticView(0).cursor_col);
     }
 
     {
         var terminal = try Terminal.initWithHistory(allocator, 2, 3, 2);
         defer terminal.deinit();
         try std.testing.expect(!(try terminal.feed("\x1b[1;1HAAA\x1b[2;1HBBB\x1b[2;2H")).history_lost);
-        const before = terminal.screen_state.activeConst().cursor;
+        const cursor_row_before = terminal.semanticView(0).cursor_row;
+        const cursor_col_before = terminal.semanticView(0).cursor_col;
         try std.testing.expect(!(try terminal.feed("\x1b[S")).history_lost);
-        const screen = terminal.screen_state.activeConst();
-        try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
-        try std.testing.expectEqual(before.row, screen.cursor.row);
-        try std.testing.expectEqual(before.col, screen.cursor.col);
-        try std.testing.expect(!screen.rowWrapped(1));
+        try std.testing.expectEqual(@as(u32, 1), terminal.semanticView(0).history_count);
+        try std.testing.expectEqual(cursor_row_before, terminal.semanticView(0).cursor_row);
+        try std.testing.expectEqual(cursor_col_before, terminal.semanticView(0).cursor_col);
     }
 }
 
@@ -1532,15 +1441,14 @@ test "terminal: structural edits retain logical width row geometry and exact mut
         var terminal = try Terminal.init(allocator, 2, 8);
         defer terminal.deinit();
         try std.testing.expect((try terminal.feed("\x1b[1;1HABCD\x1b[1;1H\x1b#6\x1b[1;2H\x1b[@")).state_changed);
-        const screen = terminal.screen_state.active();
-        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(0));
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 2));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(0, 3));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(0));
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 1));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 2));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 3));
         try std.testing.expect((try terminal.feed("\x1b[999999P")).state_changed);
-        try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
-        for (1..8) |col| try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, @intCast(col)));
+        try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+        for (1..8) |col| try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, @intCast(col)));
         try std.testing.expect(!(try terminal.feed("\x1b[999999P")).state_changed);
     }
 
@@ -1551,17 +1459,16 @@ test "terminal: structural edits retain logical width row geometry and exact mut
             "\x1b[1;1HAAAAAAAA\x1b[2;1HBBBB\x1b[2;1H\x1b#6" ++
                 "\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[2;4r\x1b[2;1H\x1b[L",
         )).state_changed);
-        const screen = terminal.screen_state.active();
-        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(1));
-        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
-        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(3));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(1));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(2));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(3));
         try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[M")).state_changed);
-        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(1));
-        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(2));
-        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(3));
-        try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
-        try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 0));
-        try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 0));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.semanticView(0).lineGeometry(1));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(2));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.semanticView(0).lineGeometry(3));
+        try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(1, 0));
+        try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(2, 0));
+        try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(3, 0));
     }
 }
 
@@ -1581,23 +1488,22 @@ test "terminal: DEC column edits require cursor regions and retain exact bounded
     try std.testing.expect(!(try terminal.feed("\x1b['~")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[48;2;40;44;52m\x1b[2;4H\x1b[2'}")).state_changed);
-    const screen = terminal.screen_state.active();
-    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
-    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
-    try std.testing.expectEqual(@as(u21, 'a'), screen.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'h'), screen.cellAt(0, 7));
-    try std.testing.expectEqual(@as(u21, 'k'), screen.cellAt(1, 2));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 3));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
-    try std.testing.expectEqual(@as(u21, 'l'), screen.cellAt(1, 5));
-    try std.testing.expectEqual(@as(u21, 'o'), screen.cellAt(1, 6));
-    try std.testing.expectEqual(@as(u21, 's'), screen.cellAt(2, 2));
-    try std.testing.expectEqual(@as(u21, 't'), screen.cellAt(2, 5));
+    try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqual(@as(u21, 'a'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'h'), terminal.semanticView(0).cellAt(0, 7));
+    try std.testing.expectEqual(@as(u21, 'k'), terminal.semanticView(0).cellAt(1, 2));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 'l'), terminal.semanticView(0).cellAt(1, 5));
+    try std.testing.expectEqual(@as(u21, 'o'), terminal.semanticView(0).cellAt(1, 6));
+    try std.testing.expectEqual(@as(u21, 's'), terminal.semanticView(0).cellAt(2, 2));
+    try std.testing.expectEqual(@as(u21, 't'), terminal.semanticView(0).cellAt(2, 5));
     for (1..3) |row| {
         for (3..5) |col| {
             try std.testing.expectEqual(
                 Terminal.Color.rgbComponents(40, 44, 52),
-                screen.cellInfoAt(@intCast(row), @intCast(col)).attrs.bg,
+                terminal.semanticView(0).cellInfoAt(@intCast(row), @intCast(col)).attrs.bg,
             );
         }
     }
@@ -1605,20 +1511,20 @@ test "terminal: DEC column edits require cursor regions and retain exact bounded
     try std.testing.expect((try terminal.feed("\x1b[999999'~")).state_changed);
     for (1..3) |row| {
         for (3..6) |col| {
-            try std.testing.expectEqual(@as(u21, 0), screen.cellAt(@intCast(row), @intCast(col)));
+            try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(@intCast(row), @intCast(col)));
         }
     }
     try std.testing.expect(!(try terminal.feed("\x1b[999999'~")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[2;4HZ\x1b[2;4H\x1b[0'}")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 3));
-    try std.testing.expectEqual(@as(u21, 'Z'), screen.cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(1, 4));
     try std.testing.expect((try terminal.feed("\x1b['~")).state_changed);
-    try std.testing.expectEqual(@as(u21, 'Z'), screen.cellAt(1, 3));
-    try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 4));
-    try std.testing.expectEqual(@as(u21, 'p'), screen.cellAt(1, 7));
-    try std.testing.expectEqual(@as(u21, 'x'), screen.cellAt(2, 7));
-    try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(3, 0));
+    try std.testing.expectEqual(@as(u21, 'Z'), terminal.semanticView(0).cellAt(1, 3));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(1, 4));
+    try std.testing.expectEqual(@as(u21, 'p'), terminal.semanticView(0).cellAt(1, 7));
+    try std.testing.expectEqual(@as(u21, 'x'), terminal.semanticView(0).cellAt(2, 7));
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(3, 0));
 }
 
 test "terminal: OSC cursor colors route into semantic cursor owner" {
@@ -1629,9 +1535,9 @@ test "terminal: OSC cursor colors route into semantic cursor owner" {
 
     try stream.nextSlice("\x1b]12;#010203\x1b\\\x1b]21;cursor_text=#040506\x1b\\");
 
-    const cursor = terminal.screen_state.activeConst().cursor;
-    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 1, .g = 2, .b = 3 }), cursor.cursor_color);
-    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 4, .g = 5, .b = 6 }), cursor.cursor_text_color);
+    const presentation = terminal.presentation();
+    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 1, .g = 2, .b = 3 }), presentation.cursor);
+    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 4, .g = 5, .b = 6 }), presentation.cursor_text);
 }
 
 test "terminal: fragmented Kitty static graphics retains display and query is probe only" {
@@ -1870,15 +1776,15 @@ test "terminal: every byte split preserves mixed control framing" {
         try std.testing.expect(!(try actual.feed(transcript[0..split])).history_lost);
         try std.testing.expect(!(try actual.feed(transcript[split..])).history_lost);
 
-        const expected_screen = expected.screen_state.activeConst();
-        const actual_screen = actual.screen_state.activeConst();
-        try std.testing.expectEqual(expected_screen.cursor.row, actual_screen.cursor.row);
-        try std.testing.expectEqual(expected_screen.cursor.col, actual_screen.cursor.col);
+        const expected_view = expected.semanticView(0);
+        const actual_view = actual.semanticView(0);
+        try std.testing.expectEqual(expected_view.cursor_row, actual_view.cursor_row);
+        try std.testing.expectEqual(expected_view.cursor_col, actual_view.cursor_col);
         var row: u16 = 0;
-        while (row < expected_screen.rows) : (row += 1) {
+        while (row < expected_view.rows) : (row += 1) {
             var col: u16 = 0;
-            while (col < expected_screen.cols) : (col += 1) {
-                try std.testing.expectEqual(expected_screen.cellAt(row, col), actual_screen.cellAt(row, col));
+            while (col < expected_view.cols) : (col += 1) {
+                try std.testing.expectEqual(expected_view.cellAt(row, col), actual_view.cellAt(row, col));
             }
         }
         try std.testing.expectEqualStrings(expected.title().?, actual.title().?);
