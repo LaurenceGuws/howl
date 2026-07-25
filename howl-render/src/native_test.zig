@@ -41,7 +41,6 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     var primary = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &ascii,
         .clusters = &clusters,
-        .cell_span = 2,
     });
     defer primary.deinit();
     try std.testing.expectEqual(@as(u8, 0), primary.face_index);
@@ -53,7 +52,6 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     var fallback = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &symbol,
         .clusters = &symbol_cluster,
-        .cell_span = 1,
     });
     defer fallback.deinit();
     try std.testing.expectEqual(@as(u8, 1), fallback.face_index);
@@ -64,7 +62,6 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     var variation_fallback = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &variation,
         .clusters = &variation_clusters,
-        .cell_span = 1,
     });
     defer variation_fallback.deinit();
     try std.testing.expectEqual(@as(u8, 1), variation_fallback.face_index);
@@ -180,14 +177,14 @@ test "shape rejects malformed and over-bound input before HarfBuzz" {
     try std.testing.expectError(error.InvalidText, shapeOwned(
         &set,
         std.testing.allocator,
-        .{ .codepoints = &codepoints, .clusters = &.{}, .cell_span = 1 },
+        .{ .codepoints = &codepoints, .clusters = &.{} },
     ));
     const invalid = [_]u32{0xd800};
     const cluster = [_]u32{0};
     try std.testing.expectError(error.InvalidText, shapeOwned(
         &set,
         std.testing.allocator,
-        .{ .codepoints = &invalid, .clusters = &cluster, .cell_span = 1 },
+        .{ .codepoints = &invalid, .clusters = &cluster },
     ));
 }
 
@@ -204,7 +201,6 @@ test "font set reports missing glyph and remains reusable" {
     try std.testing.expectError(error.MissingGlyph, shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &missing,
         .clusters = &cluster,
-        .cell_span = 1,
     }));
 
     const missing_variation = [_]u32{ '0', 0xfe0f };
@@ -212,20 +208,17 @@ test "font set reports missing glyph and remains reusable" {
     try std.testing.expectError(error.MissingGlyph, shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &missing_variation,
         .clusters = &variation_clusters,
-        .cell_span = 1,
     }));
     const lone_selector = [_]u32{0xfe00};
     try std.testing.expectError(error.MissingGlyph, shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &lone_selector,
         .clusters = &cluster,
-        .cell_span = 1,
     }));
 
     const valid = [_]u32{'A'};
     var run = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &valid,
         .clusters = &cluster,
-        .cell_span = 1,
     });
     defer run.deinit();
     try std.testing.expect(run.glyphs.len == 1);
@@ -242,7 +235,6 @@ test "font set raster owns a bounded alpha mask" {
     var run = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &cp,
         .clusters = &cluster,
-        .cell_span = 1,
     });
     defer run.deinit();
     try std.testing.expectError(error.InvalidRaster, set.rasterize(
@@ -251,29 +243,23 @@ test "font set raster owns a bounded alpha mask" {
         run.glyphs[0].id,
         1,
     ));
-    try std.testing.expectError(error.InvalidCellSpan, set.rasterize(
+    try std.testing.expectError(error.InvalidWidth, set.rasterize(
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
         0,
-    ));
-    try std.testing.expectError(error.InvalidCellSpan, set.rasterize(
-        std.testing.allocator,
-        run.face_index,
-        run.glyphs[0].id,
-        std.math.maxInt(u16),
     ));
     try std.testing.expectError(error.InvalidRaster, set.rasterize(
         std.testing.allocator,
         run.face_index,
         0,
-        1,
+        set.metrics.advance_width,
     ));
     var raster = try set.rasterize(
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
-        1,
+        set.metrics.advance_width,
     );
     defer raster.deinit();
     try std.testing.expectEqual(
@@ -297,48 +283,46 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
         .pixel_height = 18,
     });
     defer scalable.deinit();
-    try std.testing.expectEqual(@as(u16, 25), scalable.metrics.cell_height);
+    try std.testing.expectEqual(@as(u16, 25), scalable.metrics.line_height);
     try std.testing.expectEqual(@as(u16, 20), scalable.metrics.baseline);
     try std.testing.expectEqual(@as(u16, 22), scalable.metrics.underline_y);
     try std.testing.expectEqual(@as(u16, 1), scalable.metrics.underline_height);
     try std.testing.expectEqual(@as(u16, 14), scalable.metrics.strike_y);
     try std.testing.expectEqual(@as(u16, 1), scalable.metrics.strike_height);
-    try expectMetricsInsideCell(scalable.metrics);
+    try expectMetricsValid(scalable.metrics);
 
     var ascii_codepoint: u32 = 32;
     while (ascii_codepoint < 127) : (ascii_codepoint += 1) {
         var run = try shapeOwned(&scalable, std.testing.allocator, .{
             .codepoints = &.{ascii_codepoint},
             .clusters = &.{0},
-            .cell_span = 1,
         });
         defer run.deinit();
         try std.testing.expect(run.glyphs.len > 0);
         for (run.glyphs) |glyph|
             try std.testing.expect(
                 ceilPositive26Dot6(glyph.x_advance) <=
-                    scalable.metrics.cell_width,
+                    scalable.metrics.advance_width,
             );
     }
 
     var underscore_run = try shapeOwned(&scalable, std.testing.allocator, .{
         .codepoints = &.{'_'},
         .clusters = &.{0},
-        .cell_span = 1,
     });
     defer underscore_run.deinit();
     var underscore = try scalable.rasterize(
         std.testing.allocator,
         underscore_run.face_index,
         underscore_run.glyphs[0].id,
-        1,
+        scalable.metrics.advance_width,
     );
     defer underscore.deinit();
     const underscore_top =
         @as(i32, scalable.metrics.baseline) - underscore.top;
     try std.testing.expect(underscore_top >= 0);
     try std.testing.expect(
-        underscore_top + underscore.height <= scalable.metrics.cell_height,
+        underscore_top + underscore.height <= scalable.metrics.line_height,
     );
 
     var bitmap = try text.FontSet.init(std.testing.allocator, .{
@@ -346,28 +330,27 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
         .pixel_height = 16,
     });
     defer bitmap.deinit();
-    try std.testing.expectEqual(@as(u16, 8), bitmap.metrics.cell_width);
-    try std.testing.expectEqual(@as(u16, 16), bitmap.metrics.cell_height);
+    try std.testing.expectEqual(@as(u16, 8), bitmap.metrics.advance_width);
+    try std.testing.expectEqual(@as(u16, 16), bitmap.metrics.line_height);
     try std.testing.expectEqual(@as(u16, 13), bitmap.metrics.baseline);
     try std.testing.expectEqual(@as(u16, 14), bitmap.metrics.underline_y);
     try std.testing.expectEqual(@as(u16, 1), bitmap.metrics.underline_height);
     try std.testing.expectEqual(@as(u16, 8), bitmap.metrics.strike_y);
     try std.testing.expectEqual(@as(u16, 1), bitmap.metrics.strike_height);
-    try expectMetricsInsideCell(bitmap.metrics);
+    try expectMetricsValid(bitmap.metrics);
 
     const codepoint = [_]u32{'A'};
     const cluster = [_]u32{0};
     var run = try shapeOwned(&bitmap, std.testing.allocator, .{
         .codepoints = &codepoint,
         .clusters = &cluster,
-        .cell_span = 1,
     });
     defer run.deinit();
     var raster = try bitmap.rasterize(
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
-        1,
+        bitmap.metrics.advance_width,
     );
     defer raster.deinit();
     try std.testing.expectEqual(@as(u16, 8), raster.width);
@@ -376,13 +359,13 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
     for (raster.pixels) |alpha| try std.testing.expect(alpha == 0 or alpha == 255);
 }
 
-test "terminal monospace cell origins follow one ordinary ASCII advance" {
+test "monospace glyph origins follow one ordinary ASCII advance" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
         .pixel_height = 18,
     });
     defer set.deinit();
-    try std.testing.expectEqual(@as(u16, 9), set.metrics.cell_width);
+    try std.testing.expectEqual(@as(u16, 9), set.metrics.advance_width);
 
     const prompt = "bash-5.3$";
     var previous_origin: ?u32 = null;
@@ -392,70 +375,23 @@ test "terminal monospace cell origins follow one ordinary ASCII advance" {
         var run = try shapeOwned(&set, std.testing.allocator, .{
             .codepoints = &codepoints,
             .clusters = &clusters,
-            .cell_span = 1,
         });
         defer run.deinit();
         try std.testing.expectEqual(@as(usize, 1), run.glyphs.len);
         try std.testing.expectEqual(
-            set.metrics.cell_width,
+            set.metrics.advance_width,
             ceilPositive26Dot6(run.glyphs[0].x_advance),
         );
 
         const origin: u32 = @as(u32, @intCast(column)) *
-            set.metrics.cell_width;
+            set.metrics.advance_width;
         if (previous_origin) |previous|
             try std.testing.expectEqual(
-                @as(u32, set.metrics.cell_width),
+                @as(u32, set.metrics.advance_width),
                 origin - previous,
             );
         previous_origin = origin;
     }
-}
-
-test "oversized Nerd glyph fits its assigned cell without widening the grid" {
-    var set = try text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.symbol_font,
-        .pixel_height = 18,
-    });
-    defer set.deinit();
-
-    const arch = [_]u32{0xf303};
-    var run = try shapeOwned(&set, std.testing.allocator, .{
-        .codepoints = &arch,
-        .clusters = &.{0},
-        .cell_span = 1,
-    });
-    defer run.deinit();
-    try std.testing.expectEqual(@as(usize, 1), run.glyphs.len);
-    try std.testing.expectEqual(
-        @as(i32, set.metrics.cell_width) * 64,
-        run.glyphs[0].x_advance,
-    );
-    var raster = try set.rasterize(
-        std.testing.allocator,
-        run.face_index,
-        run.glyphs[0].id,
-        run.cell_span,
-    );
-    defer raster.deinit();
-    try std.testing.expect(raster.width <= set.metrics.cell_width);
-    try std.testing.expect(raster.left >= 0);
-    try std.testing.expect(
-        @as(u32, @intCast(raster.left)) + raster.width <=
-            set.metrics.cell_width,
-    );
-
-    const ascii = [_]u32{'A'};
-    var ascii_run = try shapeOwned(&set, std.testing.allocator, .{
-        .codepoints = &ascii,
-        .clusters = &.{0},
-        .cell_span = 1,
-    });
-    defer ascii_run.deinit();
-    try std.testing.expectEqual(
-        @as(i32, set.metrics.cell_width) * 64,
-        ascii_run.glyphs[0].x_advance,
-    );
 }
 
 test "metric extraction is stable across owner reuse" {
@@ -485,7 +421,6 @@ test "empty FreeType glyph produces an owned empty raster" {
     var run = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &codepoint,
         .clusters = &cluster,
-        .cell_span = 1,
     });
     defer run.deinit();
     var raster = try set.rasterize(
@@ -498,19 +433,19 @@ test "empty FreeType glyph produces an owned empty raster" {
     try std.testing.expectEqual(@as(usize, 0), raster.pixels.len);
 }
 
-fn expectMetricsInsideCell(metrics: text.Metrics) !void {
-    try std.testing.expect(metrics.cell_width > 0);
-    try std.testing.expect(metrics.cell_height > 0);
-    try std.testing.expect(metrics.baseline < metrics.cell_height);
+fn expectMetricsValid(metrics: text.Metrics) !void {
+    try std.testing.expect(metrics.advance_width > 0);
+    try std.testing.expect(metrics.line_height > 0);
+    try std.testing.expect(metrics.baseline < metrics.line_height);
     try std.testing.expect(metrics.underline_height > 0);
     try std.testing.expect(
         @as(u32, metrics.underline_y) + metrics.underline_height <=
-            metrics.cell_height,
+            metrics.line_height,
     );
     try std.testing.expect(metrics.strike_height > 0);
     try std.testing.expect(
         @as(u32, metrics.strike_y) + metrics.strike_height <=
-            metrics.cell_height,
+            metrics.line_height,
     );
 }
 
@@ -564,20 +499,17 @@ test "caller glyph capacity is exact and leaves short storage unchanged" {
     try std.testing.expectError(error.InsufficientShapeBuffer, set.shape(&short_shaper, .{
         .codepoints = &.{ 'A', 'B' },
         .clusters = &.{ 0, 1 },
-        .cell_span = 2,
     }, &output));
     try std.testing.expectEqual(sentinel, output[0]);
     try std.testing.expectError(error.InsufficientGlyphs, set.shape(&shaper, .{
         .codepoints = &.{ 'A', 'B' },
         .clusters = &.{ 0, 1 },
-        .cell_span = 2,
     }, &output));
     try std.testing.expectEqual(sentinel, output[0]);
     var complete: [2]text.Glyph = undefined;
     const run = try set.shape(&shaper, .{
         .codepoints = &.{ 'A', 'B' },
         .clusters = &.{ 0, 1 },
-        .cell_span = 2,
     }, &complete);
     try std.testing.expectEqual(@as(usize, 2), run.glyphs.len);
     try std.testing.expectEqual(@intFromPtr(complete[0..].ptr), @intFromPtr(run.glyphs.ptr));
@@ -595,7 +527,6 @@ test "raster allocation failures preserve reusable native faces" {
     var run = try shapeOwned(&set, std.testing.allocator, .{
         .codepoints = &codepoint,
         .clusters = &cluster,
-        .cell_span = 1,
     });
     defer run.deinit();
     try std.testing.checkAllAllocationFailures(
@@ -607,7 +538,7 @@ test "raster allocation failures preserve reusable native faces" {
         std.testing.allocator,
         0,
         run.glyphs[0].id,
-        1,
+        set.metrics.advance_width,
     );
     raster.deinit();
 
@@ -619,7 +550,6 @@ test "raster allocation failures preserve reusable native faces" {
     var icon = try shapeOwned(&symbols, std.testing.allocator, .{
         .codepoints = &.{0xf303},
         .clusters = &.{0},
-        .cell_span = 1,
     });
     defer icon.deinit();
     try std.testing.checkAllAllocationFailures(
@@ -631,7 +561,7 @@ test "raster allocation failures preserve reusable native faces" {
         std.testing.allocator,
         icon.face_index,
         icon.glyphs[0].id,
-        1,
+        symbols.metrics.advance_width,
     );
     reused.deinit();
 }
@@ -641,7 +571,6 @@ const OwnedRun = struct {
     storage: []text.Glyph,
     shaper: text.ShapeBuffer,
     face_index: u8,
-    cell_span: u16,
     glyphs: []const text.Glyph,
 
     fn deinit(self: *OwnedRun) void {
@@ -667,7 +596,6 @@ fn shapeOwned(
         .storage = storage,
         .shaper = shaper,
         .face_index = run.face_index,
-        .cell_span = run.cell_span,
         .glyphs = run.glyphs,
     };
 }
@@ -677,6 +605,6 @@ fn rasterAllocation(
     set: *text.FontSet,
     glyph_id: u32,
 ) !void {
-    var raster = try set.rasterize(allocator, 0, glyph_id, 1);
+    var raster = try set.rasterize(allocator, 0, glyph_id, set.metrics.advance_width);
     raster.deinit();
 }

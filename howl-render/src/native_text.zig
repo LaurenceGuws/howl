@@ -1,4 +1,4 @@
-//! Owns native font loading, metrics, shaping, and alpha rasterization.
+//! Owns reusable native font loading, metrics, shaping, and alpha rasterization.
 
 const std = @import("std");
 
@@ -16,7 +16,7 @@ pub const max_codepoints: u32 = 65_536;
 pub const max_glyphs: u32 = 65_536;
 /// Bounds one owned alpha mask to sixteen MiB.
 pub const max_raster_bytes: usize = 16 * 1024 * 1024;
-// Four bytes per output pixel admit ordinary native row padding while keeping
+// Four bytes per output pixel allow ordinary native row padding while keeping
 // the external bitmap finite before its pointer becomes a slice.
 const max_source_bitmap_bytes: usize = max_raster_bytes * 4;
 const PixelMode = @TypeOf(@as(c.FT_Bitmap, undefined).pixel_mode);
@@ -54,7 +54,7 @@ pub const RasterError = error{
     OutOfMemory,
     FontState,
     InvalidRaster,
-    InvalidCellSpan,
+    InvalidWidth,
     GlyphLoad,
     GlyphRender,
     FontSize,
@@ -75,34 +75,32 @@ pub const Config = struct {
     pixel_height: u16,
 };
 
-/// Describes validated nonzero font-derived cell geometry. Decoration lines
-/// use native font facts when valid and bounded terminal fallbacks otherwise.
+/// Describes validated nonzero font-derived text geometry. Decoration lines
+/// use native font facts when valid and bounded configured fallbacks otherwise.
 pub const Metrics = struct {
-    /// Reports the nonzero terminal cell width.
-    cell_width: u16,
-    /// Reports the nonzero terminal cell height.
-    cell_height: u16,
-    /// Locates the baseline from the cell's top edge.
+    /// Reports the nonzero nominal horizontal advance in pixels.
+    advance_width: u16,
+    /// Reports the nonzero nominal line height in pixels.
+    line_height: u16,
+    /// Locates the baseline from the line's top edge.
     baseline: u16,
-    /// Locates the underline from the cell's top edge.
+    /// Locates the underline from the line's top edge.
     underline_y: u16,
     /// Reports the nonzero underline thickness.
     underline_height: u16,
-    /// Locates the strike line from the cell's top edge.
+    /// Locates the strike line from the line's top edge.
     strike_y: u16,
     /// Reports the nonzero strike-line thickness.
     strike_height: u16,
 };
 
 /// Borrows 1..65,536 valid Unicode scalars and one source-cluster identifier
-/// per scalar; `cell_span` describes the nonzero terminal width of the run.
+/// per scalar.
 pub const Text = struct {
     /// Borrows valid Unicode scalar values for the shaping call.
     codepoints: []const u32,
     /// Borrows one caller-owned source identity per codepoint.
     clusters: []const u32,
-    /// Reports the nonzero terminal-cell width assigned to the complete run.
-    cell_span: u16,
 };
 
 /// Records one exact HarfBuzz glyph, source cluster, and 26.6-position facts.
@@ -125,7 +123,7 @@ pub const Glyph = struct {
 pub const ShapeBuffer = struct {
     /// Owns the nonempty native buffer until `deinit`.
     handle: *c.hb_buffer_t,
-    /// Bounds both admitted input scalars and retained shaping output.
+    /// Bounds accepted input scalars and retained shaping output.
     capacity: u32,
 
     /// Requests native storage once for up to `capacity` shaped glyphs.
@@ -151,8 +149,6 @@ pub const ShapeBuffer = struct {
 pub const Run = struct {
     /// Identifies the primary or ordered fallback face used for the whole run.
     face_index: u8,
-    /// Retains the caller-assigned nonzero terminal-cell width.
-    cell_span: u16,
     /// Borrows the initialized prefix of caller-owned glyph storage.
     glyphs: []const Glyph,
 };
@@ -189,7 +185,7 @@ const Face = struct {
 // Native font construction, shaping, and rasterization.
 
 /// Owns copied paths, one FT library, and initialized FT/HB faces in fallback
-/// order. Its mutable native faces admit one exclusive caller at a time;
+/// order. Its mutable native faces support one exclusive caller at a time;
 /// methods borrow the owner for the call, and returned values retain no owner
 /// state. A failed restoration after temporary raster fitting invalidates
 /// shaping and rasterization while preserving exact cleanup through deinit.
@@ -200,7 +196,7 @@ pub const FontSet = struct {
     library: c.FT_Library,
     /// Owns ordered copied paths and initialized FreeType/HarfBuzz faces.
     faces: []Face,
-    /// Retains validated terminal cell metrics for the configured size.
+    /// Retains validated font metrics for the configured size.
     metrics: Metrics,
     /// Retains the configured nonzero native pixel height.
     pixel_height: u16,
@@ -328,15 +324,14 @@ pub const FontSet = struct {
         }
         return .{
             .face_index = @intCast(face_index),
-            .cell_span = text.cell_span,
             .glyphs = glyphs,
         };
     }
 
     /// Exclusively borrows one native face and rasterizes monochrome or gray
-    /// coverage into the requested terminal cell span. Scalable glyphs wider
-    /// than that span are proportionally rerendered, while fixed bitmaps are
-    /// clipped. Invalid identity, span, native rendering, geometry, placement,
+    /// coverage into the requested pixel width. Scalable glyphs wider than
+    /// that width are proportionally rerendered, while fixed bitmaps are
+    /// clipped. Invalid identity, width, native rendering, geometry, placement,
     /// bounds, allocation, and native-size restoration fail exactly. Failed
     /// restoration invalidates later shaping and rasterization on this owner.
     pub fn rasterize(
@@ -344,25 +339,20 @@ pub const FontSet = struct {
         allocator: std.mem.Allocator,
         face_index: u8,
         glyph_id: u32,
-        cell_span: u16,
+        maximum_width_px: u16,
     ) RasterError!Raster {
         if (!self.usable) return error.FontState;
-        const maximum_width = std.math.mul(
-            u16,
-            self.metrics.cell_width,
-            cell_span,
-        ) catch return error.InvalidCellSpan;
-        if (cell_span == 0 or maximum_width == 0) return error.InvalidCellSpan;
+        if (maximum_width_px == 0) return error.InvalidWidth;
         if (face_index >= self.faces.len or glyph_id == 0) return error.InvalidRaster;
         const face = self.faces[face_index].ft;
         var raster = try rasterizeFace(allocator, face, glyph_id);
         errdefer raster.deinit();
-        if (raster.width <= maximum_width) return raster;
+        if (raster.width <= maximum_width_px) return raster;
 
         if (face.*.face_flags & c.FT_FACE_FLAG_SCALABLE != 0) {
             const scaled_height_u32 = @max(
                 @as(u32, 1),
-                @as(u32, self.pixel_height) * maximum_width / raster.width,
+                @as(u32, self.pixel_height) * maximum_width_px / raster.width,
             );
             const scaled_height = std.math.cast(u16, scaled_height_u32) orelse
                 return error.FontSize;
@@ -378,8 +368,8 @@ pub const FontSet = struct {
             raster.deinit();
             raster = fitted;
         }
-        if (raster.width > maximum_width)
-            try cropRaster(&raster, 0, maximum_width);
+        if (raster.width > maximum_width_px)
+            try cropRaster(&raster, 0, maximum_width_px);
         if (raster.left < 0) {
             const clipped = @min(
                 raster.width,
@@ -390,8 +380,8 @@ pub const FontSet = struct {
             raster.left = 0;
         }
         const right = @as(u32, @intCast(raster.left)) + raster.width;
-        if (right > maximum_width)
-            raster.left = @intCast(maximum_width - raster.width);
+        if (right > maximum_width_px)
+            raster.left = @intCast(maximum_width_px - raster.width);
         return raster;
     }
 
@@ -539,7 +529,7 @@ test "shape output ceiling rejects before caller storage" {
 }
 
 fn validateText(text: Text) error{ InvalidText, TextTooLong }!void {
-    if (text.codepoints.len == 0 or text.codepoints.len != text.clusters.len or text.cell_span == 0)
+    if (text.codepoints.len == 0 or text.codepoints.len != text.clusters.len)
         return error.InvalidText;
     if (text.codepoints.len > max_codepoints) return error.TextTooLong;
     for (text.codepoints) |codepoint| {
@@ -556,8 +546,8 @@ fn isVariationSelector(codepoint: u32) bool {
 fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!Metrics {
     const size = face.*.size orelse return error.InvalidMetrics;
     const raw = @field(size.*, "metrics");
-    // A face-wide maximum includes patched icon advances; terminal columns
-    // follow Kitty's measured printable-ASCII width instead.
+    // A face-wide maximum includes patched icon advances; printable ASCII
+    // supplies a stable nominal advance for callers that need one.
     var max_advance: c.FT_Pos = 0;
     var codepoint: u32 = 32;
     while (codepoint < 127) : (codepoint += 1) {
@@ -583,8 +573,8 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
         max_advance,
         0,
     );
-    metrics.cell_height = accommodateUnderscore(
-        metrics.cell_height,
+    metrics.line_height = accommodateUnderscore(
+        metrics.line_height,
         try underscoreBottom(face, metrics.baseline),
     );
     if (lineFromFontUnits(
@@ -592,7 +582,7 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
         face.*.underline_thickness,
         y_scale,
         metrics.baseline,
-        metrics.cell_height,
+        metrics.line_height,
     )) |line| {
         metrics.underline_y = line.y;
         metrics.underline_height = line.height;
@@ -604,7 +594,7 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
             os2.yStrikeoutSize,
             y_scale,
             metrics.baseline,
-            metrics.cell_height,
+            metrics.line_height,
         )) |line| {
             metrics.strike_y = line.y;
             metrics.strike_height = line.height;
@@ -613,10 +603,8 @@ fn metricsFromFace(face: c.FT_Face, fallback_height: u16) error{InvalidMetrics}!
     return metrics;
 }
 
-fn accommodateUnderscore(cell_height: u16, underscore_bottom: u16) u16 {
-    // A terminal row includes the primary font's underscore even when the
-    // font declares a shorter line box.
-    return @max(cell_height, underscore_bottom);
+fn accommodateUnderscore(line_height: u16, underscore_bottom: u16) u16 {
+    return @max(line_height, underscore_bottom);
 }
 
 fn underscoreBottom(
@@ -655,8 +643,8 @@ fn metricsFromExternal(
     const width = try positiveCeil26Dot6(raw_advance);
     const thickness: u16 = @max(@min(height / 12, 2), 1);
     return .{
-        .cell_width = width,
-        .cell_height = height,
+        .advance_width = width,
+        .line_height = height,
         .baseline = measured_ascender,
         .underline_y = @min(measured_ascender + 1, height - 1),
         .underline_height = thickness,
@@ -691,7 +679,7 @@ fn lineFromFontUnits(
     thickness: c.FT_Short,
     y_scale: c.FT_Fixed,
     baseline: u16,
-    cell_height: u16,
+    line_height: u16,
 ) ?DecorationLine {
     if (thickness <= 0 or y_scale <= 0) return null;
     const scaled_position = c.FT_MulFix(position, y_scale);
@@ -706,7 +694,7 @@ fn lineFromFontUnits(
         @divTrunc(thickness_px, 2),
     ) catch return null;
     const bottom = std.math.add(i64, top, thickness_px) catch return null;
-    if (top < 0 or bottom > cell_height) return null;
+    if (top < 0 or bottom > line_height) return null;
     return .{ .y = @intCast(top), .height = @intCast(thickness_px) };
 }
 
@@ -997,11 +985,11 @@ test "bitmap geometry rejects hostile external facts before slicing" {
 
 test "metrics and placement reject every narrowing boundary" {
     const metrics = try metricsFromExternal(20 * 64, 15 * 64, 9 * 64, 18);
-    try std.testing.expectEqual(@as(u16, 20), metrics.cell_height);
+    try std.testing.expectEqual(@as(u16, 20), metrics.line_height);
     const rounded = try metricsFromExternal(64 + 1, 1, 64 + 1, 1);
-    try std.testing.expectEqual(@as(u16, 2), rounded.cell_height);
+    try std.testing.expectEqual(@as(u16, 2), rounded.line_height);
     try std.testing.expectEqual(@as(u16, 1), rounded.baseline);
-    try std.testing.expectEqual(@as(u16, 2), rounded.cell_width);
+    try std.testing.expectEqual(@as(u16, 2), rounded.advance_width);
     const underline = lineFromFontUnits(-125, 50, 75_497, 20, 25).?;
     try std.testing.expectEqual(@as(u16, 22), underline.y);
     try std.testing.expectEqual(@as(u16, 1), underline.height);
@@ -1073,14 +1061,19 @@ test "normal FreeType owner produces only retained monochrome and gray modes" {
         });
         defer set.deinit();
         const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 'A');
-        var raster = try set.rasterize(std.testing.allocator, 0, glyph_id, 1);
+        var raster = try set.rasterize(
+            std.testing.allocator,
+            0,
+            glyph_id,
+            set.metrics.advance_width,
+        );
         raster.deinit();
         const slot = set.faces[0].ft.*.glyph orelse return error.TestUnexpectedResult;
         try std.testing.expectEqual(@as(PixelMode, case[1]), slot.*.bitmap.pixel_mode);
     }
 }
 
-test "Nerd icon native bitmap exceeds one cell before bounded reraster" {
+test "Nerd icon native bitmap exposes bounded source coverage" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
@@ -1096,7 +1089,24 @@ test "Nerd icon native bitmap exceeds one cell before bounded reraster" {
     defer native.deinit();
     try std.testing.expect(
         native.left < 0 or
-            @as(i32, native.left) + native.width > set.metrics.cell_width,
+            @as(i32, native.left) + native.width > set.metrics.advance_width,
+    );
+}
+
+test "native raster honors an arbitrary pixel bound" {
+    const fonts = @import("test_fonts");
+    var set = try FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .pixel_height = 18,
+    });
+    defer set.deinit();
+    const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf303);
+    var raster = try set.rasterize(std.testing.allocator, 0, glyph_id, 7);
+    defer raster.deinit();
+    try std.testing.expect(raster.width <= 7);
+    try std.testing.expect(raster.left >= 0);
+    try std.testing.expect(
+        @as(u32, @intCast(raster.left)) + raster.width <= 7,
     );
 }
 
@@ -1129,13 +1139,12 @@ test "failed size restoration invalidates native use and preserves cleanup" {
         .{
             .codepoints = &.{'A'},
             .clusters = &.{0},
-            .cell_span = 1,
         },
         &glyphs,
     ));
     try std.testing.expectError(
         error.FontState,
-        set.rasterize(std.testing.allocator, 0, 1, 1),
+        set.rasterize(std.testing.allocator, 0, 1, set.metrics.advance_width),
     );
 }
 

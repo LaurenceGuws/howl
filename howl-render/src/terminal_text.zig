@@ -231,8 +231,8 @@ pub const FontMap = if (features.native_text) struct {
     pub fn cellMetrics(self: *@This(), key: FontKey) ?CellMetrics {
         const set = self.get(key) orelse return null;
         return .{
-            .width_px = set.metrics.cell_width,
-            .height_px = set.metrics.cell_height,
+            .width_px = set.metrics.advance_width,
+            .height_px = set.metrics.line_height,
             .baseline_px = set.metrics.baseline,
         };
     }
@@ -466,7 +466,6 @@ fn nativeRun(
     const shaped = try set.shape(scratch.shaper, .{
         .codepoints = codepoints,
         .clusters = clusters,
-        .cell_span = bounds.end - bounds.first,
     }, scratch.shaped);
     if (shaped.glyphs.len > scratch.positioned.len)
         return error.InsufficientPositionedGlyphs;
@@ -575,7 +574,13 @@ test "cluster ends are independent of shaped glyph order and repetition" {
 
 fn nativeRaster(allocator: std.mem.Allocator, fonts: *FontMap, key: NativeGlyphKey) RasterError!Raster {
     const set = fonts.get(key.font) orelse return error.InvalidRaster;
-    var raster = try set.rasterize(allocator, key.face_index, key.glyph_id, key.cell_span);
+    const maximum_width = std.math.mul(
+        u16,
+        set.metrics.advance_width,
+        key.cell_span,
+    ) catch return error.InvalidWidth;
+    if (key.cell_span == 0 or maximum_width == 0) return error.InvalidWidth;
+    var raster = try set.rasterize(allocator, key.face_index, key.glyph_id, maximum_width);
     const result = Raster{
         .allocator = raster.allocator,
         .width = raster.width,

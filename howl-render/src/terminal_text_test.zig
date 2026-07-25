@@ -272,6 +272,18 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     var raster = try terminal_text.rasterizeGlyph(std.testing.allocator, &map, key);
     defer raster.deinit();
     try std.testing.expect(raster.pixels.len <= render.text.max_raster_bytes);
+    var overflow_key = key;
+    overflow_key.native.cell_span = std.math.maxInt(u16);
+    try std.testing.expectError(
+        error.InvalidWidth,
+        terminal_text.rasterizeGlyph(std.testing.allocator, &map, overflow_key),
+    );
+    var zero_key = key;
+    zero_key.native.cell_span = 0;
+    try std.testing.expectError(
+        error.InvalidWidth,
+        terminal_text.rasterizeGlyph(std.testing.allocator, &map, zero_key),
+    );
 
     var default_map = try initMap();
     defer default_map.deinit();
@@ -279,6 +291,26 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
         error.InvalidRaster,
         terminal_text.rasterizeGlyph(std.testing.allocator, &default_map, key),
     );
+}
+
+test "terminal cell span bounds oversized native raster" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .pixel_height = 18 },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{cell(0xf303)};
+    const run = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    try std.testing.expect(run.glyphs == .native);
+    const key = run.glyphs.native[0].key;
+    var raster = try rasterize(&map, std.testing.allocator, key);
+    defer raster.deinit();
+    const configured = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    try std.testing.expect(raster.width <= configured.width_px * key.native.cell_span);
 }
 
 test "native missing tuple and glyph failures preserve reusable scratch" {
