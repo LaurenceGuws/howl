@@ -1,11 +1,16 @@
 const std = @import("std");
 const screen_mod = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
+const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Screen = screen_mod.Screen;
 const Terminal = terminal_mod.Terminal;
 const StreamHarness = stream_harness.Harness;
+
+fn consumeReplies(terminal: *Terminal) !void {
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+}
 
 test "terminal: stream applies bytes to grid state deterministically" {
     const allocator = std.testing.allocator;
@@ -49,7 +54,7 @@ test "terminal: VT52 exit escape is an exact fragmented no-op" {
     try std.testing.expectEqual(Terminal.Color.indexed(1), after.current_attrs.fg);
     try std.testing.expect(terminal.modes.application_cursor_keys);
     try std.testing.expectEqual(@as(u8, 0), terminal.consequenceCount());
-    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 
     try std.testing.expect((try terminal.feed("E\x1b<\x1b[2;3HF")).state_changed);
     const completed = terminal.screen_state.activeConst();
@@ -480,8 +485,8 @@ test "terminal: ANSI insert and newline modes retain exact global lifetime" {
     try std.testing.expect(terminal.screen_state.primary.insert_mode);
     try std.testing.expect(terminal.screen_state.alternate.insert_mode);
     try std.testing.expect((try terminal.feed("\x1b[4$p\x1b[20$p")).state_changed);
-    try std.testing.expectEqualStrings("\x1b[4;1$y\x1b[20;1$y", terminal.host.pendingOutput());
-    terminal.host.clearPendingOutput();
+    try std.testing.expectEqualStrings("\x1b[4;1$y\x1b[20;1$y", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     try std.testing.expect((try terminal.feed("\x1b[20l\x1b[1;5H\n")).state_changed);
     try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.activeConst().cursor.row);
@@ -1648,7 +1653,7 @@ test "terminal: fragmented Kitty static graphics retains display and query is pr
         try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, images.image(0).?.pixels);
         try std.testing.expectEqual(@as(usize, 1), images.placementCount());
         try std.testing.expectEqual(@as(u16, 0), images.placement(0).?.row);
-        try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", actual.host.pendingOutput());
+        try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", actual.replyBytes());
     }
 
     const before = terminal.images(0).generation;
@@ -1658,7 +1663,7 @@ test "terminal: fragmented Kitty static graphics retains display and query is pr
     const queried = terminal.images(0);
     try std.testing.expectEqual(before, queried.generation);
     try std.testing.expectEqual(@as(usize, 0), queried.imageCount());
-    try std.testing.expectEqualStrings("\x1b_Gi=9;OK\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b_Gi=9;OK\x1b\\", terminal.replyBytes());
 }
 
 test "terminal: canceled Kitty continuation releases transfer without retained mutation" {
@@ -1683,22 +1688,18 @@ test "terminal: Kitty image number gets stable identity for put reply and deleti
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,I=44;AQIDBA==\x1b\\")).state_changed,
     );
-    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.host.pendingOutput());
-    const response = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(response);
+    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b_Ga=p,I=44,p=2\x1b\\")).state_changed);
-    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.host.pendingOutput());
-    const put_response = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(put_response);
+    try std.testing.expectEqualStrings("\x1b_Gi=1,I=44;OK\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=t,f=32,s=1,v=1,I=44;BQYHCA==\x1b\\")).state_changed,
     );
-    try std.testing.expectEqualStrings("\x1b_Gi=2,I=44;OK\x1b\\", terminal.host.pendingOutput());
-    const second_response = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(second_response);
+    try std.testing.expectEqualStrings("\x1b_Gi=2,I=44;OK\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b_Ga=p,I=44,p=3\x1b\\")).state_changed);
-    const second_put_response = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(second_put_response);
+    try consumeReplies(&terminal);
     try std.testing.expect(!(try terminal.feed("\x1b_Ga=d,d=n,I=44,p=2\x1b\\")).state_changed);
     try std.testing.expectEqual(@as(usize, 2), terminal.images(0).imageCount());
     try std.testing.expectEqual(@as(usize, 2), terminal.images(0).placementCount());
@@ -1717,7 +1718,7 @@ test "terminal: Kitty frame reply includes exact admitted frame number" {
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=f,f=32,s=1,v=1,i=50,r=2;BQYHCA==\x1b\\")).state_changed,
     );
-    try std.testing.expectEqualStrings("\x1b_Gi=50,r=2;OK\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b_Gi=50,r=2;OK\x1b\\", terminal.replyBytes());
 }
 
 test "terminal: Kitty C=1 display retains cursor for explicit placement" {
@@ -1742,22 +1743,18 @@ test "terminal: Kitty deletion is silent and preserves lowercase image data" {
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed,
     );
-    const response = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(response);
-    try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", response);
+    try std.testing.expectEqualStrings("\x1b_Gi=7;OK\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
 
-    const fill = try std.testing.allocator.alloc(u8, terminal_mod.pending_output_max_bytes);
+    const fill = try reply_fill.fill(&terminal, std.testing.allocator, 64 * 1024, false);
     defer std.testing.allocator.free(fill);
-    @memset(fill, 'x');
-    try terminal.host.appendPendingOutput(fill);
     try std.testing.expect((try terminal.feed("\x1b_Ga=d,d=i,i=7\x1b\\")).state_changed);
-    try std.testing.expectEqualSlices(u8, fill, terminal.host.pendingOutput());
-    const drained = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(drained);
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
+    try consumeReplies(&terminal);
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
     try std.testing.expect(!(try terminal.feed("\x1b_Ga=d,d=i,i=7\x1b\\")).state_changed);
-    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "terminal: static graphics follow scroll erase resize bank and reset lifetime" {
@@ -1826,7 +1823,7 @@ test "terminal: DECSIXEL mode owns query save reset and fixed-origin cursor pres
     try std.testing.expect(
         (try terminal.feed("\x1b[5;6H\x1b[?80h\x1b[?80$p\x1b[?80s\x1bPq\"1;1#1;2;0;100;0~\x1b\\")).state_changed,
     );
-    try std.testing.expectEqualStrings("\x1b[?80;1$y", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b[?80;1$y", terminal.replyBytes());
     const images = terminal.images(0);
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 0), images.placement(0).?.row);
@@ -1834,12 +1831,13 @@ test "terminal: DECSIXEL mode owns query save reset and fixed-origin cursor pres
     try std.testing.expectEqual(@as(u16, 4), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 5), view.cursor_col);
 
-    const first_reply = try terminal.drainPendingOutput(std.testing.allocator);
-    std.testing.allocator.free(first_reply);
+    try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed("\x1b[?80l\x1b[?80r\x1b[?80$p\x1b[!p\x1b[?80$p")).state_changed);
-    const replies = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(replies);
-    try std.testing.expectEqualStrings("\x1b[?80;1$y\x1b[?80;2$y", replies);
+    try std.testing.expectEqualStrings(
+        "\x1b[?80;1$y\x1b[?80;2$y",
+        terminal.replyBytes(),
+    );
+    try consumeReplies(&terminal);
 }
 
 test "terminal: Sixel image rows scroll primary history while preserving cursor column" {
@@ -1885,7 +1883,7 @@ test "terminal: every byte split preserves mixed control framing" {
                 try std.testing.expectEqual(expected_screen.cellAt(row, col), actual_screen.cellAt(row, col));
             }
         }
-        try std.testing.expectEqualStrings(expected.host.current_title.?, actual.host.current_title.?);
-        try std.testing.expectEqualStrings(expected.host.pendingOutput(), actual.host.pendingOutput());
+        try std.testing.expectEqualStrings(expected.title().?, actual.title().?);
+        try std.testing.expectEqualStrings(expected.replyBytes(), actual.replyBytes());
     }
 }

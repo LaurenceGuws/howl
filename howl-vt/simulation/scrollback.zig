@@ -163,7 +163,6 @@ fn pickOp(rand: std.Random) OpKind {
 }
 
 fn applyWriteBurst(vt: *Terminal, rand: std.Random) !void {
-    var stream = vt.vtStream();
     const lines = rand.uintLessThan(u8, 8) + 1;
     var line_idx: u8 = 0;
     while (line_idx < lines) : (line_idx += 1) {
@@ -174,9 +173,14 @@ fn applyWriteBurst(vt: *Terminal, rand: std.Random) !void {
             const cp = "0123456789abcdefXYZ+-_=./[]{}()";
             buf[@intCast(i)] = cp[@intCast(rand.uintLessThan(u8, @intCast(cp.len)))];
         }
-        try stream.nextSlice(buf[0..len]);
-        try stream.next('\n');
+        try feedChecked(vt, buf[0..len]);
+        try feedChecked(vt, "\n");
     }
+}
+
+fn feedChecked(vt: *Terminal, bytes: []const u8) !void {
+    const summary = try vt.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
 }
 
 fn applyResize(vt: *Terminal, rand: std.Random) !void {

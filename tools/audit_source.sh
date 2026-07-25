@@ -81,7 +81,7 @@ diff -u tools/source_audit.allow <(
         while IFS= read -r -d '' file; do
             if [[ -f "$file" ]]; then printf '%s\0' "$file"; fi
         done |
-        grep -zEv '(^|/)vendor/' |
+        grep -zEv '^(egl_slop/)|(^|/)vendor/' |
         xargs -0 perl -ne '
             $raw=$_; chomp $raw; $code=$raw;
             $code =~ s/"(?:\\.|[^"\\])*"//g; $code =~ s{//.*$}{};

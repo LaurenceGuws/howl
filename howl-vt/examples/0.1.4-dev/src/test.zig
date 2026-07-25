@@ -1,0 +1,84 @@
+//! Proves the 0.1.4 development contract through the public package root.
+
+const std = @import("std");
+const howl_vt = @import("howl_vt");
+
+test "fragmented output mutates borrowed terminal state and retains replies" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    const text = try terminal.feed("Howl\x1b[");
+    try std.testing.expect(text.state_changed);
+    const reply = try terminal.feed("5n");
+    try std.testing.expect(reply.state_changed);
+
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'H'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'l'), view.cellAt(0, 3));
+
+    try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+    try terminal.consumeReplyBytes(2);
+    try std.testing.expectEqualStrings("0n", terminal.replyBytes());
+    try std.testing.expectError(
+        error.InvalidReplyCount,
+        terminal.consumeReplyBytes(terminal.replyBytes().len + 1),
+    );
+    try std.testing.expectEqualStrings("0n", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
+test "ordered consequences are borrowed and consumed by exact identity" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x07")).state_changed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+
+    const consequence = terminal.consequenceHead() orelse
+        return error.MissingConsequence;
+    const id = switch (consequence) {
+        .bell => |bell| bell.id,
+        else => return error.UnexpectedConsequence,
+    };
+    try terminal.consumeConsequence(id);
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+}
+
+test "terminal modes determine key and paste encoding" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    var scratch: howl_vt.Terminal.InputScratch = .{};
+
+    var key = try terminal.encodeInput(
+        std.testing.allocator,
+        &scratch,
+        .{ .key = .{ .key = .{ .named = .up } } },
+    );
+    defer key.deinit();
+    try std.testing.expectEqualStrings("\x1b[A", key.bytes);
+
+    try std.testing.expect((try terminal.feed("\x1b[?2004h")).state_changed);
+    var paste = try terminal.encodeInput(
+        std.testing.allocator,
+        &scratch,
+        .{ .paste = "paste" },
+    );
+    defer paste.deinit();
+    try std.testing.expectEqualStrings("\x1b[200~paste\x1b[201~", paste.bytes);
+}
+
+test "resize changes emulator geometry and rejects zero dimensions" {
+    try std.testing.expectError(
+        error.InvalidDimensions,
+        howl_vt.Terminal.init(std.testing.allocator, 0, 8),
+    );
+
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try terminal.resize(3, 10);
+
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 3), view.rows);
+    try std.testing.expectEqual(@as(u16, 10), view.cols);
+}

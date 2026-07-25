@@ -1,0 +1,14 @@
+.{
+    .name = .howl_vt_0_1_4_dev,
+    .version = "0.1.4-dev",
+    .fingerprint = 0x4babee1fb7ed3e20,
+    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .dependencies = .{
+        .howl_vt = .{ .path = "../.." },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

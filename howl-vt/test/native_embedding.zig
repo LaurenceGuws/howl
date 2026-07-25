@@ -51,9 +51,8 @@ test "native root owns the complete embedding contract" {
     try std.testing.expectEqualStrings("\x1b[200~paste\x1b[201~", encoded.bytes);
 
     _ = try terminal.feed("\x1b[5n");
-    const output = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(output);
-    try std.testing.expectEqualStrings("\x1b[0n", output);
+    try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     _ = try terminal.feed("\x1b]52;c;SG93bA==\x07");
     const clipboard_request = terminal.consequenceHead().?.clipboard;

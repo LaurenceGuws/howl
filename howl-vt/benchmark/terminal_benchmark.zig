@@ -327,7 +327,7 @@ fn runMixedInteractiveWorkload(io: std.Io, base_allocator: std.mem.Allocator, ru
 }
 
 fn runSnapshotWorkload(io: std.Io, base_allocator: std.mem.Allocator, fixture: []const u8, runs: RunCount) !WorkloadResult {
-    const snapshot_calls_per_run: RunCount = 200;
+    const copy_calls_per_run: RunCount = 200;
     const observations = try base_allocator.alloc(RunObservation, @intCast(runs));
     defer base_allocator.free(observations);
 
@@ -346,11 +346,10 @@ fn runSnapshotWorkload(io: std.Io, base_allocator: std.mem.Allocator, fixture: [
         counting.resetWindow();
         const start = nowNs(io);
         var j: RunCount = 0;
-        while (j < snapshot_calls_per_run) : (j += 1) {
+        while (j < copy_calls_per_run) : (j += 1) {
             var snap = try @import("../test/support/screen_capture.zig").Capture.captureFromScreen(
                 terminal.allocator,
                 terminal.screen_state.activeConst(),
-                terminal.screen_state.activeSelectionConst().state(),
             );
             snap.deinit();
         }
@@ -362,7 +361,7 @@ fn runSnapshotWorkload(io: std.Io, base_allocator: std.mem.Allocator, fixture: [
             .peak_live_bytes = counting.window_peak_live_bytes,
         };
     }
-    return try summarizeObservations(base_allocator, "snapshot_opt_in", snapshot_calls_per_run, observations);
+    return try summarizeObservations(base_allocator, "semantic_copy_opt_in", copy_calls_per_run, observations);
 }
 
 fn runReplayRecordWorkload(

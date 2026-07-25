@@ -1,58 +1,3 @@
-howl-control/src/client.zig|anyerror|fn transportClientError(failure: anyerror, fallback: ClientError) ClientError {
-howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque = null,
-howl-control/src/howl_control.zig|anyopaque|context: ?*anyopaque,
-howl-control/src/howl_control.zig|anyopaque|fn countTestWake(context: ?*anyopaque) void {
-howl-control/src/howl_control.zig|anyopaque|fn ignoreWake(_: ?*anyopaque) void {}
-howl-control/src/howl_control.zig|anyopaque|fn inspectStatusOnWake(context: ?*anyopaque) void {
-howl-control/src/howl_control.zig|anyopaque|fn inspectVisualProof(context: ?*anyopaque, view: VisualView) ?DirtyToken {
-howl-control/src/howl_control.zig|anyopaque|inspect: *const fn (?*anyopaque, VisualView) ?DirtyToken,
-howl-control/src/howl_control.zig|anyopaque|notify: *const fn (?*anyopaque) void = ignoreWake,
-howl-control/src/test.zig|anyopaque|fn countWake(context: ?*anyopaque) void {
-howl-host/src/main.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
-howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|_: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|data: ?*anyopaque,
-howl-host/src/window.zig|anyopaque|fn captureAndCompareVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
-howl-host/src/window.zig|anyopaque|fn configureBounds(_: ?*anyopaque, _: ?*c.struct_xdg_toplevel, _: i32, _: i32) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn dataDeviceDrop(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn dataDeviceLeave(data: ?*anyopaque, _: ?*c.struct_wl_data_device) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn dataOfferAction(data: ?*anyopaque, offer: ?*c.struct_wl_data_offer, action: u32) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn dataSourceAction(_: ?*anyopaque, _: ?*c.struct_wl_data_source, _: u32) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn dataSourceDrop(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn dataSourceFinished(_: ?*anyopaque, _: ?*c.struct_wl_data_source) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn owner(data: ?*anyopaque) *Window {
-howl-host/src/window.zig|anyopaque|fn pointerFrame(data: ?*anyopaque, _: ?*c.struct_wl_pointer) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn projectVisual(context_pointer: ?*anyopaque, source: control.VisualView) ?control.DirtyToken {
-howl-host/src/window.zig|anyopaque|fn registryRemove(_: ?*anyopaque, _: ?*c.struct_wl_registry, _: u32) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn seatName(_: ?*anyopaque, _: ?*c.struct_wl_seat, _: [*c]const u8) callconv(.c) void {}
-howl-host/src/window.zig|anyopaque|fn shellPing(_: ?*anyopaque, base: ?*c.struct_xdg_wm_base, serial: u32) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, surface: ?*c.struct_xdg_surface, serial: u32) callconv(.c) void {
-howl-host/src/window.zig|anyopaque|fn terminalWake(context: ?*anyopaque) void {
-howl-host/src/window.zig|anyopaque|fn toplevelClose(data: ?*anyopaque, _: ?*c.struct_xdg_toplevel) callconv(.c) void {
 howl-render/src/generated_geometry.zig|anytype|comptime inside: anytype,
 howl-render/src/generated_geometry.zig|anytype|context: anytype,
 howl-vt/benchmark/pty_feed_record.zig|discard|_ = try std.fmt.hexToBytes(chunk, hex);
@@ -67,7 +12,6 @@ howl-vt/simulation/protocol.zig|anytype|fn hashCell(hasher: *std.hash.Fnv1a_64, 
 howl-vt/simulation/protocol.zig|anytype|fn hashColor(hasher: *std.hash.Fnv1a_64, color: anytype) void {
 howl-vt/simulation/protocol.zig|anytype|fn hashValue(hasher: *std.hash.Fnv1a_64, value: anytype) void {
 howl-vt/simulation/scrollback.zig|anytype|fn visibleContentLen(s: anytype, row: u16, cols: u16) u16 {
-howl-vt/src/howl_vt.zig|discard|_ = terminal;
 howl-vt/src/parser.zig|discard|_ = parser.entryPhase(.escape, 0x1B);
 howl-vt/src/parser.zig|discard|_ = parser.next('$');
 howl-vt/src/parser.zig|discard|_ = parser.next('1');
@@ -90,18 +34,12 @@ howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
 howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
 howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
 howl-vt/src/parser.zig|discard|_ = parser.next(0x1B);
-howl-vt/src/terminal.zig|anytype|fn formatLocatorReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-howl-vt/src/terminal.zig|anytype|fn formatOscReply(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-howl-vt/src/terminal.zig|anytype|fn formatTerminalReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
 howl-vt/test/fuzz_terminal.zig|discard|_ = terminal.feed(bytes) catch |err| switch (err) {
-howl-vt/test/fuzz_terminal.zig|discard|_ = terminal.scrollViewport(switch (smith.valueRangeAtMost(u8, 0, 3)) {
 howl-vt/test/fuzz_terminal.zig|discard|_ = try proof.feed("S");
 howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
 howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
 howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("R");
-howl-vt/test/fuzz_terminal.zig|discard|_ = try terminal.feed("\x18A");
 howl-vt/test/fuzz_terminal.zig|discard|_ = view.cellInfoAt(row, col);
-howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("E");
 howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[5n");
 howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b[?2004h");
 howl-vt/test/native_embedding.zig|discard|_ = try terminal.feed("\x1b]52;c;SG93bA==\x07");
@@ -116,8 +54,6 @@ howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ 
 howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .move, .button = .none, .row = 3, .col = 3, .mod = .{}, .buttons_down = 0 });
 howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .press, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 1 });
 howl-vt/test/unit/terminal_modes_test.zig|discard|_ = encodeMouse(&terminal, .{ .kind = .release, .button = .left, .row = 1, .col = 2, .mod = .{}, .buttons_down = 0 });
-howl-vt/test/unit/terminal_surface_test.zig|discard|_ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('A'), .{});
-howl-vt/test/unit/terminal_surface_test.zig|discard|_ = encodeKey(&terminal, try input_keyboard.InputKey.initUnicode('B'), .{});
 howl-vt/test_unit.zig|discard|_ = @import("src/howl_vt.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/csi_mapping_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/parser/csi_test.zig");
@@ -137,5 +73,4 @@ howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_end_to_end_test.zi
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_modes_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_osc_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig");
-howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_surface_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");

@@ -1,16 +1,33 @@
 const std = @import("std");
-const host_state = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
 const parser_mod = @import("../../src/parser.zig");
+const reply_fill = @import("../support/reply_fill.zig");
 const screen_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
-const HostState = host_state;
 const Terminal = terminal_mod.Terminal;
 const Screen = screen_mod.Screen;
 const Grid = Screen;
 const Rgb = Screen.Rgb;
 const StreamHarness = stream_harness.Harness;
+
+const expected_metadata_bytes: usize = 1024;
+const expected_clipboard_reply_bytes: usize = ((64 * 1024 - 12 - 8) / 4) * 3;
+const expected_clipboard_request_bytes: usize = 1024 * 1024;
+const expected_clipboard_packet_bytes: usize = 8 * 1024;
+const expected_clipboard_capacity: u8 = 8;
+const expected_file_transfer_bytes: usize = 8 * 1024;
+const expected_iterm_file_transfer_bytes: usize = 2 * 1024;
+const expected_file_transfer_capacity: u8 = 8;
+const expected_notification_capacity: u8 = 8;
+const expected_pointer_shape_capacity: u8 = 8;
+const expected_drag_drop_payload_bytes: usize = 4096;
+const expected_drag_drop_capacity: u8 = 16;
+const expected_reply_bytes: usize = 64 * 1024;
+
+fn consumeReplies(terminal: *Terminal) !void {
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+}
 
 test "OSC title updates terminal title under stream path" {
     const allocator = std.testing.allocator;
@@ -19,7 +36,7 @@ test "OSC title updates terminal title under stream path" {
     var stream = try StreamHarness.init(&terminal);
 
     try stream.nextSlice("\x1b]0;My Title\x07");
-    try std.testing.expectEqualStrings("My Title", terminal.host.current_title.?);
+    try std.testing.expectEqualStrings("My Title", terminal.title().?);
 }
 
 test "GNU Screen title retains bounded title and icon with exact mutation" {
@@ -33,8 +50,8 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try std.testing.expect(completed.state_changed);
     try std.testing.expect(completed.title_changed);
     try std.testing.expect(completed.icon_changed);
-    try std.testing.expectEqualStrings("new title", terminal.host.current_title.?);
-    try std.testing.expectEqualStrings("new title", terminal.host.current_icon.?);
+    try std.testing.expectEqualStrings("new title", terminal.title().?);
+    try std.testing.expectEqualStrings("new title", terminal.icon().?);
 
     const repeated = try terminal.feed("\x1bknew title\r");
     try std.testing.expect(!repeated.state_changed);
@@ -42,26 +59,26 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try std.testing.expect(!repeated.icon_changed);
     try std.testing.expect(!(try terminal.feed("\x1bk\n")).state_changed);
 
-    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 't');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1bk");
-    try sequence.appendSlice(allocator, payload[0..HostState.max_metadata_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_metadata_bytes]);
     try sequence.append(allocator, '\r');
     const maximum = try terminal.feed(sequence.items);
     try std.testing.expect(maximum.state_changed and maximum.title_changed and maximum.icon_changed);
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_title.?.len);
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_icon.?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.title().?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1bk");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, '\r');
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_title.?.len);
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), terminal.host.current_icon.?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.title().?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 }
 
 test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation" {
@@ -110,23 +127,23 @@ test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"
     terminal.hardReset();
     try std.testing.expectEqualStrings("user@host", terminal.remoteHost().?);
 
-    const payload = try allocator.alloc(u8, Terminal.remote_host_max_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'h');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
-    try sequence.appendSlice(allocator, payload[0..Terminal.remote_host_max_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_metadata_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
-    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.remoteHost().?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.remoteHost().?.len);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
-    try std.testing.expectEqual(@as(usize, Terminal.remote_host_max_bytes), terminal.remoteHost().?.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.remoteHost().?.len);
 }
 
 test "iTerm ClearScrollback clears only active screen state with exact repetition" {
@@ -182,7 +199,7 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try std.testing.expect(!(try terminal.feed("\x1b]46;canceled\x18")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b]50;restart\x07")).state_changed);
     try std.testing.expectEqual(@as(?[]const u8, null), terminal.title());
-    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 
     const payload = try std.testing.allocator.alloc(u8, parser_mod.max_metadata_control_bytes - 2);
     defer std.testing.allocator.free(payload);
@@ -198,7 +215,7 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try sequence.appendSlice(std.testing.allocator, payload);
     try sequence.append(std.testing.allocator, 0x07);
     try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
-    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 }
 
 test "working-directory report limit preserves the prior complete fact" {
@@ -207,17 +224,17 @@ test "working-directory report limit preserves the prior complete fact" {
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("\x1b]7;file://host/stable\x07")).state_changed);
 
-    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1b]7;");
-    try sequence.appendSlice(allocator, payload[0..HostState.max_metadata_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_metadata_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
     var retained = terminal.workingDirectory().?;
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), retained.value.len);
 
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]7;");
@@ -227,7 +244,7 @@ test "working-directory report limit preserves the prior complete fact" {
 
     retained = terminal.workingDirectory().?;
     try std.testing.expect(retained.kind == .uri);
-    try std.testing.expectEqual(@as(usize, HostState.max_metadata_bytes), retained.value.len);
+    try std.testing.expectEqual(@as(usize, expected_metadata_bytes), retained.value.len);
 }
 
 test "OSC 0 1 and 2 match libvterm title and icon properties" {
@@ -285,7 +302,7 @@ test "raw OSC title updates terminal title through OSC owner path" {
     var stream = try StreamHarness.init(&terminal);
 
     try stream.nextSlice("\x1b]Raw Title\x07");
-    try std.testing.expectEqualStrings("Raw Title", terminal.host.current_title.?);
+    try std.testing.expectEqualStrings("Raw Title", terminal.title().?);
 }
 
 test "OSC title limit fails without dropping current title" {
@@ -296,7 +313,7 @@ test "OSC title limit fails without dropping current title" {
 
     try stream.nextSlice("\x1b]0;ok\x07");
 
-    const title_len = HostState.max_metadata_bytes + 1;
+    const title_len = expected_metadata_bytes + 1;
     const payload = try allocator.alloc(u8, title_len);
     defer allocator.free(payload);
     @memset(payload, 'a');
@@ -308,7 +325,7 @@ test "OSC title limit fails without dropping current title" {
     try seq.appendSlice(allocator, "\x07");
 
     try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice(seq.items));
-    try std.testing.expectEqualStrings("ok", terminal.host.current_title.?);
+    try std.testing.expectEqualStrings("ok", terminal.title().?);
 }
 
 test "OSC icon limit preserves prior title and icon" {
@@ -319,7 +336,7 @@ test "OSC icon limit preserves prior title and icon" {
     const initial = try terminal.feed("\x1b]2;title\x07\x1b]1;icon\x07");
     try std.testing.expect(initial.title_changed);
     try std.testing.expect(initial.icon_changed);
-    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'i');
     var sequence = std.ArrayList(u8).empty;
@@ -341,7 +358,7 @@ test "OSC 0 bound failure preserves both prior metadata values" {
     try std.testing.expect(seeded.state_changed);
     try std.testing.expect(seeded.title_changed);
     try std.testing.expect(seeded.icon_changed);
-    const payload = try allocator.alloc(u8, HostState.max_metadata_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'b');
     var sequence = std.ArrayList(u8).empty;
@@ -398,8 +415,8 @@ test "OSC 8 retains explicit identity separately from URI and exact active mutat
     try std.testing.expect(first != 0);
     try std.testing.expect(first != second);
     try std.testing.expectEqual(first, third);
-    try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(first).?);
-    try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(second).?);
+    try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(first).?);
+    try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(second).?);
 
     try std.testing.expect(!(try terminal.feed("\x1b]8;id=one;https://example.com\x07")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b]8;;\x07")).state_changed);
@@ -441,7 +458,7 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
     try std.testing.expectEqual(@as(u32, 20), terminal.shellIntegration().?.version);
     try std.testing.expectEqual(@as(u64, 1), terminal.shellMark().generation);
     try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.current_attrs.link_id);
-    try std.testing.expectEqualStrings("https://example.com", terminal.host.hyperlinkUriForId(link_id).?);
+    try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(link_id).?);
 }
 
 test "OSC 52 produces pending clipboard request" {
@@ -451,13 +468,13 @@ test "OSC 52 produces pending clipboard request" {
     var stream = try StreamHarness.init(&terminal);
 
     try stream.nextSlice("\x1b]52;c;Zm9v\x07");
-    try std.testing.expectEqualStrings("c;Zm9v", terminal.host.pendingClipboardSet().?);
     const request = terminal.consequenceHead().?.clipboard;
     try std.testing.expect(request.kind == .set);
     try std.testing.expectEqualStrings("c", request.selection);
+    try std.testing.expectEqualStrings("c;Zm9v", request.payload);
     const clipboard = (try terminal.takeClipboard(request.generation, allocator)).?;
     defer allocator.free(clipboard);
-    try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
+    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
 test "OSC 52 decoded clipboard drain clears pending request" {
@@ -469,10 +486,10 @@ test "OSC 52 decoded clipboard drain clears pending request" {
     try stream.nextSlice("\x1b]52;c;SG93bA==\x07");
 
     const request = terminal.consequenceHead().?.clipboard;
-    const text = (try terminal.host.takeClipboardSet(request.generation, allocator)).?;
+    const text = (try terminal.takeClipboard(request.generation, allocator)).?;
     defer allocator.free(text);
     try std.testing.expectEqualStrings("Howl", text);
-    try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
+    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
 test "OSC 52 query is retained for exact transactional host reply" {
@@ -482,7 +499,7 @@ test "OSC 52 query is retained for exact transactional host reply" {
     try std.testing.expect(!(try terminal.feed("\x1b]52;cp")).state_changed);
     try std.testing.expect((try terminal.feed(";?\x1b\\")).state_changed);
     var request = terminal.consequenceHead().?.clipboard;
-    try std.testing.expectEqual(@as(?[]u8, null), try terminal.host.takeClipboardSet(
+    try std.testing.expectEqual(@as(?[]u8, null), try terminal.takeClipboard(
         request.generation,
         allocator,
     ));
@@ -491,23 +508,23 @@ test "OSC 52 query is retained for exact transactional host reply" {
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
     try std.testing.expectEqualStrings("cp", terminal.consequenceHead().?.clipboard.selection);
     try std.testing.expect(try terminal.replyClipboard(request.generation, "A\x00B"));
-    try std.testing.expectEqualStrings("\x1b]52;cp;QQBC\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]52;cp;QQBC\x1b\\", terminal.replyBytes());
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expectError(error.StaleClipboardRequest, terminal.replyClipboard(
         request.generation,
         "unused",
     ));
 
-    terminal.host.clearPendingOutput();
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     try std.testing.expect((try terminal.feed("\x1b G\x9d52;;?\x9c")).state_changed);
     request = terminal.consequenceHead().?.clipboard;
     try std.testing.expectEqualStrings("", request.selection);
     try std.testing.expect(try terminal.replyClipboard(request.generation, ""));
-    try std.testing.expectEqualStrings("\x9d52;;\x9c", terminal.host.pendingOutput());
-    try std.testing.expectEqual(@as(?[]const u8, null), terminal.host.pendingClipboardSet());
+    try std.testing.expectEqualStrings("\x9d52;;\x9c", terminal.replyBytes());
+    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
-test "OSC 52 host copy preserves FIFO until exact acknowledgement" {
+test "OSC 52 host copy preserves FIFO until exact consumption" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 16);
     defer terminal.deinit();
@@ -542,9 +559,8 @@ test "OSC 52 rejects malformed selections and base64 without replacing a request
     try std.testing.expect(!(try terminal.feed("\x1b]52;x;bmV3\x07")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b]52;c;!!!!\x07")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b]52;c;?trailing\x07")).state_changed);
-    try std.testing.expectEqualStrings("c;b2xk", terminal.host.pendingClipboardSet().?);
-
     const request = terminal.consequenceHead().?.clipboard;
+    try std.testing.expectEqualStrings("c;b2xk", request.payload);
     const decoded = (try terminal.takeClipboard(request.generation, allocator)).?;
     defer allocator.free(decoded);
     try std.testing.expectEqualStrings("old", decoded);
@@ -557,19 +573,17 @@ test "OSC 52 reply bounds preserve query and prior pending output" {
     try std.testing.expect((try terminal.feed("\x1b]52;p;?\x07")).state_changed);
     const request = terminal.consequenceHead().?.clipboard;
 
-    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    @memset(fill, 'x');
-    try terminal.host.appendPendingOutput(fill);
     try std.testing.expectError(
         error.ConsequenceLimit,
         terminal.replyClipboard(request.generation, "Howl"),
     );
     try std.testing.expectEqualStrings("p", terminal.consequenceHead().?.clipboard.selection);
-    try std.testing.expectEqualSlices(u8, fill, terminal.host.pendingOutput());
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 
-    terminal.host.clearPendingOutput();
-    const oversized = try allocator.alloc(u8, Terminal.clipboard_reply_max_bytes + 1);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const oversized = try allocator.alloc(u8, expected_clipboard_reply_bytes + 1);
     defer allocator.free(oversized);
     @memset(oversized, 'z');
     try std.testing.expectError(
@@ -577,13 +591,13 @@ test "OSC 52 reply bounds preserve query and prior pending output" {
         terminal.replyClipboard(request.generation, oversized),
     );
     try std.testing.expectEqualStrings("p", terminal.consequenceHead().?.clipboard.selection);
-    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 
     try std.testing.expect(try terminal.replyClipboard(
         request.generation,
-        oversized[0..Terminal.clipboard_reply_max_bytes],
+        oversized[0..expected_clipboard_reply_bytes],
     ));
-    try std.testing.expect(terminal.host.pendingOutput().len <= HostState.pending_output_max_bytes);
+    try std.testing.expect(terminal.replyBytes().len <= expected_reply_bytes);
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -620,9 +634,9 @@ test "OSC 52 retains ordered sets and queries until exact head consumption" {
         error.StaleClipboardRequest,
         terminal.replyClipboard(3, "wrong"),
     );
-    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
     try std.testing.expect(try terminal.replyClipboard(2, "reply"));
-    try std.testing.expectEqualStrings("\x1b]52;p;cmVwbHk=\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]52;p;cmVwbHk=\x1b\\", terminal.replyBytes());
 
     request = terminal.consequenceHead().?.clipboard;
     try std.testing.expectEqual(@as(u64, 3), request.generation);
@@ -645,13 +659,13 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
 
     try std.testing.expect((try terminal.feed("\x1b]52;c;QQ==\x07")).state_changed);
     try terminal.consumeConsequence(1);
-    for (0..Terminal.clipboard_max_count) |_| {
+    for (0..expected_clipboard_capacity) |_| {
         try std.testing.expect((try terminal.feed("\x1b]52;c;Qg==\x07")).state_changed);
     }
-    try std.testing.expectEqual(Terminal.clipboard_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;Qw==\x07"));
-    try std.testing.expectEqual(Terminal.clipboard_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
 
     for (2..10) |generation| try terminal.consumeConsequence(@intCast(generation));
@@ -660,7 +674,7 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try std.testing.expectEqual(@as(u64, 10), terminal.consequenceHead().?.clipboard.generation);
     try terminal.consumeConsequence(10);
 
-    const payload = try allocator.alloc(u8, Terminal.clipboard_request_max_bytes);
+    const payload = try allocator.alloc(u8, expected_clipboard_request_bytes);
     defer allocator.free(payload);
     @memset(payload, 'A');
     payload[0] = 'c';
@@ -678,10 +692,6 @@ test "OSC 52 queue and aggregate bounds preserve identity and wrap" {
     try std.testing.expectEqual(@as(u64, 11), terminal.consequenceHead().?.clipboard.generation);
     try std.testing.expectEqual(@as(u8, 1), terminal.consequenceCount());
     try terminal.consumeConsequence(11);
-
-    terminal.host.consequence_generation = std.math.maxInt(u64);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;Rg==\x07"));
-    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
 test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
@@ -717,9 +727,8 @@ test "Kitty OSC 5522 shares ordered clipboard admission without host policy" {
     try std.testing.expectEqualStrings("c", request.selection);
     try std.testing.expectEqualStrings("c;?", request.payload);
     try std.testing.expect(try terminal.replyClipboard(request.generation, "A\x00B"));
-    const reply = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(reply);
-    try std.testing.expectEqualStrings("\x1b]52;c;QQBC\x1b\\", reply);
+    try std.testing.expectEqualStrings("\x1b]52;c;QQBC\x1b\\", terminal.replyBytes());
+    try consumeReplies(&terminal);
 
     request = terminal.consequenceHead().?.clipboard;
     try std.testing.expectEqual(@as(u64, 3), request.generation);
@@ -747,31 +756,31 @@ test "Kitty OSC 5522 packet and FIFO bounds preserve prior occurrences" {
     try std.testing.expect((try terminal.feed("\x1b]5522;type=write\x1b\\")).state_changed);
     try terminal.consumeConsequence(1);
 
-    const payload = try allocator.alloc(u8, Terminal.kitty_clipboard_packet_max_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_clipboard_packet_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1b]5522;");
-    try sequence.appendSlice(allocator, payload[0..Terminal.kitty_clipboard_packet_max_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_clipboard_packet_bytes]);
     try sequence.appendSlice(allocator, "\x1b\\");
     const split = sequence.items.len / 2;
     try std.testing.expect(!(try terminal.feed(sequence.items[0..split])).state_changed);
     try std.testing.expect((try terminal.feed(sequence.items[split..])).state_changed);
-    for (0..Terminal.clipboard_max_count - 1) |_| {
+    for (0..expected_clipboard_capacity - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]5522;type=wdata\x1b\\")).state_changed);
     }
-    try std.testing.expectEqual(Terminal.clipboard_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
     try std.testing.expectEqual(
-        @as(usize, Terminal.kitty_clipboard_packet_max_bytes),
+        @as(usize, expected_clipboard_packet_bytes),
         terminal.consequenceHead().?.clipboard.payload.len,
     );
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]52;c;QQ==\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.clipboard.generation);
-    try std.testing.expectEqual(Terminal.clipboard_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_clipboard_capacity, terminal.consequenceCount());
 
-    for (0..Terminal.clipboard_max_count) |_| {
+    for (0..expected_clipboard_capacity) |_| {
         const head = terminal.consequenceHead().?.clipboard;
         try terminal.consumeConsequence(head.generation);
     }
@@ -832,28 +841,28 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
 
     try std.testing.expect((try terminal.feed("\x1b]5113;first\x1b\\")).state_changed);
     try terminal.consumeConsequence(1);
-    const payload = try allocator.alloc(u8, Terminal.file_transfer_max_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_file_transfer_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1b]5113;");
-    try sequence.appendSlice(allocator, payload[0..Terminal.file_transfer_max_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_file_transfer_bytes]);
     try sequence.appendSlice(allocator, "\x1b\\");
     const split = sequence.items.len / 2;
     try std.testing.expect(!(try terminal.feed(sequence.items[0..split])).state_changed);
     try std.testing.expect((try terminal.feed(sequence.items[split..])).state_changed);
-    for (0..Terminal.file_transfer_max_count - 1) |_| {
+    for (0..expected_file_transfer_capacity - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]1337;FilePart=QQ==\x1b\\")).state_changed);
     }
-    try std.testing.expectEqual(Terminal.file_transfer_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.file_transfer.generation);
-    try std.testing.expectEqual(@as(usize, Terminal.file_transfer_max_bytes), terminal.consequenceHead().?.file_transfer.payload.len);
+    try std.testing.expectEqual(@as(usize, expected_file_transfer_bytes), terminal.consequenceHead().?.file_transfer.payload.len);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;rejected\x1b\\"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.file_transfer.generation);
-    try std.testing.expectEqual(Terminal.file_transfer_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_file_transfer_capacity, terminal.consequenceCount());
 
-    for (0..Terminal.file_transfer_max_count) |_| {
+    for (0..expected_file_transfer_capacity) |_| {
         const packet = terminal.consequenceHead().?.file_transfer;
         try terminal.consumeConsequence(packet.generation);
     }
@@ -861,13 +870,13 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     try std.testing.expectEqual(@as(u64, 10), terminal.consequenceHead().?.file_transfer.generation);
     try terminal.consumeConsequence(10);
 
-    const iterm_payload = try allocator.alloc(u8, Terminal.iterm_file_transfer_max_bytes + 1);
+    const iterm_payload = try allocator.alloc(u8, expected_iterm_file_transfer_bytes + 1);
     defer allocator.free(iterm_payload);
     @memset(iterm_payload, 'x');
     @memcpy(iterm_payload[0.."FilePart=".len], "FilePart=");
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1b]1337;");
-    try sequence.appendSlice(allocator, iterm_payload[0..Terminal.iterm_file_transfer_max_bytes]);
+    try sequence.appendSlice(allocator, iterm_payload[0..expected_iterm_file_transfer_bytes]);
     try sequence.appendSlice(allocator, "\x1b\\");
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
     try std.testing.expectEqual(@as(u64, 11), terminal.consequenceHead().?.file_transfer.generation);
@@ -884,9 +893,6 @@ test "opaque file-transfer bounds preserve FIFO identity and wrap" {
     try sequence.appendSlice(allocator, payload);
     try sequence.appendSlice(allocator, "\x1b\\");
     try std.testing.expectError(error.StringControlLimit, terminal.feed(sequence.items));
-    try std.testing.expect(terminal.consequenceHead() == null);
-    terminal.host.consequence_generation = std.math.maxInt(u64);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]5113;exhausted\x1b\\"));
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -956,7 +962,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expect((try terminal.feed("lo\x07")).state_changed);
     var notification = terminal.consequenceHead().?.notification;
     try std.testing.expectEqual(@as(u64, 1), notification.generation);
-    try std.testing.expectEqual(host_state.NotificationKind.message, notification.kind);
+    try std.testing.expectEqual(terminal_mod.NotificationKind.message, notification.kind);
     try std.testing.expectEqual(@as(u16, 9), notification.command);
     try std.testing.expectEqualStrings("hello", notification.payload);
 
@@ -971,7 +977,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expectEqual(@as(u8, 7), terminal.consequenceCount());
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(2));
 
-    const expected = [_]struct { kind: host_state.NotificationKind, command: u16, payload: []const u8 }{
+    const expected = [_]struct { kind: terminal_mod.NotificationKind, command: u16, payload: []const u8 }{
         .{ .kind = .message, .command = 9, .payload = "hello" },
         .{ .kind = .message, .command = 99, .payload = "i=one:d=0;body" },
         .{ .kind = .message, .command = 777, .payload = "notify;title;body" },
@@ -995,7 +1001,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     notification = terminal.consequenceHead().?.notification;
     try std.testing.expectEqual(@as(u64, 8), notification.generation);
-    try std.testing.expectEqual(host_state.NotificationKind.request_attention, notification.kind);
+    try std.testing.expectEqual(terminal_mod.NotificationKind.request_attention, notification.kind);
     try std.testing.expectEqualStrings("once", notification.payload);
 }
 
@@ -1005,13 +1011,13 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("\x1b]9;prior\x07")).state_changed);
-    const payload = try allocator.alloc(u8, Terminal.notification_max_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
     defer sequence.deinit(allocator);
     try sequence.appendSlice(allocator, "\x1b]9;");
-    try sequence.appendSlice(allocator, payload[0..Terminal.notification_max_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_metadata_bytes]);
     try sequence.append(allocator, 0x07);
 
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
@@ -1034,16 +1040,16 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try terminal.consumeConsequence(1);
     retained = terminal.consequenceHead().?.notification;
     try std.testing.expectEqual(@as(u64, 2), retained.generation);
-    try std.testing.expectEqual(Terminal.notification_max_bytes, retained.payload.len);
-    for (0..Terminal.notification_max_count - 1) |_| {
+    try std.testing.expectEqual(expected_metadata_bytes, retained.payload.len);
+    for (0..expected_notification_capacity - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]9;queued\x07")).state_changed);
     }
-    try std.testing.expectEqual(Terminal.notification_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;rejected\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.notification.generation);
-    try std.testing.expectEqual(Terminal.notification_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_notification_capacity, terminal.consequenceCount());
 
-    for (0..Terminal.notification_max_count) |_| {
+    for (0..expected_notification_capacity) |_| {
         retained = terminal.consequenceHead().?.notification;
         try terminal.consumeConsequence(retained.generation);
     }
@@ -1054,9 +1060,6 @@ test "OSC notification bounds preserve the FIFO and wrap without reuse" {
     try std.testing.expectEqualStrings("after", retained.payload);
     try terminal.consumeConsequence(10);
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(10));
-    terminal.host.consequence_generation = std.math.maxInt(u64);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]9;exhausted\x07"));
-    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
 test "OSC 22 retains ordered bounded host-neutral requests" {
@@ -1113,7 +1116,7 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
-    const payload = try allocator.alloc(u8, Terminal.pointer_shape_max_bytes + 1);
+    const payload = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(payload);
     @memset(payload, 'x');
     var sequence = std.ArrayList(u8).empty;
@@ -1121,7 +1124,7 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
 
     try std.testing.expect((try terminal.feed("\x1b]22;prior\x07")).state_changed);
     try sequence.appendSlice(allocator, "\x1b]22;");
-    try sequence.appendSlice(allocator, payload[0..Terminal.pointer_shape_max_bytes]);
+    try sequence.appendSlice(allocator, payload[0..expected_metadata_bytes]);
     try sequence.append(allocator, 0x07);
     try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
     var retained = terminal.consequenceHead().?.pointer_shape;
@@ -1142,22 +1145,22 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     try terminal.consumeConsequence(1);
     retained = terminal.consequenceHead().?.pointer_shape;
     try std.testing.expectEqual(@as(u64, 2), retained.generation);
-    try std.testing.expectEqual(Terminal.pointer_shape_max_bytes, retained.payload.len);
-    for (0..Terminal.pointer_shape_max_count - 1) |_| {
+    try std.testing.expectEqual(expected_metadata_bytes, retained.payload.len);
+    for (0..expected_pointer_shape_capacity - 1) |_| {
         try std.testing.expect((try terminal.feed("\x1b]22;queued\x07")).state_changed);
     }
     try std.testing.expectEqual(
-        Terminal.pointer_shape_max_count,
+        expected_pointer_shape_capacity,
         terminal.consequenceCount(),
     );
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;rejected\x07"));
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.pointer_shape.generation);
     try std.testing.expectEqual(
-        Terminal.pointer_shape_max_count,
+        expected_pointer_shape_capacity,
         terminal.consequenceCount(),
     );
 
-    for (0..Terminal.pointer_shape_max_count) |_| {
+    for (0..expected_pointer_shape_capacity) |_| {
         retained = terminal.consequenceHead().?.pointer_shape;
         try terminal.consumeConsequence(retained.generation);
     }
@@ -1168,9 +1171,6 @@ test "OSC 22 bounds preserve the FIFO and wrap without reuse" {
     try std.testing.expectEqualStrings("after", retained.payload);
     try terminal.consumeConsequence(10);
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(10));
-    terminal.host.consequence_generation = std.math.maxInt(u64);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]22;exhausted\x07"));
-    try std.testing.expect(terminal.consequenceHead() == null);
 }
 
 test "OSC 22 query reply is one direct transactional operation" {
@@ -1192,7 +1192,7 @@ test "OSC 22 query reply is one direct transactional operation" {
     try std.testing.expectEqual(token, terminal.semanticSequence());
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.pointer_shape.generation);
     try terminal.replyPointerShape(2, "default");
-    try std.testing.expectEqualStrings("\x1b]22;default\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]22;default\x1b\\", terminal.replyBytes());
     try std.testing.expect(token != terminal.semanticSequence());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
@@ -1223,17 +1223,16 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     try std.testing.expectEqual(Rgb{ .r = 0xee, .g = 0xee, .b = 0xee }, presentation.palette[15]);
     try std.testing.expectEqualStrings(
         "\x1b]1337;ReportCellSize=18;9;1\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
-    const first_reply = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(first_reply);
+    try consumeReplies(&terminal);
     const valued_request = try terminal.feed(
         "\x1b]1337;ReportCellSize=ignored-by-iterm\x07",
     );
     try std.testing.expect(valued_request.state_changed);
     try std.testing.expectEqualStrings(
         "\x1b]1337;ReportCellSize=18;9;1\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 
     const osc_50 = try terminal.feed("\x1b]50;CursorShape=2\x07");
@@ -1261,7 +1260,7 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
             "\x1b]1337;ShellIntegrationVersion=20;shell=bash\x07",
     );
     try std.testing.expect(seeded.state_changed);
-    terminal.host.clearPendingOutput();
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     const rejected = try terminal.feed(
         "\x1b]50;SetColors=fg=abcdef\x07" ++
@@ -1275,7 +1274,7 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
     );
     try std.testing.expectEqual(@as(u32, 20), terminal.shellIntegration().?.version);
     try std.testing.expectEqualStrings("bash", terminal.shellIntegration().?.shell.?);
-    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 
     const accepted = try terminal.feed("\x1b]50;CursorShape=1\x07");
     try std.testing.expect(accepted.state_changed);
@@ -1293,20 +1292,6 @@ test "cell pixel report facts reject zero and preserve configured dimensions" {
     const cell = terminal.cellPixelSize().?;
     try std.testing.expectEqual(@as(u32, 9), cell.width);
     try std.testing.expectEqual(@as(u32, 18), cell.height);
-}
-
-test "iTerm metadata replacement preserves prior state on allocation failure" {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
-    var state = HostState.HostState.init(failing.allocator());
-    defer state.deinit();
-    try std.testing.expect(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" }));
-    try std.testing.expect(!(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" })));
-    try std.testing.expectError(
-        error.OutOfMemory,
-        state.replaceShellIntegration(.{ .version = 20, .shell = "zsh" }),
-    );
-    try std.testing.expectEqual(@as(u32, 19), state.shell_integration.?.version);
-    try std.testing.expectEqualStrings("bash", state.shell_integration.?.shell.?);
 }
 
 test "unsupported SetMark and Kitty context metadata remain exact no-ops" {
@@ -1381,7 +1366,7 @@ test "OSC colors distinguish mutation query and malformed no-op" {
 
     const malformed = try terminal.feed("\x1b]4;1;bogus\x07\x1b]10;no-color\x1b\\");
     try std.testing.expect(!malformed.state_changed);
-    try std.testing.expectEqual(@as(usize, 0), terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 
     const changed = try terminal.feed("\x1b]4;1;#010203\x07");
     try std.testing.expect(changed.state_changed);
@@ -1390,9 +1375,9 @@ test "OSC colors distinguish mutation query and malformed no-op" {
 
     const query = try terminal.feed("\x1b]4;1;?\x07");
     try std.testing.expect(query.state_changed);
-    try std.testing.expectEqualStrings("\x1b]4;1;rgb:0101/0202/0303\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]4;1;rgb:0101/0202/0303\x1b\\", terminal.replyBytes());
 
-    terminal.host.clearPendingOutput();
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     const iterm_malformed = try terminal.feed("\x1b]1337;SetColors=fg=bogus,missing,p3=x\x07");
     try std.testing.expect(!iterm_malformed.state_changed);
 }
@@ -1433,7 +1418,7 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
     try stream.nextSlice("\x1b]21;foreground=#112233;background=rgb:44/55/66;cursor=\x1b\\");
     try stream.nextSlice("\x1b]21;foreground=?;background=?;cursor=?;no_such=?\x1b\\");
 
-    const colors = terminal.host.terminalColorState();
+    const colors = terminal.presentation();
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.foreground);
     try std.testing.expectEqual(Rgb{ .r = 0x44, .g = 0x55, .b = 0x66 }, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
@@ -1442,12 +1427,12 @@ test "kitty OSC 21 sets queries and resets terminal colors" {
             "\x1b]21;background=rgb:4444/5555/6666\x1b\\" ++
             "\x1b]21;cursor=\x1b\\" ++
             "\x1b]21;no_such=?\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 
     try stream.nextSlice("\x1b]21;foreground;background\x1b\\");
-    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.host.terminalColorState().foreground);
-    try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.host.terminalColorState().background);
+    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
 }
 
 test "xterm OSC colors set query and reset palette and dynamic colors" {
@@ -1459,20 +1444,20 @@ test "xterm OSC colors set query and reset palette and dynamic colors" {
     try stream.nextSlice("\x1b]4;1;#010203\x1b\\\x1b]10;#aabbcc\x1b\\\x1b]11;rgb:0d/0e/0f\x1b\\\x1b]12;red\x1b\\");
     try stream.nextSlice("\x1b]4;1;?\x1b\\\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\");
 
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().palette[1]);
     try std.testing.expectEqualStrings(
         "\x1b]4;1;rgb:0101/0202/0303\x1b\\" ++
             "\x1b]10;rgb:aaaa/bbbb/cccc\x1b\\" ++
             "\x1b]11;rgb:0d0d/0e0e/0f0f\x1b\\" ++
             "\x1b]12;rgb:ffff/0000/0000\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 
     try stream.nextSlice("\x1b]104;1\x1b\\\x1b]110\x1b\\\x1b]111\x1b\\\x1b]112\x1b\\");
-    try std.testing.expectEqual(Rgb{ .r = 205, .g = 49, .b = 49 }, terminal.host.terminalColorState().palette[1]);
-    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.host.terminalColorState().foreground);
-    try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.host.terminalColorState().background);
-    try std.testing.expectEqual(@as(?Rgb, null), terminal.host.terminalColorState().cursor);
+    try std.testing.expectEqual(Rgb{ .r = 205, .g = 49, .b = 49 }, terminal.presentation().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 24, .g = 25, .b = 33 }, terminal.presentation().background);
+    try std.testing.expectEqual(@as(?Rgb, null), terminal.presentation().cursor);
 }
 
 test "OSC color grammar scales short components and rejects trailing components" {
@@ -1482,20 +1467,20 @@ test "OSC color grammar scales short components and rejects trailing components"
 
     try std.testing.expect(!(try terminal.feed("\x1b]4;1;#123;2;rgb:1/22/333/4")).state_changed);
     try std.testing.expect((try terminal.feed("44;3;rgb:1/22/333\x1b\\")).state_changed);
-    var colors = terminal.host.terminalColorState();
+    var colors = terminal.presentation();
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[1]);
     try std.testing.expectEqual(Terminal.default_presentation.palette[2], colors.palette[2]);
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[3]);
 
     try std.testing.expect(!(try terminal.feed("\x1b]4;1;#123;2;rgb:1/22/333/444\x07")).state_changed);
-    colors = terminal.host.terminalColorState();
+    colors = terminal.presentation();
     try std.testing.expectEqual(Rgb{ .r = 0x11, .g = 0x22, .b = 0x33 }, colors.palette[1]);
     try std.testing.expectEqual(Terminal.default_presentation.palette[2], colors.palette[2]);
 
     try std.testing.expect((try terminal.feed("\x1b]4;1;?\x1b\\")).state_changed);
     try std.testing.expectEqualStrings(
         "\x1b]4;1;rgb:1111/2222/3333\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 }
 
@@ -1508,14 +1493,6 @@ test "xterm extra dynamic colors set query and reset host-neutral state" {
     try stream.nextSlice("\x1b]13;#010203\x1b\\\x1b]14;#040506\x1b\\\x1b]15;#070809\x1b\\\x1b]16;#0a0b0c\x1b\\\x1b]17;#0d0e0f\x1b\\\x1b]18;#101112\x1b\\\x1b]19;#131415\x1b\\");
     try stream.nextSlice("\x1b]13;?\x1b\\\x1b]14;?\x1b\\\x1b]15;?\x1b\\\x1b]16;?\x1b\\\x1b]17;?\x1b\\\x1b]18;?\x1b\\\x1b]19;?\x1b\\");
 
-    const colors = terminal.host.terminalColorState();
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, colors.pointer_foreground.?);
-    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, colors.pointer_background.?);
-    try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9 }, colors.tektronix_foreground.?);
-    try std.testing.expectEqual(Rgb{ .r = 10, .g = 11, .b = 12 }, colors.tektronix_background.?);
-    try std.testing.expectEqual(Rgb{ .r = 13, .g = 14, .b = 15 }, colors.selection_background.?);
-    try std.testing.expectEqual(Rgb{ .r = 16, .g = 17, .b = 18 }, colors.tektronix_cursor.?);
-    try std.testing.expectEqual(Rgb{ .r = 19, .g = 20, .b = 21 }, colors.selection_foreground.?);
     try std.testing.expectEqualStrings(
         "\x1b]13;rgb:0101/0202/0303\x1b\\" ++
             "\x1b]14;rgb:0404/0505/0606\x1b\\" ++
@@ -1524,19 +1501,23 @@ test "xterm extra dynamic colors set query and reset host-neutral state" {
             "\x1b]17;rgb:0d0d/0e0e/0f0f\x1b\\" ++
             "\x1b]18;rgb:1010/1111/1212\x1b\\" ++
             "\x1b]19;rgb:1313/1414/1515\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 
-    terminal.host.clearPendingOutput();
-    try stream.nextSlice("\x1b]113\x1b\\\x1b]114\x1b\\\x1b]115\x1b\\\x1b]116\x1b\\\x1b]117\x1b\\\x1b]118\x1b\\\x1b]119\x1b\\");
-    const reset = terminal.host.terminalColorState();
-    try std.testing.expectEqual(@as(?Rgb, null), reset.pointer_foreground);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.pointer_background);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.tektronix_foreground);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.tektronix_background);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.selection_background);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.tektronix_cursor);
-    try std.testing.expectEqual(@as(?Rgb, null), reset.selection_foreground);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expect((try terminal.feed(
+        "\x1b]113\x1b\\\x1b]114\x1b\\\x1b]115\x1b\\\x1b]116\x1b\\" ++
+            "\x1b]117\x1b\\\x1b]118\x1b\\\x1b]119\x1b\\",
+    )).state_changed);
+    try std.testing.expect((try terminal.feed(
+        "\x1b]13;?\x1b\\\x1b]14;?\x1b\\\x1b]15;?\x1b\\\x1b]16;?\x1b\\" ++
+            "\x1b]17;?\x1b\\\x1b]18;?\x1b\\\x1b]19;?\x1b\\",
+    )).state_changed);
+    try std.testing.expectEqualStrings(
+        "\x1b]13;\x1b\\\x1b]14;\x1b\\\x1b]15;\x1b\\\x1b]16;\x1b\\" ++
+            "\x1b]17;\x1b\\\x1b]18;\x1b\\\x1b]19;\x1b\\",
+        terminal.replyBytes(),
+    );
 }
 
 test "xterm special colors via OSC 5 and OSC 4 special offsets" {
@@ -1548,24 +1529,16 @@ test "xterm special colors via OSC 5 and OSC 4 special offsets" {
     try stream.nextSlice("\x1b]5;0;#010203;1;#040506\x1b\\\x1b]4;258;#070809;260;#0a0b0c\x1b\\");
     try stream.nextSlice("\x1b]5;0;?;1;?\x1b\\\x1b]4;258;?;260;?\x1b\\");
 
-    const colors = terminal.host.terminalColorState();
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, colors.special_palette[0].?);
-    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, colors.special_palette[1].?);
-    try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9 }, colors.special_palette[2].?);
-    try std.testing.expectEqual(Rgb{ .r = 10, .g = 11, .b = 12 }, colors.special_palette[4].?);
     try std.testing.expectEqualStrings(
         "\x1b]5;0;rgb:0101/0202/0303\x1b\\" ++
             "\x1b]5;1;rgb:0404/0505/0606\x1b\\" ++
             "\x1b]4;258;rgb:0707/0808/0909\x1b\\" ++
             "\x1b]4;260;rgb:0a0a/0b0b/0c0c\x1b\\",
-        terminal.host.pendingOutput(),
+        terminal.replyBytes(),
     );
 
-    terminal.host.clearPendingOutput();
-    try stream.nextSlice("\x1b]104;258;260\x1b\\");
-    const reset = terminal.host.terminalColorState();
-    try std.testing.expectEqual(Rgb{ .r = 7, .g = 8, .b = 9 }, reset.special_palette[2].?);
-    try std.testing.expectEqual(Rgb{ .r = 10, .g = 11, .b = 12 }, reset.special_palette[4].?);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    try std.testing.expect(!(try terminal.feed("\x1b]104;258;260\x1b\\")).state_changed);
 }
 
 test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
@@ -1586,14 +1559,14 @@ test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
 
     try std.testing.expect(!(try terminal.feed("\x1b]104;0;")).state_changed);
     try std.testing.expect((try terminal.feed("255\x1b\\")).state_changed);
-    var colors = terminal.host.terminalColorState();
+    var colors = terminal.presentation();
     try std.testing.expectEqual(Terminal.default_presentation.palette[0], colors.palette[0]);
     try std.testing.expectEqual(Terminal.default_presentation.palette[255], colors.palette[255]);
 
     try std.testing.expect((try terminal.feed(
         "\x1b]110\x07\x1b]111\x1b\\\x1b]112\x07\x1b]117\x1b\\\x1b]119\x07",
     )).state_changed);
-    colors = terminal.host.terminalColorState();
+    colors = terminal.presentation();
     try std.testing.expectEqual(Terminal.default_presentation.foreground, colors.foreground);
     try std.testing.expectEqual(Terminal.default_presentation.background, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
@@ -1608,7 +1581,7 @@ test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
     try std.testing.expect((try terminal.feed("\x1b]4;1;#212223\x1b\\\x1b]10;#313233\x1b\\")).state_changed);
     try terminal.resize(4, 12);
     try std.testing.expect((try terminal.feed("\x1b[?1049h\x1bc\x1b[?1049l")).state_changed);
-    colors = terminal.host.terminalColorState();
+    colors = terminal.presentation();
     try std.testing.expectEqual(Rgb{ .r = 33, .g = 34, .b = 35 }, colors.palette[1]);
     try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, colors.foreground);
 
@@ -1621,24 +1594,22 @@ test "OSC color set and query failure rolls back the complete command" {
     var terminal = try Terminal.init(allocator, 2, 4);
     defer terminal.deinit();
 
-    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    @memset(fill, 'x');
-    try terminal.host.appendPendingOutput(fill);
-    const before = terminal.host.terminalColorState();
+    const before = terminal.presentation();
 
     try std.testing.expectError(
         error.ConsequenceLimit,
         terminal.feed("\x1b]4;1;#010203;2;?\x1b\\"),
     );
-    try std.testing.expectEqual(before, terminal.host.terminalColorState());
-    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
-    try std.testing.expectEqual(@as(u8, 'x'), terminal.host.pendingOutput()[fill.len - 1]);
+    try std.testing.expectEqual(before, terminal.presentation());
+    try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
     try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
     try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
-    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
+    try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
 }
 
 test "kitty color stack restores terminal color snapshots" {
@@ -1651,8 +1622,8 @@ test "kitty color stack restores terminal color snapshots" {
     try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b]30101\x1b\\");
 
     try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().foreground);
-    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.host.terminalColorState().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
 }
 
 test "kitty tui CSI save and restore colors use the same stack" {
@@ -1665,8 +1636,8 @@ test "kitty tui CSI save and restore colors use the same stack" {
     try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b[#Q");
 
     try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().foreground);
-    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.host.terminalColorState().palette[1]);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
 }
 
 test "kitty color stack owns indexed sequential bounded and report semantics" {
@@ -1682,20 +1653,20 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try std.testing.expect(!(try terminal.feed("\x1b[3#Q")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#111213\x1b\\\x1b[1#Q")).state_changed);
-    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
     try std.testing.expect((try terminal.feed("\x1b[3#Q")).state_changed);
-    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
     try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
 
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#212223\x1b\\\x1b[#P")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#313233\x1b\\\x1b[#P")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#414243\x1b\\")).state_changed);
-    terminal.host.clearPendingOutput();
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     try std.testing.expect((try terminal.feed("\x1b G\x1b[#R")).state_changed);
-    try std.testing.expectEqualStrings("\x1b[1;2#Q", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b[1;2#Q", terminal.replyBytes());
 
     try std.testing.expect((try terminal.feed("\x1b[3#Q\x1b[#Q")).state_changed);
-    try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, terminal.presentation().foreground);
     try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
 
     const rejected = try terminal.feed("\x1b[11#P\x1b[11#Q");
@@ -1723,23 +1694,21 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
         "\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\" ++
             "\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\",
     )).state_changed);
-    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 2 }, terminal.host.terminalColorState().foreground);
+    try std.testing.expectEqual(Rgb{ .r = 0, .g = 0, .b = 2 }, terminal.presentation().foreground);
 
-    terminal.host.clearPendingOutput();
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     try std.testing.expect((try terminal.feed("\x1bc\x1b[#R")).state_changed);
-    try std.testing.expectEqualStrings("\x1b[0;0#Q", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b[0;0#Q", terminal.replyBytes());
 
-    terminal.host.clearPendingOutput();
-    const fill = try allocator.alloc(u8, HostState.pending_output_max_bytes - 1);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    @memset(fill, 'x');
-    try terminal.host.appendPendingOutput(fill);
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[#R"));
-    try std.testing.expectEqual(fill.len, terminal.host.pendingOutput().len);
-    try std.testing.expectEqual(@as(u8, 'x'), terminal.host.pendingOutput()[fill.len - 1]);
+    try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
+    try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 }
 
-test "OSC 72 parses fragmented ordered commands with exact rejection and acknowledgement" {
+test "OSC 72 parses fragmented ordered commands with exact rejection and consumption" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
     const before = terminal.semanticSequence();
@@ -1778,7 +1747,7 @@ test "OSC 72 parses fragmented ordered commands with exact rejection and acknowl
 test "OSC 72 queue saturation and aggregate allocation failure preserve exact head" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
-    for (0..Terminal.drag_drop_max_count) |index| {
+    for (0..expected_drag_drop_capacity) |index| {
         var bytes: [64]u8 = undefined;
         const command = try std.fmt.bufPrint(&bytes, "\x1b]72;t=q:i={d}\x1b\\", .{index});
         try std.testing.expect((try terminal.feed(command)).state_changed);
@@ -1786,13 +1755,13 @@ test "OSC 72 queue saturation and aggregate allocation failure preserve exact he
     const head = terminal.consequenceHead().?.drag_drop;
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]72;t=q:i=99\x1b\\"));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.drag_drop.generation);
-    try std.testing.expectEqual(Terminal.drag_drop_max_count, terminal.consequenceCount());
+    try std.testing.expectEqual(expected_drag_drop_capacity, terminal.consequenceCount());
 }
 
 test "OSC 72 aggregate payload budget rejects a valid ninth chunk transactionally" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
-    const payload = try std.testing.allocator.alloc(u8, Terminal.drag_drop_payload_max_bytes);
+    const payload = try std.testing.allocator.alloc(u8, expected_drag_drop_payload_bytes);
     defer std.testing.allocator.free(payload);
     @memset(payload, 'x');
     const prefix = "\x1b]72;t=a:m=1;";

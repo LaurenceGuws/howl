@@ -5,6 +5,8 @@ const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
 
+const expected_logical_output_bytes: usize = 1024 * 1024;
+
 test "terminal rejects zero dimensions exactly" {
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 0, 1));
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 1, 0));
@@ -119,13 +121,13 @@ test "oversized finalized line records loss and terminal continues rendering" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, std.math.maxInt(u16), 32);
     defer terminal.deinit();
     var chunk: [64 * 1024]u8 = @splat('x');
-    const chunk_count = Terminal.logical_output_line_max_bytes / chunk.len + 1;
+    const chunk_count = expected_logical_output_bytes / chunk.len + 1;
     for (0..chunk_count) |_| try feedChanged(&terminal, &chunk);
     switch (try terminal.copyLogicalOutput(
         std.testing.allocator,
         0,
         1,
-        Terminal.logical_output_max_bytes,
+        expected_logical_output_bytes,
     )) {
         .open_line_too_long => {},
         else => return error.UnexpectedOutputResult,
@@ -137,7 +139,7 @@ test "oversized finalized line records loss and terminal continues rendering" {
         std.testing.allocator,
         0,
         3,
-        Terminal.logical_output_max_bytes,
+        expected_logical_output_bytes,
     )) {
         .output => |value| value,
         else => return error.UnexpectedOutputResult,
@@ -299,10 +301,10 @@ fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
         try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
         try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
-        try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
         return failure;
     };
-    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
 }
 
 fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
@@ -485,8 +487,8 @@ test "synchronized update DCS shares exact bounded mode state" {
     try std.testing.expect((try vt.feed("\x1b[?2026r")).state_changed);
     try std.testing.expect(vt.modes.synchronized_output);
     try std.testing.expect((try vt.feed("\x1b[?2026$p")).state_changed);
-    try std.testing.expectEqualStrings("\x1b[?2026;1$y", vt.host.pendingOutput());
-    vt.host.clearPendingOutput();
+    try std.testing.expectEqualStrings("\x1b[?2026;1$y", vt.replyBytes());
+    try vt.consumeReplyBytes(vt.replyBytes().len);
     try std.testing.expect((try vt.feed("\x1bc")).state_changed);
     try std.testing.expect(!vt.modes.synchronized_output);
 }
@@ -616,17 +618,45 @@ test "terminal Kitty unscroll consumes newest rows of one wrapped line" {
 test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
-    var stream = try stream_harness.Harness.init(&vt);
 
     vt.screen_state.active().writeText("ab");
-    vt.host.locator.mode = .continuous;
-    vt.host.locator.coordinate_unit = 1;
+    try std.testing.expect((try vt.feed("\x1b[1;0'z\x1b[1'*{")).state_changed);
+    var scratch: Terminal.InputScratch = .{};
+    var before = try vt.encodeInput(
+        std.testing.allocator,
+        &scratch,
+        .{ .mouse = .{
+            .kind = .press,
+            .button = .left,
+            .row = 0,
+            .col = 0,
+            .mod = .{},
+            .buttons_down = 1,
+        } },
+    );
+    defer before.deinit();
+    try std.testing.expectEqual(@as(usize, 0), before.bytes.len);
+    try std.testing.expect(vt.replyBytes().len != 0);
+    try vt.consumeReplyBytes(vt.replyBytes().len);
 
-    try stream.nextSlice("\x1bc");
+    try std.testing.expect((try vt.feed("\x1bc")).state_changed);
 
     try std.testing.expectEqual(@as(u21, 0), vt.screen_state.activeConst().cellAt(0, 0));
-    try std.testing.expect(vt.host.locator.mode == .disabled);
-    try std.testing.expectEqual(@as(u16, 0), vt.host.locator.coordinate_unit);
+    var after = try vt.encodeInput(
+        std.testing.allocator,
+        &scratch,
+        .{ .mouse = .{
+            .kind = .press,
+            .button = .left,
+            .row = 0,
+            .col = 0,
+            .mod = .{},
+            .buttons_down = 1,
+        } },
+    );
+    defer after.deinit();
+    try std.testing.expectEqual(@as(usize, 0), after.bytes.len);
+    try std.testing.expectEqual(@as(usize, 0), vt.replyBytes().len);
 }
 
 test "terminal DECSTR preserves text and position while resetting terminal state" {
@@ -640,7 +670,9 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     const col_before = vt.screen_state.activeConst().cursor.col;
     try std.testing.expect(vt.screen_state.activeConst().lineGeometry(row_before) == .double_width);
     try std.testing.expect(!vt.screen_state.activeConst().tabStopAt(8));
-    try std.testing.expect(vt.host.pending_output.eight_bit_controls);
+    try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
+    try std.testing.expectEqualStrings("\x9b0n", vt.replyBytes());
+    try vt.consumeReplyBytes(vt.replyBytes().len);
 
     const prefix = try vt.feed("\x1b[!");
     try std.testing.expect(!prefix.state_changed);
@@ -664,7 +696,8 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     try std.testing.expect(!vt.modes.bracketed_paste);
     try std.testing.expect(vt.modes.mouse_tracking == .off);
     try std.testing.expect(vt.modes.mouse_protocol == .none);
-    try std.testing.expect(!vt.host.pending_output.eight_bit_controls);
+    try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
+    try std.testing.expectEqualStrings("\x1b[0n", vt.replyBytes());
     try std.testing.expectEqual(@as(u8, 0), vt.gl_index);
     try std.testing.expectEqual(@as(u8, 1), vt.gr_index);
     try std.testing.expectEqual([_]u8{ 'B', 'B', 'B', 'B' }, vt.designations);

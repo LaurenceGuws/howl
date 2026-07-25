@@ -89,7 +89,7 @@ test "terminal cursor: DECSCUSR restores host default and rejects unsupported va
     try std.testing.expect(!active(&terminal).cursor.blink_intent);
 
     try std.testing.expect((try terminal.feed("\x1bP$q q\x1b\\")).state_changed);
-    try std.testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("\x1bP1$r4 q\x1b\\", terminal.replyBytes());
 }
 
 test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops" {
@@ -101,7 +101,7 @@ test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops"
     try std.testing.expect(!(try terminal.feed("\x1b[>100;29:2:1")).state_changed);
     try std.testing.expect(!(try terminal.feed(":2 q\x1b[> q")).state_changed);
     try std.testing.expectEqual(before, terminal.screen_state.activeConst().cursor);
-    try std.testing.expectEqualStrings("", terminal.host.pendingOutput());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
 }
 
 test "terminal cursor: Kitty DCS restores configured appearance across fragmented input" {
@@ -128,7 +128,7 @@ test "terminal cursor: Kitty DCS restores configured appearance across fragmente
     try std.testing.expect(terminal.screen_state.alternate.cursor.visible);
     try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
     try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
-    try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.host.terminalColorState().cursor);
+    try std.testing.expectEqual(@as(?Screen.Rgb, null), terminal.presentation().cursor);
     try std.testing.expectEqual(
         @as(?Screen.Rgb, .{ .r = 0x44, .g = 0x55, .b = 0x66 }),
         active(&terminal).cursor.cursor_text_color,
@@ -235,8 +235,8 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     try std.testing.expect(active(&terminal).cursor.blink_intent);
     try std.testing.expect(!active(&terminal).cursor.visible);
     try std.testing.expect((try terminal.feed("\x1b[?12$p\x1b[?25$p")).state_changed);
-    try std.testing.expectEqualStrings("\x1b[?12;1$y\x1b[?25;2$y", terminal.host.pendingOutput());
-    terminal.host.clearPendingOutput();
+    try std.testing.expectEqualStrings("\x1b[?12;1$y\x1b[?25;2$y", terminal.replyBytes());
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
     try std.testing.expectEqual(.none, active(&terminal).cursor.effective_shape);

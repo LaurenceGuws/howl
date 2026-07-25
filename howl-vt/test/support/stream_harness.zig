@@ -1,19 +1,21 @@
 const terminal_mod = @import("../../src/terminal.zig");
+const std = @import("std");
 
 const Terminal = terminal_mod.Terminal;
 
 pub const Harness = struct {
-    stream: Terminal.Stream,
+    terminal: *Terminal,
 
     pub fn init(terminal: *Terminal) !Harness {
-        return .{ .stream = terminal.vtStream() };
+        return .{ .terminal = terminal };
     }
 
     pub fn next(self: *Harness, byte: u8) !void {
-        try self.stream.next(byte);
+        try self.nextSlice(&.{byte});
     }
 
     pub fn nextSlice(self: *Harness, bytes: []const u8) !void {
-        try self.stream.nextSlice(bytes);
+        const summary = try self.terminal.feed(bytes);
+        std.debug.assert(!summary.history_lost or summary.state_changed);
     }
 };

@@ -399,21 +399,30 @@ fn feedBytesToTerminal(
     rand: std.Random,
     max_chunk_len: ChunkLen,
 ) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, StringControlLimit }!void {
-    var stream = terminal.vtStream();
     switch (mode) {
-        .whole_slice => try stream.nextSlice(bytes),
-        .bytewise => for (bytes) |byte| try stream.next(byte),
+        .whole_slice => try feedChecked(terminal, bytes),
+        .bytewise => {
+            for (bytes) |byte| try feedChecked(terminal, &.{byte});
+        },
         .chunked => {
             const bytes_len = byteCount(bytes);
             var offset: CaseOffset = 0;
             while (offset < bytes_len) {
                 const remaining = bytes_len - offset;
                 const count = chunkLen(rand, remaining, max_chunk_len);
-                try stream.nextSlice(bytes[@intCast(offset)..][0..@intCast(count)]);
+                try feedChecked(terminal, bytes[@intCast(offset)..][0..@intCast(count)]);
                 offset += count;
             }
         },
     }
+}
+
+fn feedChecked(
+    terminal: *Terminal,
+    bytes: []const u8,
+) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, StringControlLimit }!void {
+    const summary = try terminal.feed(bytes);
+    std.debug.assert(!summary.history_lost or summary.state_changed);
 }
 
 fn digestTerminal(terminal: *Terminal) VtDigest {

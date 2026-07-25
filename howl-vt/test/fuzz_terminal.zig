@@ -190,8 +190,7 @@ fn encodeMouse(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
     };
     var encoded = terminal.encodeInput(std.testing.allocator, &scratch, event) catch |err| switch (err) {
         error.ConsequenceLimit => {
-            const pending = try terminal.drainPendingOutput(std.testing.allocator);
-            std.testing.allocator.free(pending);
+            try terminal.consumeReplyBytes(terminal.replyBytes().len);
             var retry = try terminal.encodeInput(std.testing.allocator, &scratch, event);
             retry.deinit();
             return;
@@ -262,30 +261,29 @@ fn extractText(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
 }
 
 fn drainOutput(terminal: *howl_vt.Terminal) !void {
-    const previous = try terminal.drainPendingOutput(std.testing.allocator);
-    std.testing.allocator.free(previous);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     // CAN returns an arbitrary preceding byte history to parser ground.
     try feedHostile(terminal, "\x18\x1b[5n");
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, terminal.drainPendingOutput(failing.allocator()));
-    const output = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(output);
-    const empty = try terminal.drainPendingOutput(std.testing.allocator);
-    defer std.testing.allocator.free(empty);
-    try std.testing.expectEqual(@as(usize, 0), empty.len);
+    const retained = terminal.replyBytes().len;
+    try std.testing.expect(retained != 0);
+    try std.testing.expectError(
+        error.InvalidReplyCount,
+        terminal.consumeReplyBytes(retained + 1),
+    );
+    try std.testing.expectEqual(retained, terminal.replyBytes().len);
+    try terminal.consumeReplyBytes(retained);
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 }
 
 fn drainClipboard(terminal: *howl_vt.Terminal) !void {
-    const pending_output = try terminal.drainPendingOutput(std.testing.allocator);
-    std.testing.allocator.free(pending_output);
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
     while (terminal.consequenceHead()) |consequence| {
         const request = consequence.clipboard;
         switch (request.kind) {
             .set, .packet => try terminal.consumeConsequence(request.generation),
             .query => {
                 try std.testing.expect(try terminal.replyClipboard(request.generation, ""));
-                const reply = try terminal.drainPendingOutput(std.testing.allocator);
-                std.testing.allocator.free(reply);
+                try terminal.consumeReplyBytes(terminal.replyBytes().len);
             },
         }
     }
