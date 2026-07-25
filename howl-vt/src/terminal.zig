@@ -283,7 +283,7 @@ pub const Screen = struct {
     ///
     /// The caller owns the returned Screen and must call `deinit` unless it
     /// transfers ownership by swapping it into a Screen owner.
-    pub fn prepareResize(
+    fn prepareResize(
         self: *const Screen,
         allocator: std.mem.Allocator,
         rows: u16,
@@ -740,7 +740,7 @@ pub const Screen = struct {
     /// Clone retained, open, and visible content into one allocator-owned logical snapshot.
     ///
     /// Allocation failure releases partial clones and leaves this Screen unchanged.
-    pub fn collectLogicalSnapshot(
+    fn collectLogicalSnapshot(
         self: *const Screen,
         allocator: std.mem.Allocator,
     ) std.mem.Allocator.Error!LogicalSnapshot {
@@ -1116,7 +1116,7 @@ pub const Screen = struct {
     }
 
     /// Returns the oldest projected history row identity.
-    pub fn historyRowBase(self: *const Screen) u32 {
+    fn historyRowBase(self: *const Screen) u32 {
         return self.history_row_base;
     }
 
@@ -1391,7 +1391,7 @@ pub const Screen = struct {
     }
 
     /// Set the hyperlink identity copied into subsequent cells and report exact mutation.
-    pub fn setCurrentLinkId(self: *Screen, link_id: u32) bool {
+    fn setCurrentLinkId(self: *Screen, link_id: u32) bool {
         if (self.current_attrs.link_id == link_id) return false;
         self.current_attrs.link_id = link_id;
         return true;
@@ -1445,7 +1445,7 @@ pub const Screen = struct {
     }
 
     /// Clears visible cells and marks the complete screen dirty.
-    pub fn clearVisibleCells(self: *Screen) void {
+    fn clearVisibleCells(self: *Screen) void {
         if (self.cells) |cells| @memset(cells, blank_cell);
         if (self.row_flags) |flags| @memset(flags, 0);
     }
@@ -2955,7 +2955,7 @@ pub const Screen = struct {
     }
 
     /// Reject an inverted rectangle, then clamp it to the active origin bounds.
-    pub fn rectBounds(self: *const Screen, area: RectArea) ?RectBounds {
+    fn rectBounds(self: *const Screen, area: RectArea) ?RectBounds {
         if (self.rows == 0 or self.cols == 0) return null;
         if (area.bottom) |bottom| if (area.top > bottom) return null;
         if (area.right) |right| if (area.left > right) return null;
@@ -3685,21 +3685,21 @@ const LogicalLine = struct {
     cursor_offset: ?u32 = null,
 
     /// Release cloned cells and reset the line.
-    pub fn deinit(self: *LogicalLine, allocator: std.mem.Allocator) void {
+    fn deinit(self: *LogicalLine, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
         self.* = .{};
     }
 };
 
 /// Owned logical-content snapshot and cursor location used by resize.
-pub const LogicalSnapshot = struct {
+const LogicalSnapshot = struct {
     logical_lines: std.ArrayListUnmanaged(LogicalLine) = .empty,
     cursor_found: bool = false,
     cursor_line_index: u32 = 0,
     cursor_offset: u32 = 0,
 
     /// Release every cloned line and reset the snapshot.
-    pub fn deinit(self: *LogicalSnapshot, allocator: std.mem.Allocator) void {
+    fn deinit(self: *LogicalSnapshot, allocator: std.mem.Allocator) void {
         for (self.logical_lines.items) |*line| line.deinit(allocator);
         self.logical_lines.deinit(allocator);
         self.* = .{};
@@ -3711,7 +3711,7 @@ const HistoryLine = struct {
     cells: std.ArrayListUnmanaged(ScreenCell) = .empty,
 
     /// Releases a history line’s cell allocation.
-    pub fn deinit(self: *HistoryLine, allocator: std.mem.Allocator) void {
+    fn deinit(self: *HistoryLine, allocator: std.mem.Allocator) void {
         self.cells.deinit(allocator);
         self.* = .{};
     }
@@ -3794,7 +3794,7 @@ const RectCopy = struct {
 };
 
 /// Owned reflow rows, line projections, and projected cursor state.
-pub const ReflowState = struct {
+const ReflowState = struct {
     flat_rows: std.ArrayListUnmanaged(ScreenCell) = .empty,
     rewrapped: std.ArrayListUnmanaged(RewrappedRow) = .empty,
     line_row_starts: std.ArrayListUnmanaged(u32) = .empty,
@@ -3804,7 +3804,7 @@ pub const ReflowState = struct {
     next_wrap_pending: bool = false,
 
     /// Release every reflow allocation and reset the value.
-    pub fn deinit(self: *ReflowState, allocator: std.mem.Allocator) void {
+    fn deinit(self: *ReflowState, allocator: std.mem.Allocator) void {
         self.flat_rows.deinit(allocator);
         self.rewrapped.deinit(allocator);
         self.line_row_starts.deinit(allocator);
@@ -3823,7 +3823,7 @@ const ViewportState = struct {
 };
 
 /// Owned visible-grid buffers transferred together into a replacement Screen.
-pub const ResizeBuffers = struct {
+const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
     row_flags: ?[]u8,
     tab_stops: ?[]bool,
@@ -3835,7 +3835,7 @@ pub const ResizeBuffers = struct {
     };
 
     /// Release every owned buffer and reset the value.
-    pub fn deinit(self: *ResizeBuffers, allocator: std.mem.Allocator) void {
+    fn deinit(self: *ResizeBuffers, allocator: std.mem.Allocator) void {
         if (self.cells) |buf| allocator.free(buf);
         if (self.row_flags) |buf| allocator.free(buf);
         if (self.tab_stops) |buf| allocator.free(buf);
@@ -3843,7 +3843,7 @@ pub const ResizeBuffers = struct {
     }
 
     /// Transfer all buffers to one owner and leave this value empty.
-    pub fn take(self: *ResizeBuffers) ResizeBuffers {
+    fn take(self: *ResizeBuffers) ResizeBuffers {
         const owned = self.*;
         self.* = empty;
         return owned;
@@ -3853,7 +3853,7 @@ pub const ResizeBuffers = struct {
 /// Reflow one borrowed logical snapshot to allocator-owned rows without consuming it.
 ///
 /// Allocation failure releases partial output and leaves the snapshot reusable.
-pub fn reflowLogicalLines(
+fn reflowLogicalLines(
     allocator: std.mem.Allocator,
     lines: LogicalSnapshot,
     cols: u16,
@@ -4001,7 +4001,7 @@ fn projectViewport(logical_line_count: u32, reflow: ReflowState, rows: u16) View
 /// Allocate complete visible-grid replacement buffers for transfer to one Screen.
 ///
 /// Allocation failure releases every completed buffer and returns no owner.
-pub fn allocResizeBuffers(
+fn allocResizeBuffers(
     allocator: std.mem.Allocator,
     rows: u16,
     cols: u16,
@@ -4071,6 +4071,79 @@ fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, viewport: Viewp
     }
 
     std.debug.assert(src_row == viewport.visible_start + viewport.visible_rows_kept);
+}
+
+test "resize allocation owners release partial state and remain reusable" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, collectSnapshotAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, reflowAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeBuffersAllocation, .{});
+}
+
+fn collectSnapshotAllocation(allocator: std.mem.Allocator) !void {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+    screen.applyScreen(.{ .write_text = "ABCDEFGHIJ" });
+
+    var snapshot = screen.collectLogicalSnapshot(allocator) catch |err| {
+        var retry = try screen.collectLogicalSnapshot(std.testing.allocator);
+        retry.deinit(std.testing.allocator);
+        return err;
+    };
+    snapshot.deinit(allocator);
+}
+
+fn reflowAllocation(allocator: std.mem.Allocator) !void {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 4, 8);
+    defer screen.deinit(std.testing.allocator);
+    screen.applyScreen(.{ .write_text = "ABCDEFGHIJ" });
+    var snapshot = try screen.collectLogicalSnapshot(std.testing.allocator);
+    defer snapshot.deinit(std.testing.allocator);
+
+    var state = reflowLogicalLines(allocator, snapshot, 3) catch |err| {
+        var retry = try reflowLogicalLines(std.testing.allocator, snapshot, 3);
+        retry.deinit(std.testing.allocator);
+        return err;
+    };
+    state.deinit(allocator);
+}
+
+fn resizeBuffersAllocation(allocator: std.mem.Allocator) !void {
+    var buffers = allocResizeBuffers(allocator, 3, 5, null) catch |err| {
+        var retry = try allocResizeBuffers(std.testing.allocator, 3, 5, null);
+        retry.deinit(std.testing.allocator);
+        return err;
+    };
+    buffers.deinit(allocator);
+}
+
+fn canonicalLogicalStream(allocator: std.mem.Allocator, screen: *const Screen) ![]u21 {
+    var snapshot = try screen.collectLogicalSnapshot(allocator);
+    defer snapshot.deinit(allocator);
+
+    var lines: std.ArrayList(u21) = .empty;
+    defer lines.deinit(allocator);
+    for (snapshot.logical_lines.items) |line| {
+        try lines.append(allocator, 0);
+        for (line.cells.items) |cell| try lines.append(allocator, @intCast(cell.codepoint));
+    }
+    return lines.toOwnedSlice(allocator);
+}
+
+test "logical content survives reflow when projected history saturates" {
+    const allocator = std.testing.allocator;
+    var screen = try Screen.initWithCellsAndHistory(allocator, 2, 6, 4);
+    defer screen.deinit(allocator);
+
+    screen.applyScreen(.{ .write_text = "AAAAAA\nBBBBBB\nCCCCCC\nDDDDDD\nEEEEEE" });
+    const before = try canonicalLogicalStream(allocator, &screen);
+    defer allocator.free(before);
+
+    try screen.resize(allocator, 5, 3);
+    try std.testing.expectEqual(@as(u32, 4), screen.historyCount());
+
+    const after = try canonicalLogicalStream(allocator, &screen);
+    defer allocator.free(after);
+    try std.testing.expectEqualSlices(u21, before, after);
 }
 
 fn boundedCursorOffset(line: LogicalLine, has_cursor: bool, cursor_offset: u32) u32 {
@@ -9814,84 +9887,6 @@ const RowSource = union(enum) {
     screen: u16,
 };
 
-/// Borrows a unified history-and-screen viewport until screen-set mutation.
-pub const View = struct {
-    rows: u16,
-    cols: u16,
-    cursor_row: u16,
-    cursor_col: u16,
-    cursor_visible: bool,
-    cursor_shape: Screen.CursorShape,
-    cursor_blink: bool,
-    is_alternate_screen: bool,
-    history_offset: u32,
-    history_count: u32,
-    history_row_base: u32,
-    start: u32,
-    screen: *const Screen,
-
-    fn rowSource(self: *const View, row: u16) RowSource {
-        if (self.rows == 0 or row >= self.rows) return .{ .screen = 0 };
-        const src_row = self.start + rowIndex(row);
-        std.debug.assert(self.start + rowIndex(self.rows) <= self.history_count + rowIndex(self.rows));
-        std.debug.assert(src_row >= self.start);
-        std.debug.assert(src_row < self.history_count + rowIndex(self.rows));
-        if (src_row < self.history_count) return .{ .history = self.history_count - 1 - src_row };
-        return .{ .screen = @intCast(@min(src_row - self.history_count, rowIndex(self.rows -| 1))) };
-    }
-
-    /// Borrows one complete visible row until the terminal is mutated.
-    ///
-    /// `row` must be in bounds. History and active-screen storage remain
-    /// private; the returned cells share this view's mutation lifetime.
-    pub fn rowCells(self: *const View, row: u16) []const Terminal.Cell {
-        std.debug.assert(row < self.rows);
-        return switch (self.rowSource(row)) {
-            .history => |recency| self.screen.historyRowCells(recency),
-            .screen => |screen_row| self.screen.visibleRowCells(screen_row),
-        };
-    }
-
-    /// Returns a copied viewport cell or the default cell for invalid coordinates.
-    pub fn cellInfoAt(self: *const View, row: u16, col: u16) Screen.Cell {
-        if (self.rows == 0 or row >= self.rows or col >= self.cols) return Screen.default_cell;
-        return self.rowCells(row)[col];
-    }
-
-    /// Returns the codepoint of one visible cell.
-    pub fn cellAt(self: *const View, row: u16, col: u16) u21 {
-        return @intCast(self.cellInfoAt(row, col).codepoint);
-    }
-
-    /// Returns one visible row's DEC geometry without prescribing host scaling.
-    pub fn lineGeometry(self: *const View, row: u16) Screen.LineGeometry {
-        return switch (self.rowSource(row)) {
-            .history => |recency| self.screen.historyLineGeometry(recency),
-            .screen => |screen_row| self.screen.lineGeometry(screen_row),
-        };
-    }
-
-    /// Returns the display depth contributed by one visible row.
-    pub fn rowDepth(self: *const View, row: u16) u32 {
-        if (self.rows == 0 or row >= self.rows) return self.history_offset;
-        std.debug.assert(self.history_offset <= self.history_count);
-        return self.history_offset + rowIndex(self.rows - 1 - row);
-    }
-
-    /// Returns the first blank column after visible row content.
-    pub fn contentEndExclusive(self: *const View, row: u16) u16 {
-        if (self.history_offset == 0 and row > self.cursor_row) return 0;
-        var scan = self.cols;
-        while (scan > 0) {
-            const idx = scan - 1;
-            const cell = self.cellInfoAt(row, idx);
-            if (cell.codepoint != 0 and cell.codepoint != ' ') return scan;
-            scan -= 1;
-        }
-        return if (self.cols > 0) 1 else 0;
-    }
-};
-
 // Owns primary and alternate terminal screens.
 const Set = struct {
     primary: Screen,
@@ -9948,7 +9943,7 @@ const Set = struct {
 };
 
 /// Builds a borrowed viewport at a clamped scrollback offset.
-pub fn visibleView(screen_state: *const Set, history_offset: u32) View {
+fn visibleView(screen_state: *const Set, history_offset: u32) Terminal.SemanticView {
     const active = screen_state.activeConst();
     const history_count: u32 = if (screen_state.alt_active) 0 else active.historyCount();
     const offset = @min(history_offset, history_count);
@@ -9978,21 +9973,12 @@ pub fn visibleView(screen_state: *const Set, history_offset: u32) View {
 }
 
 /// Returns one history codepoint by recency.
-pub fn historyRowAt(screen_state: *const Set, history_idx: u32, col: u16) u21 {
-    if (screen_state.alt_active) return 0;
-    return screen_state.primary.historyRowAt(history_idx, col);
-}
-
 fn historyCellAt(screen_state: *const Set, history_idx: u32, col: u16) Screen.Cell {
     if (screen_state.alt_active) return Screen.default_cell;
     return screen_state.primary.historyCellAt(history_idx, col);
 }
 
 /// Returns the configured active-screen history row capacity.
-pub fn historyCapacity(screen_state: *const Set) u16 {
-    return screen_state.primary.historyCapacity();
-}
-
 fn rowIndex(row: u16) u32 {
     return row;
 }
@@ -13221,6 +13207,83 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
 
 /// Host-neutral terminal state and protocol engine.
 pub const Terminal = struct {
+    /// Borrows a unified history-and-screen viewport until terminal mutation.
+    pub const SemanticView = struct {
+        rows: u16,
+        cols: u16,
+        cursor_row: u16,
+        cursor_col: u16,
+        cursor_visible: bool,
+        cursor_shape: Screen.CursorShape,
+        cursor_blink: bool,
+        is_alternate_screen: bool,
+        history_offset: u32,
+        history_count: u32,
+        history_row_base: u32,
+        start: u32,
+        screen: *const Screen,
+
+        fn rowSource(self: *const SemanticView, row: u16) RowSource {
+            if (self.rows == 0 or row >= self.rows) return .{ .screen = 0 };
+            const src_row = self.start + rowIndex(row);
+            std.debug.assert(self.start + rowIndex(self.rows) <= self.history_count + rowIndex(self.rows));
+            std.debug.assert(src_row >= self.start);
+            std.debug.assert(src_row < self.history_count + rowIndex(self.rows));
+            if (src_row < self.history_count) return .{ .history = self.history_count - 1 - src_row };
+            return .{ .screen = @intCast(@min(src_row - self.history_count, rowIndex(self.rows -| 1))) };
+        }
+
+        /// Borrows one complete visible row until the terminal is mutated.
+        ///
+        /// `row` must be in bounds. History and active-screen storage remain
+        /// private; the returned cells share this view's mutation lifetime.
+        pub fn rowCells(self: *const SemanticView, row: u16) []const Cell {
+            std.debug.assert(row < self.rows);
+            return switch (self.rowSource(row)) {
+                .history => |recency| self.screen.historyRowCells(recency),
+                .screen => |screen_row| self.screen.visibleRowCells(screen_row),
+            };
+        }
+
+        /// Returns a copied viewport cell or the default cell for invalid coordinates.
+        pub fn cellInfoAt(self: *const SemanticView, row: u16, col: u16) Cell {
+            if (self.rows == 0 or row >= self.rows or col >= self.cols) return Screen.default_cell;
+            return self.rowCells(row)[col];
+        }
+
+        /// Returns the codepoint of one visible cell.
+        pub fn cellAt(self: *const SemanticView, row: u16, col: u16) u21 {
+            return @intCast(self.cellInfoAt(row, col).codepoint);
+        }
+
+        /// Returns one visible row's DEC geometry without prescribing host scaling.
+        pub fn lineGeometry(self: *const SemanticView, row: u16) Screen.LineGeometry {
+            return switch (self.rowSource(row)) {
+                .history => |recency| self.screen.historyLineGeometry(recency),
+                .screen => |screen_row| self.screen.lineGeometry(screen_row),
+            };
+        }
+
+        /// Returns the display depth contributed by one visible row.
+        pub fn rowDepth(self: *const SemanticView, row: u16) u32 {
+            if (self.rows == 0 or row >= self.rows) return self.history_offset;
+            std.debug.assert(self.history_offset <= self.history_count);
+            return self.history_offset + rowIndex(self.rows - 1 - row);
+        }
+
+        /// Returns the first blank column after visible row content.
+        pub fn contentEndExclusive(self: *const SemanticView, row: u16) u16 {
+            if (self.history_offset == 0 and row > self.cursor_row) return 0;
+            var scan = self.cols;
+            while (scan > 0) {
+                const idx = scan - 1;
+                const cell = self.cellInfoAt(row, idx);
+                if (cell.codepoint != 0 and cell.codepoint != ' ') return scan;
+                scan -= 1;
+            }
+            return if (self.cols > 0) 1 else 0;
+        }
+    };
     /// Identifies one cell in stable projected history-and-screen coordinates.
     pub const TextPoint = TerminalTextPoint;
     /// Identifies an inclusive text range supplied by the embedder.
@@ -14328,7 +14391,7 @@ pub const Terminal = struct {
     ///
     /// The offset is clamped to retained primary history. VT retains no
     /// viewport, follow, or scrolling intent.
-    pub fn semanticView(self: *const Terminal, history_offset: u32) View {
+    pub fn semanticView(self: *const Terminal, history_offset: u32) SemanticView {
         return visibleView(&self.screen_state, history_offset);
     }
 

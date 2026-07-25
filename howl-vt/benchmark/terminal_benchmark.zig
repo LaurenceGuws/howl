@@ -326,44 +326,6 @@ fn runMixedInteractiveWorkload(io: std.Io, base_allocator: std.mem.Allocator, ru
     return try summarizeObservations(base_allocator, "mixed_interactive", @as(u64, bursts_per_run) * count64(burst), observations);
 }
 
-fn runSnapshotWorkload(io: std.Io, base_allocator: std.mem.Allocator, fixture: []const u8, runs: RunCount) !WorkloadResult {
-    const copy_calls_per_run: RunCount = 200;
-    const observations = try base_allocator.alloc(RunObservation, @intCast(runs));
-    defer base_allocator.free(observations);
-
-    var i: RunCount = 0;
-    while (i < runs) : (i += 1) {
-        var counting = CountingAllocator.init(base_allocator);
-        var terminal = try terminal_mod.Terminal.initWithHistory(
-            counting.allocator(),
-            40,
-            120,
-            1_000,
-        );
-        defer terminal.deinit();
-        var stream = try StreamHarness.init(&terminal);
-        try stream.nextSlice(fixture);
-        counting.resetWindow();
-        const start = nowNs(io);
-        var j: RunCount = 0;
-        while (j < copy_calls_per_run) : (j += 1) {
-            var snap = try @import("../test/support/screen_capture.zig").Capture.captureFromScreen(
-                terminal.allocator,
-                terminal.screen_state.activeConst(),
-            );
-            snap.deinit();
-        }
-        const end = nowNs(io);
-        observations[@intCast(i)] = .{
-            .ns = end - start,
-            .alloc_count = counting.window_alloc_count,
-            .alloc_bytes = counting.window_alloc_bytes,
-            .peak_live_bytes = counting.window_peak_live_bytes,
-        };
-    }
-    return try summarizeObservations(base_allocator, "semantic_copy_opt_in", copy_calls_per_run, observations);
-}
-
 fn runReplayRecordWorkload(
     io: std.Io,
     base_allocator: std.mem.Allocator,
@@ -644,7 +606,6 @@ pub fn main(init: std.process.Init) !void {
         runs,
     );
     const mixed_result = try runMixedInteractiveWorkload(init.io, allocator, runs);
-    const snapshot_result = try runSnapshotWorkload(init.io, allocator, scroll_fixture, runs);
 
     const replay_fixtures = try loadReplayFixtures(init.io, allocator, options.replay_paths.items);
     defer deinitReplayFixtures(replay_fixtures);
@@ -662,7 +623,6 @@ pub fn main(init: std.process.Init) !void {
     printResult(scroll_with_history, options.format);
     printResult(scroll_with_default_history, options.format);
     printResult(mixed_result, options.format);
-    printResult(snapshot_result, options.format);
     for (replay_fixtures) |*fixture| {
         const result = try runReplayRecordWorkload(
             init.io,

@@ -1,7 +1,5 @@
 const std = @import("std");
 const dcs_payload = @import("../../src/terminal.zig");
-const screen_capture = @import("../support/screen_capture.zig");
-const screen_set = @import("../../src/terminal.zig");
 const selection = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
 const input_encode = @import("../../src/terminal.zig");
@@ -46,15 +44,8 @@ fn encodeFocusOut(terminal: *Terminal) []const u8 {
     return encoded.bytes;
 }
 
-fn visibleView(terminal: *const Terminal, history_offset: u32) screen_set.View {
-    return screen_set.visibleView(&terminal.screen_state, history_offset);
-}
-
-fn captureSnapshot(terminal: *const Terminal) !screen_capture.Capture {
-    return screen_capture.Capture.captureFromScreen(
-        terminal.allocator,
-        terminal.screen_state.activeConst(),
-    );
+fn visibleView(terminal: *const Terminal, history_offset: u32) Terminal.SemanticView {
+    return terminal.semanticView(history_offset);
 }
 
 fn write(stream: *StreamHarness, bytes: []const u8) void {
@@ -95,8 +86,10 @@ test "encodeMouse returns empty output and does not mutate state" {
 
     write(&stream, "HELLO");
 
-    var snap_before = try captureSnapshot(&terminal);
-    defer snap_before.deinit();
+    const view_before = terminal.semanticView(0);
+    const cursor_row_before = view_before.cursor_row;
+    const cursor_col_before = view_before.cursor_col;
+    const history_count_before = view_before.history_count;
 
     const mouse_event = input_mouse.MouseEvent{
         .kind = .press,
@@ -113,12 +106,10 @@ test "encodeMouse returns empty output and does not mutate state" {
     try std.testing.expectEqual(@as(usize, 0), output.len);
     try std.testing.expectEqualSlices(u8, "", output);
 
-    var snap_after = try captureSnapshot(&terminal);
-    defer snap_after.deinit();
-
-    try std.testing.expectEqual(snap_before.cursor_row, snap_after.cursor_row);
-    try std.testing.expectEqual(snap_before.cursor_col, snap_after.cursor_col);
-    try std.testing.expectEqual(snap_before.history_count, snap_after.history_count);
+    const view_after = terminal.semanticView(0);
+    try std.testing.expectEqual(cursor_row_before, view_after.cursor_row);
+    try std.testing.expectEqual(cursor_col_before, view_after.cursor_col);
+    try std.testing.expectEqual(history_count_before, view_after.history_count);
 }
 
 test "mouse reporting is gated by DECSET mouse modes and SGR protocol" {
@@ -1491,10 +1482,10 @@ test "window query replies require matching live intent and serialize transactio
         terminal.replyWindow(1, .{ .position = .{ .x = 1, .y = 2 } }),
     );
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
-    const sequence_before_reply = terminal.semantic_sequence;
+    const sequence_before_reply = terminal.semanticSequence();
     try terminal.replyWindow(1, .{ .state = .iconified });
     try std.testing.expectEqualStrings("\x1b[2t", pendingOutput(&terminal));
-    try std.testing.expect(terminal.semantic_sequence != sequence_before_reply);
+    try std.testing.expect(terminal.semanticSequence() != sequence_before_reply);
     try std.testing.expectEqual(@as(u64, 2), terminal.consequenceHead().?.window.generation);
     try std.testing.expectEqual(@as(u8, 1), terminal.consequenceCount());
     try std.testing.expectError(

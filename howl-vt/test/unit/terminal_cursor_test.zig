@@ -1,7 +1,6 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/terminal.zig");
 const screen_mod = @import("../../src/terminal.zig");
-const screen_set = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
@@ -12,8 +11,8 @@ fn active(terminal: *const Terminal) *const Screen {
     return terminal.screen_state.activeConst();
 }
 
-fn view(terminal: *const Terminal) screen_set.View {
-    return screen_set.visibleView(&terminal.screen_state, 0);
+fn view(terminal: *const Terminal) Terminal.SemanticView {
+    return terminal.semanticView(0);
 }
 
 test "terminal cursor: save restore is terminal-owned per active bank" {

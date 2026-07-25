@@ -1,5 +1,4 @@
 const std = @import("std");
-const screen_set = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
@@ -324,7 +323,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     const primary_history_count = terminal.screen_state.primary.historyCount();
     const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
     const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
-    const semantic_sequence_before = terminal.semantic_sequence;
+    const semantic_sequence_before = terminal.semanticSequence();
 
     terminal.resize(3, 3) catch |err| {
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
@@ -335,7 +334,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
         try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
         try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
         try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-        try std.testing.expectEqual(semantic_sequence_before, terminal.semantic_sequence);
+        try std.testing.expectEqual(semantic_sequence_before, terminal.semanticSequence());
         try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
         try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
@@ -355,7 +354,7 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
     try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
     try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semantic_sequence);
+    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
 }
 
 test "text extraction owns exact allocation and codepoint failures" {
@@ -500,12 +499,12 @@ test "terminal visible view projects scrollback rows" {
 
     try stream.nextSlice("aa\r\nbb\r\ncc");
 
-    const live = screen_set.visibleView(&vt.screen_state, 0);
+    const live = vt.semanticView(0);
     try std.testing.expectEqual(0, live.history_offset);
     try std.testing.expectEqual(@as(u21, 'b'), live.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'c'), live.cellAt(1, 0));
 
-    const scrolled = screen_set.visibleView(&vt.screen_state, 1);
+    const scrolled = vt.semanticView(1);
     try std.testing.expectEqual(1, scrolled.history_offset);
     try std.testing.expectEqual(@as(u21, 'a'), scrolled.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), scrolled.cellAt(1, 0));

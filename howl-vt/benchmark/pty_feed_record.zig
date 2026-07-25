@@ -1,5 +1,4 @@
 const std = @import("std");
-const screen_capture = @import("../test/support/screen_capture.zig");
 const terminal_mod = @import("../src/terminal.zig");
 const stream_harness = @import("../test/support/stream_harness.zig");
 
@@ -59,14 +58,6 @@ fn trimCr(line: []const u8) []const u8 {
     return line;
 }
 
-fn captureSnapshot(terminal: *const Terminal) !screen_capture.Capture {
-    return screen_capture.Capture.captureFromScreen(
-        terminal.allocator,
-        terminal.screen_state.activeConst(),
-        terminal.screen_state.activeSelectionConst().state(),
-    );
-}
-
 test "pty feed record parses chunk lines" {
     const gpa = std.testing.allocator;
     var record = try parse(
@@ -90,8 +81,6 @@ test "pty feed replay matches whole feed" {
     defer whole.deinit();
     var whole_stream = try StreamHarness.init(&whole);
     try whole_stream.nextSlice(fixture);
-    var whole_snap = try captureSnapshot(&whole);
-    defer whole_snap.deinit();
 
     var record = try parse(
         gpa,
@@ -105,14 +94,23 @@ test "pty feed replay matches whole feed" {
     var replayed = try Terminal.init(gpa, 4, 16);
     defer replayed.deinit();
     try replay(&replayed, &record);
-    var replay_snap = try captureSnapshot(&replayed);
-    defer replay_snap.deinit();
 
-    try std.testing.expectEqual(whole_snap.cursor_row, replay_snap.cursor_row);
-    try std.testing.expectEqual(whole_snap.cursor_col, replay_snap.cursor_col);
-    try std.testing.expectEqual(whole_snap.cursor_visible, replay_snap.cursor_visible);
-    try std.testing.expectEqual(whole_snap.auto_wrap, replay_snap.auto_wrap);
-    if (whole_snap.cells != null and replay_snap.cells != null) {
-        try std.testing.expectEqualSlices(u21, whole_snap.cells.?, replay_snap.cells.?);
+    const wrap_probe = "\r1234567890abcdef";
+    try std.testing.expect((try whole.feed(wrap_probe)).state_changed);
+    try std.testing.expect((try replayed.feed(wrap_probe)).state_changed);
+    try std.testing.expect((try whole.feed("Z")).state_changed);
+    try std.testing.expect((try replayed.feed("Z")).state_changed);
+
+    const whole_view = whole.semanticView(0);
+    const replay_view = replayed.semanticView(0);
+    try std.testing.expectEqual(whole_view.cursor_row, replay_view.cursor_row);
+    try std.testing.expectEqual(whole_view.cursor_col, replay_view.cursor_col);
+    try std.testing.expectEqual(whole_view.cursor_visible, replay_view.cursor_visible);
+    for (0..whole_view.rows) |row| {
+        try std.testing.expectEqualSlices(
+            Terminal.Cell,
+            whole_view.rowCells(@intCast(row)),
+            replay_view.rowCells(@intCast(row)),
+        );
     }
 }
