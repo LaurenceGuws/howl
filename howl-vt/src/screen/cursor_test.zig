@@ -1,12 +1,13 @@
+//! Proves cursor motion, margins, save state, and wrap semantics owned by Screen.
+
 const std = @import("std");
-const screen_mod = @import("../../../src/terminal.zig");
-const semantic_event = @import("../../../src/terminal.zig");
+const screen_mod = @import("../screen.zig");
 
 const Screen = screen_mod.Screen;
 const Grid = Screen;
-const SemanticEvent = semantic_event.SemanticEvent;
+const Action = screen_mod.Screen.Action;
 
-fn apply(screen: *Screen, event: SemanticEvent) void {
+fn apply(screen: *Screen, event: Action) void {
     screen.applyScreen(event);
 }
 
@@ -19,8 +20,8 @@ test "screen cursor: initial cursor at origin" {
 test "screen cursor: visibility and auto-wrap modes do not move cursor" {
     var s = Screen.init(2, 5);
     s.cursor.setPositionByClient(1, 4);
-    apply(&s, SemanticEvent{ .cursor_visible = false });
-    apply(&s, SemanticEvent{ .auto_wrap = false });
+    apply(&s, Action{ .cursor_visible = false });
+    apply(&s, Action{ .auto_wrap = false });
     try std.testing.expect(!s.cursor.visible);
     try std.testing.expect(!s.auto_wrap);
     try std.testing.expectEqual(@as(u16, 1), s.cursor.row);
@@ -30,29 +31,29 @@ test "screen cursor: visibility and auto-wrap modes do not move cursor" {
 test "screen cursor: origin mode makes cursor positioning relative to scroll region" {
     var s = Screen.init(6, 10);
     try std.testing.expect(s.setScrollRegion(2, 4));
-    apply(&s, SemanticEvent{ .origin_mode = true });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 0, .col = 1 } });
+    apply(&s, Action{ .origin_mode = true });
+    apply(&s, Action{ .cursor_position = .{ .row = 0, .col = 1 } });
     try std.testing.expectEqual(@as(u16, 2), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 1), s.cursor.col);
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
+    apply(&s, Action{ .cursor_position = .{ .row = 2, .col = 0 } });
     try std.testing.expectEqual(@as(u16, 4), s.cursor.row);
 }
 
 test "screen cursor: directional and absolute moves clamp correctly" {
     var s = Screen.init(24, 80);
     s.cursor.setRowByClient(5);
-    apply(&s, SemanticEvent{ .cursor_up = 3 });
+    apply(&s, Action{ .cursor_up = 3 });
     try std.testing.expectEqual(@as(u16, 2), s.cursor.row);
     s.cursor.setRowByClient(1);
-    apply(&s, SemanticEvent{ .cursor_up = 5 });
+    apply(&s, Action{ .cursor_up = 5 });
     try std.testing.expectEqual(@as(u16, 0), s.cursor.row);
     s.cursor.setRowByClient(20);
-    apply(&s, SemanticEvent{ .cursor_down = 10 });
+    apply(&s, Action{ .cursor_down = 10 });
     try std.testing.expectEqual(@as(u16, 23), s.cursor.row);
     s.cursor.setColByClient(75);
-    apply(&s, SemanticEvent{ .cursor_forward = 10 });
+    apply(&s, Action{ .cursor_forward = 10 });
     try std.testing.expectEqual(@as(u16, 79), s.cursor.col);
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 10, .col = 40 } });
+    apply(&s, Action{ .cursor_position = .{ .row = 10, .col = 40 } });
     try std.testing.expectEqual(@as(u16, 10), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 40), s.cursor.col);
 }
@@ -60,36 +61,36 @@ test "screen cursor: directional and absolute moves clamp correctly" {
 test "screen cursor: line-relative and axis-specific moves update the right fields" {
     var s = Grid.init(24, 80);
     s.cursor.setPositionByClient(5, 40);
-    apply(&s, SemanticEvent{ .cursor_next_line = 3 });
+    apply(&s, Action{ .cursor_next_line = 3 });
     try std.testing.expectEqual(@as(u16, 8), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), s.cursor.col);
     s.cursor.setPositionByClient(5, 40);
-    apply(&s, SemanticEvent{ .cursor_prev_line = 3 });
+    apply(&s, Action{ .cursor_prev_line = 3 });
     try std.testing.expectEqual(@as(u16, 2), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), s.cursor.col);
     s.cursor.setPositionByClient(12, 20);
-    apply(&s, SemanticEvent{ .cursor_horizontal_absolute = 7 });
+    apply(&s, Action{ .cursor_horizontal_absolute = 7 });
     try std.testing.expectEqual(@as(u16, 12), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 7), s.cursor.col);
-    apply(&s, SemanticEvent{ .cursor_vertical_absolute = 7 });
+    apply(&s, Action{ .cursor_vertical_absolute = 7 });
     try std.testing.expectEqual(@as(u16, 7), s.cursor.row);
     try std.testing.expectEqual(@as(u16, 7), s.cursor.col);
 }
 
 test "screen cursor: zero rows and primitive cursor controls do not panic" {
     var s = Screen.init(0, 0);
-    apply(&s, SemanticEvent{ .cursor_down = 5 });
-    apply(&s, SemanticEvent{ .cursor_forward = 5 });
+    apply(&s, Action{ .cursor_down = 5 });
+    apply(&s, Action{ .cursor_forward = 5 });
     try std.testing.expectEqual(@as(u16, 0), s.cursor.row);
 
     var t = Grid.init(4, 10);
     t.cursor.setPositionByClient(1, 7);
-    apply(&t, SemanticEvent.line_feed);
-    apply(&t, SemanticEvent.carriage_return);
+    apply(&t, Action.line_feed);
+    apply(&t, Action.carriage_return);
     try std.testing.expectEqual(@as(u16, 2), t.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), t.cursor.col);
     t.cursor.setColByClient(5);
-    apply(&t, SemanticEvent.backspace);
+    apply(&t, Action.backspace);
     try std.testing.expectEqual(@as(u16, 4), t.cursor.col);
 }
 
@@ -98,11 +99,11 @@ test "screen cursor: DECSCUSR override and default restore update semantic style
     s.setDefaultCursorStyle(.{ .shape = .underline, .blink = false });
     try std.testing.expectEqual(.underline, s.cursor.effective_shape);
     try std.testing.expect(!s.cursor.blink_intent);
-    apply(&s, SemanticEvent{ .cursor_style = .{ .program_override = .{ .shape = .bar, .blink = false } } });
+    apply(&s, Action{ .cursor_style = .{ .program_override = .{ .shape = .bar, .blink = false } } });
     try std.testing.expectEqual(.bar, s.cursor.effective_shape);
     try std.testing.expect(!s.cursor.blink_intent);
     try std.testing.expectEqual(@as(?Screen.CursorStyle, .{ .shape = .bar, .blink = false }), s.cursor.program_override_style);
-    apply(&s, SemanticEvent{ .cursor_style = .restore_default });
+    apply(&s, Action{ .cursor_style = .restore_default });
     try std.testing.expectEqual(.underline, s.cursor.effective_shape);
     try std.testing.expect(!s.cursor.blink_intent);
     try std.testing.expectEqual(@as(?Screen.CursorStyle, null), s.cursor.program_override_style);
@@ -112,13 +113,13 @@ test "screen cursor: client movement advances position_changed_by_client_at" {
     var s = Grid.init(4, 4);
     try std.testing.expectEqual(@as(u64, 0), s.cursor.position_changed_by_client_at);
 
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 2 } });
+    apply(&s, Action{ .cursor_position = .{ .row = 1, .col = 2 } });
     try std.testing.expectEqual(@as(u64, 1), s.cursor.position_changed_by_client_at);
 
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 2 } });
+    apply(&s, Action{ .cursor_position = .{ .row = 1, .col = 2 } });
     try std.testing.expectEqual(@as(u64, 1), s.cursor.position_changed_by_client_at);
 
-    apply(&s, SemanticEvent{ .cursor_forward = 1 });
+    apply(&s, Action{ .cursor_forward = 1 });
     try std.testing.expectEqual(@as(u64, 2), s.cursor.position_changed_by_client_at);
 }
 

@@ -106,15 +106,18 @@ protocol; it is not a host failure.
 - `src/howl_vt.zig` is the curated public package root.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
-- `src/terminal.zig` owns terminal composition, screens and history, semantic
-  application, modes, input encoding, replies, consequences, extraction,
-  resize, and reset.
+- `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,
+  retained history, logical-line retention, SGR application, and transactional
+  reflow. Its owner proofs live in `src/screen/`.
+- `src/terminal.zig` owns terminal composition, parser-to-screen narrowing,
+  modes, input encoding, replies, consequences, extraction, two-bank resize,
+  and reset.
 - `src/graphics.zig` owns bounded terminal images, animation frames, and
   cell-relative placements.
 - `src/sixel.zig` decodes bounded Sixel payloads into caller-owned pixels.
 
-The large `terminal.zig` owner is current source shape, not a promise that
-unrelated terminal domains will remain in one file.
+The remaining large `terminal.zig` owner is current source shape, not a promise
+that unrelated terminal domains will remain in one file.
 
 ## Acceptance proof
 

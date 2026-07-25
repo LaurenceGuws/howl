@@ -1,11 +1,12 @@
+//! Proves transactional screen resize and reflow semantics.
+
 const std = @import("std");
-const screen_mod = @import("../../../src/terminal.zig");
-const semantic_event = @import("../../../src/terminal.zig");
+const screen_mod = @import("../screen.zig");
 
 const Grid = screen_mod.Screen;
-const SemanticEvent = semantic_event.SemanticEvent;
+const Action = screen_mod.Screen.Action;
 
-fn apply(screen: *Grid, event: SemanticEvent) void {
+fn apply(screen: *Grid, event: Action) void {
     screen.applyScreen(event);
 }
 
@@ -38,14 +39,14 @@ test "screen resize: row-only resize preserves live bottom and restores from his
     var s = try Grid.initWithCellsAndHistory(gpa, 4, 4, 8);
     defer s.deinit(gpa);
 
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 0, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "AAAA" });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 1, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "BBBB" });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 2, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "CCCC" });
-    apply(&s, SemanticEvent{ .cursor_position = .{ .row = 3, .col = 0 } });
-    apply(&s, SemanticEvent{ .write_text = "PROM" });
+    apply(&s, Action{ .cursor_position = .{ .row = 0, .col = 0 } });
+    apply(&s, Action{ .write_text = "AAAA" });
+    apply(&s, Action{ .cursor_position = .{ .row = 1, .col = 0 } });
+    apply(&s, Action{ .write_text = "BBBB" });
+    apply(&s, Action{ .cursor_position = .{ .row = 2, .col = 0 } });
+    apply(&s, Action{ .write_text = "CCCC" });
+    apply(&s, Action{ .cursor_position = .{ .row = 3, .col = 0 } });
+    apply(&s, Action{ .write_text = "PROM" });
     s.cursor.setPositionByClient(3, 3);
 
     try s.resize(gpa, 2, 4);
@@ -73,7 +74,7 @@ test "screen resize: column resize reflows wrapped content into history and view
     var s = try Grid.initWithCellsAndHistory(gpa, 2, 4, 8);
     defer s.deinit(gpa);
 
-    apply(&s, SemanticEvent{ .write_text = "ABCDEFGHIJ" });
+    apply(&s, Action{ .write_text = "ABCDEFGHIJ" });
 
     try std.testing.expectEqual(@as(u32, 1), s.historyCount());
     try std.testing.expectEqual(@as(u21, 'A'), s.historyRowAt(0, 0));
@@ -104,7 +105,7 @@ test "screen resize: column resize preserves exact-fill cursor wrap state" {
     var s = try Grid.initWithCellsAndHistory(gpa, 1, 4, 4);
     defer s.deinit(gpa);
 
-    apply(&s, SemanticEvent{ .write_text = "ABCD" });
+    apply(&s, Action{ .write_text = "ABCD" });
 
     try std.testing.expect(s.wrap_pending);
     try std.testing.expectEqual(@as(u16, 0), s.cursor.row);
@@ -129,7 +130,7 @@ test "screen resize: projected history keeps the bounded tail of a hidden partia
     var s = try Grid.initWithCellsAndHistory(gpa, 2, 4, 2);
     defer s.deinit(gpa);
 
-    apply(&s, SemanticEvent{ .write_text = "ABCDEFGHIJ" });
+    apply(&s, Action{ .write_text = "ABCDEFGHIJ" });
     try s.resize(gpa, 1, 3);
 
     try std.testing.expectEqual(@as(u32, 2), s.historyCount());

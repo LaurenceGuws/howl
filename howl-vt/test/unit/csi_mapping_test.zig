@@ -1,5 +1,5 @@
 const std = @import("std");
-const erase = @import("../../src/terminal.zig");
+const erase = @import("../../src/screen.zig");
 const route = @import("../../src/terminal.zig");
 const semantic_event = @import("../../src/terminal.zig");
 const parser_mod = @import("../../src/parser.zig");

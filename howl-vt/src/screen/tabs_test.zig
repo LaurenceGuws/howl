@@ -1,35 +1,36 @@
+//! Proves terminal tab-stop state and motion owned by Screen.
+
 const std = @import("std");
-const screen_mod = @import("../../../src/terminal.zig");
-const semantic_event = @import("../../../src/terminal.zig");
+const screen_mod = @import("../screen.zig");
 
 const Grid = screen_mod.Screen;
-const SemanticEvent = semantic_event.SemanticEvent;
+const Action = screen_mod.Screen.Action;
 
-fn apply(screen: *Grid, event: SemanticEvent) void {
+fn apply(screen: *Grid, event: Action) void {
     screen.applyScreen(event);
 }
 
 test "screen tabs: default and counted tab moves clamp correctly" {
     var s = Grid.init(4, 20);
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 8), s.cursor.col);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 16), s.cursor.col);
     s.cursor.setColByClient(17);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 19), s.cursor.col);
     s.cursor.setColByClient(1);
-    apply(&s, SemanticEvent{ .horizontal_tab_forward = 2 });
+    apply(&s, Action{ .horizontal_tab_forward = 2 });
     try std.testing.expectEqual(@as(u16, 16), s.cursor.col);
     s.cursor.setColByClient(17);
-    apply(&s, SemanticEvent{ .horizontal_tab_forward = 2 });
+    apply(&s, Action{ .horizontal_tab_forward = 2 });
     try std.testing.expectEqual(@as(u16, 19), s.cursor.col);
     s.cursor.setColByClient(17);
-    apply(&s, SemanticEvent{ .horizontal_tab_back = 2 });
+    apply(&s, Action{ .horizontal_tab_back = 2 });
     try std.testing.expectEqual(@as(u16, 8), s.cursor.col);
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent{ .horizontal_tab_back = 2 });
+    apply(&s, Action{ .horizontal_tab_back = 2 });
     try std.testing.expectEqual(@as(u16, 0), s.cursor.col);
 }
 
@@ -39,24 +40,24 @@ test "screen tabs: HTS TBC and reset manage custom and default stops" {
     defer s.deinit(gpa);
 
     s.cursor.setColByClient(5);
-    apply(&s, SemanticEvent.horizontal_tab_set);
+    apply(&s, Action.horizontal_tab_set);
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 5), s.cursor.col);
 
-    apply(&s, SemanticEvent.tab_clear_current);
+    apply(&s, Action.tab_clear_current);
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 8), s.cursor.col);
 
-    apply(&s, SemanticEvent.tab_clear_all);
+    apply(&s, Action.tab_clear_all);
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 19), s.cursor.col);
 
     s.reset();
     s.cursor.setColByClient(3);
-    apply(&s, SemanticEvent.horizontal_tab);
+    apply(&s, Action.horizontal_tab);
     try std.testing.expectEqual(@as(u16, 8), s.cursor.col);
 
     s.cursor.setColByClient(8);
