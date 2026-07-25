@@ -11,6 +11,7 @@ test "public namespaces exactly match compile-time selection" {
         @hasDecl(render, "generated"),
     );
     try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal"));
+    try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal_images"));
     try std.testing.expectEqual(
         selected.terminal_text,
         @hasDecl(render, "terminal_text"),

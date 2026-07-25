@@ -43,7 +43,7 @@ pub const DecorationMetrics = struct {
     strike_height: u16,
 };
 
-/// Borrows one complete retained visual row and selects an inclusive dirty span.
+/// Borrows one complete retained visual row and selects an inclusive affected span.
 pub const RowInput = struct {
     /// Borrows the complete immutable row for the call.
     cells: []const terminal.Cell,

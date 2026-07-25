@@ -95,7 +95,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }) orelse return).module("howl_vt");
         const terminal = b.createModule(.{
-            .root_source_file = b.path("src/terminal.zig"),
+            .root_source_file = b.path("src/terminal_projection.zig"),
             .target = target,
             .optimize = optimize,
         });
@@ -103,6 +103,14 @@ pub fn build(b: *std.Build) void {
         terminal_module = terminal;
         module.addImport("terminal_projection", terminal);
         test_module.addImport("terminal_projection", terminal);
+        const images = b.createModule(.{
+            .root_source_file = b.path("src/image_projection.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        images.addImport("howl_vt", vt);
+        module.addImport("image_projection", images);
+        test_module.addImport("image_projection", images);
         const proofs = b.createModule(.{
             .root_source_file = b.path("src/terminal_test.zig"),
             .target = target,
