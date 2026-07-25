@@ -3,6 +3,15 @@
 const std = @import("std");
 const howl_vt = @import("howl_vt");
 
+fn encodeTyped(
+    terminal: *howl_vt.Terminal,
+    allocator: std.mem.Allocator,
+    scratch: *howl_vt.Terminal.InputScratch,
+    event: howl_vt.Terminal.InputEvent,
+) howl_vt.Terminal.InputError!howl_vt.Terminal.EncodedInput {
+    return terminal.encodeInput(allocator, scratch, event);
+}
+
 test "fragmented output mutates borrowed terminal state and retains replies" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
@@ -50,13 +59,50 @@ test "terminal modes determine key and paste encoding" {
     defer terminal.deinit();
     var scratch: howl_vt.Terminal.InputScratch = .{};
 
-    var key = try terminal.encodeInput(
+    const named: howl_vt.Terminal.NamedKey = .up;
+    const physical: howl_vt.Terminal.Key = .{ .named = named };
+    const event: howl_vt.Terminal.InputEvent = .{ .key = .{ .key = physical } };
+    var key: howl_vt.Terminal.EncodedInput = try encodeTyped(
+        &terminal,
         std.testing.allocator,
         &scratch,
-        .{ .key = .{ .key = .{ .named = .up } } },
+        event,
     );
     defer key.deinit();
     try std.testing.expectEqualStrings("\x1b[A", key.bytes);
+
+    const focus: howl_vt.Terminal.InputEvent = .{ .focus = .in };
+    var focus_result = try encodeTyped(&terminal, std.testing.allocator, &scratch, focus);
+    defer focus_result.deinit();
+    try std.testing.expectEqualStrings("", focus_result.bytes);
+
+    const mouse: howl_vt.Terminal.InputEvent = .{ .mouse = .{
+        .kind = .press,
+        .button = .left,
+        .row = 0,
+        .col = 0,
+        .mod = .{},
+        .buttons_down = 1,
+    } };
+    var mouse_result = try encodeTyped(&terminal, std.testing.allocator, &scratch, mouse);
+    defer mouse_result.deinit();
+    try std.testing.expectEqualStrings("", mouse_result.bytes);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1004h\x1b[?1000h\x1b[?1006h")).state_changed);
+    var focused = try encodeTyped(&terminal, std.testing.allocator, &scratch, focus);
+    defer focused.deinit();
+    try std.testing.expectEqualStrings("\x1b[I", focused.bytes);
+    var reported_mouse = try encodeTyped(&terminal, std.testing.allocator, &scratch, mouse);
+    defer reported_mouse.deinit();
+    try std.testing.expectEqualStrings("\x1b[<0;1;1M", reported_mouse.bytes);
+
+    try std.testing.expectError(
+        error.InvalidUtf8,
+        encodeTyped(&terminal, std.testing.allocator, &scratch, .{ .key = .{
+            .key = .{ .named = named },
+            .text = "\xff",
+        } }),
+    );
 
     try std.testing.expect((try terminal.feed("\x1b[?2004h")).state_changed);
     var paste = try terminal.encodeInput(
@@ -66,6 +112,13 @@ test "terminal modes determine key and paste encoding" {
     );
     defer paste.deinit();
     try std.testing.expectEqualStrings("\x1b[200~paste\x1b[201~", paste.bytes);
+
+    var no_storage: [0]u8 = .{};
+    var fixed = std.heap.FixedBufferAllocator.init(&no_storage);
+    try std.testing.expectError(
+        error.OutOfMemory,
+        encodeTyped(&terminal, fixed.allocator(), &scratch, .{ .paste = "paste" }),
+    );
 }
 
 test "resize changes emulator geometry and rejects zero dimensions" {

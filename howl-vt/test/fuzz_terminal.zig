@@ -191,7 +191,7 @@ fn encodeMouse(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
         },
     };
     var encoded = terminal.encodeInput(std.testing.allocator, &scratch, event) catch |err| switch (err) {
-        error.ConsequenceLimit, error.PropertyLimit, error.ReplyLimit => {
+        error.ReplyLimit => {
             try terminal.consumeReplyBytes(terminal.replyBytes().len);
             var retry = try terminal.encodeInput(std.testing.allocator, &scratch, event);
             retry.deinit();

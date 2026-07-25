@@ -1,5 +1,6 @@
 const std = @import("std");
 const terminal_mod = @import("../../src/terminal.zig");
+const input = @import("../../src/input.zig");
 const parser_mod = @import("../../src/parser.zig");
 const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
@@ -12,15 +13,15 @@ const expected_window_request_capacity: u8 = 32;
 const expected_metadata_bytes: usize = 1024;
 const expected_reply_bytes: usize = 64 * 1024;
 
-var encode_scratch: terminal_mod.Scratch = .{};
+var encode_scratch: Terminal.InputScratch = .{};
 
-fn encodeKey(terminal: *Terminal, key: terminal_mod.InputKey, mod: terminal_mod.Modifier) []const u8 {
+fn encodeKey(terminal: *Terminal, key: Terminal.Key, mod: input.Modifier) []const u8 {
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .key = .{ .key = key, .mods = mod } }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
 }
 
-fn encodeMouse(terminal: *Terminal, event: terminal_mod.MouseEvent) []const u8 {
+fn encodeMouse(terminal: *Terminal, event: input.MouseEvent) []const u8 {
     var encoded = terminal.encodeInput(std.testing.allocator, &encode_scratch, .{ .mouse = event }) catch unreachable;
     defer encoded.deinit();
     return encoded.bytes;
@@ -77,7 +78,7 @@ test "encodeMouse returns empty output and does not mutate state" {
     const cursor_col_before = view_before.cursor_col;
     const history_count_before = view_before.history_count;
 
-    const mouse_event = terminal_mod.MouseEvent{
+    const mouse_event = input.MouseEvent{
         .kind = .press,
         .button = .left,
         .row = 2,
@@ -104,7 +105,7 @@ test "mouse reporting is gated by DECSET mouse modes and SGR protocol" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    const mouse_event = terminal_mod.MouseEvent{
+    const mouse_event = input.MouseEvent{
         .kind = .press,
         .button = .left,
         .row = 2,
@@ -119,7 +120,7 @@ test "mouse reporting is gated by DECSET mouse modes and SGR protocol" {
     write(&stream, "\x1b[?1000h\x1b[?1006h");
     try std.testing.expectEqualStrings("\x1b[<0;4;3M", encodeMouse(&terminal, mouse_event));
 
-    const move_event = terminal_mod.MouseEvent{
+    const move_event = input.MouseEvent{
         .kind = .move,
         .button = .left,
         .row = 2,
@@ -133,7 +134,7 @@ test "mouse reporting is gated by DECSET mouse modes and SGR protocol" {
     write(&stream, "\x1b[?1002h");
     try std.testing.expectEqualStrings("\x1b[<32;4;3M", encodeMouse(&terminal, move_event));
     write(&stream, "\x1b[?1003h");
-    const hover_event = terminal_mod.MouseEvent{
+    const hover_event = input.MouseEvent{
         .kind = .move,
         .button = .none,
         .row = 1,
@@ -152,9 +153,9 @@ test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    const press = terminal_mod.MouseEvent{ .kind = .press, .button = .left, .row = 2, .col = 3, .mod = .{ .shift = true, .alt = true }, .buttons_down = 1 };
-    const release = terminal_mod.MouseEvent{ .kind = .release, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 };
-    const wheel = terminal_mod.MouseEvent{ .kind = .wheel, .button = .wheel_down, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 };
+    const press = input.MouseEvent{ .kind = .press, .button = .left, .row = 2, .col = 3, .mod = .{ .shift = true, .alt = true }, .buttons_down = 1 };
+    const release = input.MouseEvent{ .kind = .release, .button = .left, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 };
+    const wheel = input.MouseEvent{ .kind = .wheel, .button = .wheel_down, .row = 2, .col = 3, .mod = .{}, .buttons_down = 0 };
 
     write(&stream, "\x1b[?9h");
     try std.testing.expectEqualStrings("\x1b[M $#", encodeMouse(&terminal, press));
@@ -166,7 +167,7 @@ test "mouse reporting supports legacy x10 normal utf8 and urxvt encodings" {
     try std.testing.expectEqualStrings("\x1b[Ma$#", encodeMouse(&terminal, wheel));
 
     write(&stream, "\x1b[?1005h");
-    const far_press = terminal_mod.MouseEvent{ .kind = .press, .button = .left, .row = 240, .col = 240, .mod = .{}, .buttons_down = 1 };
+    const far_press = input.MouseEvent{ .kind = .press, .button = .left, .row = 240, .col = 240, .mod = .{}, .buttons_down = 1 };
     try std.testing.expectEqualStrings("\x1b[M \xc4\x91\xc4\x91", encodeMouse(&terminal, far_press));
 
     write(&stream, "\x1b[?1015h");
@@ -179,7 +180,7 @@ test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    const press = terminal_mod.MouseEvent{
+    const press = input.MouseEvent{
         .kind = .press,
         .button = .left,
         .row = 2,
@@ -187,7 +188,7 @@ test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
         .mod = .{ .shift = true, .alt = true },
         .buttons_down = 1,
     };
-    const release = terminal_mod.MouseEvent{
+    const release = input.MouseEvent{
         .kind = .release,
         .button = .left,
         .row = 2,
@@ -256,7 +257,7 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
     try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?1016")).state_changed);
     try std.testing.expect((try terminal.feed("h")).state_changed);
 
-    const pixel_press = terminal_mod.MouseEvent{
+    const pixel_press = input.MouseEvent{
         .kind = .press,
         .button = .left,
         .row = 1,
@@ -268,7 +269,7 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
     };
     try std.testing.expectEqualStrings("\x1b[<16;320;240M", encodeMouse(&terminal, pixel_press));
 
-    const missing_pixel = terminal_mod.MouseEvent{
+    const missing_pixel = input.MouseEvent{
         .kind = .press,
         .button = .left,
         .row = 1,
@@ -457,7 +458,7 @@ test "Kitty key events retain action alternates and bounded associated text" {
         &scratch,
         .{ .key = .{ .key = try Terminal.Key.initUnicode('a'), .text = "\xff" } },
     ));
-    const oversized = @as([(terminal_mod.max_text_bytes + 1)]u8, @splat('a'));
+    const oversized = @as([(input.max_text_bytes + 1)]u8, @splat('a'));
     try std.testing.expectError(error.KeyTextLimit, terminal.encodeInput(
         std.testing.allocator,
         &scratch,
@@ -645,39 +646,6 @@ test "Kitty key fields preserve empty alternates locks and committed text" {
             .legacy_text = "\x01",
             .text = "\x01",
         } },
-    ));
-
-    var exact: [terminal_mod.max_kitty_encoded_bytes]u8 = undefined;
-    const direct = try terminal_mod.encodeEvent(
-        &exact,
-        try Terminal.Key.initUnicode('a'),
-        .{},
-        .press,
-        null,
-        null,
-        "a",
-        "a",
-        false,
-        false,
-        0,
-        0,
-        31,
-    );
-    try std.testing.expect(direct.len <= exact.len);
-    try std.testing.expectError(error.EncodingLimit, terminal_mod.encodeEvent(
-        exact[0 .. terminal_mod.max_kitty_encoded_bytes - 1],
-        try Terminal.Key.initUnicode('a'),
-        .{},
-        .press,
-        null,
-        null,
-        "a",
-        "a",
-        false,
-        false,
-        0,
-        0,
-        31,
     ));
 
     write(&stream, "\x1b[=16u");
@@ -994,31 +962,6 @@ test "input mode category preserves encoding gates screen stacks and reset lifet
     try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
     try std.testing.expectEqualStrings("+", encodeKey(&terminal, .{ .named = .keypad_add }, .{}));
     try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
-}
-
-test "paste encoding distinguishes borrowed and owned results" {
-    const text = "paste";
-    var no_storage: [0]u8 = .{};
-    var fixed = std.heap.FixedBufferAllocator.init(&no_storage);
-
-    var plain = try terminal_mod.encodePaste(false, fixed.allocator(), text);
-    try std.testing.expectEqualStrings(text, plain.bytes);
-    try std.testing.expectEqual(text.ptr, plain.bytes.ptr);
-    try std.testing.expectEqual(@as(?std.mem.Allocator, null), plain.allocator);
-    plain.deinit();
-    try std.testing.expectEqualStrings("", plain.bytes);
-
-    try std.testing.expectError(
-        error.OutOfMemory,
-        terminal_mod.encodePaste(true, fixed.allocator(), text),
-    );
-
-    var bracketed = try terminal_mod.encodePaste(true, std.testing.allocator, text);
-    try std.testing.expectEqualStrings("\x1b[200~paste\x1b[201~", bracketed.bytes);
-    try std.testing.expect(bracketed.allocator != null);
-    bracketed.deinit();
-    try std.testing.expectEqualStrings("", bracketed.bytes);
-    try std.testing.expectEqual(@as(?std.mem.Allocator, null), bracketed.allocator);
 }
 
 test "report queries append pending host output" {
@@ -1693,7 +1636,7 @@ test "ANSI modes affect key encoding and insert writes" {
 
     try std.testing.expectEqualStrings("\r", encodeKey(&terminal, .{ .named = .enter }, .{}));
     write(&stream, "\x1b[20h\x1b[2h");
-    try std.testing.expectEqualStrings("", encodeKey(&terminal, try terminal_mod.InputKey.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("", encodeKey(&terminal, try Terminal.Key.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[2l");
     try std.testing.expectEqualStrings("\r\n", encodeKey(&terminal, .{ .named = .enter }, .{}));
@@ -1800,7 +1743,7 @@ test "locator ignores rows outside its retained coordinate domain" {
 
 test "locator mouse allocation failure is exact and preserves one-shot reporting" {
     const setup = "\x1b[2;0'z\x1b[1'*{";
-    const event: terminal_mod.MouseEvent = .{
+    const event: input.MouseEvent = .{
         .kind = .press,
         .button = .left,
         .row = 1,
@@ -1853,7 +1796,7 @@ test "locator mouse output limit is exact and preserves pending output" {
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
     defer allocator.free(fill);
 
-    const event: terminal_mod.MouseEvent = .{
+    const event: input.MouseEvent = .{
         .kind = .press,
         .button = .left,
         .row = 1,
@@ -2590,21 +2533,21 @@ test "modifyOtherKeys set query disable and encoding" {
 
     try std.testing.expectEqualStrings("\x1ba", encodeKey(
         &terminal,
-        try terminal_mod.InputKey.initUnicode('a'),
+        try Terminal.Key.initUnicode('a'),
         .{ .alt = true },
     ));
     write(&stream, "\x1b[>4;2m\x1b[?4m");
     try std.testing.expectEqualStrings("\x1b[>4;2m", pendingOutput(&terminal));
-    try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(&terminal, try terminal_mod.InputKey.initUnicode('a'), .{ .alt = true }));
-    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try terminal_mod.InputKey.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("\x1b[27;3;97~", encodeKey(&terminal, try Terminal.Key.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("a", encodeKey(&terminal, try Terminal.Key.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[>4;3m");
-    try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(&terminal, try terminal_mod.InputKey.initUnicode('a'), .{}));
+    try std.testing.expectEqualStrings("\x1b[27;1;97~", encodeKey(&terminal, try Terminal.Key.initUnicode('a'), .{}));
 
     write(&stream, "\x1b[>4n");
     try std.testing.expectEqualStrings("\x1ba", encodeKey(
         &terminal,
-        try terminal_mod.InputKey.initUnicode('a'),
+        try Terminal.Key.initUnicode('a'),
         .{ .alt = true },
     ));
 }
@@ -2617,7 +2560,7 @@ test "xterm key format query reset and other-key encoding" {
 
     write(&stream, "\x1b[>4;1f\x1b[?4g\x1b[>4;1m");
     try std.testing.expectEqualStrings("\x1b[>4;1f", pendingOutput(&terminal));
-    try std.testing.expectEqualStrings("\x1b[97;3u", encodeKey(&terminal, try terminal_mod.InputKey.initUnicode('a'), .{ .alt = true }));
+    try std.testing.expectEqualStrings("\x1b[97;3u", encodeKey(&terminal, try Terminal.Key.initUnicode('a'), .{ .alt = true }));
 
     write(&stream, "\x1b[>4f\x1b[?4g");
     try std.testing.expectEqualStrings("\x1b[>4;1f\x1b[>4;0f", pendingOutput(&terminal));
