@@ -10,7 +10,6 @@ const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
-const Screen = terminal_mod.Screen;
 const StreamHarness = stream_harness.Harness;
 
 const expected_color_preference_query_capacity: u8 = 16;
@@ -2490,7 +2489,7 @@ test "Kitty alternate-screen modes preserve banks and apply transition effects o
     try std.testing.expectEqual(@as(u21, 'A'), terminal.screen_state.alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.row);
     try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.alternate.cursor.col);
-    try std.testing.expectEqual(Screen.default_cell_attrs, terminal.screen_state.alternate.current_attrs);
+    try std.testing.expectEqual(Terminal.default_cell_attrs, terminal.screen_state.alternate.current_attrs);
     try std.testing.expect(!(try terminal.feed("\x1b[?47h")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
 

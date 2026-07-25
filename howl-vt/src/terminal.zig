@@ -13130,6 +13130,19 @@ test "discarded string controls stream without retaining payload bytes" {
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
 }
 
+test "xterm pointer mode retains the clamped protocol resource value" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
+    try std.testing.expect((try terminal.feed("\x1b[>2p")).state_changed);
+    try std.testing.expectEqual(@as(u2, 2), terminal.modes.pointer_mode);
+    try std.testing.expect((try terminal.feed("\x1b[>9p")).state_changed);
+    try std.testing.expectEqual(@as(u2, 3), terminal.modes.pointer_mode);
+    try std.testing.expect((try terminal.feed("\x1b[>p")).state_changed);
+    try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
+}
+
 const RestoredCursorInformation = struct {
     row: u16,
     col: u16,
@@ -13407,6 +13420,8 @@ pub const Terminal = struct {
     pub const Baseline = Screen.Baseline;
     /// Uses the canonical resolved cursor shape.
     pub const CursorShape = Screen.CursorShape;
+    /// Uses one row's DEC presentation geometry.
+    pub const LineGeometry = Screen.LineGeometry;
     /// Provides the canonical default terminal cell attributes.
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.

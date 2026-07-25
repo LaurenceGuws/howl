@@ -8,7 +8,7 @@ const parsed_events = @import("../../src/parser.zig");
 const Event = parsed_events.Event;
 const EraseMode = erase.ScreenEraseMode;
 const SemanticEvent = semantic_event.SemanticEvent;
-const Screen = @import("../../src/terminal.zig").Screen;
+const Terminal = semantic_event.Terminal;
 const process = route.process;
 const csi_max_params = parser_mod.max_params;
 const empty_params = @as([csi_max_params]i32, @splat(0));
@@ -303,10 +303,10 @@ test "csi mapping: cursor style, save restore aliases, and invalid sequence" {
     var sem = process(makeStyleChangeWithParamAndIntermediate('q', 0, ' ')).?;
     try std.testing.expect(sem.cursor_style == .restore_default);
     sem = process(makeStyleChangeWithParamAndIntermediate('q', 4, ' ')).?;
-    try std.testing.expectEqual(Screen.CursorShape.underline, sem.cursor_style.program_override.shape);
+    try std.testing.expectEqual(Terminal.CursorShape.underline, sem.cursor_style.program_override.shape);
     try std.testing.expect(!sem.cursor_style.program_override.blink);
     sem = process(makeStyleChangeWithParamAndIntermediate('q', 5, ' ')).?;
-    try std.testing.expectEqual(Screen.CursorShape.bar, sem.cursor_style.program_override.shape);
+    try std.testing.expectEqual(Terminal.CursorShape.bar, sem.cursor_style.program_override.shape);
     try std.testing.expect(sem.cursor_style.program_override.blink);
     try std.testing.expect(process(makeStyleChangeWithParamAndIntermediate('q', 7, ' ')) == null);
 }

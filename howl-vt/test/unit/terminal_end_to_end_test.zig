@@ -1,10 +1,8 @@
 const std = @import("std");
-const screen_mod = @import("../../src/terminal.zig");
 const terminal_mod = @import("../../src/terminal.zig");
 const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
-const Screen = screen_mod.Screen;
 const Terminal = terminal_mod.Terminal;
 const StreamHarness = stream_harness.Harness;
 
@@ -269,7 +267,7 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     try std.testing.expectEqual(@as(u21, 'c'), screen.cellAt(1, 2));
 
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#6WXYZ\x1b[3;2H")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
     const ech_cursor = screen.cursor;
     try std.testing.expect(!(try terminal.feed("\x1b[999")).state_changed);
     try std.testing.expect((try terminal.feed("X")).state_changed);
@@ -278,7 +276,7 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     for (1..4) |col| {
         try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, @intCast(col)));
     }
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
     try std.testing.expect((try terminal.feed("Q\x1b[3;2H\x1b[X")).state_changed);
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(2, 1));
     try std.testing.expect(!(try terminal.feed("\x1b[X")).state_changed);
@@ -288,8 +286,8 @@ test "terminal: erase families retain exact ranges protection geometry and mutat
     try std.testing.expectEqual(invalid_cursor, screen.cursor);
 
     try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b#6L\x1b[2;1Hline\x1b[2;3H\x1b[0J")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(2));
     try std.testing.expectEqual(@as(u21, 'l'), screen.cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'i'), screen.cellAt(1, 1));
     try std.testing.expectEqual(@as(u21, 0), screen.cellAt(1, 2));
@@ -752,7 +750,7 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
 
     try std.testing.expect((try terminal.feed("abcdef\x1b#6")).state_changed);
     var active = terminal.screen_state.activeConst();
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(0));
     try std.testing.expectEqual(@as(u16, 4), active.cursor.col);
     try std.testing.expectEqual(@as(u21, 0), active.cellAt(0, 5));
 
@@ -761,29 +759,29 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     try std.testing.expectEqual(@as(u21, 'X'), active.cellAt(0, 4));
     try std.testing.expect(active.wrap_pending);
     try std.testing.expect((try terminal.feed("\x1b[2K")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(0));
     try std.testing.expect((try terminal.feed("\x1b#5\x1b[99GZ")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, active.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, active.lineGeometry(0));
     try std.testing.expectEqual(@as(u21, 'Z'), active.cellAt(0, 9));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#6\x1b[3;1H\x1b#3\x1b[4;1H\x1b#4")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, active.lineGeometry(2));
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_bottom, active.lineGeometry(3));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, active.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, active.lineGeometry(3));
 
     try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[4;1H\x1bD")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, active.lineGeometry(1));
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_bottom, active.lineGeometry(2));
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, active.lineGeometry(3));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, active.lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_bottom, active.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, active.lineGeometry(3));
 
     try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b#5")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
     var surface = terminal.semanticView(0);
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, surface.lineGeometry(2));
     try terminal.resize(5, 12);
     surface = terminal.semanticView(0);
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, surface.lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[3;1H\x1b#3")).state_changed);
 
     const cursor_before_alignment = terminal.screen_state.activeConst().cursor;
@@ -795,15 +793,15 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     };
     try std.testing.expectEqual(cursor_before_alignment.row, terminal.screen_state.activeConst().cursor.row);
     try std.testing.expectEqual(cursor_before_alignment.col, terminal.screen_state.activeConst().cursor.col);
-    try std.testing.expectEqual(Screen.LineGeometry.double_height_top, surface.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_height_top, surface.lineGeometry(2));
 
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, terminal.screen_state.activeConst().lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, terminal.screen_state.activeConst().lineGeometry(2));
     try std.testing.expect(!(try terminal.feed("\x1b#6")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b[?69l\x1b#6\x1bc")).state_changed);
     for (0..terminal.screen_state.activeConst().rows) |row|
         try std.testing.expectEqual(
-            Screen.LineGeometry.single_width,
+            Terminal.LineGeometry.single_width,
             terminal.screen_state.activeConst().lineGeometry(@intCast(row)),
         );
 
@@ -812,12 +810,12 @@ test "terminal: DEC line geometry owns width movement scroll resize reset and vi
     try std.testing.expect((try history_terminal.feed("\x1b#6\x1b[3;1H\x1bD")).state_changed);
     try std.testing.expectEqual(@as(u32, 1), history_terminal.semanticView(0).history_count);
     try std.testing.expectEqual(
-        Screen.LineGeometry.double_width,
+        Terminal.LineGeometry.double_width,
         history_terminal.semanticView(history_terminal.semanticView(0).history_count).lineGeometry(0),
     );
     try history_terminal.resize(4, 12);
     surface = history_terminal.semanticView(0);
-    try std.testing.expectEqual(Screen.LineGeometry.single_width, surface.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.single_width, surface.lineGeometry(0));
 }
 
 test "terminal: DECALN owns exact retained grid and mutation truth" {
@@ -830,7 +828,7 @@ test "terminal: DECALN owns exact retained grid and mutation truth" {
     const cursor_before = active.cursor;
     const attrs_before = active.current_attrs;
     try std.testing.expect(active.rowWrapped(0));
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
 
     try std.testing.expect(!(try terminal.feed("\x1b#")).state_changed);
     try std.testing.expect((try terminal.feed("8")).state_changed);
@@ -838,7 +836,7 @@ test "terminal: DECALN owns exact retained grid and mutation truth" {
     try std.testing.expectEqual(cursor_before.col, active.cursor.col);
     try std.testing.expectEqual(@as(u16, 1), active.scroll_top);
     try std.testing.expectEqual(@as(u16, 2), active.scroll_bottom);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, active.lineGeometry(1));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, active.lineGeometry(1));
     try std.testing.expect(!active.rowWrapped(0));
     for (0..active.rows) |row| {
         const line_cols: usize = if (row == 1) 3 else 6;
@@ -875,7 +873,7 @@ test "terminal: resize resets physical geometry without reassigning it to reflow
         .{ 'L', 0, 0 },
     };
     for (expected, 0..) |row_cells, row| {
-        try std.testing.expectEqual(Screen.LineGeometry.single_width, view.lineGeometry(@intCast(row)));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(@intCast(row)));
         for (row_cells, 0..) |codepoint, col|
             try std.testing.expectEqual(codepoint, view.cellAt(@intCast(row), @intCast(col)));
     }
@@ -886,18 +884,18 @@ test "terminal: repeated DECLRMM set reports alternate-bank geometry reset" {
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("\x1b[?47h\x1b#6\x1b[?47l")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, terminal.screen_state.alternate.lineGeometry(0));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, terminal.screen_state.alternate.lineGeometry(0));
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
     try std.testing.expect(terminal.screen_state.alternate.left_right_margin_mode);
     try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
     try std.testing.expect(terminal.screen_state.activeConst().left_right_margin_mode);
     try std.testing.expectEqual(
-        Screen.LineGeometry.double_width,
+        Terminal.LineGeometry.double_width,
         terminal.screen_state.activeConst().lineGeometry(0),
     );
     try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
     try std.testing.expectEqual(
-        Screen.LineGeometry.single_width,
+        Terminal.LineGeometry.single_width,
         terminal.screen_state.activeConst().lineGeometry(0),
     );
 }
@@ -1153,7 +1151,7 @@ test "terminal: cursor origin margins own exact aliases geometry wrap and resize
     // Line geometry and horizontal margins are mutually exclusive; absolute aliases still
     // resolve vertical origin and clamp against the addressed row's logical width.
     try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[2;2H\x1b#6")).state_changed);
-    try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
+    try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
     try std.testing.expect((try terminal.feed("\x1b[2;999999f")).state_changed);
     try std.testing.expectEqual(@as(u16, 2), screen.cursor.row);
     try std.testing.expectEqual(@as(u16, 5), screen.cursor.col);
@@ -1171,7 +1169,7 @@ test "terminal: cursor origin margins own exact aliases geometry wrap and resize
     try std.testing.expect(screen.cursor.row < 4);
     try std.testing.expect(screen.cursor.col < 7);
     for (0..4) |row| try std.testing.expectEqual(
-        Screen.LineGeometry.single_width,
+        Terminal.LineGeometry.single_width,
         screen.lineGeometry(@intCast(row)),
     );
 }
@@ -1319,9 +1317,9 @@ test "terminal: SGR retains exact rendition and colon color state" {
     try std.testing.expect(set.invisible);
     try std.testing.expect(set.strikethrough);
     try std.testing.expect(set.underline);
-    try std.testing.expectEqual(Screen.UnderlineStyle.curly, set.underline_style);
-    try std.testing.expectEqual(Screen.Color.indexed(1), set.fg);
-    try std.testing.expectEqual(Screen.Color.indexed(4), set.bg);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.curly, set.underline_style);
+    try std.testing.expectEqual(Terminal.Color.indexed(1), set.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(4), set.bg);
 
     const cleared = screen.cellInfoAt(0, 1).attrs;
     try std.testing.expect(!cleared.bold);
@@ -1332,33 +1330,33 @@ test "terminal: SGR retains exact rendition and colon color state" {
     try std.testing.expect(!cleared.invisible);
     try std.testing.expect(!cleared.strikethrough);
     try std.testing.expect(!cleared.underline);
-    try std.testing.expectEqual(Screen.default_fg, cleared.fg);
-    try std.testing.expectEqual(Screen.default_cell_attrs.bg, cleared.bg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, cleared.fg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.bg, cleared.bg);
 
     const bright = screen.cellInfoAt(0, 2).attrs;
     try std.testing.expect(bright.underline);
-    try std.testing.expectEqual(Screen.UnderlineStyle.double, bright.underline_style);
-    try std.testing.expectEqual(Screen.Color.indexed(8), bright.fg);
-    try std.testing.expectEqual(Screen.Color.indexed(15), bright.bg);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.double, bright.underline_style);
+    try std.testing.expectEqual(Terminal.Color.indexed(8), bright.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(15), bright.bg);
 
     const semicolon = screen.cellInfoAt(0, 3).attrs;
-    try std.testing.expectEqual(Screen.Color.indexed(196), semicolon.fg);
-    try std.testing.expectEqual(Screen.Color.rgbComponents(1, 2, 3), semicolon.bg);
-    try std.testing.expectEqual(Screen.Color.indexed(45), semicolon.underline_color);
+    try std.testing.expectEqual(Terminal.Color.indexed(196), semicolon.fg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(1, 2, 3), semicolon.bg);
+    try std.testing.expectEqual(Terminal.Color.indexed(45), semicolon.underline_color);
 
     const colon = screen.cellInfoAt(0, 4).attrs;
-    try std.testing.expectEqual(Screen.Color.rgbComponents(10, 20, 30), colon.fg);
-    try std.testing.expectEqual(Screen.Color.indexed(200), colon.bg);
-    try std.testing.expectEqual(Screen.Color.rgbComponents(40, 50, 60), colon.underline_color);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(10, 20, 30), colon.fg);
+    try std.testing.expectEqual(Terminal.Color.indexed(200), colon.bg);
+    try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 50, 60), colon.underline_color);
 
     try std.testing.expect(!screen.cellInfoAt(0, 5).attrs.underline);
-    try std.testing.expectEqual(Screen.UnderlineStyle.straight, screen.cellInfoAt(0, 6).attrs.underline_style);
-    try std.testing.expectEqual(Screen.UnderlineStyle.double, screen.cellInfoAt(0, 7).attrs.underline_style);
-    try std.testing.expectEqual(Screen.UnderlineStyle.dotted, screen.cellInfoAt(1, 0).attrs.underline_style);
-    try std.testing.expectEqual(Screen.UnderlineStyle.dashed, screen.cellInfoAt(1, 1).attrs.underline_style);
-    try std.testing.expectEqual(Screen.UnderlineStyle.curly, screen.cellInfoAt(1, 2).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.straight, screen.cellInfoAt(0, 6).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.double, screen.cellInfoAt(0, 7).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dotted, screen.cellInfoAt(1, 0).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.dashed, screen.cellInfoAt(1, 1).attrs.underline_style);
+    try std.testing.expectEqual(Terminal.UnderlineStyle.curly, screen.cellInfoAt(1, 2).attrs.underline_style);
     try std.testing.expect(!screen.cellInfoAt(1, 3).attrs.blink);
-    try std.testing.expectEqual(Screen.default_fg, screen.cellInfoAt(1, 3).attrs.fg);
+    try std.testing.expectEqual(Terminal.default_cell_attrs.fg, screen.cellInfoAt(1, 3).attrs.fg);
 }
 
 test "terminal: SGR color mutation is exact fragmented and malformed-transactional" {
@@ -1465,7 +1463,7 @@ test "terminal: CSI grid edits clamp counts and preserve region boundaries" {
         )).history_lost);
         try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 0));
         try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 7));
-        try std.testing.expectEqual(Screen.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(0, 7).attrs.bg);
+        try std.testing.expectEqual(Terminal.Color.rgbComponents(40, 44, 52), screen.cellInfoAt(0, 7).attrs.bg);
         try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
     }
 
@@ -1535,7 +1533,7 @@ test "terminal: structural edits retain logical width row geometry and exact mut
         defer terminal.deinit();
         try std.testing.expect((try terminal.feed("\x1b[1;1HABCD\x1b[1;1H\x1b#6\x1b[1;2H\x1b[@")).state_changed);
         const screen = terminal.screen_state.active();
-        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(0));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(0));
         try std.testing.expectEqual(@as(u21, 'A'), screen.cellAt(0, 0));
         try std.testing.expectEqual(@as(u21, 0), screen.cellAt(0, 1));
         try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(0, 2));
@@ -1554,13 +1552,13 @@ test "terminal: structural edits retain logical width row geometry and exact mut
                 "\x1b[3;1HCCCCCCCC\x1b[4;1HDDDDDDDD\x1b[2;4r\x1b[2;1H\x1b[L",
         )).state_changed);
         const screen = terminal.screen_state.active();
-        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(1));
-        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(2));
-        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(3));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(1));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(2));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(3));
         try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b[M")).state_changed);
-        try std.testing.expectEqual(Screen.LineGeometry.double_width, screen.lineGeometry(1));
-        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(2));
-        try std.testing.expectEqual(Screen.LineGeometry.single_width, screen.lineGeometry(3));
+        try std.testing.expectEqual(Terminal.LineGeometry.double_width, screen.lineGeometry(1));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(2));
+        try std.testing.expectEqual(Terminal.LineGeometry.single_width, screen.lineGeometry(3));
         try std.testing.expectEqual(@as(u21, 'B'), screen.cellAt(1, 0));
         try std.testing.expectEqual(@as(u21, 'C'), screen.cellAt(2, 0));
         try std.testing.expectEqual(@as(u21, 0), screen.cellAt(3, 0));
@@ -1632,8 +1630,8 @@ test "terminal: OSC cursor colors route into semantic cursor owner" {
     try stream.nextSlice("\x1b]12;#010203\x1b\\\x1b]21;cursor_text=#040506\x1b\\");
 
     const cursor = terminal.screen_state.activeConst().cursor;
-    try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 1, .g = 2, .b = 3 }), cursor.cursor_color);
-    try std.testing.expectEqual(@as(?Screen.Rgb, .{ .r = 4, .g = 5, .b = 6 }), cursor.cursor_text_color);
+    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 1, .g = 2, .b = 3 }), cursor.cursor_color);
+    try std.testing.expectEqual(@as(?Terminal.Rgb, .{ .r = 4, .g = 5, .b = 6 }), cursor.cursor_text_color);
 }
 
 test "terminal: fragmented Kitty static graphics retains display and query is probe only" {

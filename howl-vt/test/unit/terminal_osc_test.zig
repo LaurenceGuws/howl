@@ -2,13 +2,10 @@ const std = @import("std");
 const terminal_mod = @import("../../src/terminal.zig");
 const parser_mod = @import("../../src/parser.zig");
 const reply_fill = @import("../support/reply_fill.zig");
-const screen_mod = @import("../../src/terminal.zig");
 const stream_harness = @import("../support/stream_harness.zig");
 
 const Terminal = terminal_mod.Terminal;
-const Screen = screen_mod.Screen;
-const Grid = Screen;
-const Rgb = Screen.Rgb;
+const Rgb = Terminal.Rgb;
 const StreamHarness = stream_harness.Harness;
 
 const expected_metadata_bytes: usize = 1024;
@@ -151,29 +148,27 @@ test "iTerm ClearScrollback clears only active screen state with exact repetitio
     defer terminal.deinit();
 
     try std.testing.expect((try terminal.feed("aaaa\r\nbbbb\r\ncccc")).state_changed);
-    try std.testing.expect(terminal.screen_state.primary.historyCount() > 0);
+    try std.testing.expect(terminal.semanticView(0).history_count > 0);
     const output_before = terminal.logicalOutputRange();
 
     try std.testing.expect((try terminal.feed("\x1b[?1049halt")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b]1337;ClearScrollback=ignored\x07")).state_changed);
-    try std.testing.expectEqual(@as(u21, 0), terminal.screen_state.alternate.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
     try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScrollback\x1b\\")).state_changed);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
-    try std.testing.expect(terminal.screen_state.primary.historyCount() > 0);
+    try std.testing.expect(terminal.semanticView(0).history_count > 0);
     try std.testing.expectEqual(output_before, terminal.logicalOutputRange());
     try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScro")).state_changed);
     try std.testing.expect((try terminal.feed("llback\x07")).state_changed);
-    try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.historyCount());
+    const cleared = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), cleared.history_count);
     try std.testing.expectEqual(output_before, terminal.logicalOutputRange());
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.cursor.row);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.cursor.col);
-    for (0..terminal.screen_state.primary.rows) |row| {
-        for (0..terminal.screen_state.primary.cols) |col| {
-            try std.testing.expectEqual(
-                @as(u21, 0),
-                terminal.screen_state.primary.cellAt(@intCast(row), @intCast(col)),
-            );
+    try std.testing.expectEqual(@as(u16, 0), cleared.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), cleared.cursor_col);
+    for (0..cleared.rows) |row| {
+        for (0..cleared.cols) |col| {
+            try std.testing.expectEqual(@as(u21, 0), cleared.cellAt(@intCast(row), @intCast(col)));
         }
     }
     try std.testing.expect(!(try terminal.feed("\x1b]1337;ClearScrollback\x07")).state_changed);
@@ -408,10 +403,10 @@ test "OSC 8 retains explicit identity separately from URI and exact active mutat
     try stream.nextSlice("\x1b]8;id=two;https://example.com\x1b\\b");
     try stream.nextSlice("\x1b]8;target=_blank:id=one;https://example.com\x07c");
 
-    const screen = terminal.screen_state.activeConst();
-    const first = screen.cellInfoAt(0, 0).attrs.link_id;
-    const second = screen.cellInfoAt(0, 1).attrs.link_id;
-    const third = screen.cellInfoAt(0, 2).attrs.link_id;
+    const view = terminal.semanticView(0);
+    const first = view.cellInfoAt(0, 0).attrs.link_id;
+    const second = view.cellInfoAt(0, 1).attrs.link_id;
+    const third = view.cellInfoAt(0, 2).attrs.link_id;
     try std.testing.expect(first != 0);
     try std.testing.expect(first != second);
     try std.testing.expectEqual(first, third);
@@ -434,9 +429,9 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
             "\x1b]1337;RemoteHost=user@host\x07" ++
             "\x1b]1337;ShellIntegrationVersion=20;shell=bash\x1b\\" ++
             "\x1b]133;A;prompt\x07" ++
-            "\x1b]8;id=docs;https://example.com\x07",
+            "\x1b]8;id=docs;https://example.com\x07X",
     )).state_changed);
-    const link_id = terminal.screen_state.primary.current_attrs.link_id;
+    const link_id = terminal.semanticView(0).cellInfoAt(0, 0).attrs.link_id;
     try std.testing.expect(link_id != 0);
 
     try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l")).state_changed);
@@ -448,7 +443,7 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
     try std.testing.expectEqual(@as(u32, 20), terminal.shellIntegration().?.version);
     try std.testing.expectEqualStrings("bash", terminal.shellIntegration().?.shell.?);
     try std.testing.expectEqual(@as(u64, 1), terminal.shellMark().generation);
-    try std.testing.expectEqual(link_id, terminal.screen_state.primary.current_attrs.link_id);
+    try std.testing.expectEqual(link_id, terminal.semanticView(0).cellInfoAt(0, 0).attrs.link_id);
 
     try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
     try std.testing.expectEqualStrings("name", terminal.title().?);
@@ -457,7 +452,7 @@ test "terminal metadata owns exact screen resize and reset lifetime" {
     try std.testing.expectEqualStrings("user@host", terminal.remoteHost().?);
     try std.testing.expectEqual(@as(u32, 20), terminal.shellIntegration().?.version);
     try std.testing.expectEqual(@as(u64, 1), terminal.shellMark().generation);
-    try std.testing.expectEqual(@as(u32, 0), terminal.screen_state.primary.current_attrs.link_id);
+    try std.testing.expectEqual(@as(u32, 0), terminal.semanticView(0).cellInfoAt(0, 0).attrs.link_id);
     try std.testing.expectEqualStrings("https://example.com", terminal.hyperlinkUri(link_id).?);
 }
 
@@ -1212,7 +1207,7 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     try std.testing.expect(summary.state_changed);
     const view = terminal.semanticView(0);
     const presentation = terminal.presentation();
-    try std.testing.expectEqual(Screen.CursorShape.bar, view.cursor_shape);
+    try std.testing.expectEqual(Terminal.CursorShape.bar, view.cursor_shape);
     try std.testing.expectEqual(@as(u32, 20), terminal.shellIntegration().?.version);
     try std.testing.expectEqualStrings("bash", terminal.shellIntegration().?.shell.?);
     try std.testing.expectEqual(Rgb{ .r = 0xaa, .g = 0xbb, .b = 0xcc }, presentation.foreground);
@@ -1238,7 +1233,7 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
     const osc_50 = try terminal.feed("\x1b]50;CursorShape=2\x07");
     try std.testing.expect(osc_50.state_changed);
     try std.testing.expectEqual(
-        Screen.CursorShape.underline,
+        Terminal.CursorShape.underline,
         terminal.semanticView(0).cursor_shape,
     );
     try std.testing.expect(!(try terminal.feed("\x1b]1337;CursorShape=2\x07")).state_changed);
@@ -1246,7 +1241,7 @@ test "iTerm safe controls mutate presentation metadata and exact replies" {
         "\x1b]1337;CursorShape=\x07\x1b]1337;CursorShape=x\x1b\\",
     )).state_changed);
     try std.testing.expectEqual(
-        Screen.CursorShape.underline,
+        Terminal.CursorShape.underline,
         terminal.semanticView(0).cursor_shape,
     );
 }
@@ -1279,7 +1274,7 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
     const accepted = try terminal.feed("\x1b]50;CursorShape=1\x07");
     try std.testing.expect(accepted.state_changed);
     try std.testing.expectEqual(
-        Screen.CursorShape.bar,
+        Terminal.CursorShape.bar,
         terminal.semanticView(0).cursor_shape,
     );
 }
@@ -1382,31 +1377,17 @@ test "OSC colors distinguish mutation query and malformed no-op" {
     try std.testing.expect(!iterm_malformed.state_changed);
 }
 
-test "xterm pointer mode stores bounded resource value" {
+test "kitty color stack OSC 30001 and 30101 restore colors" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
     var stream = try StreamHarness.init(&terminal);
 
-    try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
-    try stream.nextSlice("\x1b[>2p");
-    try std.testing.expectEqual(@as(u2, 2), terminal.modes.pointer_mode);
-
-    try stream.nextSlice("\x1b[>9p");
-    try std.testing.expectEqual(@as(u2, 3), terminal.modes.pointer_mode);
-
-    try stream.nextSlice("\x1b[>p");
-    try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
-}
-
-test "kitty color stack OSC 30001 and 30101 track depth" {
-    const allocator = std.testing.allocator;
-    var terminal = try Terminal.init(allocator, 3, 8);
-    defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
-
-    try stream.nextSlice("\x1b]30001\x1b\\\x1b]30001\x1b\\\x1b]30101\x1b\\");
-    try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
+    try stream.nextSlice(
+        "\x1b]21;foreground=#010203\x1b\\\x1b]30001\x1b\\" ++
+            "\x1b]21;foreground=#040506\x1b\\\x1b]30101\x1b\\",
+    );
+    try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
 }
 
 test "kitty OSC 21 sets queries and resets terminal colors" {
@@ -1551,10 +1532,6 @@ test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
             "\x1b]10;#070809;#0a0b0c;#0d0e0f\x1b\\" ++
             "\x1b]17;#101112;;#131415\x1b\\",
     )).state_changed);
-    try std.testing.expectEqual(
-        terminal.screen_state.primary.cursor.cursor_color,
-        terminal.screen_state.alternate.cursor.cursor_color,
-    );
     try std.testing.expect(!(try terminal.feed("\x1b]104;256;999;bad\x07")).state_changed);
 
     try std.testing.expect(!(try terminal.feed("\x1b]104;0;")).state_changed);
@@ -1570,8 +1547,6 @@ test "OSC palette and dynamic resets own exact bounds mutation and lifetime" {
     try std.testing.expectEqual(Terminal.default_presentation.foreground, colors.foreground);
     try std.testing.expectEqual(Terminal.default_presentation.background, colors.background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.cursor);
-    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
-    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
     try std.testing.expectEqual(@as(?Rgb, null), colors.selection_background);
     try std.testing.expectEqual(@as(?Rgb, null), colors.selection_foreground);
     try std.testing.expect(!(try terminal.feed(
@@ -1607,8 +1582,6 @@ test "OSC color set and query failure rolls back the complete command" {
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
-    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.primary.cursor.cursor_color);
-    try std.testing.expectEqual(@as(?Rgb, null), terminal.screen_state.alternate.cursor.cursor_color);
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
 }
 
@@ -1621,7 +1594,6 @@ test "kitty color stack restores terminal color snapshots" {
     try stream.nextSlice("\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b]30001\x1b\\");
     try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b]30101\x1b\\");
 
-    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
 }
@@ -1635,7 +1607,6 @@ test "kitty tui CSI save and restore colors use the same stack" {
     try stream.nextSlice("\x1b]21;foreground=#010203;1=#040506\x1b\\\x1b[#P");
     try stream.nextSlice("\x1b]21;foreground=#aabbcc;1=#ddeeff\x1b\\\x1b[#Q");
 
-    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
     try std.testing.expectEqual(Rgb{ .r = 4, .g = 5, .b = 6 }, terminal.presentation().palette[1]);
 }
@@ -1647,8 +1618,6 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
 
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#010203\x1b\\\x1b[3")).state_changed);
     try std.testing.expect((try terminal.feed("#P")).state_changed);
-    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
-    try std.testing.expectEqual(@as(u8, 3), terminal.kitty.color_stack.slot_count);
     try std.testing.expect(!(try terminal.feed("\x1b[3#P")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b[3#Q")).state_changed);
 
@@ -1656,7 +1625,6 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try std.testing.expectEqual(Rgb{ .r = 220, .g = 220, .b = 220 }, terminal.presentation().foreground);
     try std.testing.expect((try terminal.feed("\x1b[3#Q")).state_changed);
     try std.testing.expectEqual(Rgb{ .r = 1, .g = 2, .b = 3 }, terminal.presentation().foreground);
-    try std.testing.expectEqual(@as(u8, 0), terminal.kitty.color_stack.len);
 
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#212223\x1b\\\x1b[#P")).state_changed);
     try std.testing.expect((try terminal.feed("\x1b]21;foreground=#313233\x1b\\\x1b[#P")).state_changed);
@@ -1667,11 +1635,9 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
 
     try std.testing.expect((try terminal.feed("\x1b[3#Q\x1b[#Q")).state_changed);
     try std.testing.expectEqual(Rgb{ .r = 49, .g = 50, .b = 51 }, terminal.presentation().foreground);
-    try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
 
     const rejected = try terminal.feed("\x1b[11#P\x1b[11#Q");
     try std.testing.expect(!rejected.state_changed);
-    try std.testing.expectEqual(@as(u8, 1), terminal.kitty.color_stack.len);
 
     try std.testing.expect((try terminal.feed(
         "\x1bc" ++
@@ -1687,8 +1653,6 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
             "\x1b]21;foreground=#00000a\x1b\\\x1b]30001\x1b\\" ++
             "\x1b]21;foreground=#00000b\x1b\\\x1b]30001\x1b\\",
     )).state_changed);
-    try std.testing.expectEqual(@as(u8, 10), terminal.kitty.color_stack.len);
-    try std.testing.expectEqual(@as(u8, 10), terminal.kitty.color_stack.slot_count);
 
     try std.testing.expect((try terminal.feed(
         "\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\\x1b]30101\x1b\\" ++
