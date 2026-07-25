@@ -1,7 +1,7 @@
 # Howl protocol catalogue queries. Source this file; it never mutates persistent configuration.
 
 const protocol_root = (path self | path dirname)
-const protocol_catalogue = ($protocol_root | path join protocol_coverage.yml)
+const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
 export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
 export const protocol_owner = [howl-vt howl-host howl-control howl-render howl-pty]
@@ -22,18 +22,19 @@ export const protocol_cheatsheet = [
 def support-complete [] { $protocol_support }
 def disposition-complete [] { $protocol_disposition }
 def owner-complete [] { $protocol_owner }
-def reference-complete [] { open $protocol_catalogue | get references | columns | sort }
+def reference-complete [] { open $catalogue_path | get references | columns | sort }
 def id-complete [] { protocol records | get id }
+def load-catalogue [] { open $catalogue_path }
 
-def normalize-record [reference: string, revision: string, root: string, group: record, record: record] {
+def normalize-record [reference: string, revision: string, root: string, group_key: string, group: record, record_id: string, record: record] {
   let howl = ($record.howl? | default {})
   let support = ($howl.support? | default unassessed)
   let disposition = ($howl.disposition? | default (if $support == full { "none" } else { "active" }))
   {
-    id: $record.id
+    id: $record_id
     reference: $reference
     revision: $revision
-    group: ($group.symbol? | default "")
+    group: $group_key
     raw: ($record.raw? | default "")
     effect: ($record.effect? | default "")
     relevance: ($record.relevance? | default "")
@@ -45,7 +46,7 @@ def normalize-record [reference: string, revision: string, root: string, group: 
     rationale: ($howl.rationale? | default "")
     milestone: ($howl.milestone? | default "")
     reference_source: ($record.source? | default ($group.source? | default ""))
-    reference_symbol: ($record.symbol? | default ($group.symbol? | default ""))
+    reference_symbol: ($record.symbol? | default ($group.symbol? | default $group_key))
     reference_line: ($record.line? | default ($group.line? | default null))
     source: ($howl.source? | default "")
     symbol: ($howl.symbol? | default "")
@@ -54,15 +55,17 @@ def normalize-record [reference: string, revision: string, root: string, group: 
 }
 
 export def "protocol records" [] {
-  let catalogue = (open $protocol_catalogue)
+  let catalogue = (open $catalogue_path)
   $catalogue.references
   | transpose reference facts
   | each {|reference|
       $reference.facts.groups
+      | transpose group facts
       | each {|group|
-          $group.records
+          $group.facts.records
+          | transpose id record
           | each {|record|
-              normalize-record $reference.reference $reference.facts.revision $reference.facts.root $group $record
+              normalize-record $reference.reference $reference.facts.revision $reference.facts.root $group.group $group.facts $record.id $record.record
             }
         }
       | flatten
@@ -112,10 +115,10 @@ export def "protocol summary" [] {
 def diagnostic [id: string, rule: string, detail: string] { {id: $id, rule: $rule, detail: $detail} }
 
 export def "protocol validate" [--fail] {
-  let catalogue = (open $protocol_catalogue)
+  let catalogue = (load-catalogue)
   mut findings = []
-  if $catalogue.schema != 2 {
-    $findings = ($findings | append (diagnostic catalogue schema "schema must be 2"))
+  if $catalogue.schema != 3 {
+    $findings = ($findings | append (diagnostic catalogue schema "schema must be 3"))
   }
   if ($catalogue.howl_schema.support != $protocol_support
       or $catalogue.howl_schema.disposition != $protocol_disposition
@@ -126,23 +129,34 @@ export def "protocol validate" [--fail] {
     $findings = ($findings | append (diagnostic catalogue schema_values
       "catalogue enums and query completions differ"))
   }
+  let group_count = ($catalogue.references | transpose reference facts
+    | each {|reference| $reference.facts.groups | columns | length }
+    | math sum)
+  if $group_count != 34 {
+    $findings = ($findings | append (diagnostic catalogue group_count
+      $"expected 34 groups, found ($group_count)"))
+  }
   for reference in ($catalogue.references | transpose reference facts) {
-    for group in $reference.facts.groups {
-      if ($group.records | length) != $group.census.records {
-        $findings = ($findings | append (diagnostic $"($reference.reference).($group.symbol)" census
-          $"expected ($group.census.records) records, found ($group.records | length)"))
+    for group in ($reference.facts.groups | transpose group facts) {
+      if ($group.facts.records | columns | length) != $group.facts.census.semantic_branches {
+        $findings = ($findings | append (diagnostic $"($reference.reference).($group.group)" census
+          $"expected ($group.facts.census.semantic_branches) records, found ($group.facts.records | columns | length)"))
       }
-      for record in $group.records {
-        if ($record.howl.support? | default null) == null {
+      for record in ($group.facts.records | transpose id value) {
+        if ($record.value.howl.support? | default null) == null {
           $findings = ($findings | append (diagnostic $record.id explicit_support "howl.support is required"))
         }
-        if ($record.howl.disposition? | default active) == excluded and ($record.howl.owner? | default null) != null {
+        if ($record.value.howl.disposition? | default active) == excluded and ($record.value.howl.owner? | default null) != null {
           $findings = ($findings | append (diagnostic $record.id excluded_owner "excluded records omit owner"))
         }
       }
     }
   }
   let records = (protocol records)
+  if ($records | length) != 662 {
+    $findings = ($findings | append (diagnostic catalogue record_count
+      $"expected 662 records, found ($records | length)"))
+  }
   let duplicate_ids = ($records | group-by id --to-table | where ($it.items | length) != 1 | get id)
   for id in $duplicate_ids { $findings = ($findings | append (diagnostic $id duplicate_id "id must be unique")) }
   let record_ids = ($records | get id)
@@ -276,7 +290,10 @@ export def "protocol show" [id: string@id-complete] {
     $rows | first | transpose field value | table --theme compact --expand
   }
 }
-export def "protocol help" [] { $protocol_cheatsheet | each {|line| {command: $line} } | table --theme compact }
+export def "protocol help" [] {
+  let rows = ($protocol_cheatsheet | each {|line| {command: $line} })
+  $rows | table --theme compact
+}
 
 export alias pc = protocol
 export alias pcg = protocol gaps
