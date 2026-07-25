@@ -6,6 +6,7 @@ const graphics_mod = @import("graphics.zig");
 const sixel = @import("sixel.zig");
 const replies = @import("replies.zig");
 const properties = @import("properties.zig");
+const consequences = @import("consequences.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -22,6 +23,9 @@ const ScreenProtection = screen_mod.ScreenProtection;
 comptime {
     if (parser_mod.max_params > Screen.SgrOperands.capacity) {
         @compileError("parser SGR parameter bound exceeds Screen.SgrOperands capacity");
+    }
+    if (consequences.retained_packet_bytes_max != parser_mod.max_chunk_control_bytes) {
+        @compileError("retained packet bound must match parser chunk-control bound");
     }
 }
 
@@ -1754,39 +1758,9 @@ fn buttonsMask(buttons_down: u8) u16 {
     return mask;
 }
 
-const ClipboardRequestOwned = struct {
-    generation: u64,
-    raw: []u8,
-    selection_len: u8,
-    kind: ClipboardRequestKind,
-    protocol: ClipboardProtocol,
-
-    fn view(self: *const ClipboardRequestOwned) ClipboardRequestView {
-        return .{
-            .generation = self.generation,
-            .selection = self.raw[0..self.selection_len],
-            .payload = self.raw,
-            .kind = self.kind,
-            .protocol = self.protocol,
-        };
-    }
-};
-
-const ClipboardRequestKind = enum { set, query, packet };
-const ClipboardProtocol = enum { osc52, kitty_5522 };
-
-const ClipboardRequestView = struct {
-    /// Monotonic identity advancing for every accepted operation, including repeated bytes.
-    generation: u64,
-    /// Borrows exact OSC 52 selection bytes; empty selection leaves the choice to host policy.
-    selection: []const u8,
-    /// Borrows the exact protocol payload for host parsing and policy.
-    payload: []const u8,
-    /// Distinguishes OSC 52 replacement/query operations from one Kitty packet.
-    kind: ClipboardRequestKind,
-    /// Identifies the framing and semantics governing `payload`.
-    protocol: ClipboardProtocol,
-};
+const ClipboardRequestKind = consequences.ClipboardRequestKind;
+const ClipboardProtocol = consequences.ClipboardProtocol;
+const ClipboardRequestView = consequences.ClipboardRequestView;
 
 const ParsedClipboardRequest = struct {
     selection: []const u8,
@@ -1804,12 +1778,6 @@ const ApplyError = error{
     PropertyLimit,
 };
 
-/// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
-const clipboard_max_bytes: u32 = 1024 * 1024;
-/// One Kitty OSC 5522 packet follows the parser's encoded chunk boundary.
-const kitty_clipboard_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes;
-/// Bounds one ordered clipboard burst while the host applies access policy.
-const clipboard_capacity: u8 = 8;
 /// OSC 52 names four standard selections and eight numbered cut buffers.
 const clipboard_selection_bytes_max: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
@@ -1817,179 +1785,34 @@ const clipboard_reply_bytes_max: u32 =
     ((replies.max_bytes - clipboard_selection_bytes_max - 8) / 4) * 3;
 /// Bounds aggregate bytes retained across configuration, delegated transport, and host-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
-// Holds the nine-command Kitty family, three iTerm2 transports, and a bounded mixed-family burst.
-const dcs_payload_capacity: u8 = 16;
-// Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
-const string_payload_capacity: u8 = 32;
 /// Bounds one retained consequence payload owned by this composition state.
 const consequence_payload_max_bytes: u32 = 1024;
-// Bounds one notification, focus, or attention burst while a host applies policy.
-const notification_capacity: u8 = 8;
-const bell_capacity: u8 = 32;
-const legacy_control_capacity: u8 = 16;
-// Bounds one pointer-request burst while a host applies validation and presentation policy.
-const pointer_shape_capacity: u8 = 8;
 const pointer_shape_reply_max_bytes: u32 = (consequence_payload_max_bytes / 12) * 14 - 1;
-// Bounds one opaque file-transfer burst while its host applies policy and storage.
-const file_transfer_capacity: u8 = 8;
-const file_transfer_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes;
 // Owns the latest bounded OSC 133 shell mark.
 const ShellMark = properties.ShellMark;
 
-/// Identifies one ordered host-neutral notification consequence.
-pub const NotificationKind = enum {
-    message,
-    steal_focus,
-    request_attention,
-};
+/// Projects the consequence owner's notification classification.
+pub const NotificationKind = consequences.NotificationKind;
+/// Projects the consequence owner's borrowed notification view.
+pub const Notification = consequences.Notification;
 
-/// Borrows one host-neutral notification, focus, or attention occurrence until terminal mutation.
-pub const Notification = struct {
-    /// Monotonic identity advancing for every accepted occurrence, including repeated values.
-    generation: u64,
-    /// Selects message presentation, focus admission, or attention policy.
-    kind: NotificationKind,
-    /// Original OSC command identifying the protocol family.
-    command: u16,
-    /// Raw bounded message body or attention argument; interpretation belongs to the host.
-    payload: []const u8,
-};
+/// Projects the consequence owner's borrowed pointer-shape request.
+pub const PointerShapeRequest = consequences.PointerShapeRequest;
 
-// Owns one bounded notification-consequence queue slot without allocation.
-const NotificationOwned = struct {
-    generation: u64,
-    kind: NotificationKind,
-    command: u16,
-    payload_len: u16,
-    payload: [consequence_payload_max_bytes]u8,
-
-    fn view(self: *const NotificationOwned) Notification {
-        return .{
-            .generation = self.generation,
-            .kind = self.kind,
-            .command = self.command,
-            .payload = self.payload[0..self.payload_len],
-        };
-    }
-};
-
-/// Borrows one raw OSC 22 pointer-shape request until terminal mutation.
-pub const PointerShapeRequest = struct {
-    /// Monotonic identity advancing for every accepted request, including repeated bytes.
-    generation: u64,
-    /// Orders this request against terminal resets that clear both stacks.
-    reset_generation: u64,
-    /// Retains the screen bank active when this ordered request was accepted.
-    alternate_screen: bool,
-    /// Raw bounded shape, stack operation, or query; interpretation and replies belong to the host.
-    payload: []const u8,
-};
-
-// Owns one bounded pointer-request queue slot without allocation.
-const PointerShapeOwned = struct {
-    generation: u64,
-    reset_generation: u64,
-    alternate_screen: bool,
-    payload_len: u16,
-    payload: [consequence_payload_max_bytes]u8,
-
-    fn view(self: *const PointerShapeOwned) PointerShapeRequest {
-        return .{
-            .generation = self.generation,
-            .reset_generation = self.reset_generation,
-            .alternate_screen = self.alternate_screen,
-            .payload = self.payload[0..self.payload_len],
-        };
-    }
-};
-
-/// Identifies the opaque file-transfer grammar governing one retained packet.
-pub const FileTransferProtocol = enum { iterm2_1337, kitty_5113 };
-
-/// Borrows one ordered file-transfer packet until terminal mutation.
-pub const FileTransferPacket = struct {
-    /// Monotonic identity advancing for every retained packet, including repeated bytes.
-    generation: u64,
-    /// Selects the protocol whose host layer interprets `payload`.
-    protocol: FileTransferProtocol,
-    /// Preserves the exact bounded command payload without executing host policy.
-    payload: []const u8,
-};
-
-const FileTransferPacketOwned = struct {
-    generation: u64,
-    protocol: FileTransferProtocol,
-    payload: []u8,
-
-    fn view(self: *const FileTransferPacketOwned) FileTransferPacket {
-        return .{ .generation = self.generation, .protocol = self.protocol, .payload = self.payload };
-    }
-};
+/// Projects the consequence owner's file-transfer protocol identity.
+pub const FileTransferProtocol = consequences.FileTransferProtocol;
+/// Projects the consequence owner's borrowed file-transfer packet.
+pub const FileTransferPacket = consequences.FileTransferPacket;
 
 const drag_drop_capacity: u8 = 16;
 const drag_drop_packet_max_bytes: u32 = 4096;
 const drag_drop_aggregate_max_bytes: u32 = 32 * 1024;
 const drag_drop_data_max_bytes: u32 = 3072;
 
-/// Classifies one syntactically valid Kitty OSC 72 command from the child.
-pub const DragDropCommandKind = enum {
-    enable,
-    disable,
-    accept,
-    request,
-    complete,
-    query,
-    continuation,
-    unsupported,
-};
-
-/// Borrows one ordered, parsed Kitty OSC 72 command until terminal mutation.
-pub const DragDropCommandView = struct {
-    /// Monotonic occurrence identity never reused during one terminal lifetime.
-    generation: u64,
-    /// Selects the supported incoming-drop command or an explicitly unsupported family.
-    kind: DragDropCommandKind,
-    /// Preserves the protocol type byte for exact unsupported-family policy.
-    command: u8,
-    /// Retains Kitty's optional multiplexer identity.
-    client_id: ?u32,
-    /// Retains the chunk continuation flag.
-    more: bool,
-    /// Retains the requested or completed operation.
-    operation: ?u2,
-    /// Retains the one-based offered MIME index for a data request.
-    index: ?u32,
-    /// Reports a remote-file or directory request excluded from Howl policy.
-    remote: bool,
-    /// Borrows the exact bounded payload bytes.
-    payload: []const u8,
-};
-
-const DragDropCommandOwned = struct {
-    generation: u64,
-    kind: DragDropCommandKind,
-    command: u8,
-    client_id: ?u32,
-    more: bool,
-    operation: ?u2,
-    index: ?u32,
-    remote: bool,
-    payload: []u8,
-
-    fn view(self: *const DragDropCommandOwned) DragDropCommandView {
-        return .{
-            .generation = self.generation,
-            .kind = self.kind,
-            .command = self.command,
-            .client_id = self.client_id,
-            .more = self.more,
-            .operation = self.operation,
-            .index = self.index,
-            .remote = self.remote,
-            .payload = self.payload,
-        };
-    }
-};
+/// Projects the consequence owner's drag-and-drop classification.
+pub const DragDropCommandKind = consequences.DragDropCommandKind;
+/// Projects the consequence owner's borrowed drag-and-drop command.
+pub const DragDropCommandView = consequences.DragDropCommandView;
 
 /// Selects one bounded Kitty OSC 72 error returned to the child.
 pub const DragDropError = enum {
@@ -2026,55 +1849,17 @@ pub const DragDropEventValue = union(enum) {
     failure: struct { client_id: ?u32, index: ?u32, reason: DragDropError },
 };
 
-/// Names one host-neutral request from the child to manipulate its containing window.
-pub const WindowRequest = union(enum) {
-    deiconify,
-    iconify,
-    move: struct { x: u32, y: u32 },
-    resize_pixels: struct { height: u32, width: u32 },
-    raise,
-    lower,
-    resize_rows: u8,
-    resize_columns: enum(u8) { columns_80 = 80, columns_132 = 132 },
-    resize_cells: struct { rows: u32, cols: u32 },
-    report_state,
-    report_position,
-    report_screen_cells,
-    report_icon_title,
-};
+/// Projects the consequence owner's window-request vocabulary.
+pub const WindowRequest = consequences.WindowRequest;
 
-// Bounds one FIFO burst while a host applies policy or supplies query facts.
-const window_request_capacity: u8 = 32;
+/// Projects the consequence owner's borrowed window request.
+pub const WindowRequestOccurrence = consequences.WindowRequestOccurrence;
 
-/// Borrows one accepted window request until head consumption.
-pub const WindowRequestOccurrence = struct {
-    /// Monotonic identity advancing for every accepted request, including repeated values.
-    generation: u64,
-    /// Exact bounded operation and arguments; execution and authorization belong to the host.
-    request: WindowRequest,
-};
+/// Projects the consequence owner's media-copy request.
+pub const MediaCopyRequest = consequences.MediaCopyRequest;
 
-// Bounds one burst of identical host color-preference queries without allocation.
-const color_preference_query_capacity: u8 = 16;
-
-/// Preserves one ANSI or DEC media-copy command for host printing policy.
-pub const MediaCopyRequest = struct {
-    /// Distinguishes `CSI ? Ps i` from the ordinary ANSI command.
-    private: bool,
-    /// Retains the exact bounded scalar parameter accepted from the child.
-    parameter: u16,
-};
-
-// Bounds one print-command burst while a host performs potentially slow policy.
-const media_copy_capacity: u8 = 8;
-
-/// Borrows one accepted media-copy command until its queue head is consumed.
-pub const MediaCopyOccurrence = struct {
-    /// Monotonic identity advancing for every command, including repeated values.
-    generation: u64,
-    /// Exact command family and parameter retained for host interpretation.
-    request: MediaCopyRequest,
-};
+/// Projects the consequence owner's borrowed media-copy occurrence.
+pub const MediaCopyOccurrence = consequences.MediaCopyOccurrence;
 
 /// Supplies one host-owned fact requested by a retained window query.
 pub const WindowReply = union(enum) {
@@ -2093,12 +1878,6 @@ const WorkingDirectoryReport = properties.WorkingDirectory;
 const TitleStackEffect = properties.TitleStackEffect;
 
 comptime {
-    std.debug.assert(notification_capacity > 0);
-    std.debug.assert(pointer_shape_capacity > 0);
-    std.debug.assert(file_transfer_capacity > 0);
-    std.debug.assert(clipboard_capacity > 0);
-    std.debug.assert(@sizeOf(NotificationOwned) <= consequence_payload_max_bytes + 16);
-    std.debug.assert(@sizeOf(PointerShapeOwned) <= consequence_payload_max_bytes + 24);
     std.debug.assert(dcs_payload_max_bytes <= replies.max_bytes);
     std.debug.assert(clipboard_reply_bytes_max < replies.max_bytes);
 }
@@ -2117,560 +1896,6 @@ fn hyperlinkCount(items: []const HyperlinkTarget) u32 {
 // Borrows one parsed OSC 8 hyperlink until the parser dispatch returns.
 const HyperlinkSpec = properties.HyperlinkSpec;
 const HyperlinkTarget = properties.HyperlinkTarget;
-
-/// Retains bounded terminal consequences for later embedder inspection.
-///
-/// `allocator` is borrowed for the ProtocolState lifetime and owns every retained
-/// allocation; caller-selected drain allocators own only returned buffers.
-const ProtocolState = struct {
-    // Heap-backed consequences are bounded before allocation. Configuration,
-    // delegated transport, and host-directed DCS families share count and aggregate-byte bounds.
-    const DcsPayloadOwned = struct {
-        generation: u64,
-        kind: DcsPayloadKind,
-        payload: []u8,
-
-        fn view(self: *const DcsPayloadOwned) DcsPayloadOccurrence {
-            return .{ .generation = self.generation, .kind = self.kind, .payload = self.payload };
-        }
-    };
-
-    const StringPayloadOwned = struct {
-        generation: u64,
-        kind: StringPayloadKind,
-        payload: []u8,
-
-        fn view(self: *const StringPayloadOwned) StringPayloadOccurrence {
-            return .{ .generation = self.generation, .kind = self.kind, .payload = self.payload };
-        }
-    };
-
-    allocator: std.mem.Allocator,
-    properties: properties.State,
-    reply_buffer: replies.Buffer,
-    consequence_generation: u64 = 0,
-    clipboard_requests: [clipboard_capacity]ClipboardRequestOwned = undefined,
-    clipboard_requests_start: u8 = 0,
-    clipboard_requests_count: u8 = 0,
-    clipboard_retained_bytes: u32 = 0,
-    notifications: [notification_capacity]NotificationOwned = undefined,
-    notifications_start: u8 = 0,
-    notifications_count: u8 = 0,
-    pointer_shape_reset_generation: u64 = 1,
-    pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
-    pointer_shapes_start: u8 = 0,
-    pointer_shapes_count: u8 = 0,
-    file_transfer_packets: [file_transfer_capacity]FileTransferPacketOwned = undefined,
-    file_transfer_start: u8 = 0,
-    file_transfer_count: u8 = 0,
-    drag_drop_commands: [drag_drop_capacity]DragDropCommandOwned = undefined,
-    drag_drop_start: u8 = 0,
-    drag_drop_count: u8 = 0,
-    drag_drop_retained_bytes: u32 = 0,
-    window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
-    window_requests_start: u8 = 0,
-    window_requests_count: u8 = 0,
-    color_preference_queries: [color_preference_query_capacity]u64 = undefined,
-    color_preference_query_start: u8 = 0,
-    color_preference_query_count: u8 = 0,
-    media_copy_requests: [media_copy_capacity]MediaCopyOccurrence = undefined,
-    media_copy_start: u8 = 0,
-    media_copy_count: u8 = 0,
-    bells: [bell_capacity]u64 = undefined,
-    bells_start: u8 = 0,
-    bells_count: u8 = 0,
-    legacy_controls: [legacy_control_capacity]LegacyControlOccurrence = undefined,
-    legacy_controls_start: u8 = 0,
-    legacy_controls_count: u8 = 0,
-    locator: Locator = .{},
-    dcs_payloads: [dcs_payload_capacity]DcsPayloadOwned = undefined,
-    dcs_payloads_start: u8 = 0,
-    dcs_payloads_count: u8 = 0,
-    dcs_retained_bytes: u32 = 0,
-    string_payloads: [string_payload_capacity]StringPayloadOwned = undefined,
-    string_payloads_start: u8 = 0,
-    string_payloads_count: u8 = 0,
-    string_retained_bytes: u32 = 0,
-
-    /// Initialize empty consequence state borrowing `allocator` until deinit.
-    fn init(allocator: std.mem.Allocator) ProtocolState {
-        return .{
-            .allocator = allocator,
-            .properties = properties.State.init(allocator),
-            .reply_buffer = replies.Buffer.init(allocator),
-        };
-    }
-
-    fn nextConsequenceId(self: *const ProtocolState) ApplyError!u64 {
-        return std.math.add(u64, self.consequence_generation, 1) catch
-            error.ConsequenceLimit;
-    }
-
-    fn commitConsequenceId(self: *ProtocolState, id: u64) void {
-        std.debug.assert(id == self.consequence_generation + 1);
-        self.consequence_generation = id;
-    }
-
-    /// Release every retained allocation through the initializer allocator.
-    fn deinit(self: *ProtocolState) void {
-        self.properties.deinit();
-        for (0..self.clipboard_requests_count) |offset| {
-            const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
-            self.allocator.free(self.clipboard_requests[index].raw);
-        }
-        for (0..self.file_transfer_count) |offset| {
-            const index = (@as(usize, self.file_transfer_start) + offset) % file_transfer_capacity;
-            self.allocator.free(self.file_transfer_packets[index].payload);
-        }
-        for (0..self.drag_drop_count) |offset| {
-            const index = (@as(usize, self.drag_drop_start) + offset) % drag_drop_capacity;
-            self.allocator.free(self.drag_drop_commands[index].payload);
-        }
-        for (0..self.dcs_payloads_count) |offset| {
-            const index = (@as(usize, self.dcs_payloads_start) + offset) % dcs_payload_capacity;
-            self.allocator.free(self.dcs_payloads[index].payload);
-        }
-        for (0..self.string_payloads_count) |offset| {
-            const index = (@as(usize, self.string_payloads_start) + offset) % string_payload_capacity;
-            self.allocator.free(self.string_payloads[index].payload);
-        }
-        self.reply_buffer.deinit();
-    }
-
-    /// Reset host-observed state governed by terminal reset.
-    fn resetTerminalState(self: *ProtocolState) void {
-        self.locator = .{};
-        advanceIdentity(&self.pointer_shape_reset_generation);
-        self.properties.resetTerminal();
-    }
-
-    /// Borrow pending terminal reply bytes until the next ProtocolState mutation.
-    fn replyBytes(self: *const ProtocolState) []const u8 {
-        return self.reply_buffer.bytes();
-    }
-
-    /// Retain one notification, focus, or attention occurrence without choosing host policy.
-    fn retainNotification(
-        self: *ProtocolState,
-        kind: NotificationKind,
-        command: u16,
-        payload: []const u8,
-    ) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
-        if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const index = (self.notifications_start + self.notifications_count) % notification_capacity;
-        const slot = &self.notifications[index];
-        @memcpy(slot.payload[0..payload.len], payload);
-        self.commitConsequenceId(occurrence_id);
-        slot.generation = occurrence_id;
-        slot.kind = kind;
-        slot.command = command;
-        slot.payload_len = @intCast(payload.len);
-        self.notifications_count += 1;
-    }
-
-    /// Retain one OSC 22 request without selecting a host pointer or answering queries.
-    fn retainPointerShape(
-        self: *ProtocolState,
-        payload: []const u8,
-        alternate_screen: bool,
-    ) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
-        if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const index = (self.pointer_shapes_start + self.pointer_shapes_count) % pointer_shape_capacity;
-        const slot = &self.pointer_shapes[index];
-        @memcpy(slot.payload[0..payload.len], payload);
-        self.commitConsequenceId(occurrence_id);
-        slot.generation = occurrence_id;
-        slot.reset_generation = self.pointer_shape_reset_generation;
-        slot.alternate_screen = alternate_screen;
-        slot.payload_len = @intCast(payload.len);
-        self.pointer_shapes_count += 1;
-    }
-
-    // Retain one opaque packet only after every queue and allocation bound succeeds.
-    fn retainFileTransfer(self: *ProtocolState, protocol: FileTransferProtocol, payload: []const u8) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), file_transfer_packet_max_bytes);
-        if (self.file_transfer_count == file_transfer_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const owned = try self.allocator.dupe(u8, payload);
-        const index = (self.file_transfer_start + self.file_transfer_count) % file_transfer_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.file_transfer_packets[index] = .{
-            .generation = occurrence_id,
-            .protocol = protocol,
-            .payload = owned,
-        };
-        self.file_transfer_count += 1;
-    }
-
-    fn fileTransferHead(self: *const ProtocolState) ?FileTransferPacket {
-        if (self.file_transfer_count == 0) return null;
-        return self.file_transfer_packets[self.file_transfer_start].view();
-    }
-
-    fn consumeFileTransfer(self: *ProtocolState) void {
-        std.debug.assert(self.file_transfer_count > 0);
-        const packet = &self.file_transfer_packets[self.file_transfer_start];
-        self.allocator.free(packet.payload);
-        self.file_transfer_start = (self.file_transfer_start + 1) % file_transfer_capacity;
-        self.file_transfer_count -= 1;
-    }
-
-    fn retainDragDrop(self: *ProtocolState, command: ParsedDragDrop) ApplyError!void {
-        try ensureRetainedBound(byteCount(command.payload), drag_drop_packet_max_bytes);
-        if (self.drag_drop_count == drag_drop_capacity) return error.ConsequenceLimit;
-        const retained = std.math.add(
-            u32,
-            self.drag_drop_retained_bytes,
-            @intCast(command.payload.len),
-        ) catch return error.ConsequenceLimit;
-        if (retained > drag_drop_aggregate_max_bytes) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const payload = try self.allocator.dupe(u8, command.payload);
-        const index = (self.drag_drop_start + self.drag_drop_count) % drag_drop_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.drag_drop_commands[index] = .{
-            .generation = occurrence_id,
-            .kind = command.kind,
-            .command = command.command,
-            .client_id = command.client_id,
-            .more = command.more,
-            .operation = command.operation,
-            .index = command.index,
-            .remote = command.remote,
-            .payload = payload,
-        };
-        self.drag_drop_count += 1;
-        self.drag_drop_retained_bytes = retained;
-    }
-
-    fn dragDropHead(self: *const ProtocolState) ?DragDropCommandView {
-        if (self.drag_drop_count == 0) return null;
-        return self.drag_drop_commands[self.drag_drop_start].view();
-    }
-
-    fn consumeDragDrop(self: *ProtocolState) void {
-        std.debug.assert(self.drag_drop_count > 0);
-        const command = &self.drag_drop_commands[self.drag_drop_start];
-        std.debug.assert(command.payload.len <= self.drag_drop_retained_bytes);
-        self.drag_drop_retained_bytes -= @intCast(command.payload.len);
-        self.allocator.free(command.payload);
-        self.drag_drop_start = (self.drag_drop_start + 1) % drag_drop_capacity;
-        self.drag_drop_count -= 1;
-    }
-
-    /// Retain one window request occurrence without executing host policy.
-    fn retainWindowRequest(self: *ProtocolState, request: WindowRequest) ApplyError!void {
-        if (self.window_requests_count == window_request_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        self.commitConsequenceId(occurrence_id);
-        const index = (self.window_requests_start + self.window_requests_count) % window_request_capacity;
-        self.window_requests[index] = .{ .generation = occurrence_id, .request = request };
-        self.window_requests_count += 1;
-    }
-
-    fn windowRequestHead(self: *const ProtocolState) ?WindowRequestOccurrence {
-        if (self.window_requests_count == 0) return null;
-        return self.window_requests[self.window_requests_start];
-    }
-
-    fn consumeWindowRequestHead(self: *ProtocolState) void {
-        std.debug.assert(self.window_requests_count > 0);
-        self.window_requests_start = (self.window_requests_start + 1) % window_request_capacity;
-        self.window_requests_count -= 1;
-    }
-
-    fn retainColorPreferenceQuery(self: *ProtocolState) ApplyError!void {
-        if (self.color_preference_query_count == color_preference_query_capacity)
-            return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        self.commitConsequenceId(occurrence_id);
-        const index = (self.color_preference_query_start + self.color_preference_query_count) %
-            color_preference_query_capacity;
-        self.color_preference_queries[index] = occurrence_id;
-        self.color_preference_query_count += 1;
-    }
-
-    fn colorPreferenceQueryGeneration(self: *const ProtocolState) ?u64 {
-        if (self.color_preference_query_count == 0) return null;
-        return self.color_preference_queries[self.color_preference_query_start];
-    }
-
-    fn consumeColorPreferenceQuery(self: *ProtocolState) void {
-        std.debug.assert(self.color_preference_query_count > 0);
-        self.color_preference_query_start =
-            (self.color_preference_query_start + 1) % color_preference_query_capacity;
-        self.color_preference_query_count -= 1;
-    }
-
-    fn retainMediaCopy(self: *ProtocolState, request: MediaCopyRequest) ApplyError!void {
-        if (self.media_copy_count == media_copy_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        self.commitConsequenceId(occurrence_id);
-        const index = (self.media_copy_start + self.media_copy_count) % media_copy_capacity;
-        self.media_copy_requests[index] = .{ .generation = occurrence_id, .request = request };
-        self.media_copy_count += 1;
-    }
-
-    fn mediaCopyHead(self: *const ProtocolState) ?MediaCopyOccurrence {
-        if (self.media_copy_count == 0) return null;
-        return self.media_copy_requests[self.media_copy_start];
-    }
-
-    fn consumeMediaCopy(self: *ProtocolState) void {
-        std.debug.assert(self.media_copy_count > 0);
-        self.media_copy_start = (self.media_copy_start + 1) % media_copy_capacity;
-        self.media_copy_count -= 1;
-    }
-
-    fn notificationView(self: *const ProtocolState) ?Notification {
-        if (self.notifications_count == 0) return null;
-        return self.notifications[self.notifications_start].view();
-    }
-
-    fn consumeNotification(self: *ProtocolState) void {
-        std.debug.assert(self.notifications_count > 0);
-        self.notifications_start = (self.notifications_start + 1) % notification_capacity;
-        self.notifications_count -= 1;
-    }
-
-    fn pointerShapeView(self: *const ProtocolState) ?PointerShapeRequest {
-        if (self.pointer_shapes_count == 0) return null;
-        return self.pointer_shapes[self.pointer_shapes_start].view();
-    }
-
-    fn consumePointerShape(self: *ProtocolState) void {
-        std.debug.assert(self.pointer_shapes_count > 0);
-        self.pointer_shapes_start = (self.pointer_shapes_start + 1) % pointer_shape_capacity;
-        self.pointer_shapes_count -= 1;
-    }
-
-    /// Retain one BEL occurrence without choosing an audible or visual policy.
-    fn ringBell(self: *ProtocolState) ApplyError!void {
-        if (self.bells_count == bell_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const index = (self.bells_start + self.bells_count) % bell_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.bells[index] = occurrence_id;
-        self.bells_count += 1;
-    }
-
-    fn bellHead(self: *const ProtocolState) ?u64 {
-        if (self.bells_count == 0) return null;
-        return self.bells[self.bells_start];
-    }
-
-    fn consumeBell(self: *ProtocolState) void {
-        std.debug.assert(self.bells_count > 0);
-        self.bells_start = (self.bells_start + 1) % bell_capacity;
-        self.bells_count -= 1;
-    }
-
-    fn retainLegacyControl(self: *ProtocolState, kind: LegacyControlKind) ApplyError!void {
-        if (self.legacy_controls_count == legacy_control_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const index = (self.legacy_controls_start + self.legacy_controls_count) %
-            legacy_control_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.legacy_controls[index] = .{ .generation = occurrence_id, .kind = kind };
-        self.legacy_controls_count += 1;
-    }
-
-    fn legacyControlHead(self: *const ProtocolState) ?LegacyControlOccurrence {
-        if (self.legacy_controls_count == 0) return null;
-        return self.legacy_controls[self.legacy_controls_start];
-    }
-
-    fn consumeLegacyControl(self: *ProtocolState) void {
-        std.debug.assert(self.legacy_controls_count > 0);
-        self.legacy_controls_start = (self.legacy_controls_start + 1) %
-            legacy_control_capacity;
-        self.legacy_controls_count -= 1;
-    }
-
-    /// Retain one valid clipboard occurrence transactionally without choosing host access policy.
-    fn retainClipboard(self: *ProtocolState, payload: []const u8) ApplyError!bool {
-        try ensureRetainedBound(byteCount(payload), clipboard_max_bytes);
-        const parsed = parseClipboardRequest(payload) orelse return false;
-        try self.retainClipboardRequest(payload, @intCast(parsed.selection.len), parsed.kind, .osc52);
-        return true;
-    }
-
-    // Retain one exact Kitty OSC 5522 packet for ordered host parsing and policy.
-    fn retainKittyClipboard(self: *ProtocolState, payload: []const u8) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), kitty_clipboard_packet_max_bytes);
-        try self.retainClipboardRequest(payload, 0, .packet, .kitty_5522);
-    }
-
-    fn retainClipboardRequest(
-        self: *ProtocolState,
-        payload: []const u8,
-        selection_len: u8,
-        kind: ClipboardRequestKind,
-        protocol: ClipboardProtocol,
-    ) ApplyError!void {
-        if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, byteCount(payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > clipboard_max_bytes) return error.ConsequenceLimit;
-        const owned = try self.allocator.dupe(u8, payload);
-        const index = (self.clipboard_requests_start + self.clipboard_requests_count) % clipboard_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.clipboard_requests[index] = .{
-            .generation = occurrence_id,
-            .raw = owned,
-            .selection_len = selection_len,
-            .kind = kind,
-            .protocol = protocol,
-        };
-        self.clipboard_requests_count += 1;
-        self.clipboard_retained_bytes = retained_bytes;
-    }
-
-    /// Retain one ordered configuration, delegated transport, or host-directed DCS consequence.
-    /// Count, byte, generation, and allocation bounds succeed before queue mutation.
-    fn retainDcsPayload(self: *ProtocolState, payload: DcsPayload) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
-        if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const retained_bytes = std.math.add(u32, self.dcs_retained_bytes, byteCount(payload.payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
-        const owned = try self.allocator.dupe(u8, payload.payload);
-        const index = (self.dcs_payloads_start + self.dcs_payloads_count) % dcs_payload_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.dcs_payloads[index] = .{
-            .generation = occurrence_id,
-            .kind = payload.kind,
-            .payload = owned,
-        };
-        self.dcs_payloads_count += 1;
-        self.dcs_retained_bytes = retained_bytes;
-    }
-
-    fn dcsPayloadHead(self: *const ProtocolState) ?DcsPayloadOccurrence {
-        if (self.dcs_payloads_count == 0) return null;
-        return self.dcs_payloads[self.dcs_payloads_start].view();
-    }
-
-    fn consumeDcsPayload(self: *ProtocolState) void {
-        std.debug.assert(self.dcs_payloads_count > 0);
-        const payload = &self.dcs_payloads[self.dcs_payloads_start];
-        const payload_len = byteCount(payload.payload);
-        std.debug.assert(payload_len <= self.dcs_retained_bytes);
-        self.allocator.free(payload.payload);
-        self.dcs_retained_bytes -= payload_len;
-        self.dcs_payloads_start = (self.dcs_payloads_start + 1) % dcs_payload_capacity;
-        self.dcs_payloads_count -= 1;
-    }
-
-    /// Retain one generic string control after every count, byte, generation, and allocation bound succeeds.
-    fn retainStringPayload(self: *ProtocolState, payload: StringPayload) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
-        if (self.string_payloads_count == string_payload_capacity) return error.ConsequenceLimit;
-        const occurrence_id = try self.nextConsequenceId();
-        const retained_bytes = std.math.add(u32, self.string_retained_bytes, byteCount(payload.payload)) catch
-            return error.ConsequenceLimit;
-        if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
-        const owned = try self.allocator.dupe(u8, payload.payload);
-        const index = (self.string_payloads_start + self.string_payloads_count) % string_payload_capacity;
-        self.commitConsequenceId(occurrence_id);
-        self.string_payloads[index] = .{
-            .generation = occurrence_id,
-            .kind = payload.kind,
-            .payload = owned,
-        };
-        self.string_payloads_count += 1;
-        self.string_retained_bytes = retained_bytes;
-    }
-
-    fn stringPayloadHead(self: *const ProtocolState) ?StringPayloadOccurrence {
-        if (self.string_payloads_count == 0) return null;
-        return self.string_payloads[self.string_payloads_start].view();
-    }
-
-    fn consumeStringPayload(self: *ProtocolState) void {
-        std.debug.assert(self.string_payloads_count > 0);
-        const payload = &self.string_payloads[self.string_payloads_start];
-        const payload_len = byteCount(payload.payload);
-        std.debug.assert(payload_len <= self.string_retained_bytes);
-        self.allocator.free(payload.payload);
-        self.string_retained_bytes -= payload_len;
-        self.string_payloads_start = (self.string_payloads_start + 1) % string_payload_capacity;
-        self.string_payloads_count -= 1;
-    }
-
-    /// Borrow the FIFO-head raw clipboard set until terminal mutation.
-    fn pendingClipboardSet(self: *const ProtocolState) ?[]const u8 {
-        const request = self.clipboardRequestHead() orelse return null;
-        if (request.kind == .set) return request.raw;
-        return null;
-    }
-
-    /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet.
-    fn pendingClipboardRequest(self: *const ProtocolState) ?ClipboardRequestView {
-        const request = self.clipboardRequestHead() orelse return null;
-        return request.view();
-    }
-
-    fn clipboardRequestHead(self: *const ProtocolState) ?*const ClipboardRequestOwned {
-        if (self.clipboard_requests_count == 0) return null;
-        return &self.clipboard_requests[self.clipboard_requests_start];
-    }
-
-    // Release and consume only the FIFO head after its host operation completes.
-    fn consumeClipboardRequest(self: *ProtocolState) void {
-        std.debug.assert(self.clipboard_requests_count > 0);
-        const request = &self.clipboard_requests[self.clipboard_requests_start];
-        const request_len = byteCount(request.raw);
-        std.debug.assert(request_len <= self.clipboard_retained_bytes);
-        self.clipboard_retained_bytes -= request_len;
-        self.allocator.free(request.raw);
-        self.clipboard_requests_start = (self.clipboard_requests_start + 1) % clipboard_capacity;
-        self.clipboard_requests_count -= 1;
-    }
-
-    /// Decode one OSC 52 set into caller-owned memory; allocation failure preserves the request.
-    fn takeClipboardSet(
-        self: *ProtocolState,
-        generation: u64,
-        allocator: std.mem.Allocator,
-    ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
-        const request = self.clipboardRequestHead() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.protocol != .osc52) return null;
-        const pending = self.pendingClipboardSet() orelse return null;
-        const decoded = decodeClipboardSet(allocator, pending) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => unreachable,
-        };
-        self.consumeClipboardRequest();
-        return decoded;
-    }
-
-    /// Serialize one host-approved OSC 52 query reply and consume the query only on success.
-    fn replyClipboardQuery(
-        self: *ProtocolState,
-        generation: u64,
-        bytes: []const u8,
-    ) ClipboardHostReplyError!bool {
-        const request = self.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.protocol != .osc52 or request.kind != .query) return false;
-        try appendClipboardQueryReply(
-            &self.reply_buffer,
-            self.allocator,
-            request.selection,
-            bytes,
-        );
-        self.consumeClipboardRequest();
-        return true;
-    }
-};
 
 fn appendClipboardQueryReply(
     output: *replies.Buffer,
@@ -2699,253 +1924,8 @@ fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
     if (len > max_len) return error.ConsequenceLimit;
 }
 
-fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.retainClipboard("c;b2xk"));
-    const changed = state.retainClipboard("c;bmV3") catch |err| {
-        try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
-        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
-        return err;
-    };
-    try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
-    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
-}
-
-fn retainFileTransferAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try state.retainFileTransfer(.iterm2_1337, "FilePart=b2xk");
-    state.retainFileTransfer(.kitty_5113, "ac=send;d=bmV3") catch |err| {
-        const packet = state.fileTransferHead().?;
-        try std.testing.expectEqual(@as(u64, 1), packet.generation);
-        try std.testing.expect(packet.protocol == .iterm2_1337);
-        try std.testing.expectEqualStrings("FilePart=b2xk", packet.payload);
-        try std.testing.expectEqual(@as(u8, 1), state.file_transfer_count);
-        return err;
-    };
-    try std.testing.expectEqual(@as(u8, 2), state.file_transfer_count);
-    state.consumeFileTransfer();
-    const packet = state.fileTransferHead().?;
-    try std.testing.expectEqual(@as(u64, 2), packet.generation);
-    try std.testing.expect(packet.protocol == .kitty_5113);
-    try std.testing.expectEqualStrings("ac=send;d=bmV3", packet.payload);
-}
-
-fn retainDragDropAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try state.retainDragDrop(.{
-        .kind = .query,
-        .command = 'q',
-        .client_id = 1,
-        .payload = "old",
-    });
-    state.retainDragDrop(.{
-        .kind = .enable,
-        .command = 'a',
-        .client_id = 2,
-        .payload = "new",
-    }) catch |failure| {
-        const command = state.dragDropHead().?;
-        try std.testing.expectEqual(@as(u64, 1), command.generation);
-        try std.testing.expectEqualStrings("old", command.payload);
-        try std.testing.expectEqual(@as(u8, 1), state.drag_drop_count);
-        return failure;
-    };
-    try std.testing.expectEqual(@as(u8, 2), state.drag_drop_count);
-    state.consumeDragDrop();
-    const command = state.dragDropHead().?;
-    try std.testing.expectEqual(@as(u64, 2), command.generation);
-    try std.testing.expectEqualStrings("new", command.payload);
-}
-
-fn retainDcsAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    state.retainDcsPayload(.{ .kind = .iterm_tmux_wrap, .payload = "first" }) catch |failure| {
-        try std.testing.expectEqual(@as(u64, 0), state.consequence_generation);
-        try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
-        try std.testing.expectEqual(@as(u32, 0), state.dcs_retained_bytes);
-        return failure;
-    };
-    const occurrence = state.dcsPayloadHead().?;
-    try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
-    try std.testing.expectEqualStrings("first", occurrence.payload);
-}
-
-fn retainStringAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    state.retainStringPayload(.{ .kind = .apc, .payload = "first" }) catch |failure| {
-        try std.testing.expectEqual(@as(u64, 0), state.consequence_generation);
-        try std.testing.expectEqual(@as(u8, 0), state.string_payloads_count);
-        try std.testing.expectEqual(@as(u32, 0), state.string_retained_bytes);
-        return failure;
-    };
-    const occurrence = state.stringPayloadHead().?;
-    try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
-    try std.testing.expectEqualStrings("first", occurrence.payload);
-}
-
-fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    const retained = try state.retainClipboard("c;?");
-    try std.testing.expect(retained);
-    const replied = state.replyClipboardQuery(1, "Howl") catch |failure| {
-        const request = state.pendingClipboardRequest().?;
-        try std.testing.expect(request.kind == .query);
-        try std.testing.expectEqualStrings("c", request.selection);
-        try std.testing.expectEqualStrings("", state.replyBytes());
-        return failure;
-    };
-    try std.testing.expect(replied);
-    try std.testing.expectEqualStrings("\x1b]52;c;SG93bA==\x1b\\", state.replyBytes());
-    try std.testing.expectEqual(@as(?ClipboardRequestView, null), state.pendingClipboardRequest());
-}
-
-fn retainKittyClipboardAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.retainClipboard("c;b2xk"));
-    state.retainKittyClipboard("type=wdata:mime=dGV4dA==;bmV3") catch |err| {
-        const request = state.pendingClipboardRequest().?;
-        try std.testing.expectEqual(@as(u64, 1), request.generation);
-        try std.testing.expect(request.protocol == .osc52);
-        try std.testing.expectEqualStrings("c;b2xk", request.payload);
-        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
-        return err;
-    };
-    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
-    state.consumeClipboardRequest();
-    const request = state.pendingClipboardRequest().?;
-    try std.testing.expectEqual(@as(u64, 2), request.generation);
-    try std.testing.expect(request.protocol == .kitty_5522);
-    try std.testing.expectEqualStrings("type=wdata:mime=dGV4dA==;bmV3", request.payload);
-}
-
-fn prepareDragDropAllocation(allocator: std.mem.Allocator) !void {
-    var terminal = try Terminal.init(allocator, 2, 2);
-    defer terminal.deinit();
-    const bytes = try terminal.encodeDragDropEvent(.{ .data = .{
-        .client_id = 7,
-        .index = 1,
-        .more = true,
-        .bytes = "opaque",
-    } }, allocator);
-    defer allocator.free(bytes);
-    try std.testing.expectEqualStrings(
-        "\x1b]72;t=r:i=7:x=1:m=1;b3BhcXVl\x1b\\",
-        bytes,
-    );
-}
-
 fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
     return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
-}
-
-test "clipboard enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainClipboardAllocation, .{});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainKittyClipboardAllocation, .{});
-}
-
-test "file-transfer enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFileTransferAllocation, .{});
-}
-
-test "drag-drop enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDragDropAllocation, .{});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareDragDropAllocation, .{});
-}
-
-test "clipboard drain preserves the retained request on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, drainClipboardAllocation, .{});
-}
-
-test "clipboard query reply preserves request and output on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, replyClipboardAllocation, .{});
-}
-
-test "generic string retention preserves identity on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainStringAllocation, .{});
-}
-
-test "DCS retention preserves identity on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDcsAllocation, .{});
-}
-
-test "consequence identity rejects wrap without mutation" {
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    state.consequence_generation = std.math.maxInt(u64);
-
-    try std.testing.expectError(error.ConsequenceLimit, state.nextConsequenceId());
-    try std.testing.expectEqual(std.math.maxInt(u64), state.consequence_generation);
-    try std.testing.expectEqual(@as(u8, 0), state.clipboard_requests_count);
-    try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
-}
-
-test "retained host consequences enforce owner-specific boundaries" {
-    const allocator = std.testing.allocator;
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-
-    const dcs = try allocator.alloc(u8, dcs_payload_max_bytes + 1);
-    defer allocator.free(dcs);
-    @memset(dcs, 'd');
-    try state.retainDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0 .. dcs_payload_max_bytes - 1] });
-    try std.testing.expectError(
-        error.ConsequenceLimit,
-        state.retainDcsPayload(.{ .kind = .xtsettcap, .payload = dcs[0..dcs_payload_max_bytes] }),
-    );
-    try std.testing.expectEqual(dcs_payload_max_bytes - 1, state.dcs_retained_bytes);
-
-    const clipboard = try allocator.alloc(u8, clipboard_max_bytes + 1);
-    defer allocator.free(clipboard);
-    @memset(clipboard, 'A');
-    clipboard[0] = 'c';
-    clipboard[1] = 'p';
-    clipboard[2] = 'q';
-    clipboard[3] = ';';
-    try std.testing.expect(try state.retainClipboard(clipboard[0..clipboard_max_bytes]));
-    try std.testing.expectError(error.ConsequenceLimit, state.retainClipboard("c;QQ=="));
-    try std.testing.expectError(error.ConsequenceLimit, state.retainClipboard(clipboard));
-    try std.testing.expectEqual(clipboard_max_bytes, state.clipboard_retained_bytes);
-    try std.testing.expectEqual(clipboard_max_bytes, byteCount(state.pendingClipboardSet().?));
-}
-
-test "pending output enforces exact accumulated boundary" {
-    const allocator = std.testing.allocator;
-    var output = replies.Buffer.init(allocator);
-    defer output.deinit();
-
-    const bytes = try allocator.alloc(u8, replies.max_bytes + 1);
-    defer allocator.free(bytes);
-    @memset(bytes, 'o');
-
-    try output.append(bytes[0 .. replies.max_bytes - 1]);
-    try output.append(bytes[replies.max_bytes - 1 .. replies.max_bytes]);
-    try std.testing.expectEqual(replies.max_bytes, byteCount(output.bytes()));
-    try std.testing.expectError(
-        error.ReplyLimit,
-        output.append(bytes[replies.max_bytes..]),
-    );
-    try std.testing.expectEqual(replies.max_bytes, byteCount(output.bytes()));
-}
-
-fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.retainClipboard("c;SG93bA=="));
-    const decoded = state.takeClipboardSet(1, result_allocator) catch |err| {
-        try std.testing.expectEqualStrings("c;SG93bA==", state.pendingClipboardSet().?);
-        return err;
-    };
-    defer result_allocator.free(decoded.?);
-    try std.testing.expectEqualStrings("Howl", decoded.?);
-    try std.testing.expectEqual(@as(?[]const u8, null), state.pendingClipboardSet());
 }
 
 // Borrows one parsed OSC 133 shell mark until parser mutation.
@@ -3276,79 +2256,18 @@ const KittyState = struct {
     }
 };
 
-/// Identifies one retained configuration, delegated transport, or host-directed DCS consequence family.
-pub const DcsPayloadKind = enum {
-    xtsettcap,
-    decudk,
-    decaupss,
-    iterm_tmux_hook,
-    iterm_ssh_hook,
-    iterm_tmux_wrap,
-    kitty_remote_command,
-    kitty_overlay_ready,
-    kitty_result,
-    kitty_print,
-    kitty_echo,
-    kitty_ssh,
-    kitty_askpass,
-    kitty_clone,
-    kitty_edit,
-};
-
-/// Borrows the FIFO-head configuration, delegated transport, or host-directed DCS consequence.
-/// Its payload remains valid until terminal mutation or matching consumption.
-pub const DcsPayloadOccurrence = struct {
-    /// Monotonic identity advancing for every retained consequence, including repeated bytes.
-    generation: u64,
-    /// Identifies the exact DCS consequence family owning `payload`.
-    kind: DcsPayloadKind,
-    /// Borrows the exact bounded family payload until terminal mutation.
-    payload: []const u8,
-};
-
-/// Identifies one generic string-control family delegated to the embedding host.
-pub const StringPayloadKind = enum { apc, pm, sos };
-
-/// Borrows one ordered generic string-control payload until consumption.
-pub const StringPayloadOccurrence = struct {
-    /// Monotonic identity advancing for every retained control, including repeated bytes.
-    generation: u64,
-    /// Identifies the framing family that carried `payload`.
-    kind: StringPayloadKind,
-    /// Borrows exact bounded payload bytes until terminal mutation.
-    payload: []const u8,
-};
-
-const StringPayload = struct {
-    kind: StringPayloadKind,
-    payload: []const u8,
-};
-
-// Borrows one complete typed DCS consequence for immediate semantic decoding.
-const DcsPayload = struct {
-    kind: DcsPayloadKind,
-    payload: []const u8,
-};
-
-/// Identifies a legacy terminal mode transition retained for host observation.
-pub const LegacyControlKind = enum {
-    tek_point_plot,
-    tek_graph,
-    tek_incremental_plot,
-    tek_alpha,
-    tek_copy,
-    tek_special_point_plot,
-    tek_write_thru_short_dashed,
-    hp_memory_lock,
-};
-
-/// Copies one ordered legacy terminal-mode transition.
-pub const LegacyControlOccurrence = struct {
-    /// Monotonic identity shared with every retained consequence family.
-    generation: u64,
-    /// Identifies the child-requested legacy terminal mode.
-    kind: LegacyControlKind,
-};
+/// Projects the consequence owner's DCS classification.
+pub const DcsPayloadKind = consequences.DcsPayloadKind;
+/// Projects the consequence owner's borrowed DCS occurrence.
+pub const DcsPayloadOccurrence = consequences.DcsPayloadOccurrence;
+/// Projects the consequence owner's generic string-control classification.
+pub const StringPayloadKind = consequences.StringPayloadKind;
+/// Projects the consequence owner's borrowed string-control occurrence.
+pub const StringPayloadOccurrence = consequences.StringPayloadOccurrence;
+/// Projects the consequence owner's legacy-control classification.
+pub const LegacyControlKind = consequences.LegacyControlKind;
+/// Projects the consequence owner's borrowed legacy-control occurrence.
+pub const LegacyControlOccurrence = consequences.LegacyControlOccurrence;
 
 // Borrows one terminal color key and optional replacement value.
 const TerminalColorControlCommand = struct {
@@ -3479,8 +2398,8 @@ const SemanticEvent = union(enum) {
     restore_cursor_information: []const u8,
     restore_tab_stops: []const u8,
     restore_cursor_appearance,
-    dcs_payload: DcsPayload,
-    string_payload: StringPayload,
+    dcs_payload: consequences.DcsInput,
+    string_payload: consequences.StringInput,
     device_status_report,
     dec_device_status_report: u16,
     cursor_position_report,
@@ -4440,7 +3359,7 @@ fn dcsProcess(dcs: DcsEvent) ?SemanticEvent {
 
 // Classifies Kitty's host-directed DCS prefixes and borrows exactly the bytes
 // delivered to its handler, including the remote-command opening brace.
-fn kittyDcsPayload(payload: []const u8) ?DcsPayload {
+fn kittyDcsPayload(payload: []const u8) ?consequences.DcsInput {
     const commands = [_]struct { prefix: []const u8, kind: DcsPayloadKind, include_last: bool = false }{
         .{ .prefix = "kitty-cmd{", .kind = .kitty_remote_command, .include_last = true },
         .{ .prefix = "kitty-overlay-ready|", .kind = .kitty_overlay_ready },
@@ -5301,88 +4220,101 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
     switch (event) {
-        .bell => try vt.protocol.ringBell(),
-        .title_and_icon_set => |value| return vt.protocol.properties.replaceTitleAndIcon(value),
-        .title_set => |title| return vt.protocol.properties.replaceTitle(title),
-        .icon_set => |icon| return vt.protocol.properties.replaceIcon(icon),
-        .shell_integration_set => |integration| return vt.protocol.properties.replaceShellIntegration(integration.version, integration.shell),
-        .working_directory_report => |directory| return vt.protocol.properties.replaceWorkingDirectory(directory.kind, directory.value),
-        .remote_host_report => |remote_host| return vt.protocol.properties.replaceRemoteHost(remote_host),
-        .shell_mark => |mark| try vt.protocol.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
-        .notification => |notification| try vt.protocol.retainNotification(
+        .bell => try vt.consequences.ringBell(),
+        .title_and_icon_set => |value| return vt.properties.replaceTitleAndIcon(value),
+        .title_set => |title| return vt.properties.replaceTitle(title),
+        .icon_set => |icon| return vt.properties.replaceIcon(icon),
+        .shell_integration_set => |integration| return vt.properties.replaceShellIntegration(integration.version, integration.shell),
+        .working_directory_report => |directory| return vt.properties.replaceWorkingDirectory(directory.kind, directory.value),
+        .remote_host_report => |remote_host| return vt.properties.replaceRemoteHost(remote_host),
+        .shell_mark => |mark| try vt.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
+        .notification => |notification| try vt.consequences.retainNotification(
             notification.kind,
             notification.command,
             notification.payload,
         ),
-        .pointer_shape => |payload| try vt.protocol.retainPointerShape(
+        .pointer_shape => |payload| try vt.consequences.retainPointerShape(
             payload,
             vt.screen_state.alt_active,
         ),
-        .window_request => |request| try vt.protocol.retainWindowRequest(request),
-        .color_preference_query => try vt.protocol.retainColorPreferenceQuery(),
+        .window_request => |request| try vt.consequences.retainWindowRequest(request),
+        .color_preference_query => try vt.consequences.retainColorPreferenceQuery(),
         .color_control => |cmd| {
-            const before = vt.protocol.properties.colors;
-            const output_before = byteCount(vt.protocol.reply_buffer.bytes());
+            const before = vt.properties.colors;
+            const output_before = byteCount(vt.reply_buffer.bytes());
             errdefer {
-                vt.protocol.properties.colors = before;
-                vt.protocol.reply_buffer.truncate(output_before);
+                vt.properties.colors = before;
+                vt.reply_buffer.truncate(output_before);
             }
             switch (cmd.command) {
-                21 => try handleKittyControl(allocator, &vt.protocol.properties.colors, &vt.protocol.reply_buffer, cmd.payload),
+                21 => try handleKittyControl(allocator, &vt.properties.colors, &vt.reply_buffer, cmd.payload),
                 4 => try handleXtermPaletteControl(
                     allocator,
-                    &vt.protocol.properties.colors,
-                    &vt.protocol.reply_buffer,
+                    &vt.properties.colors,
+                    &vt.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 5 => try handleXtermSpecialPaletteControl(
                     allocator,
-                    &vt.protocol.properties.colors,
-                    &vt.protocol.reply_buffer,
+                    &vt.properties.colors,
+                    &vt.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
                     allocator,
-                    &vt.protocol.properties.colors,
-                    &vt.protocol.reply_buffer,
+                    &vt.properties.colors,
+                    &vt.reply_buffer,
                     scratch.buf[0..],
                     cmd.command,
                     cmd.payload,
                 ),
-                104 => resetXtermPalette(&vt.protocol.properties.colors, cmd.payload),
+                104 => resetXtermPalette(&vt.properties.colors, cmd.payload),
                 110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
-                    &vt.protocol.properties.colors,
+                    &vt.properties.colors,
                     cmd.command,
                     cmd.payload,
                 ),
                 else => {},
             }
-            const colors_changed = !std.meta.eql(before, vt.protocol.properties.colors);
+            const colors_changed = !std.meta.eql(before, vt.properties.colors);
 
-            return colors_changed or output_before != vt.protocol.reply_buffer.bytes().len;
+            return colors_changed or output_before != vt.reply_buffer.bytes().len;
         },
-        .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.protocol.properties.internHyperlink(spec)),
+        .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.properties.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
-        .clipboard_set => |payload| return try vt.protocol.retainClipboard(payload),
-        .kitty_clipboard_packet => |payload| try vt.protocol.retainKittyClipboard(payload),
-        .file_transfer_packet => |packet| try vt.protocol.retainFileTransfer(packet.protocol, packet.payload),
-        .drag_drop => |command| try vt.protocol.retainDragDrop(command),
-        .locator_reporting => |cfg| setReporting(&vt.protocol.locator, cfg.mode, cfg.unit),
-        .locator_filter => |area| setFilter(&vt.protocol.locator, area),
-        .locator_events => |modes| setEvents(&vt.protocol.locator, modes.params[0..modes.param_count]),
+        .clipboard_set => |payload| {
+            const parsed = parseClipboardRequest(payload) orelse return false;
+            try vt.consequences.admitClipboard(payload, @intCast(parsed.selection.len), parsed.kind, .osc52);
+            return true;
+        },
+        .kitty_clipboard_packet => |payload| try vt.consequences.retainKittyClipboard(payload),
+        .file_transfer_packet => |packet| try vt.consequences.retainFileTransfer(packet.protocol, packet.payload),
+        .drag_drop => |command| try vt.consequences.retainDragDrop(.{
+            .kind = command.kind,
+            .command = command.command,
+            .client_id = command.client_id,
+            .more = command.more,
+            .operation = command.operation,
+            .index = command.index,
+            .remote = command.remote,
+            .payload = command.payload,
+        }),
+        .locator_reporting => |cfg| setReporting(&vt.locator, cfg.mode, cfg.unit),
+        .locator_filter => |area| setFilter(&vt.locator, area),
+        .locator_events => |modes| setEvents(&vt.locator, modes.params[0..modes.param_count]),
         .locator_request => |param| try appendReportForRequest(
-            &vt.protocol.locator,
+            &vt.locator,
             allocator,
-            &vt.protocol.reply_buffer,
+            &vt.reply_buffer,
             scratch.buf[0..],
             param,
         ),
-        .media_copy_request => |request| try vt.protocol.retainMediaCopy(request),
-        .dcs_payload => |payload| try vt.protocol.retainDcsPayload(payload),
-        .string_payload => |payload| try vt.protocol.retainStringPayload(payload),
-        .legacy_control => |kind| try vt.protocol.retainLegacyControl(kind),
+        .media_copy_request => |request| try vt.consequences.retainMediaCopy(request),
+        .dcs_payload => |payload| try vt.consequences.retainDcsPayload(payload),
+        .string_payload => |payload| try vt.consequences.retainStringPayload(payload),
+        .legacy_control => |kind| try vt.consequences.retainLegacyControl(kind),
         else => unreachable,
     }
     return true;
@@ -5409,7 +4341,7 @@ const RectChecksumRequest = struct {
 fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
-    const reply_buffer = &vt.protocol.reply_buffer;
+    const reply_buffer = &vt.reply_buffer;
     const encode_buf = scratch.buf[0..];
     const active = vt.screen_state.activeConst();
     const render_view = CursorReportView{
@@ -5528,7 +4460,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .screen_extent_report => try appendScreenExtentReport(allocator, reply_buffer, encode_buf, render_view),
         .parameters_report => |kind| try appendTerminalParametersReport(allocator, reply_buffer, encode_buf, kind),
         .window_title_report => try appendWindowTitleReport(vt),
-        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.protocol.properties.color_stack),
+        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.properties.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
@@ -5543,12 +4475,12 @@ fn applyTitleStack(host: *properties.State, command: @FieldType(SemanticEvent, "
 }
 
 fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
-    const output = &vt.protocol.reply_buffer;
+    const output = &vt.reply_buffer;
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.iterm, .osc);
     try output.append("l");
-    if (vt.protocol.properties.current_title) |title| try output.append(title);
+    if (vt.properties.current_title) |title| try output.append(title);
     try output.appendControl(.iterm, .st);
 }
 
@@ -5568,7 +4500,7 @@ fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!b
             break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch unreachable;
         },
     };
-    try vt.protocol.reply_buffer.appendCsi(.terminal, payload);
+    try vt.reply_buffer.appendCsi(.terminal, payload);
     return true;
 }
 
@@ -5581,7 +4513,7 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
         "1337;ReportCellSize={d};{d};1",
         .{ cell.height, cell.width },
     ) catch unreachable;
-    try vt.protocol.reply_buffer.appendString(.iterm, .osc, payload);
+    try vt.reply_buffer.appendString(.iterm, .osc, payload);
 }
 
 fn appendDecrqssReply(
@@ -6899,7 +5831,7 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             return active_screen.keyboard.set(req.flags, req.mode);
         },
         .kitty_keyboard_query => {
-            try active_screen_const.keyboard.appendReport(allocator, &vt.protocol.reply_buffer, scratch.buf[0..]);
+            try active_screen_const.keyboard.appendReport(allocator, &vt.reply_buffer, scratch.buf[0..]);
             return true;
         },
         .kitty_keyboard_push => |flags| {
@@ -6915,8 +5847,8 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
 // Applies one bounded color-stack mutation and reports rejected or empty operations as unchanged.
 fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
     return switch (command) {
-        .push => |index| vt.protocol.properties.pushColor(index),
-        .pop => |index| vt.protocol.properties.popColor(index),
+        .push => |index| vt.properties.pushColor(index),
+        .pop => |index| vt.properties.popColor(index),
     };
 }
 
@@ -6984,7 +5916,7 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffe
         .icon_changed = false,
     };
     if (semantic == .title_stack) {
-        const effect = try applyTitleStack(&vt.protocol.properties, semantic.title_stack);
+        const effect = try applyTitleStack(&vt.properties, semantic.title_stack);
         return .{
             .changed = effect.changed,
             .title_changed = effect.title_changed,
@@ -6992,13 +5924,13 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffe
         };
     }
     const title_changed = switch (semantic) {
-        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_title, value),
-        .title_set => |value| !optionalBytesEqual(vt.protocol.properties.current_title, value),
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.properties.current_title, value),
+        .title_set => |value| !optionalBytesEqual(vt.properties.current_title, value),
         else => false,
     };
     const icon_changed = switch (semantic) {
-        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_icon, value),
-        .icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_icon, value),
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.properties.current_icon, value),
+        .icon_set => |value| !optionalBytesEqual(vt.properties.current_icon, value),
         else => false,
     };
     const changed = try applySemantic(vt, semantic);
@@ -7149,9 +6081,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 !std.meta.eql(alternate_before, vt.screen_state.alternate.cursor);
         },
         .iterm_set_colors => |payload| {
-            const before = vt.protocol.properties.colors;
-            handleItermSetColors(&vt.protocol.properties.colors, payload);
-            const changed = !std.meta.eql(before, vt.protocol.properties.colors);
+            const before = vt.properties.colors;
+            handleItermSetColors(&vt.properties.colors, payload);
+            const changed = !std.meta.eql(before, vt.properties.colors);
 
             return changed;
         },
@@ -8017,7 +6949,7 @@ const TerminalStream = struct {
                 .icon_changed = false,
             };
         }
-        const payload: StringPayload = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
+        const payload: consequences.StringInput = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
         defer capture.reset();
         return .{
             .changed = try applySemantic(self.terminal, .{ .string_payload = payload }),
@@ -8060,10 +6992,10 @@ fn discardedStringControl() EventEffect {
 fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!bool {
     const response_reserve: usize = 96;
     if (graphics_mod.mayRespond(packet)) {
-        if (terminal.protocol.reply_buffer.bytes().len >
+        if (terminal.reply_buffer.bytes().len >
             replies.max_bytes - response_reserve)
             return error.ReplyLimit;
-        try terminal.protocol.reply_buffer.ensureUnusedCapacity(response_reserve);
+        try terminal.reply_buffer.ensureUnusedCapacity(response_reserve);
     }
     const active = terminal.screen_state.activeConst();
     const bank: graphics_mod.Bank = if (terminal.screen_state.alt_active) .alternate else .primary;
@@ -8085,7 +7017,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         result.response_number != null or result.response_frame != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
     if (respond and !suppressed) {
-        try terminal.protocol.reply_buffer.append("\x1b_G");
+        try terminal.reply_buffer.append("\x1b_G");
         var metadata: [48]u8 = undefined;
         if (result.response_id) |id| {
             const id_bytes = if (result.response_number) |number|
@@ -8098,18 +7030,18 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
             else
                 std.fmt.bufPrint(&metadata, "i={d};", .{id});
             const written = id_bytes catch return error.ReplyLimit;
-            try terminal.protocol.reply_buffer.append(written);
+            try terminal.reply_buffer.append(written);
         } else if (result.response_number) |number| {
             const number_bytes = std.fmt.bufPrint(&metadata, "I={d};", .{number}) catch
                 return error.ReplyLimit;
-            try terminal.protocol.reply_buffer.append(number_bytes);
+            try terminal.reply_buffer.append(number_bytes);
         } else {
-            try terminal.protocol.reply_buffer.append(";");
+            try terminal.reply_buffer.append(";");
         }
-        try terminal.protocol.reply_buffer.append(
+        try terminal.reply_buffer.append(
             if (result.failure) |failure| failure.bytes() else "OK",
         );
-        try terminal.protocol.reply_buffer.append("\x1b\\");
+        try terminal.reply_buffer.append("\x1b\\");
     }
 
     return result.changed or (respond and !suppressed);
@@ -8800,7 +7732,10 @@ pub const Terminal = struct {
     sgr_stack: [sgr_stack_capacity]SgrStackEntry = @splat(.{}),
     sgr_stack_len: u8 = 0,
     xtchecksum_flags: u16 = 0,
-    protocol: ProtocolState,
+    properties: properties.State,
+    reply_buffer: replies.Buffer,
+    consequences: consequences.State,
+    locator: Locator = .{},
     gl_index: u8 = 0,
     gr_index: u8 = 1,
     single_shift: ?u8 = null,
@@ -8819,7 +7754,9 @@ pub const Terminal = struct {
             .stream_state = stream_state,
             .screen_state = ScreenSet.init(state, alt_state),
             .graphics = graphics_mod.Plane.init(allocator),
-            .protocol = ProtocolState.init(allocator),
+            .properties = properties.State.init(allocator),
+            .reply_buffer = replies.Buffer.init(allocator),
+            .consequences = consequences.State.init(allocator),
         };
     }
 
@@ -8863,7 +7800,9 @@ pub const Terminal = struct {
     pub fn deinit(self: *Terminal) void {
         const allocator = self.allocator;
         self.graphics.deinit();
-        self.protocol.deinit();
+        self.consequences.deinit();
+        self.properties.deinit();
+        self.reply_buffer.deinit();
         self.screen_state.deinit(allocator);
         self.stream_state.deinit();
     }
@@ -8895,8 +7834,8 @@ pub const Terminal = struct {
     /// failure leave both screens and terminal semantic identity unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
         try validateDimensions(rows, cols);
-        const output_before = byteCount(self.protocol.reply_buffer.bytes());
-        errdefer self.protocol.reply_buffer.truncate(output_before);
+        const output_before = byteCount(self.reply_buffer.bytes());
+        errdefer self.reply_buffer.truncate(output_before);
         if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
         try self.screen_state.resize(self.allocator, rows, cols);
         const primary_graphics_changed = self.graphics.clearBank(.primary);
@@ -8917,7 +7856,7 @@ pub const Terminal = struct {
             "48;{d};{d};{d};{d}t",
             .{ rows, cols, pixel_height, pixel_width },
         ) catch unreachable;
-        try self.protocol.reply_buffer.appendCsi(.terminal, payload);
+        try self.reply_buffer.appendCsi(.terminal, payload);
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -8950,7 +7889,7 @@ pub const Terminal = struct {
         preference: ColorSchemePreference,
     ) ApplyError!bool {
         if (!self.modes.color_preference_notifications) return false;
-        try self.protocol.reply_buffer.appendCsi(
+        try self.reply_buffer.appendCsi(
             .kitty,
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
@@ -8968,13 +7907,11 @@ pub const Terminal = struct {
         if (consequence.id() != generation or
             std.meta.activeTag(consequence) != .color_preference_query)
             return error.StaleColorPreferenceQuery;
-        const head = self.protocol.colorPreferenceQueryGeneration() orelse return error.StaleColorPreferenceQuery;
-        if (head != generation) return error.StaleColorPreferenceQuery;
-        try self.protocol.reply_buffer.appendCsi(
+        try self.reply_buffer.appendCsi(
             .kitty,
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
-        self.protocol.consumeColorPreferenceQuery();
+        self.consequences.consumeHead(generation) catch return error.StaleColorPreferenceQuery;
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -8991,9 +7928,11 @@ pub const Terminal = struct {
         self.single_shift = null;
         self.designations = .{ 'B', 'B', 'B', 'B' };
         self.stream_state.parser.resetTextEncoding();
-        self.protocol.reply_buffer.resetFraming();
+        self.reply_buffer.resetFraming();
         self.kitty.resetTerminalState();
-        self.protocol.resetTerminalState();
+        self.locator = .{};
+        self.consequences.resetTerminal();
+        self.properties.resetTerminal();
         const graphics_changed = self.graphics.reset();
         std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
     }
@@ -9026,7 +7965,7 @@ pub const Terminal = struct {
         self.modes.mouse_tracking = .off;
         if (self.modes.mouse_protocol != .none) changed = true;
         self.modes.mouse_protocol = .none;
-        changed = self.protocol.reply_buffer.setEightBitControls(false) or changed;
+        changed = self.reply_buffer.setEightBitControls(false) or changed;
         if (self.gl_index != 0 or self.gr_index != 1 or self.single_shift != null or
             !std.mem.eql(u8, self.designations[0..], &.{ 'B', 'B', 'B', 'B' })) changed = true;
         self.gl_index = 0;
@@ -9046,10 +7985,10 @@ pub const Terminal = struct {
         changed = replaceBool(&self.screen_state.primary.cursor.visible, true) or changed;
         changed = replaceBool(&self.screen_state.alternate.cursor.visible, true) or changed;
         if (self.screen_state.primary.cursor.cursor_color != null or
-            self.screen_state.alternate.cursor.cursor_color != null or self.protocol.properties.colors.cursor != null) changed = true;
+            self.screen_state.alternate.cursor.cursor_color != null or self.properties.colors.cursor != null) changed = true;
         self.screen_state.primary.cursor.cursor_color = null;
         self.screen_state.alternate.cursor.cursor_color = null;
-        self.protocol.properties.colors.cursor = null;
+        self.properties.colors.cursor = null;
         return changed;
     }
 
@@ -9268,7 +8207,7 @@ pub const Terminal = struct {
             .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
-                const changed = self.protocol.reply_buffer.setEightBitControls(enabled);
+                const changed = self.reply_buffer.setEightBitControls(enabled);
                 return changed;
             },
             .left_right_margin_mode => |enabled| return self.setDecMode(69, enabled),
@@ -9619,7 +8558,7 @@ pub const Terminal = struct {
     /// Copies terminal colors and reverse-screen state.
     pub fn presentation(self: *const Terminal) Presentation {
         const active = self.screen_state.activeConst();
-        const colors = self.protocol.properties.colors;
+        const colors = self.properties.colors;
         return .{
             .palette = colors.palette,
             .foreground = colors.foreground,
@@ -9655,83 +8594,57 @@ pub const Terminal = struct {
 
     /// Borrows the current OSC window title until terminal mutation.
     pub fn title(self: *const Terminal) ?[]const u8 {
-        return self.protocol.properties.current_title;
+        return self.properties.current_title;
     }
 
     /// Borrows the current OSC icon title until terminal mutation.
     pub fn icon(self: *const Terminal) ?[]const u8 {
-        return self.protocol.properties.current_icon;
+        return self.properties.current_icon;
     }
 
     /// Borrows the latest child-reported working directory.
     pub fn workingDirectory(self: *const Terminal) ?WorkingDirectory {
-        return self.protocol.properties.working_directory;
+        return self.properties.working_directory;
     }
 
     /// Borrows the latest child-reported remote host.
     pub fn remoteHost(self: *const Terminal) ?[]const u8 {
-        return self.protocol.properties.remote_host;
+        return self.properties.remote_host;
     }
 
     /// Borrows the latest shell-integration identity.
     pub fn shellIntegration(self: *const Terminal) ?Terminal.ShellIntegration {
-        const integration = self.protocol.properties.shell_integration orelse return null;
+        const integration = self.properties.shell_integration orelse return null;
         return .{ .version = integration.version, .shell = integration.shell };
     }
 
     /// Copies the latest shell-mark semantic state.
     pub fn shellMark(self: *const Terminal) ShellMark {
-        return self.protocol.properties.shell_mark;
-    }
-
-    fn retainEarlierConsequence(best: *?Consequence, candidate: Consequence) void {
-        if (best.* == null or candidate.id() < best.*.?.id()) best.* = candidate;
+        return self.properties.shell_mark;
     }
 
     /// Borrows the oldest retained consequence across every protocol family.
     pub fn consequenceHead(self: *const Terminal) ?Consequence {
-        var best: ?Consequence = null;
-        if (self.protocol.pendingClipboardRequest()) |value|
-            retainEarlierConsequence(&best, .{ .clipboard = value });
-        if (self.protocol.notificationView()) |value|
-            retainEarlierConsequence(&best, .{ .notification = value });
-        if (self.protocol.pointerShapeView()) |value|
-            retainEarlierConsequence(&best, .{ .pointer_shape = value });
-        if (self.protocol.fileTransferHead()) |value|
-            retainEarlierConsequence(&best, .{ .file_transfer = value });
-        if (self.protocol.dragDropHead()) |value|
-            retainEarlierConsequence(&best, .{ .drag_drop = value });
-        if (self.protocol.windowRequestHead()) |value|
-            retainEarlierConsequence(&best, .{ .window = value });
-        if (self.protocol.colorPreferenceQueryGeneration()) |id|
-            retainEarlierConsequence(&best, .{ .color_preference_query = .{ .id = id } });
-        if (self.protocol.bellHead()) |id|
-            retainEarlierConsequence(&best, .{ .bell = .{ .id = id } });
-        if (self.protocol.legacyControlHead()) |value|
-            retainEarlierConsequence(&best, .{ .legacy_control = value });
-        if (self.protocol.mediaCopyHead()) |value|
-            retainEarlierConsequence(&best, .{ .media_copy = value });
-        if (self.protocol.dcsPayloadHead()) |value|
-            retainEarlierConsequence(&best, .{ .dcs = value });
-        if (self.protocol.stringPayloadHead()) |value|
-            retainEarlierConsequence(&best, .{ .string_control = value });
-        return best;
+        const head = self.consequences.head() orelse return null;
+        return switch (head) {
+            .clipboard => |value| .{ .clipboard = value },
+            .notification => |value| .{ .notification = value },
+            .pointer_shape => |value| .{ .pointer_shape = value },
+            .file_transfer => |value| .{ .file_transfer = value },
+            .drag_drop => |value| .{ .drag_drop = value },
+            .window => |value| .{ .window = value },
+            .color_preference => |id| .{ .color_preference_query = .{ .id = id } },
+            .media_copy => |value| .{ .media_copy = value },
+            .bell => |id| .{ .bell = .{ .id = id } },
+            .legacy_control => |value| .{ .legacy_control = value },
+            .dcs => |value| .{ .dcs = value },
+            .string => |value| .{ .string_control = value },
+        };
     }
 
     /// Returns the total bounded consequence count across every protocol family.
     pub fn consequenceCount(self: *const Terminal) u16 {
-        return @as(u16, self.protocol.clipboard_requests_count) +
-            self.protocol.notifications_count +
-            self.protocol.pointer_shapes_count +
-            self.protocol.file_transfer_count +
-            self.protocol.drag_drop_count +
-            self.protocol.window_requests_count +
-            self.protocol.color_preference_query_count +
-            self.protocol.bells_count +
-            self.protocol.legacy_controls_count +
-            self.protocol.media_copy_count +
-            self.protocol.dcs_payloads_count +
-            self.protocol.string_payloads_count;
+        return self.consequences.count();
     }
 
     /// Consumes the exact global head after external policy handles it.
@@ -9747,23 +8660,15 @@ pub const Terminal = struct {
         switch (head) {
             .clipboard => |value| {
                 if (value.kind == .query) return error.ReplyRequired;
-                self.protocol.consumeClipboardRequest();
             },
-            .notification => self.protocol.consumeNotification(),
-            .pointer_shape => self.protocol.consumePointerShape(),
-            .file_transfer => self.protocol.consumeFileTransfer(),
-            .drag_drop => self.protocol.consumeDragDrop(),
+            .notification, .pointer_shape, .file_transfer, .drag_drop => {},
             .window => |value| {
                 if (isWindowQuery(value.request)) return error.ReplyRequired;
-                self.protocol.consumeWindowRequestHead();
             },
             .color_preference_query => return error.ReplyRequired,
-            .bell => self.protocol.consumeBell(),
-            .legacy_control => self.protocol.consumeLegacyControl(),
-            .media_copy => self.protocol.consumeMediaCopy(),
-            .dcs => self.protocol.consumeDcsPayload(),
-            .string_control => self.protocol.consumeStringPayload(),
+            .bell, .legacy_control, .media_copy, .dcs, .string_control => {},
         }
+        self.consequences.consumeHead(id) catch return error.StaleConsequence;
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -9774,7 +8679,7 @@ pub const Terminal = struct {
 
     /// Returns the terminal reset identity governing pointer-shape stacks.
     pub fn pointerShapeResetSequence(self: *const Terminal) u64 {
-        return self.protocol.pointer_shape_reset_generation;
+        return self.consequences.pointer_shape_reset_generation;
     }
 
     /// Reports whether mode 2031 requests color-preference notifications.
@@ -9896,7 +8801,7 @@ pub const Terminal = struct {
 
     /// Borrows the URI interned for one nonzero cell hyperlink identity.
     pub fn hyperlinkUri(self: *const Terminal, link_id: u32) ?[]const u8 {
-        return self.protocol.properties.hyperlinkUriForId(link_id);
+        return self.properties.hyperlinkUriForId(link_id);
     }
 
     /// Copies one caller-supplied semantic cell range as UTF-8.
@@ -9989,7 +8894,7 @@ pub const Terminal = struct {
     }
 
     fn encodeMouseInput(self: *Terminal, scratch: *InputScratch, event: MouseEvent) ApplyError![]const u8 {
-        try handleMouseEvent(&self.protocol.locator, self.allocator, &self.protocol.reply_buffer, scratch.buf[0..], event);
+        try handleMouseEvent(&self.locator, self.allocator, &self.reply_buffer, scratch.buf[0..], event);
         const encoded = encodeMouse(scratch.buf[0..], event, self.modes.mouse_tracking, self.modes.mouse_protocol);
         std.debug.assert(encoded.len <= scratch.buf.len);
         return encoded;
@@ -10005,14 +8910,14 @@ pub const Terminal = struct {
 
     /// Borrows ordered protocol reply bytes until the next terminal mutation.
     pub fn replyBytes(self: *const Terminal) []const u8 {
-        return self.protocol.replyBytes();
+        return self.reply_buffer.bytes();
     }
 
     /// Consumes one successfully written reply prefix without allocating.
     ///
     /// A count larger than `replyBytes().len` preserves the complete queue.
     pub fn consumeReplyBytes(self: *Terminal, count: usize) ReplyConsumeError!void {
-        try self.protocol.reply_buffer.consumePrefix(count);
+        try self.reply_buffer.consumePrefix(count);
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -10028,9 +8933,15 @@ pub const Terminal = struct {
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
-        const drained = try self.protocol.takeClipboardSet(generation, allocator);
-        if (drained != null) advanceIdentity(&self.semantic_sequence);
-        return drained;
+        const request = consequence.clipboard;
+        if (request.protocol != .osc52 or request.kind != .set) return null;
+        const decoded = decodeClipboardSet(allocator, request.payload) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => @panic("retained OSC 52 set failed prior grammar validation"),
+        };
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        return decoded;
     }
 
     /// Copies one decoded FIFO-head OSC 52 set without consuming it.
@@ -10046,15 +8957,14 @@ pub const Terminal = struct {
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
-        const request = self.protocol.clipboardRequestHead() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
+        const request = consequence.clipboard;
         if (request.protocol != .osc52 or request.kind != .set) return null;
         const decoded_len: usize = @intCast(
-            decodedClipboardSetSize(request.raw) catch
+            decodedClipboardSetSize(request.payload) catch
                 @panic("retained OSC 52 set failed prior grammar validation"),
         );
         if (decoded_len > max_bytes) return error.ClipboardLimit;
-        return decodeClipboardSet(allocator, request.raw) catch |failure| switch (failure) {
+        return decodeClipboardSet(allocator, request.payload) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             else => @panic("retained OSC 52 set failed prior grammar validation"),
         };
@@ -10065,9 +8975,12 @@ pub const Terminal = struct {
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
-        const replied = try self.protocol.replyClipboardQuery(generation, bytes);
-        if (replied) advanceIdentity(&self.semantic_sequence);
-        return replied;
+        const request = consequence.clipboard;
+        if (request.protocol != .osc52 or request.kind != .query) return false;
+        try appendClipboardQueryReply(&self.reply_buffer, self.allocator, request.selection, bytes);
+        self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
+        advanceIdentity(&self.semantic_sequence);
+        return true;
     }
 
     /// Queue one exact reply for the matching FIFO-head OSC 22 query.
@@ -10079,18 +8992,17 @@ pub const Terminal = struct {
         const consequence = self.consequenceHead() orelse return error.StalePointerShape;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .pointer_shape)
             return error.StalePointerShape;
-        const request = self.protocol.pointerShapeView() orelse return error.StalePointerShape;
-        if (request.generation != generation) return error.StalePointerShape;
+        const request = consequence.pointer_shape;
         if (request.payload.len == 0 or request.payload[0] != '?')
             return error.PointerShapeReplyMismatch;
         try ensureRetainedBound(byteCount(payload), pointer_shape_reply_max_bytes);
-        const output = &self.protocol.reply_buffer;
+        const output = &self.reply_buffer;
         const start = byteCount(output.bytes());
         errdefer output.truncate(start);
         try output.append("\x1b]22;");
         try output.append(payload);
         try output.append("\x1b\\");
-        self.protocol.consumePointerShape();
+        self.consequences.consumeHead(generation) catch return error.StalePointerShape;
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -10101,7 +9013,7 @@ pub const Terminal = struct {
         allocator: std.mem.Allocator,
     ) DragDropEventError![]u8 {
         var output = replies.Buffer.init(allocator);
-        output.copyFramingFrom(&self.protocol.reply_buffer);
+        output.copyFramingFrom(&self.reply_buffer);
         errdefer output.deinit();
         try output.appendControl(.terminal, .osc);
         try output.append("72;");
@@ -10197,15 +9109,14 @@ pub const Terminal = struct {
         const consequence = self.consequenceHead() orelse return error.StaleWindowRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .window)
             return error.StaleWindowRequest;
-        const occurrence = self.protocol.windowRequestHead() orelse return error.StaleWindowRequest;
-        if (occurrence.generation != generation) return error.StaleWindowRequest;
+        const occurrence = consequence.window;
         if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
 
-        const output = &self.protocol.reply_buffer;
+        const output = &self.reply_buffer;
         const start = byteCount(output.bytes());
         errdefer output.truncate(start);
         try appendWindowReply(output, self.allocator, reply);
-        self.protocol.consumeWindowRequestHead();
+        self.consequences.consumeHead(generation) catch return error.StaleWindowRequest;
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -10385,8 +9296,7 @@ test "terminal retains every bounded bell and remains reusable" {
     try std.testing.expectEqual(@as(u16, 2), vt.consequenceCount());
     try std.testing.expectEqual(@as(u21, 'x'), vt.semanticView(0).cellAt(0, 0));
 
-    for (2..bell_capacity) |_| try std.testing.expect((try vt.feed("\x07")).state_changed);
-    try std.testing.expectError(error.ConsequenceLimit, vt.feed("\x07"));
+    try std.testing.expect((try vt.feed("\x07")).state_changed);
     while (vt.consequenceHead()) |consequence|
         try vt.consumeConsequence(consequence.id());
     const reused = try vt.feed("y");
