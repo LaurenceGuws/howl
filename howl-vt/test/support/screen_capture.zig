@@ -1,8 +1,6 @@
 const std = @import("std");
-const selection_mod = @import("../../src/terminal.zig");
 const screen_mod = @import("../../src/terminal.zig");
 
-const Selection = selection_mod;
 const Screen = screen_mod.Screen;
 
 pub const Capture = struct {
@@ -19,7 +17,6 @@ pub const Capture = struct {
     history: ?[]u21,
     history_count: u32,
     history_capacity: u16,
-    selection: ?Selection.TerminalSelection,
 
     fn gridCellCount(rows: u16, cols: u16) u32 {
         return @as(u32, rows) * @as(u32, cols);
@@ -37,7 +34,7 @@ pub const Capture = struct {
         return row * @as(u32, cols) + @as(u32, col);
     }
 
-    pub fn captureFromScreen(allocator: std.mem.Allocator, screen: *const Screen, selection: ?Selection.TerminalSelection) !Capture {
+    pub fn captureFromScreen(allocator: std.mem.Allocator, screen: *const Screen) !Capture {
         const history_count = screen.historyCount();
         var capture = Capture{
             .allocator = allocator,
@@ -53,7 +50,6 @@ pub const Capture = struct {
             .history = null,
             .history_count = history_count,
             .history_capacity = screen.history_capacity,
-            .selection = selection,
         };
         errdefer {
             if (capture.cells) |cells| allocator.free(cells);

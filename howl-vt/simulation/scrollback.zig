@@ -81,7 +81,7 @@ pub fn runScenario(allocator: std.mem.Allocator, seed: u64, op_count: ScenarioOp
     return .{
         .structural_hash = hashStructural(&vt),
         .logical_hash = hashLogicalContent(&vt),
-        .history_count = vt.visibleHistoryCount(),
+        .history_count = vt.semanticView(0).history_count,
         .rows = vt.screen_state.activeConst().rows,
         .cols = vt.screen_state.activeConst().cols,
     };
@@ -124,7 +124,6 @@ pub fn runCanonicalPreservation(allocator: std.mem.Allocator, seed: u64, options
 
     const restore_pre_state = summarizeCoreState(&vt);
     try vt.screen_state.resize(vt.allocator, options.initial_rows, options.initial_cols);
-    vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
     const restore_step: ChurnStep = .{ .resize = .{
         .rows = options.initial_rows,
         .cols = options.initial_cols,
@@ -184,14 +183,12 @@ fn applyResize(vt: *Terminal, rand: std.Random) !void {
     const rows = RowsMin + rand.uintLessThan(u16, RowsMax - RowsMin + 1);
     const cols = ColsMin + rand.uintLessThan(u16, ColsMax - ColsMin + 1);
     try vt.screen_state.resize(vt.allocator, rows, cols);
-    vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
 }
 
 fn applyResizeStep(vt: *Terminal, rand: std.Random) !ChurnStep {
     const rows = RowsMin + rand.uintLessThan(u16, RowsMax - RowsMin + 1);
     const cols = ColsMin + rand.uintLessThan(u16, ColsMax - ColsMin + 1);
     try vt.screen_state.resize(vt.allocator, rows, cols);
-    vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
     return .{ .resize = .{ .rows = rows, .cols = cols } };
 }
 
@@ -206,10 +203,8 @@ fn applyZoomJitter(vt: *Terminal, rand: std.Random) !void {
         const next_rows = clampDimI16(cur_rows, delta_rows, RowsMin, RowsMax);
         const next_cols = clampDimI16(cur_cols, delta_cols, ColsMin, ColsMax);
         try vt.screen_state.resize(vt.allocator, next_rows, next_cols);
-        vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
     }
     try vt.screen_state.resize(vt.allocator, cur_rows, cur_cols);
-    vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
 }
 
 fn applyZoomJitterStep(vt: *Terminal, rand: std.Random) !ChurnStep {
@@ -225,10 +220,8 @@ fn applyZoomJitterStep(vt: *Terminal, rand: std.Random) !ChurnStep {
         end_rows = clampDimI16(cur_rows, delta_rows, RowsMin, RowsMax);
         end_cols = clampDimI16(cur_cols, delta_cols, ColsMin, ColsMax);
         try vt.screen_state.resize(vt.allocator, end_rows, end_cols);
-        vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
     }
     try vt.screen_state.resize(vt.allocator, cur_rows, cur_cols);
-    vt.screen_state.activeSelection().clearIfInvalidatedByGrid(vt.screen_state.activeConst());
     return .{ .zoom_jitter = .{
         .start_rows = cur_rows,
         .start_cols = cur_cols,
@@ -256,7 +249,7 @@ fn hashStructural(vt: *const Terminal) u64 {
     h.update(std.mem.asBytes(&s.rows));
     h.update(std.mem.asBytes(&s.cols));
     h.update(std.mem.asBytes(&s.wrap_pending));
-    const history_count = vt.visibleHistoryCount();
+    const history_count = vt.semanticView(0).history_count;
     const history_capacity = s.historyCapacity();
     h.update(std.mem.asBytes(&history_count));
     h.update(std.mem.asBytes(&history_capacity));
@@ -266,7 +259,7 @@ fn hashStructural(vt: *const Terminal) u64 {
 fn hashLogicalContent(vt: *const Terminal) u64 {
     var h = std.hash.Wyhash.init(0x9e3779b97f4a7c15);
     const s = vt.screen_state.activeConst();
-    const history = vt.visibleHistoryCount();
+    const history = vt.semanticView(0).history_count;
 
     var hr: u32 = 0;
     while (hr < history) : (hr += 1) {
@@ -357,7 +350,7 @@ fn summarizeCoreState(vt: *const Terminal) CoreStateSummary {
         .rows = s.rows,
         .cols = s.cols,
         .wrap_pending = s.wrap_pending,
-        .history_count = vt.visibleHistoryCount(),
+        .history_count = vt.semanticView(0).history_count,
         .history_capacity = s.historyCapacity(),
     };
 }

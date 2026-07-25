@@ -15,7 +15,6 @@ fn captureSnapshot(terminal: *const Terminal) !screen_capture.Capture {
     return screen_capture.Capture.captureFromScreen(
         terminal.allocator,
         terminal.screen_state.activeConst(),
-        terminal.screen_state.activeSelectionConst().state(),
     );
 }
 
@@ -91,8 +90,7 @@ test "visual view carries OSC colors and complete cell presentation" {
     );
     try std.testing.expect(summary.state_changed);
 
-    const publication = terminal.visualView();
-    const presentation = publication.presentation;
+    const presentation = terminal.presentation();
     try std.testing.expectEqual(
         Terminal.Rgb{ .r = 1, .g = 2, .b = 3 },
         presentation.palette[2],
@@ -109,7 +107,7 @@ test "visual view carries OSC colors and complete cell presentation" {
         @as(?Terminal.Rgb, .{ .r = 0x31, .g = 0x32, .b = 0x33 }),
         presentation.cursor,
     );
-    const cell = publication.view.cellInfoAt(0, 0);
+    const cell = terminal.semanticView(0).cellInfoAt(0, 0);
     try std.testing.expectEqual(
         presentation.palette[2],
         cell.attrs.fg.resolve(presentation.foreground, &presentation.palette),
@@ -203,31 +201,6 @@ test "snapshot: historyRowAt matches terminal after wraparound" {
         while (col < terminal.screen_state.activeConst().cols) : (col += 1) {
             try std.testing.expectEqual(screen_set.historyRowAt(&terminal.screen_state, idx, col), snap.historyRowAt(idx, col));
         }
-    }
-}
-
-test "snapshot: selection state is included" {
-    const gpa = std.testing.allocator;
-    var terminal = try Terminal.init(gpa, 5, 10);
-    defer terminal.deinit();
-    var stream = try StreamHarness.init(&terminal);
-
-    try stream.nextSlice("HELLO");
-
-    terminal.startSelection(0, 0);
-    terminal.updateSelection(0, 4);
-    terminal.finishSelection();
-
-    var snap = try captureSnapshot(&terminal);
-    defer snap.deinit();
-
-    try std.testing.expectEqual(true, snap.selection != null);
-    if (snap.selection) |sel| {
-        try std.testing.expectEqual(@as(i32, 0), sel.start.row);
-        try std.testing.expectEqual(@as(u16, 0), sel.start.col);
-        try std.testing.expectEqual(@as(i32, 0), sel.end.row);
-        try std.testing.expectEqual(@as(u16, 4), sel.end.col);
-        try std.testing.expectEqual(true, sel.active);
     }
 }
 

@@ -1,8 +1,8 @@
-//! Sole native embedding root for the host-neutral terminal model.
+//! Public embedding root for the terminal emulator.
 
 const terminal = @import("terminal.zig");
 
-/// Terminal state owner, byte-stream engine, visual view, and consequence boundary.
+/// Owns one terminal emulator, its retained state, replies, and consequences.
 pub const Terminal = terminal.Terminal;
 
 test {

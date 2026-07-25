@@ -10,26 +10,17 @@ test "native root owns the complete embedding contract" {
     const feed = try terminal.feed("ABCD");
     try std.testing.expect(feed.state_changed);
 
-    const visual = terminal.visualView();
-    try std.testing.expectEqual(@as(u16, 2), visual.view.rows);
-    try std.testing.expectEqual(@as(u16, 8), visual.view.cols);
-    try std.testing.expectEqual(@as(u21, 'A'), visual.view.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'D'), visual.view.cellAt(0, 3));
-    try std.testing.expect(terminal.ackVisual(visual.dirty_token));
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 2), view.rows);
+    try std.testing.expectEqual(@as(u16, 8), view.cols);
+    try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'D'), view.cellAt(0, 3));
 
-    const stale = terminal.visualView();
-    _ = try terminal.feed("E");
-    try std.testing.expect(!terminal.ackVisual(stale.dirty_token));
-    const current = terminal.visualView();
-    try std.testing.expect(current.dirty == .rows);
-    try std.testing.expect(current.dirty_token != stale.dirty_token);
-    try std.testing.expect(terminal.ackVisual(current.dirty_token));
-    try std.testing.expect(terminal.visualView().dirty == .none);
-
-    terminal.startSelection(0, 1);
-    terminal.updateSelection(0, 2);
-    terminal.finishSelection();
-    const selected = try terminal.copySelection(std.testing.allocator, std.math.maxInt(usize));
+    const selected = try terminal.copyText(
+        std.testing.allocator,
+        .{ .start = .{ .row = 0, .col = 1 }, .end = .{ .row = 0, .col = 2 } },
+        std.math.maxInt(usize),
+    );
     defer std.testing.allocator.free(selected);
     try std.testing.expectEqualStrings("BC", selected);
 
@@ -65,8 +56,8 @@ test "native root owns the complete embedding contract" {
     try std.testing.expectEqualStrings("\x1b[0n", output);
 
     _ = try terminal.feed("\x1b]52;c;SG93bA==\x07");
-    const clipboard_request = terminal.pendingClipboardRequest().?;
-    const clipboard = (try terminal.drainPendingClipboard(
+    const clipboard_request = terminal.consequenceHead().?.clipboard;
+    const clipboard = (try terminal.takeClipboard(
         clipboard_request.generation,
         std.testing.allocator,
     )).?;
@@ -74,7 +65,7 @@ test "native root owns the complete embedding contract" {
     try std.testing.expectEqualStrings("Howl", clipboard);
 
     try terminal.resize(3, 10);
-    const resized = terminal.visualView().view;
+    const resized = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 3), resized.rows);
     try std.testing.expectEqual(@as(u16, 10), resized.cols);
 }

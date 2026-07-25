@@ -21,11 +21,10 @@ const Operation = enum {
     mouse,
     focus,
     paste,
-    selection,
+    text,
     drain_output,
     drain_clipboard,
-    acknowledge,
-    scroll_viewport,
+    view,
     inspect,
 };
 
@@ -61,13 +60,13 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
                 try terminal.resize(rows, cols);
             },
             .reject_zero_resize => {
-                const before = terminal.visibleMeta();
+                const before = terminal.semanticView(0);
                 if (smith.value(bool)) {
                     try std.testing.expectError(error.InvalidDimensions, terminal.resize(0, before.cols));
                 } else {
                     try std.testing.expectError(error.InvalidDimensions, terminal.resize(before.rows, 0));
                 }
-                const after = terminal.visibleMeta();
+                const after = terminal.semanticView(0);
                 try std.testing.expectEqual(before.rows, after.rows);
                 try std.testing.expectEqual(before.cols, after.cols);
                 try std.testing.expectEqual(before.history_count, after.history_count);
@@ -84,11 +83,10 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
             .mouse => try encodeMouse(&terminal, smith),
             .focus => try encodeFocus(&terminal, smith),
             .paste => try encodePaste(&terminal, smith),
-            .selection => try mutateSelection(&terminal, smith),
+            .text => try extractText(&terminal, smith),
             .drain_output => try drainOutput(&terminal),
             .drain_clipboard => try drainClipboard(&terminal),
-            .acknowledge => try acknowledgeAndReuse(&terminal),
-            .scroll_viewport => scrollViewport(&terminal, smith),
+            .view => inspectView(&terminal, smith),
             .inspect => {},
         }
         try assertPublicInvariants(&terminal, history_capacity);
@@ -233,25 +231,32 @@ fn encodePaste(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
     try std.testing.expect(encoded.bytes.len <= input_max + 12);
 }
 
-fn mutateSelection(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
-    terminal.startSelection(smith.value(i32), smith.value(u16));
-    terminal.updateSelection(smith.value(i32), smith.value(u16));
-    terminal.finishSelection();
-    const generated = try terminal.copySelection(std.testing.allocator, std.math.maxInt(usize));
+fn extractText(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
+    const generated = try terminal.copyText(
+        std.testing.allocator,
+        .{
+            .start = .{ .row = smith.value(i32), .col = smith.value(u16) },
+            .end = .{ .row = smith.value(i32), .col = smith.value(u16) },
+        },
+        std.math.maxInt(usize),
+    );
     std.testing.allocator.free(generated);
-    if (smith.value(bool)) terminal.clearSelection();
 
-    // Arbitrary histories may select no text, so allocation retention uses one
+    // Arbitrary ranges may select no text, so allocation retention uses one
     // known cell without weakening the generated live-terminal mutation.
     var proof = try howl_vt.Terminal.init(std.testing.allocator, 1, 1);
     defer proof.deinit();
     _ = try proof.feed("S");
-    proof.startSelection(0, 0);
-    proof.updateSelection(0, 0);
-    proof.finishSelection();
+    const range: howl_vt.Terminal.TextRange = .{
+        .start = .{ .row = 0, .col = 0 },
+        .end = .{ .row = 0, .col = 0 },
+    };
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, proof.copySelection(failing.allocator(), std.math.maxInt(usize)));
-    const copied = try proof.copySelection(std.testing.allocator, std.math.maxInt(usize));
+    try std.testing.expectError(
+        error.OutOfMemory,
+        proof.copyText(failing.allocator(), range, std.math.maxInt(usize)),
+    );
+    const copied = try proof.copyText(std.testing.allocator, range, std.math.maxInt(usize));
     try std.testing.expectEqualStrings("S", copied);
     std.testing.allocator.free(copied);
 }
@@ -273,55 +278,43 @@ fn drainOutput(terminal: *howl_vt.Terminal) !void {
 fn drainClipboard(terminal: *howl_vt.Terminal) !void {
     const pending_output = try terminal.drainPendingOutput(std.testing.allocator);
     std.testing.allocator.free(pending_output);
-    while (terminal.pendingClipboardRequest()) |request| {
+    while (terminal.consequenceHead()) |consequence| {
+        const request = consequence.clipboard;
         switch (request.kind) {
-            .set, .packet => try terminal.acknowledgeClipboard(request.generation),
+            .set, .packet => try terminal.consumeConsequence(request.generation),
             .query => {
-                try std.testing.expect(try terminal.replyPendingClipboard(request.generation, ""));
+                try std.testing.expect(try terminal.replyClipboard(request.generation, ""));
                 const reply = try terminal.drainPendingOutput(std.testing.allocator);
                 std.testing.allocator.free(reply);
             },
         }
     }
-    try std.testing.expect(terminal.pendingClipboardRequest() == null);
+    try std.testing.expect(terminal.consequenceHead() == null);
     // CAN makes the retained OSC consequence independent of preceding bytes.
     try feedHostile(terminal, "\x18\x1b]52;c;SG93bA==\x07");
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    const request = terminal.pendingClipboardRequest().?;
+    const request = terminal.consequenceHead().?.clipboard;
     try std.testing.expectError(
         error.OutOfMemory,
-        terminal.drainPendingClipboard(request.generation, failing.allocator()),
+        terminal.takeClipboard(request.generation, failing.allocator()),
     );
-    const clipboard = (try terminal.drainPendingClipboard(request.generation, std.testing.allocator)).?;
+    const clipboard = (try terminal.takeClipboard(request.generation, std.testing.allocator)).?;
     defer std.testing.allocator.free(clipboard);
     try std.testing.expectEqualStrings("Howl", clipboard);
     try std.testing.expectError(
         error.StaleClipboardRequest,
-        terminal.drainPendingClipboard(request.generation, std.testing.allocator),
+        terminal.takeClipboard(request.generation, std.testing.allocator),
     );
 }
 
-fn acknowledgeAndReuse(terminal: *howl_vt.Terminal) !void {
-    const publication = terminal.visualView();
-    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
-    _ = try terminal.feed("\x18A");
-    const next = terminal.visualView();
-    try std.testing.expect(next.dirty_token != publication.dirty_token);
-    try std.testing.expect(terminal.ackVisual(next.dirty_token));
-}
-
-fn scrollViewport(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) void {
-    _ = terminal.scrollViewport(switch (smith.valueRangeAtMost(u8, 0, 3)) {
-        0 => .top,
-        1 => .bottom,
-        2 => .{ .delta = smith.value(i64) },
-        else => .{ .absolute = smith.value(u64) },
-    });
+fn inspectView(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) void {
+    const view = terminal.semanticView(smith.value(u32));
+    std.debug.assert(view.rows > 0);
+    std.debug.assert(view.cols > 0);
 }
 
 fn assertPublicInvariants(terminal: *howl_vt.Terminal, history_capacity: u16) !void {
-    const publication = terminal.visualView();
-    const view = publication.view;
+    const view = terminal.semanticView(0);
     try std.testing.expect(view.rows > 0);
     try std.testing.expect(view.cols > 0);
     try std.testing.expect(view.cursor_row < view.rows);
@@ -336,5 +329,4 @@ fn assertPublicInvariants(terminal: *howl_vt.Terminal, history_capacity: u16) !v
             _ = view.cellInfoAt(row, col);
         }
     }
-    try std.testing.expect(terminal.ackVisual(publication.dirty_token));
 }

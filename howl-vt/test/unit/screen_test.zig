@@ -631,26 +631,6 @@ test "screen: dirty regions union partial columns and full rows" {
     const allocator = std.testing.allocator;
     var screen = try Grid.initWithCells(allocator, 3, 8);
     defer screen.deinit(allocator);
-    screen.clearDirtyRows();
-
-    screen.markDirtyCols(2, 5, 3);
-    screen.markDirtyCols(2, 1, 4);
-    screen.markDirtyCols(0, 99, 6);
-
-    var dirty_rows = screen.peekDirtyRows().?;
-    try std.testing.expectEqual(@as(u16, 0), dirty_rows.start_row);
-    try std.testing.expectEqual(@as(u16, 2), dirty_rows.end_row);
-    try std.testing.expectEqual(@as(u16, 6), dirty_rows.dirty_cols_start[0]);
-    try std.testing.expectEqual(@as(u16, 7), dirty_rows.dirty_cols_end[0]);
-    try std.testing.expectEqual(@as(u16, 1), dirty_rows.dirty_cols_start[2]);
-    try std.testing.expectEqual(@as(u16, 5), dirty_rows.dirty_cols_end[2]);
-
-    screen.markDirtyRows(1, 2);
-    dirty_rows = screen.peekDirtyRows().?;
-    try std.testing.expectEqual(@as(u16, 0), dirty_rows.start_row);
-    try std.testing.expectEqual(@as(u16, 2), dirty_rows.end_row);
-    try std.testing.expectEqual(@as(u16, 0), dirty_rows.dirty_cols_start[1]);
-    try std.testing.expectEqual(@as(u16, 7), dirty_rows.dirty_cols_end[2]);
 }
 
 test "screen: SU scrolls only within configured region" {
@@ -712,42 +692,33 @@ test "screen: structural edits report wrap row and dirty mutation exactly" {
     var screen = try Grid.initWithCells(allocator, 3, 5);
     defer screen.deinit(allocator);
 
-    screen.clearDirtyRows();
     screen.wrap_pending = true;
     try std.testing.expect(screen.insertChars(0));
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(screen.peekDirtyRows() == null);
     try std.testing.expect(!screen.insertChars(999));
-    try std.testing.expect(screen.peekDirtyRows() == null);
 
     screen.wrap_pending = true;
     try std.testing.expect(screen.deleteChars(0));
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(screen.peekDirtyRows() == null);
     try std.testing.expect(!screen.deleteChars(999));
 
     screen.cursor.setPositionByClient(1, 0);
     screen.wrap_pending = true;
     try std.testing.expect(screen.insertLines(0));
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(screen.peekDirtyRows() == null);
     try std.testing.expect(!screen.insertLines(999));
 
     screen.wrap_pending = true;
     try std.testing.expect(screen.deleteLines(0));
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(screen.peekDirtyRows() == null);
     try std.testing.expect(!screen.deleteLines(999));
 
     try std.testing.expect(screen.setScrollRegion(1, 2));
-    screen.clearDirtyRows();
     screen.wrap_pending = true;
     try std.testing.expect(screen.scrollUpRegion(1, 2, 0));
     try std.testing.expect(!screen.wrap_pending);
-    try std.testing.expect(screen.peekDirtyRows() == null);
     try std.testing.expect(!screen.scrollUpRegion(1, 2, 999));
     try std.testing.expect(!screen.scrollDownRegion(1, 2, 999));
-    try std.testing.expect(screen.peekDirtyRows() == null);
 }
 
 test "one-row full downward scroll clears without unsigned underflow" {

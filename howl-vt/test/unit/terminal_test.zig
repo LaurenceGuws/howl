@@ -309,21 +309,19 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
     defer terminal.deinit();
 
-    terminal.screen_state.primary.writeText("PRIMARY-ROWS");
-    terminal.screen_state.alternate.writeText("ALTERNATE");
+    terminal.screen_state.primary.cells.?[0].codepoint = 'P';
+    terminal.screen_state.primary.cells.?[1].codepoint = 'R';
+    terminal.screen_state.alternate.cells.?[0].codepoint = 'A';
+    terminal.screen_state.alternate.cells.?[1].codepoint = 'L';
     terminal.screen_state.alt_active = alternate_active;
     terminal.screen_state.primary.cursor.setDefaultStyle(.{ .shape = .bar, .blink = false });
     terminal.screen_state.alternate.cursor.setDefaultStyle(.{ .shape = .underline, .blink = true });
     terminal.screen_state.primary.left_right_margin_mode = true;
     terminal.screen_state.primary.left_margin = 1;
     terminal.screen_state.primary.right_margin = 2;
-    terminal.startSelection(0, 0);
-    terminal.finishSelection();
-
     const primary_history_count = terminal.screen_state.primary.historyCount();
     const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
     const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
-    const selection_before = terminal.selectionState();
     const semantic_sequence_before = terminal.semantic_sequence;
 
     terminal.resize(3, 3) catch |err| {
@@ -335,7 +333,6 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
         try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
         try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
         try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-        try std.testing.expectEqual(selection_before, terminal.selectionState());
         try std.testing.expectEqual(semantic_sequence_before, terminal.semantic_sequence);
         try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
         try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
@@ -359,113 +356,67 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semantic_sequence);
 }
 
-test "selection copy owns exact allocation and codepoint failures" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, copySelectionAllocation, .{});
+test "text extraction owns exact allocation and codepoint failures" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, copyTextAllocation, .{});
 
     var terminal = try Terminal.init(std.testing.allocator, 1, 1);
     defer terminal.deinit();
-    terminal.startSelection(0, 0);
-    terminal.finishSelection();
+    const range: Terminal.TextRange = .{
+        .start = .{ .row = 0, .col = 0 },
+        .end = .{ .row = 0, .col = 0 },
+    };
 
     terminal.screen_state.primary.cells.?[0].codepoint = 0x110000;
-    try std.testing.expectError(error.CodepointTooLarge, terminal.copySelection(std.testing.allocator, std.math.maxInt(usize)));
-    terminal.screen_state.primary.cells.?[0].codepoint = 0xD800;
-    try std.testing.expectError(error.Utf8CannotEncodeSurrogateHalf, terminal.copySelection(std.testing.allocator, std.math.maxInt(usize)));
-}
-
-test "selection resolves scrolled history reverse drag and bounded copy" {
-    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
-    defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD")).state_changed);
-    try std.testing.expect(terminal.scrollViewport(.{ .absolute = 1 }));
-    terminal.startSelection(1, 1);
-    terminal.updateSelection(0, 0);
-    terminal.finishSelection();
-    const finished_sequence = terminal.semanticSequence();
-    terminal.finishSelection();
-    try std.testing.expectEqual(finished_sequence, terminal.semanticSequence());
-
-    const copied = try terminal.copySelection(std.testing.allocator, 16);
-    defer std.testing.allocator.free(copied);
-    try std.testing.expectEqualStrings("1AAAA\n2B", copied);
     try std.testing.expectError(
-        error.SelectionLimit,
-        terminal.copySelection(std.testing.allocator, copied.len - 1),
+        error.CodepointTooLarge,
+        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
+    );
+    terminal.screen_state.primary.cells.?[0].codepoint = 0xD800;
+    try std.testing.expectError(
+        error.Utf8CannotEncodeSurrogateHalf,
+        terminal.copyText(std.testing.allocator, range, std.math.maxInt(usize)),
     );
 }
 
-test "selection copy joins soft-wrapped rows without inventing a newline" {
+test "text extraction resolves projected history reverse ranges and bounded copy" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD")).state_changed);
+    const range: Terminal.TextRange = .{
+        .start = .{ .row = 1, .col = 1 },
+        .end = .{ .row = 0, .col = 0 },
+    };
+    const copied = try terminal.copyText(std.testing.allocator, range, 16);
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("1AAAA\n2B", copied);
+    try std.testing.expectError(
+        error.TextLimit,
+        terminal.copyText(std.testing.allocator, range, copied.len - 1),
+    );
+}
+
+test "text extraction joins soft-wrapped rows without inventing a newline" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 3);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("ABCDEF")).state_changed);
-    terminal.startSelection(0, 0);
-    terminal.updateSelection(1, 2);
-    terminal.finishSelection();
-    const copied = try terminal.copySelection(std.testing.allocator, 6);
+    const copied = try terminal.copyText(
+        std.testing.allocator,
+        .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 1, .col = 2 } },
+        6,
+    );
     defer std.testing.allocator.free(copied);
     try std.testing.expectEqualStrings("ABCDEF", copied);
 }
 
-test "selection appearance dirties exact active rows and resets at lifecycle boundaries" {
-    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 2);
-    defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("ABCDE\r\nFGHIJ")).state_changed);
-    try std.testing.expect(terminal.ackVisual(terminal.visualView().dirty_token));
-
-    terminal.startSelection(0, 1);
-    terminal.updateSelection(1, 2);
-    const dirty = terminal.visualView();
-    try std.testing.expect(dirty.dirty == .rows);
-    try std.testing.expectEqual(@as(u16, 0), dirty.dirty.rows.start_row);
-    try std.testing.expectEqual(@as(u16, 1), dirty.dirty.rows.end_row);
-    var rows = dirty.dirty.rows.iterator();
-    try std.testing.expectEqual(
-        Terminal.VisualDirtyRow{ .row = 0, .start_col = 1, .end_col = 4 },
-        rows.next().?,
-    );
-    try std.testing.expectEqual(
-        Terminal.VisualDirtyRow{ .row = 1, .start_col = 0, .end_col = 2 },
-        rows.next().?,
-    );
-    try std.testing.expect(rows.next() == null);
-
-    terminal.hardReset();
-    try std.testing.expect(terminal.selectionState() == null);
-    terminal.startSelection(0, 0);
-    try std.testing.expect(terminal.switchScreenMode(true, true, true));
-    try std.testing.expect(terminal.selectionState() == null);
-    terminal.startSelection(0, 0);
-    try std.testing.expect(terminal.switchScreenMode(false, false, true));
-    try std.testing.expect(terminal.selectionState() == null);
-}
-
-test "selection invalidates when retained endpoint is evicted or resized away" {
-    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 2);
-    defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("AAA\r\nBBB\r\nCCC")).state_changed);
-    try std.testing.expect(terminal.scrollViewport(.top));
-    terminal.startSelection(0, 0);
-    terminal.finishSelection();
-    try std.testing.expect((try terminal.feed("\r\nDDD\r\nEEE\r\nFFF")).state_changed);
-    try std.testing.expect(terminal.selectionState() == null);
-
-    var resized = try Terminal.init(std.testing.allocator, 2, 3);
-    defer resized.deinit();
-    resized.startSelection(1, 0);
-    try resized.resize(1, 3);
-    try std.testing.expect(resized.selectionState() == null);
-}
-
-fn copySelectionAllocation(allocator: std.mem.Allocator) !void {
+fn copyTextAllocation(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.init(allocator, 1, 4);
     defer terminal.deinit();
     terminal.screen_state.primary.writeText("COPY");
-    terminal.startSelection(0, 0);
-    terminal.updateSelection(0, 3);
-    terminal.finishSelection();
-
-    const copied = terminal.copySelection(allocator, std.math.maxInt(usize)) catch |err| {
-        try std.testing.expect(terminal.selectionState() != null);
+    const range: Terminal.TextRange = .{
+        .start = .{ .row = 0, .col = 0 },
+        .end = .{ .row = 0, .col = 3 },
+    };
+    const copied = terminal.copyText(allocator, range, std.math.maxInt(usize)) catch |err| {
         try std.testing.expectEqual(@as(u21, 'C'), terminal.screen_state.primary.cellAt(0, 0));
         return err;
     };
@@ -478,7 +429,7 @@ test "terminal rejects zero resize without changing dimensions" {
     defer terminal.deinit();
 
     try std.testing.expectError(error.InvalidDimensions, terminal.resize(0, 3));
-    const view = terminal.visualView().view;
+    const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 2), view.rows);
     try std.testing.expectEqual(@as(u16, 3), view.cols);
 }
@@ -490,29 +441,25 @@ test "terminal tracks synchronized output private mode" {
 
     try stream.nextSlice("\x1b[?2026h");
     try std.testing.expect(vt.modes.synchronized_output);
-    try std.testing.expect(vt.visualView().synchronized_output);
 
     try stream.nextSlice("\x1b[?2026l");
     try std.testing.expect(!vt.modes.synchronized_output);
-    try std.testing.expect(!vt.visualView().synchronized_output);
 }
 
-test "stationary cursor movement advances visual identity outside synchronized output" {
+test "stationary cursor movement advances semantic identity" {
     var vt = try Terminal.init(std.testing.allocator, 4, 8);
     defer vt.deinit();
 
     try std.testing.expect(!(try vt.feed("\x1b[?25h")).state_changed);
-    const before = vt.visualView();
-    try std.testing.expect(before.view.cursor_visible);
-    const before_token = before.dirty_token;
-    try std.testing.expect(vt.ackVisual(before_token));
+    const before = vt.semanticView(0);
+    try std.testing.expect(before.cursor_visible);
+    const before_sequence = vt.semanticSequence();
 
     try std.testing.expect((try vt.feed("\x1b[3;4H")).state_changed);
-    const after = vt.visualView();
-    try std.testing.expect(after.dirty_token != before_token);
-    try std.testing.expectEqual(@as(u16, 2), after.view.cursor_row);
-    try std.testing.expectEqual(@as(u16, 3), after.view.cursor_col);
-    try std.testing.expect(!after.synchronized_output);
+    const after = vt.semanticView(0);
+    try std.testing.expect(vt.semanticSequence() != before_sequence);
+    try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), after.cursor_col);
 }
 
 test "synchronized update DCS shares exact bounded mode state" {
@@ -552,12 +499,12 @@ test "terminal visible view projects scrollback rows" {
     try stream.nextSlice("aa\r\nbb\r\ncc");
 
     const live = screen_set.visibleView(&vt.screen_state, 0);
-    try std.testing.expectEqual(0, live.scrollback_offset);
+    try std.testing.expectEqual(0, live.history_offset);
     try std.testing.expectEqual(@as(u21, 'b'), live.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'c'), live.cellAt(1, 0));
 
     const scrolled = screen_set.visibleView(&vt.screen_state, 1);
-    try std.testing.expectEqual(1, scrolled.scrollback_offset);
+    try std.testing.expectEqual(1, scrolled.history_offset);
     try std.testing.expectEqual(@as(u21, 'a'), scrolled.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), scrolled.cellAt(1, 0));
     try std.testing.expectEqual(2, scrolled.rowDepth(0));
@@ -569,11 +516,11 @@ test "terminal Kitty unscroll consumes primary history in row order" {
     defer vt.deinit();
 
     try std.testing.expect((try vt.feed("aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee")).state_changed);
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
     vt.screen_state.active().cursor.setPositionByClient(1, 2);
 
     try std.testing.expect((try vt.feed("\x1b[2+T")).state_changed);
-    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.activeConst().cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.activeConst().cellAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.activeConst().cellAt(2, 0));
@@ -581,7 +528,7 @@ test "terminal Kitty unscroll consumes primary history in row order" {
     try std.testing.expectEqual(@as(u16, 2), vt.screen_state.activeConst().cursor.col);
 
     try vt.resize(3, 2);
-    try std.testing.expectEqual(@as(u32, 3), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 3), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.historyRowAt(2, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
@@ -592,14 +539,14 @@ test "terminal Kitty unscroll fragments and preserves alternate history" {
     defer vt.deinit();
 
     try feedChanged(&vt, "aaa\r\nbbb\r\nccc");
-    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try feedChanged(&vt, "\x1b[?1049hxxx");
     try std.testing.expect(!(try vt.feed("\x1b[")).state_changed);
     try std.testing.expect((try vt.feed("+T")).state_changed);
     try std.testing.expectEqual(@as(u21, 0), vt.screen_state.alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u32, 1), vt.screen_state.primary.historyCount());
     try feedChanged(&vt, "\x1b[?1049l\x1b[999999+T");
-    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 0), vt.screen_state.primary.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(1, 0));
 }
@@ -609,10 +556,10 @@ test "terminal Kitty unscroll preserves logical authority and cell facts" {
     defer vt.deinit();
 
     try feedChanged(&vt, "\x1b[31mAAAA\r\n1111\r\n2222");
-    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 0));
     try std.testing.expect((try vt.feed("\x1b[+T")).state_changed);
-    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.cellAt(0, 0));
     try std.testing.expectEqual(
         terminal_mod.Screen.Color.indexed(1),
@@ -620,7 +567,7 @@ test "terminal Kitty unscroll preserves logical authority and cell facts" {
     );
 
     try vt.resize(2, 2);
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'A'), vt.screen_state.primary.historyRowAt(0, 1));
 }
@@ -630,22 +577,22 @@ test "terminal Kitty unscroll consumes wrapped history ring authority" {
     defer vt.deinit();
 
     try feedChanged(&vt, "aa\r\nbb\r\ncc\r\ndd\r\nee");
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.historyRowAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
 
     try feedChanged(&vt, "\x1b[+T");
-    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try feedChanged(&vt, "\x1b[2;1Hzz\r\n");
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
 
     try feedChanged(&vt, "\x1b[2+T");
-    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'c'), vt.screen_state.primary.cellAt(1, 0));
 
     try vt.resize(2, 1);
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(1, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.screen_state.primary.historyRowAt(0, 0));
 }
@@ -655,14 +602,14 @@ test "terminal Kitty unscroll consumes newest rows of one wrapped line" {
     defer vt.deinit();
 
     try feedChanged(&vt, "abcdefghij");
-    try std.testing.expectEqual(@as(u32, 2), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
 
     try feedChanged(&vt, "\x1b[+T");
-    try std.testing.expectEqual(@as(u32, 1), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'd'), vt.screen_state.primary.cellAt(0, 0));
 
     try feedChanged(&vt, "\x1b[+T");
-    try std.testing.expectEqual(@as(u32, 0), vt.visibleHistoryCount());
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'a'), vt.screen_state.primary.cellAt(0, 0));
 }
 

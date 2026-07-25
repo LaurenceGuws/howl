@@ -161,7 +161,7 @@ test "terminal cursor: savepoint restores presentation while host colors remain 
     terminal.gl_index = 1;
     terminal.designations[0] = '0';
     terminal.designations[1] = 'A';
-    try std.testing.expect(terminal.saveCursor());
+    try std.testing.expect((try terminal.feed("\x1b7")).state_changed);
 
     active_screen.cursor.setPositionByClient(0, 0);
     active_screen.cursor.setProgramStyle(.{ .shape = .block, .blink = true });
@@ -176,7 +176,7 @@ test "terminal cursor: savepoint restores presentation while host colors remain 
     terminal.designations[0] = 'B';
     terminal.designations[1] = 'B';
 
-    try std.testing.expect(terminal.restoreCursor());
+    try std.testing.expect((try terminal.feed("\x1b8")).state_changed);
 
     try std.testing.expectEqual(@as(u16, 2), active(&terminal).cursor.row);
     try std.testing.expectEqual(@as(u16, 5), active(&terminal).cursor.col);

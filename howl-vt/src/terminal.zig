@@ -1,4 +1,4 @@
-//! Owns the complete terminal state machine, host consequences, and visual observation lifecycle.
+//! Owns terminal semantic state, byte application, replies, and ordered consequences.
 
 const std = @import("std");
 const parser_mod = @import("parser.zig");
@@ -42,8 +42,6 @@ pub const Screen = struct {
     /// Provides the canonical default cell attributes.
     pub const default_cell_attrs = initial_cell_attrs;
     const default_cell = blank_cell;
-    /// Uses the canonical borrowed dirty-row visual view.
-    pub const DirtyRows = ScreenDirtyRows;
     /// Describes one row's DEC presentation geometry without prescribing host rendering.
     pub const LineGeometry = enum(u2) {
         single_width,
@@ -95,7 +93,6 @@ pub const Screen = struct {
     history_loss_generation: u64,
     last_graphic: ?LastGraphic,
     current_attrs: CellAttrs,
-    dirty_state: DirtyState,
     tab_stops: ?[]bool,
     cell_pixel_size: ?CellPixelSize,
 
@@ -113,7 +110,6 @@ pub const Screen = struct {
         history: ?[]Cell,
         history_flags: ?[]u8,
         history_capacity: u16,
-        dirty_state: DirtyState,
         tab_stops: ?[]bool,
     ) Screen {
         return .{
@@ -152,7 +148,6 @@ pub const Screen = struct {
             .history_loss_generation = 0,
             .last_graphic = null,
             .current_attrs = initial_cell_attrs,
-            .dirty_state = dirty_state,
             .tab_stops = tab_stops,
             .cell_pixel_size = null,
         };
@@ -164,7 +159,7 @@ pub const Screen = struct {
     }
 
     fn initWithDefaultCursorStyle(rows: u16, cols: u16, cursor_style_default: CursorStyle) Screen {
-        return initBase(null, rows, cols, cursor_style_default, null, null, null, null, 0, .{}, null);
+        return initBase(null, rows, cols, cursor_style_default, null, null, null, null, 0, null);
     }
 
     /// Initialize screen with owned cell storage.
@@ -192,10 +187,6 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (row_flags) |buf| allocator.free(buf);
-        const dirty_cols_start = try allocDirtyCols(allocator, rows, 0);
-        errdefer if (dirty_cols_start) |buf| allocator.free(buf);
-        const dirty_cols_end = try allocDirtyCols(allocator, rows, cols -| 1);
-        errdefer if (dirty_cols_end) |buf| allocator.free(buf);
         const tab_stops = try allocTabStops(allocator, cols);
         errdefer if (tab_stops) |buf| allocator.free(buf);
         return initBase(
@@ -208,7 +199,6 @@ pub const Screen = struct {
             null,
             null,
             0,
-            DirtyState.initFull(rows, dirty_cols_start, dirty_cols_end),
             tab_stops,
         );
     }
@@ -264,7 +254,6 @@ pub const Screen = struct {
         self.cells = null;
         if (self.row_flags) |buf| allocator.free(buf);
         self.row_flags = null;
-        self.dirty_state.deinit(allocator);
         if (self.tab_stops) |buf| allocator.free(buf);
         self.tab_stops = null;
         if (self.history) |h| allocator.free(h);
@@ -331,7 +320,6 @@ pub const Screen = struct {
         replacement.allocator = allocator;
         replacement.cells = null;
         replacement.row_flags = null;
-        replacement.dirty_state = .{};
         replacement.tab_stops = null;
         replacement.history = null;
         replacement.history_flags = null;
@@ -352,7 +340,6 @@ pub const Screen = struct {
         self.cols = cols;
         self.cells = buffers.cells;
         self.row_flags = buffers.row_flags;
-        self.dirty_state = buffers.dirty_state;
         self.tab_stops = buffers.tab_stops;
         self.history = null;
         self.history_flags = null;
@@ -366,19 +353,14 @@ pub const Screen = struct {
         self.left_margin = 0;
         self.right_margin = cols -| 1;
         self.attr_change_extent_rect = false;
-        self.dirty_state.rows = rowsForFull(rows, self.dirty_state.cols_start, self.dirty_state.cols_end);
 
         std.debug.assert(self.rows == rows);
         std.debug.assert(self.cols == cols);
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.row_flags != null) == (rows > 0));
-        std.debug.assert((self.dirty_state.cols_start != null) == (rows > 0));
-        std.debug.assert((self.dirty_state.cols_end != null) == (rows > 0));
         std.debug.assert((self.tab_stops != null) == (cols > 0));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
         if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
-        if (self.dirty_state.cols_start) |buf| std.debug.assert(buf.len == rows);
-        if (self.dirty_state.cols_end) |buf| std.debug.assert(buf.len == rows);
         if (self.tab_stops) |buf| std.debug.assert(buf.len == cols);
         std.debug.assert(self.history == null);
         std.debug.assert(self.history_flags == null);
@@ -1037,7 +1019,6 @@ pub const Screen = struct {
         self.scroll_bottom = self.rows -| 1;
         self.last_graphic = null;
         self.current_attrs = initial_cell_attrs;
-        self.markAllRowsDirty();
         if (self.cells) |c| @memset(c, blank_cell);
         if (self.row_flags) |buf| @memset(buf, 0);
         if (self.tab_stops) |stops| setDefaultTabStops(stops);
@@ -1077,18 +1058,6 @@ pub const Screen = struct {
     /// Replaces the configured cursor default on this screen.
     pub fn setDefaultCursorStyle(self: *Screen, style: CursorStyle) void {
         self.cursor.setDefaultStyle(style);
-    }
-
-    /// Borrows current dirty bounds until the next screen mutation.
-    pub fn peekDirtyRows(self: *const Screen) ?DirtyRows {
-        return self.dirty_state.rows;
-    }
-
-    /// Acknowledges and clears all current dirty visual bounds.
-    pub fn clearDirtyRows(self: *Screen) void {
-        self.dirty_state.rows = null;
-        if (self.dirty_state.cols_start) |buf| @memset(buf, self.cols);
-        if (self.dirty_state.cols_end) |buf| @memset(buf, 0);
     }
 
     /// Read visible cell value by row and column.
@@ -1154,16 +1123,6 @@ pub const Screen = struct {
     /// Return configured history capacity.
     pub fn historyCapacity(self: *const Screen) u16 {
         return self.history_capacity;
-    }
-
-    /// Report whether selection endpoint should be invalidated.
-    pub fn shouldInvalidateSelectionEndpoint(self: *const Screen, endpoint_row: i32) bool {
-        if (endpoint_row < 0) return true;
-        const oldest_row = self.history_row_base;
-        const newest_row_exclusive = oldest_row + self.history_count + self.rows;
-        if (@as(u32, @intCast(endpoint_row)) < oldest_row) return true;
-        if (@as(u32, @intCast(endpoint_row)) >= newest_row_exclusive) return true;
-        return false;
     }
 
     /// Apply one routed screen mutation request to this Screen.
@@ -1413,7 +1372,6 @@ pub const Screen = struct {
         changed = self.clearRowContinuation(row) or changed;
         if (self.lineGeometry(row) != .single_width) {
             self.resetLineGeometry(row);
-            self.markDirtyRow(row);
             changed = true;
         }
         return changed;
@@ -1429,7 +1387,6 @@ pub const Screen = struct {
     fn clearRowContinuation(self: *Screen, row: u16) bool {
         if (!self.rowWrapped(row)) return false;
         self.setRowWrapped(row, false);
-        self.markDirtyRow(row);
         return true;
     }
 
@@ -1491,7 +1448,6 @@ pub const Screen = struct {
     pub fn clearVisibleCells(self: *Screen) void {
         if (self.cells) |cells| @memset(cells, blank_cell);
         if (self.row_flags) |flags| @memset(flags, 0);
-        self.markAllRowsDirty();
     }
 
     /// Moves the alternate-screen cursor to origin and clears pending wrap.
@@ -1529,7 +1485,6 @@ pub const Screen = struct {
         self.clearHistoryAuthority(allocator);
         self.history_count = 0;
         self.history_write_idx = 0;
-        if (changed) self.markAllRowsDirty();
         return changed;
     }
 
@@ -1620,7 +1575,6 @@ pub const Screen = struct {
             while (col <= end_col) : (col += 1) {
                 const idx = row_start + @as(u32, col);
                 if (applyRectAttrOps(&cells[@intCast(idx)].attrs, attrs, reverse)) {
-                    self.markDirtyCols(row, col, col);
                     changed = true;
                 }
             }
@@ -1664,7 +1618,6 @@ pub const Screen = struct {
                 const cell = &cells[start + col];
                 if (std.meta.eql(cell.*, fill)) continue;
                 cell.* = fill;
-                self.markDirtyCols(row, col, col);
                 changed = true;
             }
         }
@@ -1712,22 +1665,14 @@ pub const Screen = struct {
             const dest_start = self.rowStart(dest_top + row) + dest_left;
             const source_cells = cells[@intCast(source_start)..@intCast(source_start + copy_width)];
             const dest_cells = cells[@intCast(dest_start)..@intCast(dest_start + copy_width)];
-            var first_changed: ?u16 = null;
-            var last_changed: u16 = 0;
-            for (dest_cells, source_cells, 0..) |dest, source_cell, offset| {
+            for (dest_cells, source_cells) |dest, source_cell| {
                 if (std.meta.eql(dest, source_cell)) continue;
-                const col: u16 = @intCast(offset);
-                if (first_changed == null) first_changed = col;
-                last_changed = col;
+                changed = true;
             }
             if (dest_start > source_start) {
                 std.mem.copyBackwards(Cell, dest_cells, source_cells);
             } else {
                 std.mem.copyForwards(Cell, dest_cells, source_cells);
-            }
-            if (first_changed) |first| {
-                self.markDirtyCols(dest_top + row, dest_left + first, dest_left + last_changed);
-                changed = true;
             }
         }
         return changed;
@@ -1835,7 +1780,6 @@ pub const Screen = struct {
         }
         @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
-        if (cells_changed) self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
         return cells_changed or changed;
     }
 
@@ -1885,7 +1829,6 @@ pub const Screen = struct {
         }
         @memset(row[@intCast(tail_start)..@intCast(tail_end)], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
-        if (cells_changed) self.markDirtyCols(self.cursor.row, self.cursor.col, self.rightBoundary());
         return cells_changed or changed;
     }
 
@@ -1925,7 +1868,6 @@ pub const Screen = struct {
         }
         @memset(cells[@intCast(cursor_col)..@intCast(cursor_col + amount_cols)], erase);
         changed = self.clearRowContinuation(row) or changed;
-        if (changed) self.markDirtyCols(row, self.cursor.col, right);
         return changed;
     }
 
@@ -1968,7 +1910,6 @@ pub const Screen = struct {
             erase,
         );
         changed = self.clearRowContinuation(row) or changed;
-        if (changed) self.markDirtyCols(row, self.cursor.col, right);
         return changed;
     }
 
@@ -2009,7 +1950,6 @@ pub const Screen = struct {
         }
         @memset(cells[@intCast(left_idx + move_len)..@intCast(end)], erase);
         changed = self.clearRowContinuation(row) or changed;
-        if (changed) self.markDirtyCols(row, left, right);
         return changed;
     }
 
@@ -2048,7 +1988,6 @@ pub const Screen = struct {
         }
         @memset(cells[@intCast(left_idx)..@intCast(left_idx + amount_cols)], erase);
         changed = self.clearRowContinuation(row) or changed;
-        if (changed) self.markDirtyCols(row, left, right);
         return changed;
     }
 
@@ -2181,7 +2120,6 @@ pub const Screen = struct {
                     changed = true;
                 }
             }
-            self.markDirtyCols(row, start_col, start_col + physical_width - 1);
         }
         self.last_graphic = null;
         if (start_col + physical_width <= right) {
@@ -2235,7 +2173,6 @@ pub const Screen = struct {
                     self.cursor.col != self.clusterAnchorCol(self.cursor.row, self.cursor.col),
                 ));
             }
-            self.markDirtyCols(self.cursor.row, self.cursor.col, self.cursor.col);
             cells[@intCast(start + @as(u32, self.cursor.col))] = .{
                 .codepoint = cp,
                 .attrs = self.current_attrs,
@@ -2271,7 +2208,6 @@ pub const Screen = struct {
                 member.combining[combining_index] = cp;
                 member.combining_len = combining_index + 1;
             }
-            self.markDirtyCols(row, anchor_col, anchor_col + lead_cell.width - 1);
         }
         if (self.last_graphic) |*graphic| {
             if (graphic.combining_len < graphic.combining.len) {
@@ -2527,8 +2463,9 @@ pub const Screen = struct {
     fn scrollUp(self: *Screen) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
-        if (self.clearClustersIntersecting(0, 1, 0, self.cols)) self.markDirtyRow(0);
-        self.markDirtyRow(self.rows - 1);
+        if (self.clearClustersIntersecting(0, 1, 0, self.cols)) {
+            self.setRowWrapped(0, false);
+        }
         const row_len = @as(u32, self.cols);
         self.storeHistoryRow(0);
         self.row_origin = (self.row_origin + 1) % self.rows;
@@ -2786,7 +2723,6 @@ pub const Screen = struct {
                     history[@intCast(source)..@intCast(source + self.cols)],
                 );
                 self.row_flags.?[@intCast(self.rowWrapIndex(self.scroll_top).?)] = history_flags;
-                self.markDirtyRow(self.scroll_top);
                 self.consumeNewestHistoryRow();
                 changed = true;
             }
@@ -2833,7 +2769,6 @@ pub const Screen = struct {
             self.cursor.setColByClient(@min(self.cursor.col, width -| 1));
             self.wrap_pending = false;
         }
-        self.markDirtyRow(logical_row);
         return true;
     }
 
@@ -2876,7 +2811,6 @@ pub const Screen = struct {
                 }
             }
             if (row_changed) {
-                self.markDirtyRow(row);
                 changed = true;
             }
         }
@@ -2990,7 +2924,6 @@ pub const Screen = struct {
             self.resetLineGeometry(row);
             changed = true;
         }
-        if (changed) self.markDirtyCols(row, start_col, end_col_exclusive - 1);
         return changed;
     }
 
@@ -3016,7 +2949,6 @@ pub const Screen = struct {
             }
             if (std.meta.eql(cell.*, erase_cell)) continue;
             cell.* = erase_cell;
-            self.markDirtyCols(row, col, col);
             changed = true;
         }
         return changed;
@@ -3075,7 +3007,6 @@ pub const Screen = struct {
             observed.y >= observed.height or col < observed.x or row < observed.y)
         {
             cells[@intCast(self.rowStart(row) + col)] = self.eraseCell();
-            self.markDirtyCols(row, col, col);
             return true;
         }
         const top = row - observed.y;
@@ -3104,7 +3035,6 @@ pub const Screen = struct {
                     changed = true;
                 }
             }
-            if (first) |start| self.markDirtyCols(y, start, last);
         }
         return changed;
     }
@@ -3150,7 +3080,6 @@ pub const Screen = struct {
         } else {
             changed = self.clearRowContinuation(dst_row) or changed;
         }
-        if (changed) self.markDirtyCols(dst_row, start_col, end_col_exclusive - 1);
         return changed;
     }
 
@@ -3165,102 +3094,6 @@ pub const Screen = struct {
         const dst = self.rowWrapIndex(dst_row) orelse return;
         const src = self.rowWrapIndex(src_row) orelse return;
         flags[@intCast(dst)] = flags[@intCast(src)];
-    }
-
-    /// Mark one in-bounds row dirty across its full visible width.
-    fn markDirtyRow(self: *Screen, row: u16) void {
-        if (self.rows == 0 or row >= self.rows) return;
-        self.markDirtyCols(row, 0, self.cols -| 1);
-    }
-
-    /// Union an ordered, clamped column range into one row's dirty state.
-    pub fn markDirtyCols(self: *Screen, row: u16, start_col: u16, end_col: u16) void {
-        if (self.rows == 0 or self.cols == 0 or row >= self.rows) return;
-        advanceIdentity(&self.dirty_state.revision);
-        const start = @min(start_col, self.cols -| 1);
-        const end = @min(end_col, self.cols -| 1);
-        const lo = @min(start, end);
-        const hi = @max(start, end);
-        self.markDirtyColsRaw(row, lo, hi);
-        const cells = self.cells orelse return;
-        var col = lo;
-        while (true) {
-            const cell = cells[@intCast(self.rowStart(row) + col)];
-            if (!(cell.width == 1 and cell.height == 1 and cell.x == 0 and cell.y == 0) and
-                cell.width != 0 and cell.height != 0 and cell.x < cell.width and
-                cell.y < cell.height and col >= cell.x and row >= cell.y)
-            {
-                const top = row - cell.y;
-                const left = col - cell.x;
-                const bottom = @min(self.rows, top + cell.height);
-                const right = @min(self.cols, left + cell.width);
-                var cluster_row = top;
-                while (cluster_row < bottom) : (cluster_row += 1)
-                    self.markDirtyColsRaw(cluster_row, left, right - 1);
-            }
-            if (col == hi) break;
-            col += 1;
-        }
-    }
-
-    fn markDirtyColsRaw(self: *Screen, row: u16, lo: u16, hi: u16) void {
-        if (self.dirty_state.rows) |*d| {
-            d.start_row = @min(d.start_row, row);
-            d.end_row = @max(d.end_row, row);
-            d.dirty_cols_start = self.dirty_state.cols_start orelse &.{};
-            d.dirty_cols_end = self.dirty_state.cols_end orelse &.{};
-        } else {
-            self.dirty_state.rows = .{
-                .start_row = row,
-                .end_row = row,
-                .dirty_cols_start = self.dirty_state.cols_start orelse &.{},
-                .dirty_cols_end = self.dirty_state.cols_end orelse &.{},
-            };
-        }
-        if (self.dirty_state.cols_start) |cols_start| {
-            cols_start[row] = @min(cols_start[row], lo);
-        }
-        if (self.dirty_state.cols_end) |cols_end| {
-            cols_end[row] = @max(cols_end[row], hi);
-        }
-    }
-
-    /// Mark a clamped row range fully dirty and union it with prior dirty rows.
-    pub fn markDirtyRows(self: *Screen, start_row: u16, end_row: u16) void {
-        if (self.rows == 0) return;
-        advanceIdentity(&self.dirty_state.revision);
-        const start = @min(start_row, self.rows -| 1);
-        const end = @min(end_row, self.rows -| 1);
-        if (self.dirty_state.cols_start) |cols_start| {
-            var row = start;
-            while (row <= end) : (row += 1) cols_start[row] = 0;
-        }
-        if (self.dirty_state.cols_end) |cols_end| {
-            var row = start;
-            while (row <= end) : (row += 1) cols_end[row] = self.cols -| 1;
-        }
-        if (self.dirty_state.rows) |*d| {
-            d.start_row = @min(d.start_row, start);
-            d.end_row = @max(d.end_row, end);
-            d.dirty_cols_start = self.dirty_state.cols_start orelse &.{};
-            d.dirty_cols_end = self.dirty_state.cols_end orelse &.{};
-        } else {
-            self.dirty_state.rows = .{
-                .start_row = start,
-                .end_row = end,
-                .dirty_cols_start = self.dirty_state.cols_start orelse &.{},
-                .dirty_cols_end = self.dirty_state.cols_end orelse &.{},
-            };
-        }
-    }
-
-    /// Mark every row and column dirty while refreshing borrowed column slices.
-    pub fn markAllRowsDirty(self: *Screen) void {
-        if (self.rows == 0) return;
-        advanceIdentity(&self.dirty_state.revision);
-        if (self.dirty_state.cols_start) |buf| @memset(buf, 0);
-        if (self.dirty_state.cols_end) |buf| @memset(buf, self.cols -| 1);
-        self.dirty_state.rows = rowsForFull(self.rows, self.dirty_state.cols_start, self.dirty_state.cols_end);
     }
 };
 
@@ -3822,61 +3655,8 @@ const ScreenSemanticCursor = struct {
     }
 };
 
-// Borrows the outer dirty-row interval and one column range per screen row.
-// An untouched row inside the outer interval has start=screen cols and end=0.
-const ScreenDirtyRows = struct {
-    start_row: u16,
-    end_row: u16,
-    dirty_cols_start: []const u16 = &.{},
-    dirty_cols_end: []const u16 = &.{},
-};
-
-// Owns dirty visual bounds for one screen allocation.
-const DirtyState = struct {
-    rows: ?ScreenDirtyRows = null,
-    cols_start: ?[]u16 = null,
-    cols_end: ?[]u16 = null,
-    revision: u64 = 0,
-
-    /// Marks every row and column dirty using caller-owned column arrays.
-    pub fn initFull(row_count: u16, cols_start: ?[]u16, cols_end: ?[]u16) DirtyState {
-        return .{
-            .rows = rowsForFull(row_count, cols_start, cols_end),
-            .cols_start = cols_start,
-            .cols_end = cols_end,
-            .revision = 1,
-        };
-    }
-
-    /// Releases optional dirty-column arrays through the screen allocator.
-    pub fn deinit(self: *DirtyState, allocator: std.mem.Allocator) void {
-        if (self.cols_start) |buf| allocator.free(buf);
-        if (self.cols_end) |buf| allocator.free(buf);
-        self.* = .{};
-    }
-};
-
 fn advanceIdentity(value: *u64) void {
     value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
-}
-
-// Allocates and initializes one u16 column bound per row when rows are nonzero.
-fn allocDirtyCols(allocator: std.mem.Allocator, rows: u16, initial: u16) std.mem.Allocator.Error!?[]u16 {
-    if (rows == 0) return null;
-    const buf = try allocator.alloc(u16, rows);
-    @memset(buf, initial);
-    return buf;
-}
-
-// Returns a full dirty-row view when the screen has at least one row.
-fn rowsForFull(rows: u16, dirty_cols_start: ?[]const u16, dirty_cols_end: ?[]const u16) ?ScreenDirtyRows {
-    if (rows == 0) return null;
-    return .{
-        .start_row = 0,
-        .end_row = rows -| 1,
-        .dirty_cols_start = dirty_cols_start orelse &.{},
-        .dirty_cols_end = dirty_cols_end orelse &.{},
-    };
 }
 
 /// Erase extent selected by CSI display and line erase controls.
@@ -4046,13 +3826,11 @@ const ViewportState = struct {
 pub const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
     row_flags: ?[]u8,
-    dirty_state: DirtyState,
     tab_stops: ?[]bool,
 
     const empty: ResizeBuffers = .{
         .cells = null,
         .row_flags = null,
-        .dirty_state = .{},
         .tab_stops = null,
     };
 
@@ -4060,7 +3838,6 @@ pub const ResizeBuffers = struct {
     pub fn deinit(self: *ResizeBuffers, allocator: std.mem.Allocator) void {
         if (self.cells) |buf| allocator.free(buf);
         if (self.row_flags) |buf| allocator.free(buf);
-        self.dirty_state.deinit(allocator);
         if (self.tab_stops) |buf| allocator.free(buf);
         self.* = empty;
     }
@@ -4247,29 +4024,20 @@ pub fn allocResizeBuffers(
     }
     errdefer if (row_flags) |buf| allocator.free(buf);
 
-    const dirty_cols_start = try allocDirtyCols(allocator, rows, 0);
-    errdefer if (dirty_cols_start) |buf| allocator.free(buf);
-    const dirty_cols_end = try allocDirtyCols(allocator, rows, cols -| 1);
-    errdefer if (dirty_cols_end) |buf| allocator.free(buf);
     const tab_stops = try allocTabStops(allocator, cols);
     errdefer if (tab_stops) |buf| allocator.free(buf);
     copyTabStops(tab_stops, old_tab_stops);
 
     std.debug.assert((cells != null) == (cell_count > 0));
     std.debug.assert((row_flags != null) == (rows > 0));
-    std.debug.assert((dirty_cols_start != null) == (rows > 0));
-    std.debug.assert((dirty_cols_end != null) == (rows > 0));
     std.debug.assert((tab_stops != null) == (cols > 0));
     if (cells) |buf| std.debug.assert(buf.len == cell_count);
     if (row_flags) |buf| std.debug.assert(buf.len == rows);
-    if (dirty_cols_start) |buf| std.debug.assert(buf.len == rows);
-    if (dirty_cols_end) |buf| std.debug.assert(buf.len == rows);
     if (tab_stops) |buf| std.debug.assert(buf.len == cols);
 
     return .{
         .cells = cells,
         .row_flags = row_flags,
-        .dirty_state = DirtyState.initFull(rows, dirty_cols_start, dirty_cols_end),
         .tab_stops = tab_stops,
     };
 }
@@ -5988,8 +5756,8 @@ fn appendDeviceStatusReport(
     param: u16,
 ) ApplyError!void {
     const text = switch (param) {
-        55 => formatLocatorReport(encode_buf, "?50n", .{}),
-        56 => formatLocatorReport(encode_buf, "?57;1n", .{}),
+        55 => std.fmt.bufPrint(encode_buf, "?50n", .{}) catch unreachable,
+        56 => std.fmt.bufPrint(encode_buf, "?57;1n", .{}) catch unreachable,
         else => return,
     };
     try appendCsiReply(output, allocator, .terminal, text);
@@ -6055,18 +5823,14 @@ fn appendReport(
 ) ApplyError!void {
     const button_mask = buttonsMask(buttons_down);
     const coords = coordinates(state, row, col);
-    const text = formatLocatorReport(
+    std.debug.assert(encode_buf.len >= locator_report_max_bytes);
+    const text = std.fmt.bufPrint(
         encode_buf,
         "{d};{d};{d};{d};0&w",
         .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
-    );
+    ) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, text);
     if (state.mode == .one_shot) state.mode = .disabled;
-}
-
-fn formatLocatorReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-    std.debug.assert(encode_buf.len >= locator_report_max_bytes);
-    return std.fmt.bufPrint(encode_buf, fmt, args) catch unreachable;
 }
 
 fn coordinates(state: *const Locator, row: u16, col: u16) struct { row: u32, col: u32 } {
@@ -6178,6 +5942,7 @@ const hyperlink_target_max_bytes: u32 = 2 * 1024;
 pub const max_metadata_bytes: u32 = 1024;
 // Bounds one notification, focus, or attention burst while a host applies policy.
 const notification_capacity: u8 = 8;
+const bell_capacity: u8 = 32;
 // Bounds one pointer-request burst while a host applies validation and presentation policy.
 const pointer_shape_capacity: u8 = 8;
 // Bounds one opaque file-transfer burst while its host applies policy and storage.
@@ -6544,7 +6309,7 @@ pub const HostState = struct {
     colors: TerminalColorState = .{},
     pending_output: PendingOutput,
     hyperlink_targets: std.ArrayList(HyperlinkTarget),
-    clipboard_generation: u64 = 0,
+    consequence_generation: u64 = 0,
     clipboard_requests: [clipboard_capacity]ClipboardRequestOwned = undefined,
     clipboard_requests_start: u8 = 0,
     clipboard_requests_count: u8 = 0,
@@ -6557,43 +6322,37 @@ pub const HostState = struct {
     title_stack_len: u8 = 0,
     shell_integration: ?ShellIntegration = null,
     shell_mark: ShellMark = .{},
-    notification_generation: u64 = 0,
     notifications: [notification_capacity]NotificationOwned = undefined,
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
-    pointer_shape_generation: u64 = 0,
     pointer_shape_reset_generation: u64 = 1,
     pointer_shapes: [pointer_shape_capacity]PointerShapeOwned = undefined,
     pointer_shapes_start: u8 = 0,
     pointer_shapes_count: u8 = 0,
-    file_transfer_generation: u64 = 0,
     file_transfer_packets: [file_transfer_capacity]FileTransferPacketOwned = undefined,
     file_transfer_start: u8 = 0,
     file_transfer_count: u8 = 0,
-    drag_drop_generation: u64 = 0,
     drag_drop_commands: [drag_drop_capacity]DragDropCommandOwned = undefined,
     drag_drop_start: u8 = 0,
     drag_drop_count: u8 = 0,
     drag_drop_retained_bytes: u32 = 0,
-    window_request_generation: u64 = 0,
     window_requests: [window_request_capacity]WindowRequestOccurrence = undefined,
     window_requests_start: u8 = 0,
     window_requests_count: u8 = 0,
-    color_preference_query_generation: u64 = 0,
-    color_preference_query_head: u64 = 0,
+    color_preference_queries: [color_preference_query_capacity]u64 = undefined,
+    color_preference_query_start: u8 = 0,
     color_preference_query_count: u8 = 0,
-    media_copy_generation: u64 = 0,
     media_copy_requests: [media_copy_capacity]MediaCopyOccurrence = undefined,
     media_copy_start: u8 = 0,
     media_copy_count: u8 = 0,
-    bell_generation: u64 = 0,
+    bells: [bell_capacity]u64 = undefined,
+    bells_start: u8 = 0,
+    bells_count: u8 = 0,
     locator: Locator = .{},
-    dcs_payload_generation: u64 = 0,
     dcs_payloads: [dcs_payload_capacity]DcsPayloadOwned = undefined,
     dcs_payloads_start: u8 = 0,
     dcs_payloads_count: u8 = 0,
     dcs_retained_bytes: u32 = 0,
-    string_payload_generation: u64 = 0,
     string_payloads: [string_payload_capacity]StringPayloadOwned = undefined,
     string_payloads_start: u8 = 0,
     string_payloads_count: u8 = 0,
@@ -6607,6 +6366,16 @@ pub const HostState = struct {
             .pending_output = PendingOutput.init(),
             .hyperlink_targets = std.ArrayList(HyperlinkTarget).empty,
         };
+    }
+
+    fn nextConsequenceId(self: *const HostState) ApplyError!u64 {
+        return std.math.add(u64, self.consequence_generation, 1) catch
+            error.ConsequenceLimit;
+    }
+
+    fn commitConsequenceId(self: *HostState, id: u64) void {
+        std.debug.assert(id == self.consequence_generation + 1);
+        self.consequence_generation = id;
     }
 
     /// Release every retained allocation through the initializer allocator.
@@ -6776,12 +6545,12 @@ pub const HostState = struct {
     ) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
         if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
-        if (self.notification_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const index = (self.notifications_start + self.notifications_count) % notification_capacity;
         const slot = &self.notifications[index];
         @memcpy(slot.payload[0..payload.len], payload);
-        self.notification_generation += 1;
-        slot.generation = self.notification_generation;
+        self.commitConsequenceId(occurrence_id);
+        slot.generation = occurrence_id;
         slot.kind = kind;
         slot.command = command;
         slot.payload_len = @intCast(payload.len);
@@ -6796,12 +6565,12 @@ pub const HostState = struct {
     ) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
         if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
-        if (self.pointer_shape_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const index = (self.pointer_shapes_start + self.pointer_shapes_count) % pointer_shape_capacity;
         const slot = &self.pointer_shapes[index];
         @memcpy(slot.payload[0..payload.len], payload);
-        self.pointer_shape_generation += 1;
-        slot.generation = self.pointer_shape_generation;
+        self.commitConsequenceId(occurrence_id);
+        slot.generation = occurrence_id;
         slot.reset_generation = self.pointer_shape_reset_generation;
         slot.alternate_screen = alternate_screen;
         slot.payload_len = @intCast(payload.len);
@@ -6812,12 +6581,12 @@ pub const HostState = struct {
     fn retainFileTransfer(self: *HostState, protocol: FileTransferProtocol, payload: []const u8) ApplyError!void {
         try ensureRetainedBound(byteCount(payload), file_transfer_packet_max_bytes);
         if (self.file_transfer_count == file_transfer_capacity) return error.ConsequenceLimit;
-        if (self.file_transfer_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const owned = try self.allocator.dupe(u8, payload);
         const index = (self.file_transfer_start + self.file_transfer_count) % file_transfer_capacity;
-        self.file_transfer_generation += 1;
+        self.commitConsequenceId(occurrence_id);
         self.file_transfer_packets[index] = .{
-            .generation = self.file_transfer_generation,
+            .generation = occurrence_id,
             .protocol = protocol,
             .payload = owned,
         };
@@ -6846,12 +6615,12 @@ pub const HostState = struct {
             @intCast(command.payload.len),
         ) catch return error.ConsequenceLimit;
         if (retained > drag_drop_aggregate_max_bytes) return error.ConsequenceLimit;
-        if (self.drag_drop_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const payload = try self.allocator.dupe(u8, command.payload);
         const index = (self.drag_drop_start + self.drag_drop_count) % drag_drop_capacity;
-        self.drag_drop_generation += 1;
+        self.commitConsequenceId(occurrence_id);
         self.drag_drop_commands[index] = .{
-            .generation = self.drag_drop_generation,
+            .generation = occurrence_id,
             .kind = command.kind,
             .command = command.command,
             .client_id = command.client_id,
@@ -6883,10 +6652,10 @@ pub const HostState = struct {
     /// Retain one window request occurrence without executing host policy.
     pub fn retainWindowRequest(self: *HostState, request: WindowRequest) ApplyError!void {
         if (self.window_requests_count == window_request_capacity) return error.ConsequenceLimit;
-        if (self.window_request_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
-        self.window_request_generation += 1;
+        const occurrence_id = try self.nextConsequenceId();
+        self.commitConsequenceId(occurrence_id);
         const index = (self.window_requests_start + self.window_requests_count) % window_request_capacity;
-        self.window_requests[index] = .{ .generation = self.window_request_generation, .request = request };
+        self.window_requests[index] = .{ .generation = occurrence_id, .request = request };
         self.window_requests_count += 1;
     }
 
@@ -6904,36 +6673,32 @@ pub const HostState = struct {
     fn retainColorPreferenceQuery(self: *HostState) ApplyError!void {
         if (self.color_preference_query_count == color_preference_query_capacity)
             return error.ConsequenceLimit;
-        if (self.color_preference_query_generation == std.math.maxInt(u64))
-            return error.ConsequenceLimit;
-        self.color_preference_query_generation += 1;
-        if (self.color_preference_query_count == 0)
-            self.color_preference_query_head = self.color_preference_query_generation;
+        const occurrence_id = try self.nextConsequenceId();
+        self.commitConsequenceId(occurrence_id);
+        const index = (self.color_preference_query_start + self.color_preference_query_count) %
+            color_preference_query_capacity;
+        self.color_preference_queries[index] = occurrence_id;
         self.color_preference_query_count += 1;
     }
 
     fn colorPreferenceQueryGeneration(self: *const HostState) ?u64 {
         if (self.color_preference_query_count == 0) return null;
-        return self.color_preference_query_head;
+        return self.color_preference_queries[self.color_preference_query_start];
     }
 
     fn consumeColorPreferenceQuery(self: *HostState) void {
         std.debug.assert(self.color_preference_query_count > 0);
+        self.color_preference_query_start =
+            (self.color_preference_query_start + 1) % color_preference_query_capacity;
         self.color_preference_query_count -= 1;
-        if (self.color_preference_query_count == 0) {
-            self.color_preference_query_head = 0;
-        } else {
-            std.debug.assert(self.color_preference_query_head < self.color_preference_query_generation);
-            self.color_preference_query_head += 1;
-        }
     }
 
     fn retainMediaCopy(self: *HostState, request: MediaCopyRequest) ApplyError!void {
         if (self.media_copy_count == media_copy_capacity) return error.ConsequenceLimit;
-        if (self.media_copy_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
-        self.media_copy_generation += 1;
+        const occurrence_id = try self.nextConsequenceId();
+        self.commitConsequenceId(occurrence_id);
         const index = (self.media_copy_start + self.media_copy_count) % media_copy_capacity;
-        self.media_copy_requests[index] = .{ .generation = self.media_copy_generation, .request = request };
+        self.media_copy_requests[index] = .{ .generation = occurrence_id, .request = request };
         self.media_copy_count += 1;
     }
 
@@ -6987,9 +6752,23 @@ pub const HostState = struct {
 
     /// Retain one BEL occurrence without choosing an audible or visual policy.
     pub fn ringBell(self: *HostState) ApplyError!void {
-        if (self.bell_generation == std.math.maxInt(u64))
-            return error.ConsequenceLimit;
-        self.bell_generation += 1;
+        if (self.bells_count == bell_capacity) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
+        const index = (self.bells_start + self.bells_count) % bell_capacity;
+        self.commitConsequenceId(occurrence_id);
+        self.bells[index] = occurrence_id;
+        self.bells_count += 1;
+    }
+
+    fn bellHead(self: *const HostState) ?u64 {
+        if (self.bells_count == 0) return null;
+        return self.bells[self.bells_start];
+    }
+
+    fn consumeBell(self: *HostState) void {
+        std.debug.assert(self.bells_count > 0);
+        self.bells_start = (self.bells_start + 1) % bell_capacity;
+        self.bells_count -= 1;
     }
 
     /// Retain one valid clipboard occurrence transactionally without choosing host access policy.
@@ -7014,15 +6793,15 @@ pub const HostState = struct {
         protocol: ClipboardProtocol,
     ) ApplyError!void {
         if (self.clipboard_requests_count == clipboard_capacity) return error.ConsequenceLimit;
-        if (self.clipboard_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const retained_bytes = std.math.add(u32, self.clipboard_retained_bytes, byteCount(payload)) catch
             return error.ConsequenceLimit;
         if (retained_bytes > clipboard_max_bytes) return error.ConsequenceLimit;
         const owned = try self.allocator.dupe(u8, payload);
         const index = (self.clipboard_requests_start + self.clipboard_requests_count) % clipboard_capacity;
-        self.clipboard_generation += 1;
+        self.commitConsequenceId(occurrence_id);
         self.clipboard_requests[index] = .{
-            .generation = self.clipboard_generation,
+            .generation = occurrence_id,
             .raw = owned,
             .selection_len = selection_len,
             .kind = kind,
@@ -7037,15 +6816,15 @@ pub const HostState = struct {
     pub fn retainDcsPayload(self: *HostState, payload: DcsPayload) ApplyError!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
         if (self.dcs_payloads_count == dcs_payload_capacity) return error.ConsequenceLimit;
-        if (self.dcs_payload_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const retained_bytes = std.math.add(u32, self.dcs_retained_bytes, byteCount(payload.payload)) catch
             return error.ConsequenceLimit;
         if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
         const owned = try self.allocator.dupe(u8, payload.payload);
         const index = (self.dcs_payloads_start + self.dcs_payloads_count) % dcs_payload_capacity;
-        self.dcs_payload_generation += 1;
+        self.commitConsequenceId(occurrence_id);
         self.dcs_payloads[index] = .{
-            .generation = self.dcs_payload_generation,
+            .generation = occurrence_id,
             .kind = payload.kind,
             .payload = owned,
         };
@@ -7073,15 +6852,15 @@ pub const HostState = struct {
     pub fn retainStringPayload(self: *HostState, payload: StringPayload) ApplyError!void {
         try ensureRetainedBound(byteCount(payload.payload), dcs_payload_max_bytes);
         if (self.string_payloads_count == string_payload_capacity) return error.ConsequenceLimit;
-        if (self.string_payload_generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
+        const occurrence_id = try self.nextConsequenceId();
         const retained_bytes = std.math.add(u32, self.string_retained_bytes, byteCount(payload.payload)) catch
             return error.ConsequenceLimit;
         if (retained_bytes > dcs_payload_max_bytes) return error.ConsequenceLimit;
         const owned = try self.allocator.dupe(u8, payload.payload);
         const index = (self.string_payloads_start + self.string_payloads_count) % string_payload_capacity;
-        self.string_payload_generation += 1;
+        self.commitConsequenceId(occurrence_id);
         self.string_payloads[index] = .{
-            .generation = self.string_payload_generation,
+            .generation = occurrence_id,
             .kind = payload.kind,
             .payload = owned,
         };
@@ -7178,7 +6957,7 @@ pub const HostState = struct {
     }
 
     /// Decode one OSC 52 set into caller-owned memory; allocation failure preserves the request.
-    pub fn drainPendingClipboardSet(
+    pub fn takeClipboardSet(
         self: *HostState,
         generation: u64,
         allocator: std.mem.Allocator,
@@ -7196,7 +6975,7 @@ pub const HostState = struct {
     }
 
     /// Serialize one host-approved OSC 52 query reply and consume the query only on success.
-    pub fn replyPendingClipboardQuery(
+    pub fn replyClipboardQuery(
         self: *HostState,
         generation: u64,
         bytes: []const u8,
@@ -7621,7 +7400,7 @@ fn retainDragDropAllocation(allocator: std.mem.Allocator) !void {
 fn prepareDragDropAllocation(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.init(allocator, 2, 2);
     defer terminal.deinit();
-    const bytes = try terminal.prepareDragDropEvent(.{ .data = .{
+    const bytes = try terminal.encodeDragDropEvent(.{ .data = .{
         .client_id = 7,
         .index = 1,
         .more = true,
@@ -7672,7 +7451,7 @@ fn retainDcsAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
     state.retainDcsPayload(.{ .kind = .iterm_tmux_wrap, .payload = "first" }) catch |failure| {
-        try std.testing.expectEqual(@as(u64, 0), state.dcs_payload_generation);
+        try std.testing.expectEqual(@as(u64, 0), state.consequence_generation);
         try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
         try std.testing.expectEqual(@as(u32, 0), state.dcs_retained_bytes);
         return failure;
@@ -7686,7 +7465,7 @@ fn retainStringAllocation(allocator: std.mem.Allocator) !void {
     var state = HostState.init(allocator);
     defer state.deinit();
     state.retainStringPayload(.{ .kind = .apc, .payload = "first" }) catch |failure| {
-        try std.testing.expectEqual(@as(u64, 0), state.string_payload_generation);
+        try std.testing.expectEqual(@as(u64, 0), state.consequence_generation);
         try std.testing.expectEqual(@as(u8, 0), state.string_payloads_count);
         try std.testing.expectEqual(@as(u32, 0), state.string_retained_bytes);
         return failure;
@@ -7701,7 +7480,7 @@ fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
     defer state.deinit();
     const retained = try state.retainClipboard("c;?");
     try std.testing.expect(retained);
-    const replied = state.replyPendingClipboardQuery(1, "Howl") catch |failure| {
+    const replied = state.replyClipboardQuery(1, "Howl") catch |failure| {
         const request = state.pendingClipboardRequest().?;
         try std.testing.expect(request.kind == .query);
         try std.testing.expectEqualStrings("c", request.selection);
@@ -7790,7 +7569,7 @@ fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
     var state = HostState.init(std.testing.allocator);
     defer state.deinit();
     try std.testing.expect(try state.retainClipboard("c;SG93bA=="));
-    const decoded = state.drainPendingClipboardSet(1, result_allocator) catch |err| {
+    const decoded = state.takeClipboardSet(1, result_allocator) catch |err| {
         try std.testing.expectEqualStrings("c;SG93bA==", state.pendingClipboardSet().?);
         return err;
     };
@@ -9988,7 +9767,7 @@ test "OSC Kitty host-policy payloads expose only retained terminal facts" {
     } }).?.text_size.payload);
 }
 
-// Screen banks, viewport projection, selection, and visual observation.
+// Screen banks and borrowed semantic projection.
 
 // Identifies whether a visible row comes from history or the active screen.
 const RowSource = union(enum) {
@@ -10006,7 +9785,7 @@ pub const View = struct {
     cursor_shape: Screen.CursorShape,
     cursor_blink: bool,
     is_alternate_screen: bool,
-    scrollback_offset: u32,
+    history_offset: u32,
     history_count: u32,
     history_row_base: u32,
     start: u32,
@@ -10026,7 +9805,7 @@ pub const View = struct {
     ///
     /// `row` must be in bounds. History and active-screen storage remain
     /// private; the returned cells share this view's mutation lifetime.
-    pub fn rowCells(self: *const View, row: u16) []const Terminal.VisualCell {
+    pub fn rowCells(self: *const View, row: u16) []const Terminal.Cell {
         std.debug.assert(row < self.rows);
         return switch (self.rowSource(row)) {
             .history => |recency| self.screen.historyRowCells(recency),
@@ -10055,14 +9834,14 @@ pub const View = struct {
 
     /// Returns the display depth contributed by one visible row.
     pub fn rowDepth(self: *const View, row: u16) u32 {
-        if (self.rows == 0 or row >= self.rows) return self.scrollback_offset;
-        std.debug.assert(self.scrollback_offset <= self.history_count);
-        return self.scrollback_offset + rowIndex(self.rows - 1 - row);
+        if (self.rows == 0 or row >= self.rows) return self.history_offset;
+        std.debug.assert(self.history_offset <= self.history_count);
+        return self.history_offset + rowIndex(self.rows - 1 - row);
     }
 
     /// Returns the first blank column after visible row content.
     pub fn contentEndExclusive(self: *const View, row: u16) u16 {
-        if (self.scrollback_offset == 0 and row > self.cursor_row) return 0;
+        if (self.history_offset == 0 and row > self.cursor_row) return 0;
         var scan = self.cols;
         while (scan > 0) {
             const idx = scan - 1;
@@ -10074,28 +9853,10 @@ pub const View = struct {
     }
 };
 
-// Pairs a borrowed visible view with its active selection.
-const VisualSource = struct {
-    view: View,
-    selection: ?TerminalSelection,
-};
-
-const VisibleSelection = struct {
-    selected: ?TerminalSelection,
-
-    fn span(self: *const VisibleSelection, view: *const View, row: u16) ?Range {
-        if (row >= view.rows) return null;
-        const selected = self.selected orelse return null;
-        return visibleRange(view, selected, row);
-    }
-};
-
-// Owns primary and alternate screens plus their independent selections.
+// Owns primary and alternate terminal screens.
 const Set = struct {
     primary: Screen,
     alternate: Screen,
-    primary_selection: SelectionState = SelectionState.init(),
-    alternate_selection: SelectionState = SelectionState.init(),
     alt_active: bool = false,
 
     /// Takes primary and alternate screen values into one screen set.
@@ -10111,16 +9872,6 @@ const Set = struct {
     /// Returns the borrowed screen selected by alternate-screen state.
     pub fn activeConst(self: *const Set) *const Screen {
         return if (self.alt_active) &self.alternate else &self.primary;
-    }
-
-    /// Returns mutable selection state paired with the active screen.
-    pub fn activeSelection(self: *Set) *SelectionState {
-        return if (self.alt_active) &self.alternate_selection else &self.primary_selection;
-    }
-
-    /// Returns borrowed selection state paired with the active screen.
-    pub fn activeSelectionConst(self: *const Set) *const SelectionState {
-        return if (self.alt_active) &self.alternate_selection else &self.primary_selection;
     }
 
     /// Resets the active screen while preserving alternate-screen identity.
@@ -10158,10 +9909,10 @@ const Set = struct {
 };
 
 /// Builds a borrowed viewport at a clamped scrollback offset.
-pub fn visibleView(screen_state: *const Set, scrollback_offset: u32) View {
+pub fn visibleView(screen_state: *const Set, history_offset: u32) View {
     const active = screen_state.activeConst();
     const history_count: u32 = if (screen_state.alt_active) 0 else active.historyCount();
-    const offset = @min(scrollback_offset, history_count);
+    const offset = @min(history_offset, history_count);
     const rows_count: u32 = active.rows;
     const total_rows = history_count + rows_count;
     const start = if (total_rows >= rows_count + offset) total_rows - rows_count - offset else 0;
@@ -10179,35 +9930,12 @@ pub fn visibleView(screen_state: *const Set, scrollback_offset: u32) View {
         .cursor_shape = active.cursor.effective_shape,
         .cursor_blink = active.cursor.blink_intent,
         .is_alternate_screen = screen_state.alt_active,
-        .scrollback_offset = offset,
+        .history_offset = offset,
         .history_count = history_count,
         .history_row_base = active.historyRowBase(),
         .start = start,
         .screen = active,
     };
-}
-
-// Builds a borrowed view and selection at a clamped u64 offset.
-fn projectVisualSource(screen_state: *const Set, scrollback_offset: u64) VisualSource {
-    const history_count: u64 = if (screen_state.alt_active)
-        0
-    else
-        screen_state.activeConst().historyCount();
-    const offset: u32 = @intCast(@min(scrollback_offset, history_count));
-    const view = visibleView(screen_state, offset);
-    return .{
-        .view = view,
-        .selection = screen_state.activeSelectionConst().state(),
-    };
-}
-
-fn peekDirtyRows(screen_state: *const Set) ?Screen.DirtyRows {
-    return screen_state.activeConst().peekDirtyRows();
-}
-
-/// Acknowledges dirty state on the active screen.
-pub fn clearDirtyRows(screen_state: *Set) void {
-    screen_state.active().clearDirtyRows();
 }
 
 /// Returns one history codepoint by recency.
@@ -10230,192 +9958,30 @@ fn rowIndex(row: u16) u32 {
     return row;
 }
 
-/// Selection endpoint coordinate in stable projected scrollback rows.
-const SelectionPos = struct {
+/// Identifies one cell in stable projected history-and-screen coordinates.
+const TerminalTextPoint = struct {
     row: i32,
     col: u16,
 };
 
-/// Selection state snapshot.
-pub const TerminalSelection = struct {
-    active: bool,
-    selecting: bool,
-    start: SelectionPos,
-    end: SelectionPos,
+/// Identifies an inclusive terminal text range without owning gesture state.
+const TerminalTextRange = struct {
+    start: TerminalTextPoint,
+    end: TerminalTextPoint,
 };
 
-// Selection lifecycle state container.
-const SelectionState = struct {
-    selection: TerminalSelection,
-
-    /// Initialize inactive selection state.
-    pub fn init() SelectionState {
-        return .{
-            .selection = .{
-                .active = false,
-                .selecting = false,
-                .start = .{ .row = 0, .col = 0 },
-                .end = .{ .row = 0, .col = 0 },
-            },
-        };
-    }
-
-    /// Clear and deactivate selection.
-    pub fn clear(self: *SelectionState) void {
-        self.selection.active = false;
-        self.selection.selecting = false;
-    }
-
-    /// Start selection at row/column.
-    pub fn start(self: *SelectionState, row: i32, col: u16) void {
-        self.selection.active = true;
-        self.selection.selecting = true;
-        self.selection.start = .{ .row = row, .col = col };
-        self.selection.end = .{ .row = row, .col = col };
-    }
-
-    /// Update selection end coordinate.
-    pub fn update(self: *SelectionState, row: i32, col: u16) void {
-        if (!self.selection.active) return;
-        self.selection.end = .{ .row = row, .col = col };
-    }
-
-    /// Mark current selection as finished.
-    pub fn finish(self: *SelectionState) void {
-        if (!self.selection.active) return;
-        self.selection.selecting = false;
-    }
-
-    /// Clear the selection when grid changes invalidate either endpoint.
-    pub fn clearIfInvalidatedByGrid(self: *SelectionState, screen: *const Screen) void {
-        if (!self.selection.active) return;
-        if (screen.shouldInvalidateSelectionEndpoint(self.selection.start.row) or
-            screen.shouldInvalidateSelectionEndpoint(self.selection.end.row))
-        {
-            self.clear();
-        }
-    }
-
-    /// Return active selection snapshot or null.
-    pub fn state(self: *const SelectionState) ?TerminalSelection {
-        if (!self.selection.active) return null;
-        return self.selection;
-    }
-};
-
-// Returns selection endpoints in document order without mutating selection state.
-fn orderedSelection(sel: TerminalSelection) struct { start: SelectionPos, end: SelectionPos } {
-    if (sel.start.row < sel.end.row) return .{ .start = sel.start, .end = sel.end };
-    if (sel.start.row > sel.end.row) return .{ .start = sel.end, .end = sel.start };
-    if (sel.start.col <= sel.end.col) return .{ .start = sel.start, .end = sel.end };
-    return .{ .start = sel.end, .end = sel.start };
+fn orderedTextRange(range: TerminalTextRange) TerminalTextRange {
+    if (range.start.row < range.end.row) return range;
+    if (range.start.row > range.end.row) return .{ .start = range.end, .end = range.start };
+    if (range.start.col <= range.end.col) return range;
+    return .{ .start = range.end, .end = range.start };
 }
 
-test "selection: start in viewport coordinates" {
-    var s = SelectionState.init();
-    s.start(5, 10);
-    const sel = s.state().?;
-    try std.testing.expectEqual(@as(i32, 5), sel.start.row);
-    try std.testing.expectEqual(@as(u16, 10), sel.start.col);
-    try std.testing.expect(sel.active);
-    try std.testing.expect(sel.selecting);
-}
-
-test "selection: start in projected scrollback coordinates" {
-    var s = SelectionState.init();
-    s.start(3, 7);
-    const sel = s.state().?;
-    try std.testing.expectEqual(@as(i32, 3), sel.start.row);
-    try std.testing.expectEqual(@as(u16, 7), sel.start.col);
-}
-
-test "selection: update spanning projected rows" {
-    var s = SelectionState.init();
-    s.start(1, 0);
-    s.update(5, 20);
-    const sel = s.state().?;
-    try std.testing.expectEqual(@as(i32, 1), sel.start.row);
-    try std.testing.expectEqual(@as(i32, 5), sel.end.row);
-    try std.testing.expectEqual(@as(u16, 20), sel.end.col);
-}
-
-test "selection: inactive returns null" {
-    var s = SelectionState.init();
-    try std.testing.expectEqual(@as(?TerminalSelection, null), s.state());
-}
-
-test "selection: start and update with viewport coordinates" {
-    var sel = SelectionState.init();
-    sel.start(5, 10);
-    var state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 5), state.start.row);
-    try std.testing.expectEqual(@as(u16, 10), state.start.col);
-
-    sel.update(7, 15);
-    state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 7), state.end.row);
-    try std.testing.expectEqual(@as(u16, 15), state.end.col);
-}
-
-test "selection: start and update with projected coordinates" {
-    var sel = SelectionState.init();
-    sel.start(3, 2);
-    var state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 3), state.start.row);
-    try std.testing.expectEqual(@as(u16, 2), state.start.col);
-
-    sel.update(5, 8);
-    state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 5), state.end.row);
-    try std.testing.expectEqual(@as(u16, 8), state.end.col);
-}
-
-test "selection: span projected rows" {
-    var sel = SelectionState.init();
-    sel.start(2, 0);
-    var state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 2), state.start.row);
-
-    sel.update(5, 20);
-    state = sel.state().?;
-    try std.testing.expectEqual(@as(i32, 2), state.start.row);
-    try std.testing.expectEqual(@as(i32, 5), state.end.row);
-    try std.testing.expect(state.active);
-    try std.testing.expect(state.selecting);
-}
-
-test "selection: clear deactivates selection" {
-    var sel = SelectionState.init();
-    sel.start(2, 5);
-    try std.testing.expect(sel.state() != null);
-
-    sel.clear();
-    try std.testing.expectEqual(@as(?TerminalSelection, null), sel.state());
-}
-
-test "selection: finish stops selecting but keeps active" {
-    var sel = SelectionState.init();
-    sel.start(3, 7);
-    var state = sel.state().?;
-    try std.testing.expect(state.selecting);
-
-    sel.finish();
-    state = sel.state().?;
-    try std.testing.expect(state.active);
-    try std.testing.expect(!state.selecting);
-}
-
-/// Stores a half-open visible column range for one projected selection row.
-pub const Range = struct {
-    start: u16,
-    end_exclusive: u16,
-};
-
-// Failures produced while copying selected cells into UTF-8 caller storage.
+// Failures produced while copying terminal cells into UTF-8 caller storage.
 const CopyError = error{
     CodepointTooLarge,
     OutOfMemory,
-    SelectionLimit,
+    TextLimit,
     Utf8CannotEncodeSurrogateHalf,
 };
 
@@ -10456,45 +10022,17 @@ fn sourceRowWrapped(screen: *const Screen, source: RowSource) bool {
     };
 }
 
-fn visibleRow(view: *const View, row: u16) i32 {
-    std.debug.assert(row < view.rows or view.rows == 0);
-    const absolute = @as(u64, view.history_row_base) + @as(u64, view.start) + @as(u64, row);
-    return std.math.cast(i32, absolute) orelse std.math.maxInt(i32);
-}
-
-/// Projects an ordered selection onto one visible row, or null outside the selection.
-pub fn visibleRange(view: *const View, selected: TerminalSelection, row: u16) ?Range {
-    std.debug.assert(row < view.rows or view.rows == 0);
-    const ordered = orderedSelection(selected);
-    const selected_row = visibleRow(view, row);
-    if (selected_row < ordered.start.row or selected_row > ordered.end.row) return null;
-
-    const row_end = view.contentEndExclusive(row);
-    if (row_end == 0) return null;
-
-    const range_start: u16 = if (selected_row == ordered.start.row) ordered.start.col else 0;
-    const unclamped_end: u32 = if (selected_row == ordered.end.row)
-        @as(u32, ordered.end.col) + 1
-    else
-        row_end;
-    const range_end: u16 = @intCast(@min(unclamped_end, row_end));
-    if (range_start >= range_end) return null;
-    std.debug.assert(range_end <= view.cols);
-    return .{ .start = range_start, .end_exclusive = range_end };
-}
-
-// Copy selected cells into caller-owned UTF-8 memory.
+// Copy one caller-selected semantic range into caller-owned UTF-8 memory.
 //
 // The caller owns a successful non-empty result. Invalid stored codepoints
 // are reported exactly instead of trapping during integer narrowing.
-fn copyText(
+fn copyTextRange(
     allocator: std.mem.Allocator,
     screen_state: *const Set,
-    selected: ?TerminalSelection,
+    range: TerminalTextRange,
     max_bytes: usize,
 ) CopyError![]const u8 {
-    const active_selection = selected orelse return &.{};
-    const ordered_selection = orderedSelection(active_selection);
+    const ordered_selection = orderedTextRange(range);
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
     var row = ordered_selection.start.row;
@@ -10516,12 +10054,12 @@ fn copyText(
                 var utf8: [4]u8 = undefined;
                 const codepoint = std.math.cast(u21, cell.codepoint) orelse return error.CodepointTooLarge;
                 const len = try std.unicode.utf8Encode(codepoint, &utf8);
-                if (out.items.len > max_bytes -| len) return error.SelectionLimit;
+                if (out.items.len > max_bytes -| len) return error.TextLimit;
                 try out.appendSlice(allocator, utf8[0..len]);
             }
         }
         if (row != ordered_selection.end.row and !sourceRowWrapped(screen_state.activeConst(), source)) {
-            if (out.items.len == max_bytes) return error.SelectionLimit;
+            if (out.items.len == max_bytes) return error.TextLimit;
             try out.append(allocator, '\n');
         }
     }
@@ -10594,7 +10132,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 else => {},
             }
             const colors_changed = !std.meta.eql(before, vt.host.colors);
-            if (colors_changed) vt.noteSourceWideVisualChange();
+
             return colors_changed or output_before != vt.host.pending_output.bytes.items.len;
         },
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.host.internHyperlink(spec)),
@@ -10892,7 +10430,7 @@ fn appendModifyOtherKeysReport(
     encode_buf: []u8,
     value: i8,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, ">4;{d}m", .{value});
+    const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -10903,7 +10441,7 @@ fn appendKeyFormatReport(
     resource: u8,
     value: u16,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, ">{d};{d}f", .{ resource, value });
+    const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11000,7 +10538,7 @@ fn appendTitleStackPositionReport(
     current: u16,
     max: u16,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "{d};{d}#S", .{ current, max });
+    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#S", .{ current, max }) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11012,11 +10550,11 @@ fn appendCursorPositionReport(
 ) ApplyError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
-    const payload = formatTerminalReport(
+    const payload = std.fmt.bufPrint(
         encode_buf,
         "{d};{d}R",
         .{ row, col },
-    );
+    ) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11028,11 +10566,11 @@ fn appendDecCursorPositionReport(
 ) ApplyError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
-    const payload = formatTerminalReport(
+    const payload = std.fmt.bufPrint(
         encode_buf,
         "?{d};{d}R",
         .{ row, col },
-    );
+    ) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11055,7 +10593,7 @@ fn appendDecModeReport(
     mode: u16,
     state: u8,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "?{d};{d}$y", .{ mode, state });
+    const payload = std.fmt.bufPrint(encode_buf, "?{d};{d}$y", .{ mode, state }) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11066,7 +10604,7 @@ fn appendAnsiModeReport(
     mode: u16,
     state: u8,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "{d};{d}$y", .{ mode, state });
+    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}$y", .{ mode, state }) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11077,7 +10615,7 @@ fn appendColorStackReport(
     stack: *const KittyColorStack,
 ) ApplyError!void {
     const index = if (stack.len == 0) 0 else stack.len - 1;
-    const payload = formatTerminalReport(encode_buf, "{d};{d}#Q", .{ index, stack.len });
+    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
     try appendCsiReply(output, allocator, .kitty, payload);
 }
 
@@ -11097,7 +10635,7 @@ fn appendTabStopReport(
         if (!screen.tabStopAt(col)) continue;
         if (!first) try appendOutput(output, allocator, "/");
         first = false;
-        const text = formatTerminalReport(encode_buf, "{d}", .{col + 1});
+        const text = std.fmt.bufPrint(encode_buf, "{d}", .{col + 1}) catch unreachable;
         try appendOutput(output, allocator, text);
     }
     try appendReplyControl(output, allocator, .terminal, .st);
@@ -11109,7 +10647,7 @@ fn appendScreenExtentReport(
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols });
+    const payload = std.fmt.bufPrint(encode_buf, "{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols }) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11120,7 +10658,7 @@ fn appendTerminalParametersReport(
     kind: u16,
 ) ApplyError!void {
     if (kind > 1) return;
-    const payload = formatTerminalReport(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2});
+    const payload = std.fmt.bufPrint(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2}) catch unreachable;
     try appendCsiReply(output, allocator, .terminal, payload);
 }
 
@@ -11131,7 +10669,7 @@ fn appendRectChecksumReport(
     req: RectChecksumRequest,
     checksum: u16,
 ) ApplyError!void {
-    const payload = formatTerminalReport(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum });
+    const payload = std.fmt.bufPrint(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum }) catch unreachable;
     try appendStringReply(output, allocator, .terminal, .dcs, payload);
 }
 
@@ -11171,7 +10709,7 @@ fn appendSgrAttrs(
     if (attrs.invisible) try appendSgrParam(allocator, output, &first, "8");
     if (attrs.strikethrough) try appendSgrParam(allocator, output, &first, "9");
     if (attrs.font != 0) {
-        const font = formatTerminalReport(encode_buf, "{d}", .{@as(u8, 10) + attrs.font});
+        const font = std.fmt.bufPrint(encode_buf, "{d}", .{@as(u8, 10) + attrs.font}) catch unreachable;
         try appendSgrParam(allocator, output, &first, font);
     }
     try appendColorParam(allocator, output, encode_buf, &first, true, attrs.fg, Screen.default_cell_attrs.fg);
@@ -11341,7 +10879,7 @@ fn appendColorParam(
                     (if (idx < 8) 30 + idx else 90 + (idx - 8))
                 else
                     (if (idx < 8) 40 + idx else 100 + (idx - 8));
-                const text = formatTerminalReport(encode_buf, "{d}", .{code});
+                const text = std.fmt.bufPrint(encode_buf, "{d}", .{code}) catch unreachable;
                 try appendSgrParam(allocator, output, first, text);
                 return;
             }
@@ -11362,24 +10900,19 @@ fn appendExtendedColorParam(
     switch (color.kind) {
         .default => return,
         .indexed => {
-            const text = formatTerminalReport(encode_buf, "{d};5;{d}", .{ prefix, color.value });
+            const text = std.fmt.bufPrint(encode_buf, "{d};5;{d}", .{ prefix, color.value }) catch unreachable;
             try appendSgrParam(allocator, output, first, text);
         },
         .rgb => {
-            const text = formatTerminalReport(encode_buf, "{d};2;{d};{d};{d}", .{
+            const text = std.fmt.bufPrint(encode_buf, "{d};2;{d};{d};{d}", .{
                 prefix,
                 (color.value >> 16) & 0xFF,
                 (color.value >> 8) & 0xFF,
                 color.value & 0xFF,
-            });
+            }) catch unreachable;
             try appendSgrParam(allocator, output, first, text);
         },
     }
-}
-
-fn formatTerminalReport(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-    std.debug.assert(encode_buf.len >= terminal_report_max_bytes);
-    return std.fmt.bufPrint(encode_buf, fmt, args) catch unreachable;
 }
 
 fn colorEq(a: Screen.Color, b: Screen.Color) bool {
@@ -11516,7 +11049,7 @@ fn handleXtermPaletteControl(
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
         if (std.mem.eql(u8, value, "?")) {
-            const text = formatOscReply(encode_buf, "4;{d};", .{idx});
+            const text = std.fmt.bufPrint(encode_buf, "4;{d};", .{idx}) catch unreachable;
             const start = byteCount(output.bytes.items);
             errdefer restorePendingOutput(output, start);
             try appendReplyControl(output, allocator, .terminal, .osc);
@@ -11541,7 +11074,7 @@ fn handleXtermSpecialPaletteControl(
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
         const idx = std.fmt.parseUnsigned(u3, idx_text, 10) catch continue;
-        const text = formatOscReply(encode_buf, "5;{d};", .{idx});
+        const text = std.fmt.bufPrint(encode_buf, "5;{d};", .{idx}) catch unreachable;
         if (std.mem.eql(u8, value, "?")) {
             const start = byteCount(output.bytes.items);
             errdefer restorePendingOutput(output, start);
@@ -11968,7 +11501,7 @@ fn appendXtermSpecialColorReply(
         .cursor => colors.cursor orelse colors.foreground,
         else => colors.foreground,
     };
-    const text = formatOscReply(encode_buf, "{d};", .{osc});
+    const text = std.fmt.bufPrint(encode_buf, "{d};", .{osc}) catch unreachable;
     const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
     try appendReplyControl(output, allocator, .terminal, .osc);
@@ -11984,7 +11517,7 @@ fn appendXtermDynamicColorReply(
     colors: TerminalColorState,
     key: DynamicKey,
 ) ApplyError!void {
-    const text = formatOscReply(encode_buf, "{d};", .{dynamicCommandForKey(key)});
+    const text = std.fmt.bufPrint(encode_buf, "{d};", .{dynamicCommandForKey(key)}) catch unreachable;
     const start = byteCount(output.bytes.items);
     errdefer restorePendingOutput(output, start);
     try appendReplyControl(output, allocator, .terminal, .osc);
@@ -12013,11 +11546,6 @@ fn setSpecialColorDynamic(colors: *TerminalColorState, key: []const u8) void {
         .selection_background => colors.selection_background = null,
         .selection_foreground => colors.selection_foreground = null,
     };
-}
-
-fn formatOscReply(encode_buf: []u8, comptime fmt: []const u8, args: anytype) []const u8 {
-    std.debug.assert(encode_buf.len >= osc_reply_max_bytes);
-    return std.fmt.bufPrint(encode_buf, fmt, args) catch unreachable;
 }
 
 fn formatColorOsc(buf: []u8, color: Rgb) []const u8 {
@@ -12329,9 +11857,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         => return try applyKittyEvent(vt, event),
 
         .kitty_color_stack => |command| {
-            const colors_before = vt.host.colors;
             const changed = applyKittyColorStack(vt, command);
-            if (!std.meta.eql(colors_before, vt.host.colors)) vt.noteSourceWideVisualChange();
             return changed;
         },
         .text_size => |command| return vt.screen_state.active().writeSizedText(command.payload),
@@ -12418,7 +11944,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             const before = vt.host.colors;
             handleItermSetColors(&vt.host.colors, payload);
             const changed = !std.meta.eql(before, vt.host.colors);
-            if (changed) vt.noteSourceWideVisualChange();
+
             return changed;
         },
         .bell,
@@ -12989,10 +12515,6 @@ const TerminalStream = struct {
 
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     pub fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) FeedError!FeedSummary {
-        const visual_before = self.terminal.visualMutationState();
-        const selection_before = self.terminal.screen_state.activeSelectionConst().state();
-        const history_before = self.terminal.visibleHistoryCount();
-        const was_scrolled = self.terminal.scrollback_offset > 0;
         var summary: FeedSummary = .{
             .state_changed = false,
             .title_changed = false,
@@ -13000,13 +12522,7 @@ const TerminalStream = struct {
             .history_lost = false,
         };
         var completed = false;
-        defer if (!completed) self.terminal.completeStreamMutation(
-            visual_before,
-            selection_before,
-            history_before,
-            was_scrolled,
-            summary.state_changed,
-        );
+        defer if (!completed) self.terminal.completeStreamMutation(summary.state_changed);
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         for (bytes) |byte| {
             const byte_summary = try self.nextSummary(byte);
@@ -13016,13 +12532,7 @@ const TerminalStream = struct {
         }
         summary.history_lost =
             self.terminal.screen_state.primary.history_loss_generation != history_loss_before;
-        self.terminal.completeStreamMutation(
-            visual_before,
-            selection_before,
-            history_before,
-            was_scrolled,
-            summary.state_changed,
-        );
+        self.terminal.completeStreamMutation(summary.state_changed);
         completed = true;
         return summary;
     }
@@ -13385,7 +12895,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         );
         try appendOutput(&terminal.host.pending_output, terminal.allocator, "\x1b\\");
     }
-    if (result.changed and result.visual_changed) terminal.noteSourceWideVisualChange();
+
     return result.changed or (respond and !suppressed);
 }
 
@@ -13590,7 +13100,7 @@ test "discarded string controls stream without retaining payload bytes" {
     try stream.nextSlice("\x1b\\");
     try stream.nextSlice("ok");
 
-    const view = terminal.visualView().view;
+    const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'o'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
 }
@@ -13674,6 +13184,12 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
 pub const Terminal = struct {
     /// Exposes the terminal-borrowing byte stream type used by native hosts.
     pub const Stream = TerminalStream;
+    /// Identifies one cell in stable projected history-and-screen coordinates.
+    pub const TextPoint = TerminalTextPoint;
+    /// Identifies an inclusive text range supplied by the embedder.
+    pub const TextRange = TerminalTextRange;
+    /// Reports exact terminal-text extraction failures.
+    pub const TextError = CopyError;
     /// Names one host-neutral request from the child to manipulate its containing window.
     pub const WindowOperation = WindowRequest;
     /// Copies one accepted ordered window request and its monotonic identity.
@@ -13768,13 +13284,8 @@ pub const Terminal = struct {
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
     pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, StaleClipboardRequest };
     /// Reports stale identity, allocation, or bounded transfer saturation for one Kitty clipboard packet.
-    pub const KittyClipboardReplyError = error{ ConsequenceLimit, StaleClipboardRequest };
-    /// Reports stale identity or an attempt to acknowledge a query without its required reply.
-    pub const ClipboardAcknowledgeError = error{ StaleClipboardRequest, ClipboardReplyRequired };
     /// Reports stale or mismatched host facts, allocation failure, or bounded reply saturation.
     pub const WindowReplyError = ApplyError || error{ StaleWindowRequest, WindowReplyMismatch };
-    /// Reports stale identity or an attempt to acknowledge a query without its required reply.
-    pub const WindowAcknowledgeError = error{ StaleWindowRequest, WindowReplyRequired };
     /// Exposes the fixed pending-window-intent capacity to embedding hosts.
     pub const window_request_max_count = window_request_capacity;
     /// Bounds host clipboard bytes accepted by one query reply in every framing mode.
@@ -13789,14 +13300,55 @@ pub const Terminal = struct {
     pub const clipboard_max_count = clipboard_capacity;
     /// Exposes one borrowed OSC 52 operation or Kitty OSC 5522 packet.
     pub const ClipboardRequest = ClipboardRequestView;
+    /// Identifies one retained color-preference query.
+    pub const ColorPreferenceQuery = struct {
+        id: u64,
+    };
+    /// Identifies one accepted BEL control.
+    pub const Bell = struct {
+        id: u64,
+    };
+    /// Borrows exactly one host-neutral terminal consequence.
+    pub const Consequence = union(enum) {
+        clipboard: ClipboardRequest,
+        notification: Notification,
+        pointer_shape: PointerShapeRequest,
+        file_transfer: FileTransferPacket,
+        drag_drop: DragDropCommand,
+        window: WindowOccurrence,
+        color_preference_query: ColorPreferenceQuery,
+        bell: Bell,
+        media_copy: MediaCopyOccurrence,
+        dcs: DcsPayloadOccurrence,
+        string_control: StringPayloadOccurrence,
+
+        /// Returns the process-lifetime occurrence identity.
+        pub fn id(self: Consequence) u64 {
+            return switch (self) {
+                .clipboard => |value| value.generation,
+                .notification => |value| value.generation,
+                .pointer_shape => |value| value.generation,
+                .file_transfer => |value| value.generation,
+                .drag_drop => |value| value.generation,
+                .window => |value| value.generation,
+                .color_preference_query => |value| value.id,
+                .bell => |value| value.id,
+                .media_copy => |value| value.generation,
+                .dcs => |value| value.generation,
+                .string_control => |value| value.generation,
+            };
+        }
+    };
+    /// Reports stale occurrence identity or a consequence requiring a reply.
+    pub const ConsumeConsequenceError = error{ StaleConsequence, ReplyRequired };
     /// Uses the canonical copied terminal RGB value.
     pub const Rgb = Screen.Rgb;
     /// Uses the canonical default, indexed, or RGB cell color.
     pub const Color = Screen.Color;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = Screen.CellAttrs;
-    /// Borrows one complete terminal visual cell through `VisualView`.
-    pub const VisualCell = Screen.Cell;
+    /// Borrows one complete terminal cell.
+    pub const Cell = Screen.Cell;
     /// Uses the canonical terminal underline style.
     pub const UnderlineStyle = Screen.UnderlineStyle;
     /// Uses the canonical terminal baseline displacement.
@@ -13807,14 +13359,12 @@ pub const Terminal = struct {
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
     pub const default_presentation = defaultPresentation();
-    /// Identifies one exact cumulative visual-dirty observation without exposing its counter.
-    pub const DirtyToken = enum(u64) { _ };
     /// Borrows one immutable decoded terminal image.
-    pub const VisualImage = graphics_mod.ImageView;
+    pub const Image = graphics_mod.ImageView;
     /// Reports one VT-owned image-animation service result.
     pub const GraphicsTick = graphics_mod.AnimationTick;
     /// Copies one image placement resolved into the visible viewport.
-    pub const VisualImagePlacement = struct {
+    pub const ImagePlacement = struct {
         /// Resolves retained image content.
         image_id: u32,
         /// Distinguishes placement churn.
@@ -13843,7 +13393,7 @@ pub const Terminal = struct {
         z: i32,
     };
     /// Borrows coherent image-plane facts until terminal mutation.
-    pub const VisualImages = struct {
+    pub const Images = struct {
         plane: *const graphics_mod.Plane,
         bank: graphics_mod.Bank,
         visible_row_start: u64,
@@ -13852,22 +13402,22 @@ pub const Terminal = struct {
         content_generation: u64,
 
         /// Returns the dense retained image count.
-        pub fn imageCount(self: *const VisualImages) usize {
+        pub fn imageCount(self: *const Images) usize {
             return self.plane.image_count;
         }
 
         /// Borrows one retained image.
-        pub fn image(self: *const VisualImages, index: usize) ?VisualImage {
+        pub fn image(self: *const Images, index: usize) ?Image {
             return self.plane.image(index);
         }
 
         /// Returns the dense retained placement count.
-        pub fn placementCount(self: *const VisualImages) usize {
+        pub fn placementCount(self: *const Images) usize {
             return self.plane.placement_count;
         }
 
         /// Copies one placement visible in the current bank and viewport.
-        pub fn placement(self: *const VisualImages, index: usize) ?VisualImagePlacement {
+        pub fn placement(self: *const Images, index: usize) ?ImagePlacement {
             const value = self.plane.placement(index) orelse return null;
             if (value.bank != self.bank or value.row < self.visible_row_start or
                 value.row >= self.visible_row_start + self.rows)
@@ -13887,98 +13437,6 @@ pub const Terminal = struct {
                 .pixel_height = value.pixel_height,
                 .z = value.z,
             };
-        }
-    };
-    /// Identifies one visible row and its inclusive changed-column span.
-    pub const VisualDirtyRow = struct {
-        /// Identifies the row in the borrowed visual viewport.
-        row: u16,
-        /// Identifies the first changed visible column.
-        start_col: u16,
-        /// Identifies the last changed visible column.
-        end_col: u16,
-    };
-    /// Iterates active-screen dirtiness resolved into visible viewport coordinates.
-    pub const VisualDirtyRows = struct {
-        /// Identifies the viewport row represented by borrowed column index zero.
-        start_row: u16,
-        /// Identifies the last viewport row represented by the borrowed arrays.
-        end_row: u16,
-        /// Borrows one first-changed-column value per represented viewport row.
-        dirty_cols_start: []const u16,
-        /// Borrows one last-changed-column value per represented viewport row.
-        dirty_cols_end: []const u16,
-
-        /// Owns bounded iteration state and borrows dirty-column arrays from the terminal.
-        pub const Iterator = struct {
-            rows: VisualDirtyRows,
-            index: usize,
-
-            /// Returns the next changed visible row, skipping clean rows in the dense interval.
-            pub fn next(self: *Iterator) ?VisualDirtyRow {
-                while (self.index < self.rows.dirty_cols_start.len) {
-                    const index = self.index;
-                    self.index += 1;
-                    const start_col = self.rows.dirty_cols_start[index];
-                    const end_col = self.rows.dirty_cols_end[index];
-                    if (start_col > end_col) continue;
-                    return .{
-                        .row = self.rows.start_row + @as(u16, @intCast(index)),
-                        .start_col = start_col,
-                        .end_col = end_col,
-                    };
-                }
-                return null;
-            }
-        };
-
-        /// Starts one allocation-free pass over changed rows in ascending viewport order.
-        pub fn iterator(self: VisualDirtyRows) Iterator {
-            return .{ .rows = self, .index = 0 };
-        }
-
-        fn hasRows(self: VisualDirtyRows) bool {
-            var it = self.iterator();
-            return it.next() != null;
-        }
-    };
-    /// Describes cumulative terminal-owned cell and row-geometry dirtiness.
-    pub const VisualDirty = union(enum) {
-        /// No cell, selection-span, or row-geometry mutation remains unacknowledged.
-        none,
-        /// Borrows changed spans resolved into visible viewport rows until terminal mutation.
-        rows: VisualDirtyRows,
-        /// Requires complete reconstruction after a source-wide visual discontinuity.
-        full,
-    };
-    /// Borrows coherent terminal visual semantics until the next terminal mutation.
-    ///
-    /// This view allocates and owns nothing. The caller must exclude terminal
-    /// mutation while reading borrowed cells, dirty spans, selected spans, or palette.
-    /// Cursor overlay changes are copied separately and do not enter cell dirty spans.
-    pub const VisualView = struct {
-        /// Borrows visible cells, row geometry, and copied cursor overlay facts.
-        view: View,
-        /// Borrows cumulative cell and row dirtiness or requests full reconstruction.
-        dirty: VisualDirty,
-        /// Retains only the VT-owned row-resolution operation for selection appearance.
-        selected_rows: VisibleSelection,
-        /// Copies palette, dynamic defaults, cursor colors, and screen reverse state.
-        presentation: Presentation,
-        /// Borrows the selected terminal image frames and visible placements.
-        images: VisualImages,
-        /// Copies the application-controlled synchronized-output mode state.
-        synchronized_output: bool,
-        /// Identifies the exact visual observation accepted by `ackVisual`.
-        dirty_token: DirtyToken,
-
-        /// Resolves the selected half-open column span for one visible row.
-        ///
-        /// Raw history and screen selection endpoints remain VT-owned. An invalid
-        /// row has no selected span.
-        pub fn selectedSpan(self: *const VisualView, row: u16) ?Range {
-            if (row >= self.view.rows) return null;
-            return self.selected_rows.span(&self.view, row);
         }
     };
     /// Bounds each borrowed title or icon value in a state snapshot.
@@ -14079,20 +13537,6 @@ pub const Terminal = struct {
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
-    visual_generation: u64 = 1,
-    visual_acknowledged_generation: u64 = 0,
-    visual_full: bool = true,
-    visual_source_wide_revision: u64 = 0,
-    scrollback_offset: u32 = 0,
-
-    /// Selects one bounded projection requested by an external viewport-policy owner.
-    pub const ScrollViewport = union(enum) {
-        top,
-        bottom,
-        delta: i64,
-        absolute: u64,
-    };
-
     fn initWithScreens(
         allocator: std.mem.Allocator,
         stream_state: TerminalStreamState,
@@ -14158,83 +13602,6 @@ pub const Terminal = struct {
         return .init(self);
     }
 
-    const VisualCursorState = struct {
-        row: u16,
-        col: u16,
-        visible: bool,
-        shape: CursorShape,
-        blink: bool,
-        color: ?Terminal.Rgb,
-        text_color: ?Terminal.Rgb,
-    };
-
-    const VisualMutationState = struct {
-        dirty_revision: u64,
-        cursor: VisualCursorState,
-        selection: ?TerminalSelection,
-        rows: u16,
-        cols: u16,
-        start: u32,
-        history_count: u32,
-        history_row_base: u32,
-        scrollback_offset: u32,
-        row_origin: u16,
-        alternate: bool,
-        reverse_screen: bool,
-        source_wide_revision: u64,
-        graphics_generation: u64,
-    };
-
-    fn visualMutationState(self: *const Terminal) VisualMutationState {
-        const active = self.screen_state.activeConst();
-        const view = visibleView(&self.screen_state, self.scrollback_offset);
-        const cursor_visible = view.cursor_visible;
-        return .{
-            .dirty_revision = active.dirty_state.revision,
-            .cursor = .{
-                .row = if (cursor_visible) view.cursor_row else 0,
-                .col = if (cursor_visible) view.cursor_col else 0,
-                .visible = cursor_visible,
-                .shape = if (cursor_visible) view.cursor_shape else .block,
-                .blink = cursor_visible and view.cursor_blink,
-                .color = if (cursor_visible) active.cursor.cursor_color else null,
-                .text_color = if (cursor_visible) active.cursor.cursor_text_color else null,
-            },
-            .selection = self.screen_state.activeSelectionConst().state(),
-            .rows = view.rows,
-            .cols = view.cols,
-            .start = view.start,
-            .history_count = view.history_count,
-            .history_row_base = view.history_row_base,
-            .scrollback_offset = view.scrollback_offset,
-            .row_origin = active.row_origin,
-            .alternate = view.is_alternate_screen,
-            .reverse_screen = self.modes.reverse_screen_mode,
-            .source_wide_revision = self.visual_source_wide_revision,
-            .graphics_generation = self.graphics.generation(),
-        };
-    }
-
-    fn finishVisualMutation(self: *Terminal, before: VisualMutationState) void {
-        const after = self.visualMutationState();
-        if (std.meta.eql(before, after)) return;
-        if (before.rows != after.rows or before.cols != after.cols or
-            before.start != after.start or before.history_count != after.history_count or
-            before.history_row_base != after.history_row_base or
-            before.scrollback_offset != after.scrollback_offset or
-            before.row_origin != after.row_origin or before.alternate != after.alternate or
-            before.reverse_screen != after.reverse_screen or
-            before.source_wide_revision != after.source_wide_revision)
-        {
-            self.visual_full = true;
-        }
-        advanceIdentity(&self.visual_generation);
-    }
-
-    fn noteSourceWideVisualChange(self: *Terminal) void {
-        advanceIdentity(&self.visual_source_wide_revision);
-    }
-
     /// Applies a borrowed byte slice and reports mutation; failures reset transient parser state.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!FeedSummary {
         var stream = self.vtStream();
@@ -14243,28 +13610,16 @@ pub const Terminal = struct {
 
     fn completeStreamMutation(
         self: *Terminal,
-        visual_before: VisualMutationState,
-        selection_before: ?TerminalSelection,
-        history_before: u32,
-        was_scrolled: bool,
         state_changed: bool,
     ) void {
-        self.repairScrollbackAfterHistoryChange(history_before, was_scrolled);
         const graphics_changed = self.graphics.evictBefore(
             self.screen_state.primary.historyRowBase(),
         );
         self.postApply(state_changed or graphics_changed);
-        if (!std.meta.eql(selection_before, self.screen_state.activeSelectionConst().state())) {
-            self.visual_full = true;
-        }
-        self.finishVisualMutation(visual_before);
     }
 
-    /// Advances semantic mutation identity and enforces selection invariants after routing.
-    pub fn postApply(self: *Terminal, state_changed: bool) void {
-        self.screen_state.activeSelection().clearIfInvalidatedByGrid(
-            self.screen_state.activeConst(),
-        );
+    /// Advances semantic mutation identity after routing.
+    fn postApply(self: *Terminal, state_changed: bool) void {
         if (state_changed) advanceIdentity(&self.semantic_sequence);
     }
 
@@ -14274,7 +13629,6 @@ pub const Terminal = struct {
     /// failure leave both screens, terminal state, and visual identity unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
         try validateDimensions(rows, cols);
-        const visual_before = self.visualMutationState();
         const output_before = byteCount(self.host.pending_output.bytes.items);
         errdefer restorePendingOutput(&self.host.pending_output, output_before);
         if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
@@ -14283,13 +13637,7 @@ pub const Terminal = struct {
         const alternate_graphics_changed = self.graphics.clearBank(.alternate);
         std.debug.assert(!primary_graphics_changed or self.graphics.generation() != 0);
         std.debug.assert(!alternate_graphics_changed or self.graphics.generation() != 0);
-        self.screen_state.activeSelection().clearIfInvalidatedByGrid(
-            self.screen_state.activeConst(),
-        );
-        self.clampScrollbackOffset();
         advanceIdentity(&self.semantic_sequence);
-        self.noteSourceWideVisualChange();
-        self.finishVisualMutation(visual_before);
     }
 
     // Appends one exact iTerm2/Kitty mode-2048 resize report when host pixel facts are known.
@@ -14347,11 +13695,15 @@ pub const Terminal = struct {
     }
 
     /// Reply to and consume the matching FIFO-head color-preference query transactionally.
-    pub fn replyColorSchemePreference(
+    pub fn replyColorPreference(
         self: *Terminal,
         generation: u64,
         preference: ColorSchemePreference,
     ) ColorPreferenceReplyError!void {
+        const consequence = self.consequenceHead() orelse return error.StaleColorPreferenceQuery;
+        if (consequence.id() != generation or
+            std.meta.activeTag(consequence) != .color_preference_query)
+            return error.StaleColorPreferenceQuery;
         const head = self.host.colorPreferenceQueryGeneration() orelse return error.StaleColorPreferenceQuery;
         if (head != generation) return error.StaleColorPreferenceQuery;
         try appendCsiReply(
@@ -14364,50 +13716,9 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
-    /// Serialize one matching color-preference query reply without mutation.
-    ///
-    /// The returned bytes are owned by `allocator` and must be freed by the
-    /// caller. Stale identity, allocation failure, and reply saturation
-    /// preserve the retained FIFO head.
-    pub fn prepareColorSchemePreferenceReply(
-        self: *Terminal,
-        generation: u64,
-        preference: ColorSchemePreference,
-        allocator: std.mem.Allocator,
-    ) ColorPreferenceReplyError![]u8 {
-        const head = self.host.colorPreferenceQueryGeneration() orelse
-            return error.StaleColorPreferenceQuery;
-        if (head != generation) return error.StaleColorPreferenceQuery;
-        var output = PendingOutput.init();
-        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
-        errdefer output.bytes.deinit(allocator);
-        try appendCsiReply(
-            &output,
-            allocator,
-            .kitty,
-            if (preference == .dark) "?997;1n" else "?997;2n",
-        );
-        return output.bytes.toOwnedSlice(allocator);
-    }
-
-    /// Consume only the exact color-preference query after its prepared reply flush.
-    pub fn completeColorSchemePreferenceReply(
-        self: *Terminal,
-        generation: u64,
-    ) error{StaleColorPreferenceQuery}!void {
-        const head = self.host.colorPreferenceQueryGeneration() orelse
-            return error.StaleColorPreferenceQuery;
-        if (head != generation) return error.StaleColorPreferenceQuery;
-        self.host.consumeColorPreferenceQuery();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
-        const visual_before = self.visualMutationState();
         self.screen_state.reset();
-        self.screen_state.primary_selection.clear();
-        self.screen_state.alternate_selection.clear();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
         self.modes = .{};
@@ -14423,8 +13734,6 @@ pub const Terminal = struct {
         self.host.resetTerminalState();
         const graphics_changed = self.graphics.reset();
         std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
-        self.noteSourceWideVisualChange();
-        self.finishVisualMutation(visual_before);
     }
 
     // Applies DECSTR to active-bank state and terminal-global modes without erasing text or moving the cursor.
@@ -14560,7 +13869,7 @@ pub const Terminal = struct {
     /// Saves cursor presentation, rendition, charset, origin, and wrap state into the active screen slot.
     ///
     /// The result reports whether the bank-local savepoint changed.
-    pub fn saveCursor(self: *Terminal) bool {
+    fn saveCursor(self: *Terminal) bool {
         const next = self.captureSavepoint();
         const savepoint = self.activeSavepoint();
         if (std.meta.eql(savepoint.*, next)) return false;
@@ -14593,8 +13902,7 @@ pub const Terminal = struct {
     ///
     /// Position is clamped to current dimensions and a saved pending wrap survives
     /// only when the restored position remains at the active right boundary.
-    pub fn restoreCursor(self: *Terminal) bool {
-        const visual_before = self.visualMutationState();
+    fn restoreCursor(self: *Terminal) bool {
         const active = self.screen_state.active();
         const cursor_before = active.cursor;
         const visibility_before = .{
@@ -14625,7 +13933,7 @@ pub const Terminal = struct {
             gl_before != self.gl_index or gr_before != self.gr_index or
             single_shift_before != self.single_shift or
             !std.mem.eql(u8, designations_before[0..], self.designations[0..]);
-        if (changed) self.finishVisualMutation(visual_before);
+
         return changed;
     }
 
@@ -14660,40 +13968,30 @@ pub const Terminal = struct {
     }
 
     /// Switches primary or alternate screen with explicit clear and cursor-save behavior.
-    pub fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
-        const visual_before = self.visualMutationState();
+    fn switchScreenMode(self: *Terminal, enable_alt: bool, clear_alt: bool, save_restore_cursor: bool) bool {
         if (enable_alt) {
             if (self.screen_state.alt_active) return false;
             if (save_restore_cursor) self.activeSavepoint().* = self.captureSavepoint();
             self.screen_state.alt_active = true;
-            self.scrollback_offset = 0;
-            self.screen_state.activeSelection().clear();
             if (clear_alt) {
                 self.screen_state.alternate.clearVisibleCells();
                 const graphics_changed = self.graphics.clearBank(.alternate);
                 std.debug.assert(!graphics_changed or self.graphics.generation() != 0);
             }
             self.screen_state.alternate.resetCursorForAltEntry();
-            self.screen_state.alternate.markAllRowsDirty();
-            self.finishVisualMutation(visual_before);
             return true;
         }
 
         if (!self.screen_state.alt_active) return false;
         self.screen_state.alt_active = false;
-        self.clampScrollbackOffset();
-        self.screen_state.activeSelection().clear();
         if (save_restore_cursor) self.restoreCursorState();
-        self.screen_state.primary.markAllRowsDirty();
-        self.finishVisualMutation(visual_before);
         return true;
     }
 
     /// Apply one canonical semantic mode event.
-    pub fn applyModeEvent(self: *Terminal, event: SemanticEvent) bool {
-        const visual_before = self.visualMutationState();
+    fn applyModeEvent(self: *Terminal, event: SemanticEvent) bool {
         const changed = self.applyModeEventInner(event);
-        if (changed) self.finishVisualMutation(visual_before);
+
         return changed;
     }
 
@@ -14992,60 +14290,12 @@ pub const Terminal = struct {
         return true;
     }
 
-    /// Retires cumulative visual dirtiness only for the current unacknowledged token.
-    pub fn ackVisual(self: *Terminal, token: DirtyToken) bool {
-        const generation = @backingInt(token);
-        if (generation != self.visual_generation or
-            generation == self.visual_acknowledged_generation)
-        {
-            return false;
-        }
-        clearDirtyRows(&self.screen_state);
-        self.visual_full = false;
-        self.visual_acknowledged_generation = generation;
-        return true;
-    }
-
-    /// Applies one caller-owned history projection within retained bounds.
-    pub fn scrollViewport(self: *Terminal, behavior: ScrollViewport) bool {
-        const visual_before = self.visualMutationState();
-        const history_count = self.visibleHistoryCount();
-        const previous = self.scrollback_offset;
-        self.scrollback_offset = switch (behavior) {
-            .top => history_count,
-            .bottom => 0,
-            .delta => |delta| offset: {
-                if (delta < 0) {
-                    const decrease: u64 = if (delta == std.math.minInt(i64))
-                        @as(u64, @intCast(std.math.maxInt(i64))) + 1
-                    else
-                        @intCast(-delta);
-                    break :offset if (decrease >= previous) 0 else previous - @as(u32, @intCast(decrease));
-                }
-                const increase: u64 = @intCast(delta);
-                const target = @as(u64, previous) + increase;
-                break :offset @intCast(@min(target, history_count));
-            },
-            .absolute => |offset| @intCast(@min(offset, history_count)),
-        };
-        std.debug.assert(self.scrollback_offset <= history_count);
-        const changed = self.scrollback_offset != previous;
-        if (changed) self.finishVisualMutation(visual_before);
-        return changed;
-    }
-
-    /// Returns history rows currently reachable above the active screen.
-    pub fn visibleHistoryCount(self: *const Terminal) u32 {
-        if (self.screen_state.alt_active) return 0;
-        return self.screen_state.activeConst().historyCount();
-    }
-
     /// Reports whether an enabled terminal mouse-tracking mode owns pointer input.
     pub fn mouseReportingEnabled(self: *const Terminal) bool {
         return self.modes.mouse_tracking != .off;
     }
 
-    // Clears active display, history, cursor, viewport, and selection as one exact terminal mutation.
+    // Clears active display, history, and cursor as one exact terminal mutation.
     fn clearBuffer(self: *Terminal) bool {
         const active = self.screen_state.active();
         var changed = active.eraseDisplay(.all, false);
@@ -15053,57 +14303,7 @@ pub const Terminal = struct {
         const cursor_before = active.cursor;
         active.cursor.setPositionByClient(0, 0);
         changed = !std.meta.eql(cursor_before, active.cursor) or changed;
-        if (self.scrollback_offset != 0) changed = true;
-        self.scrollback_offset = 0;
-        if (self.screen_state.activeSelectionConst().state() != null) changed = true;
-        self.screen_state.activeSelection().clear();
         return changed;
-    }
-
-    fn clampScrollbackOffset(self: *Terminal) void {
-        const history_count = self.visibleHistoryCount();
-        self.scrollback_offset = @min(self.scrollback_offset, history_count);
-        std.debug.assert(self.scrollback_offset <= history_count);
-    }
-
-    fn repairScrollbackAfterHistoryChange(self: *Terminal, history_before: u32, was_scrolled: bool) void {
-        const history_after = self.visibleHistoryCount();
-        if (history_after > history_before) {
-            if (was_scrolled) {
-                const delta = history_after - history_before;
-                const target = @as(u64, self.scrollback_offset) + delta;
-                self.scrollback_offset = @intCast(@min(target, history_after));
-                std.debug.assert(self.scrollback_offset <= history_after);
-            }
-            return;
-        }
-        self.scrollback_offset = @min(self.scrollback_offset, history_after);
-        std.debug.assert(self.scrollback_offset <= history_after);
-    }
-
-    fn projectDirtyRows(view: View, source: Screen.DirtyRows) ?VisualDirtyRows {
-        const viewport_end = view.start + @as(u32, view.rows);
-        const screen_source_end = view.history_count + @as(u32, view.rows);
-        const visible_source_start = @max(view.start, view.history_count);
-        const visible_source_end = @min(viewport_end, screen_source_end);
-        if (visible_source_start >= visible_source_end) return null;
-
-        const visible_screen_start: u16 = @intCast(visible_source_start - view.history_count);
-        const visible_screen_end: u16 = @intCast(visible_source_end - view.history_count);
-        const dirty_start = @max(source.start_row, visible_screen_start);
-        const dirty_end: u16 = @intCast(@min(
-            @as(u32, source.end_row) + 1,
-            @as(u32, visible_screen_end),
-        ));
-        if (dirty_start >= dirty_end) return null;
-
-        const projected: VisualDirtyRows = .{
-            .start_row = @intCast(view.history_count + @as(u32, dirty_start) - view.start),
-            .end_row = @intCast(view.history_count + @as(u32, dirty_end - 1) - view.start),
-            .dirty_cols_start = source.dirty_cols_start[dirty_start..dirty_end],
-            .dirty_cols_end = source.dirty_cols_end[dirty_start..dirty_end],
-        };
-        return if (projected.hasRows()) projected else null;
     }
 
     /// Reports whether mode 19997 requests foreground termios handling for typed one-byte keys.
@@ -15114,6 +14314,21 @@ pub const Terminal = struct {
     /// Reports whether mode 5522 requests the operator-triggered MIME paste exchange.
     pub fn pasteEvents(self: *const Terminal) bool {
         return self.modes.paste_events;
+    }
+
+    /// Reports whether mode 1007 translates alternate-screen wheel input.
+    pub fn alternateScroll(self: *const Terminal) bool {
+        return self.modes.alternate_scroll;
+    }
+
+    /// Reports whether mode 1036 prefixes Meta-modified legacy input with Escape.
+    pub fn metaSendsEscape(self: *const Terminal) bool {
+        return self.modes.meta_sends_escape;
+    }
+
+    /// Reports whether mode 1337 requests key-release input.
+    pub fn reportKeyUp(self: *const Terminal) bool {
+        return self.modes.report_key_up;
     }
 
     /// Copies the process-lifetime semantic mutation identity.
@@ -15127,126 +14342,179 @@ pub const Terminal = struct {
 
     /// Advances retained image animation against caller monotonic milliseconds.
     pub fn advanceGraphics(self: *Terminal, now_ms: u64) graphics_mod.AnimationTick {
-        const visual_before = self.visualMutationState();
         const tick = self.graphics.advanceAnimations(now_ms);
-        if (tick.semantic_changed) {
-            if (tick.changed) self.noteSourceWideVisualChange();
-            self.postApply(true);
-        }
-        if (tick.changed) {
-            self.finishVisualMutation(visual_before);
-        }
+        if (tick.semantic_changed) self.postApply(true);
         return tick;
     }
 
-    /// Borrows coherent visual-only terminal state until the next terminal mutation.
+    /// Borrows terminal cells and cursor facts at one caller-selected history offset.
     ///
-    /// The caller supplies no allocator because this operation allocates and owns
-    /// nothing. Borrowed cells, palette, selection, and dirty spans become invalid
-    /// on terminal mutation. Cursor overlay facts remain outside `VisualDirty`.
-    pub fn visualView(self: *const Terminal) VisualView {
-        const source = projectVisualSource(&self.screen_state, self.scrollback_offset);
+    /// The offset is clamped to retained primary history. VT retains no
+    /// viewport, follow, or scrolling intent.
+    pub fn semanticView(self: *const Terminal, history_offset: u32) View {
+        return visibleView(&self.screen_state, history_offset);
+    }
+
+    /// Copies terminal colors and reverse-screen state.
+    pub fn presentation(self: *const Terminal) Presentation {
         const active = self.screen_state.activeConst();
         const colors = self.host.terminalColorState();
         return .{
-            .view = source.view,
-            .dirty = if (self.visual_full)
-                .full
-            else if (peekDirtyRows(&self.screen_state)) |rows|
-                if (projectDirtyRows(source.view, rows)) |projected|
-                    .{ .rows = projected }
-                else
-                    .none
+            .palette = colors.palette,
+            .foreground = colors.foreground,
+            .background = colors.background,
+            .cursor = active.cursor.cursor_color orelse colors.cursor,
+            .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
+            .selection_background = colors.selection_background,
+            .selection_foreground = colors.selection_foreground,
+            .reverse_screen = self.modes.reverse_screen_mode,
+        };
+    }
+
+    /// Borrows decoded images and placements at one caller-selected history offset.
+    pub fn images(self: *const Terminal, history_offset: u32) Images {
+        const view = visibleView(&self.screen_state, history_offset);
+        return .{
+            .plane = &self.graphics,
+            .bank = if (view.is_alternate_screen) .alternate else .primary,
+            .visible_row_start = if (view.is_alternate_screen)
+                view.start
             else
-                .none,
-            .selected_rows = .{ .selected = source.selection },
-            .presentation = .{
-                .palette = colors.palette,
-                .foreground = colors.foreground,
-                .background = colors.background,
-                .cursor = active.cursor.cursor_color orelse colors.cursor,
-                .cursor_text = active.cursor.cursor_text_color orelse colors.cursor_text,
-                .selection_background = colors.selection_background,
-                .selection_foreground = colors.selection_foreground,
-                .reverse_screen = self.modes.reverse_screen_mode,
-            },
-            .images = .{
-                .plane = &self.graphics,
-                .bank = if (source.view.is_alternate_screen) .alternate else .primary,
-                .visible_row_start = if (source.view.is_alternate_screen)
-                    source.view.start
-                else
-                    @as(u64, source.view.history_row_base) + source.view.start,
-                .rows = source.view.rows,
-                .generation = self.graphics.generation(),
-                .content_generation = self.graphics.imageGeneration(),
-            },
-            .synchronized_output = self.modes.synchronized_output,
-            .dirty_token = @fromBackingInt(@intCast(self.visual_generation)),
-        };
-    }
-
-    /// Borrows retained host consequences and input-policy facts until terminal mutation.
-    pub fn stateSnapshot(self: *const Terminal) StateSnapshot {
-        const view = visibleView(&self.screen_state, self.scrollback_offset);
-        return .{
-            .title = self.host.current_title,
-            .icon = self.host.current_icon,
-            .working_directory = self.host.working_directory_report,
-            .remote_host = self.host.remote_host_report,
-            .shell_integration = if (self.host.shell_integration) |integration| .{
-                .version = integration.version,
-                .shell = integration.shell,
-            } else null,
-            .shell_mark = self.host.shell_mark,
-            .clipboard_request = self.host.pendingClipboardRequest(),
-            .clipboard_request_count = self.host.clipboard_requests_count,
-            .notification = self.host.notificationView(),
-            .notification_count = self.host.notifications_count,
-            .pointer_shape = self.host.pointerShapeView(),
-            .pointer_shape_count = self.host.pointer_shapes_count,
-            .pointer_shape_reset_generation = self.host.pointer_shape_reset_generation,
-            .file_transfer = self.host.fileTransferHead(),
-            .file_transfer_count = self.host.file_transfer_count,
-            .drag_drop = self.host.dragDropHead(),
-            .drag_drop_count = self.host.drag_drop_count,
-            .window_request = self.host.windowRequestHead(),
-            .window_request_count = self.host.window_requests_count,
-            .color_preference_query_generation = self.host.colorPreferenceQueryGeneration(),
-            .color_preference_query_count = self.host.color_preference_query_count,
-            .media_copy = self.host.mediaCopyHead(),
-            .media_copy_count = self.host.media_copy_count,
-            .dcs_payload = self.host.dcsPayloadHead(),
-            .dcs_payload_count = self.host.dcs_payloads_count,
-            .string_payload = self.host.stringPayloadHead(),
-            .string_payload_count = self.host.string_payloads_count,
-            .color_preference_notifications = self.modes.color_preference_notifications,
-            .paste_events = self.modes.paste_events,
-            .termios_signals = self.modes.termios_signals,
-            .alternate_scroll = self.modes.alternate_scroll,
-            .meta_sends_escape = self.modes.meta_sends_escape,
-            .report_key_up = self.modes.report_key_up,
-            .bell_generation = self.host.bell_generation,
-            .history_loss_generation = self.screen_state.primary.history_loss_generation,
-            .is_alternate_screen = view.is_alternate_screen,
-            .history_row_base = view.history_row_base,
-            .history_count = view.history_count,
-            .scrollback_offset = view.scrollback_offset,
-            .mouse_reporting = self.mouseReportingEnabled(),
-        };
-    }
-
-    /// Returns copied dimensions, cursor, history, and active-screen metadata.
-    pub fn visibleMeta(self: *const Terminal) VisibleMeta {
-        const visual = self.visualView();
-        const view = visual.view;
-        return .{
+                @as(u64, view.history_row_base) + view.start,
             .rows = view.rows,
-            .cols = view.cols,
-            .history_count = view.history_count,
-            .is_alternate_screen = view.is_alternate_screen,
-            .dirty_token = visual.dirty_token,
+            .generation = self.graphics.generation(),
+            .content_generation = self.graphics.imageGeneration(),
         };
+    }
+
+    /// Reports whether synchronized-output mode is enabled.
+    pub fn synchronizedOutput(self: *const Terminal) bool {
+        return self.modes.synchronized_output;
+    }
+
+    /// Borrows the current OSC window title until terminal mutation.
+    pub fn title(self: *const Terminal) ?[]const u8 {
+        return self.host.current_title;
+    }
+
+    /// Borrows the current OSC icon title until terminal mutation.
+    pub fn icon(self: *const Terminal) ?[]const u8 {
+        return self.host.current_icon;
+    }
+
+    /// Borrows the latest child-reported working directory.
+    pub fn workingDirectory(self: *const Terminal) ?WorkingDirectory {
+        return self.host.working_directory_report;
+    }
+
+    /// Borrows the latest child-reported remote host.
+    pub fn remoteHost(self: *const Terminal) ?[]const u8 {
+        return self.host.remote_host_report;
+    }
+
+    /// Borrows the latest shell-integration identity.
+    pub fn shellIntegration(self: *const Terminal) ?Terminal.ShellIntegration {
+        const integration = self.host.shell_integration orelse return null;
+        return .{ .version = integration.version, .shell = integration.shell };
+    }
+
+    /// Copies the latest shell-mark semantic state.
+    pub fn shellMark(self: *const Terminal) ShellMark {
+        return self.host.shell_mark;
+    }
+
+    fn retainEarlierConsequence(best: *?Consequence, candidate: Consequence) void {
+        if (best.* == null or candidate.id() < best.*.?.id()) best.* = candidate;
+    }
+
+    /// Borrows the oldest retained consequence across every protocol family.
+    pub fn consequenceHead(self: *const Terminal) ?Consequence {
+        var best: ?Consequence = null;
+        if (self.host.pendingClipboardRequest()) |value|
+            retainEarlierConsequence(&best, .{ .clipboard = value });
+        if (self.host.notificationView()) |value|
+            retainEarlierConsequence(&best, .{ .notification = value });
+        if (self.host.pointerShapeView()) |value|
+            retainEarlierConsequence(&best, .{ .pointer_shape = value });
+        if (self.host.fileTransferHead()) |value|
+            retainEarlierConsequence(&best, .{ .file_transfer = value });
+        if (self.host.dragDropHead()) |value|
+            retainEarlierConsequence(&best, .{ .drag_drop = value });
+        if (self.host.windowRequestHead()) |value|
+            retainEarlierConsequence(&best, .{ .window = value });
+        if (self.host.colorPreferenceQueryGeneration()) |id|
+            retainEarlierConsequence(&best, .{ .color_preference_query = .{ .id = id } });
+        if (self.host.bellHead()) |id|
+            retainEarlierConsequence(&best, .{ .bell = .{ .id = id } });
+        if (self.host.mediaCopyHead()) |value|
+            retainEarlierConsequence(&best, .{ .media_copy = value });
+        if (self.host.dcsPayloadHead()) |value|
+            retainEarlierConsequence(&best, .{ .dcs = value });
+        if (self.host.stringPayloadHead()) |value|
+            retainEarlierConsequence(&best, .{ .string_control = value });
+        return best;
+    }
+
+    /// Returns the total bounded consequence count across every protocol family.
+    pub fn consequenceCount(self: *const Terminal) u16 {
+        return @as(u16, self.host.clipboard_requests_count) +
+            self.host.notifications_count +
+            self.host.pointer_shapes_count +
+            self.host.file_transfer_count +
+            self.host.drag_drop_count +
+            self.host.window_requests_count +
+            self.host.color_preference_query_count +
+            self.host.bells_count +
+            self.host.media_copy_count +
+            self.host.dcs_payloads_count +
+            self.host.string_payloads_count;
+    }
+
+    /// Consumes the exact global head after external policy handles it.
+    ///
+    /// Clipboard and window queries remain retained until their typed reply
+    /// operation serializes protocol-mandated bytes.
+    pub fn consumeConsequence(
+        self: *Terminal,
+        id: u64,
+    ) ConsumeConsequenceError!void {
+        const head = self.consequenceHead() orelse return error.StaleConsequence;
+        if (head.id() != id) return error.StaleConsequence;
+        switch (head) {
+            .clipboard => |value| {
+                if (value.kind == .query) return error.ReplyRequired;
+                self.host.consumeClipboardRequest();
+            },
+            .notification => self.host.consumeNotification(),
+            .pointer_shape => self.host.consumePointerShape(),
+            .file_transfer => self.host.consumeFileTransfer(),
+            .drag_drop => self.host.consumeDragDrop(),
+            .window => |value| {
+                if (isWindowQuery(value.request)) return error.ReplyRequired;
+                self.host.consumeWindowRequestHead();
+            },
+            .color_preference_query => return error.ReplyRequired,
+            .bell => self.host.consumeBell(),
+            .media_copy => self.host.consumeMediaCopy(),
+            .dcs => self.host.consumeDcsPayload(),
+            .string_control => self.host.consumeStringPayload(),
+        }
+        advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Returns the number of primary-history rows lost to bounded allocation failure.
+    pub fn historyLossCount(self: *const Terminal) u64 {
+        return self.screen_state.primary.history_loss_generation;
+    }
+
+    /// Returns the terminal reset identity governing pointer-shape stacks.
+    pub fn pointerShapeResetSequence(self: *const Terminal) u64 {
+        return self.host.pointer_shape_reset_generation;
+    }
+
+    /// Reports whether mode 2031 requests color-preference notifications.
+    pub fn colorPreferenceNotifications(self: *const Terminal) bool {
+        return self.modes.color_preference_notifications;
     }
 
     /// Copies finalized primary logical lines after `cursor` and one observation-scoped open line.
@@ -15361,94 +14629,22 @@ pub const Terminal = struct {
         };
     }
 
-    /// Borrows a cell hyperlink URI only for the current visual identity and coordinates.
+    /// Borrows the URI interned for one nonzero cell hyperlink identity.
+    pub fn hyperlinkUri(self: *const Terminal, link_id: u32) ?[]const u8 {
+        return self.host.hyperlinkUriForId(link_id);
+    }
+
+    /// Copies one caller-supplied semantic cell range as UTF-8.
     ///
-    /// Acknowledgement does not invalidate that identity; any later visual mutation does.
-    pub fn visibleCellHyperlinkUri(
-        self: *const Terminal,
-        token: DirtyToken,
-        row: u16,
-        col: u16,
-    ) error{InvalidArgument}!?[]const u8 {
-        if (@backingInt(token) != self.visual_generation) return error.InvalidArgument;
-        const view = self.visualView().view;
-        if (row >= view.rows or col >= view.cols) return error.InvalidArgument;
-        return self.host.hyperlinkUriForId(view.cellInfoAt(row, col).attrs.link_id);
-    }
-
-    /// Borrows the current cell hyperlink URI, or null for invalid coordinates or no link.
-    pub fn visibleCellHyperlinkUriCurrent(self: *Terminal, row: u16, col: u16) ?[]const u8 {
-        const view = self.visualView().view;
-        if (row >= view.rows or col >= view.cols) return null;
-        return self.host.hyperlinkUriForId(view.cellInfoAt(row, col).attrs.link_id);
-    }
-
-    /// Returns a copied active-screen selection when one exists.
-    pub fn selectionState(self: *const Terminal) ?TerminalSelection {
-        return self.screen_state.activeSelectionConst().state();
-    }
-
-    /// Starts selection at a clamped column and VT/history row.
-    pub fn startSelection(self: *Terminal, row: i32, col: u16) void {
-        const visual_before = self.visualMutationState();
-        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
-        const selection_before = self.selectionState();
-        self.screen_state.activeSelection().start(
-            selectionAbsoluteRow(view_before, row),
-            @min(col, view_before.cols -| 1),
-        );
-        const changed = !std.meta.eql(selection_before, self.selectionState());
-        if (!changed) return;
-        self.noteSelectionChanged(view_before, selection_before);
-        self.finishVisualMutation(visual_before);
-    }
-
-    /// Moves the active selection endpoint to a clamped column.
-    pub fn updateSelection(self: *Terminal, row: i32, col: u16) void {
-        const visual_before = self.visualMutationState();
-        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
-        const before = self.selectionState() orelse return;
-        self.screen_state.activeSelection().update(
-            selectionAbsoluteRow(view_before, row),
-            @min(col, view_before.cols -| 1),
-        );
-        const after = self.selectionState() orelse return;
-        if (before.end.row == after.end.row and before.end.col == after.end.col) return;
-        self.noteSelectionChanged(view_before, before);
-        self.finishVisualMutation(visual_before);
-    }
-
-    /// Marks the active selection complete without changing its endpoints.
-    pub fn finishSelection(self: *Terminal) void {
-        const before = self.selectionState() orelse return;
-        self.screen_state.activeSelection().finish();
-        const after = self.selectionState() orelse return;
-        if (before.selecting == after.selecting) return;
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Clears active-screen selection state.
-    pub fn clearSelection(self: *Terminal) void {
-        const visual_before = self.visualMutationState();
-        const view_before = visibleView(&self.screen_state, self.scrollback_offset);
-        const before = self.selectionState() orelse return;
-        self.screen_state.activeSelection().clear();
-        self.noteSelectionChanged(view_before, before);
-        self.finishVisualMutation(visual_before);
-    }
-
-    /// Copy selected terminal text into caller-owned memory.
-    ///
-    /// The returned slice is always owned by `allocator`, including when no
-    /// selection exists, and the caller must free it. `max_bytes` bounds the
-    /// complete UTF-8 result before each allocation growth.
-    pub fn copySelection(
+    /// Rows use stable projected history-and-screen coordinates. The caller
+    /// owns the returned slice and must free it with `allocator`.
+    pub fn copyText(
         self: *const Terminal,
         allocator: std.mem.Allocator,
+        range: TextRange,
         max_bytes: usize,
-    ) CopyError![]const u8 {
-        if (self.selectionState() == null) return allocator.dupe(u8, "");
-        return copyText(allocator, &self.screen_state, self.selectionState(), max_bytes);
+    ) TextError![]const u8 {
+        return copyTextRange(allocator, &self.screen_state, range, max_bytes);
     }
 
     /// Encode one host input event according to current terminal modes.
@@ -15556,12 +14752,15 @@ pub const Terminal = struct {
     ///
     /// A returned slice is owned by `allocator`; `null` means no decodable set
     /// request was pending. Allocation failure preserves the request.
-    pub fn drainPendingClipboard(
+    pub fn takeClipboard(
         self: *Terminal,
         generation: u64,
         allocator: std.mem.Allocator,
     ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
-        const drained = try self.host.drainPendingClipboardSet(generation, allocator);
+        const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
+            return error.StaleClipboardRequest;
+        const drained = try self.host.takeClipboardSet(generation, allocator);
         if (drained != null) advanceIdentity(&self.semantic_sequence);
         return drained;
     }
@@ -15570,12 +14769,15 @@ pub const Terminal = struct {
     ///
     /// The caller owns a successful slice with `allocator`. Stale identity,
     /// allocation failure, and the caller byte bound preserve the exact head.
-    pub fn copyPendingClipboardSet(
+    pub fn copyClipboard(
         self: *Terminal,
         generation: u64,
         allocator: std.mem.Allocator,
         max_bytes: usize,
     ) error{ OutOfMemory, StaleClipboardRequest, ClipboardLimit }!?[]u8 {
+        const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
+            return error.StaleClipboardRequest;
         const request = self.host.clipboardRequestHead() orelse return error.StaleClipboardRequest;
         if (request.generation != generation) return error.StaleClipboardRequest;
         if (request.protocol != .osc52 or request.kind != .set) return null;
@@ -15590,190 +14792,42 @@ pub const Terminal = struct {
         };
     }
 
-    /// Serializes one matching OSC 52 query reply into caller-owned bytes without mutation.
-    ///
-    /// The returned framing follows current S7C1T/S8C1T state. Every failure
-    /// preserves both the FIFO head and accumulated terminal reply output.
-    pub fn preparePendingClipboardReply(
-        self: *Terminal,
-        generation: u64,
-        bytes: []const u8,
-        allocator: std.mem.Allocator,
-    ) ClipboardReplyError!?[]u8 {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.protocol != .osc52 or request.kind != .query) return null;
-        var output = PendingOutput.init();
-        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
-        errdefer output.bytes.deinit(allocator);
-        try appendClipboardQueryReply(&output, allocator, request.selection, bytes);
-        return @as(?[]u8, try output.bytes.toOwnedSlice(allocator));
-    }
-
-    /// Consumes only the exact FIFO-head OSC 52 query after its prepared bytes flush.
-    pub fn completePendingClipboardReply(
-        self: *Terminal,
-        generation: u64,
-    ) error{StaleClipboardRequest}!void {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation or
-            request.protocol != .osc52 or request.kind != .query)
-            return error.StaleClipboardRequest;
-        self.host.consumeClipboardRequest();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Consumes only the exact FIFO-head OSC 52 set after host policy completes.
-    pub fn acknowledgePendingClipboardSet(
-        self: *Terminal,
-        generation: u64,
-    ) error{ StaleClipboardRequest, ClipboardSetMismatch }!void {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.protocol != .osc52 or request.kind != .set)
-            return error.ClipboardSetMismatch;
-        self.host.consumeClipboardRequest();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Borrow the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.
-    pub fn pendingClipboardRequest(self: *const Terminal) ?ClipboardRequest {
-        return self.host.pendingClipboardRequest();
-    }
-
-    /// Copies one exact FIFO-head Kitty OSC 5522 packet into caller ownership.
-    ///
-    /// Stale identity, allocation failure, and the caller bound preserve the
-    /// packet. A non-Kitty head returns `null`.
-    pub fn copyPendingKittyClipboard(
-        self: *Terminal,
-        generation: u64,
-        allocator: std.mem.Allocator,
-        max_bytes: usize,
-    ) error{ OutOfMemory, StaleClipboardRequest, ClipboardLimit }!?[]u8 {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.protocol != .kitty_5522 or request.kind != .packet) return null;
-        if (request.payload.len > max_bytes) return error.ClipboardLimit;
-        return try allocator.dupe(u8, request.payload);
-    }
-
-    /// Validates one Kitty packet identity before a host-owned complete reply transfer.
-    pub fn validatePendingKittyClipboardReply(
-        self: *const Terminal,
-        generation: u64,
-        reply_bytes: usize,
-    ) KittyClipboardReplyError!void {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation or
-            request.protocol != .kitty_5522 or request.kind != .packet)
-            return error.StaleClipboardRequest;
-        if (reply_bytes > pending_output_max_bytes) return error.ConsequenceLimit;
-    }
-
-    /// Consumes one exact FIFO-head Kitty packet after its host reply completely transfers.
-    pub fn completePendingKittyClipboardReply(
-        self: *Terminal,
-        generation: u64,
-    ) error{StaleClipboardRequest}!void {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation or
-            request.protocol != .kitty_5522 or request.kind != .packet)
-            return error.StaleClipboardRequest;
-        self.host.consumeClipboardRequest();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
     /// Queue one host-approved OSC 52 reply and consume its query only after complete bounded serialization.
-    pub fn replyPendingClipboard(self: *Terminal, generation: u64, bytes: []const u8) ClipboardReplyError!bool {
-        const replied = try self.host.replyPendingClipboardQuery(generation, bytes);
+    pub fn replyClipboard(self: *Terminal, generation: u64, bytes: []const u8) ClipboardReplyError!bool {
+        const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
+            return error.StaleClipboardRequest;
+        const replied = try self.host.replyClipboardQuery(generation, bytes);
         if (replied) advanceIdentity(&self.semantic_sequence);
         return replied;
     }
 
-    /// Consume the matching FIFO-head clipboard set or Kitty packet after host policy runs.
-    pub fn acknowledgeClipboard(
-        self: *Terminal,
-        generation: u64,
-    ) ClipboardAcknowledgeError!void {
-        const request = self.host.pendingClipboardRequest() orelse return error.StaleClipboardRequest;
-        if (request.generation != generation) return error.StaleClipboardRequest;
-        if (request.kind == .query) return error.ClipboardReplyRequired;
-        self.host.consumeClipboardRequest();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Consume the matching FIFO-head notification consequence after host policy runs.
-    pub fn acknowledgeNotification(self: *Terminal, generation: u64) error{StaleNotification}!void {
-        const notification = self.host.notificationView() orelse return error.StaleNotification;
-        if (notification.generation != generation) return error.StaleNotification;
-        self.host.consumeNotification();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Consume the matching FIFO-head pointer request after host policy runs.
-    pub fn acknowledgePointerShape(self: *Terminal, generation: u64) error{StalePointerShape}!void {
-        const request = self.host.pointerShapeView() orelse return error.StalePointerShape;
-        if (request.generation != generation) return error.StalePointerShape;
-        self.host.consumePointerShape();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Serialize one exact OSC 22 query reply without consuming its FIFO head.
-    ///
-    /// The returned bytes are owned by `allocator`. Stale identity, allocation
-    /// failure, and output saturation preserve the exact request.
-    pub fn preparePointerShapeReply(
+    /// Queue one exact reply for the matching FIFO-head OSC 22 query.
+    pub fn replyPointerShape(
         self: *Terminal,
         generation: u64,
         payload: []const u8,
-        allocator: std.mem.Allocator,
-    ) PointerShapeReplyError![]u8 {
+    ) PointerShapeReplyError!void {
+        const consequence = self.consequenceHead() orelse return error.StalePointerShape;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .pointer_shape)
+            return error.StalePointerShape;
         const request = self.host.pointerShapeView() orelse return error.StalePointerShape;
         if (request.generation != generation) return error.StalePointerShape;
         if (request.payload.len == 0 or request.payload[0] != '?')
             return error.PointerShapeReplyMismatch;
         try ensureRetainedBound(byteCount(payload), pointer_shape_reply_max_bytes);
-        var output = PendingOutput.init();
-        errdefer output.bytes.deinit(allocator);
-        try appendOutput(&output, allocator, "\x1b]22;");
-        try appendOutput(&output, allocator, payload);
-        try appendOutput(&output, allocator, "\x1b\\");
-        return output.bytes.toOwnedSlice(allocator);
-    }
-
-    /// Consume the matching FIFO-head file-transfer packet after host policy runs.
-    pub fn acknowledgeFileTransfer(self: *Terminal, generation: u64) error{StaleFileTransfer}!void {
-        const packet = self.host.fileTransferHead() orelse return error.StaleFileTransfer;
-        if (packet.generation != generation) return error.StaleFileTransfer;
-        self.host.consumeFileTransfer();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Copies the FIFO-head file-transfer packet identity without borrowing its payload.
-    pub fn fileTransferGeneration(self: *const Terminal) ?u64 {
-        const packet = self.host.fileTransferHead() orelse return null;
-        return packet.generation;
-    }
-
-    /// Borrows the parsed FIFO-head Kitty OSC 72 command until terminal mutation.
-    pub fn pendingDragDrop(self: *const Terminal) ?DragDropCommand {
-        return self.host.dragDropHead();
-    }
-
-    /// Consumes only the exact FIFO-head Kitty OSC 72 command after host policy.
-    pub fn acknowledgeDragDrop(
-        self: *Terminal,
-        generation: u64,
-    ) error{StaleDragDrop}!void {
-        const command = self.host.dragDropHead() orelse return error.StaleDragDrop;
-        if (command.generation != generation) return error.StaleDragDrop;
-        self.host.consumeDragDrop();
+        const output = &self.host.pending_output;
+        const start = byteCount(output.bytes.items);
+        errdefer restorePendingOutput(output, start);
+        try appendOutput(output, self.allocator, "\x1b]22;");
+        try appendOutput(output, self.allocator, payload);
+        try appendOutput(output, self.allocator, "\x1b\\");
+        self.host.consumePointerShape();
         advanceIdentity(&self.semantic_sequence);
     }
 
     /// Serializes one host-owned Kitty OSC 72 event without retaining caller borrows.
-    pub fn prepareDragDropEvent(
+    pub fn encodeDragDropEvent(
         self: *Terminal,
         event: DragDropEvent,
         allocator: std.mem.Allocator,
@@ -15867,11 +14921,14 @@ pub const Terminal = struct {
     }
 
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
-    pub fn replyWindowRequest(
+    pub fn replyWindow(
         self: *Terminal,
         generation: u64,
         reply: WindowReply,
     ) WindowReplyError!void {
+        const consequence = self.consequenceHead() orelse return error.StaleWindowRequest;
+        if (consequence.id() != generation or std.meta.activeTag(consequence) != .window)
+            return error.StaleWindowRequest;
         const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
         if (occurrence.generation != generation) return error.StaleWindowRequest;
         if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
@@ -15882,130 +14939,6 @@ pub const Terminal = struct {
         try appendWindowReply(output, self.allocator, reply);
         self.host.consumeWindowRequestHead();
         advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Borrows the exact FIFO-head window request until terminal mutation.
-    pub fn pendingWindowRequest(self: *const Terminal) ?WindowRequestOccurrence {
-        return self.host.windowRequestHead();
-    }
-
-    /// Serializes one matching window query reply without mutating its FIFO or pending output.
-    pub fn prepareWindowReply(
-        self: *Terminal,
-        generation: u64,
-        reply: WindowReply,
-        allocator: std.mem.Allocator,
-    ) WindowReplyError![]u8 {
-        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
-        if (occurrence.generation != generation) return error.StaleWindowRequest;
-        if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
-        var output = PendingOutput.init();
-        output.eight_bit_controls = self.host.pending_output.eight_bit_controls;
-        errdefer output.bytes.deinit(allocator);
-        try appendWindowReply(&output, allocator, reply);
-        return output.bytes.toOwnedSlice(allocator);
-    }
-
-    /// Consumes only the exact FIFO-head window query after its prepared reply flush.
-    pub fn completeWindowReply(
-        self: *Terminal,
-        generation: u64,
-    ) error{StaleWindowRequest}!void {
-        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
-        if (occurrence.generation != generation or !isWindowQuery(occurrence.request))
-            return error.StaleWindowRequest;
-        self.host.consumeWindowRequestHead();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Consume the matching FIFO-head operation after host handling; queries require an exact reply instead.
-    pub fn acknowledgeWindowRequest(
-        self: *Terminal,
-        generation: u64,
-    ) WindowAcknowledgeError!void {
-        const occurrence = self.host.windowRequestHead() orelse return error.StaleWindowRequest;
-        if (occurrence.generation != generation) return error.StaleWindowRequest;
-        if (isWindowQuery(occurrence.request)) return error.WindowReplyRequired;
-        self.host.consumeWindowRequestHead();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Consume the matching FIFO-head media-copy command after host policy runs.
-    pub fn acknowledgeMediaCopy(self: *Terminal, generation: u64) error{StaleMediaCopy}!void {
-        const occurrence = self.host.mediaCopyHead() orelse return error.StaleMediaCopy;
-        if (occurrence.generation != generation) return error.StaleMediaCopy;
-        self.host.consumeMediaCopy();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Copies the FIFO-head media-copy command identity.
-    pub fn mediaCopyGeneration(self: *const Terminal) ?u64 {
-        const occurrence = self.host.mediaCopyHead() orelse return null;
-        return occurrence.generation;
-    }
-
-    /// Consume the matching FIFO-head configuration, delegated transport, or host-directed DCS consequence.
-    pub fn acknowledgeDcsPayload(self: *Terminal, generation: u64) error{StaleDcsPayload}!void {
-        const occurrence = self.host.dcsPayloadHead() orelse return error.StaleDcsPayload;
-        if (occurrence.generation != generation) return error.StaleDcsPayload;
-        self.host.consumeDcsPayload();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Copies the FIFO-head DCS consequence identity without borrowing its payload.
-    pub fn dcsPayloadGeneration(self: *const Terminal) ?u64 {
-        const occurrence = self.host.dcsPayloadHead() orelse return null;
-        return occurrence.generation;
-    }
-
-    /// Consume the matching FIFO-head APC, PM, or SOS payload after host handling.
-    pub fn acknowledgeStringPayload(self: *Terminal, generation: u64) error{StaleStringPayload}!void {
-        const occurrence = self.host.stringPayloadHead() orelse return error.StaleStringPayload;
-        if (occurrence.generation != generation) return error.StaleStringPayload;
-        self.host.consumeStringPayload();
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    /// Copies the FIFO-head APC, PM, or SOS consequence identity without borrowing its payload.
-    pub fn stringPayloadGeneration(self: *const Terminal) ?u64 {
-        const occurrence = self.host.stringPayloadHead() orelse return null;
-        return occurrence.generation;
-    }
-
-    fn noteSelectionChanged(self: *Terminal, previous_view: View, previous: ?TerminalSelection) void {
-        self.markSelectionAppearance(previous_view, previous);
-        self.markSelectionAppearance(
-            visibleView(&self.screen_state, self.scrollback_offset),
-            self.selectionState(),
-        );
-        advanceIdentity(&self.semantic_sequence);
-    }
-
-    fn markSelectionAppearance(self: *Terminal, view: View, selection: ?TerminalSelection) void {
-        const selected = selection orelse return;
-        var row: u16 = 0;
-        while (row < view.rows) : (row += 1) {
-            const range = visibleRange(&view, selected, row) orelse continue;
-            switch (view.rowSource(row)) {
-                .screen => |screen_row| self.screen_state.active().markDirtyCols(
-                    screen_row,
-                    range.start,
-                    range.end_exclusive - 1,
-                ),
-                // Active-screen dirty storage cannot name retained-history rows.
-                // A selection appearance change there requires reconstruction.
-                .history => self.visual_full = true,
-            }
-        }
-    }
-
-    fn selectionAbsoluteRow(view: View, row: i32) i32 {
-        const visible_row: u16 = if (row <= 0)
-            0
-        else
-            @intCast(@min(@as(u64, @intCast(row)), view.rows -| 1));
-        const absolute = @as(u64, view.history_row_base) + view.start + visible_row;
-        return std.math.cast(i32, absolute) orelse std.math.maxInt(i32);
     }
 
     fn activeSavepoint(self: *Terminal) *Savepoint {
@@ -16028,85 +14961,6 @@ pub const Terminal = struct {
         const bounded_col = @min(col, active.cols - 1);
         active.cursor.setPositionStructural(bounded_row, bounded_col);
     }
-
-    /// Borrows retained host consequences and input-policy facts until terminal mutation.
-    pub const StateSnapshot = struct {
-        title: ?[]const u8,
-        icon: ?[]const u8,
-        /// Borrows the latest OSC 7 URI or iTerm CurrentDir path until terminal mutation.
-        working_directory: ?Terminal.WorkingDirectory,
-        /// Borrows the latest OSC 1337 RemoteHost value until terminal mutation.
-        remote_host: ?[]const u8,
-        shell_integration: ?Terminal.ShellIntegration,
-        shell_mark: ShellMark,
-        /// Borrows the FIFO-head OSC 52 operation or Kitty OSC 5522 packet until terminal mutation.
-        clipboard_request: ?Terminal.ClipboardRequest,
-        /// Reports the bounded number of pending clipboard operations, including the exposed head.
-        clipboard_request_count: u8,
-        /// Borrows the next FIFO host-neutral notification consequence until terminal mutation.
-        notification: ?Notification,
-        /// Reports the bounded number of pending notification consequences, including the exposed head.
-        notification_count: u8,
-        /// Borrows the next FIFO OSC 22 request until terminal mutation.
-        pointer_shape: ?PointerShapeRequest,
-        /// Reports the bounded number of pending pointer requests, including the exposed head.
-        pointer_shape_count: u8,
-        /// Orders pointer stack state against RIS without collapsing queued requests.
-        pointer_shape_reset_generation: u64,
-        /// Borrows the next opaque file-transfer packet until terminal mutation.
-        file_transfer: ?FileTransferPacket,
-        /// Reports the bounded number of pending file-transfer packets, including the head.
-        file_transfer_count: u8,
-        /// Borrows the next parsed Kitty OSC 72 command until terminal mutation.
-        drag_drop: ?Terminal.DragDropCommand,
-        /// Reports the bounded number of pending Kitty OSC 72 commands including the head.
-        drag_drop_count: u8,
-        /// Borrows the next FIFO host-neutral CSI `t` request until terminal mutation.
-        window_request: ?WindowRequestOccurrence,
-        /// Reports the bounded number of pending FIFO window requests, including the exposed head.
-        window_request_count: u8,
-        /// Identifies the next FIFO color-preference query until terminal mutation.
-        color_preference_query_generation: ?u64,
-        /// Reports the bounded number of pending color-preference queries, including the exposed head.
-        color_preference_query_count: u8,
-        /// Borrows the next FIFO ANSI or DEC media-copy command until terminal mutation.
-        media_copy: ?MediaCopyOccurrence,
-        /// Reports the bounded number of pending media-copy commands, including the exposed head.
-        media_copy_count: u8,
-        /// Borrows the next FIFO configuration, delegated transport, or host-directed DCS consequence.
-        dcs_payload: ?DcsPayloadOccurrence,
-        /// Reports up to 16 ordered configuration, delegated transport, and host-directed DCS consequences.
-        dcs_payload_count: u8,
-        /// Borrows the next FIFO generic APC, PM, or SOS payload until terminal mutation.
-        string_payload: ?StringPayloadOccurrence,
-        /// Reports the bounded number of generic string controls, including the exposed head.
-        string_payload_count: u8,
-        /// Reports whether mode 2031 asks the host to publish color-scheme changes.
-        color_preference_notifications: bool,
-        /// Reports whether mode 5522 asks the host to use Kitty's extended paste path.
-        paste_events: bool,
-        /// Reports whether mode 19997 delegates terminal-generated signal handling to the host.
-        termios_signals: bool,
-        /// Reports whether mode 1007 asks the host to translate alternate-screen wheel input.
-        alternate_scroll: bool,
-        /// Reports whether mode 1036 asks the host to prefix Meta-modified legacy input with Escape.
-        meta_sends_escape: bool,
-        /// Reports whether mode 1337 asks the host to deliver key-release input.
-        report_key_up: bool,
-        /// Monotonic count of accepted BEL controls; presentation belongs to the embedder.
-        bell_generation: u64,
-        /// Monotonic count of history rows dropped after bounded allocation failure.
-        history_loss_generation: u64,
-        is_alternate_screen: bool,
-        /// Identifies the oldest projected primary history row.
-        history_row_base: u32,
-        /// Reports retained projected rows available above the screen.
-        history_count: u32,
-        /// Reports the currently applied projected-history offset.
-        scrollback_offset: u32,
-        /// Reports whether terminal mouse tracking owns pointer events.
-        mouse_reporting: bool,
-    };
 
     /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
     /// reverse state used to resolve terminal visual values.
@@ -16134,15 +14988,6 @@ pub const Terminal = struct {
             .reverse_screen = false,
         };
     }
-
-    /// Copies host-facing viewport dimensions, cursor, history, and active-screen facts.
-    pub const VisibleMeta = struct {
-        rows: u16,
-        cols: u16,
-        history_count: u32,
-        is_alternate_screen: bool,
-        dirty_token: DirtyToken,
-    };
 
     /// Returns the active G0, G1, and GL charset selection for DECCIR reporting.
     pub fn deccirCharsetState(self: *const Terminal) parser_mod.DeccirCharsetState {
@@ -16223,35 +15068,32 @@ comptime {
     std.debug.assert(maximum_cell_count <= std.math.maxInt(usize));
 }
 
-test "terminal applies bounded host viewport projections" {
+test "terminal borrows bounded caller-selected history projections" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
     defer vt.deinit();
 
     const feed = try vt.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
     try std.testing.expect(feed.state_changed);
-    try std.testing.expect(vt.visibleHistoryCount() > 0);
-    try std.testing.expect(vt.scrollViewport(.top));
-    try std.testing.expect(vt.scrollback_offset > 0);
-    try std.testing.expect(vt.scrollViewport(.bottom));
-    try std.testing.expectEqual(@as(u32, 0), vt.scrollback_offset);
-    try std.testing.expect(!vt.scrollViewport(.bottom));
+    try std.testing.expect(vt.semanticView(0).history_count > 0);
+    const top = vt.semanticView(std.math.maxInt(u32));
+    try std.testing.expectEqual(vt.semanticView(0).history_count, top.history_offset);
+    const bottom = vt.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), bottom.history_offset);
 }
 
-test "terminal feed preserves scrolled viewport as history grows" {
+test "terminal feed retains no caller viewport intent" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
     defer vt.deinit();
 
     const initial_feed = try vt.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
     try std.testing.expect(initial_feed.state_changed);
-    try std.testing.expect(vt.scrollViewport(.{ .absolute = 1 }));
-    const before = vt.visualView().view.cellAt(0, 0);
-    const offset_before = vt.scrollback_offset;
+    const before = vt.semanticView(1).cellAt(0, 0);
 
     const append_feed = try vt.feed("\r\n5EEEE");
     try std.testing.expect(append_feed.state_changed);
 
-    try std.testing.expect(vt.scrollback_offset > offset_before);
-    try std.testing.expectEqual(before, vt.visualView().view.cellAt(0, 0));
+    try std.testing.expectEqual(before, vt.semanticView(2).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_offset);
 }
 
 test "history allocation failures publish loss and preserve paired state" {
@@ -16311,7 +15153,7 @@ test "feed summary and state snapshot publish dropped history" {
     try std.testing.expect(dropped.history_lost);
     try std.testing.expectEqual(
         @as(u64, 1),
-        terminal.stateSnapshot().history_loss_generation,
+        terminal.historyLossCount(),
     );
 
     failing.fail_index = std.math.maxInt(usize);
@@ -16319,31 +15161,30 @@ test "feed summary and state snapshot publish dropped history" {
     try std.testing.expect(!retained.history_lost);
     try std.testing.expectEqual(
         @as(u64, 1),
-        terminal.stateSnapshot().history_loss_generation,
+        terminal.historyLossCount(),
     );
 }
 
-test "terminal publishes every bounded bell and remains reusable" {
+test "terminal retains every bounded bell and remains reusable" {
     var vt = try Terminal.init(std.testing.allocator, 2, 2);
     defer vt.deinit();
 
     const first = try vt.feed("\x07");
     try std.testing.expect(first.state_changed);
-    try std.testing.expectEqual(@as(u64, 1), vt.stateSnapshot().bell_generation);
+    try std.testing.expectEqual(@as(u64, 1), vt.consequenceHead().?.bell.id);
 
     const second = try vt.feed("\x07x");
     try std.testing.expect(second.state_changed);
-    const snapshot = vt.stateSnapshot();
-    try std.testing.expectEqual(@as(u64, 2), snapshot.bell_generation);
-    try std.testing.expectEqual(@as(u21, 'x'), vt.visualView().view.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u16, 2), vt.consequenceCount());
+    try std.testing.expectEqual(@as(u21, 'x'), vt.semanticView(0).cellAt(0, 0));
 
-    vt.host.bell_generation = std.math.maxInt(u64);
+    for (2..bell_capacity) |_| try std.testing.expect((try vt.feed("\x07")).state_changed);
     try std.testing.expectError(error.ConsequenceLimit, vt.feed("\x07"));
-    try std.testing.expectEqual(std.math.maxInt(u64), vt.host.bell_generation);
-    vt.host.bell_generation = 2;
+    while (vt.consequenceHead()) |consequence|
+        try vt.consumeConsequence(consequence.id());
     const reused = try vt.feed("y");
     try std.testing.expect(reused.state_changed);
-    try std.testing.expectEqual(@as(u21, 'y'), vt.visualView().view.cellAt(0, 1));
+    try std.testing.expectEqual(@as(u21, 'y'), vt.semanticView(0).cellAt(0, 1));
 }
 
 test "logical output aggregate evicts whole lines and preserves exact cursor loss" {
