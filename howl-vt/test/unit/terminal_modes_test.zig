@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../../src/terminal.zig");
+const terminal_mod = @import("../../src/howl_vt.zig");
 const input = @import("../../src/input.zig");
 const parser_mod = @import("../../src/parser.zig");
 const reply_fill = @import("../support/reply_fill.zig");
@@ -55,7 +55,7 @@ fn consumeReplies(terminal: *Terminal) !void {
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
 }
 
-fn dcsPayloadKind(terminal: *Terminal) ?terminal_mod.DcsPayloadKind {
+fn dcsPayloadKind(terminal: *Terminal) ?Terminal.DcsPayloadKind {
     if (terminal.consequenceHead()) |consequence| return consequence.dcs.kind;
     return null;
 }
@@ -1271,7 +1271,7 @@ test "iTerm2 window operations retain exact bounded host intent" {
     try std.testing.expectEqual(@as(u8, 2), terminal.consequenceCount());
     try stream.nextSlice(second);
 
-    const expected = [_]terminal_mod.WindowRequest{
+    const expected = [_]Terminal.WindowRequest{
         .deiconify,
         .iconify,
         .{ .move = .{ .x = 2147483647, .y = 0 } },
@@ -1331,7 +1331,7 @@ test "application resize requests retain exact ordered host intent" {
     try stream.nextSlice("0t\x9b8;0;2147483647t\x1b[4;7;9t");
     try std.testing.expectEqual(@as(u8, 3), terminal.consequenceCount());
 
-    const expected = [_]terminal_mod.WindowRequest{
+    const expected = [_]Terminal.WindowRequest{
         .{ .resize_pixels = .{ .height = 2147483647, .width = 0 } },
         .{ .resize_cells = .{ .rows = 0, .cols = 2147483647 } },
         .{ .resize_pixels = .{ .height = 7, .width = 9 } },
@@ -1373,7 +1373,7 @@ test "DEC cell dimension requests retain exact ordered host intent" {
     try stream.nextSlice("|\x9b132$|\x1b[$|\x1b[0$|\x1b[80$|\x1b[255*|");
     try std.testing.expectEqual(@as(u8, 6), terminal.consequenceCount());
 
-    const expected = [_]terminal_mod.WindowRequest{
+    const expected = [_]Terminal.WindowRequest{
         .{ .resize_rows = 40 },
         .{ .resize_columns = .columns_132 },
         .{ .resize_columns = .columns_80 },
@@ -2054,7 +2054,7 @@ test "DCS configuration commands retain bounded cross-family order" {
 
     try stream.nextSlice("\x1bP+p436F=");
     try stream.nextSlice("7661\x1b\\\x90" ++ "0;1|keys\x9c\x1bP0!uA\x1b\\");
-    const expected = [_]struct { kind: terminal_mod.DcsPayloadKind, payload: []const u8 }{
+    const expected = [_]struct { kind: Terminal.DcsPayloadKind, payload: []const u8 }{
         .{ .kind = .xtsettcap, .payload = "436F=7661" },
         .{ .kind = .decudk, .payload = "0;1|keys" },
         .{ .kind = .decaupss, .payload = "0!uA" },
@@ -2093,7 +2093,7 @@ test "iTerm2 DCS transports retain bounded unescaped occurrences in order" {
         try std.testing.expect((try terminal.feed(command.terminator)).state_changed);
     }
 
-    const expected = [_]struct { kind: terminal_mod.DcsPayloadKind, payload: []const u8 }{
+    const expected = [_]struct { kind: Terminal.DcsPayloadKind, payload: []const u8 }{
         .{ .kind = .iterm_tmux_hook, .payload = "tmux-client" },
         .{ .kind = .iterm_ssh_hook, .payload = "ssh-client" },
         .{ .kind = .iterm_tmux_wrap, .payload = "wrapped\x1b[31m" },
@@ -2121,7 +2121,7 @@ test "Kitty host-directed DCS commands retain exact handler payloads in order" {
 
     const commands = [_]struct {
         bytes: []const u8,
-        kind: terminal_mod.DcsPayloadKind,
+        kind: Terminal.DcsPayloadKind,
         payload: []const u8,
     }{
         .{ .bytes = "kitty-cmd{\"cmd\":\"ls\"}", .kind = .kitty_remote_command, .payload = "{\"cmd\":\"ls\"}" },
@@ -2160,11 +2160,11 @@ test "canceled DCS discards its partial consequence before the next complete DCS
     var stream = try StreamHarness.init(&terminal);
 
     try stream.nextSlice("\x1bP+p436F=drop\x18");
-    try std.testing.expectEqual(@as(?terminal_mod.DcsPayloadKind, null), dcsPayloadKind(&terminal));
+    try std.testing.expectEqual(@as(?Terminal.DcsPayloadKind, null), dcsPayloadKind(&terminal));
     try std.testing.expectEqual(@as(?[]const u8, null), dcsPayload(&terminal));
 
     try stream.nextSlice("\x1bP+p436F=keep\x1b\\");
-    try std.testing.expectEqual(terminal_mod.DcsPayloadKind.xtsettcap, dcsPayloadKind(&terminal).?);
+    try std.testing.expectEqual(Terminal.DcsPayloadKind.xtsettcap, dcsPayloadKind(&terminal).?);
     try std.testing.expectEqualStrings("436F=keep", dcsPayload(&terminal).?);
 }
 
@@ -2223,7 +2223,7 @@ test "APC PM and SOS retain bounded ordered fallback payloads" {
     try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b_A")).state_changed);
     try std.testing.expect((try terminal.feed("P\x1b\x1bC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).state_changed);
-    const expected = [_]struct { kind: terminal_mod.StringPayloadKind, payload: []const u8 }{
+    const expected = [_]struct { kind: Terminal.StringPayloadKind, payload: []const u8 }{
         .{ .kind = .apc, .payload = "AP\x1bC" },
         .{ .kind = .pm, .payload = "PM" },
         .{ .kind = .sos, .payload = "SOS" },
@@ -2297,12 +2297,12 @@ test "generic string aggregate budget rolls back and is reclaimed by consumption
 
     const second = terminal.consequenceHead().?.string_control;
     try std.testing.expectEqual(@as(u64, 2), second.generation);
-    try std.testing.expectEqual(terminal_mod.StringPayloadKind.pm, second.kind);
+    try std.testing.expectEqual(Terminal.StringPayloadKind.pm, second.kind);
     try std.testing.expectEqual(@as(usize, 900), second.payload.len);
     try terminal.consumeConsequence(second.generation);
     const third = terminal.consequenceHead().?.string_control;
     try std.testing.expectEqual(@as(u64, 3), third.generation);
-    try std.testing.expectEqual(terminal_mod.StringPayloadKind.sos, third.kind);
+    try std.testing.expectEqual(Terminal.StringPayloadKind.sos, third.kind);
     try std.testing.expectEqual(@as(usize, 1000), third.payload.len);
 }
 
@@ -2314,7 +2314,7 @@ test "legacy Tektronix C0 and ESC controls retain ordered consequences" {
     try std.testing.expect((try terminal.feed(
         "\x1c\x1d\x1e\x1f\x1b\x17\x1b\x1c\x1bl\x1bs",
     )).state_changed);
-    const expected = [_]terminal_mod.LegacyControlKind{
+    const expected = [_]Terminal.LegacyControlKind{
         .tek_point_plot,
         .tek_graph,
         .tek_incremental_plot,
@@ -2575,7 +2575,7 @@ test "low priority private modes and media copy retain host-neutral state" {
     write(&stream, "\x1b[?45h\x1b[?1045h\x1b[?45$p\x1b[?1045$p\x1b[?5i");
     try std.testing.expectEqualStrings("\x1b[?45;1$y\x1b[?1045;1$y", pendingOutput(&terminal));
     try std.testing.expectEqualDeep(
-        terminal_mod.MediaCopyRequest{ .private = true, .parameter = 5 },
+        Terminal.MediaCopyRequest{ .private = true, .parameter = 5 },
         terminal.consequenceHead().?.media_copy.request,
     );
 
@@ -2592,7 +2592,7 @@ test "media-copy commands retain bounded ordered host intent" {
 
     try stream.nextSlice("\x1b[");
     try stream.nextSlice("i\x9b4i\x1b[5i\x1b[99i\x1b[?5i");
-    const expected = [_]terminal_mod.MediaCopyRequest{
+    const expected = [_]Terminal.MediaCopyRequest{
         .{ .private = false, .parameter = 0 },
         .{ .private = false, .parameter = 4 },
         .{ .private = false, .parameter = 5 },
@@ -2634,7 +2634,7 @@ test "media-copy commands retain bounded ordered host intent" {
     try std.testing.expect((try terminal.feed("\x1b[5i\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     try terminal.resize(5, 9);
     try std.testing.expectEqualDeep(
-        terminal_mod.MediaCopyRequest{ .private = false, .parameter = 5 },
+        Terminal.MediaCopyRequest{ .private = false, .parameter = 5 },
         terminal.consequenceHead().?.media_copy.request,
     );
 }

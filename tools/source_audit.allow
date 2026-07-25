@@ -11,7 +11,6 @@ howl-vt/benchmark/terminal_benchmark.zig|discard|_ = args.next();
 howl-vt/simulation/protocol.zig|anytype|fn hashCell(hasher: *std.hash.Fnv1a_64, cell: anytype) void {
 howl-vt/simulation/protocol.zig|anytype|fn hashColor(hasher: *std.hash.Fnv1a_64, color: anytype) void {
 howl-vt/simulation/protocol.zig|anytype|fn hashValue(hasher: *std.hash.Fnv1a_64, value: anytype) void {
-howl-vt/simulation/scrollback.zig|anytype|fn visibleContentLen(s: anytype, row: u16, cols: u16) u16 {
 howl-vt/src/parser.zig|discard|_ = parser.entryPhase(.escape, 0x1B);
 howl-vt/src/parser.zig|discard|_ = parser.next('$');
 howl-vt/src/parser.zig|discard|_ = parser.next('1');

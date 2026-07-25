@@ -8,7 +8,7 @@ pub fn main() !void {
     var terminal = try howl_vt.Terminal.init(allocator, 2, 8);
     defer terminal.deinit();
 
-    const summary = try terminal.feed("Howl\x1b[5n");
+    const summary: howl_vt.Terminal.FeedSummary = try terminal.feed("Howl\x1b[5n");
     if (!summary.state_changed) return error.TerminalStateDidNotChange;
 
     const view = terminal.semanticView(0);

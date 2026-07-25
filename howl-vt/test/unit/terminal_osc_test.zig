@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../../src/terminal.zig");
+const terminal_mod = @import("../../src/howl_vt.zig");
 const parser_mod = @import("../../src/parser.zig");
 const reply_fill = @import("../support/reply_fill.zig");
 const stream_harness = @import("../support/stream_harness.zig");
@@ -805,7 +805,7 @@ test "iTerm and Kitty file transfers retain one opaque ordered stream" {
     )).state_changed);
     try std.testing.expectEqual(@as(u8, 4), terminal.consequenceCount());
 
-    const expected = [_]struct { protocol: terminal_mod.FileTransferProtocol, payload: []const u8 }{
+    const expected = [_]struct { protocol: Terminal.FileTransferProtocol, payload: []const u8 }{
         .{ .protocol = .iterm2_1337, .payload = "MultipartFile=name=ZmlsZQ==" },
         .{ .protocol = .kitty_5113, .payload = "ac=send;id=1;d=QQ==" },
         .{ .protocol = .iterm2_1337, .payload = "FilePart=Qg==" },
@@ -957,7 +957,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expect((try terminal.feed("lo\x07")).state_changed);
     var notification = terminal.consequenceHead().?.notification;
     try std.testing.expectEqual(@as(u64, 1), notification.generation);
-    try std.testing.expectEqual(terminal_mod.NotificationKind.message, notification.kind);
+    try std.testing.expectEqual(Terminal.NotificationKind.message, notification.kind);
     try std.testing.expectEqual(@as(u16, 9), notification.command);
     try std.testing.expectEqualStrings("hello", notification.payload);
 
@@ -972,7 +972,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expectEqual(@as(u8, 7), terminal.consequenceCount());
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(2));
 
-    const expected = [_]struct { kind: terminal_mod.NotificationKind, command: u16, payload: []const u8 }{
+    const expected = [_]struct { kind: Terminal.NotificationKind, command: u16, payload: []const u8 }{
         .{ .kind = .message, .command = 9, .payload = "hello" },
         .{ .kind = .message, .command = 99, .payload = "i=one:d=0;body" },
         .{ .kind = .message, .command = 777, .payload = "notify;title;body" },
@@ -996,7 +996,7 @@ test "OSC notifications retain ordered bounded host-neutral occurrences" {
     try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
     notification = terminal.consequenceHead().?.notification;
     try std.testing.expectEqual(@as(u64, 8), notification.generation);
-    try std.testing.expectEqual(terminal_mod.NotificationKind.request_attention, notification.kind);
+    try std.testing.expectEqual(Terminal.NotificationKind.request_attention, notification.kind);
     try std.testing.expectEqualStrings("once", notification.payload);
 }
 

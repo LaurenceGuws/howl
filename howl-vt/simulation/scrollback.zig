@@ -1,5 +1,5 @@
 const std = @import("std");
-const terminal_mod = @import("../src/terminal.zig");
+const terminal_mod = @import("../src/howl_vt.zig");
 
 // Shared VT simulation helper for scrollback churn. Workloads use deterministic
 // seeded input space with explicit preservation claims.
@@ -42,9 +42,7 @@ pub const ChurnStep = union(enum) {
 pub const CoreStateSummary = struct {
     rows: u16,
     cols: u16,
-    wrap_pending: bool,
     history_count: u32,
-    history_capacity: u16,
 };
 
 pub const PreservationOptions = struct {
@@ -82,8 +80,8 @@ pub fn runScenario(allocator: std.mem.Allocator, seed: u64, op_count: ScenarioOp
         .structural_hash = hashStructural(&vt),
         .logical_hash = hashLogicalContent(&vt),
         .history_count = vt.semanticView(0).history_count,
-        .rows = vt.screen_state.activeConst().rows,
-        .cols = vt.screen_state.activeConst().cols,
+        .rows = vt.semanticView(0).rows,
+        .cols = vt.semanticView(0).cols,
     };
 }
 
@@ -123,7 +121,7 @@ pub fn runCanonicalPreservation(allocator: std.mem.Allocator, seed: u64, options
     }
 
     const restore_pre_state = summarizeCoreState(&vt);
-    try vt.screen_state.resize(vt.allocator, options.initial_rows, options.initial_cols);
+    try vt.resize(options.initial_rows, options.initial_cols);
     const restore_step: ChurnStep = .{ .resize = .{
         .rows = options.initial_rows,
         .cols = options.initial_cols,
@@ -186,19 +184,20 @@ fn feedChecked(vt: *Terminal, bytes: []const u8) !void {
 fn applyResize(vt: *Terminal, rand: std.Random) !void {
     const rows = RowsMin + rand.uintLessThan(u16, RowsMax - RowsMin + 1);
     const cols = ColsMin + rand.uintLessThan(u16, ColsMax - ColsMin + 1);
-    try vt.screen_state.resize(vt.allocator, rows, cols);
+    try vt.resize(rows, cols);
 }
 
 fn applyResizeStep(vt: *Terminal, rand: std.Random) !ChurnStep {
     const rows = RowsMin + rand.uintLessThan(u16, RowsMax - RowsMin + 1);
     const cols = ColsMin + rand.uintLessThan(u16, ColsMax - ColsMin + 1);
-    try vt.screen_state.resize(vt.allocator, rows, cols);
+    try vt.resize(rows, cols);
     return .{ .resize = .{ .rows = rows, .cols = cols } };
 }
 
 fn applyZoomJitter(vt: *Terminal, rand: std.Random) !void {
-    const cur_rows = vt.screen_state.activeConst().rows;
-    const cur_cols = vt.screen_state.activeConst().cols;
+    const view = vt.semanticView(0);
+    const cur_rows = view.rows;
+    const cur_cols = view.cols;
     const steps = rand.uintLessThan(u8, 5) + 2;
     var i: u8 = 0;
     while (i < steps) : (i += 1) {
@@ -206,14 +205,15 @@ fn applyZoomJitter(vt: *Terminal, rand: std.Random) !void {
         const delta_cols: i16 = @as(i16, @intCast(rand.uintLessThan(u8, 19))) - 9;
         const next_rows = clampDimI16(cur_rows, delta_rows, RowsMin, RowsMax);
         const next_cols = clampDimI16(cur_cols, delta_cols, ColsMin, ColsMax);
-        try vt.screen_state.resize(vt.allocator, next_rows, next_cols);
+        try vt.resize(next_rows, next_cols);
     }
-    try vt.screen_state.resize(vt.allocator, cur_rows, cur_cols);
+    try vt.resize(cur_rows, cur_cols);
 }
 
 fn applyZoomJitterStep(vt: *Terminal, rand: std.Random) !ChurnStep {
-    const cur_rows = vt.screen_state.activeConst().rows;
-    const cur_cols = vt.screen_state.activeConst().cols;
+    const view = vt.semanticView(0);
+    const cur_rows = view.rows;
+    const cur_cols = view.cols;
     const steps = rand.uintLessThan(u8, 5) + 2;
     var end_rows = cur_rows;
     var end_cols = cur_cols;
@@ -223,9 +223,9 @@ fn applyZoomJitterStep(vt: *Terminal, rand: std.Random) !ChurnStep {
         const delta_cols: i16 = @as(i16, @intCast(rand.uintLessThan(u8, 19))) - 9;
         end_rows = clampDimI16(cur_rows, delta_rows, RowsMin, RowsMax);
         end_cols = clampDimI16(cur_cols, delta_cols, ColsMin, ColsMax);
-        try vt.screen_state.resize(vt.allocator, end_rows, end_cols);
+        try vt.resize(end_rows, end_cols);
     }
-    try vt.screen_state.resize(vt.allocator, cur_rows, cur_cols);
+    try vt.resize(cur_rows, cur_cols);
     return .{ .zoom_jitter = .{
         .start_rows = cur_rows,
         .start_cols = cur_cols,
@@ -242,102 +242,50 @@ fn clampDimI16(base: u16, delta: i16, min_v: u16, max_v: u16) u16 {
 }
 
 fn ensureCoreInvariants(vt: *const Terminal) InvariantError!void {
-    const s = vt.screen_state.activeConst();
-    if (s.rows < RowsMin) return error.RowBelowMinimum;
-    if (s.cols < ColsMin) return error.ColBelowMinimum;
+    const view = vt.semanticView(0);
+    if (view.rows < RowsMin) return error.RowBelowMinimum;
+    if (view.cols < ColsMin) return error.ColBelowMinimum;
 }
 
 fn hashStructural(vt: *const Terminal) u64 {
     var h = std.hash.Wyhash.init(0);
-    const s = vt.screen_state.activeConst();
-    h.update(std.mem.asBytes(&s.rows));
-    h.update(std.mem.asBytes(&s.cols));
-    h.update(std.mem.asBytes(&s.wrap_pending));
-    const history_count = vt.semanticView(0).history_count;
-    const history_capacity = s.historyCapacity();
+    const view = vt.semanticView(0);
+    h.update(std.mem.asBytes(&view.rows));
+    h.update(std.mem.asBytes(&view.cols));
+    const history_count = view.history_count;
     h.update(std.mem.asBytes(&history_count));
-    h.update(std.mem.asBytes(&history_capacity));
     return h.final();
 }
 
 fn hashLogicalContent(vt: *const Terminal) u64 {
     var h = std.hash.Wyhash.init(0x9e3779b97f4a7c15);
-    const s = vt.screen_state.activeConst();
-    const history = vt.semanticView(0).history_count;
+    const view = vt.semanticView(0);
+    const history = view.history_count;
 
     var hr: u32 = 0;
     while (hr < history) : (hr += 1) {
+        const history_view = vt.semanticView(hr + 1);
         var col: u16 = 0;
-        while (col < s.cols) : (col += 1) {
-            const cp = s.historyRowAt(hr, col);
+        while (col < history_view.cols) : (col += 1) {
+            const cp = history_view.cellAt(0, col);
             h.update(std.mem.asBytes(&cp));
         }
     }
 
     var row: u16 = 0;
-    while (row < s.rows) : (row += 1) {
+    while (row < view.rows) : (row += 1) {
         var col: u16 = 0;
-        while (col < s.cols) : (col += 1) {
-            const cp = s.cellAt(row, col);
-            h.update(std.mem.asBytes(&cp));
-        }
-    }
-
-    return h.final();
-}
-
-fn canonicalLogicalHash(vt: *const Terminal) u64 {
-    var h = std.hash.Wyhash.init(0xd1b54a32d192ed03);
-
-    const s = vt.screen_state.activeConst();
-    const row_break: u32 = 0;
-
-    for (s.history_lines.items, 0..) |_, line_idx| {
-        const slot = (s.history_lines_start + @as(u32, @intCast(line_idx))) % @as(u32, @intCast(s.history_lines.items.len));
-        const line = s.history_lines.items[@intCast(slot)];
-        h.update(std.mem.asBytes(&row_break));
-        for (line.cells.items) |cell| {
-            const codepoint: u32 = @intCast(cell.codepoint);
-            h.update(std.mem.asBytes(&codepoint));
-        }
-    }
-
-    var open_prefix_len: usize = 0;
-    if (s.open_history_line) |open_line| {
-        h.update(std.mem.asBytes(&row_break));
-        for (open_line.cells.items) |cell| {
-            const codepoint: u32 = @intCast(cell.codepoint);
-            h.update(std.mem.asBytes(&codepoint));
-        }
-        open_prefix_len = open_line.cells.items.len;
-    }
-
-    var pending_visible = false;
-
-    var row: u16 = 0;
-    while (row < s.rows) : (row += 1) {
-        const len = visibleContentLen(s, row, s.cols);
-        var col: u16 = 0;
-        if (!pending_visible and (row > 0 or open_prefix_len == 0)) {
-            h.update(std.mem.asBytes(&row_break));
-        }
-        pending_visible = true;
+        const len = visibleContentLen(&view, row, view.cols);
         while (col < len) : (col += 1) {
-            const codepoint: u32 = s.cellAt(row, col);
-            h.update(std.mem.asBytes(&codepoint));
-        }
-        if (!s.rowWrapped(row)) {
-            pending_visible = false;
+            const cp = view.cellAt(row, col);
+            h.update(std.mem.asBytes(&cp));
         }
     }
 
-    if (!pending_visible and s.history_lines.items.len == 0 and open_prefix_len == 0 and s.rows == 0) {
-        h.update(std.mem.asBytes(&row_break));
-    }
     return h.final();
 }
 
-fn visibleContentLen(s: anytype, row: u16, cols: u16) u16 {
+fn visibleContentLen(s: *const Terminal.SemanticView, row: u16, cols: u16) u16 {
     var col = cols;
     while (col > 0) {
         const idx = col - 1;
@@ -348,27 +296,43 @@ fn visibleContentLen(s: anytype, row: u16, cols: u16) u16 {
     return 0;
 }
 
+fn canonicalLogicalHash(vt: *const Terminal) u64 {
+    var h = std.hash.Wyhash.init(0xd1b54a32d192ed03);
+    var output = vt.copyLogicalOutput(std.heap.page_allocator, 0, std.math.maxInt(u16), 1024 * 1024) catch return 0;
+    switch (output) {
+        .output => |*value| {
+            defer value.deinit();
+            h.update(value.text);
+            h.update(value.open_line);
+            h.update(std.mem.asBytes(&value.open_line_omitted));
+            for (value.losses) |loss| {
+                h.update(std.mem.asBytes(&loss.id));
+                h.update(std.mem.asBytes(&loss.byte_count));
+                h.update(std.mem.asBytes(&loss.reason));
+            }
+        },
+        else => return 0,
+    }
+    return h.final();
+}
+
 fn summarizeCoreState(vt: *const Terminal) CoreStateSummary {
-    const s = vt.screen_state.activeConst();
+    const view = vt.semanticView(0);
     return .{
-        .rows = s.rows,
-        .cols = s.cols,
-        .wrap_pending = s.wrap_pending,
-        .history_count = vt.semanticView(0).history_count,
-        .history_capacity = s.historyCapacity(),
+        .rows = view.rows,
+        .cols = view.cols,
+        .history_count = view.history_count,
     };
 }
 
 fn logBreakpoint(index: ScenarioOpCount, before: CoreStateSummary, step: ChurnStep, expected: u64, actual: u64, after: CoreStateSummary) void {
     std.debug.print(
-        "scrollback simulation breakpoint at step {d}\nstate before: rows={d} cols={d} wrap_pending={} history={d}/{d}\n",
+        "scrollback simulation breakpoint at step {d}\nstate before: rows={d} cols={d} history={d}\n",
         .{
             index,
             before.rows,
             before.cols,
-            before.wrap_pending,
             before.history_count,
-            before.history_capacity,
         },
     );
     switch (step) {
@@ -380,13 +344,11 @@ fn logBreakpoint(index: ScenarioOpCount, before: CoreStateSummary, step: ChurnSt
     }
     std.debug.print("expected output hash: {d}\nactual output hash: {d}\n", .{ expected, actual });
     std.debug.print(
-        "state after: rows={d} cols={d} wrap_pending={} history={d}/{d}\n",
+        "state after: rows={d} cols={d} history={d}\n",
         .{
             after.rows,
             after.cols,
-            after.wrap_pending,
             after.history_count,
-            after.history_capacity,
         },
     );
 }

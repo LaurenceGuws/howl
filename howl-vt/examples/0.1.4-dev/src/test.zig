@@ -3,6 +3,13 @@
 const std = @import("std");
 const howl_vt = @import("howl_vt");
 
+fn feedTyped(
+    terminal: *howl_vt.Terminal,
+    bytes: []const u8,
+) howl_vt.Terminal.FeedError!howl_vt.Terminal.FeedSummary {
+    return terminal.feed(bytes);
+}
+
 fn encodeTyped(
     terminal: *howl_vt.Terminal,
     allocator: std.mem.Allocator,
@@ -16,9 +23,9 @@ test "fragmented output mutates borrowed terminal state and retains replies" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
 
-    const text = try terminal.feed("Howl\x1b[");
+    const text: howl_vt.Terminal.FeedSummary = try feedTyped(&terminal, "Howl\x1b[");
     try std.testing.expect(text.state_changed);
-    const reply = try terminal.feed("5n");
+    const reply = try feedTyped(&terminal, "5n");
     try std.testing.expect(reply.state_changed);
 
     const view = terminal.semanticView(0);
@@ -134,4 +141,14 @@ test "resize changes emulator geometry and rejects zero dimensions" {
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 3), view.rows);
     try std.testing.expectEqual(@as(u16, 10), view.cols);
+}
+
+test "semantic row continuation is borrowed terminal state" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 2);
+    defer terminal.deinit();
+
+    try std.testing.expect((try feedTyped(&terminal, "abc")).state_changed);
+    const view = terminal.semanticView(0);
+    try std.testing.expect(view.rowWrapped(0));
+    try std.testing.expect(!view.rowWrapped(1));
 }

@@ -452,15 +452,10 @@ const ParsedClipboardRequest = struct {
     kind: ClipboardRequestKind,
 };
 
-const ClipboardHostReplyError = ApplyError || error{StaleClipboardRequest};
-
-// Reports allocation failure or rejection by a concrete retained-consequence bound.
-const ApplyError = error{
-    OutOfMemory,
-    ConsequenceLimit,
-    ReplyLimit,
-    PropertyLimit,
-};
+const HostEventError = consequences.Error || properties.PropertyError || replies.AppendError;
+const ClipboardQueryError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
+const WindowSerializationError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
+const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
 
 /// OSC 52 names four standard selections and eight numbered cut buffers.
 const clipboard_selection_bytes_max: u8 = 12;
@@ -475,48 +470,31 @@ const pointer_shape_reply_max_bytes: u32 = (consequence_payload_max_bytes / 12) 
 // Owns the latest bounded OSC 133 shell mark.
 const ShellMark = properties.ShellMark;
 
-/// Projects the consequence owner's notification classification.
-pub const NotificationKind = consequences.NotificationKind;
-/// Projects the consequence owner's borrowed notification view.
-pub const Notification = consequences.Notification;
+// Internal composition alias for the consequence-owned notification classification.
+const NotificationKind = consequences.NotificationKind;
+// Internal composition alias for the consequence-owned notification view.
+const Notification = consequences.Notification;
 
-/// Projects the consequence owner's borrowed pointer-shape request.
-pub const PointerShapeRequest = consequences.PointerShapeRequest;
+// Internal composition alias for the consequence-owned pointer-shape request.
+const PointerShapeRequest = consequences.PointerShapeRequest;
 
-/// Projects the consequence owner's file-transfer protocol identity.
-pub const FileTransferProtocol = consequences.FileTransferProtocol;
-/// Projects the consequence owner's borrowed file-transfer packet.
-pub const FileTransferPacket = consequences.FileTransferPacket;
+// Internal composition alias for the consequence-owned file-transfer protocol.
+const FileTransferProtocol = consequences.FileTransferProtocol;
+// Internal composition alias for the consequence-owned file-transfer packet.
+const FileTransferPacket = consequences.FileTransferPacket;
 
 const drag_drop_capacity: u8 = 16;
 const drag_drop_packet_max_bytes: u32 = 4096;
 const drag_drop_aggregate_max_bytes: u32 = 32 * 1024;
 const drag_drop_data_max_bytes: u32 = 3072;
 
-/// Projects the consequence owner's drag-and-drop classification.
-pub const DragDropCommandKind = consequences.DragDropCommandKind;
-/// Projects the consequence owner's borrowed drag-and-drop command.
-pub const DragDropCommandView = consequences.DragDropCommandView;
-
-/// Selects one bounded Kitty OSC 72 error returned to the child.
-pub const DragDropError = enum {
-    invalid,
-    permission,
-    io,
-    resource,
-
-    fn bytes(self: DragDropError) []const u8 {
-        return switch (self) {
-            .invalid => "EINVAL",
-            .permission => "EPERM",
-            .io => "EIO",
-            .resource => "EMFILE",
-        };
-    }
-};
+// Internal composition alias for the consequence-owned drag-and-drop classification.
+const DragDropCommandKind = consequences.DragDropCommandKind;
+// Internal composition alias for the consequence-owned drag-and-drop command.
+const DragDropCommandView = consequences.DragDropCommandView;
 
 /// Supplies one host fact serialized through Kitty OSC 72 framing.
-pub const DragDropEventValue = union(enum) {
+const DragDropEventValue = union(enum) {
     query: struct { client_id: ?u32 },
     move: struct {
         client_id: ?u32,
@@ -530,23 +508,23 @@ pub const DragDropEventValue = union(enum) {
     },
     leave: struct { client_id: ?u32 },
     data: struct { client_id: ?u32, index: u32, more: bool, bytes: []const u8 },
-    failure: struct { client_id: ?u32, index: ?u32, reason: DragDropError },
+    failure: struct { client_id: ?u32, index: ?u32, reason: Terminal.DragDropError },
 };
 
-/// Projects the consequence owner's window-request vocabulary.
-pub const WindowRequest = consequences.WindowRequest;
+// Internal composition alias for the consequence-owned window-request vocabulary.
+const WindowRequest = consequences.WindowRequest;
 
-/// Projects the consequence owner's borrowed window request.
-pub const WindowRequestOccurrence = consequences.WindowRequestOccurrence;
+// Internal composition alias for the consequence-owned window request.
+const WindowRequestOccurrence = consequences.WindowRequestOccurrence;
 
-/// Projects the consequence owner's media-copy request.
-pub const MediaCopyRequest = consequences.MediaCopyRequest;
+// Internal composition alias for the consequence-owned media-copy request.
+const MediaCopyRequest = consequences.MediaCopyRequest;
 
-/// Projects the consequence owner's borrowed media-copy occurrence.
-pub const MediaCopyOccurrence = consequences.MediaCopyOccurrence;
+// Internal composition alias for the consequence-owned media-copy occurrence.
+const MediaCopyOccurrence = consequences.MediaCopyOccurrence;
 
-/// Supplies one host-owned fact requested by a retained window query.
-pub const WindowReply = union(enum) {
+// Internal composition value for one host-owned window-query reply.
+const WindowReplyValue = union(enum) {
     state: enum { normal, iconified },
     position: struct { x: u32, y: u32 },
     screen_cells: struct { rows: u32, cols: u32 },
@@ -586,7 +564,7 @@ fn appendClipboardQueryReply(
     allocator: std.mem.Allocator,
     selection: []const u8,
     bytes: []const u8,
-) ApplyError!void {
+) ClipboardQueryError!void {
     if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
     const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
     const prefix_len = std.math.add(usize, 4, selection.len) catch
@@ -604,7 +582,7 @@ fn appendClipboardQueryReply(
     try output.appendString(.terminal, .osc, payload);
 }
 
-fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
+fn ensureRetainedBound(len: u32, max_len: u32) error{ConsequenceLimit}!void {
     if (len > max_len) return error.ConsequenceLimit;
 }
 
@@ -793,7 +771,7 @@ fn handleKittyControl(
     colors: *KittyColorState,
     output: *replies.Buffer,
     payload: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |raw_part| {
         const part = std.mem.trim(u8, raw_part, " \t\r\n");
@@ -817,7 +795,7 @@ fn appendKittyQueryReply(
     output: *replies.Buffer,
     key: []const u8,
     colors: KittyColorState,
-) ApplyError!void {
+) replies.AppendError!void {
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.kitty, .osc);
@@ -836,18 +814,18 @@ fn appendKittyQueryReply(
 
 const key_report_max_bytes = 16;
 
-/// Projects the consequence owner's DCS classification.
-pub const DcsPayloadKind = consequences.DcsPayloadKind;
-/// Projects the consequence owner's borrowed DCS occurrence.
-pub const DcsPayloadOccurrence = consequences.DcsPayloadOccurrence;
-/// Projects the consequence owner's generic string-control classification.
-pub const StringPayloadKind = consequences.StringPayloadKind;
-/// Projects the consequence owner's borrowed string-control occurrence.
-pub const StringPayloadOccurrence = consequences.StringPayloadOccurrence;
-/// Projects the consequence owner's legacy-control classification.
-pub const LegacyControlKind = consequences.LegacyControlKind;
-/// Projects the consequence owner's borrowed legacy-control occurrence.
-pub const LegacyControlOccurrence = consequences.LegacyControlOccurrence;
+// Internal composition alias for the consequence-owned DCS classification.
+const DcsPayloadKind = consequences.DcsPayloadKind;
+// Internal composition alias for the consequence-owned DCS occurrence.
+const DcsPayloadOccurrence = consequences.DcsPayloadOccurrence;
+// Internal composition alias for the consequence-owned string-control classification.
+const StringPayloadKind = consequences.StringPayloadKind;
+// Internal composition alias for the consequence-owned string-control occurrence.
+const StringPayloadOccurrence = consequences.StringPayloadOccurrence;
+// Internal composition alias for the consequence-owned legacy-control classification.
+const LegacyControlKind = consequences.LegacyControlKind;
+// Internal composition alias for the consequence-owned legacy-control occurrence.
+const LegacyControlOccurrence = consequences.LegacyControlOccurrence;
 
 // Borrows one terminal color key and optional replacement value.
 const TerminalColorControlCommand = struct {
@@ -2590,28 +2568,28 @@ const RowSource = union(enum) {
 };
 
 // Owns primary and alternate terminal screens.
-const Set = struct {
+const ScreenSet = struct {
     primary: Screen,
     alternate: Screen,
     alt_active: bool = false,
 
     /// Takes primary and alternate screen values into one screen set.
-    pub fn init(primary: Screen, alternate: Screen) Set {
+    fn init(primary: Screen, alternate: Screen) ScreenSet {
         return .{ .primary = primary, .alternate = alternate };
     }
 
     /// Returns the mutable screen selected by alternate-screen state.
-    pub fn active(self: *Set) *Screen {
+    fn active(self: *ScreenSet) *Screen {
         return if (self.alt_active) &self.alternate else &self.primary;
     }
 
     /// Returns the borrowed screen selected by alternate-screen state.
-    pub fn activeConst(self: *const Set) *const Screen {
+    fn activeConst(self: *const ScreenSet) *const Screen {
         return if (self.alt_active) &self.alternate else &self.primary;
     }
 
     /// Resets the active screen while preserving alternate-screen identity.
-    pub fn reset(self: *Set) void {
+    fn reset(self: *ScreenSet) void {
         self.active().reset();
     }
 
@@ -2619,7 +2597,7 @@ const Set = struct {
     ///
     /// Allocation failure leaves both screens unchanged and at matching
     /// dimensions.
-    pub fn resize(self: *Set, allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!void {
+    fn resize(self: *ScreenSet, allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!void {
         var primary = try self.primary.prepareResize(allocator, rows, cols);
         errdefer primary.deinit(allocator);
         var alternate = try self.alternate.prepareResize(allocator, rows, cols);
@@ -2632,20 +2610,20 @@ const Set = struct {
     }
 
     /// Copies one nonzero host cell-pixel fact to both screen identities.
-    pub fn setCellPixelSize(self: *Set, width: u32, height: u32) void {
+    fn setCellPixelSize(self: *ScreenSet, width: u32, height: u32) void {
         self.primary.setCellPixelSize(width, height);
         self.alternate.setCellPixelSize(width, height);
     }
 
     /// Releases both screens through their shared terminal allocator.
-    pub fn deinit(self: *Set, allocator: std.mem.Allocator) void {
+    fn deinit(self: *ScreenSet, allocator: std.mem.Allocator) void {
         self.primary.deinit(allocator);
         self.alternate.deinit(allocator);
     }
 };
 
 /// Builds a borrowed viewport at a clamped scrollback offset.
-fn visibleView(screen_state: *const Set, history_offset: u32) Terminal.SemanticView {
+fn visibleView(screen_state: *const ScreenSet, history_offset: u32) Terminal.SemanticView {
     const active = screen_state.activeConst();
     const history_count: u32 = if (screen_state.alt_active) 0 else active.historyCount();
     const offset = @min(history_offset, history_count);
@@ -2675,7 +2653,7 @@ fn visibleView(screen_state: *const Set, history_offset: u32) Terminal.SemanticV
 }
 
 /// Returns one history codepoint by recency.
-fn historyCellAt(screen_state: *const Set, history_idx: u32, col: u16) Screen.Cell {
+fn historyCellAt(screen_state: *const ScreenSet, history_idx: u32, col: u16) Screen.Cell {
     if (screen_state.alt_active) return Screen.default_cell;
     return screen_state.primary.historyCellAt(history_idx, col);
 }
@@ -2685,19 +2663,7 @@ fn rowIndex(row: u16) u32 {
     return row;
 }
 
-/// Identifies one cell in stable projected history-and-screen coordinates.
-const TerminalTextPoint = struct {
-    row: i32,
-    col: u16,
-};
-
-/// Identifies an inclusive terminal text range without owning gesture state.
-const TerminalTextRange = struct {
-    start: TerminalTextPoint,
-    end: TerminalTextPoint,
-};
-
-fn orderedTextRange(range: TerminalTextRange) TerminalTextRange {
+fn orderedTextRange(range: Terminal.TextRange) Terminal.TextRange {
     if (range.start.row < range.end.row) return range;
     if (range.start.row > range.end.row) return .{ .start = range.end, .end = range.start };
     if (range.start.col <= range.end.col) return range;
@@ -2712,7 +2678,7 @@ const CopyError = error{
     Utf8CannotEncodeSurrogateHalf,
 };
 
-fn rowSource(screen_state: *const Set, row: i32) ?RowSource {
+fn rowSource(screen_state: *const ScreenSet, row: i32) ?RowSource {
     if (row < 0) return null;
     const active = screen_state.activeConst();
     const absolute: u32 = std.math.cast(u32, row) orelse return null;
@@ -2726,7 +2692,7 @@ fn rowSource(screen_state: *const Set, row: i32) ?RowSource {
     return .{ .screen = @intCast(screen_row) };
 }
 
-fn contentEndExclusive(screen_state: *const Set, row: i32) u16 {
+fn contentEndExclusive(screen_state: *const ScreenSet, row: i32) u16 {
     const source = rowSource(screen_state, row) orelse return 0;
     const active = screen_state.activeConst();
     var scan = active.cols;
@@ -2755,8 +2721,8 @@ fn sourceRowWrapped(screen: *const Screen, source: RowSource) bool {
 // are reported exactly instead of trapping during integer narrowing.
 fn copyTextRange(
     allocator: std.mem.Allocator,
-    screen_state: *const Set,
-    range: TerminalTextRange,
+    screen_state: *const ScreenSet,
+    range: Terminal.TextRange,
     max_bytes: usize,
 ) CopyError![]const u8 {
     const ordered_selection = orderedTextRange(range);
@@ -2796,7 +2762,7 @@ fn copyTextRange(
 // Semantic application and terminal reply generation.
 
 // Apply one host-directed semantic event and retain its bounded consequence.
-fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
+fn applyHostEvent(vt: *Terminal, event: SemanticEvent) HostEventError!bool {
     var scratch: input.Scratch = .{};
     const allocator = vt.allocator;
     switch (event) {
@@ -2918,7 +2884,7 @@ const RectChecksumRequest = struct {
 };
 
 // Apply one report-directed semantic event to bounded host output.
-fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
+fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!void {
     var scratch: input.Scratch = .{};
     const allocator = vt.allocator;
     const reply_buffer = &vt.reply_buffer;
@@ -3054,7 +3020,7 @@ fn applyTitleStack(host: *properties.State, command: @FieldType(SemanticEvent, "
     };
 }
 
-fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
+fn appendWindowTitleReport(vt: *Terminal) replies.AppendError!void {
     const output = &vt.reply_buffer;
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
@@ -3064,7 +3030,7 @@ fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
     try output.appendControl(.iterm, .st);
 }
 
-fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!bool {
+fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) replies.AppendError!bool {
     const active = vt.screen_state.activeConst();
     const payload = switch (kind) {
         .text_cells => std.fmt.bufPrint(scratch, "8;{d};{d}t", .{ active.rows, active.cols }) catch unreachable,
@@ -3084,7 +3050,7 @@ fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!b
     return true;
 }
 
-fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
+fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) replies.AppendError!void {
     const cell = vt.cellPixelSize() orelse return;
     // The current host supplies logical pixel metrics and owns no output-scale
     // protocol, so points equal pixels and the reported scale is exactly one.
@@ -3102,7 +3068,7 @@ fn appendDecrqssReply(
     encode_buf: []u8,
     screen: *const Screen,
     request: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .dcs);
@@ -3167,7 +3133,7 @@ fn appendModifyOtherKeysReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     value: i8,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -3178,12 +3144,12 @@ fn appendKeyFormatReport(
     encode_buf: []u8,
     resource: u8,
     value: u16,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
 
-fn appendXtVersionReport(_: std.mem.Allocator, output: *replies.Buffer) ApplyError!void {
+fn appendXtVersionReport(_: std.mem.Allocator, output: *replies.Buffer) replies.AppendError!void {
     try output.appendString(.terminal, .dcs, ">|" ++ xtversion_text);
 }
 
@@ -3215,7 +3181,7 @@ fn appendTermcapReports(
     _: std.mem.Allocator,
     output: *replies.Buffer,
     request: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     var names = std.mem.splitScalar(u8, request, ';');
@@ -3260,7 +3226,7 @@ fn appendResourceInvalidReport(
     _: std.mem.Allocator,
     output: *replies.Buffer,
     request: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .dcs);
@@ -3275,7 +3241,7 @@ fn appendTitleStackPositionReport(
     encode_buf: []u8,
     current: u16,
     max: u16,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#S", .{ current, max }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -3285,7 +3251,7 @@ fn appendCursorPositionReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
-) ApplyError!void {
+) replies.AppendError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
     const payload = std.fmt.bufPrint(
@@ -3301,7 +3267,7 @@ fn appendDecCursorPositionReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
-) ApplyError!void {
+) replies.AppendError!void {
     const row = reportCursorCoordinate(render_view.cursor_row, render_view.origin_top, render_view.origin_mode);
     const col = reportCursorCoordinate(render_view.cursor_col, render_view.origin_left, render_view.origin_mode);
     const payload = std.fmt.bufPrint(
@@ -3330,7 +3296,7 @@ fn appendDecModeReport(
     encode_buf: []u8,
     mode: u16,
     state: u8,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, "?{d};{d}$y", .{ mode, state }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -3341,7 +3307,7 @@ fn appendAnsiModeReport(
     encode_buf: []u8,
     mode: u16,
     state: u8,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}$y", .{ mode, state }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -3351,7 +3317,7 @@ fn appendColorStackReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     stack: *const KittyColorStack,
-) ApplyError!void {
+) replies.AppendError!void {
     const index = if (stack.len == 0) 0 else stack.len - 1;
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
     try output.appendCsi(.kitty, payload);
@@ -3362,7 +3328,7 @@ fn appendTabStopReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
-) ApplyError!void {
+) replies.AppendError!void {
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
     try output.appendControl(.terminal, .dcs);
@@ -3384,7 +3350,7 @@ fn appendScreenExtentReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols }) catch unreachable;
     try output.appendCsi(.terminal, payload);
 }
@@ -3394,7 +3360,7 @@ fn appendTerminalParametersReport(
     output: *replies.Buffer,
     encode_buf: []u8,
     kind: u16,
-) ApplyError!void {
+) replies.AppendError!void {
     if (kind > 1) return;
     const payload = std.fmt.bufPrint(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2}) catch unreachable;
     try output.appendCsi(.terminal, payload);
@@ -3406,7 +3372,7 @@ fn appendRectChecksumReport(
     encode_buf: []u8,
     req: RectChecksumRequest,
     checksum: u16,
-) ApplyError!void {
+) replies.AppendError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum }) catch unreachable;
     try output.appendString(.terminal, .dcs, payload);
 }
@@ -3417,7 +3383,7 @@ fn appendSelectedGraphicRenditionReport(
     encode_buf: []u8,
     screen: *const Screen,
     area: RectArea,
-) ApplyError!void {
+) replies.AppendError!void {
     const common = commonAttrsForRect(screen, area) orelse {
         try output.appendCsi(.terminal, "0m");
         return;
@@ -3435,7 +3401,7 @@ fn appendSgrAttrs(
     output: *replies.Buffer,
     encode_buf: []u8,
     attrs: CommonAttrs,
-) ApplyError!void {
+) replies.AppendError!void {
     var first = true;
     try appendSgrParam(allocator, output, &first, "0");
     if (attrs.bold) try appendSgrParam(allocator, output, &first, "1");
@@ -3582,7 +3548,7 @@ fn appendSgrParam(
     output: *replies.Buffer,
     first: *bool,
     text: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     if (!first.*) try output.append(";");
     first.* = false;
     try output.append(text);
@@ -3606,7 +3572,7 @@ fn appendColorParam(
     is_fg: bool,
     color: Screen.Color,
     default_color: Screen.Color,
-) ApplyError!void {
+) replies.AppendError!void {
     if (colorEq(color, default_color)) return;
     switch (color.kind) {
         .default => return,
@@ -3634,7 +3600,7 @@ fn appendExtendedColorParam(
     first: *bool,
     prefix: u8,
     color: Screen.Color,
-) ApplyError!void {
+) replies.AppendError!void {
     switch (color.kind) {
         .default => return,
         .indexed => {
@@ -3765,7 +3731,7 @@ fn handleXtermPaletteControl(
     output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
@@ -3791,7 +3757,7 @@ fn handleXtermSpecialPaletteControl(
     output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |idx_text| {
         const value = parts.next() orelse break;
@@ -3818,7 +3784,7 @@ fn handleXtermDynamicColor(
     encode_buf: []u8,
     command: u16,
     payload: []const u8,
-) ApplyError!void {
+) replies.AppendError!void {
     var key = dynamicKeyForCommand(command) orelse return;
     var parts = std.mem.splitScalar(u8, payload, ';');
     while (parts.next()) |value| {
@@ -4161,7 +4127,7 @@ fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey) void {
 }
 
 // Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
-fn appendColorOsc(_: std.mem.Allocator, output: *replies.Buffer, color: Rgb) ApplyError!void {
+fn appendColorOsc(_: std.mem.Allocator, output: *replies.Buffer, color: Rgb) replies.AppendError!void {
     var buf: [32]u8 = undefined;
     const text = formatColorOsc(buf[0..], color);
     try output.append(text);
@@ -4202,7 +4168,7 @@ fn appendXtermSpecialColorReply(
     encode_buf: []u8,
     colors: TerminalColorState,
     key: SpecialKey,
-) ApplyError!void {
+) replies.AppendError!void {
     const osc: u8 = switch (key) {
         .foreground => 10,
         .background => 11,
@@ -4230,7 +4196,7 @@ fn appendXtermDynamicColorReply(
     encode_buf: []u8,
     colors: TerminalColorState,
     key: DynamicKey,
-) ApplyError!void {
+) replies.AppendError!void {
     const text = std.fmt.bufPrint(encode_buf, "{d};", .{dynamicCommandForKey(key)}) catch unreachable;
     const start = byteCount(output.bytes());
     errdefer output.truncate(start);
@@ -4401,7 +4367,7 @@ test "cursor color control mutates semantic cursor owner through screen apply" {
 }
 
 // Apply one Kitty-directed semantic event and report exact state or output mutation.
-fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
+fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!bool {
     var scratch: input.Scratch = .{};
     const active_screen = vt.kitty.activeScreen(vt.screen_state.alt_active);
     const active_screen_const = vt.kitty.activeScreenConst(vt.screen_state.alt_active);
@@ -4482,7 +4448,7 @@ fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
 }
 
 /// Apply one parser event and report whether terminal or title state changed.
-fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
+fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) HostEventError!EventEffect {
     switch (event) {
         .invoke_charset => |slot| {
             const changed = vt.charset.selectGl(slot);
@@ -4526,7 +4492,7 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffe
     };
 }
 
-fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
+fn applySemantic(vt: *Terminal, event: SemanticEvent) HostEventError!bool {
     switch (event) {
         .hard_reset => vt.hardReset(),
         .soft_reset => return vt.softReset(),
@@ -5025,7 +4991,7 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
 }
 
 // Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
-const FeedError = error{
+const TerminalFeedError = error{
     ConsequenceLimit,
     OutOfMemory,
     PropertyLimit,
@@ -5035,7 +5001,7 @@ const FeedError = error{
 };
 
 // Reports terminal mutation and distinct title or icon metadata changes.
-const FeedSummary = struct {
+const TerminalFeedSummary = struct {
     state_changed: bool,
     title_changed: bool,
     icon_changed: bool,
@@ -5170,7 +5136,7 @@ const StringCapture = struct {
 // Owns parser allocation and bounded DCS and generic string capture for one terminal lifetime.
 const TerminalStreamState = struct {
     /// TerminalStream-state initialization can fail only while allocating parser storage.
-    pub const InitError = error{OutOfMemory};
+    const InitError = error{OutOfMemory};
 
     parser: parser_mod.Parser,
     dcs: DcsCapture,
@@ -5203,20 +5169,20 @@ const TerminalStream = struct {
     }
 
     /// Feeds one byte and omits the optional mutation summary while preserving failures.
-    fn next(self: *TerminalStream, byte: u8) FeedError!void {
+    fn next(self: *TerminalStream, byte: u8) TerminalFeedError!void {
         const summary = try self.nextSliceSummary(&.{byte});
         std.debug.assert(!summary.title_changed or summary.state_changed);
         std.debug.assert(!summary.icon_changed or summary.state_changed);
     }
 
     /// Feeds a borrowed byte slice and omits the optional mutation summary.
-    fn nextSlice(self: *TerminalStream, bytes: []const u8) FeedError!void {
+    fn nextSlice(self: *TerminalStream, bytes: []const u8) TerminalFeedError!void {
         const summary = try self.nextSliceSummary(bytes);
         std.debug.assert(!summary.title_changed or summary.state_changed);
         std.debug.assert(!summary.icon_changed or summary.state_changed);
     }
 
-    fn nextSummary(self: *TerminalStream, byte: u8) FeedError!FeedSummary {
+    fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!TerminalFeedSummary {
         var state_changed = false;
         var title_changed = false;
         var icon_changed = false;
@@ -5249,8 +5215,8 @@ const TerminalStream = struct {
     }
 
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
-    fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) FeedError!FeedSummary {
-        var summary: FeedSummary = .{
+    fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
+        var summary: TerminalFeedSummary = .{
             .state_changed = false,
             .title_changed = false,
             .icon_changed = false,
@@ -5272,7 +5238,7 @@ const TerminalStream = struct {
         return summary;
     }
 
-    fn applyAction(self: *TerminalStream, action: parser_mod.Action) FeedError!EventEffect {
+    fn applyAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!EventEffect {
         return switch (action) {
             .print => |cp| self.applyPrint(cp),
             .execute => |ctrl| self.applyExecute(ctrl),
@@ -5309,7 +5275,7 @@ const TerminalStream = struct {
         };
     }
 
-    fn applyPrint(self: *TerminalStream, cp: u21) FeedError!EventEffect {
+    fn applyPrint(self: *TerminalStream, cp: u21) TerminalFeedError!EventEffect {
         const mapped = self.mapCodepoint(cp);
         if (mapped <= 0x7f) {
             const ascii: [1]u8 = .{@intCast(mapped)};
@@ -5318,7 +5284,7 @@ const TerminalStream = struct {
         return try self.applyEvent(.{ .codepoint = mapped });
     }
 
-    fn applyExecute(self: *TerminalStream, ctrl: u8) FeedError!EventEffect {
+    fn applyExecute(self: *TerminalStream, ctrl: u8) TerminalFeedError!EventEffect {
         switch (ctrl) {
             0x0E, 0x0F, 0x8E, 0x8F => {
                 const slot: u8 = switch (ctrl) {
@@ -5342,7 +5308,7 @@ const TerminalStream = struct {
         }
     }
 
-    fn applyEsc(self: *TerminalStream, esc: parser_mod.EscAction) FeedError!EventEffect {
+    fn applyEsc(self: *TerminalStream, esc: parser_mod.EscAction) TerminalFeedError!EventEffect {
         if (esc.intermediates_len == 1) {
             switch (esc.intermediates[0]) {
                 '(', ')', '*', '+' => {
@@ -5403,11 +5369,11 @@ const TerminalStream = struct {
         return try self.applyEvent(.{ .esc_dispatch = esc });
     }
 
-    fn applyEvent(self: *TerminalStream, event: parser_mod.Event) FeedError!EventEffect {
+    fn applyEvent(self: *TerminalStream, event: parser_mod.Event) TerminalFeedError!EventEffect {
         return try applyParserEvent(self.terminal, event);
     }
 
-    fn startDcs(self: *TerminalStream, hook: parser_mod.DcsHook) FeedError!EventEffect {
+    fn startDcs(self: *TerminalStream, hook: parser_mod.DcsHook) TerminalFeedError!EventEffect {
         try self.terminal.stream_state.dcs.start(hook);
         return .{
             .changed = false,
@@ -5416,7 +5382,7 @@ const TerminalStream = struct {
         };
     }
 
-    fn putDcs(self: *TerminalStream, byte: u8) FeedError!EventEffect {
+    fn putDcs(self: *TerminalStream, byte: u8) TerminalFeedError!EventEffect {
         try self.terminal.stream_state.dcs.put(byte);
         return .{
             .changed = false,
@@ -5425,7 +5391,7 @@ const TerminalStream = struct {
         };
     }
 
-    fn endDcs(self: *TerminalStream) FeedError!EventEffect {
+    fn endDcs(self: *TerminalStream) TerminalFeedError!EventEffect {
         const state = &self.terminal.stream_state;
         if (state.dcs.final == 'q' and state.dcs.intermediates_len == 0) {
             defer state.dcs.reset();
@@ -5439,7 +5405,7 @@ const TerminalStream = struct {
         return try applyParserEvent(self.terminal, event);
     }
 
-    fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) FeedError!EventEffect {
+    fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) TerminalFeedError!EventEffect {
         if (params.len > 3) return discardedStringControl();
         for (params) |param| if (param < 0) return discardedStringControl();
         const p1: u16 = if (params.len > 0) @intCast(params[0]) else 0;
@@ -5514,12 +5480,12 @@ const TerminalStream = struct {
         return discardedStringControl();
     }
 
-    fn putString(self: *TerminalStream, byte: u8) FeedError!EventEffect {
+    fn putString(self: *TerminalStream, byte: u8) TerminalFeedError!EventEffect {
         try self.terminal.stream_state.string.put(byte);
         return discardedStringControl();
     }
 
-    fn endString(self: *TerminalStream) FeedError!EventEffect {
+    fn endString(self: *TerminalStream) TerminalFeedError!EventEffect {
         const capture = &self.terminal.stream_state.string;
         if (capture.overflowed) {
             if (capturedKittyGraphics(capture)) self.terminal.graphics.cancel();
@@ -5567,7 +5533,7 @@ fn discardedStringControl() EventEffect {
     };
 }
 
-fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!bool {
+fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEventError!bool {
     const response_reserve: usize = 96;
     if (graphics_mod.mayRespond(packet)) {
         if (terminal.reply_buffer.bytes().len >
@@ -5876,6 +5842,15 @@ pub const Terminal = struct {
             return self.history_offset + rowIndex(self.rows - 1 - row);
         }
 
+        /// Reports whether one visible row continues the preceding logical row.
+        pub fn rowWrapped(self: *const SemanticView, row: u16) bool {
+            if (row >= self.rows) return false;
+            return switch (self.rowSource(row)) {
+                .history => |recency| self.screen.historyRowWrapped(recency),
+                .screen => |screen_row| self.screen.rowWrapped(screen_row),
+            };
+        }
+
         /// Returns the first blank column after visible row content.
         pub fn contentEndExclusive(self: *const SemanticView, row: u16) u16 {
             if (self.history_offset == 0 and row > self.cursor_row) return 0;
@@ -5890,17 +5865,51 @@ pub const Terminal = struct {
         }
     };
     /// Identifies one cell in stable projected history-and-screen coordinates.
-    pub const TextPoint = TerminalTextPoint;
+    pub const TextPoint = struct {
+        row: i32,
+        col: u16,
+    };
     /// Identifies an inclusive text range supplied by the embedder.
-    pub const TextRange = TerminalTextRange;
+    pub const TextRange = struct {
+        start: TextPoint,
+        end: TextPoint,
+    };
     /// Reports exact terminal-text extraction failures.
     pub const TextError = CopyError;
-    /// Names one host-neutral request from the child to manipulate its containing window.
-    pub const WindowOperation = WindowRequest;
+    /// Classifies one retained notification consequence.
+    pub const NotificationKind = consequences.NotificationKind;
+    /// Borrows one retained notification consequence.
+    pub const Notification = consequences.Notification;
+    /// Classifies one retained file-transfer consequence.
+    pub const FileTransferProtocol = consequences.FileTransferProtocol;
+    /// Borrows one retained file-transfer consequence.
+    pub const FileTransferPacket = consequences.FileTransferPacket;
+    /// Borrows one retained pointer-shape consequence.
+    pub const PointerShapeRequest = consequences.PointerShapeRequest;
+    /// Classifies one retained DCS consequence.
+    pub const DcsPayloadKind = consequences.DcsPayloadKind;
+    /// Classifies one retained string-control consequence.
+    pub const StringPayloadKind = consequences.StringPayloadKind;
+    /// Classifies one retained legacy-control consequence.
+    pub const LegacyControlKind = consequences.LegacyControlKind;
+    /// Identifies one retained media-copy request.
+    pub const MediaCopyRequest = consequences.MediaCopyRequest;
+    /// Borrows one retained media-copy consequence.
+    pub const MediaCopyOccurrence = consequences.MediaCopyOccurrence;
+    /// Borrows one retained DCS consequence.
+    pub const DcsPayloadOccurrence = consequences.DcsPayloadOccurrence;
+    /// Borrows one retained string-control consequence.
+    pub const StringPayloadOccurrence = consequences.StringPayloadOccurrence;
+    /// Identifies one retained window request.
+    pub const WindowRequest = consequences.WindowRequest;
     /// Copies one accepted ordered window request and its monotonic identity.
     pub const WindowOccurrence = WindowRequestOccurrence;
-    /// Supplies one host-owned fact requested by a retained window query.
-    pub const WindowQueryReply = WindowReply;
+    /// Supplies one host-owned fact for a retained window query.
+    pub const WindowReply = WindowReplyValue;
+    /// Reports parser, retained-state, and reply failures while feeding PTY bytes.
+    pub const FeedError = TerminalFeedError;
+    /// Summarizes observable terminal changes from one feed operation.
+    pub const FeedSummary = TerminalFeedSummary;
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
@@ -5918,15 +5927,31 @@ pub const Terminal = struct {
         light,
     };
     /// Reports stale query identity, allocation failure, or bounded reply saturation.
-    pub const ColorPreferenceReplyError = ApplyError || error{StaleColorPreferenceQuery};
+    pub const ColorPreferenceReplyError = replies.AppendError || error{StaleColorPreferenceQuery};
     /// Borrows validated shell-integration identity from one state snapshot.
     pub const ShellIntegration = ItermShellIntegration;
     /// Borrows the latest child-reported directory bytes and their URI-or-path interpretation.
     pub const WorkingDirectory = WorkingDirectoryReport;
     /// Reports stale or non-query identity, allocation failure, or bounded OSC 22 reply saturation.
-    pub const PointerShapeReplyError = ApplyError || error{ StalePointerShape, PointerShapeReplyMismatch };
+    pub const PointerShapeReplyError = replies.AppendError || error{ ConsequenceLimit, StalePointerShape, PointerShapeReplyMismatch };
     /// Exposes one parsed ordered Kitty OSC 72 command.
     pub const DragDropCommand = DragDropCommandView;
+    /// Selects one bounded Kitty OSC 72 failure reason.
+    pub const DragDropError = enum {
+        invalid,
+        permission,
+        io,
+        resource,
+
+        fn bytes(self: DragDropError) []const u8 {
+            return switch (self) {
+                .invalid => "EINVAL",
+                .permission => "EPERM",
+                .io => "EIO",
+                .resource => "EMFILE",
+            };
+        }
+    };
     /// Exposes one typed host-to-child Kitty OSC 72 event.
     pub const DragDropEvent = DragDropEventValue;
     /// Reports bounded OSC 72 event construction failure.
@@ -5945,12 +5970,11 @@ pub const Terminal = struct {
     pub const InputError = input.PasteError || replies.AppendError ||
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
-    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, PropertyLimit, ReplyLimit, StaleClipboardRequest };
+    pub const ClipboardReplyError = replies.AppendError || error{ ConsequenceLimit, StaleClipboardRequest };
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
-    /// Reports stale identity, allocation, or bounded transfer saturation for one Kitty clipboard packet.
     /// Reports stale or mismatched host facts, allocation failure, or bounded reply saturation.
-    pub const WindowReplyError = ApplyError || error{ StaleWindowRequest, WindowReplyMismatch };
+    pub const WindowReplyError = replies.AppendError || error{ ConsequenceLimit, StaleWindowRequest, WindowReplyMismatch };
     /// Exposes one borrowed OSC 52 operation or Kitty OSC 5522 packet.
     pub const ClipboardRequest = ClipboardRequestView;
     /// Identifies one retained color-preference query.
@@ -5966,17 +5990,17 @@ pub const Terminal = struct {
     /// Borrows exactly one host-neutral terminal consequence.
     pub const Consequence = union(enum) {
         clipboard: ClipboardRequest,
-        notification: Notification,
-        pointer_shape: PointerShapeRequest,
-        file_transfer: FileTransferPacket,
+        notification: consequences.Notification,
+        pointer_shape: consequences.PointerShapeRequest,
+        file_transfer: consequences.FileTransferPacket,
         drag_drop: DragDropCommand,
         window: WindowOccurrence,
         color_preference_query: ColorPreferenceQuery,
         bell: Bell,
         legacy_control: LegacyControl,
-        media_copy: MediaCopyOccurrence,
-        dcs: DcsPayloadOccurrence,
-        string_control: StringPayloadOccurrence,
+        media_copy: consequences.MediaCopyOccurrence,
+        dcs: consequences.DcsPayloadOccurrence,
+        string_control: consequences.StringPayloadOccurrence,
 
         /// Returns the process-lifetime occurrence identity.
         pub fn id(self: Consequence) u64 {
@@ -6020,7 +6044,7 @@ pub const Terminal = struct {
     pub const default_presentation = defaultPresentation();
     /// Borrows one immutable decoded terminal image.
     pub const Image = graphics_mod.ImageView;
-    /// Reports one VT-owned image-animation service result.
+    /// Reports one image-animation advancement result.
     pub const GraphicsTick = graphics_mod.AnimationTick;
     /// Copies one image placement resolved into the visible viewport.
     pub const ImagePlacement = struct {
@@ -6169,8 +6193,6 @@ pub const Terminal = struct {
         /// Identifies the newest retained line, or zero when empty.
         newest: u64,
     };
-
-    const ScreenSet = Set;
 
     allocator: std.mem.Allocator,
     stream_state: TerminalStreamState,
@@ -6334,7 +6356,7 @@ pub const Terminal = struct {
     pub fn reportColorSchemePreference(
         self: *Terminal,
         preference: ColorSchemePreference,
-    ) ApplyError!bool {
+    ) replies.AppendError!bool {
         if (!self.modes.color_preference_notifications) return false;
         try self.reply_buffer.appendCsi(
             .kitty,
@@ -6973,7 +6995,7 @@ pub const Terminal = struct {
     }
 
     /// Advances retained image animation against caller monotonic milliseconds.
-    pub fn advanceGraphics(self: *Terminal, now_ms: u64) graphics_mod.AnimationTick {
+    pub fn advanceGraphics(self: *Terminal, now_ms: u64) GraphicsTick {
         const tick = self.graphics.advanceAnimations(now_ms);
         if (tick.semantic_changed) self.postApply(true);
         return tick;
@@ -7121,7 +7143,7 @@ pub const Terminal = struct {
 
     /// Copies finalized primary logical lines after `cursor` and one observation-scoped open line.
     pub fn copyLogicalOutput(
-        self: *Terminal,
+        self: *const Terminal,
         allocator: std.mem.Allocator,
         cursor: u64,
         max_lines: u16,
@@ -7601,7 +7623,7 @@ pub const Terminal = struct {
     }
 };
 
-fn windowReplyMatches(request: WindowRequest, reply: WindowReply) bool {
+fn windowReplyMatches(request: WindowRequest, reply: WindowReplyValue) bool {
     return switch (request) {
         .report_state => reply == .state,
         .report_position => reply == .position,
@@ -7614,8 +7636,8 @@ fn windowReplyMatches(request: WindowRequest, reply: WindowReply) bool {
 fn appendWindowReply(
     output: *replies.Buffer,
     _: std.mem.Allocator,
-    reply: WindowReply,
-) ApplyError!void {
+    reply: WindowReplyValue,
+) WindowSerializationError!void {
     var scratch: input.Scratch = .{};
     switch (reply) {
         .state => |state| try output.appendCsi(
@@ -7910,7 +7932,7 @@ const Savepoint = struct {
     designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
 
     /// Returns the savepoint to default cursor and charset state.
-    pub fn clear(self: *Savepoint) void {
+    fn clear(self: *Savepoint) void {
         self.* = .{};
     }
 };
