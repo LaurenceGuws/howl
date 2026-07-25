@@ -5,6 +5,7 @@ const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
 const sixel = @import("sixel.zig");
 const replies = @import("replies.zig");
+const properties = @import("properties.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -1800,6 +1801,7 @@ const ApplyError = error{
     OutOfMemory,
     ConsequenceLimit,
     ReplyLimit,
+    PropertyLimit,
 };
 
 /// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
@@ -1819,32 +1821,20 @@ const dcs_payload_max_bytes: u32 = 2 * 1024;
 const dcs_payload_capacity: u8 = 16;
 // Bounds one ordered APC, PM, and SOS fallback burst within the same metadata scale.
 const string_payload_capacity: u8 = 32;
-/// One retained OSC 8 URI and optional identity share the ordinary metadata scale.
-const hyperlink_target_max_bytes: u32 = 2 * 1024;
-/// Each retained title or icon name follows the 1 KiB parser metadata scale.
-pub const max_metadata_bytes: u32 = 1024;
+/// Bounds one retained consequence payload owned by this composition state.
+const consequence_payload_max_bytes: u32 = 1024;
 // Bounds one notification, focus, or attention burst while a host applies policy.
 const notification_capacity: u8 = 8;
 const bell_capacity: u8 = 32;
 const legacy_control_capacity: u8 = 16;
 // Bounds one pointer-request burst while a host applies validation and presentation policy.
 const pointer_shape_capacity: u8 = 8;
-const pointer_shape_reply_max_bytes: u32 = (max_metadata_bytes / 12) * 14 - 1;
+const pointer_shape_reply_max_bytes: u32 = (consequence_payload_max_bytes / 12) * 14 - 1;
 // Bounds one opaque file-transfer burst while its host applies policy and storage.
 const file_transfer_capacity: u8 = 8;
 const file_transfer_packet_max_bytes: u32 = parser_mod.max_chunk_control_bytes;
-/// Kitty retains the newest ten nonempty child titles.
-const title_stack_limit = 10;
-/// A terminal instance interns at most 4096 distinct hyperlink targets.
-const hyperlink_target_max_count: u32 = 4096;
 // Owns the latest bounded OSC 133 shell mark.
-const ShellMark = struct {
-    // Advances only after one valid OSC 133 mark is retained successfully.
-    generation: u64 = 0,
-    kind: u8 = 0,
-    status: ?i32 = null,
-    metadata: []u8 = &[_]u8{},
-};
+const ShellMark = properties.ShellMark;
 
 /// Identifies one ordered host-neutral notification consequence.
 pub const NotificationKind = enum {
@@ -1871,7 +1861,7 @@ const NotificationOwned = struct {
     kind: NotificationKind,
     command: u16,
     payload_len: u16,
-    payload: [max_metadata_bytes]u8,
+    payload: [consequence_payload_max_bytes]u8,
 
     fn view(self: *const NotificationOwned) Notification {
         return .{
@@ -1901,7 +1891,7 @@ const PointerShapeOwned = struct {
     reset_generation: u64,
     alternate_screen: bool,
     payload_len: u16,
-    payload: [max_metadata_bytes]u8,
+    payload: [consequence_payload_max_bytes]u8,
 
     fn view(self: *const PointerShapeOwned) PointerShapeRequest {
         return .{
@@ -2095,34 +2085,22 @@ pub const WindowReply = union(enum) {
 };
 
 // Owns validated shell-integration identity until replacement or deinit.
-const ShellIntegration = struct {
-    version: u32,
-    shell: ?[]u8,
-};
+const ShellIntegration = properties.ShellIntegration;
 
 // Borrows one child-reported directory and preserves whether its bytes are a URI or path.
-const WorkingDirectoryReport = struct {
-    kind: enum { uri, path },
-    value: []const u8,
-};
+const WorkingDirectoryReport = properties.WorkingDirectory;
 
-const TitleStackEffect = struct {
-    changed: bool = false,
-    title_changed: bool = false,
-};
+const TitleStackEffect = properties.TitleStackEffect;
 
 comptime {
-    std.debug.assert(max_metadata_bytes <= hyperlink_target_max_bytes);
-    std.debug.assert(hyperlink_target_max_bytes <= std.math.maxInt(u16));
     std.debug.assert(notification_capacity > 0);
     std.debug.assert(pointer_shape_capacity > 0);
     std.debug.assert(file_transfer_capacity > 0);
     std.debug.assert(clipboard_capacity > 0);
-    std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
-    std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 24);
+    std.debug.assert(@sizeOf(NotificationOwned) <= consequence_payload_max_bytes + 16);
+    std.debug.assert(@sizeOf(PointerShapeOwned) <= consequence_payload_max_bytes + 24);
     std.debug.assert(dcs_payload_max_bytes <= replies.max_bytes);
     std.debug.assert(clipboard_reply_bytes_max < replies.max_bytes);
-    std.debug.assert(hyperlink_target_max_count > 0);
 }
 
 // Converts a slice length after asserting it fits the protocol-owned u32 domain.
@@ -2137,32 +2115,8 @@ fn hyperlinkCount(items: []const HyperlinkTarget) u32 {
 }
 
 // Borrows one parsed OSC 8 hyperlink until the parser dispatch returns.
-const HyperlinkSpec = struct {
-    uri: []const u8,
-    id: ?[]const u8,
-};
-
-// Owns one bounded URI and optional explicit identity in a single allocation.
-const HyperlinkTarget = struct {
-    storage: []u8,
-    uri_len: u16,
-
-    fn uri(self: HyperlinkTarget) []const u8 {
-        return self.storage[0..self.uri_len];
-    }
-
-    fn id(self: HyperlinkTarget) ?[]const u8 {
-        if (self.storage.len == self.uri_len) return null;
-        return self.storage[self.uri_len..];
-    }
-
-    fn matches(self: HyperlinkTarget, spec: HyperlinkSpec) bool {
-        if (!std.mem.eql(u8, self.uri(), spec.uri)) return false;
-        const retained_id = self.id();
-        if (retained_id == null or spec.id == null) return retained_id == null and spec.id == null;
-        return std.mem.eql(u8, retained_id.?, spec.id.?);
-    }
-};
+const HyperlinkSpec = properties.HyperlinkSpec;
+const HyperlinkTarget = properties.HyperlinkTarget;
 
 /// Retains bounded terminal consequences for later embedder inspection.
 ///
@@ -2192,22 +2146,13 @@ const ProtocolState = struct {
     };
 
     allocator: std.mem.Allocator,
-    colors: TerminalColorState = .{},
+    properties: properties.State,
     reply_buffer: replies.Buffer,
-    hyperlink_targets: std.ArrayList(HyperlinkTarget),
     consequence_generation: u64 = 0,
     clipboard_requests: [clipboard_capacity]ClipboardRequestOwned = undefined,
     clipboard_requests_start: u8 = 0,
     clipboard_requests_count: u8 = 0,
     clipboard_retained_bytes: u32 = 0,
-    current_title: ?[]u8 = null,
-    current_icon: ?[]u8 = null,
-    working_directory_report: ?WorkingDirectoryReport = null,
-    remote_host_report: ?[]u8 = null,
-    title_stack: [title_stack_limit]?[]u8 = @as([title_stack_limit]?[]u8, @splat(null)),
-    title_stack_len: u8 = 0,
-    shell_integration: ?ShellIntegration = null,
-    shell_mark: ShellMark = .{},
     notifications: [notification_capacity]NotificationOwned = undefined,
     notifications_start: u8 = 0,
     notifications_count: u8 = 0,
@@ -2251,8 +2196,8 @@ const ProtocolState = struct {
     fn init(allocator: std.mem.Allocator) ProtocolState {
         return .{
             .allocator = allocator,
+            .properties = properties.State.init(allocator),
             .reply_buffer = replies.Buffer.init(allocator),
-            .hyperlink_targets = std.ArrayList(HyperlinkTarget).empty,
         };
     }
 
@@ -2268,8 +2213,7 @@ const ProtocolState = struct {
 
     /// Release every retained allocation through the initializer allocator.
     fn deinit(self: *ProtocolState) void {
-        for (self.hyperlink_targets.items) |target| self.allocator.free(target.storage);
-        self.hyperlink_targets.deinit(self.allocator);
+        self.properties.deinit();
         for (0..self.clipboard_requests_count) |offset| {
             const index = (@as(usize, self.clipboard_requests_start) + offset) % clipboard_capacity;
             self.allocator.free(self.clipboard_requests[index].raw);
@@ -2282,14 +2226,6 @@ const ProtocolState = struct {
             const index = (@as(usize, self.drag_drop_start) + offset) % drag_drop_capacity;
             self.allocator.free(self.drag_drop_commands[index].payload);
         }
-        if (self.current_title) |title| self.allocator.free(title);
-        if (self.current_icon) |icon| self.allocator.free(icon);
-        if (self.working_directory_report) |directory| self.allocator.free(directory.value);
-        if (self.remote_host_report) |remote_host| self.allocator.free(remote_host);
-        for (self.title_stack[0..self.title_stack_len]) |title| self.allocator.free(title.?);
-        if (self.shell_integration) |integration|
-            if (integration.shell) |shell| self.allocator.free(shell);
-        self.allocator.free(self.shell_mark.metadata);
         for (0..self.dcs_payloads_count) |offset| {
             const index = (@as(usize, self.dcs_payloads_start) + offset) % dcs_payload_capacity;
             self.allocator.free(self.dcs_payloads[index].payload);
@@ -2305,119 +2241,12 @@ const ProtocolState = struct {
     fn resetTerminalState(self: *ProtocolState) void {
         self.locator = .{};
         advanceIdentity(&self.pointer_shape_reset_generation);
-        if (self.working_directory_report) |directory| self.allocator.free(directory.value);
-        self.working_directory_report = null;
+        self.properties.resetTerminal();
     }
 
     /// Borrow pending terminal reply bytes until the next ProtocolState mutation.
     fn replyBytes(self: *const ProtocolState) []const u8 {
         return self.reply_buffer.bytes();
-    }
-
-    /// Append already serialized host-owned bytes transactionally without framing reinterpretation.
-    /// Replace the bounded title transactionally and report whether its bytes changed.
-    fn replaceTitle(self: *ProtocolState, title: []const u8) ApplyError!bool {
-        return replaceMetadata(self, &self.current_title, title);
-    }
-
-    /// Replace the bounded icon name transactionally and report whether it changed.
-    fn replaceIcon(self: *ProtocolState, icon: []const u8) ApplyError!bool {
-        return replaceMetadata(self, &self.current_icon, icon);
-    }
-
-    // Replaces one bounded child-reported URI or path transactionally and reports exact mutation.
-    fn replaceWorkingDirectoryReport(
-        self: *ProtocolState,
-        directory: WorkingDirectoryReport,
-    ) ApplyError!bool {
-        try ensureRetainedBound(byteCount(directory.value), max_metadata_bytes);
-        if (self.working_directory_report) |current| {
-            if (current.kind == directory.kind and std.mem.eql(u8, current.value, directory.value)) return false;
-        }
-        const owned = try self.allocator.dupe(u8, directory.value);
-        if (self.working_directory_report) |current| self.allocator.free(current.value);
-        self.working_directory_report = .{ .kind = directory.kind, .value = owned };
-        return true;
-    }
-
-    // Replaces one bounded child-reported remote-host identity transactionally.
-    fn replaceRemoteHostReport(self: *ProtocolState, remote_host: []const u8) ApplyError!bool {
-        return replaceMetadata(self, &self.remote_host_report, remote_host);
-    }
-
-    /// Pushes one nonempty current title, dropping the oldest only after allocation succeeds.
-    fn pushTitle(self: *ProtocolState) ApplyError!bool {
-        const current = self.current_title orelse return false;
-        if (current.len == 0) return false;
-        const owned = try self.allocator.dupe(u8, current);
-        if (self.title_stack_len == title_stack_limit) {
-            self.allocator.free(self.title_stack[0].?);
-            std.mem.copyForwards(
-                ?[]u8,
-                self.title_stack[0 .. title_stack_limit - 1],
-                self.title_stack[1..title_stack_limit],
-            );
-            self.title_stack[title_stack_limit - 1] = owned;
-            return true;
-        }
-        self.title_stack[self.title_stack_len] = owned;
-        self.title_stack_len += 1;
-        return true;
-    }
-
-    /// Pops one retained title, transferring its allocation into current title ownership.
-    fn popTitle(self: *ProtocolState) TitleStackEffect {
-        if (self.title_stack_len == 0) return .{};
-        self.title_stack_len -= 1;
-        const slot = &self.title_stack[self.title_stack_len];
-        const restored = slot.*.?;
-        slot.* = null;
-        const title_changed = !optionalBytesEqual(self.current_title, restored);
-        if (self.current_title) |current| self.allocator.free(current);
-        self.current_title = restored;
-        return .{ .changed = true, .title_changed = title_changed };
-    }
-
-    /// Replace typed shell integration transactionally and report exact identity mutation.
-    ///
-    /// An identical value is allocation-free. An oversized shell or allocation failure
-    /// preserves the prior borrowed semantic value.
-    fn replaceShellIntegration(
-        self: *ProtocolState,
-        integration: ItermShellIntegration,
-    ) ApplyError!bool {
-        if (self.shell_integration) |current| {
-            const same_shell = if (current.shell) |current_shell|
-                if (integration.shell) |next_shell| std.mem.eql(u8, current_shell, next_shell) else false
-            else
-                integration.shell == null;
-            if (current.version == integration.version and same_shell) return false;
-        }
-        const shell = if (integration.shell) |value| blk: {
-            if (value.len > max_shell_name_bytes) return error.ConsequenceLimit;
-            break :blk try self.allocator.dupe(u8, value);
-        } else null;
-        if (self.shell_integration) |old|
-            if (old.shell) |value| self.allocator.free(value);
-        self.shell_integration = .{
-            .version = integration.version,
-            .shell = shell,
-        };
-        return true;
-    }
-
-    /// Replaces one bounded shell mark without disturbing the prior mark on failure.
-    fn replaceShellMark(self: *ProtocolState, mark: ItermShellMark) ApplyError!void {
-        try ensureRetainedBound(byteCount(mark.metadata), max_metadata_bytes);
-        if (self.shell_mark.generation == std.math.maxInt(u64)) return error.ConsequenceLimit;
-        const metadata = try self.allocator.dupe(u8, mark.metadata);
-        self.allocator.free(self.shell_mark.metadata);
-        self.shell_mark = .{
-            .generation = self.shell_mark.generation + 1,
-            .kind = mark.kind,
-            .status = mark.status,
-            .metadata = metadata,
-        };
     }
 
     /// Retain one notification, focus, or attention occurrence without choosing host policy.
@@ -2427,7 +2256,7 @@ const ProtocolState = struct {
         command: u16,
         payload: []const u8,
     ) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
+        try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
         if (self.notifications_count == notification_capacity) return error.ConsequenceLimit;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.notifications_start + self.notifications_count) % notification_capacity;
@@ -2447,7 +2276,7 @@ const ProtocolState = struct {
         payload: []const u8,
         alternate_screen: bool,
     ) ApplyError!void {
-        try ensureRetainedBound(byteCount(payload), max_metadata_bytes);
+        try ensureRetainedBound(byteCount(payload), consequence_payload_max_bytes);
         if (self.pointer_shapes_count == pointer_shape_capacity) return error.ConsequenceLimit;
         const occurrence_id = try self.nextConsequenceId();
         const index = (self.pointer_shapes_start + self.pointer_shapes_count) % pointer_shape_capacity;
@@ -2619,21 +2448,6 @@ const ProtocolState = struct {
         self.pointer_shapes_count -= 1;
     }
 
-    /// Replace title and icon together transactionally and report any changed bytes.
-    fn replaceTitleAndIcon(self: *ProtocolState, value: []const u8) ApplyError!bool {
-        try ensureRetainedBound(byteCount(value), max_metadata_bytes);
-        if (optionalBytesEqual(self.current_title, value) and
-            optionalBytesEqual(self.current_icon, value)) return false;
-        const title = try self.allocator.dupe(u8, value);
-        errdefer self.allocator.free(title);
-        const icon = try self.allocator.dupe(u8, value);
-        if (self.current_title) |old| self.allocator.free(old);
-        if (self.current_icon) |old| self.allocator.free(old);
-        self.current_title = title;
-        self.current_icon = icon;
-        return true;
-    }
-
     /// Retain one BEL occurrence without choosing an audible or visual policy.
     fn ringBell(self: *ProtocolState) ApplyError!void {
         if (self.bells_count == bell_capacity) return error.ConsequenceLimit;
@@ -2790,35 +2604,6 @@ const ProtocolState = struct {
         self.string_payloads_count -= 1;
     }
 
-    // Returns a stable nonzero hyperlink identity, preserving existing identities on failure.
-    fn internHyperlink(self: *ProtocolState, spec: HyperlinkSpec) ApplyError!u32 {
-        for (self.hyperlink_targets.items, 0..) |existing, idx| {
-            if (existing.matches(spec)) return @intCast(idx + 1);
-        }
-        const id_len = if (spec.id) |id| id.len else 0;
-        const storage_len = std.math.add(usize, spec.uri.len, id_len) catch return error.ConsequenceLimit;
-        if (storage_len > hyperlink_target_max_bytes or spec.uri.len > std.math.maxInt(u16))
-            return error.ConsequenceLimit;
-        if (hyperlinkCount(self.hyperlink_targets.items) >= hyperlink_target_max_count) return error.ConsequenceLimit;
-        const owned = try self.allocator.alloc(u8, storage_len);
-        errdefer self.allocator.free(owned);
-        @memcpy(owned[0..spec.uri.len], spec.uri);
-        if (spec.id) |id| @memcpy(owned[spec.uri.len..], id);
-        try self.hyperlink_targets.append(self.allocator, .{
-            .storage = owned,
-            .uri_len = @intCast(spec.uri.len),
-        });
-        return hyperlinkCount(self.hyperlink_targets.items);
-    }
-
-    /// Borrow the URI for a retained nonzero identity, or return null.
-    fn hyperlinkUriForId(self: *const ProtocolState, link_id: u32) ?[]const u8 {
-        if (link_id == 0) return null;
-        const idx = link_id - 1;
-        if (idx >= self.hyperlink_targets.items.len) return null;
-        return self.hyperlink_targets.items[idx].uri();
-    }
-
     /// Borrow the FIFO-head raw clipboard set until terminal mutation.
     fn pendingClipboardSet(self: *const ProtocolState) ?[]const u8 {
         const request = self.clipboardRequestHead() orelse return null;
@@ -2885,122 +2670,8 @@ const ProtocolState = struct {
         self.consumeClipboardRequest();
         return true;
     }
-
-    /// Return the most recently observed legacy control kind.
-    /// Return a value snapshot of host-observable terminal colors.
-    fn terminalColorState(self: *const ProtocolState) TerminalColorState {
-        return self.colors;
-    }
 };
 
-fn replaceMetadata(
-    self: *ProtocolState,
-    destination: *?[]u8,
-    bytes: []const u8,
-) ApplyError!bool {
-    try ensureRetainedBound(byteCount(bytes), max_metadata_bytes);
-    if (optionalBytesEqual(destination.*, bytes)) return false;
-    const owned = try self.allocator.dupe(u8, bytes);
-    if (destination.*) |old| self.allocator.free(old);
-    destination.* = owned;
-    return true;
-}
-
-fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
-    return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
-}
-
-test "working-directory replacement is bounded transactional and distinguishes representation" {
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        replaceWorkingDirectoryAllocation,
-        .{},
-    );
-
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    const oversized = @as([(max_metadata_bytes + 1)]u8, @splat('x'));
-    try std.testing.expectError(error.ConsequenceLimit, state.replaceWorkingDirectoryReport(.{
-        .kind = .path,
-        .value = &oversized,
-    }));
-    try std.testing.expect(state.working_directory_report == null);
-}
-
-fn replaceWorkingDirectoryAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    const first_changed = state.replaceWorkingDirectoryReport(.{
-        .kind = .uri,
-        .value = "file://host/work",
-    }) catch |failure| {
-        try std.testing.expect(state.working_directory_report == null);
-        return failure;
-    };
-    try std.testing.expect(first_changed);
-    const second_changed = state.replaceWorkingDirectoryReport(.{ .kind = .path, .value = "/work" }) catch |failure| {
-        const retained = state.working_directory_report.?;
-        try std.testing.expect(retained.kind == .uri);
-        try std.testing.expectEqualStrings("file://host/work", retained.value);
-        return failure;
-    };
-    try std.testing.expect(second_changed);
-    const retained = state.working_directory_report.?;
-    try std.testing.expect(retained.kind == .path);
-    try std.testing.expectEqualStrings("/work", retained.value);
-}
-
-test "shell mark replacement is bounded transactional and reusable" {
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        replaceShellMarkAllocation,
-        .{},
-    );
-
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    const oversized = @as([(max_metadata_bytes + 1)]u8, @splat('x'));
-    try std.testing.expectError(error.ConsequenceLimit, state.replaceShellMark(.{
-        .kind = 'C',
-        .status = null,
-        .metadata = &oversized,
-    }));
-
-    try state.replaceShellMark(.{
-        .kind = 'D',
-        .status = 9,
-        .metadata = "aid=build;9",
-    });
-    state.shell_mark.generation = std.math.maxInt(u64);
-    try std.testing.expectError(error.ConsequenceLimit, state.replaceShellMark(.{
-        .kind = 'A',
-        .status = null,
-        .metadata = "replacement",
-    }));
-    try std.testing.expectEqual(std.math.maxInt(u64), state.shell_mark.generation);
-    try std.testing.expectEqual(@as(u8, 'D'), state.shell_mark.kind);
-    try std.testing.expectEqual(@as(?i32, 9), state.shell_mark.status);
-    try std.testing.expectEqualStrings("aid=build;9", state.shell_mark.metadata);
-}
-
-fn replaceShellMarkAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    state.replaceShellMark(.{ .kind = 'C', .status = null, .metadata = "old" }) catch |failure| {
-        try std.testing.expectEqual(@as(u8, 0), state.shell_mark.kind);
-        return failure;
-    };
-    state.replaceShellMark(.{ .kind = 'D', .status = 7, .metadata = "7" }) catch |failure| {
-        try std.testing.expectEqual(@as(u8, 'C'), state.shell_mark.kind);
-        try std.testing.expectEqualStrings("old", state.shell_mark.metadata);
-        return failure;
-    };
-    try std.testing.expectEqual(@as(u8, 'D'), state.shell_mark.kind);
-    try std.testing.expectEqual(@as(?i32, 7), state.shell_mark.status);
-    try std.testing.expectEqualStrings("7", state.shell_mark.metadata);
-}
-
-// Serializes one exact OSC 52 query result through the shared reply framing owner.
 fn appendClipboardQueryReply(
     output: *replies.Buffer,
     allocator: std.mem.Allocator,
@@ -3028,112 +2699,6 @@ fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
     if (len > max_len) return error.ConsequenceLimit;
 }
 
-test "clipboard enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainClipboardAllocation, .{});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainKittyClipboardAllocation, .{});
-}
-
-test "file-transfer enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFileTransferAllocation, .{});
-}
-
-test "drag-drop enqueue preserves the retained FIFO on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDragDropAllocation, .{});
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareDragDropAllocation, .{});
-}
-
-test "title replacement preserves the retained title on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceTitleAllocation, .{});
-}
-
-test "icon replacement preserves title and prior icon on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, replaceIconAllocation, .{});
-}
-
-test "paired title and icon replacement is transactional under allocation failure" {
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        replaceTitleAndIconAllocation,
-        .{},
-    );
-}
-
-test "title stack push preserves current and retained titles on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, pushTitleAllocation, .{});
-}
-
-test "title stack retains only the newest ten titles" {
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    var buf: [2]u8 = undefined;
-    for (0..title_stack_limit + 1) |idx| {
-        const title = try std.fmt.bufPrint(&buf, "{d}", .{idx});
-        try std.testing.expect(try state.replaceTitle(title));
-        try std.testing.expect(try state.pushTitle());
-    }
-    try std.testing.expectEqual(@as(u8, title_stack_limit), state.title_stack_len);
-    try std.testing.expectEqualStrings("1", state.title_stack[0].?);
-    try std.testing.expectEqualStrings("10", state.title_stack[title_stack_limit - 1].?);
-}
-
-fn pushTitleAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.replaceTitle("first"));
-    try std.testing.expect(try state.pushTitle());
-    try std.testing.expect(try state.replaceTitle("second"));
-    const changed = state.pushTitle() catch |err| {
-        try std.testing.expectEqualStrings("second", state.current_title.?);
-        try std.testing.expectEqual(@as(u8, 1), state.title_stack_len);
-        try std.testing.expectEqualStrings("first", state.title_stack[0].?);
-        return err;
-    };
-    try std.testing.expect(changed);
-    try std.testing.expectEqual(@as(u8, 2), state.title_stack_len);
-}
-
-fn replaceTitleAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.replaceTitle("old"));
-    const changed = state.replaceTitle("new") catch |err| {
-        try std.testing.expectEqualStrings("old", state.current_title.?);
-        return err;
-    };
-    try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("new", state.current_title.?);
-}
-
-fn replaceIconAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.replaceTitle("title"));
-    try std.testing.expect(try state.replaceIcon("old"));
-    const changed = state.replaceIcon("new") catch |err| {
-        try std.testing.expectEqualStrings("title", state.current_title.?);
-        try std.testing.expectEqualStrings("old", state.current_icon.?);
-        return err;
-    };
-    try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("title", state.current_title.?);
-    try std.testing.expectEqualStrings("new", state.current_icon.?);
-}
-
-fn replaceTitleAndIconAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.replaceTitle("old-title"));
-    try std.testing.expect(try state.replaceIcon("old-icon"));
-    const changed = state.replaceTitleAndIcon("both") catch |err| {
-        try std.testing.expectEqualStrings("old-title", state.current_title.?);
-        try std.testing.expectEqualStrings("old-icon", state.current_icon.?);
-        return err;
-    };
-    try std.testing.expect(changed);
-    try std.testing.expectEqualStrings("both", state.current_title.?);
-    try std.testing.expectEqualStrings("both", state.current_icon.?);
-}
-
 fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {
     var state = ProtocolState.init(allocator);
     defer state.deinit();
@@ -3146,26 +2711,6 @@ fn retainClipboardAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expect(changed);
     try std.testing.expectEqualStrings("c;b2xk", state.pendingClipboardSet().?);
     try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
-}
-
-fn retainKittyClipboardAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expect(try state.retainClipboard("c;b2xk"));
-    state.retainKittyClipboard("type=wdata:mime=dGV4dA==;bmV3") catch |err| {
-        const request = state.pendingClipboardRequest().?;
-        try std.testing.expectEqual(@as(u64, 1), request.generation);
-        try std.testing.expect(request.protocol == .osc52);
-        try std.testing.expectEqualStrings("c;b2xk", request.payload);
-        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
-        return err;
-    };
-    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
-    state.consumeClipboardRequest();
-    const request = state.pendingClipboardRequest().?;
-    try std.testing.expectEqual(@as(u64, 2), request.generation);
-    try std.testing.expect(request.protocol == .kitty_5522);
-    try std.testing.expectEqualStrings("type=wdata:mime=dGV4dA==;bmV3", request.payload);
 }
 
 fn retainFileTransferAllocation(allocator: std.mem.Allocator) !void {
@@ -3216,82 +2761,6 @@ fn retainDragDropAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("new", command.payload);
 }
 
-fn prepareDragDropAllocation(allocator: std.mem.Allocator) !void {
-    var terminal = try Terminal.init(allocator, 2, 2);
-    defer terminal.deinit();
-    const bytes = try terminal.encodeDragDropEvent(.{ .data = .{
-        .client_id = 7,
-        .index = 1,
-        .more = true,
-        .bytes = "opaque",
-    } }, allocator);
-    defer allocator.free(bytes);
-    try std.testing.expectEqualStrings(
-        "\x1b]72;t=r:i=7:x=1:m=1;b3BhcXVl\x1b\\",
-        bytes,
-    );
-}
-
-test "hyperlink interning preserves prior identities on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, internHyperlinkAllocation, .{});
-}
-
-fn internHyperlinkAllocation(allocator: std.mem.Allocator) !void {
-    var state = ProtocolState.init(allocator);
-    defer state.deinit();
-    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink(.{ .uri = "https://one.example", .id = null }));
-    const second_id = state.internHyperlink(.{ .uri = "https://two.example", .id = "second" }) catch |err| {
-        try std.testing.expectEqualStrings("https://one.example", state.hyperlinkUriForId(1).?);
-        try std.testing.expectEqual(@as(?[]const u8, null), state.hyperlinkUriForId(2));
-        return err;
-    };
-    try std.testing.expectEqual(@as(u32, 2), second_id);
-    try std.testing.expectEqualStrings("https://one.example", state.hyperlinkUriForId(1).?);
-    try std.testing.expectEqualStrings("https://two.example", state.hyperlinkUriForId(2).?);
-}
-
-test "clipboard drain preserves the retained request on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, drainClipboardAllocation, .{});
-}
-
-test "clipboard query reply preserves request and output on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, replyClipboardAllocation, .{});
-}
-
-test "generic string retention preserves identity on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainStringAllocation, .{});
-}
-
-test "DCS retention preserves identity on allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDcsAllocation, .{});
-}
-
-test "consequence identity rejects wrap without mutation" {
-    var state = ProtocolState.init(std.testing.allocator);
-    defer state.deinit();
-    state.consequence_generation = std.math.maxInt(u64);
-
-    try std.testing.expectError(error.ConsequenceLimit, state.nextConsequenceId());
-    try std.testing.expectEqual(std.math.maxInt(u64), state.consequence_generation);
-    try std.testing.expectEqual(@as(u8, 0), state.clipboard_requests_count);
-    try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
-}
-
-test "shell integration replacement preserves prior state on allocation failure" {
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
-    var state = ProtocolState.init(failing.allocator());
-    defer state.deinit();
-
-    try std.testing.expect(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" }));
-    try std.testing.expect(!(try state.replaceShellIntegration(.{ .version = 19, .shell = "bash" })));
-    try std.testing.expectError(
-        error.OutOfMemory,
-        state.replaceShellIntegration(.{ .version = 20, .shell = "zsh" }),
-    );
-    try std.testing.expectEqual(@as(u32, 19), state.shell_integration.?.version);
-    try std.testing.expectEqualStrings("bash", state.shell_integration.?.shell.?);
-}
-
 fn retainDcsAllocation(allocator: std.mem.Allocator) !void {
     var state = ProtocolState.init(allocator);
     defer state.deinit();
@@ -3337,35 +2806,91 @@ fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqual(@as(?ClipboardRequestView, null), state.pendingClipboardRequest());
 }
 
+fn retainKittyClipboardAllocation(allocator: std.mem.Allocator) !void {
+    var state = ProtocolState.init(allocator);
+    defer state.deinit();
+    try std.testing.expect(try state.retainClipboard("c;b2xk"));
+    state.retainKittyClipboard("type=wdata:mime=dGV4dA==;bmV3") catch |err| {
+        const request = state.pendingClipboardRequest().?;
+        try std.testing.expectEqual(@as(u64, 1), request.generation);
+        try std.testing.expect(request.protocol == .osc52);
+        try std.testing.expectEqualStrings("c;b2xk", request.payload);
+        try std.testing.expectEqual(@as(u8, 1), state.clipboard_requests_count);
+        return err;
+    };
+    try std.testing.expectEqual(@as(u8, 2), state.clipboard_requests_count);
+    state.consumeClipboardRequest();
+    const request = state.pendingClipboardRequest().?;
+    try std.testing.expectEqual(@as(u64, 2), request.generation);
+    try std.testing.expect(request.protocol == .kitty_5522);
+    try std.testing.expectEqualStrings("type=wdata:mime=dGV4dA==;bmV3", request.payload);
+}
+
+fn prepareDragDropAllocation(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.init(allocator, 2, 2);
+    defer terminal.deinit();
+    const bytes = try terminal.encodeDragDropEvent(.{ .data = .{
+        .client_id = 7,
+        .index = 1,
+        .more = true,
+        .bytes = "opaque",
+    } }, allocator);
+    defer allocator.free(bytes);
+    try std.testing.expectEqualStrings(
+        "\x1b]72;t=r:i=7:x=1:m=1;b3BhcXVl\x1b\\",
+        bytes,
+    );
+}
+
+fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
+    return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
+}
+
+test "clipboard enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainClipboardAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainKittyClipboardAllocation, .{});
+}
+
+test "file-transfer enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainFileTransferAllocation, .{});
+}
+
+test "drag-drop enqueue preserves the retained FIFO on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDragDropAllocation, .{});
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareDragDropAllocation, .{});
+}
+
+test "clipboard drain preserves the retained request on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, drainClipboardAllocation, .{});
+}
+
+test "clipboard query reply preserves request and output on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, replyClipboardAllocation, .{});
+}
+
+test "generic string retention preserves identity on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainStringAllocation, .{});
+}
+
+test "DCS retention preserves identity on allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, retainDcsAllocation, .{});
+}
+
+test "consequence identity rejects wrap without mutation" {
+    var state = ProtocolState.init(std.testing.allocator);
+    defer state.deinit();
+    state.consequence_generation = std.math.maxInt(u64);
+
+    try std.testing.expectError(error.ConsequenceLimit, state.nextConsequenceId());
+    try std.testing.expectEqual(std.math.maxInt(u64), state.consequence_generation);
+    try std.testing.expectEqual(@as(u8, 0), state.clipboard_requests_count);
+    try std.testing.expectEqual(@as(u8, 0), state.dcs_payloads_count);
+}
+
 test "retained host consequences enforce owner-specific boundaries" {
     const allocator = std.testing.allocator;
     var state = ProtocolState.init(allocator);
     defer state.deinit();
-
-    const title = try allocator.alloc(u8, max_metadata_bytes + 1);
-    defer allocator.free(title);
-    @memset(title, 't');
-    try std.testing.expect(try state.replaceTitle(title[0 .. max_metadata_bytes - 1]));
-    try std.testing.expect(try state.replaceTitle(title[0..max_metadata_bytes]));
-    try std.testing.expectError(error.ConsequenceLimit, state.replaceTitle(title));
-    try std.testing.expectEqual(max_metadata_bytes, byteCount(state.current_title.?));
-
-    const hyperlink = try allocator.alloc(u8, hyperlink_target_max_bytes + 1);
-    defer allocator.free(hyperlink);
-    @memset(hyperlink, 'h');
-    try std.testing.expectEqual(@as(u32, 1), try state.internHyperlink(.{
-        .uri = hyperlink[0 .. hyperlink_target_max_bytes - 1],
-        .id = null,
-    }));
-    try std.testing.expectEqual(@as(u32, 2), try state.internHyperlink(.{
-        .uri = hyperlink[0 .. hyperlink_target_max_bytes - 1],
-        .id = hyperlink[0..1],
-    }));
-    try std.testing.expectError(error.ConsequenceLimit, state.internHyperlink(.{
-        .uri = hyperlink[0..hyperlink_target_max_bytes],
-        .id = hyperlink[0..1],
-    }));
-    try std.testing.expectEqual(@as(u32, 2), hyperlinkCount(state.hyperlink_targets.items));
 
     const dcs = try allocator.alloc(u8, dcs_payload_max_bytes + 1);
     defer allocator.free(dcs);
@@ -3587,7 +3112,7 @@ test "iTerm safe controls decode without accepting policy commands" {
     try std.testing.expect(parse(49, "CursorShape=1") == null);
 }
 
-const KittyColorState = TerminalColorState;
+const KittyColorState = properties.ColorState;
 
 // Selects one terminal-owned Kitty color-stack operation and its zero-based stack convention.
 const KittyColorCommand = union(enum) {
@@ -3596,53 +3121,7 @@ const KittyColorCommand = union(enum) {
 };
 
 // Stores Kitty's ten bounded color slots, sequential depth, and initialized slot extent.
-const KittyColorStack = struct {
-    stack: [10]KittyColorState = undefined,
-    len: u8 = 0,
-    slot_count: u8 = 0,
-};
-
-// Saves current colors sequentially or by one-based slot and reports exact stack mutation.
-fn pushState(stack: *KittyColorStack, colors: *const KittyColorState, index: u16) bool {
-    if (index > stack.stack.len) return false;
-    if (index != 0) {
-        const required: u8 = @intCast(index);
-        const expanded = required > stack.slot_count;
-        while (stack.slot_count < required) : (stack.slot_count += 1) {
-            stack.stack[stack.slot_count] = .{};
-        }
-        if (!expanded and std.meta.eql(stack.stack[required - 1], colors.*)) return false;
-        stack.stack[required - 1] = colors.*;
-        return true;
-    }
-
-    if (stack.len == stack.slot_count and stack.slot_count < stack.stack.len) stack.slot_count += 1;
-    if (stack.len == stack.stack.len) {
-        std.mem.copyForwards(KittyColorState, stack.stack[0 .. stack.stack.len - 1], stack.stack[1..]);
-        stack.len -= 1;
-    }
-
-    stack.stack[stack.len] = colors.*;
-    stack.len += 1;
-    return true;
-}
-
-// Restores sequentially or from one initialized one-based slot and reports exact mutation.
-fn popState(stack: *KittyColorStack, colors: *KittyColorState, index: u16) bool {
-    if (index > stack.stack.len) return false;
-    if (index != 0) {
-        const slot: u8 = @intCast(index - 1);
-        if (slot >= stack.slot_count) return false;
-        if (std.meta.eql(colors.*, stack.stack[slot])) return false;
-        colors.* = stack.stack[slot];
-        return true;
-    }
-    if (stack.len == 0) return false;
-    stack.len -= 1;
-    colors.* = stack.stack[stack.len];
-    stack.stack[stack.len] = .{};
-    return true;
-}
+const KittyColorStack = properties.ColorStack;
 
 // Applies one Kitty color control or appends its bounded query reply.
 fn handleKittyControl(
@@ -3779,7 +3258,6 @@ const ScreenState = struct {
 const KittyState = struct {
     main: ScreenState = .{},
     alt: ScreenState = .{},
-    color_stack: KittyColorStack = .{},
 
     /// Returns mutable Kitty state for the currently selected screen.
     pub fn activeScreen(self: *KittyState, alt_active: bool) *ScreenState {
@@ -3795,8 +3273,6 @@ const KittyState = struct {
     fn resetTerminalState(self: *KittyState) void {
         self.main.keyboard = .{};
         self.alt.keyboard = .{};
-        self.color_stack.len = 0;
-        for (self.color_stack.stack[0..self.color_stack.slot_count]) |*slot| slot.* = .{};
     }
 };
 
@@ -5826,13 +5302,13 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
     const allocator = vt.allocator;
     switch (event) {
         .bell => try vt.protocol.ringBell(),
-        .title_and_icon_set => |value| return vt.protocol.replaceTitleAndIcon(value),
-        .title_set => |title| return vt.protocol.replaceTitle(title),
-        .icon_set => |icon| return vt.protocol.replaceIcon(icon),
-        .shell_integration_set => |integration| return vt.protocol.replaceShellIntegration(integration),
-        .working_directory_report => |directory| return vt.protocol.replaceWorkingDirectoryReport(directory),
-        .remote_host_report => |remote_host| return vt.protocol.replaceRemoteHostReport(remote_host),
-        .shell_mark => |mark| try vt.protocol.replaceShellMark(mark),
+        .title_and_icon_set => |value| return vt.protocol.properties.replaceTitleAndIcon(value),
+        .title_set => |title| return vt.protocol.properties.replaceTitle(title),
+        .icon_set => |icon| return vt.protocol.properties.replaceIcon(icon),
+        .shell_integration_set => |integration| return vt.protocol.properties.replaceShellIntegration(integration.version, integration.shell),
+        .working_directory_report => |directory| return vt.protocol.properties.replaceWorkingDirectory(directory.kind, directory.value),
+        .remote_host_report => |remote_host| return vt.protocol.properties.replaceRemoteHost(remote_host),
+        .shell_mark => |mark| try vt.protocol.properties.replaceShellMark(mark.kind, mark.status, mark.metadata),
         .notification => |notification| try vt.protocol.retainNotification(
             notification.kind,
             notification.command,
@@ -5845,49 +5321,49 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .window_request => |request| try vt.protocol.retainWindowRequest(request),
         .color_preference_query => try vt.protocol.retainColorPreferenceQuery(),
         .color_control => |cmd| {
-            const before = vt.protocol.colors;
+            const before = vt.protocol.properties.colors;
             const output_before = byteCount(vt.protocol.reply_buffer.bytes());
             errdefer {
-                vt.protocol.colors = before;
+                vt.protocol.properties.colors = before;
                 vt.protocol.reply_buffer.truncate(output_before);
             }
             switch (cmd.command) {
-                21 => try handleKittyControl(allocator, &vt.protocol.colors, &vt.protocol.reply_buffer, cmd.payload),
+                21 => try handleKittyControl(allocator, &vt.protocol.properties.colors, &vt.protocol.reply_buffer, cmd.payload),
                 4 => try handleXtermPaletteControl(
                     allocator,
-                    &vt.protocol.colors,
+                    &vt.protocol.properties.colors,
                     &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 5 => try handleXtermSpecialPaletteControl(
                     allocator,
-                    &vt.protocol.colors,
+                    &vt.protocol.properties.colors,
                     &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
                     allocator,
-                    &vt.protocol.colors,
+                    &vt.protocol.properties.colors,
                     &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.command,
                     cmd.payload,
                 ),
-                104 => resetXtermPalette(&vt.protocol.colors, cmd.payload),
+                104 => resetXtermPalette(&vt.protocol.properties.colors, cmd.payload),
                 110, 111, 112, 113, 114, 115, 116, 117, 118, 119 => resetXtermDynamicColor(
-                    &vt.protocol.colors,
+                    &vt.protocol.properties.colors,
                     cmd.command,
                     cmd.payload,
                 ),
                 else => {},
             }
-            const colors_changed = !std.meta.eql(before, vt.protocol.colors);
+            const colors_changed = !std.meta.eql(before, vt.protocol.properties.colors);
 
             return colors_changed or output_before != vt.protocol.reply_buffer.bytes().len;
         },
-        .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.protocol.internHyperlink(spec)),
+        .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.protocol.properties.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
         .clipboard_set => |payload| return try vt.protocol.retainClipboard(payload),
         .kitty_clipboard_packet => |payload| try vt.protocol.retainKittyClipboard(payload),
@@ -6052,13 +5528,13 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
         .screen_extent_report => try appendScreenExtentReport(allocator, reply_buffer, encode_buf, render_view),
         .parameters_report => |kind| try appendTerminalParametersReport(allocator, reply_buffer, encode_buf, kind),
         .window_title_report => try appendWindowTitleReport(vt),
-        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.kitty.color_stack),
+        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.protocol.properties.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
 }
 
-fn applyTitleStack(host: *ProtocolState, command: @FieldType(SemanticEvent, "title_stack")) ApplyError!TitleStackEffect {
+fn applyTitleStack(host: *properties.State, command: @FieldType(SemanticEvent, "title_stack")) properties.PropertyError!properties.TitleStackEffect {
     if (command.option != 0 and command.option != 2) return .{};
     return switch (command.command) {
         .push => .{ .changed = try host.pushTitle() },
@@ -6072,7 +5548,7 @@ fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
     errdefer output.truncate(start);
     try output.appendControl(.iterm, .osc);
     try output.append("l");
-    if (vt.protocol.current_title) |title| try output.append(title);
+    if (vt.protocol.properties.current_title) |title| try output.append(title);
     try output.appendControl(.iterm, .st);
 }
 
@@ -6741,29 +6217,13 @@ test "cursor position report payload names semantic cursor position" {
     try std.testing.expectEqualStrings("\x1b[3;5R", output.bytes());
 }
 
-const Rgb = Screen.Rgb;
+const Rgb = properties.Rgb;
 const osc_reply_max_bytes = 8;
 const color_osc_max_bytes = 18;
 
-// Owns the 256-color palette and dynamic foreground, background, and cursor colors.
-const TerminalColorState = struct {
-    foreground: Rgb = default_terminal_foreground,
-    background: Rgb = default_terminal_background,
-    cursor: ?Rgb = null,
-    pointer_foreground: ?Rgb = null,
-    pointer_background: ?Rgb = null,
-    tektronix_foreground: ?Rgb = null,
-    tektronix_background: ?Rgb = null,
-    tektronix_cursor: ?Rgb = null,
-    cursor_text: ?Rgb = null,
-    selection_background: ?Rgb = null,
-    selection_foreground: ?Rgb = null,
-    special_palette: [5]?Rgb = @as([5]?Rgb, @splat(null)),
-    palette: [256]Rgb = defaultPalette(),
-};
-
-const default_terminal_foreground = Rgb{ .r = 220, .g = 220, .b = 220 };
-const default_terminal_background = Rgb{ .r = 24, .g = 25, .b = 33 };
+const TerminalColorState = properties.ColorState;
+const default_terminal_foreground = properties.default_foreground;
+const default_terminal_background = properties.default_background;
 
 const SpecialKey = enum { foreground, background, cursor, cursor_text, selection_background, selection_foreground };
 const DynamicKey = enum {
@@ -6995,14 +6455,6 @@ fn parseItermPaletteIndex(name: []const u8) ?u8 {
     for (names, 0..) |candidate, index|
         if (std.mem.eql(u8, name, candidate)) return @intCast(index);
     return null;
-}
-
-fn defaultPalette() [256]Rgb {
-    return buildDefaultPalette();
-}
-
-fn defaultPaletteColor(idx: u8) Rgb {
-    return paletteColor(idx);
 }
 
 fn specialColorKey(key: []const u8) ?SpecialKey {
@@ -7463,8 +6915,8 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
 // Applies one bounded color-stack mutation and reports rejected or empty operations as unchanged.
 fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
     return switch (command) {
-        .push => |index| pushState(&vt.kitty.color_stack, &vt.protocol.colors, index),
-        .pop => |index| popState(&vt.kitty.color_stack, &vt.protocol.colors, index),
+        .push => |index| vt.protocol.properties.pushColor(index),
+        .pop => |index| vt.protocol.properties.popColor(index),
     };
 }
 
@@ -7532,7 +6984,7 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffe
         .icon_changed = false,
     };
     if (semantic == .title_stack) {
-        const effect = try applyTitleStack(&vt.protocol, semantic.title_stack);
+        const effect = try applyTitleStack(&vt.protocol.properties, semantic.title_stack);
         return .{
             .changed = effect.changed,
             .title_changed = effect.title_changed,
@@ -7540,13 +6992,13 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffe
         };
     }
     const title_changed = switch (semantic) {
-        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.current_title, value),
-        .title_set => |value| !optionalBytesEqual(vt.protocol.current_title, value),
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_title, value),
+        .title_set => |value| !optionalBytesEqual(vt.protocol.properties.current_title, value),
         else => false,
     };
     const icon_changed = switch (semantic) {
-        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.current_icon, value),
-        .icon_set => |value| !optionalBytesEqual(vt.protocol.current_icon, value),
+        .title_and_icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_icon, value),
+        .icon_set => |value| !optionalBytesEqual(vt.protocol.properties.current_icon, value),
         else => false,
     };
     const changed = try applySemantic(vt, semantic);
@@ -7697,9 +7149,9 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
                 !std.meta.eql(alternate_before, vt.screen_state.alternate.cursor);
         },
         .iterm_set_colors => |payload| {
-            const before = vt.protocol.colors;
-            handleItermSetColors(&vt.protocol.colors, payload);
-            const changed = !std.meta.eql(before, vt.protocol.colors);
+            const before = vt.protocol.properties.colors;
+            handleItermSetColors(&vt.protocol.properties.colors, payload);
+            const changed = !std.meta.eql(before, vt.protocol.properties.colors);
 
             return changed;
         },
@@ -8059,6 +7511,7 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
 const FeedError = error{
     ConsequenceLimit,
     OutOfMemory,
+    PropertyLimit,
     ReplyLimit,
     ParsedEventLimit,
     StringControlLimit,
@@ -9111,7 +8564,7 @@ pub const Terminal = struct {
     pub const InputError = PasteError || ApplyError ||
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
-    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, ReplyLimit, StaleClipboardRequest };
+    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, PropertyLimit, ReplyLimit, StaleClipboardRequest };
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
     /// Reports stale identity, allocation, or bounded transfer saturation for one Kitty clipboard packet.
@@ -9593,10 +9046,10 @@ pub const Terminal = struct {
         changed = replaceBool(&self.screen_state.primary.cursor.visible, true) or changed;
         changed = replaceBool(&self.screen_state.alternate.cursor.visible, true) or changed;
         if (self.screen_state.primary.cursor.cursor_color != null or
-            self.screen_state.alternate.cursor.cursor_color != null or self.protocol.colors.cursor != null) changed = true;
+            self.screen_state.alternate.cursor.cursor_color != null or self.protocol.properties.colors.cursor != null) changed = true;
         self.screen_state.primary.cursor.cursor_color = null;
         self.screen_state.alternate.cursor.cursor_color = null;
-        self.protocol.colors.cursor = null;
+        self.protocol.properties.colors.cursor = null;
         return changed;
     }
 
@@ -10166,7 +9619,7 @@ pub const Terminal = struct {
     /// Copies terminal colors and reverse-screen state.
     pub fn presentation(self: *const Terminal) Presentation {
         const active = self.screen_state.activeConst();
-        const colors = self.protocol.terminalColorState();
+        const colors = self.protocol.properties.colors;
         return .{
             .palette = colors.palette,
             .foreground = colors.foreground,
@@ -10202,33 +9655,33 @@ pub const Terminal = struct {
 
     /// Borrows the current OSC window title until terminal mutation.
     pub fn title(self: *const Terminal) ?[]const u8 {
-        return self.protocol.current_title;
+        return self.protocol.properties.current_title;
     }
 
     /// Borrows the current OSC icon title until terminal mutation.
     pub fn icon(self: *const Terminal) ?[]const u8 {
-        return self.protocol.current_icon;
+        return self.protocol.properties.current_icon;
     }
 
     /// Borrows the latest child-reported working directory.
     pub fn workingDirectory(self: *const Terminal) ?WorkingDirectory {
-        return self.protocol.working_directory_report;
+        return self.protocol.properties.working_directory;
     }
 
     /// Borrows the latest child-reported remote host.
     pub fn remoteHost(self: *const Terminal) ?[]const u8 {
-        return self.protocol.remote_host_report;
+        return self.protocol.properties.remote_host;
     }
 
     /// Borrows the latest shell-integration identity.
     pub fn shellIntegration(self: *const Terminal) ?Terminal.ShellIntegration {
-        const integration = self.protocol.shell_integration orelse return null;
+        const integration = self.protocol.properties.shell_integration orelse return null;
         return .{ .version = integration.version, .shell = integration.shell };
     }
 
     /// Copies the latest shell-mark semantic state.
     pub fn shellMark(self: *const Terminal) ShellMark {
-        return self.protocol.shell_mark;
+        return self.protocol.properties.shell_mark;
     }
 
     fn retainEarlierConsequence(best: *?Consequence, candidate: Consequence) void {
@@ -10443,7 +9896,7 @@ pub const Terminal = struct {
 
     /// Borrows the URI interned for one nonzero cell hyperlink identity.
     pub fn hyperlinkUri(self: *const Terminal, link_id: u32) ?[]const u8 {
-        return self.protocol.hyperlinkUriForId(link_id);
+        return self.protocol.properties.hyperlinkUriForId(link_id);
     }
 
     /// Copies one caller-supplied semantic cell range as UTF-8.
@@ -10837,7 +10290,7 @@ fn appendWindowReply(
                 @panic("bounded screen-cell reply exceeded scratch"),
         ),
         .icon_title => |title| {
-            try ensureRetainedBound(byteCount(title), max_metadata_bytes);
+            try ensureRetainedBound(byteCount(title), consequence_payload_max_bytes);
             try output.appendControl(.iterm, .osc);
             try output.append("L");
             try output.append(title);

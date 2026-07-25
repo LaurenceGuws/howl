@@ -73,7 +73,7 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try sequence.appendSlice(allocator, "\x1bk");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, '\r');
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.title().?.len);
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 }
@@ -139,7 +139,7 @@ test "iTerm RemoteHost retains bounded metadata across terminal screen lifetime"
     try sequence.appendSlice(allocator, "\x1b]1337;RemoteHost=");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.remoteHost().?.len);
 }
 
@@ -235,7 +235,7 @@ test "working-directory report limit preserves the prior complete fact" {
     try sequence.appendSlice(allocator, "\x1b]7;");
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
 
     retained = terminal.workingDirectory().?;
     try std.testing.expect(retained.kind == .uri);
@@ -319,7 +319,7 @@ test "OSC title limit fails without dropping current title" {
     try seq.appendSlice(allocator, payload);
     try seq.appendSlice(allocator, "\x07");
 
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice(seq.items));
+    try std.testing.expectError(error.PropertyLimit, stream.nextSlice(seq.items));
     try std.testing.expectEqualStrings("ok", terminal.title().?);
 }
 
@@ -340,7 +340,7 @@ test "OSC icon limit preserves prior title and icon" {
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
 
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
     try std.testing.expectEqualStrings("title", terminal.title().?);
     try std.testing.expectEqualStrings("icon", terminal.icon().?);
 }
@@ -362,7 +362,7 @@ test "OSC 0 bound failure preserves both prior metadata values" {
     try sequence.appendSlice(allocator, payload);
     try sequence.append(allocator, 0x07);
 
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed(sequence.items));
+    try std.testing.expectError(error.PropertyLimit, terminal.feed(sequence.items));
     try std.testing.expectEqualStrings("old-title", terminal.title().?);
     try std.testing.expectEqualStrings("old-icon", terminal.icon().?);
 }

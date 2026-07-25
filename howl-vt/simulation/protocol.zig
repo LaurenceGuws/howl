@@ -398,7 +398,7 @@ fn feedBytesToTerminal(
     mode: FeedMode,
     rand: std.Random,
     max_chunk_len: ChunkLen,
-) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, ReplyLimit, StringControlLimit }!void {
+) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, PropertyLimit, ReplyLimit, StringControlLimit }!void {
     switch (mode) {
         .whole_slice => try feedChecked(terminal, bytes),
         .bytewise => {
@@ -420,7 +420,7 @@ fn feedBytesToTerminal(
 fn feedChecked(
     terminal: *Terminal,
     bytes: []const u8,
-) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, ReplyLimit, StringControlLimit }!void {
+) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, PropertyLimit, ReplyLimit, StringControlLimit }!void {
     const summary = try terminal.feed(bytes);
     std.debug.assert(!summary.history_lost or summary.state_changed);
 }

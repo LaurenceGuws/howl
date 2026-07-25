@@ -96,6 +96,7 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
 fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
     _ = terminal.feed(bytes) catch |err| switch (err) {
         error.ConsequenceLimit,
+        error.PropertyLimit,
         error.ReplyLimit,
         error.ParsedEventLimit,
         error.StringControlLimit,
@@ -190,7 +191,7 @@ fn encodeMouse(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
         },
     };
     var encoded = terminal.encodeInput(std.testing.allocator, &scratch, event) catch |err| switch (err) {
-        error.ConsequenceLimit, error.ReplyLimit => {
+        error.ConsequenceLimit, error.PropertyLimit, error.ReplyLimit => {
             try terminal.consumeReplyBytes(terminal.replyBytes().len);
             var retry = try terminal.encodeInput(std.testing.allocator, &scratch, event);
             retry.deinit();
