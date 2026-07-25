@@ -53,8 +53,9 @@ pub const PointF = struct { x: f64, y: f64 };
 pub fn supersampledCoverage(
     x: u16,
     y: u16,
-    comptime inside: anytype,
-    context: anytype,
+    comptime Context: type,
+    comptime inside: fn (f64, f64, Context) bool,
+    context: Context,
 ) u8 {
     // The callback and context stay compile-time concrete across geometry
     // owners; no runtime type erasure or ownership crosses this boundary.
@@ -74,6 +75,23 @@ pub fn supersampledCoverage(
     return @intCast(
         (hits * 255 + (factor * factor / 2)) / (factor * factor),
     );
+}
+
+const CoverageTestContext = struct { x: f64, y: f64 };
+
+fn coverageTestInside(px: f64, py: f64, context: CoverageTestContext) bool {
+    return px >= context.x and py >= context.y;
+}
+
+test "supersampled coverage accepts a typed callback context" {
+    const coverage = supersampledCoverage(
+        0,
+        0,
+        CoverageTestContext,
+        coverageTestInside,
+        .{ .x = 0.0, .y = 0.0 },
+    );
+    try std.testing.expectEqual(@as(u8, 255), coverage);
 }
 
 /// Draws one antialiased generated line into a bounded alpha mask.

@@ -46,7 +46,8 @@ pub fn classify(codepoint: u32) ?Glyph {
 }
 
 /// Fills exactly `width_px × height_px` caller-owned bytes for one implemented
-/// glyph within the extent bound and leaves trailing output untouched.
+/// glyph within the extent bound and leaves trailing output untouched. Returns
+/// `Error.UnsupportedGlyph` for a codepoint without a generated raster family.
 pub fn rasterize(
     pixels: []u8,
     width_px: u16,
@@ -61,7 +62,8 @@ pub fn rasterize(
 }
 
 /// Rasterizes with ordered, bounded light and heavy box-drawing strokes,
-/// rejecting invalid input before changing caller-owned output.
+/// rejecting invalid input before changing caller-owned output. Returns the
+/// exact `Error` member for invalid geometry, stroke, capacity, or glyph input.
 pub fn rasterizeWithStroke(
     pixels: []u8,
     width_px: u16,
@@ -82,39 +84,39 @@ pub fn rasterizeWithStroke(
     const family = classify(codepoint) orelse return error.UnsupportedGlyph;
     @memset(pixels[0..required], 0);
     switch (family) {
-        .box => generated_box.rasterizeGeneratedBoxAlpha(
+        .box => try generated_box.rasterizeGeneratedBoxAlpha(
             pixels,
             width_px,
             height_px,
             codepoint,
             box_drawing,
         ),
-        .powerline => generated_powerline.rasterizeGeneratedPowerlineAlpha(
+        .powerline => try generated_powerline.rasterizeGeneratedPowerlineAlpha(
             pixels,
             width_px,
             height_px,
             codepoint,
             box_drawing,
         ),
-        .block => generated_block.rasterizeGeneratedBlockAlpha(
+        .block => try generated_block.rasterizeGeneratedBlockAlpha(
             pixels,
             width_px,
             height_px,
             codepoint,
         ),
-        .braille => generated_block.rasterizeGeneratedBrailleAlpha(
+        .braille => try generated_block.rasterizeGeneratedBrailleAlpha(
             pixels,
             width_px,
             height_px,
             codepoint,
         ),
-        .sextant => generated_legacy.rasterizeGeneratedSextantAlpha(
+        .sextant => try generated_legacy.rasterizeGeneratedSextantAlpha(
             pixels,
             width_px,
             height_px,
             codepoint,
         ),
-        .octant => generated_legacy.rasterizeGeneratedOctantAlpha(
+        .octant => try generated_legacy.rasterizeGeneratedOctantAlpha(
             pixels,
             width_px,
             height_px,

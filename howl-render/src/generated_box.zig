@@ -4,8 +4,15 @@ const std = @import("std");
 const geometry = @import("generated_geometry.zig");
 const BoxDrawingStroke = geometry.BoxDrawingStroke;
 
-/// Rasterizes one classified box-drawing glyph with explicit stroke geometry.
-pub fn rasterizeGeneratedBoxAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32, box_drawing: BoxDrawingStroke) void {
+/// Rasterizes one classified box-drawing glyph with explicit stroke geometry,
+/// or returns `error.UnsupportedGlyph` for an unclassified codepoint.
+pub fn rasterizeGeneratedBoxAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+    box_drawing: BoxDrawingStroke,
+) error{UnsupportedGlyph}!void {
     switch (codepoint) {
         0x2504 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.light_stroke_px, 2),
         0x2505 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.heavy_stroke_px, 2),
@@ -25,7 +32,7 @@ pub fn rasterizeGeneratedBoxAlpha(pixels: []u8, width: u16, height: u16, codepoi
                 pixels,
                 width,
                 height,
-                lineSpec(codepoint) orelse unreachable,
+                lineSpec(codepoint) orelse return error.UnsupportedGlyph,
                 box_drawing,
             );
         },
@@ -40,7 +47,7 @@ pub fn rasterizeGeneratedBoxAlpha(pixels: []u8, width: u16, height: u16, codepoi
         0x256f => rasterizeRoundedCorner(pixels, width, height, .bottom_right, box_drawing),
         0x2570 => rasterizeRoundedCorner(pixels, width, height, .bottom_left, box_drawing),
         // The caller admits only the complete Unicode box range.
-        else => unreachable,
+        else => return error.UnsupportedGlyph,
     }
 }
 
@@ -444,14 +451,14 @@ test "box junction topology reaches only declared arms" {
         .heavy_stroke_px = 2,
     };
     @memset(&pixels, 0);
-    rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x250c, stroke);
+    try rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x250c, stroke);
     try std.testing.expectEqual(@as(u8, 0), pixels[4]);
     try std.testing.expectEqual(@as(u8, 0), pixels[4 * 9]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9 + 8]);
     try std.testing.expectEqual(@as(u8, 255), pixels[8 * 9 + 4]);
 
     @memset(&pixels, 0);
-    rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x253c, stroke);
+    try rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x253c, stroke);
     try std.testing.expectEqual(@as(u8, 255), pixels[4]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9 + 8]);

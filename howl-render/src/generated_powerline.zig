@@ -5,8 +5,15 @@ const geometry = @import("generated_geometry.zig");
 const special_box = @import("generated_box.zig");
 const BoxDrawingStroke = geometry.BoxDrawingStroke;
 
-/// Rasterizes one classified Powerline separator or extended triangle.
-pub fn rasterizeGeneratedPowerlineAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32, box_drawing: BoxDrawingStroke) void {
+/// Rasterizes one classified Powerline separator or extended triangle, or
+/// returns `error.UnsupportedGlyph` for an unclassified codepoint.
+pub fn rasterizeGeneratedPowerlineAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+    box_drawing: BoxDrawingStroke,
+) error{UnsupportedGlyph}!void {
     switch (codepoint) {
         0xe0b0 => rasterizePowerlineTriangle(pixels, width, height, true, false),
         0xe0b2 => rasterizePowerlineTriangle(pixels, width, height, false, false),
@@ -25,7 +32,7 @@ pub fn rasterizeGeneratedPowerlineAlpha(pixels: []u8, width: u16, height: u16, c
         0xe0d6 => rasterizePowerlineTriangle(pixels, width, height, false, false),
         0xe0d7 => rasterizePowerlineTriangle(pixels, width, height, true, false),
         // The sole generated classifier admits only these implemented ranges.
-        else => unreachable,
+        else => return error.UnsupportedGlyph,
     }
 }
 
@@ -94,11 +101,23 @@ const TriangleCoverageCtx = struct { x1: f64, x2: f64, y_mid: f64, height: u16, 
 const FilledDCoverageCtx = struct { cb: CubicBezier, width: u16, left: bool };
 
 fn supersampledTriangleCoverage(x: u16, y: u16, ctx: TriangleCoverageCtx) u8 {
-    return geometry.supersampledCoverage(x, y, triangleContains, ctx);
+    return geometry.supersampledCoverage(
+        x,
+        y,
+        TriangleCoverageCtx,
+        triangleContains,
+        ctx,
+    );
 }
 
 fn supersampledFilledDCoverage(x: u16, y: u16, ctx: FilledDCoverageCtx) u8 {
-    return geometry.supersampledCoverage(x, y, filledDContains, ctx);
+    return geometry.supersampledCoverage(
+        x,
+        y,
+        FilledDCoverageCtx,
+        filledDContains,
+        ctx,
+    );
 }
 
 fn triangleContains(px: f64, py: f64, ctx: TriangleCoverageCtx) bool {
@@ -232,16 +251,16 @@ test "powerline triangles retain exact aliases and directions" {
     @memset(&left, 0);
     @memset(&extended_right, 0);
     @memset(&extended_left, 0);
-    rasterizeGeneratedPowerlineAlpha(&right, 8, 8, 0xe0b0, stroke);
-    rasterizeGeneratedPowerlineAlpha(&left, 8, 8, 0xe0b2, stroke);
-    rasterizeGeneratedPowerlineAlpha(
+    try rasterizeGeneratedPowerlineAlpha(&right, 8, 8, 0xe0b0, stroke);
+    try rasterizeGeneratedPowerlineAlpha(&left, 8, 8, 0xe0b2, stroke);
+    try rasterizeGeneratedPowerlineAlpha(
         &extended_right,
         8,
         8,
         0xe0d7,
         stroke,
     );
-    rasterizeGeneratedPowerlineAlpha(
+    try rasterizeGeneratedPowerlineAlpha(
         &extended_left,
         8,
         8,

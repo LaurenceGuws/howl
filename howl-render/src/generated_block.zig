@@ -3,17 +3,29 @@
 const std = @import("std");
 const geometry = @import("generated_geometry.zig");
 
-/// Rasterizes one classified block glyph into a valid mask.
-pub fn rasterizeGeneratedBlockAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32) void {
-    // The sole generated classifier proves this range before dispatch.
-    std.debug.assert(codepoint >= 0x2580 and codepoint <= 0x259f);
+/// Rasterizes one classified block glyph into a valid mask, or returns
+/// `error.UnsupportedGlyph` when called with a codepoint outside its family.
+pub fn rasterizeGeneratedBlockAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+) error{UnsupportedGlyph}!void {
+    if (codepoint < 0x2580 or codepoint > 0x259f)
+        return error.UnsupportedGlyph;
     rasterizeBlockElementAlpha(pixels, width, height, codepoint);
 }
 
-/// Rasterizes one classified braille glyph into a valid mask.
-pub fn rasterizeGeneratedBrailleAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32) void {
-    // The sole generated classifier proves this range before dispatch.
-    std.debug.assert(codepoint >= 0x2800 and codepoint <= 0x28ff);
+/// Rasterizes one classified braille glyph into a valid mask, or returns
+/// `error.UnsupportedGlyph` when called with a codepoint outside its family.
+pub fn rasterizeGeneratedBrailleAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+) error{UnsupportedGlyph}!void {
+    if (codepoint < 0x2800 or codepoint > 0x28ff)
+        return error.UnsupportedGlyph;
     rasterizeBrailleAlpha(pixels, width, height, @intCast(codepoint - 0x2800));
 }
 
@@ -202,7 +214,13 @@ fn brailleLayout(width: u16, height: u16) BrailleLayout {
 const BrailleDotCoverageCtx = struct { cx: f64, cy: f64, rx: f64, ry: f64 };
 
 fn supersampledBrailleDotCoverage(x: u16, y: u16, ctx: BrailleDotCoverageCtx) u8 {
-    return geometry.supersampledCoverage(x, y, brailleDotContains, ctx);
+    return geometry.supersampledCoverage(
+        x,
+        y,
+        BrailleDotCoverageCtx,
+        brailleDotContains,
+        ctx,
+    );
 }
 
 fn brailleDotContains(px: f64, py: f64, ctx: BrailleDotCoverageCtx) bool {
@@ -214,12 +232,12 @@ fn brailleDotContains(px: f64, py: f64, ctx: BrailleDotCoverageCtx) bool {
 test "block geometry preserves exact terminal partitions and shades" {
     var pixels: [8 * 8]u8 = undefined;
     @memset(&pixels, 0);
-    rasterizeGeneratedBlockAlpha(&pixels, 8, 8, 0x2580);
+    try rasterizeGeneratedBlockAlpha(&pixels, 8, 8, 0x2580);
     try std.testing.expect(std.mem.allEqual(u8, pixels[0 .. 8 * 4], 255));
     try std.testing.expect(std.mem.allEqual(u8, pixels[8 * 4 ..], 0));
 
     @memset(&pixels, 0);
-    rasterizeGeneratedBlockAlpha(&pixels, 8, 8, 0x2590);
+    try rasterizeGeneratedBlockAlpha(&pixels, 8, 8, 0x2590);
     for (0..8) |row| {
         try std.testing.expect(std.mem.allEqual(
             u8,
@@ -235,7 +253,7 @@ test "block geometry preserves exact terminal partitions and shades" {
 
     inline for (.{ .{ 0x2591, 0x40 }, .{ 0x2592, 0x80 }, .{ 0x2593, 0xc0 } }) |case| {
         @memset(&pixels, 0);
-        rasterizeGeneratedBlockAlpha(&pixels, 8, 8, case[0]);
+        try rasterizeGeneratedBlockAlpha(&pixels, 8, 8, case[0]);
         try std.testing.expect(std.mem.allEqual(u8, &pixels, case[1]));
     }
 }
@@ -245,7 +263,7 @@ test "every braille codepoint maps its exact eight-dot occupancy" {
     var expected: u16 = 0;
     while (expected <= 0xff) : (expected += 1) {
         @memset(&pixels, 0);
-        rasterizeGeneratedBrailleAlpha(
+        try rasterizeGeneratedBrailleAlpha(
             &pixels,
             2,
             4,

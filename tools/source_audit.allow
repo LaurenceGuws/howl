@@ -1,5 +1,3 @@
-howl-render/src/generated_geometry.zig|anytype|comptime inside: anytype,
-howl-render/src/generated_geometry.zig|anytype|context: anytype,
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {

@@ -5,22 +5,33 @@ const geometry = @import("generated_geometry.zig");
 
 const Range = geometry.Range;
 
-/// Rasterizes one classified sextant codepoint.
-pub fn rasterizeGeneratedSextantAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32) void {
+/// Rasterizes one classified sextant codepoint, or returns
+/// `error.UnsupportedGlyph` for an unclassified codepoint.
+pub fn rasterizeGeneratedSextantAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+) error{UnsupportedGlyph}!void {
     const sextant = switch (codepoint) {
         0x1fb00...0x1fb13 => @as(u8, @intCast(codepoint - 0x1fb00 + 1)),
         0x1fb14...0x1fb27 => @as(u8, @intCast(codepoint - 0x1fb00 + 2)),
         0x1fb28...0x1fb3b => @as(u8, @intCast(codepoint - 0x1fb00 + 3)),
         // The public classifier admits only the complete sextant range.
-        else => unreachable,
+        else => return error.UnsupportedGlyph,
     };
     rasterizeSextantAlpha(pixels, width, height, sextant);
 }
 
-/// Rasterizes one classified octant codepoint or terminal alias.
-pub fn rasterizeGeneratedOctantAlpha(pixels: []u8, width: u16, height: u16, codepoint: u32) void {
-    // The sole generated classifier admits only mapped octants and aliases.
-    const octant = generatedOctantPattern(codepoint) orelse unreachable;
+/// Rasterizes one classified octant codepoint or terminal alias, or returns
+/// `error.UnsupportedGlyph` for an unclassified codepoint.
+pub fn rasterizeGeneratedOctantAlpha(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+) error{UnsupportedGlyph}!void {
+    const octant = generatedOctantPattern(codepoint) orelse return error.UnsupportedGlyph;
     rasterizeOctantAlpha(pixels, width, height, octant);
 }
 
@@ -154,7 +165,7 @@ test "every sextant codepoint maps its exact six-cell occupancy" {
             @as(u32, @intFromBool(codepoint >= 0x1fb14)) +
             @as(u32, @intFromBool(codepoint >= 0x1fb28)));
         @memset(&pixels, 0);
-        rasterizeGeneratedSextantAlpha(&pixels, 2, 3, codepoint);
+        try rasterizeGeneratedSextantAlpha(&pixels, 2, 3, codepoint);
         var actual: u8 = 0;
         const bit_at = [_]u8{ 0, 3, 1, 4, 2, 5 };
         for (bit_at, 0..) |bit, offset| {
@@ -185,7 +196,7 @@ fn expectOctantOccupancy(
     pattern: u8,
 ) !void {
     @memset(pixels, 0);
-    rasterizeGeneratedOctantAlpha(pixels, 2, 4, codepoint);
+    try rasterizeGeneratedOctantAlpha(pixels, 2, 4, codepoint);
     var actual: u8 = 0;
     for (0..4) |row| {
         if (pixels[row * 2] != 0) actual |= @as(u8, 1) << @intCast(row);

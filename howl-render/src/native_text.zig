@@ -857,8 +857,7 @@ fn bitmapAlpha(
         c.FT_PIXEL_MODE_MONO => if ((row[x / 8] &
             (@as(u8, 0x80) >> @intCast(x & 7))) != 0) 255 else 0,
         c.FT_PIXEL_MODE_GRAY => grayAlpha(row[x], geometry.num_grays),
-        // `bitmapGeometry` rejects every other external pixel mode.
-        else => unreachable,
+        else => error.InvalidBitmap,
     };
 }
 
@@ -915,6 +914,24 @@ test "pixel modes decode exact alpha including negative pitch" {
     try expectSyntheticAlpha(&.{0b1000_0000}, c.FT_PIXEL_MODE_MONO, 1, 1, 1, 0, 0, 255);
     try expectSyntheticAlpha(&.{127}, c.FT_PIXEL_MODE_GRAY, 1, 1, 1, 0, 0, 127);
     try expectSyntheticAlpha(&.{ 11, 22 }, c.FT_PIXEL_MODE_GRAY, 1, 2, -1, 0, 0, 22);
+}
+
+test "bitmap alpha rejects unsupported modes with InvalidBitmap" {
+    const geometry = BitmapGeometry{
+        .mode = c.FT_PIXEL_MODE_NONE,
+        .num_grays = 0,
+        .source_height = 1,
+        .width = 1,
+        .height = 1,
+        .pitch = 1,
+        .negative_pitch = false,
+        .source_bytes = 1,
+        .source = null,
+    };
+    try std.testing.expectError(
+        error.InvalidBitmap,
+        bitmapAlpha(&.{0}, geometry, 0, 0),
+    );
 }
 
 test "nonstandard gray levels normalize or reject exact samples" {
