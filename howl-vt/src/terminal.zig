@@ -3978,7 +3978,7 @@ const TextSizeCommand = struct {
 // Parser events to canonical terminal semantics.
 
 /// Canonical parser-to-domain event consumed synchronously by terminal state owners.
-pub const SemanticEvent = union(enum) {
+const SemanticEvent = union(enum) {
     cursor_up: u16,
     cursor_down: u16,
     cursor_forward: u16,
@@ -7568,7 +7568,7 @@ const EventEffect = struct {
 };
 
 /// Classify one parsed event into the canonical parser-to-domain vocabulary.
-pub fn process(event: parser_mod.Event) ?SemanticEvent {
+fn routeParserEvent(event: parser_mod.Event) ?SemanticEvent {
     switch (event) {
         .style_change => |sc| {
             const params = sc.params[0..sc.param_count];
@@ -7605,7 +7605,7 @@ fn escDispatchProcess(final: u8, intermediates: []const u8) ?SemanticEvent {
 }
 
 /// Apply one parser event and report whether terminal or title state changed.
-pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
+fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
     switch (event) {
         .invoke_charset => |slot| {
             vt.gl_index = slot;
@@ -7618,7 +7618,7 @@ pub fn apply(vt: *Terminal, event: parser_mod.Event) ApplyError!EventEffect {
         else => {},
     }
 
-    const semantic = process(event) orelse return .{
+    const semantic = routeParserEvent(event) orelse return .{
         .changed = false,
         .title_changed = false,
         .icon_changed = false,
@@ -8525,7 +8525,7 @@ const TerminalStream = struct {
     }
 
     fn applyEvent(self: *TerminalStream, event: parser_mod.Event) FeedError!EventEffect {
-        return try apply(self.terminal, event);
+        return try applyParserEvent(self.terminal, event);
     }
 
     fn startDcs(self: *TerminalStream, hook: parser_mod.DcsHook) FeedError!EventEffect {
@@ -8557,7 +8557,7 @@ const TerminalStream = struct {
         }
         const event = state.dcs.event();
         defer state.dcs.reset();
-        return try apply(self.terminal, event);
+        return try applyParserEvent(self.terminal, event);
     }
 
     fn applySixel(self: *TerminalStream, payload: []const u8, params: []const i32) FeedError!EventEffect {
@@ -11228,3 +11228,923 @@ const Savepoint = struct {
         self.* = .{};
     }
 };
+
+const RouteOwnerTests = struct {
+    const ParserEvent = parser_mod.Event;
+    const EraseMode = ScreenEraseMode;
+    const csi_max_params = parser_mod.max_params;
+    const empty_params = @as([csi_max_params]i32, @splat(0));
+    const empty_separators = parser_mod.CsiSeparatorList.empty;
+    const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
+
+    fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) ParserEvent {
+        const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = count,
+            .leader = 0,
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+    }
+
+    fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8) ParserEvent {
+        const params = @as([csi_max_params]i32, @splat(0));
+        const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 0,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } };
+    }
+
+    fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32, comptime intermediate: u8) ParserEvent {
+        const params = [_]i32{p0} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } };
+    }
+
+    fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) ParserEvent {
+        const params = comptime blk: {
+            var out = @as([csi_max_params]i32, @splat(0));
+            for (params_in, 0..) |value, idx| out[idx] = value;
+            break :blk out;
+        };
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = @intCast(params_in.len),
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+    }
+
+    fn makeEscFinal(final: u8) ParserEvent {
+        return ParserEvent{ .esc_dispatch = .{
+            .final = final,
+            .intermediates = @as([4]u8, @splat(0)),
+            .intermediates_len = 0,
+        } };
+    }
+
+    fn expectDecModes(event: ParserEvent, enabled: bool, expected: []const u16) !void {
+        const semantic = routeParserEvent(event) orelse return error.NoEvent;
+        const modes = switch (semantic) {
+            .dec_mode_set => |modes| if (enabled) modes else return error.UnexpectedEvent,
+            .dec_mode_reset => |modes| if (!enabled) modes else return error.UnexpectedEvent,
+            else => return error.UnexpectedEvent,
+        };
+        try std.testing.expectEqualSlices(u16, expected, modes.params[0..modes.param_count]);
+    }
+
+    test "actions: text event maps to write_text" {
+        const sem = routeParserEvent(ParserEvent{ .text = "hello" }) orelse return error.NoEvent;
+        try std.testing.expectEqualSlices(u8, "hello", sem.write_text);
+    }
+
+    test "actions: codepoint event maps to write_codepoint" {
+        const sem = routeParserEvent(ParserEvent{ .codepoint = 0xE9 }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u21, 0xE9), sem.write_codepoint);
+    }
+
+    test "actions: DEC private application cursor enable maps true" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1;
+        const ev = ParserEvent{ .style_change = .{
+            .final = 'h',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try expectDecModes(ev, true, &.{1});
+    }
+
+    test "actions: DEC private focus reporting enable maps true" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1004;
+        const ev = ParserEvent{ .style_change = .{
+            .final = 'h',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try expectDecModes(ev, true, &.{1004});
+    }
+
+    test "actions: DEC private bracketed paste disable maps false" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 2004;
+        const ev = ParserEvent{ .style_change = .{
+            .final = 'l',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try expectDecModes(ev, false, &.{2004});
+    }
+
+    test "actions: DEC private synchronized output maps enable disable" {
+        try expectDecModes(makePrivateStyleChange('h', &.{2026}), true, &.{2026});
+        try expectDecModes(makePrivateStyleChange('l', &.{2026}), false, &.{2026});
+    }
+
+    test "actions: DEC private mouse tracking mode mappings" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 9;
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'h',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try expectDecModes(ev, true, &.{9});
+        params[0] = 1000;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1000});
+        params[0] = 1002;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1002});
+        params[0] = 1003;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1003});
+        params[0] = 1006;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1006});
+        params[0] = 1005;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1005});
+        params[0] = 1015;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1015});
+    }
+
+    test "actions: low priority DEC private modes and media copy map" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'h',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+
+        params[0] = 45;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{45});
+
+        params[0] = 1045;
+        ev.style_change.params = params[0..];
+        try expectDecModes(ev, true, &.{1045});
+
+        params[0] = 5;
+        ev.style_change.final = 'i';
+        ev.style_change.params = params[0..];
+        try std.testing.expectEqualDeep(
+            MediaCopyRequest{ .private = true, .parameter = 5 },
+            routeParserEvent(ev).?.media_copy_request,
+        );
+    }
+
+    test "actions: application keypad and modifyOtherKeys mappings" {
+        try std.testing.expect(routeParserEvent(makeEscFinal('=')).?.application_keypad);
+        try std.testing.expect(!routeParserEvent(makeEscFinal('>')).?.application_keypad);
+
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 66;
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'h',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try expectDecModes(ev, true, &.{66});
+
+        params[0] = 4;
+        params[1] = 2;
+        ev = ParserEvent{ .style_change = .{
+            .final = 'm',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 2,
+            .leader = '>',
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try std.testing.expectEqual(@as(i8, 2), routeParserEvent(ev).?.modify_other_keys_set);
+
+        ev.style_change.final = 'n';
+        try std.testing.expect(routeParserEvent(ev).? == .modify_other_keys_disable);
+
+        ev.style_change.final = 'm';
+        ev.style_change.leader = '?';
+        ev.style_change.private = true;
+        ev.style_change.param_count = 1;
+        try std.testing.expect(routeParserEvent(ev).? == .modify_other_keys_query);
+    }
+
+    test "actions: xterm key format set reset and query mappings" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 4;
+        params[1] = 1;
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'f',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 2,
+            .leader = '>',
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+
+        var change = routeParserEvent(ev).?.key_format_change;
+        try std.testing.expectEqual(@as(?u8, 4), change.resource);
+        try std.testing.expectEqual(@as(?u16, 1), change.value);
+
+        ev.style_change.param_count = 1;
+        change = routeParserEvent(ev).?.key_format_change;
+        try std.testing.expectEqual(@as(?u8, 4), change.resource);
+        try std.testing.expectEqual(@as(?u16, null), change.value);
+
+        ev.style_change.param_count = 0;
+        change = routeParserEvent(ev).?.key_format_change;
+        try std.testing.expectEqual(@as(?u8, null), change.resource);
+        try std.testing.expectEqual(@as(?u16, null), change.value);
+
+        ev.style_change.final = 'g';
+        ev.style_change.param_count = 1;
+        ev.style_change.leader = '?';
+        ev.style_change.private = true;
+        try std.testing.expectEqual(@as(u8, 4), routeParserEvent(ev).?.key_format_query);
+    }
+
+    test "actions: xterm key format resource saturates above 255" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 300;
+        const ev = ParserEvent{ .style_change = .{
+            .final = 'f',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '>',
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+
+        try std.testing.expectEqual(@as(?u8, 255), routeParserEvent(ev).?.key_format_change.resource);
+    }
+
+    test "actions: xterm key format query saturates above 255" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 300;
+        const ev = ParserEvent{ .style_change = .{
+            .final = 'g',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+
+        try std.testing.expectEqual(@as(u8, 255), routeParserEvent(ev).?.key_format_query);
+    }
+
+    test "actions: xterm key format non-positive params normalize to 0" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = -7;
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'f',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '>',
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+
+        try std.testing.expectEqual(@as(?u8, 0), routeParserEvent(ev).?.key_format_change.resource);
+
+        params[0] = 0;
+        ev.style_change.final = 'g';
+        ev.style_change.leader = '?';
+        ev.style_change.private = true;
+        try std.testing.expectEqual(@as(u8, 0), routeParserEvent(ev).?.key_format_query);
+    }
+
+    test "actions: xterm pointer mode maps bounded value" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 2;
+        var ev = ParserEvent{ .style_change = .{
+            .final = 'p',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '>',
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+        try std.testing.expectEqual(@as(u2, 2), routeParserEvent(ev).?.pointer_mode);
+
+        params[0] = 9;
+        ev.style_change.params = params[0..];
+        try std.testing.expectEqual(@as(u2, 3), routeParserEvent(ev).?.pointer_mode);
+
+        ev.style_change.param_count = 0;
+        try std.testing.expectEqual(@as(u2, 1), routeParserEvent(ev).?.pointer_mode);
+    }
+
+    test "actions: ANSI mode set reset and query map" {
+        const set = routeParserEvent(makeStyleChange('h', 4, 20, 2)) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u8, 2), set.ansi_mode_set.param_count);
+        try std.testing.expectEqual(@as(u16, 4), set.ansi_mode_set.params[0]);
+        try std.testing.expectEqual(@as(u16, 20), set.ansi_mode_set.params[1]);
+
+        const reset = routeParserEvent(makeStyleChange('l', 2, 0, 1)) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u8, 1), reset.ansi_mode_reset.param_count);
+        try std.testing.expectEqual(@as(u16, 2), reset.ansi_mode_reset.params[0]);
+
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 4;
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '$';
+        const query = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'p',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u16, 4), query.ansi_mode_query);
+    }
+
+    test "actions: locator controls map" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 2;
+        params[1] = 1;
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '\'';
+        const elr = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'z',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 2,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u16, 2), elr.locator_reporting.mode);
+        try std.testing.expectEqual(@as(u16, 1), elr.locator_reporting.unit);
+
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 3;
+        const req = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = '|',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u16, 3), req.locator_request);
+
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 2;
+        params[1] = 3;
+        params[2] = 4;
+        params[3] = 5;
+        const filter = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'w',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 4,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(?u16, 1), filter.locator_filter.top);
+        try std.testing.expectEqual(@as(?u16, 4), filter.locator_filter.right);
+
+        intermediates[1] = '*';
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1;
+        params[1] = 3;
+        const sle = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = '{',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 2,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 2,
+        } }) orelse return error.NoEvent;
+        try std.testing.expectEqual(@as(u8, 2), sle.locator_events.param_count);
+    }
+};
+
+comptime {
+    std.debug.assert(@sizeOf(RouteOwnerTests) == 0);
+}
+
+const CsiMappingOwnerTests = struct {
+    const ParserEvent = parser_mod.Event;
+    const EraseMode = ScreenEraseMode;
+    const csi_max_params = parser_mod.max_params;
+    const empty_params = @as([csi_max_params]i32, @splat(0));
+    const empty_separators = parser_mod.CsiSeparatorList.empty;
+    const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
+
+    fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) ParserEvent {
+        const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = count,
+            .leader = 0,
+            .private = false,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+    }
+
+    fn makeStyleChangeWithIntermediate(comptime final: u8, comptime intermediate: u8) ParserEvent {
+        const params = @as([csi_max_params]i32, @splat(0));
+        const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 0,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } };
+    }
+
+    fn makeStyleChangeWithParamAndIntermediate(comptime final: u8, comptime p0: i32, comptime intermediate: u8) ParserEvent {
+        const params = [_]i32{p0} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        const intermediates = [_]u8{intermediate} ++ @as([(parser_mod.max_intermediates - 1)]u8, @splat(0));
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } };
+    }
+
+    fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) ParserEvent {
+        const params = comptime blk: {
+            var out = @as([csi_max_params]i32, @splat(0));
+            for (params_in, 0..) |value, index| out[index] = value;
+            break :blk out;
+        };
+        return ParserEvent{ .style_change = .{
+            .final = final,
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = @intCast(params_in.len),
+            .leader = '?',
+            .private = true,
+            .intermediates = empty_intermediates[0..],
+            .intermediates_len = 0,
+        } };
+    }
+
+    test "csi mapping: cursor motion and tab movement" {
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('A', 3, 0, 1)).?.cursor_up);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('A', 0, 0, 1)).?.cursor_up);
+        try std.testing.expectEqual(@as(u16, 5), routeParserEvent(makeStyleChange('B', 5, 0, 1)).?.cursor_down);
+        try std.testing.expectEqual(@as(u16, 5), routeParserEvent(makeStyleChange('e', 5, 0, 1)).?.cursor_down);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('e', 0, 0, 1)).?.cursor_down);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('C', 2, 0, 1)).?.cursor_forward);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('a', 2, 0, 1)).?.cursor_forward);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('a', 0, 0, 1)).?.cursor_forward);
+        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('D', 4, 0, 1)).?.cursor_back);
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('E', 3, 0, 1)).?.cursor_next_line);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('E', 0, 0, 1)).?.cursor_next_line);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('F', 2, 0, 1)).?.cursor_prev_line);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('F', 0, 0, 1)).?.cursor_prev_line);
+        try std.testing.expectEqual(@as(u16, 6), routeParserEvent(makeStyleChange('G', 7, 0, 1)).?.cursor_horizontal_absolute);
+        try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('G', 0, 0, 1)).?.cursor_horizontal_absolute);
+        try std.testing.expectEqual(@as(u16, 6), routeParserEvent(makeStyleChange('`', 7, 0, 1)).?.cursor_horizontal_absolute);
+        try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('`', 0, 0, 1)).?.cursor_horizontal_absolute);
+        try std.testing.expectEqual(@as(u16, 8), routeParserEvent(makeStyleChange('d', 9, 0, 1)).?.cursor_vertical_absolute);
+        try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('d', 0, 0, 1)).?.cursor_vertical_absolute);
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('I', 3, 0, 1)).?.horizontal_tab_forward);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('I', 0, 0, 1)).?.horizontal_tab_forward);
+        try std.testing.expectEqual(std.math.maxInt(u16), routeParserEvent(makeStyleChange('I', 999999, 0, 1)).?.horizontal_tab_forward);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('Z', 2, 0, 1)).?.horizontal_tab_back);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('Z', 0, 0, 1)).?.horizontal_tab_back);
+        try std.testing.expectEqual(std.math.maxInt(u16), routeParserEvent(makeStyleChange('Z', 999999, 0, 1)).?.horizontal_tab_back);
+    }
+
+    test "csi mapping: editing and scrolling" {
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('L', 3, 0, 1)).?.insert_lines);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('M', 0, 0, 0)).?.delete_lines);
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChange('P', 3, 0, 1)).?.delete_chars);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('P', 0, 0, 0)).?.delete_chars);
+        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('@', 4, 0, 1)).?.insert_chars);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('@', 0, 0, 0)).?.insert_chars);
+        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('b', 4, 0, 1)).?.repeat_preceding);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('b', 0, 0, 0)).?.repeat_preceding);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('S', 2, 0, 1)).?.scroll_up_lines);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('T', 0, 0, 0)).?.scroll_down_lines);
+
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '+';
+        const params = [_]i32{3} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'T',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?.scroll_down_from_history);
+    }
+
+    test "csi mapping: positioning, tab, erase, and reset semantics" {
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('r', 2, 5, 2)).?.set_scroll_region.top);
+        try std.testing.expectEqual(@as(?u16, 4), routeParserEvent(makeStyleChange('r', 2, 5, 2)).?.set_scroll_region.bottom);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('r', 3, 0, 1)).?.set_scroll_region.top);
+        try std.testing.expectEqual(@as(?u16, null), routeParserEvent(makeStyleChange('r', 3, 0, 1)).?.set_scroll_region.bottom);
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(makeStyleChange('H', 3, 5, 2)).?.cursor_position.row);
+        try std.testing.expectEqual(@as(u16, 4), routeParserEvent(makeStyleChange('H', 3, 5, 2)).?.cursor_position.col);
+        try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('H', 0, 0, 0)).?.cursor_position.row);
+        try std.testing.expectEqual(@as(u16, 0), routeParserEvent(makeStyleChange('H', 0, 0, 0)).?.cursor_position.col);
+        try std.testing.expectEqual(@as(?SemanticEvent, null), routeParserEvent(makeStyleChange('Y', 1, 0, 1)));
+        try std.testing.expect(routeParserEvent(makeStyleChangeWithIntermediate('p', '!')).? == .soft_reset);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 0, 0, 0)).? == .tab_clear_current);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 3, 0, 1)).? == .tab_clear_all);
+        try std.testing.expect(routeParserEvent(makeStyleChange('g', 5, 0, 1)).? == .tab_clear_all);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{5})).? == .reset_default_tab_stops);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 1, 0, 1)).?.erase_display_above);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 2, 0, 1)).?.erase_display_complete);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 3, 0, 1)).?.erase_display_scrollback);
+        try std.testing.expect(routeParserEvent(makeStyleChange('J', 5, 0, 1)) == null);
+        try std.testing.expectEqual(EraseMode.cursor_to_end, routeParserEvent(makeStyleChange('K', 0, 0, 0)).?.erase_line);
+        try std.testing.expectEqual(EraseMode.start_to_cursor, routeParserEvent(makeStyleChange('K', 1, 0, 1)).?.erase_line);
+        try std.testing.expectEqual(EraseMode.all, routeParserEvent(makeStyleChange('K', 2, 0, 1)).?.erase_line);
+        try std.testing.expect(routeParserEvent(makeStyleChange('K', 5, 0, 1)) == null);
+        try std.testing.expectEqual(@as(u16, 6), routeParserEvent(makeStyleChange('X', 6, 0, 1)).?.erase_chars);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('X', 0, 0, 0)).?.erase_chars);
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChangeWithParamAndIntermediate('@', 3, ' ')).?.shift_left_columns);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChangeWithIntermediate('A', ' ')).?.shift_right_columns);
+        try std.testing.expect(routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 7, ' ')) == null);
+    }
+
+    test "csi mapping: protection, rectangular ops, and margins" {
+        try std.testing.expect(routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 1, '"')).?.character_protection == .dec);
+        try std.testing.expect(routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 2, '"')).?.character_protection == .none);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('J', &.{2})).?.erase_display_complete);
+        try std.testing.expectEqual(EraseMode.start_to_cursor, routeParserEvent(makePrivateStyleChange('K', &.{1})).?.selective_erase_line);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('J', &.{5})) == null);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('K', &.{5})) == null);
+
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 88;
+        params[1] = 1;
+        params[2] = 2;
+        params[3] = 3;
+        params[4] = 4;
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '$';
+        const fill = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'x',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 5,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?;
+        try std.testing.expectEqual(@as(u21, 88), fill.rect_fill.ch);
+        try std.testing.expectEqual(@as(u16, 0), fill.rect_fill.area.top);
+        try std.testing.expectEqual(@as(u16, 1), fill.rect_fill.area.left);
+
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1;
+        params[1] = 1;
+        params[2] = 2;
+        params[3] = 2;
+        params[4] = 1;
+        params[5] = 3;
+        params[6] = 4;
+        params[7] = 1;
+        const copy = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'v',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 8,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?;
+        try std.testing.expectEqual(@as(u16, 2), copy.rect_copy.dest_top);
+        try std.testing.expectEqual(@as(u16, 3), copy.rect_copy.dest_left);
+
+        intermediates[0] = '\'';
+        const insert_params = [_]i32{2} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        try std.testing.expectEqual(@as(u16, 2), routeParserEvent(ParserEvent{ .style_change = .{
+            .final = '}',
+            .params = insert_params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?.insert_columns);
+
+        const delete_params = [_]i32{3} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(ParserEvent{ .style_change = .{
+            .final = '~',
+            .params = delete_params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?.delete_columns);
+
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1;
+        params[1] = 1;
+        params[2] = 2;
+        params[3] = 2;
+        params[4] = 1;
+        intermediates[0] = '$';
+        const change = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'r',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 5,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?;
+        try std.testing.expect(!change.rect_attrs_change.reverse);
+        try std.testing.expectEqual(@as(u16, 1), change.rect_attrs_change.attrs.params[0]);
+
+        const reverse = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 't',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 5,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?;
+        try std.testing.expect(reverse.rect_attrs_change.reverse);
+
+        intermediates[0] = '*';
+        const extent_params = [_]i32{2} ++ @as([(csi_max_params - 1)]i32, @splat(0));
+        try std.testing.expect(routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'x',
+            .params = extent_params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = 0,
+            .private = false,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?.attr_change_extent_rect);
+
+        const margins = routeParserEvent(makeStyleChange('s', 2, 4, 2)).?;
+        try std.testing.expectEqual(@as(u16, 1), margins.set_left_right_margins.left);
+        try std.testing.expectEqual(@as(?u16, 3), margins.set_left_right_margins.right);
+        const margins_on = routeParserEvent(makePrivateStyleChange('h', &.{69})).?;
+        try std.testing.expect(margins_on == .dec_mode_set);
+        try std.testing.expectEqual(@as(u16, 69), margins_on.dec_mode_set.params[0]);
+        const margins_off = routeParserEvent(makePrivateStyleChange('l', &.{69})).?;
+        try std.testing.expect(margins_off == .dec_mode_reset);
+        try std.testing.expectEqual(@as(u16, 69), margins_off.dec_mode_reset.params[0]);
+    }
+
+    test "csi mapping: cursor style, save restore aliases, and invalid sequence" {
+        try std.testing.expectEqual(@as(?SemanticEvent, null), routeParserEvent(ParserEvent.invalid_sequence));
+        try std.testing.expect(routeParserEvent(makeStyleChange('s', 0, 0, 0)).? == .save_cursor);
+        try std.testing.expect(routeParserEvent(makeStyleChange('u', 0, 0, 0)).? == .restore_cursor);
+        var sem = routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 0, ' ')).?;
+        try std.testing.expect(sem.cursor_style == .restore_default);
+        sem = routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 4, ' ')).?;
+        try std.testing.expectEqual(Terminal.CursorShape.underline, sem.cursor_style.program_override.shape);
+        try std.testing.expect(!sem.cursor_style.program_override.blink);
+        sem = routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 5, ' ')).?;
+        try std.testing.expectEqual(Terminal.CursorShape.bar, sem.cursor_style.program_override.shape);
+        try std.testing.expect(sem.cursor_style.program_override.blink);
+        try std.testing.expect(routeParserEvent(makeStyleChangeWithParamAndIntermediate('q', 7, ' ')) == null);
+    }
+
+    test "csi mapping: mode query, save restore, and erase families" {
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1004;
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '$';
+        const decrqm = routeParserEvent(ParserEvent{ .style_change = .{
+            .final = 'p',
+            .params = params[0..],
+            .separators = empty_separators,
+            .param_count = 1,
+            .leader = '?',
+            .private = true,
+            .intermediates = intermediates[0..],
+            .intermediates_len = 1,
+        } }).?;
+        try std.testing.expectEqual(@as(u16, 1004), decrqm.dec_mode_query);
+
+        const save = routeParserEvent(makePrivateStyleChange('s', &.{ 1, 7, 1004 })).?;
+        try std.testing.expectEqual(@as(u8, 3), save.dec_mode_save.param_count);
+        try std.testing.expectEqual(@as(u16, 1), save.dec_mode_save.params[0]);
+        try std.testing.expectEqual(@as(u16, 7), save.dec_mode_save.params[1]);
+        try std.testing.expectEqual(@as(u16, 1004), save.dec_mode_save.params[2]);
+
+        const restore = routeParserEvent(makePrivateStyleChange('r', &.{ 1, 7, 1004 })).?;
+        try std.testing.expectEqual(@as(u8, 3), restore.dec_mode_restore.param_count);
+        try std.testing.expectEqual(@as(u16, 1004), restore.dec_mode_restore.params[2]);
+
+        const save_all = routeParserEvent(makePrivateStyleChange('s', &.{})).?;
+        try std.testing.expectEqual(@as(u8, 0), save_all.dec_mode_save.param_count);
+        const restore_all = routeParserEvent(makePrivateStyleChange('r', &.{})).?;
+        try std.testing.expectEqual(@as(u8, 0), restore_all.dec_mode_restore.param_count);
+
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 0, 0, 0)).?.erase_display_below);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 1, 0, 1)).?.erase_display_above);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 2, 0, 1)).?.erase_display_complete);
+        try std.testing.expect(!routeParserEvent(makeStyleChange('J', 3, 0, 1)).?.erase_display_scrollback);
+        try std.testing.expect(routeParserEvent(makeStyleChange('J', 5, 0, 1)) == null);
+        try std.testing.expectEqual(EraseMode.cursor_to_end, routeParserEvent(makeStyleChange('K', 0, 0, 0)).?.erase_line);
+        try std.testing.expectEqual(EraseMode.start_to_cursor, routeParserEvent(makeStyleChange('K', 1, 0, 1)).?.erase_line);
+        try std.testing.expectEqual(EraseMode.all, routeParserEvent(makeStyleChange('K', 2, 0, 1)).?.erase_line);
+        try std.testing.expect(routeParserEvent(makeStyleChange('K', 5, 0, 1)) == null);
+        try std.testing.expectEqual(@as(u16, 6), routeParserEvent(makeStyleChange('X', 6, 0, 1)).?.erase_chars);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('X', 0, 0, 0)).?.erase_chars);
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(makeStyleChangeWithParamAndIntermediate('@', 3, ' ')).?.shift_left_columns);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChangeWithIntermediate('A', ' ')).?.shift_right_columns);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('W', &.{5})).? == .reset_default_tab_stops);
+    }
+};
+
+comptime {
+    std.debug.assert(@sizeOf(CsiMappingOwnerTests) == 0);
+}
+
+const ReportRoutingOwnerTests = struct {
+    const ParserEvent = parser_mod.Event;
+    const csi_max_params = parser_mod.max_params;
+    const empty_params = @as([csi_max_params]i32, @splat(0));
+    const empty_separators = parser_mod.CsiSeparatorList.empty;
+    const empty_intermediates = @as([parser_mod.max_intermediates]u8, @splat(0));
+
+    fn makeStyleChange(comptime final: u8, comptime p0: i32, comptime p1: i32, comptime count: u8) ParserEvent {
+        const params = [_]i32{ p0, p1 } ++ @as([(csi_max_params - 2)]i32, @splat(0));
+        return ParserEvent{ .style_change = .{ .final = final, .params = params[0..], .separators = empty_separators, .param_count = count, .leader = 0, .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
+    }
+
+    fn makePrivateStyleChange(comptime final: u8, comptime params_in: []const i32) ParserEvent {
+        const params = comptime blk: {
+            var out = @as([csi_max_params]i32, @splat(0));
+            for (params_in, 0..) |value, index| out[index] = value;
+            break :blk out;
+        };
+        return ParserEvent{ .style_change = .{ .final = final, .params = params[0..], .separators = empty_separators, .param_count = @intCast(params_in.len), .leader = '?', .private = true, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
+    }
+
+    test "report mapping: DSR DECXCPR and DEC locator status map" {
+        try std.testing.expect(routeParserEvent(makeStyleChange('n', 5, 0, 1)).? == .device_status_report);
+        try std.testing.expect(routeParserEvent(makeStyleChange('n', 6, 0, 1)).? == .cursor_position_report);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('n', &.{6})).? == .dec_cursor_position_report);
+        try std.testing.expectEqual(@as(u16, 55), routeParserEvent(makePrivateStyleChange('n', &.{55})).?.dec_device_status_report);
+        try std.testing.expectEqual(@as(u16, 56), routeParserEvent(makePrivateStyleChange('n', &.{56})).?.dec_device_status_report);
+        try std.testing.expect(routeParserEvent(makePrivateStyleChange('n', &.{996})).? == .color_preference_query);
+    }
+
+    test "report mapping: device attributes and title reports" {
+        try std.testing.expect(routeParserEvent(makeStyleChange('c', 0, 0, 0)).? == .primary_device_attributes);
+        const da2 = ParserEvent{ .style_change = .{ .final = 'c', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = '>', .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
+        try std.testing.expect(routeParserEvent(da2).? == .secondary_device_attributes);
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 0;
+        const xtversion = ParserEvent{ .style_change = .{ .final = 'q', .params = params[0..], .separators = empty_separators, .param_count = 1, .leader = '>', .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
+        try std.testing.expect(routeParserEvent(xtversion).? == .xtversion);
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '#';
+        const xttitlepos = ParserEvent{ .style_change = .{ .final = 'S', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } };
+        try std.testing.expect(routeParserEvent(xttitlepos).? == .xttitlepos);
+        const da3 = ParserEvent{ .style_change = .{ .final = 'c', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = '=', .private = false, .intermediates = empty_intermediates[0..], .intermediates_len = 0 } };
+        try std.testing.expect(routeParserEvent(da3).? == .tertiary_device_attributes);
+    }
+
+    test "report mapping: checksum and report request families" {
+        var intermediates = @as([4]u8, @splat(0));
+        var params = @as([csi_max_params]i32, @splat(0));
+        intermediates[0] = '"';
+        try std.testing.expect(routeParserEvent(ParserEvent{ .style_change = .{ .final = 'v', .params = params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).? == .screen_extent_report);
+        intermediates[0] = '#';
+        params[0] = 3;
+        try std.testing.expectEqual(@as(u16, 3), routeParserEvent(ParserEvent{ .style_change = .{ .final = 'y', .params = params[0..], .separators = empty_separators, .param_count = 1, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).?.xtchecksum);
+        intermediates[0] = '*';
+        params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 7;
+        params[1] = 1;
+        params[2] = 2;
+        params[3] = 3;
+        params[4] = 4;
+        params[5] = 5;
+        const crc = routeParserEvent(ParserEvent{ .style_change = .{ .final = 'y', .params = params[0..], .separators = empty_separators, .param_count = 6, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).?.rect_checksum_request;
+        try std.testing.expectEqual(@as(u16, 7), crc.request_id);
+        try std.testing.expectEqual(@as(u16, 1), crc.page);
+        try std.testing.expectEqual(@as(u16, 1), routeParserEvent(makeStyleChange('x', 1, 0, 1)).?.parameters_report);
+        intermediates[0] = '#';
+        try std.testing.expect(routeParserEvent(ParserEvent{ .style_change = .{ .final = 'R', .params = empty_params[0..], .separators = empty_separators, .param_count = 0, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).? == .xtreportcolors);
+    }
+
+    test "report mapping: XTREPORTSGR maps selected graphic rendition report" {
+        var intermediates = @as([4]u8, @splat(0));
+        intermediates[0] = '#';
+        var params = @as([csi_max_params]i32, @splat(0));
+        params[0] = 1;
+        params[1] = 2;
+        params[2] = 3;
+        params[3] = 4;
+        const sgr = routeParserEvent(ParserEvent{ .style_change = .{ .final = '|', .params = params[0..], .separators = empty_separators, .param_count = 4, .leader = 0, .private = false, .intermediates = intermediates[0..], .intermediates_len = 1 } }).?.selected_graphic_rendition_report;
+        try std.testing.expectEqual(@as(u16, 0), sgr.top);
+        try std.testing.expectEqual(@as(u16, 1), sgr.left);
+        try std.testing.expectEqual(@as(?u16, 2), sgr.bottom);
+        try std.testing.expectEqual(@as(?u16, 3), sgr.right);
+    }
+};
+
+comptime {
+    std.debug.assert(@sizeOf(ReportRoutingOwnerTests) == 0);
+}
