@@ -571,7 +571,7 @@ test "OSC 52 reply bounds preserve query and prior pending output" {
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.replyClipboard(request.generation, "Howl"),
     );
     try std.testing.expectEqualStrings("p", terminal.consequenceHead().?.clipboard.selection);
@@ -1574,14 +1574,14 @@ test "OSC color set and query failure rolls back the complete command" {
     const before = terminal.presentation();
 
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.feed("\x1b]4;1;#010203;2;?\x1b\\"),
     );
     try std.testing.expectEqual(before, terminal.presentation());
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b]12;#010203;?\x1b\\"));
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
 }
 
@@ -1667,7 +1667,7 @@ test "kitty color stack owns indexed sequential bounded and report semantics" {
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[#R"));
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[#R"));
     try std.testing.expectEqual(fill.len, terminal.replyBytes().len);
     try std.testing.expectEqualSlices(u8, fill, terminal.replyBytes());
 }

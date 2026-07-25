@@ -4,6 +4,7 @@ const std = @import("std");
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
 const sixel = @import("sixel.zig");
+const replies = @import("replies.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -1631,13 +1632,13 @@ fn setEvents(state: *Locator, modes: []const u16) void {
 fn appendReportForRequest(
     state: *Locator,
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     param: u16,
 ) ApplyError!void {
     if (param > 1) return;
     if (state.mode == .disabled or state.last_row == null or state.last_col == null) {
-        try appendCsiReply(output, allocator, .terminal, "0&w");
+        try output.appendCsi(.terminal, "0&w");
         return;
     }
     try appendReport(
@@ -1654,8 +1655,8 @@ fn appendReportForRequest(
 
 // Appends the supported locator device-status reply for parameter 53.
 fn appendDeviceStatusReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     param: u16,
 ) ApplyError!void {
@@ -1664,7 +1665,7 @@ fn appendDeviceStatusReport(
         56 => std.fmt.bufPrint(encode_buf, "?57;1n", .{}) catch unreachable,
         else => return,
     };
-    try appendCsiReply(output, allocator, .terminal, text);
+    try output.appendCsi(.terminal, text);
 }
 
 // Updates representable locator coordinates and appends enabled reports.
@@ -1674,7 +1675,7 @@ fn appendDeviceStatusReport(
 fn handleMouseEvent(
     state: *Locator,
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     event: MouseEvent,
 ) ApplyError!void {
@@ -1717,8 +1718,8 @@ fn handleMouseEvent(
 
 fn appendReport(
     state: *Locator,
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     event_code: u16,
     buttons_down: u8,
@@ -1733,7 +1734,7 @@ fn appendReport(
         "{d};{d};{d};{d};0&w",
         .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
     ) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, text);
+    try output.appendCsi(.terminal, text);
     if (state.mode == .one_shot) state.mode = .disabled;
 }
 
@@ -1798,26 +1799,9 @@ const ClipboardHostReplyError = ApplyError || error{StaleClipboardRequest};
 const ApplyError = error{
     OutOfMemory,
     ConsequenceLimit,
+    ReplyLimit,
 };
 
-// Selects adaptive terminal replies or extension-mandated seven-bit framing.
-const ReplyProtocol = enum { terminal, kitty, iterm };
-
-// Names the C1 controls emitted by current terminal reply families.
-const ReplyControl = enum { csi, dcs, osc, st };
-
-// Owns bounded reply bytes and the terminal-selected C1 transmission form.
-const PendingOutput = struct {
-    bytes: std.ArrayList(u8),
-    eight_bit_controls: bool = false,
-
-    fn init() PendingOutput {
-        return .{ .bytes = .empty };
-    }
-};
-
-/// Accumulated replies await a host drain and stop at a bounded 64 KiB queue.
-pub const pending_output_max_bytes: u32 = 64 * 1024;
 /// OSC 52 is unchunked; retain at most the parser's 1 MiB clipboard packet.
 const clipboard_max_bytes: u32 = 1024 * 1024;
 /// One Kitty OSC 5522 packet follows the parser's encoded chunk boundary.
@@ -1828,7 +1812,7 @@ const clipboard_capacity: u8 = 8;
 const clipboard_selection_bytes_max: u8 = 12;
 /// One query reply fits regardless of selection length and 7-bit framing.
 const clipboard_reply_bytes_max: u32 =
-    ((pending_output_max_bytes - clipboard_selection_bytes_max - 8) / 4) * 3;
+    ((replies.max_bytes - clipboard_selection_bytes_max - 8) / 4) * 3;
 /// Bounds aggregate bytes retained across configuration, delegated transport, and host-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
 // Holds the nine-command Kitty family, three iTerm2 transports, and a bounded mixed-family burst.
@@ -2136,8 +2120,8 @@ comptime {
     std.debug.assert(clipboard_capacity > 0);
     std.debug.assert(@sizeOf(NotificationOwned) <= max_metadata_bytes + 16);
     std.debug.assert(@sizeOf(PointerShapeOwned) <= max_metadata_bytes + 24);
-    std.debug.assert(dcs_payload_max_bytes <= pending_output_max_bytes);
-    std.debug.assert(clipboard_reply_bytes_max < pending_output_max_bytes);
+    std.debug.assert(dcs_payload_max_bytes <= replies.max_bytes);
+    std.debug.assert(clipboard_reply_bytes_max < replies.max_bytes);
     std.debug.assert(hyperlink_target_max_count > 0);
 }
 
@@ -2209,7 +2193,7 @@ const ProtocolState = struct {
 
     allocator: std.mem.Allocator,
     colors: TerminalColorState = .{},
-    pending_output: PendingOutput,
+    reply_buffer: replies.Buffer,
     hyperlink_targets: std.ArrayList(HyperlinkTarget),
     consequence_generation: u64 = 0,
     clipboard_requests: [clipboard_capacity]ClipboardRequestOwned = undefined,
@@ -2267,7 +2251,7 @@ const ProtocolState = struct {
     fn init(allocator: std.mem.Allocator) ProtocolState {
         return .{
             .allocator = allocator,
-            .pending_output = PendingOutput.init(),
+            .reply_buffer = replies.Buffer.init(allocator),
             .hyperlink_targets = std.ArrayList(HyperlinkTarget).empty,
         };
     }
@@ -2314,7 +2298,7 @@ const ProtocolState = struct {
             const index = (@as(usize, self.string_payloads_start) + offset) % string_payload_capacity;
             self.allocator.free(self.string_payloads[index].payload);
         }
-        self.pending_output.bytes.deinit(self.allocator);
+        self.reply_buffer.deinit();
     }
 
     /// Reset host-observed state governed by terminal reset.
@@ -2326,15 +2310,11 @@ const ProtocolState = struct {
     }
 
     /// Borrow pending terminal reply bytes until the next ProtocolState mutation.
-    fn pendingOutput(self: *const ProtocolState) []const u8 {
-        return self.pending_output.bytes.items;
+    fn replyBytes(self: *const ProtocolState) []const u8 {
+        return self.reply_buffer.bytes();
     }
 
     /// Append already serialized host-owned bytes transactionally without framing reinterpretation.
-    fn appendPendingOutput(self: *ProtocolState, bytes: []const u8) ApplyError!void {
-        try appendOutput(&self.pending_output, self.allocator, bytes);
-    }
-
     /// Replace the bounded title transactionally and report whether its bytes changed.
     fn replaceTitle(self: *ProtocolState, title: []const u8) ApplyError!bool {
         return replaceMetadata(self, &self.current_title, title);
@@ -2897,7 +2877,7 @@ const ProtocolState = struct {
         if (request.generation != generation) return error.StaleClipboardRequest;
         if (request.protocol != .osc52 or request.kind != .query) return false;
         try appendClipboardQueryReply(
-            &self.pending_output,
+            &self.reply_buffer,
             self.allocator,
             request.selection,
             bytes,
@@ -3020,68 +3000,9 @@ fn replaceShellMarkAllocation(allocator: std.mem.Allocator) !void {
     try std.testing.expectEqualStrings("7", state.shell_mark.metadata);
 }
 
-// Appends a reply transactionally within the accumulated-output bound.
-fn appendOutput(output: *PendingOutput, allocator: std.mem.Allocator, bytes: []const u8) ApplyError!void {
-    try ensureAppendBound(byteCount(output.bytes.items), byteCount(bytes), pending_output_max_bytes);
-    try output.bytes.appendSlice(allocator, bytes);
-}
-
-// Appends one reply framing control through the sole 7-bit/8-bit decision.
-fn appendReplyControl(
-    output: *PendingOutput,
-    allocator: std.mem.Allocator,
-    protocol: ReplyProtocol,
-    control: ReplyControl,
-) ApplyError!void {
-    const eight_bit = protocol == .terminal and output.eight_bit_controls;
-    const bytes = if (eight_bit) switch (control) {
-        .csi => "\x9b",
-        .dcs => "\x90",
-        .osc => "\x9d",
-        .st => "\x9c",
-    } else switch (control) {
-        .csi => "\x1b[",
-        .dcs => "\x1bP",
-        .osc => "\x1b]",
-        .st => "\x1b\\",
-    };
-    try appendOutput(output, allocator, bytes);
-}
-
-// Appends one complete CSI reply transactionally.
-fn appendCsiReply(
-    output: *PendingOutput,
-    allocator: std.mem.Allocator,
-    protocol: ReplyProtocol,
-    payload: []const u8,
-) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, protocol, .csi);
-    try appendOutput(output, allocator, payload);
-}
-
-// Appends one complete DCS or OSC reply with a matching ST transactionally.
-fn appendStringReply(
-    output: *PendingOutput,
-    allocator: std.mem.Allocator,
-    protocol: ReplyProtocol,
-    control: enum { dcs, osc },
-    payload: []const u8,
-) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, protocol, switch (control) {
-        .dcs => .dcs,
-        .osc => .osc,
-    });
-    try appendOutput(output, allocator, payload);
-    try appendReplyControl(output, allocator, protocol, .st);
-}
-
 // Serializes one exact OSC 52 query result through the shared reply framing owner.
 fn appendClipboardQueryReply(
-    output: *PendingOutput,
+    output: *replies.Buffer,
     allocator: std.mem.Allocator,
     selection: []const u8,
     bytes: []const u8,
@@ -3092,7 +3013,7 @@ fn appendClipboardQueryReply(
         return error.ConsequenceLimit;
     const payload_len = std.math.add(usize, prefix_len, encoded_len) catch
         return error.ConsequenceLimit;
-    if (payload_len > pending_output_max_bytes) return error.ConsequenceLimit;
+    if (payload_len > replies.max_bytes) return error.ReplyLimit;
     const payload = try allocator.alloc(u8, payload_len);
     defer allocator.free(payload);
     @memcpy(payload[0..3], "52;");
@@ -3100,18 +3021,7 @@ fn appendClipboardQueryReply(
     payload[prefix_len - 1] = ';';
     const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
     std.debug.assert(encoded.len == encoded_len);
-    try appendStringReply(output, allocator, .terminal, .osc, payload);
-}
-
-// Restores drained reply bytes ahead of current output without partial mutation.
-fn restorePendingOutput(output: *PendingOutput, len: u32) void {
-    std.debug.assert(len <= byteCount(output.bytes.items));
-    output.bytes.items.len = len;
-}
-
-fn ensureAppendBound(current_len: u32, append_len: u32, max_len: u32) ApplyError!void {
-    const next_len = std.math.add(u32, current_len, append_len) catch return error.ConsequenceLimit;
-    try ensureRetainedBound(next_len, max_len);
+    try output.appendString(.terminal, .osc, payload);
 }
 
 fn ensureRetainedBound(len: u32, max_len: u32) ApplyError!void {
@@ -3419,11 +3329,11 @@ fn replyClipboardAllocation(allocator: std.mem.Allocator) !void {
         const request = state.pendingClipboardRequest().?;
         try std.testing.expect(request.kind == .query);
         try std.testing.expectEqualStrings("c", request.selection);
-        try std.testing.expectEqualStrings("", state.pendingOutput());
+        try std.testing.expectEqualStrings("", state.replyBytes());
         return failure;
     };
     try std.testing.expect(replied);
-    try std.testing.expectEqualStrings("\x1b]52;c;SG93bA==\x1b\\", state.pendingOutput());
+    try std.testing.expectEqualStrings("\x1b]52;c;SG93bA==\x1b\\", state.replyBytes());
     try std.testing.expectEqual(@as(?ClipboardRequestView, null), state.pendingClipboardRequest());
 }
 
@@ -3483,21 +3393,21 @@ test "retained host consequences enforce owner-specific boundaries" {
 
 test "pending output enforces exact accumulated boundary" {
     const allocator = std.testing.allocator;
-    var output = PendingOutput.init();
-    defer output.bytes.deinit(allocator);
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
 
-    const bytes = try allocator.alloc(u8, pending_output_max_bytes + 1);
+    const bytes = try allocator.alloc(u8, replies.max_bytes + 1);
     defer allocator.free(bytes);
     @memset(bytes, 'o');
 
-    try appendOutput(&output, allocator, bytes[0 .. pending_output_max_bytes - 1]);
-    try appendOutput(&output, allocator, bytes[pending_output_max_bytes - 1 .. pending_output_max_bytes]);
-    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.bytes.items));
+    try output.append(bytes[0 .. replies.max_bytes - 1]);
+    try output.append(bytes[replies.max_bytes - 1 .. replies.max_bytes]);
+    try std.testing.expectEqual(replies.max_bytes, byteCount(output.bytes()));
     try std.testing.expectError(
-        error.ConsequenceLimit,
-        appendOutput(&output, allocator, bytes[pending_output_max_bytes..]),
+        error.ReplyLimit,
+        output.append(bytes[replies.max_bytes..]),
     );
-    try std.testing.expectEqual(pending_output_max_bytes, byteCount(output.bytes.items));
+    try std.testing.expectEqual(replies.max_bytes, byteCount(output.bytes()));
 }
 
 fn drainClipboardAllocation(result_allocator: std.mem.Allocator) !void {
@@ -3738,7 +3648,7 @@ fn popState(stack: *KittyColorStack, colors: *KittyColorState, index: u16) bool 
 fn handleKittyControl(
     allocator: std.mem.Allocator,
     colors: *KittyColorState,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     payload: []const u8,
 ) ApplyError!void {
     var parts = std.mem.splitScalar(u8, payload, ';');
@@ -3761,24 +3671,24 @@ fn handleKittyControl(
 }
 fn appendKittyQueryReply(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     key: []const u8,
     colors: KittyColorState,
 ) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .kitty, .osc);
-    try appendOutput(output, allocator, "21;");
-    try appendOutput(output, allocator, key);
-    try appendOutput(output, allocator, "=");
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.kitty, .osc);
+    try output.append("21;");
+    try output.append(key);
+    try output.append("=");
     if (colorForKey(colors, key)) |color| {
         try appendColorOsc(allocator, output, color);
     } else if (isKnownColorKey(key)) {
         // Empty value means dynamic/undefined for Kitty color control.
     } else {
-        try appendOutput(output, allocator, "?");
+        try output.append("?");
     }
-    try appendReplyControl(output, allocator, .kitty, .st);
+    try output.appendControl(.kitty, .st);
 }
 
 const key_report_max_bytes = 16;
@@ -3835,13 +3745,13 @@ const KittyKeyStack = struct {
     /// Appends the current keyboard flags as one bounded Kitty reply.
     pub fn appendReport(
         self: *const KittyKeyStack,
-        allocator: std.mem.Allocator,
-        output: *PendingOutput,
+        _: std.mem.Allocator,
+        output: *replies.Buffer,
         encode_buf: []u8,
     ) ApplyError!void {
         std.debug.assert(encode_buf.len >= key_report_max_bytes);
         const payload = std.fmt.bufPrint(encode_buf, "?{d}u", .{self.flags}) catch unreachable;
-        try appendCsiReply(output, allocator, .kitty, payload);
+        try output.appendCsi(.kitty, payload);
     }
 };
 
@@ -5936,31 +5846,31 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .color_preference_query => try vt.protocol.retainColorPreferenceQuery(),
         .color_control => |cmd| {
             const before = vt.protocol.colors;
-            const output_before = byteCount(vt.protocol.pending_output.bytes.items);
+            const output_before = byteCount(vt.protocol.reply_buffer.bytes());
             errdefer {
                 vt.protocol.colors = before;
-                restorePendingOutput(&vt.protocol.pending_output, output_before);
+                vt.protocol.reply_buffer.truncate(output_before);
             }
             switch (cmd.command) {
-                21 => try handleKittyControl(allocator, &vt.protocol.colors, &vt.protocol.pending_output, cmd.payload),
+                21 => try handleKittyControl(allocator, &vt.protocol.colors, &vt.protocol.reply_buffer, cmd.payload),
                 4 => try handleXtermPaletteControl(
                     allocator,
                     &vt.protocol.colors,
-                    &vt.protocol.pending_output,
+                    &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 5 => try handleXtermSpecialPaletteControl(
                     allocator,
                     &vt.protocol.colors,
-                    &vt.protocol.pending_output,
+                    &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.payload,
                 ),
                 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 => try handleXtermDynamicColor(
                     allocator,
                     &vt.protocol.colors,
-                    &vt.protocol.pending_output,
+                    &vt.protocol.reply_buffer,
                     scratch.buf[0..],
                     cmd.command,
                     cmd.payload,
@@ -5975,7 +5885,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             }
             const colors_changed = !std.meta.eql(before, vt.protocol.colors);
 
-            return colors_changed or output_before != vt.protocol.pending_output.bytes.items.len;
+            return colors_changed or output_before != vt.protocol.reply_buffer.bytes().len;
         },
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.protocol.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
@@ -5989,7 +5899,7 @@ fn applyHostEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
         .locator_request => |param| try appendReportForRequest(
             &vt.protocol.locator,
             allocator,
-            &vt.protocol.pending_output,
+            &vt.protocol.reply_buffer,
             scratch.buf[0..],
             param,
         ),
@@ -6023,7 +5933,7 @@ const RectChecksumRequest = struct {
 fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     var scratch: Scratch = .{};
     const allocator = vt.allocator;
-    const pending_output = &vt.protocol.pending_output;
+    const reply_buffer = &vt.protocol.reply_buffer;
     const encode_buf = scratch.buf[0..];
     const active = vt.screen_state.activeConst();
     const render_view = CursorReportView{
@@ -6074,77 +5984,75 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) ApplyError!void {
     switch (event) {
         .ansi_mode_query => |mode| try appendAnsiModeReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             mode,
             ansiModeStateForView(ansi_modes, mode),
         ),
         .modify_other_keys_query => try appendModifyOtherKeysReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             vt.modes.modify_other_keys,
         ),
         .key_format_query => |resource| if (isKeyFormatResource(resource))
             try appendKeyFormatReport(
                 allocator,
-                pending_output,
+                reply_buffer,
                 encode_buf,
                 resource,
                 vt.modes.key_format[resource],
             ),
         .dec_mode_query => |mode| try appendDecModeReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             mode,
             decModeStateForView(dec_modes, mode),
         ),
-        .dcs_request_status => |request| try appendDecrqssReply(allocator, pending_output, encode_buf, active, request),
-        .dcs_request_termcap => |request| try appendTermcapReports(allocator, pending_output, request),
-        .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, pending_output, request),
-        .device_status_report => try appendCsiReply(pending_output, allocator, .terminal, "0n"),
-        .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, pending_output, encode_buf, param),
-        .cursor_position_report => try appendCursorPositionReport(allocator, pending_output, encode_buf, render_view),
+        .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
+        .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
+        .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, reply_buffer, request),
+        .device_status_report => try reply_buffer.appendCsi(.terminal, "0n"),
+        .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, reply_buffer, encode_buf, param),
+        .cursor_position_report => try appendCursorPositionReport(allocator, reply_buffer, encode_buf, render_view),
         .dec_cursor_position_report => try appendDecCursorPositionReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             render_view,
         ),
         .primary_device_attributes => {
             const payload = std.fmt.bufPrint(encode_buf, "?{d};22c", .{dec_conformance_level}) catch unreachable;
-            try appendCsiReply(pending_output, allocator, .terminal, payload);
+            try reply_buffer.appendCsi(.terminal, payload);
         },
-        .secondary_device_attributes => try appendCsiReply(pending_output, allocator, .terminal, ">1;10;0c"),
-        .tertiary_device_attributes => try appendStringReply(
-            pending_output,
-            allocator,
+        .secondary_device_attributes => try reply_buffer.appendCsi(.terminal, ">1;10;0c"),
+        .tertiary_device_attributes => try reply_buffer.appendString(
             .terminal,
             .dcs,
             "!|00000000",
         ),
-        .xtversion => try appendXtVersionReport(allocator, pending_output),
-        .xttitlepos => try appendTitleStackPositionReport(allocator, pending_output, encode_buf, 0, 0),
+        .xtversion => try appendXtVersionReport(allocator, reply_buffer),
+        .xttitlepos => try appendTitleStackPositionReport(allocator, reply_buffer, encode_buf, 0, 0),
         .xtchecksum => |flags| vt.xtchecksum_flags = flags,
         .rect_checksum_request => |req| try appendRectChecksumReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             .{ .request_id = req.request_id },
             computeRectChecksum(active, vt.xtchecksum_flags, req.page, req.area),
         ),
         .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(
             allocator,
-            pending_output,
+            reply_buffer,
             encode_buf,
             active,
             area,
         ),
-        .screen_extent_report => try appendScreenExtentReport(allocator, pending_output, encode_buf, render_view),
-        .parameters_report => |kind| try appendTerminalParametersReport(allocator, pending_output, encode_buf, kind),
+        .screen_extent_report => try appendScreenExtentReport(allocator, reply_buffer, encode_buf, render_view),
+        .parameters_report => |kind| try appendTerminalParametersReport(allocator, reply_buffer, encode_buf, kind),
         .window_title_report => try appendWindowTitleReport(vt),
-        .xtreportcolors => try appendColorStackReport(allocator, pending_output, encode_buf, &vt.kitty.color_stack),
+        .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.kitty.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
         else => unreachable,
     }
@@ -6159,13 +6067,13 @@ fn applyTitleStack(host: *ProtocolState, command: @FieldType(SemanticEvent, "tit
 }
 
 fn appendWindowTitleReport(vt: *Terminal) ApplyError!void {
-    const output = &vt.protocol.pending_output;
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, vt.allocator, .iterm, .osc);
-    try appendOutput(output, vt.allocator, "l");
-    if (vt.protocol.current_title) |title| try appendOutput(output, vt.allocator, title);
-    try appendReplyControl(output, vt.allocator, .iterm, .st);
+    const output = &vt.protocol.reply_buffer;
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.iterm, .osc);
+    try output.append("l");
+    if (vt.protocol.current_title) |title| try output.append(title);
+    try output.appendControl(.iterm, .st);
 }
 
 fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!bool {
@@ -6184,7 +6092,7 @@ fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) ApplyError!b
             break :blk std.fmt.bufPrint(scratch, "4;{d};{d}t", .{ height, width }) catch unreachable;
         },
     };
-    try appendCsiReply(&vt.protocol.pending_output, vt.allocator, .terminal, payload);
+    try vt.protocol.reply_buffer.appendCsi(.terminal, payload);
     return true;
 }
 
@@ -6197,33 +6105,33 @@ fn appendItermCellSizeReport(vt: *Terminal, scratch: []u8) ApplyError!void {
         "1337;ReportCellSize={d};{d};1",
         .{ cell.height, cell.width },
     ) catch unreachable;
-    try appendStringReply(&vt.protocol.pending_output, vt.allocator, .iterm, .osc, payload);
+    try vt.protocol.reply_buffer.appendString(.iterm, .osc, payload);
 }
 
 fn appendDecrqssReply(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
     request: []const u8,
 ) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .dcs);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .dcs);
     if (std.mem.eql(u8, request, "m")) {
-        try appendOutput(output, allocator, "1$r");
+        try output.append("1$r");
         try appendSgrAttrs(allocator, output, encode_buf, currentAttrs(screen));
-        try appendReplyControl(output, allocator, .terminal, .st);
+        try output.appendControl(.terminal, .st);
         return;
     }
     if (decrqssPayload(encode_buf, screen, request)) |payload| {
-        try appendOutput(output, allocator, "1$r");
-        try appendOutput(output, allocator, payload);
-        try appendReplyControl(output, allocator, .terminal, .st);
+        try output.append("1$r");
+        try output.append(payload);
+        try output.appendControl(.terminal, .st);
         return;
     }
-    try appendOutput(output, allocator, "0$r");
-    try appendReplyControl(output, allocator, .terminal, .st);
+    try output.append("0$r");
+    try output.appendControl(.terminal, .st);
 }
 
 // Howl identifies as a VT220-class terminal in DA1 and DECRQSS DECSCL.
@@ -6267,28 +6175,28 @@ fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) 
 }
 
 fn appendModifyOtherKeysReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     value: i8,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, ">4;{d}m", .{value}) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendKeyFormatReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     resource: u8,
     value: u16,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, ">{d};{d}f", .{ resource, value }) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
-fn appendXtVersionReport(allocator: std.mem.Allocator, output: *PendingOutput) ApplyError!void {
-    try appendStringReply(output, allocator, .terminal, .dcs, ">|" ++ xtversion_text);
+fn appendXtVersionReport(_: std.mem.Allocator, output: *replies.Buffer) ApplyError!void {
+    try output.appendString(.terminal, .dcs, ">|" ++ xtversion_text);
 }
 
 const TermcapValue = union(enum) {
@@ -6316,26 +6224,26 @@ fn hexNameEquals(encoded: []const u8, name: []const u8) bool {
 }
 
 fn appendTermcapReports(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     request: []const u8,
 ) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
     var names = std.mem.splitScalar(u8, request, ';');
     while (names.next()) |encoded_name| {
-        try appendReplyControl(output, allocator, .terminal, .dcs);
+        try output.appendControl(.terminal, .dcs);
         const value = termcapValue(encoded_name);
-        try appendOutput(output, allocator, if (value == null) "0+r" else "1+r");
-        try appendOutput(output, allocator, encoded_name);
+        try output.append(if (value == null) "0+r" else "1+r");
+        try output.append(encoded_name);
         if (value) |known| switch (known) {
             .flag => {},
             .encoded => |encoded_value| {
-                try appendOutput(output, allocator, "=");
-                try appendOutput(output, allocator, encoded_value);
+                try output.append("=");
+                try output.append(encoded_value);
             },
         };
-        try appendReplyControl(output, allocator, .terminal, .st);
+        try output.appendControl(.terminal, .st);
     }
 }
 
@@ -6348,45 +6256,45 @@ test "XTGETTCAP reply allocation failure rolls back the complete ordered respons
 }
 
 fn appendTermcapReportsAllocation(allocator: std.mem.Allocator) !void {
-    var output = PendingOutput.init();
-    defer output.bytes.deinit(allocator);
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
     appendTermcapReports(allocator, &output, "436F;5463;626F677573") catch |failure| {
-        try std.testing.expectEqual(@as(usize, 0), output.bytes.items.len);
+        try std.testing.expectEqual(@as(usize, 0), output.bytes().len);
         return failure;
     };
     try std.testing.expectEqualStrings(
         "\x1bP1+r436F=323536\x1b\\\x1bP1+r5463\x1b\\\x1bP0+r626F677573\x1b\\",
-        output.bytes.items,
+        output.bytes(),
     );
 }
 
 fn appendResourceInvalidReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     request: []const u8,
 ) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .dcs);
-    try appendOutput(output, allocator, "0+R");
-    try appendOutput(output, allocator, request);
-    try appendReplyControl(output, allocator, .terminal, .st);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .dcs);
+    try output.append("0+R");
+    try output.append(request);
+    try output.appendControl(.terminal, .st);
 }
 
 fn appendTitleStackPositionReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     current: u16,
     max: u16,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#S", .{ current, max }) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendCursorPositionReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
@@ -6397,12 +6305,12 @@ fn appendCursorPositionReport(
         "{d};{d}R",
         .{ row, col },
     ) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendDecCursorPositionReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
@@ -6413,7 +6321,7 @@ fn appendDecCursorPositionReport(
         "?{d};{d}R",
         .{ row, col },
     ) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 // A restored cursor may precede current margins; relative reports clamp that
@@ -6429,114 +6337,114 @@ test "cursor report coordinate saturates origin and preserves one-based u16 exte
 }
 
 fn appendDecModeReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     mode: u16,
     state: u8,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, "?{d};{d}$y", .{ mode, state }) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendAnsiModeReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     mode: u16,
     state: u8,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}$y", .{ mode, state }) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendColorStackReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     stack: *const KittyColorStack,
 ) ApplyError!void {
     const index = if (stack.len == 0) 0 else stack.len - 1;
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
-    try appendCsiReply(output, allocator, .kitty, payload);
+    try output.appendCsi(.kitty, payload);
 }
 
 fn appendTabStopReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
 ) ApplyError!void {
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .dcs);
-    try appendOutput(output, allocator, "2$u");
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .dcs);
+    try output.append("2$u");
     var first = true;
     var col: u16 = 0;
     while (col < screen.cols) : (col += 1) {
         if (!screen.tabStopAt(col)) continue;
-        if (!first) try appendOutput(output, allocator, "/");
+        if (!first) try output.append("/");
         first = false;
         const text = std.fmt.bufPrint(encode_buf, "{d}", .{col + 1}) catch unreachable;
-        try appendOutput(output, allocator, text);
+        try output.append(text);
     }
-    try appendReplyControl(output, allocator, .terminal, .st);
+    try output.appendControl(.terminal, .st);
 }
 
 fn appendScreenExtentReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     render_view: CursorReportView,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d};1;1;1\"w", .{ render_view.rows, render_view.cols }) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendTerminalParametersReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     kind: u16,
 ) ApplyError!void {
     if (kind > 1) return;
     const payload = std.fmt.bufPrint(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2}) catch unreachable;
-    try appendCsiReply(output, allocator, .terminal, payload);
+    try output.appendCsi(.terminal, payload);
 }
 
 fn appendRectChecksumReport(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     encode_buf: []u8,
     req: RectChecksumRequest,
     checksum: u16,
 ) ApplyError!void {
     const payload = std.fmt.bufPrint(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum }) catch unreachable;
-    try appendStringReply(output, allocator, .terminal, .dcs, payload);
+    try output.appendString(.terminal, .dcs, payload);
 }
 
 fn appendSelectedGraphicRenditionReport(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     screen: *const Screen,
     area: RectArea,
 ) ApplyError!void {
     const common = commonAttrsForRect(screen, area) orelse {
-        try appendCsiReply(output, allocator, .terminal, "0m");
+        try output.appendCsi(.terminal, "0m");
         return;
     };
 
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .csi);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .csi);
     try appendSgrAttrs(allocator, output, encode_buf, common);
 }
 
 // Appends one complete SGR parameter payload for retained terminal attributes.
 fn appendSgrAttrs(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     attrs: CommonAttrs,
 ) ApplyError!void {
@@ -6564,7 +6472,7 @@ fn appendSgrAttrs(
         .raised => try appendSgrParam(allocator, output, &first, "73"),
         .lowered => try appendSgrParam(allocator, output, &first, "74"),
     }
-    try appendOutput(output, allocator, "m");
+    try output.append("m");
 }
 
 fn computeRectChecksum(screen: *const Screen, xtchecksum_flags: u16, page: u16, area: RectArea) u16 {
@@ -6682,14 +6590,14 @@ fn commonAttrsForRect(screen: *const Screen, area: RectArea) ?CommonAttrs {
 }
 
 fn appendSgrParam(
-    allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    _: std.mem.Allocator,
+    output: *replies.Buffer,
     first: *bool,
     text: []const u8,
 ) ApplyError!void {
-    if (!first.*) try appendOutput(output, allocator, ";");
+    if (!first.*) try output.append(";");
     first.* = false;
-    try appendOutput(output, allocator, text);
+    try output.append(text);
 }
 
 fn underlineStyleParam(style: Screen.UnderlineStyle) []const u8 {
@@ -6704,7 +6612,7 @@ fn underlineStyleParam(style: Screen.UnderlineStyle) []const u8 {
 
 fn appendColorParam(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     first: *bool,
     is_fg: bool,
@@ -6733,7 +6641,7 @@ fn appendColorParam(
 
 fn appendExtendedColorParam(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     first: *bool,
     prefix: u8,
@@ -6788,40 +6696,40 @@ test "DECRQSS reply allocation failure preserves prior pending output" {
 }
 
 fn appendDecrqssReplyAllocation(allocator: std.mem.Allocator) !void {
-    var output = PendingOutput.init();
-    defer output.bytes.deinit(allocator);
-    try appendOutput(&output, allocator, "kept");
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
+    try output.append("kept");
 
     const screen = Screen.init(30, 80);
     var encode_buf: [terminal_report_max_bytes]u8 = undefined;
     appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t") catch |failure| {
-        try std.testing.expectEqualStrings("kept", output.bytes.items);
+        try std.testing.expectEqualStrings("kept", output.bytes());
         return failure;
     };
-    try std.testing.expectEqualStrings("kept\x1bP1$r30t\x1b\\", output.bytes.items);
+    try std.testing.expectEqualStrings("kept\x1bP1$r30t\x1b\\", output.bytes());
 }
 
 test "DECRQSS reply capacity failure preserves the complete prior output" {
     const allocator = std.testing.allocator;
-    var output = PendingOutput.init();
-    defer output.bytes.deinit(allocator);
-    const retained = try allocator.alloc(u8, pending_output_max_bytes - 1);
+    var output = replies.Buffer.init(allocator);
+    defer output.deinit();
+    const retained = try allocator.alloc(u8, replies.max_bytes - 1);
     defer allocator.free(retained);
     @memset(retained, 'k');
-    try appendOutput(&output, allocator, retained);
+    try output.append(retained);
 
     const screen = Screen.init(30, 80);
     var encode_buf: [terminal_report_max_bytes]u8 = undefined;
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t"),
     );
-    try std.testing.expectEqualSlices(u8, retained, output.bytes.items);
+    try std.testing.expectEqualSlices(u8, retained, output.bytes());
 }
 
 test "cursor position report payload names semantic cursor position" {
-    var output = PendingOutput.init();
-    defer output.bytes.deinit(std.testing.allocator);
+    var output = replies.Buffer.init(std.testing.allocator);
+    defer output.deinit();
     var encode_buf: [64]u8 = undefined;
 
     try appendCursorPositionReport(std.testing.allocator, &output, encode_buf[0..], .{
@@ -6830,7 +6738,7 @@ test "cursor position report payload names semantic cursor position" {
         .cursor_row = 2,
         .cursor_col = 4,
     });
-    try std.testing.expectEqualStrings("\x1b[3;5R", output.bytes.items);
+    try std.testing.expectEqualStrings("\x1b[3;5R", output.bytes());
 }
 
 const Rgb = Screen.Rgb;
@@ -6882,7 +6790,7 @@ const SpecialPaletteKey = enum(u3) {
 fn handleXtermPaletteControl(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
 ) ApplyError!void {
@@ -6892,12 +6800,12 @@ fn handleXtermPaletteControl(
         const idx = std.fmt.parseUnsigned(u16, idx_text, 10) catch continue;
         if (std.mem.eql(u8, value, "?")) {
             const text = std.fmt.bufPrint(encode_buf, "4;{d};", .{idx}) catch unreachable;
-            const start = byteCount(output.bytes.items);
-            errdefer restorePendingOutput(output, start);
-            try appendReplyControl(output, allocator, .terminal, .osc);
-            try appendOutput(output, allocator, text);
+            const start = byteCount(output.bytes());
+            errdefer output.truncate(start);
+            try output.appendControl(.terminal, .osc);
+            try output.append(text);
             if (paletteTargetColor(colors.*, idx)) |color| try appendColorOsc(allocator, output, color);
-            try appendReplyControl(output, allocator, .terminal, .st);
+            try output.appendControl(.terminal, .st);
         } else if (parseColor(value)) |color| {
             setPaletteTarget(colors, idx, color);
         }
@@ -6908,7 +6816,7 @@ fn handleXtermPaletteControl(
 fn handleXtermSpecialPaletteControl(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     payload: []const u8,
 ) ApplyError!void {
@@ -6918,12 +6826,12 @@ fn handleXtermSpecialPaletteControl(
         const idx = std.fmt.parseUnsigned(u3, idx_text, 10) catch continue;
         const text = std.fmt.bufPrint(encode_buf, "5;{d};", .{idx}) catch unreachable;
         if (std.mem.eql(u8, value, "?")) {
-            const start = byteCount(output.bytes.items);
-            errdefer restorePendingOutput(output, start);
-            try appendReplyControl(output, allocator, .terminal, .osc);
-            try appendOutput(output, allocator, text);
+            const start = byteCount(output.bytes());
+            errdefer output.truncate(start);
+            try output.appendControl(.terminal, .osc);
+            try output.append(text);
             if (colors.special_palette[idx]) |color| try appendColorOsc(allocator, output, color);
-            try appendReplyControl(output, allocator, .terminal, .st);
+            try output.appendControl(.terminal, .st);
         } else if (parseColor(value)) |color| {
             colors.special_palette[idx] = color;
         }
@@ -6934,7 +6842,7 @@ fn handleXtermSpecialPaletteControl(
 fn handleXtermDynamicColor(
     allocator: std.mem.Allocator,
     colors: *TerminalColorState,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     command: u16,
     payload: []const u8,
@@ -7289,10 +7197,10 @@ fn resetDynamicColor(colors: *TerminalColorState, key: DynamicKey) void {
 }
 
 // Appends one bounded rgb:RRRR/GGGG/BBBB OSC color reply.
-fn appendColorOsc(allocator: std.mem.Allocator, output: *PendingOutput, color: Rgb) ApplyError!void {
+fn appendColorOsc(_: std.mem.Allocator, output: *replies.Buffer, color: Rgb) ApplyError!void {
     var buf: [32]u8 = undefined;
     const text = formatColorOsc(buf[0..], color);
-    try appendOutput(output, allocator, text);
+    try output.append(text);
 }
 
 // Parses and applies a recognized Kitty color key, ignoring invalid values.
@@ -7326,7 +7234,7 @@ fn resetColorKey(colors: *TerminalColorState, key: []const u8) void {
 
 fn appendXtermSpecialColorReply(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     colors: TerminalColorState,
     key: SpecialKey,
@@ -7344,28 +7252,28 @@ fn appendXtermSpecialColorReply(
         else => colors.foreground,
     };
     const text = std.fmt.bufPrint(encode_buf, "{d};", .{osc}) catch unreachable;
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .osc);
-    try appendOutput(output, allocator, text);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .osc);
+    try output.append(text);
     try appendColorOsc(allocator, output, color);
-    try appendReplyControl(output, allocator, .terminal, .st);
+    try output.appendControl(.terminal, .st);
 }
 
 fn appendXtermDynamicColorReply(
     allocator: std.mem.Allocator,
-    output: *PendingOutput,
+    output: *replies.Buffer,
     encode_buf: []u8,
     colors: TerminalColorState,
     key: DynamicKey,
 ) ApplyError!void {
     const text = std.fmt.bufPrint(encode_buf, "{d};", .{dynamicCommandForKey(key)}) catch unreachable;
-    const start = byteCount(output.bytes.items);
-    errdefer restorePendingOutput(output, start);
-    try appendReplyControl(output, allocator, .terminal, .osc);
-    try appendOutput(output, allocator, text);
+    const start = byteCount(output.bytes());
+    errdefer output.truncate(start);
+    try output.appendControl(.terminal, .osc);
+    try output.append(text);
     if (dynamicColor(colors, key)) |color| try appendColorOsc(allocator, output, color);
-    try appendReplyControl(output, allocator, .terminal, .st);
+    try output.appendControl(.terminal, .st);
 }
 
 fn setSpecialColor(colors: *TerminalColorState, key: SpecialKey, color: Rgb) void {
@@ -7539,7 +7447,7 @@ fn applyKittyEvent(vt: *Terminal, event: SemanticEvent) ApplyError!bool {
             return active_screen.keyboard.set(req.flags, req.mode);
         },
         .kitty_keyboard_query => {
-            try active_screen_const.keyboard.appendReport(allocator, &vt.protocol.pending_output, scratch.buf[0..]);
+            try active_screen_const.keyboard.appendReport(allocator, &vt.protocol.reply_buffer, scratch.buf[0..]);
             return true;
         },
         .kitty_keyboard_push => |flags| {
@@ -8151,6 +8059,7 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
 const FeedError = error{
     ConsequenceLimit,
     OutOfMemory,
+    ReplyLimit,
     ParsedEventLimit,
     StringControlLimit,
 };
@@ -8698,10 +8607,10 @@ fn discardedStringControl() EventEffect {
 fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!bool {
     const response_reserve: usize = 96;
     if (graphics_mod.mayRespond(packet)) {
-        if (terminal.protocol.pending_output.bytes.items.len >
-            pending_output_max_bytes - response_reserve)
-            return error.ConsequenceLimit;
-        try terminal.protocol.pending_output.bytes.ensureUnusedCapacity(terminal.allocator, response_reserve);
+        if (terminal.protocol.reply_buffer.bytes().len >
+            replies.max_bytes - response_reserve)
+            return error.ReplyLimit;
+        try terminal.protocol.reply_buffer.ensureUnusedCapacity(response_reserve);
     }
     const active = terminal.screen_state.activeConst();
     const bank: graphics_mod.Bank = if (terminal.screen_state.alt_active) .alternate else .primary;
@@ -8723,7 +8632,7 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
         result.response_number != null or result.response_frame != null;
     const suppressed = result.quiet == 2 or (result.quiet == 1 and result.failure == null);
     if (respond and !suppressed) {
-        try appendOutput(&terminal.protocol.pending_output, terminal.allocator, "\x1b_G");
+        try terminal.protocol.reply_buffer.append("\x1b_G");
         var metadata: [48]u8 = undefined;
         if (result.response_id) |id| {
             const id_bytes = if (result.response_number) |number|
@@ -8735,21 +8644,19 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) ApplyError!
                 std.fmt.bufPrint(&metadata, "i={d},r={d};", .{ id, frame_number })
             else
                 std.fmt.bufPrint(&metadata, "i={d};", .{id});
-            const written = id_bytes catch return error.ConsequenceLimit;
-            try appendOutput(&terminal.protocol.pending_output, terminal.allocator, written);
+            const written = id_bytes catch return error.ReplyLimit;
+            try terminal.protocol.reply_buffer.append(written);
         } else if (result.response_number) |number| {
             const number_bytes = std.fmt.bufPrint(&metadata, "I={d};", .{number}) catch
-                return error.ConsequenceLimit;
-            try appendOutput(&terminal.protocol.pending_output, terminal.allocator, number_bytes);
+                return error.ReplyLimit;
+            try terminal.protocol.reply_buffer.append(number_bytes);
         } else {
-            try appendOutput(&terminal.protocol.pending_output, terminal.allocator, ";");
+            try terminal.protocol.reply_buffer.append(";");
         }
-        try appendOutput(
-            &terminal.protocol.pending_output,
-            terminal.allocator,
+        try terminal.protocol.reply_buffer.append(
             if (result.failure) |failure| failure.bytes() else "OK",
         );
-        try appendOutput(&terminal.protocol.pending_output, terminal.allocator, "\x1b\\");
+        try terminal.protocol.reply_buffer.append("\x1b\\");
     }
 
     return result.changed or (respond and !suppressed);
@@ -9163,7 +9070,7 @@ pub const Terminal = struct {
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ConsequenceLimit } || std.mem.Allocator.Error;
+    pub const ResizeError = error{ InvalidDimensions, ConsequenceLimit, ReplyLimit } || std.mem.Allocator.Error;
     /// Reports a zero cell-pixel dimension before any screen mutation.
     pub const CellPixelSizeError = error{InvalidDimensions};
     /// Copies one nonzero host-provided terminal cell size in logical pixels.
@@ -9189,7 +9096,7 @@ pub const Terminal = struct {
     /// Exposes one typed host-to-child Kitty OSC 72 event.
     pub const DragDropEvent = DragDropEventValue;
     /// Reports bounded OSC 72 event construction failure.
-    pub const DragDropEventError = error{ OutOfMemory, ConsequenceLimit, InvalidArgument };
+    pub const DragDropEventError = error{ OutOfMemory, ConsequenceLimit, ReplyLimit, InvalidArgument };
     /// Exposes the typed host-input vocabulary accepted by encodeInput.
     pub const InputEvent = Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -9204,7 +9111,7 @@ pub const Terminal = struct {
     pub const InputError = PasteError || ApplyError ||
         error{ InvalidUtf8, InvalidText, KeyTextLimit };
     /// Reports stale identity, allocation, or bounded reply saturation without consuming a clipboard query.
-    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, StaleClipboardRequest };
+    pub const ClipboardReplyError = error{ OutOfMemory, ConsequenceLimit, ReplyLimit, StaleClipboardRequest };
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
     /// Reports stale identity, allocation, or bounded transfer saturation for one Kitty clipboard packet.
@@ -9535,8 +9442,8 @@ pub const Terminal = struct {
     /// failure leave both screens and terminal semantic identity unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
         try validateDimensions(rows, cols);
-        const output_before = byteCount(self.protocol.pending_output.bytes.items);
-        errdefer restorePendingOutput(&self.protocol.pending_output, output_before);
+        const output_before = byteCount(self.protocol.reply_buffer.bytes());
+        errdefer self.protocol.reply_buffer.truncate(output_before);
         if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
         try self.screen_state.resize(self.allocator, rows, cols);
         const primary_graphics_changed = self.graphics.clearBank(.primary);
@@ -9557,7 +9464,7 @@ pub const Terminal = struct {
             "48;{d};{d};{d};{d}t",
             .{ rows, cols, pixel_height, pixel_width },
         ) catch unreachable;
-        try appendCsiReply(&self.protocol.pending_output, self.allocator, .terminal, payload);
+        try self.protocol.reply_buffer.appendCsi(.terminal, payload);
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -9590,9 +9497,7 @@ pub const Terminal = struct {
         preference: ColorSchemePreference,
     ) ApplyError!bool {
         if (!self.modes.color_preference_notifications) return false;
-        try appendCsiReply(
-            &self.protocol.pending_output,
-            self.allocator,
+        try self.protocol.reply_buffer.appendCsi(
             .kitty,
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
@@ -9612,9 +9517,7 @@ pub const Terminal = struct {
             return error.StaleColorPreferenceQuery;
         const head = self.protocol.colorPreferenceQueryGeneration() orelse return error.StaleColorPreferenceQuery;
         if (head != generation) return error.StaleColorPreferenceQuery;
-        try appendCsiReply(
-            &self.protocol.pending_output,
-            self.allocator,
+        try self.protocol.reply_buffer.appendCsi(
             .kitty,
             if (preference == .dark) "?997;1n" else "?997;2n",
         );
@@ -9635,7 +9538,7 @@ pub const Terminal = struct {
         self.single_shift = null;
         self.designations = .{ 'B', 'B', 'B', 'B' };
         self.stream_state.parser.resetTextEncoding();
-        self.protocol.pending_output.eight_bit_controls = false;
+        self.protocol.reply_buffer.resetFraming();
         self.kitty.resetTerminalState();
         self.protocol.resetTerminalState();
         const graphics_changed = self.graphics.reset();
@@ -9670,7 +9573,7 @@ pub const Terminal = struct {
         self.modes.mouse_tracking = .off;
         if (self.modes.mouse_protocol != .none) changed = true;
         self.modes.mouse_protocol = .none;
-        changed = replaceBool(&self.protocol.pending_output.eight_bit_controls, false) or changed;
+        changed = self.protocol.reply_buffer.setEightBitControls(false) or changed;
         if (self.gl_index != 0 or self.gr_index != 1 or self.single_shift != null or
             !std.mem.eql(u8, self.designations[0..], &.{ 'B', 'B', 'B', 'B' })) changed = true;
         self.gl_index = 0;
@@ -9912,8 +9815,7 @@ pub const Terminal = struct {
             .auto_repeat => |enabled| return self.setDecMode(8, enabled),
             .reverse_screen_mode => |enabled| return self.setDecMode(5, enabled),
             .eight_bit_controls => |enabled| {
-                const changed = self.protocol.pending_output.eight_bit_controls != enabled;
-                self.protocol.pending_output.eight_bit_controls = enabled;
+                const changed = self.protocol.reply_buffer.setEightBitControls(enabled);
                 return changed;
             },
             .left_right_margin_mode => |enabled| return self.setDecMode(69, enabled),
@@ -10634,7 +10536,7 @@ pub const Terminal = struct {
     }
 
     fn encodeMouseInput(self: *Terminal, scratch: *InputScratch, event: MouseEvent) ApplyError![]const u8 {
-        try handleMouseEvent(&self.protocol.locator, self.allocator, &self.protocol.pending_output, scratch.buf[0..], event);
+        try handleMouseEvent(&self.protocol.locator, self.allocator, &self.protocol.reply_buffer, scratch.buf[0..], event);
         const encoded = encodeMouse(scratch.buf[0..], event, self.modes.mouse_tracking, self.modes.mouse_protocol);
         std.debug.assert(encoded.len <= scratch.buf.len);
         return encoded;
@@ -10650,19 +10552,14 @@ pub const Terminal = struct {
 
     /// Borrows ordered protocol reply bytes until the next terminal mutation.
     pub fn replyBytes(self: *const Terminal) []const u8 {
-        return self.protocol.pendingOutput();
+        return self.protocol.replyBytes();
     }
 
     /// Consumes one successfully written reply prefix without allocating.
     ///
     /// A count larger than `replyBytes().len` preserves the complete queue.
     pub fn consumeReplyBytes(self: *Terminal, count: usize) ReplyConsumeError!void {
-        const pending = &self.protocol.pending_output.bytes;
-        if (count > pending.items.len) return error.InvalidReplyCount;
-        if (count == 0) return;
-        const remaining = pending.items.len - count;
-        std.mem.copyForwards(u8, pending.items[0..remaining], pending.items[count..]);
-        pending.shrinkRetainingCapacity(remaining);
+        try self.protocol.reply_buffer.consumePrefix(count);
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -10734,12 +10631,12 @@ pub const Terminal = struct {
         if (request.payload.len == 0 or request.payload[0] != '?')
             return error.PointerShapeReplyMismatch;
         try ensureRetainedBound(byteCount(payload), pointer_shape_reply_max_bytes);
-        const output = &self.protocol.pending_output;
-        const start = byteCount(output.bytes.items);
-        errdefer restorePendingOutput(output, start);
-        try appendOutput(output, self.allocator, "\x1b]22;");
-        try appendOutput(output, self.allocator, payload);
-        try appendOutput(output, self.allocator, "\x1b\\");
+        const output = &self.protocol.reply_buffer;
+        const start = byteCount(output.bytes());
+        errdefer output.truncate(start);
+        try output.append("\x1b]22;");
+        try output.append(payload);
+        try output.append("\x1b\\");
         self.protocol.consumePointerShape();
         advanceIdentity(&self.semantic_sequence);
     }
@@ -10750,11 +10647,11 @@ pub const Terminal = struct {
         event: DragDropEvent,
         allocator: std.mem.Allocator,
     ) DragDropEventError![]u8 {
-        var output = PendingOutput.init();
-        output.eight_bit_controls = self.protocol.pending_output.eight_bit_controls;
-        errdefer output.bytes.deinit(allocator);
-        try appendReplyControl(&output, allocator, .terminal, .osc);
-        try appendOutput(&output, allocator, "72;");
+        var output = replies.Buffer.init(allocator);
+        output.copyFramingFrom(&self.protocol.reply_buffer);
+        errdefer output.deinit();
+        try output.appendControl(.terminal, .osc);
+        try output.append("72;");
         var metadata: [192]u8 = undefined;
         switch (event) {
             .query => |value| {
@@ -10763,7 +10660,7 @@ pub const Terminal = struct {
                         return error.ConsequenceLimit
                 else
                     "t=q;";
-                try appendOutput(&output, allocator, header);
+                try output.append(header);
             },
             .move => |value| {
                 if (value.mimes.len > drag_drop_packet_max_bytes) return error.ConsequenceLimit;
@@ -10779,8 +10676,8 @@ pub const Terminal = struct {
                         "t={c}:x={d}:y={d}:X={d}:Y={d}:o={d};",
                         .{ if (value.drop) @as(u8, 'M') else 'm', value.cell_x, value.cell_y, value.pixel_x, value.pixel_y, value.operation },
                     ) catch return error.ConsequenceLimit;
-                try appendOutput(&output, allocator, header);
-                try appendOutput(&output, allocator, value.mimes);
+                try output.append(header);
+                try output.append(value.mimes);
             },
             .leave => |value| {
                 const header = if (value.client_id) |id|
@@ -10788,7 +10685,7 @@ pub const Terminal = struct {
                         return error.ConsequenceLimit
                 else
                     "t=m:x=-1:y=-1:X=0:Y=0:o=1;";
-                try appendOutput(&output, allocator, header);
+                try output.append(header);
             },
             .data => |value| {
                 if (value.index == 0 or value.bytes.len > drag_drop_data_max_bytes)
@@ -10805,14 +10702,14 @@ pub const Terminal = struct {
                         "t=r:x={d}:m={d};",
                         .{ value.index, @intFromBool(value.more) },
                     ) catch return error.ConsequenceLimit;
-                try appendOutput(&output, allocator, header);
+                try output.append(header);
                 const encoded_len = std.base64.standard.Encoder.calcSize(value.bytes.len);
                 if (encoded_len > drag_drop_packet_max_bytes) return error.InvalidArgument;
                 const encoded = try allocator.alloc(u8, encoded_len);
                 defer allocator.free(encoded);
                 const encoded_bytes = std.base64.standard.Encoder.encode(encoded, value.bytes);
                 std.debug.assert(encoded_bytes.len == encoded.len);
-                try appendOutput(&output, allocator, encoded);
+                try output.append(encoded);
             },
             .failure => |value| {
                 const header = if (value.index) |index|
@@ -10830,12 +10727,12 @@ pub const Terminal = struct {
                         return error.ConsequenceLimit
                 else
                     "t=R;";
-                try appendOutput(&output, allocator, header);
-                try appendOutput(&output, allocator, value.reason.bytes());
+                try output.append(header);
+                try output.append(value.reason.bytes());
             },
         }
-        try appendReplyControl(&output, allocator, .terminal, .st);
-        return output.bytes.toOwnedSlice(allocator);
+        try output.appendControl(.terminal, .st);
+        return output.toOwnedSlice();
     }
 
     /// Queue one exact reply for the matching FIFO-head query, consuming it only after serialization.
@@ -10851,9 +10748,9 @@ pub const Terminal = struct {
         if (occurrence.generation != generation) return error.StaleWindowRequest;
         if (!windowReplyMatches(occurrence.request, reply)) return error.WindowReplyMismatch;
 
-        const output = &self.protocol.pending_output;
-        const start = byteCount(output.bytes.items);
-        errdefer restorePendingOutput(output, start);
+        const output = &self.protocol.reply_buffer;
+        const start = byteCount(output.bytes());
+        errdefer output.truncate(start);
         try appendWindowReply(output, self.allocator, reply);
         self.protocol.consumeWindowRequestHead();
         advanceIdentity(&self.semantic_sequence);
@@ -10919,38 +10816,32 @@ fn windowReplyMatches(request: WindowRequest, reply: WindowReply) bool {
 }
 
 fn appendWindowReply(
-    output: *PendingOutput,
-    allocator: std.mem.Allocator,
+    output: *replies.Buffer,
+    _: std.mem.Allocator,
     reply: WindowReply,
 ) ApplyError!void {
     var scratch: Scratch = .{};
     switch (reply) {
-        .state => |state| try appendCsiReply(
-            output,
-            allocator,
+        .state => |state| try output.appendCsi(
             .iterm,
             if (state == .normal) "1t" else "2t",
         ),
-        .position => |position| try appendCsiReply(
-            output,
-            allocator,
+        .position => |position| try output.appendCsi(
             .iterm,
             std.fmt.bufPrint(scratch.buf[0..], "3;{d};{d}t", .{ position.x, position.y }) catch
                 @panic("bounded window-position reply exceeded scratch"),
         ),
-        .screen_cells => |size| try appendCsiReply(
-            output,
-            allocator,
+        .screen_cells => |size| try output.appendCsi(
             .iterm,
             std.fmt.bufPrint(scratch.buf[0..], "9;{d};{d}t", .{ size.rows, size.cols }) catch
                 @panic("bounded screen-cell reply exceeded scratch"),
         ),
         .icon_title => |title| {
             try ensureRetainedBound(byteCount(title), max_metadata_bytes);
-            try appendReplyControl(output, allocator, .iterm, .osc);
-            try appendOutput(output, allocator, "L");
-            try appendOutput(output, allocator, title);
-            try appendReplyControl(output, allocator, .iterm, .st);
+            try output.appendControl(.iterm, .osc);
+            try output.append("L");
+            try output.append(title);
+            try output.appendControl(.iterm, .st);
         },
     }
 }

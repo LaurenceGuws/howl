@@ -377,7 +377,7 @@ test "kitty keyboard query preserves full pending output on failure" {
     const fill = try reply_fill.fill(&terminal, allocator, fill_len, false);
     defer allocator.free(fill);
 
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1b[?u"));
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x1b[?u"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
@@ -797,7 +797,7 @@ test "Kitty host-coordinated modes retain exact state reports and color notifica
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.reportColorSchemePreference(.dark));
+    try std.testing.expectError(error.ReplyLimit, terminal.reportColorSchemePreference(.dark));
     try std.testing.expectEqual(fill.len, pendingOutput(&terminal).len);
     try std.testing.expect(terminal.colorPreferenceNotifications());
 
@@ -824,7 +824,7 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes, false);
     defer allocator.free(fill);
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.replyColorPreference(1, .dark),
     );
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
@@ -1096,7 +1096,7 @@ test "report query limit fails without partial pending output" {
     const fill = try reply_fill.fill(&terminal, allocator, fill_len, false);
     defer allocator.free(fill);
 
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1b[5n"));
+    try std.testing.expectError(error.ReplyLimit, stream.nextSlice("\x1b[5n"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
 
     try consumeReplies(&terminal);
@@ -1107,7 +1107,7 @@ test "report query limit fails without partial pending output" {
     try consumeReplies(&terminal);
     const refill = try reply_fill.fill(&terminal, allocator, fill_len, false);
     defer allocator.free(refill);
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qr\x1b\\"));
+    try std.testing.expectError(error.ReplyLimit, stream.nextSlice("\x1bP$qr\x1b\\"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
 
     try consumeReplies(&terminal);
@@ -1176,7 +1176,7 @@ test "fragmented mixed report families preserve order and per-query rollback" {
     try consumeReplies(&terminal);
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 6, true);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x9b5n\x9b6n"));
+    try std.testing.expectError(error.ReplyLimit, terminal.feed("\x9b5n\x9b6n"));
     try std.testing.expectEqual(fill.len + 3, pendingOutput(&terminal).len);
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal)[0..fill.len]);
     try std.testing.expectEqualStrings("\x9b0n", pendingOutput(&terminal)[fill.len..]);
@@ -1220,7 +1220,7 @@ test "terminal size reports use exact current cell and pixel facts" {
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1b[18t"));
+    try std.testing.expectError(error.ReplyLimit, stream.nextSlice("\x1b[18t"));
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
@@ -1498,7 +1498,7 @@ test "window query replies require matching live intent and serialize transactio
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.replyWindow(5, .{ .screen_cells = .{ .rows = 1, .cols = 1 } }),
     );
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
@@ -1566,7 +1566,7 @@ test "in-band resize report saturation preserves dimensions and pending output" 
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, terminal.resize(std.math.maxInt(u16), std.math.maxInt(u16)));
+    try std.testing.expectError(error.ReplyLimit, terminal.resize(std.math.maxInt(u16), std.math.maxInt(u16)));
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 3), view.rows);
     try std.testing.expectEqual(@as(u16, 5), view.cols);
@@ -1607,7 +1607,7 @@ test "title stack retains exact bounded title lifecycle and report bytes" {
     try consumeReplies(&terminal);
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 2, false);
     defer allocator.free(fill);
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x9b21t"));
+    try std.testing.expectError(error.ReplyLimit, stream.nextSlice("\x9b21t"));
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
 
@@ -1622,7 +1622,7 @@ test "eight-bit multipart reply limit rolls back every framing byte" {
     const fill = try reply_fill.fill(&terminal, allocator, fill_len, true);
     defer allocator.free(fill);
 
-    try std.testing.expectError(error.ConsequenceLimit, stream.nextSlice("\x1bP$qm\x1b\\"));
+    try std.testing.expectError(error.ReplyLimit, stream.nextSlice("\x1bP$qm\x1b\\"));
     try std.testing.expectEqual(fill_len, pendingOutput(&terminal).len);
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
 }
@@ -1862,7 +1862,7 @@ test "locator mouse output limit is exact and preserves pending output" {
         .buttons_down = 1,
     };
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.encodeInput(allocator, &encode_scratch, .{ .mouse = event }),
     );
     try std.testing.expectEqual(@as(usize, expected_reply_bytes), pendingOutput(&terminal).len);
@@ -2097,7 +2097,7 @@ test "XTGETTCAP response capacity failure rolls back every requested reply" {
     defer allocator.free(fill);
 
     try std.testing.expectError(
-        error.ConsequenceLimit,
+        error.ReplyLimit,
         terminal.feed("\x1bP+q436F;5463\x1b\\"),
     );
     try std.testing.expectEqualSlices(u8, fill, pendingOutput(&terminal));
