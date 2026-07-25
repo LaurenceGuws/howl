@@ -45,6 +45,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const chrome = b.createModule(.{
+        .root_source_file = b.path("src/chrome.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("chrome", chrome);
+    test_module.addImport("chrome", chrome);
 
     var test_fonts: ?*std.Build.Module = null;
     var production_native: ?*std.Build.Module = null;

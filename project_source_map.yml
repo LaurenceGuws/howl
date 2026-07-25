@@ -34,6 +34,8 @@ accepted:
   howl-render/src/image_projection.zig: stateless VT image-plane projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
   howl-render/src/image_projection_test.zig: image projection identity, placement, capacity, and alias proofs
+  howl-render/src/chrome.zig: caller-neutral tab, pane-frame, label, and scrollbar projection
+  howl-render/src/chrome_test.zig: deterministic chrome geometry, ordering, capacity, and alias proofs
   howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs

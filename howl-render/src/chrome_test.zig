@@ -1,0 +1,379 @@
+//! Deterministic proofs for caller-neutral chrome geometry and ownership.
+
+const std = @import("std");
+const chrome = @import("howl_render").chrome;
+
+fn input() chrome.Input {
+    return .{
+        .surface = .{ .width = 80, .height = 40 },
+        .tab_bar_height = 2,
+        .tabs = &.{ .{ .label = "one", .active = true }, .{ .label = "two", .active = false } },
+        .panes = &.{ .{
+            .rect = .{ .x = 0, .y = 2, .width = 40, .height = 38 },
+            .label = "left",
+            .focused = true,
+            .scroll = .{ .visible = 10, .total = 100, .start = 0 },
+        }, .{
+            .rect = .{ .x = 40, .y = 2, .width = 40, .height = 38 },
+            .label = "right",
+            .focused = false,
+            .scroll = null,
+        } },
+        .style = .{ .foreground = .{ .r = 1, .g = 0, .b = 0, .a = 255 }, .background = .{ .r = 2, .g = 0, .b = 0, .a = 255 }, .border = .{ .r = 3, .g = 0, .b = 0, .a = 255 } },
+        .tab_active_background = .{ .r = 4, .g = 0, .b = 0, .a = 255 },
+        .tab_inactive_background = .{ .r = 5, .g = 0, .b = 0, .a = 255 },
+        .scrollbar_width = 1,
+        .scrollbar_min_thumb = 2,
+    };
+}
+
+test "chrome output order and shared edge ownership are deterministic" {
+    var output: [16]chrome.Primitive = undefined;
+    var text: [64]u8 = undefined;
+    const result = try chrome.project(input(), &output, &text);
+    try std.testing.expectEqual(@as(usize, 10), result.primitives.len);
+    try std.testing.expect(result.primitives[0] == .fill);
+    try std.testing.expect(result.primitives[1] == .fill);
+    try std.testing.expect(result.primitives[2] == .label);
+    try std.testing.expect(result.primitives[5].border.edges.right == false);
+}
+
+test "chrome rejects insufficient output without mutation" {
+    var output: [2]chrome.Primitive = undefined;
+    output[0] = .{ .fill = .{ .rect = .{ .x = 1, .y = 1, .width = 1, .height = 1 }, .color = .{ .r = 7, .g = 0, .b = 0, .a = 255 } } };
+    output[1] = output[0];
+    const before = output;
+    var text: [64]u8 = undefined;
+    @memset(&text, 0x5a);
+    const text_before = text;
+    try std.testing.expectError(error.InsufficientOutput, chrome.project(input(), &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqualSlices(u8, &text_before, &text);
+}
+
+test "chrome rejects invalid geometry and aliased storage" {
+    var output: [16]chrome.Primitive = undefined;
+    output[0] = .{ .fill = .{ .rect = .{ .x = 1, .y = 1, .width = 1, .height = 1 }, .color = .{ .r = 1, .g = 2, .b = 3, .a = 4 } } };
+    for (output[1..]) |*primitive| primitive.* = output[0];
+    const output_before = output;
+    var invalid = input();
+    invalid.surface = .{ .width = 0, .height = 40 };
+    var text: [64]u8 = undefined;
+    @memset(&text, 0x5a);
+    const text_before = text;
+    try std.testing.expectError(error.InvalidSurface, chrome.project(invalid, &output, &text));
+    try std.testing.expectEqualDeep(output_before, output);
+    try std.testing.expectEqualSlices(u8, &text_before, &text);
+    var invalid_panes = [_]chrome.Pane{.{ .rect = .{ .x = 0, .y = 0, .width = 0, .height = 1 }, .label = "", .focused = false, .scroll = null }};
+    invalid = input();
+    invalid.panes = &invalid_panes;
+    try std.testing.expectError(error.InvalidRectangle, chrome.project(invalid, &output, &text));
+    try std.testing.expectEqualDeep(output_before, output);
+    try std.testing.expectEqualSlices(u8, &text_before, &text);
+    var panes: [1]chrome.Pane = .{.{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .label = "",
+        .focused = false,
+        .scroll = null,
+    }};
+    const alias: []chrome.Primitive = @as([*]chrome.Primitive, @ptrCast(@alignCast(panes[0..].ptr)))[0..1];
+    invalid = input();
+    invalid.panes = &panes;
+    try std.testing.expectError(error.AliasedStorage, chrome.project(invalid, alias, &text));
+    var clean_output: [16]chrome.Primitive = undefined;
+    const text_alias: []u8 = @as([*]u8, @ptrCast(@alignCast(panes[0..].ptr)))[0..@sizeOf(chrome.Pane)];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(invalid, &clean_output, text_alias));
+}
+
+test "chrome rejects every input and output alias relationship without mutation" {
+    var tabs = [_]chrome.Tab{.{ .label = "tab", .active = true }};
+    var panes = [_]chrome.Pane{.{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 8 }, .label = "pane", .focused = false, .scroll = null }};
+    var value = input();
+    value.tabs = &tabs;
+    value.panes = &panes;
+    var clean_output: [16]chrome.Primitive = undefined;
+    var clean_text: [32]u8 = undefined;
+
+    const tabs_before = tabs;
+    const primitive_tabs: []chrome.Primitive = @as([*]chrome.Primitive, @ptrCast(@alignCast(tabs[0..].ptr)))[0..1];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, primitive_tabs, &clean_text));
+    try std.testing.expectEqualDeep(tabs_before, tabs);
+
+    const panes_before = panes;
+    const primitive_panes: []chrome.Primitive = @as([*]chrome.Primitive, @ptrCast(@alignCast(panes[0..].ptr)))[0..1];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, primitive_panes, &clean_text));
+    try std.testing.expectEqualDeep(panes_before, panes);
+
+    clean_output[0] = .{ .fill = .{ .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .color = .{ .r = 1, .g = 2, .b = 3, .a = 4 } } };
+    for (clean_output[1..]) |*primitive| primitive.* = clean_output[0];
+    const output_before = clean_output;
+    const primitive_text = std.mem.asBytes(&clean_output);
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, &clean_output, primitive_text));
+    try std.testing.expectEqualDeep(output_before, clean_output);
+
+    const text_tabs: []u8 = @as([*]u8, @ptrCast(@alignCast(tabs[0..].ptr)))[0..@sizeOf(chrome.Tab)];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, &clean_output, text_tabs));
+    try std.testing.expectEqualDeep(tabs_before, tabs);
+    const text_panes: []u8 = @as([*]u8, @ptrCast(@alignCast(panes[0..].ptr)))[0..@sizeOf(chrome.Pane)];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, &clean_output, text_panes));
+    try std.testing.expectEqualDeep(panes_before, panes);
+
+    var label_backing: [@sizeOf(chrome.Primitive)]u8 align(@alignOf(chrome.Primitive)) = @splat('x');
+    const label_before = label_backing;
+    tabs[0].label = &label_backing;
+    const primitive_label: []chrome.Primitive = @as([*]chrome.Primitive, @ptrCast(&label_backing))[0..1];
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, primitive_label, &clean_text));
+    try std.testing.expectEqualSlices(u8, &label_before, &label_backing);
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, &clean_output, &label_backing));
+    try std.testing.expectEqualSlices(u8, &label_before, &label_backing);
+    tabs[0].label = "tab";
+    panes[0].label = &label_backing;
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, primitive_label, &clean_text));
+    try std.testing.expectEqualSlices(u8, &label_before, &label_backing);
+    try std.testing.expectError(error.AliasedStorage, chrome.project(value, &clean_output, &label_backing));
+    try std.testing.expectEqualSlices(u8, &label_before, &label_backing);
+}
+
+test "scrollbar handles no-scroll and minimum thumb bounds" {
+    var output: [16]chrome.Primitive = undefined;
+    var value = input();
+    var panes = [_]chrome.Pane{ .{
+        .rect = .{ .x = 0, .y = 2, .width = 40, .height = 38 },
+        .label = "left",
+        .focused = true,
+        .scroll = .{ .visible = 100, .total = 100, .start = 0 },
+    }, .{
+        .rect = .{ .x = 40, .y = 2, .width = 40, .height = 38 },
+        .label = "right",
+        .focused = false,
+        .scroll = null,
+    } };
+    value.panes = &panes;
+    var text: [64]u8 = undefined;
+    const no_scroll = try chrome.project(value, &output, &text);
+    try std.testing.expectEqual(@as(usize, 9), no_scroll.primitives.len);
+    panes[0].scroll = .{ .visible = 1, .total = 10_000, .start = 5_000 };
+    const minimum = try chrome.project(value, &output, &text);
+    var found_scrollbar = false;
+    for (minimum.primitives) |primitive| if (primitive == .scrollbar) {
+        found_scrollbar = true;
+        try std.testing.expectEqual(@as(u16, 2), primitive.scrollbar.thumb.height);
+    };
+    try std.testing.expect(found_scrollbar);
+}
+
+test "chrome copies complete UTF-8 labels into caller text storage" {
+    var tabs = [_]chrome.Tab{ .{ .label = "α", .active = true }, .{ .label = "β", .active = false } };
+    var value = input();
+    value.tabs = &tabs;
+    var panes = [_]chrome.Pane{ .{ .rect = .{ .x = 0, .y = 2, .width = 40, .height = 38 }, .label = "left", .focused = true, .scroll = null }, .{ .rect = .{ .x = 40, .y = 2, .width = 40, .height = 38 }, .label = "right", .focused = false, .scroll = null } };
+    value.panes = &panes;
+    var output: [12]chrome.Primitive = undefined;
+    var text: [64]u8 = undefined;
+    const result = try chrome.project(value, &output, &text);
+    try std.testing.expectEqualStrings("αβleftright", result.text);
+    const expected = [_][]const u8{ "α", "β", "left", "right" };
+    var labels: usize = 0;
+    var offset: usize = 0;
+    for (result.primitives) |primitive| if (primitive == .label) {
+        try std.testing.expectEqualStrings(expected[labels], primitive.label.text);
+        try std.testing.expectEqual(expected[labels].len, primitive.label.text.len);
+        try std.testing.expectEqual(@intFromPtr(text[0..].ptr) + offset, @intFromPtr(primitive.label.text.ptr));
+        offset += expected[labels].len;
+        labels += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 4), labels);
+}
+
+test "chrome text capacity and invalid scroll failures preserve output" {
+    var output: [16]chrome.Primitive = undefined;
+    output[0] = .{ .fill = .{ .rect = .{ .x = 3, .y = 3, .width = 1, .height = 1 }, .color = .{ .r = 9, .g = 0, .b = 0, .a = 255 } } };
+    for (output[1..]) |*primitive| primitive.* = output[0];
+    const before = output;
+    var tiny_text: [1]u8 = undefined;
+    tiny_text[0] = 0x5a;
+    const tiny_before = tiny_text;
+    try std.testing.expectError(error.InsufficientText, chrome.project(input(), &output, &tiny_text));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqualSlices(u8, &tiny_before, &tiny_text);
+
+    var panes = [_]chrome.Pane{.{
+        .rect = .{ .x = 0, .y = 2, .width = 40, .height = 38 },
+        .label = "pane",
+        .focused = false,
+        .scroll = .{ .visible = 0, .total = 10, .start = 0 },
+    }};
+    var value = input();
+    value.panes = &panes;
+    var text: [32]u8 = undefined;
+    try std.testing.expectError(error.InvalidScroll, chrome.project(value, &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+    panes[0].scroll = .{ .visible = 2, .total = 10, .start = 9 };
+    try std.testing.expectError(error.InvalidScroll, chrome.project(value, &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "hidden and empty tab bars emit no zero-sized primitives" {
+    var output: [4]chrome.Primitive = undefined;
+    var text: [8]u8 = undefined;
+    var value = input();
+    value.tab_bar_height = 0;
+    value.tabs = &.{};
+    value.panes = &.{};
+    const hidden = try chrome.project(value, &output, &text);
+    try std.testing.expectEqual(@as(usize, 0), hidden.primitives.len);
+    value.tab_bar_height = 2;
+    const empty = try chrome.project(value, &output, &text);
+    try std.testing.expectEqual(@as(usize, 1), empty.primitives.len);
+}
+
+test "odd-width tabs preserve exact rectangles colors and clamped height" {
+    var tabs = [_]chrome.Tab{ .{ .label = "a", .active = false }, .{ .label = "b", .active = true }, .{ .label = "c", .active = false } };
+    var value = input();
+    value.surface = .{ .width = 7, .height = 3 };
+    value.tab_bar_height = 9;
+    value.tabs = &tabs;
+    value.panes = &.{};
+    var output: [8]chrome.Primitive = undefined;
+    var text: [3]u8 = undefined;
+    const result = try chrome.project(value, &output, &text);
+    try std.testing.expectEqualDeep(chrome.Rect{ .x = 0, .y = 0, .width = 7, .height = 3 }, result.primitives[0].fill.rect);
+    try std.testing.expectEqualDeep(chrome.Rect{ .x = 0, .y = 0, .width = 2, .height = 3 }, result.primitives[1].fill.rect);
+    try std.testing.expectEqualDeep(chrome.Rect{ .x = 2, .y = 0, .width = 2, .height = 3 }, result.primitives[3].fill.rect);
+    try std.testing.expectEqualDeep(chrome.Rect{ .x = 4, .y = 0, .width = 3, .height = 3 }, result.primitives[5].fill.rect);
+    try std.testing.expectEqual(value.tab_inactive_background, result.primitives[1].fill.color);
+    try std.testing.expectEqual(value.tab_active_background, result.primitives[3].fill.color);
+    try std.testing.expectEqual(value.tab_inactive_background, result.primitives[5].fill.color);
+}
+
+test "partially clipped panes stay within every surface edge" {
+    var panes = [_]chrome.Pane{ .{
+        .rect = .{ .x = -3, .y = -2, .width = 10, .height = 10 },
+        .label = "edge",
+        .focused = true,
+        .scroll = null,
+    }, .{
+        .rect = .{ .x = 75, .y = 35, .width = 10, .height = 10 },
+        .label = "far",
+        .focused = false,
+        .scroll = null,
+    } };
+    var value = input();
+    value.tabs = &.{};
+    value.panes = &panes;
+    var output: [8]chrome.Primitive = undefined;
+    var text: [16]u8 = undefined;
+    const result = try chrome.project(value, &output, &text);
+    const rect = result.primitives[1].border.rect;
+    try std.testing.expectEqual(@as(i32, 0), rect.x);
+    try std.testing.expectEqual(@as(i32, 0), rect.y);
+    try std.testing.expect(rect.width <= value.surface.width and rect.height <= value.surface.height);
+    const far = result.primitives[3].border.rect;
+    try std.testing.expectEqual(@as(u16, 5), far.width);
+    try std.testing.expectEqual(@as(u16, 5), far.height);
+}
+
+test "invalid UTF-8 and excessive visible tabs preserve both outputs" {
+    var bad = input();
+    var tabs = [_]chrome.Tab{.{ .label = &.{ 0xc3, 0x28 }, .active = true }};
+    bad.tabs = &tabs;
+    var output: [16]chrome.Primitive = undefined;
+    output[0] = .{ .fill = .{ .rect = .{ .x = 1, .y = 1, .width = 1, .height = 1 }, .color = .{ .r = 8, .g = 0, .b = 0, .a = 255 } } };
+    for (output[1..]) |*primitive| primitive.* = output[0];
+    const before = output;
+    var text: [64]u8 = undefined;
+    @memset(&text, 0xa5);
+    const text_before = text;
+    try std.testing.expectError(error.InvalidText, chrome.project(bad, &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqualSlices(u8, &text_before, &text);
+    var many: [81]chrome.Tab = undefined;
+    for (&many) |*tab| tab.* = .{ .label = "x", .active = false };
+    bad = input();
+    bad.surface.width = 80;
+    bad.tabs = &many;
+    try std.testing.expectError(error.InvalidTabBar, chrome.project(bad, &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+}
+
+test "scrollbar validates every tuple and preserves output" {
+    var panes = [_]chrome.Pane{.{ .rect = .{ .x = 0, .y = 0, .width = 20, .height = 20 }, .label = "", .focused = false, .scroll = .{ .visible = 1, .total = 1, .start = 1 } }};
+    var value = input();
+    value.tabs = &.{};
+    value.panes = &panes;
+    var output: [8]chrome.Primitive = undefined;
+    output[0] = .{ .fill = .{ .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 }, .color = .{ .r = 1, .g = 1, .b = 1, .a = 1 } } };
+    for (output[1..]) |*primitive| primitive.* = output[0];
+    const before = output;
+    var text: [8]u8 = undefined;
+    @memset(&text, 0x5a);
+    const initial_text = text;
+    try std.testing.expectError(error.InvalidScroll, chrome.project(value, &output, &text));
+    try std.testing.expectEqualDeep(before, output);
+    try std.testing.expectEqualSlices(u8, &initial_text, &text);
+    panes[0].scroll = .{ .visible = 3, .total = 2, .start = 0 };
+    try std.testing.expectError(error.InvalidScroll, chrome.project(value, &output, &text));
+    try std.testing.expectEqualSlices(u8, &initial_text, &text);
+    panes[0].scroll = .{ .visible = 0, .total = 2, .start = 0 };
+    try std.testing.expectError(error.InvalidScroll, chrome.project(value, &output, &text));
+    try std.testing.expectEqualSlices(u8, &initial_text, &text);
+    panes[0].scroll = .{ .visible = 10, .total = 100, .start = 0 };
+    const start = try chrome.project(value, &output, &text);
+    var start_y: i32 = 0;
+    for (start.primitives) |primitive| {
+        if (primitive == .scrollbar) start_y = primitive.scrollbar.thumb.y;
+    }
+    panes[0].scroll = .{ .visible = 10, .total = 100, .start = 50 };
+    const middle = try chrome.project(value, &output, &text);
+    var middle_y: i32 = 0;
+    for (middle.primitives) |primitive| {
+        if (primitive == .scrollbar) middle_y = primitive.scrollbar.thumb.y;
+    }
+    panes[0].scroll = .{ .visible = 10, .total = 100, .start = 90 };
+    const end = try chrome.project(value, &output, &text);
+    var end_y: i32 = 0;
+    for (end.primitives) |primitive| {
+        if (primitive == .scrollbar) end_y = primitive.scrollbar.thumb.y;
+    }
+    try std.testing.expectEqual(@as(i32, 0), start_y);
+    try std.testing.expectEqual(@as(i32, 10), middle_y);
+    try std.testing.expectEqual(@as(i32, 18), end_y);
+    const output_before = output;
+    const text_before = text;
+    value.scrollbar_width = 0;
+    try std.testing.expectError(error.InvalidScrollbar, chrome.project(value, &output, &text));
+    try std.testing.expectEqualDeep(output_before, output);
+    try std.testing.expectEqualSlices(u8, &text_before, &text);
+}
+
+test "horizontal and vertical pane junctions own shared edges once" {
+    var panes = [_]chrome.Pane{ .{
+        .rect = .{ .x = 0, .y = 0, .width = 20, .height = 10 },
+        .label = "",
+        .focused = false,
+        .scroll = null,
+    }, .{
+        .rect = .{ .x = 20, .y = 0, .width = 20, .height = 10 },
+        .label = "",
+        .focused = false,
+        .scroll = null,
+    }, .{
+        .rect = .{ .x = 0, .y = 10, .width = 20, .height = 10 },
+        .label = "",
+        .focused = false,
+        .scroll = null,
+    } };
+    var value = input();
+    value.surface = .{ .width = 40, .height = 20 };
+    value.tabs = &.{};
+    value.panes = &panes;
+    var output: [8]chrome.Primitive = undefined;
+    var text: [1]u8 = undefined;
+    const result = try chrome.project(value, &output, &text);
+    try std.testing.expectEqualDeep(
+        chrome.BorderEdges{ .right = false, .bottom = false },
+        result.primitives[1].border.edges,
+    );
+    try std.testing.expectEqualDeep(chrome.BorderEdges{}, result.primitives[2].border.edges);
+    try std.testing.expectEqualDeep(chrome.BorderEdges{}, result.primitives[3].border.edges);
+}
