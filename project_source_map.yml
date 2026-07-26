@@ -42,7 +42,12 @@ accepted:
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, three-slot ownership, and release observation
+  howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, generation-tagged rings, and release observation
+  howl-host/src/chrome_state.zig: Renderer-owned Topology with bounded stable tab/pane identities, transactional geometry, focus, and chrome projection composition
+  howl-host/src/chrome_draw.zig: bounded native-label shaping, shared alpha-atlas residency, and Vulkan-ready chrome vertices, indices, and draw facts
+  howl-host/src/gpu_chrome.zig: Host-owned solid and alpha-text Vulkan pipelines, shared GPU atlas, mapped bounded staging, and per-slot framebuffer ownership
+  howl-host/shaders: maintained GLSL sources and compilation provenance for the two chrome pipelines
+  howl-host/src/shaders: checked SPIR-V consumed directly by the Vulkan owner
   howl-host/vendor/vulkan/vulkan.zig: maintained minimal Vulkan 1.4.357 Zig ABI used by the host
   howl-host/vendor/xdg-shell: Wayland-protocols 1.49 generated xdg-shell client ABI
   howl-host/vendor/linux-dmabuf: Wayland-protocols 1.49 generated linux-dmabuf-v1 client ABI

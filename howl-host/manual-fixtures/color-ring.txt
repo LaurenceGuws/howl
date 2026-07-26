@@ -1,7 +1,12 @@
-Howl Vulkan host foundation — bounded live receipt
+Howl Vulkan host foundation — initial persistent-surface receipt
 
 Command:
-  ../.zig/zig build run -Doptimize=ReleaseSafe
+  ../.zig/zig build run -Doptimize=ReleaseSafe \
+    -Dfont=/absolute/path/to/a/Unicode-monospace-font.ttf
+
+The product remains alive after this initial receipt and exits only after the
+compositor closes the surface. The bounded owner proofs are the automated gate;
+this command is an interactive compositor fixture.
 
 Machine tuple:
   Wayland DMA-BUF device: /dev/dri/renderD128 (226:128)
@@ -11,16 +16,18 @@ Machine tuple:
   slots: 3
 
 Observed boundary:
-  Window commit revision=1 slot=0 acquire=1 release=1
-  Window frame revision=1
-  Window commit revision=2 slot=1 acquire=2 release=1
-  Window frame revision=2
-  Window commit revision=3 slot=2 acquire=3 release=1
-  Window frame revision=3
-  Window commit revision=4 slot=0 acquire=4 release=2
-  Window frame revision=4
-  Render ring complete revisions=4 slots=3
-  Howl color ring retired cleanly
+  Window commit generation=1 revision=1 slot=0 acquire=1 release=1
+  Window frame generation=1 revision=1
+  Window commit generation=1 revision=2 slot=1 acquire=2 release=1
+  Window frame generation=1 revision=2
+  Render ring submitted revisions=3 slots=3 generation=1
+  Render same-generation reuse slot=0 acquire=4 release=2 generation=1
+  Window commit generation=2 revision=4 slot=0 acquire=4 release=1
+  Window frame generation=2 revision=4
+  Window commit generation=2 revision=5 slot=1 acquire=5 release=1
+  Window frame generation=2 revision=5
+  Window commit generation=2 revision=6 slot=2 acquire=6 release=1
+  Window frame generation=2 revision=6
 
 Elapsed build-and-run wall time:
   0.364 seconds
@@ -32,10 +39,25 @@ Ownership evidence:
   Directional eventfds woke each owner for newly published copied facts.
   Window committed at most one revision per frame opportunity.
   Window sent no acknowledgement and did not gate Render GPU submission.
-  Window detached and retired its wrappers after revision 4.
-  Render waited for Window retirement before destroying Vulkan slot storage.
-  Main joined both owners, then retired the shared boundary and std.Io root.
+  Slot 0 release point 1 was exported to a sync-file, imported into a Vulkan
+  wait semaphore, redrawn, and republished at release point 2 in generation 1.
+  Window detached and retires each wrapper generation before Render destroys
+  its corresponding Vulkan slot storage.
+  Renderer topology retains typed TabId/PaneId domains and validates complete
+  non-overlapping pane coverage after each mutation.
+  Chrome fills and native-shaped labels are emitted through distinct Vulkan
+  solid-color and source-over alpha-atlas pipelines.
+  One shared bounded mapped buffer stages 16,384 vertices, 24,576 indices, and
+  one 2,048×2,048 R8 atlas upload; no full-surface CPU buffer exists.
+  A second equal-sized CPU atlas buffer is retained only for transactional
+  pressure rebuilds; it is not a GPU allocation.
+  Atlas residency covers 24 labels × 256 shaped glyphs and rebuilds
+  transactionally when accumulated renames exhaust the retained set.
+  GPU memory is bounded at 512 MiB and charges the exact Vulkan memory
+  requirement of six exportable images, the shared atlas, and shared staging.
+  The font path is explicit and independent of the process working directory.
+  Main joins both owners, then retires the shared boundary and std.Io root.
 
 No Vulkan API failure, Wayland protocol error, or synchronization failure was
-reported. No PTY, VT, terminal projection, input, or multiplexer module was
-linked.
+reported during the initial generation. No PTY, VT, terminal projection,
+input, or terminal-policy module was linked.

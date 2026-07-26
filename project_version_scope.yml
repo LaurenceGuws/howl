@@ -1,6 +1,6 @@
 version:
   current: 0.1.3-dev
-  status: reconstructed dependency foundation and bounded Vulkan host mechanism
+  status: reconstructed dependency foundation and persistent Vulkan surface/chrome host review
 
 objective: >-
   Preserve independently useful PTY, VT, and Render packages while establishing
@@ -15,8 +15,9 @@ settled_capabilities:
     acceptance: reusable text plus backend-neutral terminal, image, and chrome projection
   - name: executable
     acceptance: >-
-      three Vulkan DMA-BUF slots, per-slot DRM release timelines, directional
-      Window/Render eventfds, compositor-paced commits, and reverse cleanup
+      compositor-configured generation-tagged three-slot DMA-BUF rings, per-slot
+      DRM release timelines, directional Window/Render eventfds, compositor-paced
+      commits, Renderer-owned tab/pane chrome facts, and reverse cleanup
 
 accepted_implementation:
   - The tracked Zig pin drives every workspace and child command.
@@ -31,18 +32,18 @@ accepted_implementation:
 
 invariants:
   - bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary
-  - Render owns no runtime threads, GPU objects, Wayland objects, or presentation policy
+  - Render owns no runtime threads, Wayland objects, or presentation policy; Host Renderer owns its Vulkan objects
   - Window never acknowledges Render completion or gates GPU mutation
   - every exported descriptor has one owner and every ownership transfer is explicit
   - source audit and protocol catalogue validation pass without diagnostics
 
 deferred:
-  - PTY, VT, and Render composition inside the host
-  - keyboard, pointer, clipboard, terminal consequences, tabs, panes, sessions, and multiplexing
+  - PTY, VT, and terminal composition inside the host
+  - keyboard, pointer, clipboard, terminal consequences, sessions, and multiplexing
   - performance work and production-sized surfaces
 
 gates:
   - permanent authorities parse
   - root and child all-mode checks and tests pass
-  - bounded Debug and ReleaseSafe live rings retire cleanly
+  - bounded Debug and ReleaseSafe live rings reach persistent generation-tagged commits; owner proofs cover retirement
   - source audit, protocol validation, formatting, and diff checks pass

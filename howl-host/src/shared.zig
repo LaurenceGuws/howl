@@ -7,6 +7,8 @@ const c = @import("host_c");
 pub const slot_count: usize = 3;
 /// Bounds the DRM memory-plane facts copied for one slot.
 pub const plane_limit: usize = 4;
+/// Bounds one compositor-selected pixel dimension for this bounded host.
+pub const surface_dimension_limit: u32 = 8192;
 
 /// Copies one Wayland DMA-BUF plane layout without owning storage.
 pub const Plane = struct {
@@ -26,10 +28,26 @@ pub const Feedback = struct {
     modifier: u64,
 };
 
+/// Identifies one nonzero compositor-configured pixel surface generation.
+pub const SurfaceConfig = struct {
+    /// Monotonic identity; newer facts supersede older facts.
+    generation: u64,
+    /// Configured pixel width.
+    width: u32,
+    /// Configured pixel height.
+    height: u32,
+};
+
 /// Transfers one slot's duplicated descriptors and immutable plane layout from
 /// Render to Window. Boundary owns every descriptor after successful publish;
 /// `takeOffers` transfers all three descriptors to Window.
 pub const SlotOffer = struct {
+    /// Surface generation owning the image and wrappers.
+    generation: u64,
+    /// Pixel width of the offered image.
+    width: u32,
+    /// Pixel height of the offered image.
+    height: u32,
     /// Exported DMA-BUF descriptor.
     dma_fd: i32,
     /// Duplicated acquire-timeline syncobj descriptor.
@@ -44,6 +62,8 @@ pub const SlotOffer = struct {
 
 /// Copies one completed Render revision for compositor presentation.
 pub const Completion = struct {
+    /// Surface generation owning the completed slot.
+    generation: u64,
     /// Nonzero globally increasing render revision.
     revision: u64,
     /// Slot identity within the fixed ring.
@@ -52,6 +72,15 @@ pub const Completion = struct {
     acquire_point: u64,
     /// Per-slot release point reserved for Window's commit.
     release_point: u64,
+};
+
+/// Describes which slots were presented before Window retired their wrappers.
+/// Render must wait only these submitted release points before destroying the
+/// corresponding Vulkan storage; never wait an unpresented slot.
+pub const RetiredRing = struct {
+    generation: u64,
+    presented_mask: u8,
+    release_points: [slot_count]u64,
 };
 
 /// Identifies the first runtime owner that failed.
@@ -72,9 +101,20 @@ pub const Boundary = struct {
     io: std.Io,
     mutex: std.Io.Mutex = .init,
     feedback: ?Feedback = null,
+    configure: ?SurfaceConfig = null,
+    latest_generation: u64 = 0,
+    latest_width: u32 = 0,
+    latest_height: u32 = 0,
     offers: [slot_count]?SlotOffer = .{ null, null, null },
     offer_count: u8 = 0,
     window_ring_ready: bool = false,
+    window_ring_generation: u64 = 0,
+    presented_generation: u64 = 0,
+    presented_mask: u8 = 0,
+    presented_release_points: [slot_count]u64 = .{ 0, 0, 0 },
+    pending_release: ?RetiredRing = null,
+    retire_request_generation: u64 = 0,
+    retired: ?RetiredRing = null,
     completions: [slot_count]Completion = undefined,
     completion_head: u8 = 0,
     completion_count: u8 = 0,
@@ -150,14 +190,63 @@ pub const Boundary = struct {
         return self.feedback;
     }
 
+    /// Publishes the newest nonzero bounded configure fact. Repeated identical
+    /// dimensions retain their generation; newer dimensions supersede pending
+    /// facts without allowing an older generation to cross the boundary.
+    pub fn publishConfigure(self: *Boundary, width: u32, height: u32) error{ Stopping, InvalidConfigure, GenerationOverflow }!void {
+        if (width == 0 or height == 0 or width > surface_dimension_limit or height > surface_dimension_limit) return error.InvalidConfigure;
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.latest_width == width and self.latest_height == height) {
+            self.mutex.unlock(self.io);
+            return;
+        }
+        if (self.latest_generation == std.math.maxInt(u64)) {
+            self.mutex.unlock(self.io);
+            return error.GenerationOverflow;
+        }
+        self.latest_generation += 1;
+        self.latest_width = width;
+        self.latest_height = height;
+        self.configure = .{ .generation = self.latest_generation, .width = width, .height = height };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Takes the newest pending configure fact for Render.
+    pub fn takeConfigure(self: *Boundary) ?SurfaceConfig {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.configure;
+        self.configure = null;
+        return result;
+    }
+
+    /// Reports whether a staged generation is still the newest configure fact.
+    pub fn isLatestGeneration(self: *Boundary, generation: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.latest_generation == generation;
+    }
+
     /// Transfers every descriptor in one complete valid ring from Render to
     /// Boundary. Invalid facts, an unconsumed ring, or shutdown leave Boundary
     /// unchanged and every supplied descriptor owned by Render.
     pub fn publishOffers(self: *Boundary, offers: [slot_count]SlotOffer) error{ Stopping, OffersPending, InvalidOffer }!void {
+        const generation = offers[0].generation;
+        const width = offers[0].width;
+        const height = offers[0].height;
         for (offers) |offer| {
             if (offer.dma_fd < 0 or
                 offer.acquire_timeline_fd < 0 or
                 offer.release_timeline_fd < 0 or
+                offer.generation == 0 or offer.generation != generation or
+                offer.width == 0 or offer.height == 0 or
+                offer.width > surface_dimension_limit or offer.height > surface_dimension_limit or
+                offer.width != width or offer.height != height or
                 offer.plane_count == 0 or
                 offer.plane_count > plane_limit)
             {
@@ -172,6 +261,10 @@ pub const Boundary = struct {
         if (self.offer_count != 0) {
             self.mutex.unlock(self.io);
             return error.OffersPending;
+        }
+        if (generation != self.latest_generation or width == 0 or height == 0) {
+            self.mutex.unlock(self.io);
+            return error.InvalidOffer;
         }
         for (offers, 0..) |offer, index| self.offers[index] = offer;
         self.offer_count = slot_count;
@@ -194,18 +287,109 @@ pub const Boundary = struct {
     }
 
     /// Publishes completed Window wrapper construction and wakes Render.
-    pub fn markWindowRingReady(self: *Boundary) void {
+    pub fn markWindowRingReady(self: *Boundary, generation: u64) void {
         self.mutex.lockUncancelable(self.io);
+        if (self.presented_generation != 0 and self.presented_mask != 0) {
+            self.pending_release = .{ .generation = self.presented_generation, .presented_mask = self.presented_mask, .release_points = self.presented_release_points };
+        }
         self.window_ring_ready = true;
+        self.window_ring_generation = generation;
+        self.presented_generation = generation;
+        self.presented_mask = 0;
+        self.presented_release_points = .{ 0, 0, 0 };
+        // A replacement ring supersedes every queued completion from the old
+        // generation. Compact in place so a stale queue can never fill the
+        // bounded completion transport or strand the new ring.
+        var kept: [slot_count]Completion = undefined;
+        var kept_count: u8 = 0;
+        var index: u8 = 0;
+        while (index < self.completion_count) : (index += 1) {
+            const completion = self.completions[(self.completion_head + index) % @as(u8, slot_count)];
+            if (completion.generation == generation) {
+                kept[kept_count] = completion;
+                kept_count += 1;
+            }
+        }
+        self.completions = kept;
+        self.completion_head = 0;
+        self.completion_count = kept_count;
         self.mutex.unlock(self.io);
         signal(self.render_fd);
     }
 
-    /// Copies whether Window completed every slot wrapper.
-    pub fn isWindowRingReady(self: *Boundary) bool {
+    /// Records a slot release point while its Window wrapper remains live.
+    pub fn recordPresentation(self: *Boundary, generation: u64, slot: u8, release_point: u64) error{InvalidRevision}!void {
+        if (slot >= slot_count or generation == 0 or release_point == 0) return error.InvalidRevision;
+        self.mutex.lockUncancelable(self.io);
+        if (self.presented_generation != generation) {
+            self.mutex.unlock(self.io);
+            return error.InvalidRevision;
+        }
+        self.presented_mask |= @as(u8, 1) << @intCast(slot);
+        self.presented_release_points[slot] = release_point;
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Copies the currently presented release facts for Render's wait phase.
+    pub fn releaseFacts(self: *Boundary, generation: u64) ?RetiredRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return self.window_ring_ready;
+        if (self.pending_release) |pending| if (pending.generation == generation) return pending;
+        if (self.presented_generation != generation) return null;
+        return .{ .generation = generation, .presented_mask = self.presented_mask, .release_points = self.presented_release_points };
+    }
+
+    /// Requests Window to retire wrappers after Render has observed release.
+    pub fn requestWindowRingRetirement(self: *Boundary, generation: u64) void {
+        self.mutex.lockUncancelable(self.io);
+        if (generation > self.retire_request_generation) self.retire_request_generation = generation;
+        self.mutex.unlock(self.io);
+        signal(self.window_fd);
+    }
+
+    /// Copies and consumes the newest wrapper-retirement request.
+    pub fn takeWindowRingRetirementRequest(self: *Boundary, generation: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.retire_request_generation >= generation) {
+            self.retire_request_generation = 0;
+            return true;
+        }
+        return false;
+    }
+
+    /// Copies whether Window completed every slot wrapper.
+    pub fn isWindowRingReady(self: *Boundary, generation: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.window_ring_ready and self.window_ring_generation == generation;
+    }
+
+    /// Records that Window has destroyed wrappers from an older generation.
+    pub fn markWindowRingRetired(self: *Boundary, retired: RetiredRing) void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.retired == null or retired.generation > self.retired.?.generation) {
+            self.retired = retired;
+        }
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Copies the wrapper-retirement fact for Renderer cleanup ordering.
+    pub fn takeWindowRingRetired(self: *Boundary, generation: u64) ?RetiredRing {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.retired) |retired| {
+            if (retired.generation >= generation) {
+                self.retired = null;
+                if (self.pending_release) |pending| {
+                    if (pending.generation == generation) self.pending_release = null;
+                }
+                return retired;
+            }
+        }
+        return null;
     }
 
     /// Appends one ordered completion and wakes Window transactionally.
@@ -215,7 +399,7 @@ pub const Boundary = struct {
             self.mutex.unlock(self.io);
             return error.Stopping;
         }
-        if (completion.revision == 0 or completion.slot >= slot_count) {
+        if (completion.generation == 0 or completion.generation != self.window_ring_generation or completion.revision == 0 or completion.slot >= slot_count) {
             self.mutex.unlock(self.io);
             return error.InvalidRevision;
         }

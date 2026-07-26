@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const run_font = b.option([]const u8, "font", "Absolute font path passed to the live host");
     const headers = b.addWriteFiles();
     const window_header = headers.add("window-native.h",
         \\#ifdef _FORTIFY_SOURCE
@@ -56,14 +57,48 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    root.addImport("window_c", window_translate.createModule());
-    root.addImport("renderer_c", renderer_translate.createModule());
-    root.addImport("host_c", host_c);
-    root.addImport("vulkan", b.createModule(.{
+    const render = b.dependency("howl_render", .{
+        .target = target,
+        .optimize = optimize,
+        .native_text = true,
+        .generated_glyphs = false,
+        .terminal = false,
+    });
+    root.addImport("howl_render", render.module("howl_render"));
+    const chrome_state = b.createModule(.{
+        .root_source_file = b.path("src/chrome_state.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    chrome_state.addImport("howl_render", render.module("howl_render"));
+    const chrome_draw = b.createModule(.{
+        .root_source_file = b.path("src/chrome_draw.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    chrome_draw.addImport("howl_render", render.module("howl_render"));
+    const chrome_options = b.addOptions();
+    chrome_options.addOption([]const u8, "test_font_path", b.root.joinString(b.allocator, "../howl-render/testdata/primary.ttf") catch @panic("OOM"));
+    chrome_draw.addImport("host_build_options", chrome_options.createModule());
+    const vulkan = b.createModule(.{
         .root_source_file = b.path("vendor/vulkan/vulkan.zig"),
         .target = target,
         .optimize = optimize,
-    }));
+    });
+    const gpu_chrome = b.createModule(.{
+        .root_source_file = b.path("src/gpu_chrome.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    gpu_chrome.addImport("chrome_draw", chrome_draw);
+    gpu_chrome.addImport("vulkan", vulkan);
+    root.addImport("chrome_state", chrome_state);
+    root.addImport("chrome_draw", chrome_draw);
+    root.addImport("gpu_chrome", gpu_chrome);
+    root.addImport("window_c", window_translate.createModule());
+    root.addImport("renderer_c", renderer_translate.createModule());
+    root.addImport("host_c", host_c);
+    root.addImport("vulkan", vulkan);
     root.addCSourceFiles(.{
         .root = b.path("vendor"),
         .files = &.{
@@ -86,6 +121,7 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile the host");
     check.dependOn(&executable.step);
     const run = b.addRunArtifact(executable);
+    if (run_font) |font| run.addArgs(&.{ "--font", font });
     b.step("run", "Run the bounded live color ring").dependOn(&run.step);
 
     const test_module = b.createModule(.{
@@ -102,8 +138,16 @@ pub fn build(b: *std.Build) void {
     test_shared.addImport("host_c", host_c);
     test_module.addImport("shared", test_shared);
     test_module.addImport("host_c", host_c);
+    test_module.addImport("chrome_state", chrome_state);
+    test_module.addImport("howl_render", render.module("howl_render"));
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = false, .use_lld = false });
     const run_tests = b.addRunArtifact(tests);
-    b.step("test", "Run deterministic host-owner proofs").dependOn(&run_tests.step);
+    const test_step = b.step("test", "Run deterministic host-owner proofs");
+    test_step.dependOn(&run_tests.step);
+    const chrome_tests = b.addTest(.{ .root_module = chrome_state, .use_llvm = false, .use_lld = false });
+    const run_chrome_tests = b.addRunArtifact(chrome_tests);
+    test_step.dependOn(&run_chrome_tests.step);
+    const draw_tests = b.addTest(.{ .root_module = chrome_draw, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(draw_tests).step);
     b.default_step = check;
 }
