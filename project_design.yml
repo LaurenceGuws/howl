@@ -12,7 +12,7 @@ capabilities:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
     role: first-party Wayland, Vulkan, DMA-BUF, and explicit-synchronization lifetime foundation
-    status: persistent compositor-configured three-slot surface with Renderer-owned chrome in review; terminal composition and product input remain deferred
+    status: persistent compositor-configured three-slot surface with reusable Wayland input transport and Renderer-owned chrome; terminal composition and product input actions remain deferred
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator
@@ -30,4 +30,4 @@ workspace:
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: dependency packages frozen and persistent Vulkan surface/chrome foundation implemented in review; terminal composition remains deferred
+  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome foundation accepted; chrome ownership hardening is active

@@ -23,6 +23,8 @@ baseline:
     render_projection: 1f20094ab7181104b90e38e501c6c4043020c46b
     render_text: 5f4c1e1eacb01c4e67b84e7822db25fe1f9d0a47
     render_chrome: 4a2c90db3f9d0af81ed031c78f574a9c5538cc31
+    vk: f774e36b8403f388b75a5bf355bd5897f5593521
+    wayland: 63c2d43
   proven_runtime:
     - one Main lifetime, one Window thread, and one Render thread
     - compositor-selected DMA-BUF device and format/modifier tuple
@@ -176,8 +178,9 @@ transactions:
     - Generated and maintained source are visibly separated and have exact provenance.
     - Public roots expose only curated domain contracts; internal declarations do not leak for tests.
   input:
-    - Ordered key, mouse button, axis, enter/leave, and close facts never coalesce.
-    - Latest configure, scale, pointer position, and modifier facts may coalesce with cumulative revision.
+    - Ordered key, mouse button, axis, and device-specific enter/leave facts never coalesce.
+    - Latest configure, pointer position, modifier, and repeat facts may coalesce with cumulative revision.
+    - Compositor close is Window-owned process lifecycle, not an input occurrence.
     - Capacity failure preserves prior queued facts and first runtime failure.
   chrome:
     - Topology mutations validate complete candidate state before publication.

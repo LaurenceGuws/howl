@@ -1,6 +1,6 @@
 version:
   current: 0.1.3-dev
-  status: reconstructed dependency foundation and persistent Vulkan surface/chrome host review
+  status: reusable Vulkan and Wayland foundations accepted; backend-neutral chrome ownership is active
 
 objective: >-
   Preserve independently useful PTY, VT, and Render packages while establishing
@@ -28,6 +28,8 @@ accepted_implementation:
   - The host selects Vulkan by the compositor DMA-BUF device identity and queries the exact format/modifier tuple.
   - The maintained Vulkan ABI derives from Vulkan-Headers v1.4.357.
   - Generated Wayland ABIs derive from Wayland-protocols 1.49 using wayland-scanner 1.25.0.
+  - Wayland input preserves bounded ordered key, button, axis, and focus facts plus coalesced pointer, modifier, repeat, and configure state.
+  - Compositor close remains Window-owned lifecycle rather than an input occurrence.
   - Every accepted family and Host manifest uses version 0.1.3-dev.
 
 invariants:
@@ -39,7 +41,7 @@ invariants:
 
 deferred:
   - PTY, VT, and terminal composition inside the host
-  - keyboard, pointer, clipboard, terminal consequences, sessions, and multiplexing
+  - keyboard and pointer action policy, clipboard, terminal consequences, sessions, and interactive multiplexing
   - performance work and production-sized surfaces
 
 gates:
