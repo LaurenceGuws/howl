@@ -64,6 +64,7 @@ pub fn build(b: *std.Build) void {
         .generated_glyphs = false,
         .terminal = false,
     });
+    const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
     const chrome_state = b.createModule(.{
         .root_source_file = b.path("src/chrome_state.zig"),
@@ -80,25 +81,20 @@ pub fn build(b: *std.Build) void {
     const chrome_options = b.addOptions();
     chrome_options.addOption([]const u8, "test_font_path", b.root.joinString(b.allocator, "../howl-render/testdata/primary.ttf") catch @panic("OOM"));
     chrome_draw.addImport("host_build_options", chrome_options.createModule());
-    const vulkan = b.createModule(.{
-        .root_source_file = b.path("vendor/vulkan/vulkan.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
     const gpu_chrome = b.createModule(.{
         .root_source_file = b.path("src/gpu_chrome.zig"),
         .target = target,
         .optimize = optimize,
     });
     gpu_chrome.addImport("chrome_draw", chrome_draw);
-    gpu_chrome.addImport("vulkan", vulkan);
+    gpu_chrome.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("chrome_state", chrome_state);
     root.addImport("chrome_draw", chrome_draw);
     root.addImport("gpu_chrome", gpu_chrome);
+    root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("window_c", window_translate.createModule());
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);
-    root.addImport("vulkan", vulkan);
     root.addCSourceFiles(.{
         .root = b.path("vendor"),
         .files = &.{

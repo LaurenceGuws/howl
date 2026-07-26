@@ -11,6 +11,7 @@
         "howl-render",
         "howl-pty",
         "howl-vt",
+        "howl-vk",
         "protocol_coverage.nu",
         "protocol_coverage.yml",
         "tools/audit_source.sh",

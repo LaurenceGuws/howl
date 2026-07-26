@@ -1,0 +1,133 @@
+scratch:
+  marathon: host_platform_chrome
+  status: active
+  checkpoint: howl_wayland
+  purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
+
+accepted:
+  howl_vk:
+    status: reviewed_for_commit
+    commit_boundary: Extract reusable Vulkan module
+    outcome:
+      - independent howl-vk package with curated abi and dispatch namespaces
+      - 515-declaration mechanical Vulkan 1.4.357 ABI
+      - 273 direct roots, 515 recursively reachable declarations, and zero unreachable declarations
+      - validated non-null external-image dispatch with exact missing-procedure errors
+      - Host migrated with no duplicate Vulkan ABI or runtime behavior change
+    receipts:
+      - package tests passed in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+      - Host and root checks/tests passed
+      - Debug and ReleaseSafe live rings preserved reuse, resize, and retirement
+      - source audit, protocol validation, formatting, and diff checks passed
+      - no allowlist mutation or sensitive-site addition
+
+baseline:
+  head_before_commit: b03db424c7af379f1027b8a348bc15eca7061630
+  current_wayland_owner: howl-host/src/window.zig
+  current_generated_protocols:
+    - howl-host/vendor/xdg-shell
+    - howl-host/vendor/linux-dmabuf
+    - howl-host/vendor/linux-drm-syncobj
+  current_build_owner: howl-host/build.zig
+  current_runtime_receipt: howl-host/manual-fixtures/color-ring.txt
+
+checkpoint:
+  id: howl_wayland
+  status: ready_for_worker
+  objective: >-
+    Extract small reusable Wayland bindings and typed bounded key, mouse, and
+    window input facts while preserving Window-only protocol ownership and the
+    current Vulkan presentation behavior.
+  authorities:
+    - /home/home/personal/projects/dev_references/backends/wayland
+    - /home/home/personal/projects/dev_references/terminals/foot
+    - /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
+    - /home/home/personal/projects/official_docs/host
+  required_research:
+    - index every current Wayland declaration, generated protocol symbol, callback, and Host consumer
+    - inspect official libwayland client, scanner, xdg-shell, linux-dmabuf, and linux-drm-syncobj ownership
+    - inspect Foot seat, keyboard, pointer, keymap, compose, clipboard, and event-loop mechanics
+    - inspect pinned Zig build/module and Translate-C behavior before selecting files or signatures
+    - determine the smallest honest xkbcommon boundary from official xkbcommon 1.13.2 evidence
+  positive_scope:
+    - independent howl-wayland package identity, build, curated root, provenance, and proofs
+    - reproducible protocol generation from exact official XML inputs
+    - visibly separate generated ABI and maintained Zig ownership
+    - current core client, xdg-shell, DMA-BUF feedback, and DRM-syncobj facts
+    - typed bounded key, mouse, and window input facts
+    - exact keymap mapping, modifier, compose, pointer, axis, configure, scale, close, and descriptor lifetimes as earned
+    - Host migration with Window retaining exclusive Wayland dispatch and object ownership
+  input_contract:
+    ordered:
+      - key press and release
+      - pointer button
+      - pointer axis
+      - pointer enter and leave
+      - compositor close
+    coalescible:
+      - pointer position
+      - modifiers
+      - configure size
+      - scale
+    rules:
+      - input facts contain no tab, pane, terminal, chrome-action, Vulkan, or renderer-policy noun
+      - ordered occurrences never collapse
+      - coalesced state carries a cumulative revision
+      - caller storage and queue bounds are explicit
+      - malformed keymaps, UTF-8, protocol values, and descriptor transfers fail transactionally
+  exclusions:
+    - tab/pane action mapping
+    - chrome mutation
+    - terminal input encoding
+    - Vulkan declarations or GPU completion
+    - Window/Render presentation policy
+    - generic event bus, callback framework, command queue, backend abstraction, or widget input
+    - clipboard and drag/drop policy beyond exact protocol/descriptor facts
+    - configuration parser or key-binding configuration
+    - unused protocol completeness for hypothetical consumers
+    - allowlist mutation without exact operator authorization
+  source_shape:
+    rule: >-
+      Choose independently owned files only after indexing. Generated protocol
+      declarations, maintained object/input ownership, and package proofs may
+      separate; tiny files for individual events or protocol objects do not earn
+      existence.
+    package_root: curated Wayland domain only
+    generated_boundary: official scanner outputs and maintained Zig source remain visibly distinct
+  transactions:
+    - generate every protocol artifact before exposing it to package modules
+    - construct complete listener/object/keymap state before publication
+    - close or unmap every received descriptor exactly once on every path
+    - reject queue saturation without losing prior ordered input
+    - migrate Host only after independent package proofs pass
+    - delete duplicate Host generated bindings only after all consumers build against howl-wayland
+  deterministic_proofs:
+    - exact used-symbol closure and zero unearned exports
+    - reproducible scanner output and provenance
+    - object/listener partial-construction rollback and reverse cleanup
+    - keymap map/build/unmap/close sequence
+    - key press/release, modifiers, compose, repeat facts, and hostile keymap data
+    - pointer enter/leave/motion/button/axis and hostile coordinates
+    - configure/scale/close ordering and coalescing
+    - queue saturation, stale revisions, simultaneous readiness, and shutdown
+    - no hidden global mutable state or runtime allocation after construction
+    - package works independently in all four optimize modes
+  host_regression_gates:
+    - Host check/test in all four optimize modes
+    - Root check/test in established modes
+    - Debug and ReleaseSafe persistent live rings
+    - same-generation release/reacquire, resize, and orderly compositor close
+    - bounded live keyboard and pointer receipt without chrome actions
+    - source audit, protocol validation, YAML, formatting, and git diff --check
+  review_boundary:
+    - leave the checkpoint uncommitted
+    - report package root, import graph, generated/maintained split, and symbol closure
+    - report exact input facts, bounds, ownership, and event ordering
+    - report old/new source, public-symbol, file, line, and byte counts
+    - report every sensitive construct before touching the operator-owned allowlist
+    - report exact Host behavior and performance delta
+
+next:
+  - reviewer accepts or corrects howl_wayland
+  - commit one coherent reusable Wayland module checkpoint
+  - reset this scratch for render_chrome_ownership

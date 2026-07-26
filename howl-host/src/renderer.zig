@@ -3,7 +3,8 @@
 const std = @import("std");
 const c = @import("renderer_c");
 const shared = @import("shared.zig");
-const vk = @import("vulkan");
+const howl_vk = @import("howl_vk");
+const vk = howl_vk.abi;
 const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
 const chrome_draw = @import("chrome_draw");
@@ -132,11 +133,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
 
     const drm_fd = try openRenderNode(selected.render_major, selected.render_minor);
     defer closeDescriptor(drm_fd);
-    const get_memory_fd: vk.PFN_vkGetMemoryFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetMemoryFdKHR"));
-    const get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetImageDrmFormatModifierPropertiesEXT"));
-    const get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkGetSemaphoreFdKHR"));
-    const import_semaphore_fd: vk.PFN_vkImportSemaphoreFdKHR = @ptrCast(vk.vkGetDeviceProcAddr(device, "vkImportSemaphoreFdKHR"));
-    if (get_memory_fd == null or get_modifier == null or get_semaphore_fd == null or import_semaphore_fd == null) return error.FunctionLoad;
+    const dispatch = howl_vk.dispatch.load(device) catch return error.FunctionLoad;
 
     var memory_properties: vk.VkPhysicalDeviceMemoryProperties = undefined;
     vk.vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
@@ -170,7 +167,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         if (fds.timeline >= 0) closeDescriptor(fds.timeline);
     };
     for (&rings[0], 0..) |*slot, index| {
-        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, initial_surface, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index], &gpu_bytes);
+        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, initial_surface, &dispatch, drm_fd, &offers[index], &offered_fds[index], &gpu_bytes);
         if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &offered_fds[index].acquire) != 0) return error.Syncobj;
         offers[index].acquire_timeline_fd = offered_fds[index].acquire;
     }
@@ -207,7 +204,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     var next_acquire_point: u64 = 4;
     for (&rings[0], 0..) |*slot, index| {
         queue_active = true;
-        try render(&graphics, device, queue, family, command, slot, colors[index], initial_chrome, &labels, &labels_omission_reported, null, get_semaphore_fd.?, drm_fd, acquire_handle, index + 1);
+        try render(&graphics, device, queue, family, command, slot, colors[index], initial_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
     }
     std.debug.print("Render ring submitted revisions=3 slots=3 generation={d}\n", .{initial_surface.generation});
@@ -219,9 +216,9 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     var release_sync_fd: i32 = -1;
     if (c.drmSyncobjExportSyncFile(drm_fd, rings[0][0].release_handle, &release_sync_fd) != 0) return error.Syncobj;
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
-    const release_wait = try importReleaseSemaphore(device, import_semaphore_fd.?, &release_sync_fd);
+    const release_wait = try importReleaseSemaphore(device, &dispatch, &release_sync_fd);
     defer vk.vkDestroySemaphore(device, release_wait, null);
-    try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, initial_chrome, &labels, &labels_omission_reported, release_wait, get_semaphore_fd.?, drm_fd, acquire_handle, next_acquire_point);
+    try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, initial_chrome, &labels, &labels_omission_reported, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
     std.debug.print("Render same-generation reuse slot=0 acquire={d} release=2 generation={d}\n", .{ next_acquire_point, initial_surface.generation });
     next_acquire_point += 1;
@@ -245,7 +242,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
                 if (fds.timeline >= 0) closeDescriptor(fds.timeline);
             };
             for (&rings[replacement], 0..) |*slot, index| {
-                try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, surface, get_memory_fd.?, get_modifier.?, drm_fd, &replacement_offers[index], &replacement_fds[index], &gpu_bytes);
+                try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, surface, &dispatch, drm_fd, &replacement_offers[index], &replacement_fds[index], &gpu_bytes);
                 if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &replacement_fds[index].acquire) != 0) return error.Syncobj;
                 replacement_offers[index].acquire_timeline_fd = replacement_fds[index].acquire;
             }
@@ -282,7 +279,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             active_ring = replacement;
             active_generation = surface.generation;
             for (&rings[active_ring], 0..) |*slot, index| {
-                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_chrome, &labels, &labels_omission_reported, null, get_semaphore_fd.?, drm_fd, acquire_handle, next_acquire_point);
+                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, next_acquire_point);
                 try boundary.publishCompletion(.{ .generation = surface.generation, .revision = next_acquire_point, .slot = @intCast(index), .acquire_point = next_acquire_point, .release_point = 1 });
                 next_acquire_point += 1;
             }
@@ -512,7 +509,7 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     return error.Modifier;
 }
 
-fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: shared.SurfaceConfig, get_memory_fd: vk.PFN_vkGetMemoryFdKHR, get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
+fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: shared.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
     slot.width = surface.width;
     slot.height = surface.height;
     var selected_modifier = modifier;
@@ -569,7 +566,7 @@ fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.Vk
     gpu_bytes.* += owned_bytes;
     var actual = std.mem.zeroes(vk.VkImageDrmFormatModifierPropertiesEXT);
     actual.sType = vk.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
-    if (get_modifier.?(device, slot.image, &actual) != vk.VK_SUCCESS or actual.drmFormatModifier != modifier) return error.Modifier;
+    if (dispatch.get_modifier(device, slot.image, &actual) != vk.VK_SUCCESS or actual.drmFormatModifier != modifier) return error.Modifier;
     const aspects = [_]vk.VkImageAspectFlags{ vk.VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT, vk.VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT, vk.VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT, vk.VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT };
     slot.plane_count = plane_count;
     for (0..plane_count) |plane| {
@@ -583,13 +580,13 @@ fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.Vk
     fd_info.sType = vk.VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR;
     fd_info.memory = slot.memory;
     fd_info.handleType = vk.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
-    if (get_memory_fd.?(device, &fd_info, &offered_fds.dma) != vk.VK_SUCCESS or offered_fds.dma < 0) return error.DmaBuf;
+    if (dispatch.get_memory_fd(device, &fd_info, &offered_fds.dma) != vk.VK_SUCCESS or offered_fds.dma < 0) return error.DmaBuf;
     if (c.drmSyncobjCreate(drm_fd, 0, &slot.release_handle) != 0) return error.Syncobj;
     if (c.drmSyncobjHandleToFD(drm_fd, slot.release_handle, &offered_fds.timeline) != 0) return error.Syncobj;
     offer.* = .{ .generation = surface.generation, .width = surface.width, .height = surface.height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
 }
 
-fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, chrome_output: render_api.chrome.Output, labels: *chrome_draw.Engine, labels_omission_reported: *bool, wait_semaphore: ?vk.VkSemaphore, get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
+fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, chrome_output: render_api.chrome.Output, labels: *chrome_draw.Engine, labels_omission_reported: *bool, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
     const plan = try labels.build(.{ .width = @intCast(slot.width), .height = @intCast(slot.height) }, chrome_output);
     if (plan.labels_omitted and !labels_omission_reported.*) {
         std.debug.print("Chrome labels omitted under bounded residency; solid chrome remains complete\n", .{});
@@ -653,7 +650,7 @@ fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue,
     fd_info.semaphore = completion;
     fd_info.handleType = vk.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
     var sync_fd: i32 = -1;
-    if (get_semaphore_fd.?(device, &fd_info, &sync_fd) != vk.VK_SUCCESS or sync_fd < 0) return error.Semaphore;
+    if (dispatch.get_semaphore_fd(device, &fd_info, &sync_fd) != vk.VK_SUCCESS or sync_fd < 0) return error.Semaphore;
     defer closeDescriptor(sync_fd);
     var temporary: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &temporary) != 0) return error.Syncobj;
@@ -674,7 +671,7 @@ fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {
     if (c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, try deadline(), 0, null) != 0) return error.ReleaseCompletion;
 }
 
-fn importReleaseSemaphore(device: vk.VkDevice, import_fd: vk.PFN_vkImportSemaphoreFdKHR, sync_fd: *i32) !vk.VkSemaphore {
+fn importReleaseSemaphore(device: vk.VkDevice, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, sync_fd: *i32) !vk.VkSemaphore {
     var export_info = std.mem.zeroes(vk.VkExportSemaphoreCreateInfo);
     export_info.sType = vk.VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
     export_info.handleTypes = vk.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
@@ -689,7 +686,7 @@ fn importReleaseSemaphore(device: vk.VkDevice, import_fd: vk.PFN_vkImportSemapho
     import_info.semaphore = semaphore;
     import_info.handleType = vk.VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT;
     import_info.fd = sync_fd.*;
-    if (import_fd.?(device, &import_info) != vk.VK_SUCCESS) return error.Semaphore;
+    if (dispatch.import_semaphore_fd(device, &import_info) != vk.VK_SUCCESS) return error.Semaphore;
     sync_fd.* = -1;
     return semaphore;
 }

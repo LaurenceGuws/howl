@@ -48,7 +48,13 @@ accepted:
   howl-host/src/gpu_chrome.zig: Host-owned solid and alpha-text Vulkan pipelines, shared GPU atlas, mapped bounded staging, and per-slot framebuffer ownership
   howl-host/shaders: maintained GLSL sources and compilation provenance for the two chrome pipelines
   howl-host/src/shaders: checked SPIR-V consumed directly by the Vulkan owner
-  howl-host/vendor/vulkan/vulkan.zig: maintained minimal Vulkan 1.4.357 Zig ABI used by the host
+  howl-vk/build.zig: independent Vulkan ABI and dispatch package build and proofs
+  howl-vk/build.zig.zon: Vulkan package identity and source boundary
+  howl-vk/LICENSES: Vulkan-Headers provenance and license facts
+  howl-vk/src/root.zig: curated Vulkan ABI and dispatch package root
+  howl-vk/src/abi.zig: maintained minimal Vulkan 1.4.357 mechanical ABI
+  howl-vk/src/dispatch.zig: typed ExternalImageDispatch procedure loading and validation
+  howl-vk/src/proofs.zig: Vulkan ABI size, signature, closure, and dispatch proofs
   howl-host/vendor/xdg-shell: Wayland-protocols 1.49 generated xdg-shell client ABI
   howl-host/vendor/linux-dmabuf: Wayland-protocols 1.49 generated linux-dmabuf-v1 client ABI
   howl-host/vendor/linux-drm-syncobj: Wayland-protocols 1.49 generated linux-drm-syncobj-v1 client ABI

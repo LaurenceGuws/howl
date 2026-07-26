@@ -2,7 +2,8 @@
 //! vertex/index/upload staging. It owns no Wayland or presentation facts.
 
 const std = @import("std");
-const vk = @import("vulkan");
+const howl_vk = @import("howl_vk");
+const vk = howl_vk.abi;
 const draw = @import("chrome_draw");
 
 const vertex_shader align(4) = @embedFile("shaders/chrome.vert.spv").*;

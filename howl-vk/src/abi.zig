@@ -1,4 +1,4 @@
-//! Maintained minimal Vulkan 1.4.357 ABI used by Howl host.
+//! Maintained minimal Vulkan 1.4.357 ABI for external image and semaphore facts.
 //! SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Source: KhronosGroup/Vulkan-Headers v1.4.357,
 //! commit e3b1eec08173d6b825cd3ac88c885a63b621504a.
@@ -6,8 +6,6 @@
 //! a7ac0d7e35e77f642c175af5d36729cfdae2d626d2aaa9145c030a42bd44edc6.
 //! Derived from the official C header through pinned Zig translate-C, then
 //! reduced to the declarations consumed by renderer.zig.
-
-const root = @This();
 
 pub const VkBool32 = u32;
 
@@ -317,7 +315,6 @@ pub const VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT: c_int = 256;
 
 pub const VK_IMAGE_VIEW_TYPE_2D: c_int = 1;
 pub const VK_COMPONENT_SWIZZLE_IDENTITY: c_int = 0;
-pub const VK_VERTEX_INPUT_RATE_VERTEX: c_int = 0;
 pub const VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST: c_int = 3;
 pub const VK_POLYGON_MODE_FILL: c_int = 0;
 pub const VK_CULL_MODE_NONE: c_int = 0;
@@ -749,7 +746,6 @@ pub const struct_VkInstanceCreateInfo = extern struct {
     ppEnabledLayerNames: [*c]const [*c]const u8 = null,
     enabledExtensionCount: u32 = 0,
     ppEnabledExtensionNames: [*c]const [*c]const u8 = null,
-    pub const vkCreateInstance = root.vkCreateInstance;
 };
 
 pub const VkInstanceCreateInfo = struct_VkInstanceCreateInfo;
@@ -1284,7 +1280,6 @@ pub extern fn vkResetCommandBuffer(commandBuffer: VkCommandBuffer, flags: VkComm
 
 pub extern fn vkCmdPipelineBarrier(commandBuffer: VkCommandBuffer, srcStageMask: VkPipelineStageFlags, dstStageMask: VkPipelineStageFlags, dependencyFlags: VkDependencyFlags, memoryBarrierCount: u32, pMemoryBarriers: [*c]const VkMemoryBarrier, bufferMemoryBarrierCount: u32, pBufferMemoryBarriers: [*c]const VkBufferMemoryBarrier, imageMemoryBarrierCount: u32, pImageMemoryBarriers: [*c]const VkImageMemoryBarrier) void;
 
-pub extern fn vkCmdClearColorImage(commandBuffer: VkCommandBuffer, image: VkImage, imageLayout: VkImageLayout, pColor: [*c]const VkClearColorValue, rangeCount: u32, pRanges: [*c]const VkImageSubresourceRange) void;
 pub extern fn vkCmdCopyBufferToImage(commandBuffer: VkCommandBuffer, srcBuffer: VkBuffer, dstImage: VkImage, dstImageLayout: VkImageLayout, regionCount: u32, pRegions: [*c]const VkBufferImageCopy) void;
 pub extern fn vkCreateImageView(device: VkDevice, pCreateInfo: [*c]const VkImageViewCreateInfo, pAllocator: ?*const VkAllocationCallbacks, pView: [*c]VkImageView) VkResult;
 pub extern fn vkDestroyImageView(device: VkDevice, imageView: VkImageView, pAllocator: ?*const VkAllocationCallbacks) void;
@@ -1329,8 +1324,6 @@ pub const VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT: c_int = 1;
 pub const VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT: c_int = 2;
 
 pub const VkExternalMemoryFeatureFlags = VkFlags;
-
-pub const VK_SEMAPHORE_IMPORT_TEMPORARY_BIT: c_int = 1;
 
 pub const VkSemaphoreImportFlags = VkFlags;
 
