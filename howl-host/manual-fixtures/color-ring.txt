@@ -1,0 +1,41 @@
+Howl Vulkan host foundation — bounded live receipt
+
+Command:
+  ../.zig/zig build run -Doptimize=ReleaseSafe
+
+Machine tuple:
+  Wayland DMA-BUF device: /dev/dri/renderD128 (226:128)
+  DRM fourcc: AB24 (0x34324241)
+  Vulkan format: VK_FORMAT_R8G8B8A8_UNORM
+  DRM modifier: 0x030000000606010
+  slots: 3
+
+Observed boundary:
+  Window commit revision=1 slot=0 acquire=1 release=1
+  Window frame revision=1
+  Window commit revision=2 slot=1 acquire=2 release=1
+  Window frame revision=2
+  Window commit revision=3 slot=2 acquire=3 release=1
+  Window frame revision=3
+  Window commit revision=4 slot=0 acquire=4 release=2
+  Window frame revision=4
+  Render ring complete revisions=4 slots=3
+  Howl color ring retired cleanly
+
+Elapsed build-and-run wall time:
+  0.364 seconds
+
+Ownership evidence:
+  Render alone created and mutated Vulkan objects.
+  Render alone observed per-slot DRM release timelines.
+  Window alone dispatched Wayland and committed completed revisions.
+  Directional eventfds woke each owner for newly published copied facts.
+  Window committed at most one revision per frame opportunity.
+  Window sent no acknowledgement and did not gate Render GPU submission.
+  Window detached and retired its wrappers after revision 4.
+  Render waited for Window retirement before destroying Vulkan slot storage.
+  Main joined both owners, then retired the shared boundary and std.Io root.
+
+No Vulkan API failure, Wayland protocol error, or synchronization failure was
+reported. No PTY, VT, terminal projection, input, or multiplexer module was
+linked.
