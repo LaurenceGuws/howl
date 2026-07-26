@@ -235,7 +235,7 @@ test "renderer chrome state retains stable identities through pane and tab chang
         },
         .tab_active_background = .{ .r = 48, .g = 72, .b = 112, .a = 255 },
         .tab_inactive_background = .{ .r = 28, .g = 34, .b = 46, .a = 255 },
-    }, &primitives, &text);
+    }, &.{}, &primitives, &text);
     try std.testing.expect(output.primitives.len > 0);
     try std.testing.expectEqualStrings("主", output.text[0.."主".len]);
     try state.closePane(split);

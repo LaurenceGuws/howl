@@ -199,7 +199,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         .{ 0.12, 0.48, 0.20, 1 },
         .{ 0.52, 0.16, 0.56, 1 },
     };
-    const initial_chrome = try chrome.project(chrome_appearance, &chrome_primitives, &chrome_text);
+    const initial_chrome = try chrome.project(chrome_appearance, &.{}, &chrome_primitives, &chrome_text);
     if (initial_chrome.primitives.len == 0) return error.Chrome;
     var next_acquire_point: u64 = 4;
     for (&rings[0], 0..) |*slot, index| {
@@ -230,7 +230,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             if (surface.generation <= active_generation) continue;
             try checkGpuBudget(surface.width, surface.height);
             try chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) });
-            const resized_chrome = try chrome.project(chrome_appearance, &chrome_primitives, &chrome_text);
+            const resized_chrome = try chrome.project(chrome_appearance, &.{}, &chrome_primitives, &chrome_text);
             if (resized_chrome.primitives.len == 0) return error.Chrome;
             const replacement = 1 - active_ring;
             for (&rings[replacement]) |*slot| slot.* = .{};

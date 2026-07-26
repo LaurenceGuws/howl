@@ -10,11 +10,18 @@ pub const Error = error{
     InvalidScrollbar,
     InvalidText,
     InvalidScroll,
+    InvalidIdentity,
+    InvalidOrder,
     ArithmeticOverflow,
     InsufficientOutput,
     InsufficientText,
     AliasedStorage,
 };
+
+/// Stable caller identity for one tab. Render never issues or retains it.
+pub const TabId = enum(u64) { _ };
+/// Stable caller identity for one pane. Render never issues or retains it.
+pub const PaneId = enum(u64) { _ };
 
 /// Names a bounded surface in caller coordinates.
 pub const Size = struct {
@@ -60,11 +67,16 @@ pub const Style = struct {
 
 /// Supplies one ordered tab label and its active appearance fact.
 pub const Tab = struct {
+    /// Supplies the stable nonzero caller identity.
+    id: TabId,
     /// Borrows validated UTF-8 label bytes for this call.
     label: []const u8,
     /// Selects active versus inactive tab styling.
     active: bool,
 };
+
+/// Selects tiled coverage or caller-ordered floating overlap.
+pub const PaneLayer = enum { tiled, floating };
 
 /// Supplies bounded scroll-model facts; no viewport policy is retained.
 pub const Scroll = struct {
@@ -78,6 +90,8 @@ pub const Scroll = struct {
 
 /// Supplies one immutable pane rectangle, label, focus fact, and scroll model.
 pub const Pane = struct {
+    /// Supplies the stable nonzero caller identity.
+    id: PaneId,
     /// Supplies the pane rectangle before surface clipping.
     rect: Rect,
     /// Borrows validated UTF-8 pane-label bytes for this call.
@@ -86,6 +100,19 @@ pub const Pane = struct {
     focused: bool,
     /// Supplies scroll facts when a scrollbar should be projected.
     scroll: ?Scroll,
+    /// Supplies the pane composition layer. Tiled panes precede floating panes.
+    layer: PaneLayer,
+};
+
+/// Supplies one caller-owned selected pixel range and its appearance.
+pub const Selection = struct {
+    /// Identifies the pane whose content owns this range before surface and
+    /// pane clipping.
+    pane: PaneId,
+    /// Supplies the selected range before surface clipping.
+    rect: Rect,
+    /// Supplies the caller-selected highlight color.
+    color: Color,
 };
 
 /// Supplies all immutable caller facts for one chrome projection.
@@ -98,6 +125,8 @@ pub const Input = struct {
     tabs: []const Tab,
     /// Borrows ordered pane facts.
     panes: []const Pane,
+    /// Borrows caller-mapped selection ranges in deterministic draw order.
+    selections: []const Selection,
     /// Supplies shared chrome colors.
     style: Style,
     /// Supplies active tab background color.
@@ -108,6 +137,22 @@ pub const Input = struct {
     scrollbar_width: u16,
     /// Supplies the minimum scrollbar thumb height when emitted.
     scrollbar_min_thumb: u16,
+};
+
+/// Supplies one surface-local pixel coordinate for stateless hit testing.
+pub const Point = struct {
+    /// Horizontal pixel coordinate.
+    x: i32,
+    /// Vertical pixel coordinate.
+    y: i32,
+};
+
+/// Identifies the topmost tab or pane under one caller coordinate.
+pub const Hit = union(enum) {
+    /// Identifies one tab-bar entry.
+    tab: TabId,
+    /// Identifies one tiled or floating pane.
+    pane: PaneId,
 };
 
 /// Identifies which frame edges are owned by one primitive.
@@ -148,15 +193,19 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
     const primitive_bytes = try byteLen(primitives.len, @sizeOf(Primitive));
     const tab_bytes = try byteLen(input.tabs.len, @sizeOf(Tab));
     const pane_bytes = try byteLen(input.panes.len, @sizeOf(Pane));
+    const selection_bytes = try byteLen(input.selections.len, @sizeOf(Selection));
     const primitive_start = @intFromPtr(primitives.ptr);
     const text_start = @intFromPtr(text_storage.ptr);
     const tab_start = @intFromPtr(input.tabs.ptr);
     const pane_start = @intFromPtr(input.panes.ptr);
+    const selection_start = @intFromPtr(input.selections.ptr);
     if (overlapsRanges(primitive_start, primitive_bytes, tab_start, tab_bytes) or
         overlapsRanges(primitive_start, primitive_bytes, pane_start, pane_bytes) or
+        overlapsRanges(primitive_start, primitive_bytes, selection_start, selection_bytes) or
         overlapsRanges(primitive_start, primitive_bytes, text_start, text_storage.len) or
         overlapsRanges(text_start, text_storage.len, tab_start, tab_bytes) or
-        overlapsRanges(text_start, text_storage.len, pane_start, pane_bytes))
+        overlapsRanges(text_start, text_storage.len, pane_start, pane_bytes) or
+        overlapsRanges(text_start, text_storage.len, selection_start, selection_bytes))
         return error.AliasedStorage;
     for (input.tabs) |tab| {
         if (overlapsRanges(primitive_start, primitive_bytes, @intFromPtr(tab.label.ptr), tab.label.len) or
@@ -172,6 +221,11 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
     const tab_height = @min(input.tab_bar_height, input.surface.height);
     var needed: usize = 0;
     var text_needed: usize = 0;
+    try validateIdentitiesAndOrder(input);
+    for (input.selections) |selection| {
+        if (@backingInt(selection.pane) == 0 or !hasPane(input.panes, selection.pane)) return error.InvalidIdentity;
+        try validateRect(selection.rect, input.surface);
+    }
     if (tab_height != 0) {
         if (input.tabs.len > input.surface.width) return error.InvalidTabBar;
         try add(&needed, 1);
@@ -195,6 +249,12 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
     for (input.panes) |pane| {
         try validateRect(pane.rect, input.surface);
         const rect = clipRect(pane.rect, input.surface);
+        for (input.selections) |selection| {
+            if (selection.pane == pane.id) {
+                const clipped = clipRectToPane(selection.rect, rect);
+                if (clipped.width != 0 and clipped.height != 0) try add(&needed, 1);
+            }
+        }
         try add(&needed, 1);
         try validateUtf8(pane.label);
         if (pane.label.len != 0) {
@@ -233,6 +293,15 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
     }
     for (input.panes) |pane| {
         const rect = clipRect(pane.rect, input.surface);
+        for (input.selections) |selection| {
+            if (selection.pane == pane.id) {
+                const clipped = clipRectToPane(selection.rect, rect);
+                if (clipped.width != 0 and clipped.height != 0) {
+                    primitives[used] = .{ .fill = .{ .rect = clipped, .color = selection.color } };
+                    used += 1;
+                }
+            }
+        }
         primitives[used] = .{ .border = .{ .rect = rect, .edges = edgeMask(pane, input.panes), .color = if (pane.focused) input.style.foreground else input.style.border } };
         used += 1;
         if (pane.label.len != 0) {
@@ -247,6 +316,33 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
         };
     }
     return .{ .primitives = primitives[0..used], .text = text_storage[0..text_used] };
+}
+
+/// Returns the topmost caller identity at `point` without allocation or retained
+/// state. Hit-relevant geometry, identity, and order facts fail before a hit is
+/// returned.
+pub fn hitTest(input: Input, point: Point) Error!?Hit {
+    if (input.surface.width == 0 or input.surface.height == 0) return error.InvalidSurface;
+    try validateIdentitiesAndOrder(input);
+    const tab_height = @min(input.tab_bar_height, input.surface.height);
+    if (tab_height != 0 and input.tabs.len > input.surface.width) return error.InvalidTabBar;
+    for (input.panes) |pane| try validateRect(pane.rect, input.surface);
+    if (point.x >= 0 and point.y >= 0 and point.x < input.surface.width and point.y < tab_height and input.tabs.len != 0) {
+        const unit = input.surface.width / @as(u16, @intCast(input.tabs.len));
+        for (input.tabs, 0..) |tab, index| {
+            const width = if (index + 1 == input.tabs.len) input.surface.width - unit * @as(u16, @intCast(index)) else unit;
+            const x: i32 = @intCast(@as(u32, @intCast(index)) * unit);
+            if (point.x >= x and point.x < @as(i64, x) + width) return .{ .tab = tab.id };
+        }
+    }
+    var index = input.panes.len;
+    while (index > 0) {
+        index -= 1;
+        const pane = input.panes[index];
+        const rect = clipRect(pane.rect, input.surface);
+        if (contains(rect, point)) return .{ .pane = pane.id };
+    }
+    return null;
 }
 
 fn add(value: *usize, amount: usize) Error!void {
@@ -274,6 +370,13 @@ fn clipRect(rect: Rect, surface: Size) Rect {
     const bottom = @min(@as(i64, surface.height), @as(i64, rect.y) + rect.height);
     return .{ .x = @intCast(left), .y = @intCast(top), .width = @intCast(right - left), .height = @intCast(bottom - top) };
 }
+fn clipRectToPane(rect: Rect, pane: Rect) Rect {
+    const left = @max(@as(i64, pane.x), @as(i64, rect.x));
+    const top = @max(@as(i64, pane.y), @as(i64, rect.y));
+    const right = @min(@as(i64, pane.x) + pane.width, @as(i64, rect.x) + rect.width);
+    const bottom = @min(@as(i64, pane.y) + pane.height, @as(i64, rect.y) + rect.height);
+    return .{ .x = @intCast(left), .y = @intCast(top), .width = @intCast(@max(@as(i64, 0), right - left)), .height = @intCast(@max(@as(i64, 0), bottom - top)) };
+}
 fn overlapsRanges(a: usize, a_len: usize, b: usize, b_len: usize) bool {
     if (a_len == 0 or b_len == 0) return false;
     return if (a <= b) b - a < a_len else a - b < b_len;
@@ -281,13 +384,43 @@ fn overlapsRanges(a: usize, a_len: usize, b: usize, b_len: usize) bool {
 fn byteLen(count: usize, size: usize) Error!usize {
     return std.math.mul(usize, count, size) catch return error.ArithmeticOverflow;
 }
+fn validateIdentitiesAndOrder(input: Input) Error!void {
+    var active_count: usize = 0;
+    for (input.tabs, 0..) |tab, index| {
+        if (@backingInt(tab.id) == 0) return error.InvalidIdentity;
+        if (tab.active) active_count += 1;
+        for (input.tabs[0..index]) |prior| {
+            if (prior.id == tab.id) return error.InvalidIdentity;
+        }
+    }
+    if (input.tabs.len != 0 and active_count != 1) return error.InvalidIdentity;
+    var floating = false;
+    for (input.panes, 0..) |pane, index| {
+        if (@backingInt(pane.id) == 0) return error.InvalidIdentity;
+        if (pane.layer == .floating) floating = true else if (floating) return error.InvalidOrder;
+        for (input.panes[0..index]) |prior| {
+            if (prior.id == pane.id) return error.InvalidIdentity;
+        }
+    }
+}
+fn hasPane(panes: []const Pane, id: PaneId) bool {
+    for (panes) |pane| if (pane.id == id) return true;
+    return false;
+}
+fn contains(rect: Rect, point: Point) bool {
+    if (point.x < rect.x or point.y < rect.y) return false;
+    return @as(i64, point.x) < @as(i64, rect.x) + rect.width and
+        @as(i64, point.y) < @as(i64, rect.y) + rect.height;
+}
 fn edgeMask(pane: Pane, panes: []const Pane) BorderEdges {
     var edges = BorderEdges{};
+    if (pane.layer == .floating) return edges;
     const left = @as(i64, pane.rect.x);
     const top = @as(i64, pane.rect.y);
     const right = left + pane.rect.width;
     const bottom = top + pane.rect.height;
     for (panes) |other| {
+        if (other.layer == .floating) continue;
         const other_left = @as(i64, other.rect.x);
         const other_top = @as(i64, other.rect.y);
         const other_right = other_left + other.rect.width;

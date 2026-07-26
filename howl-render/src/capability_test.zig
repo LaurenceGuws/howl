@@ -21,6 +21,7 @@ test "public namespaces exactly match compile-time selection" {
 
 comptime {
     std.testing.refAllDecls(@import("chrome_test.zig"));
+    if (selected.native_text) std.testing.refAllDecls(@import("chrome_reuse_test.zig"));
     if (selected.native_text) std.testing.refAllDecls(@import("native_test.zig"));
     if (selected.generated_glyphs) std.testing.refAllDecls(@import("generated_test.zig"));
     if (selected.terminal_text) std.testing.refAllDecls(@import("terminal_text_test.zig"));

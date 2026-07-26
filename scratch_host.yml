@@ -24,7 +24,7 @@ accepted:
 
 checkpoint:
   id: render_chrome_ownership
-  status: ready_for_worker
+  status: in_progress
   objective: >-
     Reconcile howl-host chrome_state/chrome_draw with howl-render so tabs,
     tiled and floating panes, labels, borders, scrollbars, and caller-owned
@@ -69,9 +69,39 @@ checkpoint:
     - report exact public-symbol, file, line, byte, and dependency-graph delta
     - report every Host-local chrome noun deleted, retained, or still awaiting interactive input
     - provide one stable manual command only after deterministic proofs pass
+  evidence:
+    zellij:
+      paths:
+        - /home/home/personal/projects/dev_references/terminals/zellij/zellij-server/src/tab/mod.rs
+        - /home/home/personal/projects/dev_references/terminals/zellij/zellij-server/src/panes/tiled_panes/mod.rs
+        - /home/home/personal/projects/dev_references/terminals/zellij/zellij-server/src/panes/floating_panes/mod.rs
+      adopted_behavior:
+        - tiled and floating are distinct pane composition roles
+        - floating caller order determines topmost focus and hit behavior
+        - hidden tabs retain pane state outside visible composition
+      rejected_structure:
+        - pane managers, layout engines, swap layouts, widgets, events, and application commands
+    current_shape:
+      render:
+        - stable caller-issued TabId and PaneId
+        - immutable tiled/floating order, selection, projection, and hit facts
+        - no retained topology or application policy
+      host:
+        - bounded identity issuance and tab/pane retention
+        - complete tiled coverage plus bounded floating overlap
+        - transactional mutation, focus, and geometry policy
+      reuse:
+        - editor-like native shaping and chrome projection through the curated howl-render root
+    receipts:
+      - all eight Render capability graphs passed check/test in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+      - Host and root check/test passed in all four optimize modes
+      - source audit, protocol validation, YAML load, pinned formatting, and diff checks passed
+      - Debug and ReleaseSafe live rings preserved the 40-vertex, 60-index, six-draw, four-glyph plan
+      - both live rings proved same-generation slot reuse, resize generation two, and clean compositor-close retirement
+      - visual receipt /tmp/howl-render-chrome-ownership.png matches the accepted tab label and blank pane pixels
 
 next:
-  - worker implements render_chrome_ownership
+  - worker completes the ownership correction pass
   - reviewer accepts or corrects the checkpoint
   - commit one coherent backend-neutral chrome ownership checkpoint
   - advance this scratch to interactive_chrome

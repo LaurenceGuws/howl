@@ -29,8 +29,9 @@ accepted:
   howl-render/src/image_projection.zig: stateless VT image-plane projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
   howl-render/src/image_projection_test.zig: image projection identity, placement, capacity, and alias proofs
-  howl-render/src/chrome.zig: caller-neutral tab, pane-frame, label, and scrollbar projection
-  howl-render/src/chrome_test.zig: deterministic chrome geometry, ordering, capacity, and alias proofs
+  howl-render/src/chrome.zig: caller-neutral stable identities, tab bar, tiled/floating pane frames, labels, scrollbars, selection, and hit projection
+  howl-render/src/chrome_test.zig: deterministic chrome geometry, overlap order, clipping, hit, capacity, rollback, and alias proofs
+  howl-render/src/chrome_reuse_test.zig: independent editor-like native-text and chrome reuse proof through the curated package root
   howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
@@ -43,7 +44,7 @@ accepted:
   howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
   howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, generation-tagged rings, and release observation
-  howl-host/src/chrome_state.zig: Renderer-owned Topology with bounded stable tab/pane identities, transactional geometry, focus, and chrome projection composition
+  howl-host/src/chrome_state.zig: Renderer-owned bounded tab and tiled/floating pane topology, transactional geometry/focus policy, and immutable chrome composition
   howl-host/src/chrome_draw.zig: bounded native-label shaping, shared alpha-atlas residency, and Vulkan-ready chrome vertices, indices, and draw facts
   howl-host/src/gpu_chrome.zig: Host-owned solid and alpha-text Vulkan pipelines, shared GPU atlas, mapped bounded staging, and per-slot framebuffer ownership
   howl-host/shaders: maintained GLSL sources and compilation provenance for the two chrome pipelines

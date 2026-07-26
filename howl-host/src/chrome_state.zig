@@ -22,10 +22,8 @@ pub const scrollbar_width: u16 = 8;
 /// Bounds the host's currently admitted minimum scrollbar thumb.
 pub const scrollbar_min_thumb: u16 = 16;
 
-/// Stable identity for a tab, distinct from pane identities at compile time.
-pub const TabId = enum(u64) { _ };
-/// Stable identity for a pane, distinct from tab identities at compile time.
-pub const PaneId = enum(u64) { _ };
+const TabId = chrome.TabId;
+const PaneId = chrome.PaneId;
 
 /// Caller-selected visual facts used only while deriving chrome primitives.
 /// Topology owns identities and rectangles, never presentation policy.
@@ -52,6 +50,7 @@ const Pane = struct {
     label: [max_label_bytes]u8 = undefined,
     label_len: u8 = 0,
     scroll: ?chrome.Scroll = null,
+    layer: chrome.PaneLayer = .tiled,
 };
 
 const Tab = struct {
@@ -183,6 +182,59 @@ pub const Topology = struct {
         self.tabs[location.tab].panes[location.pane].scroll = scroll;
     }
 
+    /// Creates one focused floating pane above every current pane in the active
+    /// tab. Candidate geometry and identity issuance commit together.
+    pub fn createFloatingPane(self: *Topology, rect: chrome.Rect, label: []const u8) Error!PaneId {
+        var candidate = self.*;
+        const tab = &candidate.tabs[candidate.active_tab];
+        if (candidate.live_panes >= max_live_panes or tab.pane_count >= max_panes_per_tab) return error.Capacity;
+        try validateLabel(label);
+        try validateFloatingRect(&candidate, rect);
+        const id = try candidate.takePaneId();
+        for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = false;
+        var pane = Pane{ .id = id, .rect = rect, .focused = true, .layer = .floating };
+        copyLabel(&pane.label, &pane.label_len, label);
+        tab.panes[tab.pane_count] = pane;
+        tab.pane_count += 1;
+        candidate.live_panes += 1;
+        try validateLayout(&candidate);
+        self.* = candidate;
+        return id;
+    }
+
+    /// Replaces one floating pane rectangle transactionally.
+    pub fn setFloatingRect(self: *Topology, id: PaneId, rect: chrome.Rect) Error!void {
+        var candidate = self.*;
+        const location = candidate.findPane(id) orelse return error.InvalidId;
+        if (candidate.tabs[location.tab].panes[location.pane].layer != .floating) return error.InvalidId;
+        try validateFloatingRect(&candidate, rect);
+        candidate.tabs[location.tab].panes[location.pane].rect = rect;
+        try validateLayout(&candidate);
+        self.* = candidate;
+    }
+
+    /// Focuses and raises one floating pane to the top of its caller-owned order.
+    pub fn raiseFloatingPane(self: *Topology, id: PaneId) Error!void {
+        var candidate = self.*;
+        const location = candidate.findPane(id) orelse return error.InvalidId;
+        const tab = &candidate.tabs[location.tab];
+        if (tab.panes[location.pane].layer != .floating) return error.InvalidId;
+        const selected = tab.panes[location.pane];
+        var index = location.pane;
+        while (index + 1 < tab.pane_count) : (index += 1) tab.panes[index] = tab.panes[index + 1];
+        tab.panes[tab.pane_count - 1] = selected;
+        for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = pane.id == id;
+        try validateLayout(&candidate);
+        self.* = candidate;
+    }
+
+    /// Focuses an exact retained pane without changing its geometry or order.
+    pub fn focusPane(self: *Topology, id: PaneId) Error!void {
+        const location = self.findPane(id) orelse return error.InvalidId;
+        const tab = &self.tabs[location.tab];
+        for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = pane.id == id;
+    }
+
     /// Reorders one tab in the visible ordered list.
     pub fn reorderTab(self: *Topology, id: TabId, destination: usize) Error!void {
         const source = self.findTab(id) orelse return error.InvalidId;
@@ -239,6 +291,7 @@ pub const Topology = struct {
         const tab = &self.tabs[location.tab];
         if (tab.pane_count >= max_panes_per_tab) return error.Capacity;
         const source = tab.panes[location.pane];
+        if (source.layer != .tiled) return error.InvalidGeometry;
         const first_width = if (orientation == .vertical) source.rect.width / 2 else source.rect.width;
         const first_height = if (orientation == .horizontal) source.rect.height / 2 else source.rect.height;
         if (first_width == 0 or first_height == 0) return error.InvalidGeometry;
@@ -328,6 +381,7 @@ pub const Topology = struct {
         const location = candidate.findPane(pane_id) orelse return error.InvalidId;
         const tab = &candidate.tabs[location.tab];
         const source = tab.panes[location.pane].rect;
+        if (tab.panes[location.pane].layer != .tiled) return error.InvalidGeometry;
         var edge: i64 = if (orientation == .vertical) @as(i64, source.x) + source.width else @as(i64, source.y) + source.height;
         var movement: i64 = delta;
         if (!hasOpposite(tab, location.pane, orientation, edge, source)) {
@@ -340,6 +394,7 @@ pub const Topology = struct {
         while (expanded) {
             expanded = false;
             for (tab.panes[0..tab.pane_count]) |pane| {
+                if (pane.layer == .floating) continue;
                 if (!touchesEdge(pane.rect, orientation, edge)) continue;
                 const start: i64 = if (orientation == .vertical) pane.rect.y else pane.rect.x;
                 const finish = start + if (orientation == .vertical) pane.rect.height else pane.rect.width;
@@ -354,6 +409,7 @@ pub const Topology = struct {
         var left_count: usize = 0;
         var right_count: usize = 0;
         for (tab.panes[0..tab.pane_count]) |*pane| {
+            if (pane.layer == .floating) continue;
             const start: i64 = if (orientation == .vertical) pane.rect.y else pane.rect.x;
             const finish = start + if (orientation == .vertical) pane.rect.height else pane.rect.width;
             if (start < span_start or finish > span_end) continue;
@@ -382,36 +438,41 @@ pub const Topology = struct {
         self.* = candidate;
     }
 
-    /// Closes a pane and focuses the nearest surviving pane.
+    /// Closes a pane, preserving another focused identity when the removed pane
+    /// was unfocused and choosing a deterministic neighbor only when needed.
     pub fn closePane(self: *Topology, pane_id: PaneId) Error!void {
         const location = self.findPane(pane_id) orelse return error.InvalidId;
         if (self.tabs[location.tab].pane_count == 1) return self.closeTab(self.tabs[location.tab].id);
         var candidate = self.*;
         const tab = &candidate.tabs[location.tab];
         const removed = tab.panes[location.pane];
-        if (!fillRemovedRectangle(tab, location.pane, removed)) return error.InvalidGeometry;
+        if (removed.layer == .tiled and !fillRemovedRectangle(tab, location.pane, removed)) return error.InvalidGeometry;
         var index = location.pane;
         while (index + 1 < tab.pane_count) : (index += 1) tab.panes[index] = tab.panes[index + 1];
         tab.pane_count -= 1;
         candidate.live_panes -= 1;
-        for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = false;
-        tab.panes[@min(location.pane, tab.pane_count - 1)].focused = true;
+        if (removed.focused) {
+            for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = false;
+            tab.panes[@min(location.pane, tab.pane_count - 1)].focused = true;
+        }
         try validateLayout(&candidate);
         self.* = candidate;
     }
 
     /// Projects active-pane chrome and all tab labels into caller storage.
-    pub fn project(self: *const Topology, appearance: Appearance, primitives: []chrome.Primitive, text: []u8) chrome.Error!chrome.Output {
+    pub fn project(self: *const Topology, appearance: Appearance, selections: []const chrome.Selection, primitives: []chrome.Primitive, text: []u8) chrome.Error!chrome.Output {
         var tabs: [max_tabs]chrome.Tab = undefined;
-        for (self.tabs[0..self.tab_count], 0..) |*tab, index| tabs[index] = .{ .label = tab.label[0..tab.label_len], .active = index == self.active_tab };
+        for (self.tabs[0..self.tab_count], 0..) |*tab, index| tabs[index] = .{ .id = tab.id, .label = tab.label[0..tab.label_len], .active = index == self.active_tab };
         var panes: [max_panes_per_tab]chrome.Pane = undefined;
         const active = &self.tabs[self.active_tab];
         for (active.panes[0..active.pane_count], 0..) |*pane, index| {
             panes[index] = .{
+                .id = pane.id,
                 .rect = pane.rect,
                 .label = pane.label[0..pane.label_len],
                 .focused = pane.focused,
                 .scroll = pane.scroll,
+                .layer = pane.layer,
             };
         }
         return chrome.project(.{
@@ -419,12 +480,42 @@ pub const Topology = struct {
             .tab_bar_height = self.contentTop(),
             .tabs = tabs[0..self.tab_count],
             .panes = panes[0..active.pane_count],
+            .selections = selections,
             .style = appearance.style,
             .tab_active_background = appearance.tab_active_background,
             .tab_inactive_background = appearance.tab_inactive_background,
             .scrollbar_width = scrollbar_width,
             .scrollbar_min_thumb = scrollbar_min_thumb,
         }, primitives, text);
+    }
+
+    /// Resolves the topmost visible tab or pane identity through Render's
+    /// caller-neutral geometry contract.
+    pub fn hitTest(self: *const Topology, appearance: Appearance, point: chrome.Point) chrome.Error!?chrome.Hit {
+        var tabs: [max_tabs]chrome.Tab = undefined;
+        for (self.tabs[0..self.tab_count], 0..) |*tab, index| tabs[index] = .{ .id = tab.id, .label = tab.label[0..tab.label_len], .active = index == self.active_tab };
+        var panes: [max_panes_per_tab]chrome.Pane = undefined;
+        const active = &self.tabs[self.active_tab];
+        for (active.panes[0..active.pane_count], 0..) |*pane, index| panes[index] = .{
+            .id = pane.id,
+            .rect = pane.rect,
+            .label = pane.label[0..pane.label_len],
+            .focused = pane.focused,
+            .scroll = pane.scroll,
+            .layer = pane.layer,
+        };
+        return chrome.hitTest(.{
+            .surface = self.surface,
+            .tab_bar_height = self.contentTop(),
+            .tabs = tabs[0..self.tab_count],
+            .panes = panes[0..active.pane_count],
+            .selections = &.{},
+            .style = appearance.style,
+            .tab_active_background = appearance.tab_active_background,
+            .tab_inactive_background = appearance.tab_inactive_background,
+            .scrollbar_width = scrollbar_width,
+            .scrollbar_min_thumb = scrollbar_min_thumb,
+        }, point);
     }
 
     fn createTabInternal(self: *Topology, label: []const u8, activate: bool) Error!TabId {
@@ -475,6 +566,7 @@ fn scaleEdge(value: i64, old_extent: u16, new_extent: u16) Error!i64 {
 fn hasOpposite(tab: *const Tab, source_index: usize, orientation: Orientation, edge: i64, source: chrome.Rect) bool {
     for (tab.panes[0..tab.pane_count], 0..) |pane, index| {
         if (index == source_index) continue;
+        if (pane.layer == .floating) continue;
         const after = if (orientation == .vertical) @as(i64, pane.rect.x) else @as(i64, pane.rect.y);
         const start = if (orientation == .vertical) @as(i64, pane.rect.y) else @as(i64, pane.rect.x);
         const finish = start + if (orientation == .vertical) pane.rect.height else pane.rect.width;
@@ -498,8 +590,9 @@ fn validateLayout(self: *const Topology) Error!void {
         if (@backingInt(tab.id) == 0) return error.InvalidId;
         if (tab.pane_count == 0) return error.InvalidGeometry;
         counted_panes = std.math.add(u16, counted_panes, tab.pane_count) catch return error.ArithmeticOverflow;
-        var area: u64 = 0;
+        var tiled_area: u64 = 0;
         var focused: u8 = 0;
+        var floating_seen = false;
         for (tab.panes[0..tab.pane_count], 0..) |pane, index| {
             if (@backingInt(pane.id) == 0) return error.InvalidId;
             if (pane.rect.x < 0 or pane.rect.y < self.contentTop() or pane.rect.width == 0 or pane.rect.height == 0) return error.InvalidGeometry;
@@ -507,14 +600,20 @@ fn validateLayout(self: *const Topology) Error!void {
             const right = std.math.add(i64, pane.rect.x, pane.rect.width) catch return error.ArithmeticOverflow;
             const bottom = std.math.add(i64, pane.rect.y, pane.rect.height) catch return error.ArithmeticOverflow;
             if (right > self.surface.width or bottom > self.surface.height) return error.InvalidGeometry;
-            area = std.math.add(u64, area, @as(u64, pane.rect.width) * pane.rect.height) catch return error.ArithmeticOverflow;
+            if (pane.layer == .floating) {
+                floating_seen = true;
+            } else {
+                if (floating_seen) return error.InvalidGeometry;
+                tiled_area = std.math.add(u64, tiled_area, @as(u64, pane.rect.width) * pane.rect.height) catch return error.ArithmeticOverflow;
+            }
             if (pane.focused) focused += 1;
             for (tab.panes[0..index]) |other| {
+                if (pane.layer == .floating or other.layer == .floating) continue;
                 const overlap = pane.rect.x < other.rect.x + other.rect.width and other.rect.x < pane.rect.x + pane.rect.width and pane.rect.y < other.rect.y + other.rect.height and other.rect.y < pane.rect.y + pane.rect.height;
                 if (overlap) return error.InvalidGeometry;
             }
         }
-        if (area != @as(u64, self.surface.width) * (self.surface.height - self.contentTop()) or focused != 1) return error.InvalidGeometry;
+        if (tiled_area != @as(u64, self.surface.width) * (self.surface.height - self.contentTop()) or focused != 1) return error.InvalidGeometry;
     }
     if (counted_panes != self.live_panes or counted_panes > max_live_panes) return error.InvalidGeometry;
     for (self.tabs[0..self.tab_count], 0..) |tab, tab_index| {
@@ -528,6 +627,13 @@ fn validateLayout(self: *const Topology) Error!void {
     }
 }
 
+fn validateFloatingRect(self: *const Topology, rect: chrome.Rect) Error!void {
+    if (rect.width == 0 or rect.height == 0 or rect.x < 0 or rect.y < self.contentTop()) return error.InvalidGeometry;
+    const right = std.math.add(i64, rect.x, rect.width) catch return error.ArithmeticOverflow;
+    const bottom = std.math.add(i64, rect.y, rect.height) catch return error.ArithmeticOverflow;
+    if (right > self.surface.width or bottom > self.surface.height) return error.InvalidGeometry;
+}
+
 fn validatePaneScroll(scroll: chrome.Scroll, rect: chrome.Rect) Error!void {
     if (scroll.visible == 0 or scroll.visible > scroll.total or scroll.start > scroll.total - scroll.visible) return error.InvalidScroll;
     if (scroll.visible < scroll.total and (rect.width < scrollbar_width or rect.height < scrollbar_min_thumb)) return error.InvalidGeometry;
@@ -539,6 +645,7 @@ fn fillRemovedRectangle(tab: *Tab, removed_index: usize, removed: Pane) bool {
         var covered: u32 = 0;
         for (tab.panes[0..tab.pane_count], 0..) |other, index| {
             if (index == removed_index) continue;
+            if (other.layer == .floating) continue;
             const adjacent = switch (side) {
                 .right => other.rect.x == removed.rect.x + removed.rect.width,
                 .left => other.rect.x + other.rect.width == removed.rect.x,
@@ -567,6 +674,7 @@ fn fillRemovedRectangle(tab: *Tab, removed_index: usize, removed: Pane) bool {
         if (covered != required) continue;
         for (tab.panes[0..tab.pane_count], 0..) |*other, index| {
             if (index == removed_index) continue;
+            if (other.layer == .floating) continue;
             const contained = switch (side) {
                 .right, .left => other.rect.y >= removed.rect.y and
                     other.rect.y + other.rect.height <= removed.rect.y + removed.rect.height,
@@ -634,7 +742,7 @@ test "chrome state preserves identities and projects deterministic output" {
     try std.testing.expectEqual(second_tab, state.activeTabId());
     var primitives: [128]chrome.Primitive = undefined;
     var text: [1024]u8 = undefined;
-    const output = try state.project(testAppearance(), &primitives, &text);
+    const output = try state.project(testAppearance(), &.{}, &primitives, &text);
     try std.testing.expect(output.primitives.len > 0);
     try std.testing.expect(std.mem.containsAtLeast(u8, output.text, 1, "第二"));
     try std.testing.expect(std.mem.endsWith(u8, output.text, "pane"));
@@ -739,7 +847,7 @@ test "tiny compositor surfaces remain deterministic with a clamped tab bar" {
     try state.validate();
     var primitives: [16]chrome.Primitive = undefined;
     var text: [128]u8 = undefined;
-    const output = try state.project(testAppearance(), &primitives, &text);
+    const output = try state.project(testAppearance(), &.{}, &primitives, &text);
     try std.testing.expect(output.primitives.len > 0);
     try std.testing.expectEqual(@as(i32, 0), state.tabs[0].panes[0].rect.y);
     try std.testing.expectEqual(@as(u16, 1), state.tabs[0].panes[0].rect.height);
@@ -753,4 +861,59 @@ test "tab and pane identity issuance commits together" {
     try std.testing.expectEqual(next_tab, state.next_tab_id);
     try std.testing.expectEqual(@as(usize, 1), state.tabCount());
     try state.validate();
+}
+
+test "floating panes retain order geometry focus hit and transactional identity" {
+    var state = try Topology.init(.{ .width = 160, .height = 100 }, 24);
+    const tiled = state.paneId(0, 0).?;
+    const first = try state.createFloatingPane(.{ .x = 20, .y = 32, .width = 80, .height = 48 }, "first");
+    const second = try state.createFloatingPane(.{ .x = 50, .y = 40, .width = 80, .height = 48 }, "second");
+    try std.testing.expectEqual(second, (try state.hitTest(testAppearance(), .{ .x = 60, .y = 50 })).?.pane);
+    try state.raiseFloatingPane(first);
+    try std.testing.expectEqual(first, (try state.hitTest(testAppearance(), .{ .x = 60, .y = 50 })).?.pane);
+    try state.setFloatingRect(first, .{ .x = 24, .y = 30, .width = 60, .height = 40 });
+    try std.testing.expectEqual(tiled, (try state.hitTest(testAppearance(), .{ .x = 140, .y = 90 })).?.pane);
+    const next = state.next_pane_id;
+    const before = state;
+    try std.testing.expectError(error.InvalidGeometry, state.createFloatingPane(.{ .x = -1, .y = 10, .width = 5, .height = 5 }, "bad"));
+    try std.testing.expectEqual(next, state.next_pane_id);
+    try std.testing.expectEqualDeep(before, state);
+    try state.resizeSurface(.{ .width = 200, .height = 120 });
+    try state.closePane(first);
+    try std.testing.expectEqual(second, (try state.hitTest(testAppearance(), .{ .x = 70, .y = 60 })).?.pane);
+    try state.validate();
+}
+
+test "closing background panes preserves focus and focused closure falls back" {
+    var state = try Topology.init(.{ .width = 160, .height = 100 }, 24);
+    const tiled = state.paneId(0, 0).?;
+    const other_tiled = try state.split(tiled, .vertical);
+    try std.testing.expect(other_tiled != tiled);
+    const first = try state.createFloatingPane(.{ .x = 20, .y = 32, .width = 40, .height = 32 }, "first");
+    const second = try state.createFloatingPane(.{ .x = 60, .y = 32, .width = 40, .height = 32 }, "second");
+    const third = try state.createFloatingPane(.{ .x = 80, .y = 40, .width = 40, .height = 32 }, "third");
+    try state.closePane(tiled);
+    try std.testing.expect(state.findPane(third).?.pane < state.tabs[0].pane_count);
+    try std.testing.expect(state.tabs[0].panes[state.findPane(third).?.pane].focused);
+    try state.closePane(second);
+    try std.testing.expect(state.tabs[0].panes[state.findPane(third).?.pane].focused);
+    try state.closePane(third);
+    try std.testing.expect(state.tabs[0].panes[state.findPane(first).?.pane].focused);
+    try state.validate();
+}
+
+test "hidden tabs retain floating state outside visible composition" {
+    var state = try Topology.init(.{ .width = 120, .height = 80 }, 20);
+    const first_tab = state.activeTabId();
+    const floating = try state.createFloatingPane(.{ .x = 12, .y = 28, .width = 60, .height = 36 }, "float");
+    const second_tab = try state.createTab("other");
+    try std.testing.expectEqual(second_tab, state.activeTabId());
+    var primitives: [32]chrome.Primitive = undefined;
+    var text: [256]u8 = undefined;
+    const hidden = try state.project(testAppearance(), &.{}, &primitives, &text);
+    try std.testing.expect(!std.mem.containsAtLeast(u8, hidden.text, 1, "float"));
+    try state.switchTab(first_tab);
+    try std.testing.expectEqual(floating, (try state.hitTest(testAppearance(), .{ .x = 20, .y = 30 })).?.pane);
+    const visible = try state.project(testAppearance(), &.{.{ .pane = floating, .rect = .{ .x = 1, .y = 24, .width = 4, .height = 4 }, .color = .{ .r = 1, .g = 2, .b = 3, .a = 4 } }}, &primitives, &text);
+    try std.testing.expect(std.mem.containsAtLeast(u8, visible.text, 1, "float"));
 }
