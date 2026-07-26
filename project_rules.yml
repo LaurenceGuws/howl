@@ -8,7 +8,7 @@ rules:
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
   - VT owns terminal semantics, state, dirty facts, input encoding, replies, and terminal consequences.
-  - PTY owns Linux transport, descriptors, child processes, cancellation, and cleanup.
+  - PTY owns Linux transport, descriptors, child processes, process-group cleanup, and foreground termios signaling.
   - Control optionally composes PTY and VT through bounded operations and has no rendering relation.
   - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
   - Howl-host owns its concrete Wayland, EGL/GLES, input, retained-visual, render-thread, and presentation lifecycle.

@@ -6,7 +6,7 @@ const posix = std.posix;
 
 const c = @import("pty_c");
 
-// Public lifecycle failures, signals, and bounded transfer outcomes.
+// Public lifecycle failures, signals, and nonblocking write outcomes.
 
 /// Reports copied launch allocation, invalid environment, or a non-Linux build.
 pub const InitError = std.mem.Allocator.Error || error{
@@ -37,33 +37,27 @@ pub const StartError = error{
     MasterConfigureFailed,
     OpenPtyFailed,
     ShellUnavailable,
-    WakePipeFailed,
+    InvalidDimensions,
 };
 
 /// Names signals accepted by the child process-group owner.
-pub const ControlSignal = enum(u8) {
+pub const Signal = enum(u8) {
     hangup = 1,
     interrupt = 2,
     resize_notify = 3,
     kill = 9,
     terminate = 15,
 
-    fn native(self: ControlSignal) c_int {
+    fn native(self: Signal) c_int {
         return @intCast(@backingInt(self));
     }
 };
 
-/// Distinguishes readable transport, elapsed timeout, and cancellation.
-pub const WaitReadableResult = enum(u8) { ready, timeout, canceled };
-
 /// Reports a nonblocking PTY read failure.
 pub const ReadError = error{ EndOfStream, Interrupted, NotStarted, ReadFailed, WouldBlock };
 
-/// Reports failure while waiting for readable PTY output.
-pub const WaitReadableError = error{ NotStarted, WaitFailed };
-
-/// Reports resize before start or a failed Linux ioctl.
-pub const ResizeError = error{ NotStarted, ResizeFailed };
+/// Reports invalid dimensions or a failed Linux resize ioctl.
+pub const ResizeError = error{ InvalidDimensions, NotStarted, ResizeFailed };
 
 /// Reports unavailable PTY state or failed foreground termios signal delivery.
 pub const TermiosSignalError = error{
@@ -73,42 +67,28 @@ pub const TermiosSignalError = error{
     TermiosQueryFailed,
 };
 
-/// Names why a bounded PTY input transfer stopped before completion.
-pub const TransferFailure = enum(u8) {
-    timeout,
-    canceled,
-    child_closed,
-    not_started,
-    wait_failed,
-    write_failed,
+/// Reports one nonblocking PTY write failure.
+pub const WriteError = error{ ChildClosed, Interrupted, NotStarted, WouldBlock, WriteFailed };
+
+/// Reports the exact normal or signal termination fact returned by waitpid.
+pub const ChildExit = union(enum) {
+    code: u8,
+    signal: u8,
 };
 
-/// Carries the exact transferred prefix and terminal outcome of one write.
-pub const Transfer = union(enum) {
-    complete: usize,
-    incomplete: struct {
-        transferred: usize,
-        reason: TransferFailure,
-    },
-
-    /// Returns the exact prefix accepted by the PTY master.
-    pub fn transferred(self: Transfer) usize {
-        return switch (self) {
-            .complete => |count| count,
-            .incomplete => |failure| failure.transferred,
-        };
-    }
+/// Reports whether the child remains live or has been reaped.
+pub const ChildObservation = union(enum) {
+    running,
+    exited: ChildExit,
 };
+
+/// Reports child observation before start or when waitpid cannot report state.
+pub const ObserveError = error{ NotStarted, ObserveFailed };
 
 /// Owns one newly opened master/slave PTY pair until parent or child adoption.
 const Open = struct {
     master_fd: posix.fd_t,
     slave_fd: posix.fd_t,
-};
-
-const Wake = struct {
-    read_fd: posix.fd_t,
-    write_fd: posix.fd_t,
 };
 
 const LaunchStatus = struct {
@@ -123,28 +103,17 @@ const ChildLaunchFailure = enum(u8) {
     exec = 4,
 };
 
-const SignalResult = enum {
-    delivered,
-    target_missing,
-    permission_denied,
-    native_signal_failed,
-};
-
 /// Reports exact process-group probing and signal-delivery outcomes.
-pub const ControlResult = enum {
+pub const SignalResult = enum {
     /// The kernel accepted delivery to the live child process group.
     delivered,
     /// The target was already reaped or no process group remained.
     target_missing,
-    /// The nonblocking child-state probe failed before signal delivery.
-    state_probe_failed,
     /// The kernel rejected signal delivery for process ownership permissions.
     permission_denied,
     /// Native signal delivery failed for another reason.
     native_signal_failed,
 };
-
-const WriteWait = enum { ready, timeout, canceled, closed, failed };
 
 const stop_hangup_grace_ns = 50 * std.time.ns_per_ms;
 const stop_terminate_grace_ns = 50 * std.time.ns_per_ms;
@@ -263,11 +232,7 @@ fn copyEnvironmentOverride(
     index.* += 1;
 }
 
-// Construction and deadline primitives used by the PTY owner.
-
-fn incomplete(transferred: usize, reason: TransferFailure) Transfer {
-    return .{ .incomplete = .{ .transferred = transferred, .reason = reason } };
-}
+// Construction primitives used by the PTY owner.
 
 fn childLaunchError(value: u8) StartError {
     return switch (value) {
@@ -277,10 +242,6 @@ fn childLaunchError(value: u8) StartError {
         @backingInt(ChildLaunchFailure.exec) => error.ChildExecFailed,
         else => error.LaunchStatusFailed,
     };
-}
-
-fn deadlineExpired(io: std.Io, started: std.Io.Timestamp, timeout_ms: u32) bool {
-    return started.durationTo(std.Io.Clock.awake.now(io)).toMilliseconds() >= timeout_ms;
 }
 
 fn openTransport(cols: u16, rows: u16) StartError!Open {
@@ -298,10 +259,10 @@ fn openTransport(cols: u16, rows: u16) StartError!Open {
     return .{ .master_fd = @intCast(master_fd), .slave_fd = @intCast(slave_fd) };
 }
 
-/// Owns copied launch values, one Linux PTY, wake pipe, and child process group.
-/// `start`, `read`, `waitReadable`, `transfer`, `resize`, `control`, and `stop`
-/// are externally serialized. `cancel` alone is safe concurrently. `stop` and
-/// `deinit` require every concurrent caller to have returned.
+/// Owns copied launch values, one Linux PTY, and its child process group.
+/// `start`, `read`, `write`, `observeChild`, `resize`, `signal`, and `stop`
+/// are externally serialized. `stop` and `deinit` require every caller to
+/// have returned.
 pub const Owned = struct {
     allocator: std.mem.Allocator,
     shell_path: [:0]u8,
@@ -312,22 +273,19 @@ pub const Owned = struct {
     environment: LaunchEnvironment,
     started: bool,
     master_fd: ?posix.fd_t,
-    wake_read_fd: ?posix.fd_t,
-    wake_write_fd: ?posix.fd_t,
     child: Child,
     last_cols: u16,
     last_rows: u16,
-    canceled: std.atomic.Value(bool),
 
     const Self = @This();
     const Child = union(enum) {
         none,
         pending_session: posix.pid_t,
         live: posix.pid_t,
+        reaped: struct { pid: posix.pid_t, exit: ChildExit },
     };
 
     const StartPipes = struct {
-        wake: Wake,
         launch_status: LaunchStatus,
     };
 
@@ -389,12 +347,9 @@ pub const Owned = struct {
             .environment = environment,
             .started = false,
             .master_fd = null,
-            .wake_read_fd = null,
-            .wake_write_fd = null,
             .child = .none,
             .last_cols = 0,
             .last_rows = 0,
-            .canceled = .init(false),
         };
     }
 
@@ -411,8 +366,7 @@ pub const Owned = struct {
     /// Starts one child at the supplied nonzero terminal dimensions.
     pub fn start(self: *Self, cols: u16, rows: u16) StartError!void {
         if (self.started) return error.AlreadyStarted;
-        std.debug.assert(cols > 0);
-        std.debug.assert(rows > 0);
+        if (cols == 0 or rows == 0) return error.InvalidDimensions;
 
         try requireExecutable(self.shell_path);
         const transport = try openTransport(cols, rows);
@@ -436,18 +390,14 @@ pub const Owned = struct {
     }
 
     fn openStartPipes() StartError!StartPipes {
-        const wake = try openWake();
-        errdefer closeWake(wake);
-
         const launch_status = try openLaunchStatusPipe();
         errdefer closeLaunchStatusPipe(launch_status);
 
-        return .{ .wake = wake, .launch_status = launch_status };
+        return .{ .launch_status = launch_status };
     }
 
     fn closeStartPipes(pipes: StartPipes) void {
         closeLaunchStatusPipe(pipes.launch_status);
-        closeWake(pipes.wake);
     }
 
     fn configureMaster(master_fd: posix.fd_t) StartError!void {
@@ -465,8 +415,6 @@ pub const Owned = struct {
             childProcess(
                 transport.master_fd,
                 transport.slave_fd,
-                pipes.wake.read_fd,
-                pipes.wake.write_fd,
                 pipes.launch_status.write_fd,
                 self.shell_path,
                 self.command_ptr,
@@ -488,19 +436,14 @@ pub const Owned = struct {
         closeOwned(transport.slave_fd);
         closeOwned(pipes.launch_status.write_fd);
         self.master_fd = transport.master_fd;
-        self.wake_read_fd = pipes.wake.read_fd;
-        self.wake_write_fd = pipes.wake.write_fd;
         self.child = .{ .pending_session = pid };
         self.last_cols = cols;
         self.last_rows = rows;
-        self.canceled.store(false, .release);
         self.started = true;
     }
 
     fn assertStarted(self: *const Self) void {
         std.debug.assert(self.master_fd != null);
-        std.debug.assert(self.wake_read_fd != null);
-        std.debug.assert(self.wake_write_fd != null);
         std.debug.assert(self.childPid() != null);
     }
 
@@ -508,42 +451,15 @@ pub const Owned = struct {
     pub fn stop(self: *Self) void {
         if (!self.started) return;
 
-        self.cancel();
         self.stopChild();
 
         if (self.master_fd) |fd| closeOwned(fd);
-        if (self.wake_read_fd) |fd| closeOwned(fd);
-        if (self.wake_write_fd) |fd| closeOwned(fd);
         self.child = .none;
         self.master_fd = null;
-        self.wake_read_fd = null;
-        self.wake_write_fd = null;
         self.started = false;
 
         std.debug.assert(self.master_fd == null);
-        std.debug.assert(self.wake_read_fd == null);
-        std.debug.assert(self.wake_write_fd == null);
         std.debug.assert(self.childPid() == null);
-    }
-
-    fn refreshChildState(self: *Self) enum { live, missing, probe_failed } {
-        if (!self.started) return .missing;
-        const pid = self.childPid() orelse return .missing;
-        return switch (waitChildNoHang(pid)) {
-            .alive => .live,
-            .reaped => {
-                self.child = .none;
-                return .missing;
-            },
-            .failed => .probe_failed,
-        };
-    }
-
-    fn transportReady(self: *const Self) bool {
-        if (!self.started) return false;
-        if (self.master_fd == null) return false;
-        if (self.child != .live) return false;
-        return true;
     }
 
     fn childPid(self: *const Self) ?posix.pid_t {
@@ -551,7 +467,34 @@ pub const Owned = struct {
             .none => null,
             .pending_session => |pid| pid,
             .live => |pid| pid,
+            .reaped => |state| state.pid,
         };
+    }
+
+    /// Returns the live master descriptor for caller-managed poll sets.
+    pub fn masterFd(self: *const Self) error{NotStarted}!posix.fd_t {
+        return self.master_fd orelse error.NotStarted;
+    }
+
+    /// Observes child state without blocking and without closing the master.
+    pub fn observeChild(self: *Self) ObserveError!ChildObservation {
+        if (!self.started) return error.NotStarted;
+        if (self.child == .reaped) return .{ .exited = self.child.reaped.exit };
+        const pid = self.childPid() orelse return error.ObserveFailed;
+        var status: c_int = 0;
+        const result = while (true) {
+            const waited = c.waitpid(pid, &status, c.WNOHANG);
+            if (waited < 0 and posix.errno(waited) == .INTR) continue;
+            break waited;
+        };
+        if (result == 0) return .running;
+        if (result == pid) {
+            const exit = childObservation(status);
+            self.child = .{ .reaped = .{ .pid = pid, .exit = exit.exited } };
+            return exit;
+        }
+        if (posix.errno(result) == .CHILD) return error.ObserveFailed;
+        return error.ObserveFailed;
     }
 
     fn awaitChildLaunch(status_fd: posix.fd_t) StartError!void {
@@ -574,6 +517,7 @@ pub const Owned = struct {
             .none => {},
             .pending_session => |pid| stopPendingChild(self, pid),
             .live => |pid| stopLiveChild(self, pid),
+            .reaped => |state| stopLiveChild(self, state.pid),
         }
     }
 
@@ -613,93 +557,24 @@ pub const Owned = struct {
         self.child = .none;
     }
 
-    /// Concurrently cancels every active and future transport wait.
-    /// Destructive cleanup remains serialized after all callers return.
-    pub fn cancel(self: *Self) void {
-        if (!self.started) return;
-        self.canceled.store(true, .release);
-        const fd = self.wake_write_fd orelse return;
-        var byte: [1]u8 = .{1};
-        while (true) {
-            const result = c.write(fd, &byte, byte.len);
-            if (result == 1) return;
-            if (result < 0) switch (posix.errno(result)) {
-                .AGAIN => return,
-                .INTR => continue,
-                .BADF => @panic("PTY cancellation raced destructive cleanup"),
-                else => @panic("PTY cancellation pipe write failed"),
-            };
-            @panic("PTY cancellation pipe accepted an invalid byte count");
+    /// Attempts one nonblocking write. The caller owns polling, retries,
+    /// deadlines, and the unaccepted suffix.
+    pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
+        const master = self.master_fd orelse return error.NotStarted;
+        if (bytes.len == 0) return 0;
+        const result = c.write(master, bytes.ptr, bytes.len);
+        if (result > 0) {
+            const count: usize = @intCast(result);
+            if (count > bytes.len) return error.WriteFailed;
+            return count;
         }
-    }
-
-    /// Transfers one borrowed slice before its caller-supplied deadline.
-    /// The outcome retains the exact accepted prefix on every failure.
-    pub fn transfer(
-        self: *Self,
-        io: std.Io,
-        bytes: []const u8,
-        timeout_ms: u32,
-    ) Transfer {
-        if (!self.transportReady()) return incomplete(0, .not_started);
-        if (self.canceled.load(.acquire)) return incomplete(0, .canceled);
-        if (bytes.len == 0) return .{ .complete = 0 };
-        const started = std.Io.Clock.awake.now(io);
-        var written: usize = 0;
-        while (written < bytes.len) {
-            if (self.canceled.load(.acquire)) return incomplete(written, .canceled);
-            if (deadlineExpired(io, started, timeout_ms)) return incomplete(written, .timeout);
-            const remaining = bytes.len - written;
-            const result = c.write(self.master_fd.?, bytes[written..].ptr, remaining);
-            if (result > 0) {
-                const count: usize = @intCast(result);
-                std.debug.assert(count <= remaining);
-                if (count > remaining) return incomplete(written, .write_failed);
-                written += count;
-                continue;
-            }
-            if (result == 0) return incomplete(written, .child_closed);
-            switch (posix.errno(result)) {
-                .INTR => continue,
-                .AGAIN => switch (self.waitWritable(io, started, timeout_ms)) {
-                    .ready => continue,
-                    .timeout => return incomplete(written, .timeout),
-                    .canceled => return incomplete(written, .canceled),
-                    .closed => return incomplete(written, .child_closed),
-                    .failed => return incomplete(written, .wait_failed),
-                },
-                .IO, .PIPE => return incomplete(written, .child_closed),
-                else => return incomplete(written, .write_failed),
-            }
-        }
-        return .{ .complete = written };
-    }
-
-    fn waitWritable(
-        self: *Self,
-        io: std.Io,
-        started: std.Io.Timestamp,
-        timeout_ms: u32,
-    ) WriteWait {
-        while (true) {
-            if (self.canceled.load(.acquire)) return .canceled;
-            const master = self.master_fd orelse return .closed;
-            const wake = self.wake_read_fd orelse return .closed;
-            const elapsed = started.durationTo(std.Io.Clock.awake.now(io)).toMilliseconds();
-            if (elapsed >= timeout_ms) return .timeout;
-            var descriptors = [_]posix.pollfd{
-                .{ .fd = master, .events = posix.POLL.OUT | posix.POLL.HUP, .revents = 0 },
-                .{ .fd = wake, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
-            };
-            const remaining: i32 = @intCast(timeout_ms - @as(u32, @intCast(elapsed)));
-            const ready = posix.poll(&descriptors, remaining) catch return .failed;
-            if (ready == 0) return .timeout;
-            if (self.canceled.load(.acquire) or
-                (descriptors[1].revents & (posix.POLL.IN | posix.POLL.HUP)) != 0) return .canceled;
-            if ((descriptors[0].revents & posix.POLL.OUT) != 0) return .ready;
-            if ((descriptors[0].revents & posix.POLL.HUP) != 0) return .closed;
-            return .failed;
-        }
+        if (result == 0) return error.ChildClosed;
+        return switch (posix.errno(result)) {
+            .AGAIN => error.WouldBlock,
+            .INTR => error.Interrupted,
+            .IO, .PIPE => error.ChildClosed,
+            else => error.WriteFailed,
+        };
     }
 
     /// Reads available transport bytes into caller-owned storage.
@@ -723,36 +598,10 @@ pub const Owned = struct {
         return @intCast(n);
     }
 
-    /// Waits for transport readability, timeout, or an explicit wake.
-    pub fn waitReadable(self: *Self, timeout_ms: i32) WaitReadableError!WaitReadableResult {
-        if (!self.transportReady()) return error.NotStarted;
-        std.debug.assert(self.wake_read_fd != null);
-
-        var fds = [_]posix.pollfd{
-            .{ .fd = self.master_fd.?, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
-            .{
-                .fd = self.wake_read_fd orelse return error.NotStarted,
-                .events = posix.POLL.IN | posix.POLL.HUP,
-                .revents = 0,
-            },
-        };
-        const poll_timeout: i32 = if (timeout_ms < 0) -1 else timeout_ms;
-        const ready = posix.poll(&fds, poll_timeout) catch return error.WaitFailed;
-        if (ready <= 0) return .timeout;
-
-        if ((fds[1].revents & (posix.POLL.IN | posix.POLL.HUP)) != 0) {
-            return .canceled;
-        }
-        if ((fds[0].revents & posix.POLL.IN) != 0) return .ready;
-        if ((fds[0].revents & posix.POLL.HUP) != 0) return .ready;
-        return waitReadablePollResult(fds[0].revents);
-    }
-
     /// Applies nonzero terminal dimensions to the active PTY.
     pub fn resize(self: *Self, cols: u16, rows: u16) ResizeError!void {
-        if (!self.transportReady()) return error.NotStarted;
-        std.debug.assert(cols > 0);
-        std.debug.assert(rows > 0);
+        if (self.master_fd == null) return error.NotStarted;
+        if (cols == 0 or rows == 0) return error.InvalidDimensions;
 
         var winsize = c.struct_winsize{
             .ws_row = rows,
@@ -797,15 +646,10 @@ pub const Owned = struct {
     }
 
     /// Delivers one typed signal to the active child process group.
-    pub fn control(self: *Self, signal: ControlSignal) ControlResult {
-        switch (self.refreshChildState()) {
-            .live => {},
-            .missing => return .target_missing,
-            .probe_failed => return .state_probe_failed,
-        }
-        if (!self.transportReady()) return .target_missing;
+    pub fn signal(self: *Self, requested: Signal) SignalResult {
+        if (self.child != .live) return .target_missing;
         const pid = self.childPid() orelse return .target_missing;
-        return switch (sendGroupSignal(pid, signal)) {
+        return switch (sendGroupSignal(pid, requested)) {
             .delivered => .delivered,
             .target_missing => .target_missing,
             .permission_denied => .permission_denied,
@@ -816,9 +660,10 @@ pub const Owned = struct {
 
 // Linux descriptor, child-launch, and process-group mechanics.
 
-fn waitReadablePollResult(revents: i16) WaitReadableResult {
-    if ((revents & posix.POLL.IN) != 0) return .ready;
-    return .timeout;
+fn childObservation(status: c_int) ChildObservation {
+    const value: u32 = @intCast(status);
+    if ((value & 0x7f) == 0) return .{ .exited = .{ .code = @intCast((value >> 8) & 0xff) } };
+    return .{ .exited = .{ .signal = @intCast(value & 0x7f) } };
 }
 
 fn optionalZPtr(bytes: ?[:0]u8) ?[*:0]u8 {
@@ -851,26 +696,6 @@ fn requireCleanupSignal(result: SignalResult) void {
 fn closeTransport(transport: Open) void {
     closeOwned(transport.master_fd);
     closeOwned(transport.slave_fd);
-}
-
-fn openWake() StartError!Wake {
-    var fds = [_]c_int{ -1, -1 };
-    if (c.pipe(&fds) != 0) return error.WakePipeFailed;
-    errdefer {
-        if (fds[0] >= 0) closeOwned(@intCast(fds[0]));
-        if (fds[1] >= 0) closeOwned(@intCast(fds[1]));
-    }
-
-    setCloseOnExec(@intCast(fds[0])) catch return error.WakePipeFailed;
-    setCloseOnExec(@intCast(fds[1])) catch return error.WakePipeFailed;
-    setNonBlocking(@intCast(fds[0])) catch return error.WakePipeFailed;
-    setNonBlocking(@intCast(fds[1])) catch return error.WakePipeFailed;
-    return .{ .read_fd = @intCast(fds[0]), .write_fd = @intCast(fds[1]) };
-}
-
-fn closeWake(wake: Wake) void {
-    closeOwned(wake.read_fd);
-    closeOwned(wake.write_fd);
 }
 
 fn openLaunchStatusPipe() StartError!LaunchStatus {
@@ -914,8 +739,6 @@ fn cArg(path: [*:0]const u8) [*c]u8 {
 const ChildProcessFds = struct {
     master_fd: posix.fd_t,
     slave_fd: posix.fd_t,
-    wake_read_fd: ?posix.fd_t,
-    wake_write_fd: ?posix.fd_t,
 };
 
 fn resetChildSignalDispositions() bool {
@@ -948,8 +771,6 @@ fn setupChildProcessFds(fds: ChildProcessFds, status_fd: posix.fd_t) void {
     if (c.ioctl(@intCast(fds.slave_fd), c.TIOCSCTTY, @as(c_ulong, 0)) != 0 or
         c.dup2(fds.slave_fd, 0) < 0 or c.dup2(fds.slave_fd, 1) < 0 or
         c.dup2(fds.slave_fd, 2) < 0 or !closeChildFdIfNeeded(fds.master_fd) or
-        (fds.wake_read_fd != null and !closeChildFdIfNeeded(fds.wake_read_fd.?)) or
-        (fds.wake_write_fd != null and !closeChildFdIfNeeded(fds.wake_write_fd.?)) or
         !closeChildFdIfNeeded(fds.slave_fd))
     {
         childLaunchExit(status_fd, .stdio);
@@ -971,8 +792,6 @@ fn childLaunchExit(status_fd: posix.fd_t, failure: ChildLaunchFailure) noreturn 
 fn childProcess(
     master_fd: posix.fd_t,
     slave_fd: posix.fd_t,
-    wake_read_fd: ?posix.fd_t,
-    wake_write_fd: ?posix.fd_t,
     status_fd: posix.fd_t,
     shell_path: [:0]const u8,
     command: ?[*:0]const u8,
@@ -982,8 +801,6 @@ fn childProcess(
     setupChildProcessFds(.{
         .master_fd = master_fd,
         .slave_fd = slave_fd,
-        .wake_read_fd = wake_read_fd,
-        .wake_write_fd = wake_write_fd,
     }, status_fd);
 
     if (cwd) |dir| {
@@ -1078,16 +895,16 @@ fn signalTargetExists(target: posix.pid_t) bool {
     }
 }
 
-fn sendSignal(pid: posix.pid_t, signal: ControlSignal) SignalResult {
+fn sendSignal(pid: posix.pid_t, signal: Signal) SignalResult {
     return sendSignalTarget(pid, signal);
 }
 
-fn sendGroupSignal(pid: posix.pid_t, signal: ControlSignal) SignalResult {
+fn sendGroupSignal(pid: posix.pid_t, signal: Signal) SignalResult {
     std.debug.assert(pid > 0);
     return sendSignalTarget(-pid, signal);
 }
 
-fn sendSignalTarget(target: posix.pid_t, signal: ControlSignal) SignalResult {
+fn sendSignalTarget(target: posix.pid_t, signal: Signal) SignalResult {
     while (true) {
         const res = c.kill(target, signal.native());
         if (res == 0) return .delivered;
@@ -1120,11 +937,9 @@ fn expectOutput(owned: *Owned, expected: []const u8) !void {
     var used: usize = 0;
     var waits: u8 = 0;
     while (waits < test_waits_max) : (waits += 1) {
-        switch (try owned.waitReadable(test_wait_ms)) {
-            .timeout => continue,
-            .canceled => return error.TestCanceled,
-            .ready => {},
-        }
+        var descriptor = [_]posix.pollfd{.{ .fd = try owned.masterFd(), .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 }};
+        const ready = try posix.poll(&descriptor, test_wait_ms);
+        if (ready == 0) continue;
         const count = owned.read(buffer[used..]) catch |failure| switch (failure) {
             error.EndOfStream, error.NotStarted => break,
             error.Interrupted, error.WouldBlock => continue,
@@ -1162,21 +977,6 @@ fn environmentAllocation(allocator: std.mem.Allocator) !void {
 
 fn expectEnvironmentEntry(environment: *const LaunchEnvironment, index: usize, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, std.mem.span(environment.entries[index].?));
-}
-
-const TransferContext = struct {
-    owned: *Owned,
-    bytes: []const u8,
-    timeout_ms: u32,
-    started: std.atomic.Value(bool) = .init(false),
-    completed: std.atomic.Value(bool) = .init(false),
-    result: Transfer = .{ .incomplete = .{ .transferred = 0, .reason = .not_started } },
-};
-
-fn transferThread(context: *TransferContext) void {
-    context.started.store(true, .release);
-    context.result = context.owned.transfer(std.testing.io, context.bytes, context.timeout_ms);
-    context.completed.store(true, .release);
 }
 
 test "initialization releases every partial allocation" {
@@ -1300,23 +1100,17 @@ test "child receives selected identities and retained environment across restart
     try expectOutput(&owned, "xterm-256color|truecolor|kept");
 }
 
-test "idle owner reports exact lifecycle outcomes and remains startable" {
+test "idle owner rejects descriptors and dimensions before start" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat", null, test_environment);
     defer owned.deinit();
     var buffer: [16]u8 = undefined;
-    try std.testing.expectEqual(
-        Transfer{ .incomplete = .{ .transferred = 0, .reason = .not_started } },
-        owned.transfer(std.testing.io, "hello", 10),
-    );
+    try std.testing.expectError(error.NotStarted, owned.masterFd());
     try std.testing.expectError(error.NotStarted, owned.read(&buffer));
-    try std.testing.expectError(error.NotStarted, owned.waitReadable(0));
     try std.testing.expectError(error.NotStarted, owned.resize(test_cols, test_rows));
-    try std.testing.expectEqual(ControlResult.target_missing, owned.control(.interrupt));
-    owned.cancel();
-    owned.stop();
-    try owned.start(test_cols, test_rows);
-    try std.testing.expectEqual(Transfer{ .complete = 6 }, owned.transfer(std.testing.io, "hello\n", 100));
+    try std.testing.expectEqual(SignalResult.target_missing, owned.signal(.interrupt));
+    try std.testing.expectError(error.NotStarted, owned.write("hello"));
+    try std.testing.expectError(error.InvalidDimensions, owned.start(0, test_rows));
 }
 
 test "start rejects unavailable and duplicate child transitions without descriptor leaks" {
@@ -1356,172 +1150,7 @@ test "start rejects unavailable and duplicate child transitions without descript
     try std.testing.expectError(error.AlreadyStarted, owned.start(test_cols, test_rows));
 }
 
-test "zero deadline rejects nonempty input before the first write" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null, test_environment);
-    defer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    try std.testing.expectEqual(
-        Transfer{ .incomplete = .{ .transferred = 0, .reason = .timeout } },
-        owned.transfer(std.testing.io, "must-not-enter-pty", 0),
-    );
-}
-
-test "deadline stops a continuously accepting transfer with its exact prefix" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "stty raw -echo; printf ready; cat >/dev/null",
-        null,
-        test_environment,
-    );
-    defer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    try expectOutput(&owned, "ready");
-    const bytes = try std.testing.allocator.alloc(u8, 16 * 1024 * 1024);
-    defer std.testing.allocator.free(bytes);
-    @memset(bytes, 'd');
-    const transfer = owned.transfer(std.testing.io, bytes, 1);
-    try std.testing.expect(transfer == .incomplete);
-    try std.testing.expectEqual(TransferFailure.timeout, transfer.incomplete.reason);
-    try std.testing.expect(transfer.incomplete.transferred < bytes.len);
-}
-
-test "complete transfer reports every accepted byte" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "stty raw -echo; dd bs=1 count=5 2>/dev/null; printf complete",
-        null,
-        test_environment,
-    );
-    defer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    try std.testing.expectEqual(Transfer{ .complete = 5 }, owned.transfer(std.testing.io, "hello", 100));
-    try expectOutput(&owned, "complete");
-}
-
-test "non-reading child saturates with a bounded partial timeout" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    const before = try descriptorCount();
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "stty raw -echo; printf ready; kill -STOP $$",
-        null,
-        test_environment,
-    );
-    try owned.start(test_cols, test_rows);
-    try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = @splat('x');
-    const started = std.Io.Clock.awake.now(std.testing.io);
-    const transfer = owned.transfer(std.testing.io, &bytes, 25);
-    const elapsed = started.durationTo(std.Io.Clock.awake.now(std.testing.io)).toMilliseconds();
-    try std.testing.expect(transfer == .incomplete);
-    try std.testing.expectEqual(TransferFailure.timeout, transfer.incomplete.reason);
-    try std.testing.expect(transfer.incomplete.transferred < bytes.len);
-    try std.testing.expect(elapsed >= 25 and elapsed < 500);
-    owned.deinit();
-    try std.testing.expectEqual(before, try descriptorCount());
-}
-
-test "child consuming a strict prefix retains the partial timeout count" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "stty raw -echo; printf ready; dd bs=1024 count=1 of=/dev/null 2>/dev/null; kill -STOP $$",
-        null,
-        test_environment,
-    );
-    defer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = @splat('p');
-    const transfer = owned.transfer(std.testing.io, &bytes, 50);
-    try std.testing.expect(transfer == .incomplete);
-    try std.testing.expectEqual(TransferFailure.timeout, transfer.incomplete.reason);
-    try std.testing.expect(transfer.incomplete.transferred >= 1024);
-    try std.testing.expect(transfer.incomplete.transferred < bytes.len);
-}
-
-test "concurrent cancellation wakes a saturated writable wait without descriptor race" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    const before = try descriptorCount();
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "stty raw -echo; printf ready; kill -STOP $$",
-        null,
-        test_environment,
-    );
-    errdefer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    try expectOutput(&owned, "ready");
-    var bytes: [64 * 1024]u8 = @splat('c');
-    var context = TransferContext{ .owned = &owned, .bytes = &bytes, .timeout_ms = 10_000 };
-    const thread = try std.Thread.spawn(.{}, transferThread, .{&context});
-    while (!context.started.load(.acquire)) std.atomic.spinLoopHint();
-    try (std.Io.Clock.Duration{ .raw = .fromMilliseconds(10), .clock = .awake }).sleep(std.testing.io);
-    owned.cancel();
-    thread.join();
-    try std.testing.expect(context.completed.load(.acquire));
-    try std.testing.expect(context.result == .incomplete);
-    try std.testing.expectEqual(TransferFailure.canceled, context.result.incomplete.reason);
-    try std.testing.expect(context.result.incomplete.transferred < bytes.len);
-    try std.testing.expectEqual(
-        Transfer{ .incomplete = .{ .transferred = 0, .reason = .canceled } },
-        owned.transfer(std.testing.io, "later", 100),
-    );
-    owned.deinit();
-    try std.testing.expectEqual(before, try descriptorCount());
-}
-
-test "child exit closes read and write paths before exact cleanup" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    const before = try descriptorCount();
-    var owned = try Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "sleep 0.02; exit 0",
-        null,
-        test_environment,
-    );
-    errdefer owned.deinit();
-    try owned.start(test_cols, test_rows);
-    const bytes = try std.testing.allocator.alloc(u8, 1024 * 1024);
-    defer std.testing.allocator.free(bytes);
-    @memset(bytes, 'e');
-    const transfer = owned.transfer(std.testing.io, bytes, 1000);
-    try std.testing.expect(transfer == .incomplete);
-    try std.testing.expectEqual(TransferFailure.child_closed, transfer.incomplete.reason);
-    try std.testing.expect(transfer.incomplete.transferred < bytes.len);
-    var buffer: [16]u8 = undefined;
-    var closed = false;
-    var waits: u8 = 0;
-    while (!closed and waits < test_waits_max) : (waits += 1) {
-        if (try owned.waitReadable(test_wait_ms) != .ready) continue;
-        while (true) {
-            const count = owned.read(&buffer) catch |failure| switch (failure) {
-                error.EndOfStream => {
-                    closed = true;
-                    break;
-                },
-                error.Interrupted => continue,
-                error.WouldBlock => break,
-                error.NotStarted, error.ReadFailed => return failure,
-            };
-            try std.testing.expect(count > 0);
-        }
-    }
-    try std.testing.expect(closed);
-    owned.deinit();
-    try std.testing.expectEqual(before, try descriptorCount());
-}
-
-test "wake resize read and process-group signal share one owner" {
+test "resize write and process-group signal share one owner" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     const command =
         "trap 'printf interrupted; exit 0' INT; printf ready; read line; " ++
@@ -1530,10 +1159,11 @@ test "wake resize read and process-group signal share one owner" {
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
+    try std.testing.expectError(error.InvalidDimensions, owned.resize(0, test_rows));
     try owned.resize(100, 40);
-    try std.testing.expectEqual(Transfer{ .complete = 6 }, owned.transfer(std.testing.io, "hello\n", 100));
+    try std.testing.expectEqual(@as(usize, 6), try owned.write("hello\n"));
     try expectOutput(&owned, "40 100");
-    try std.testing.expectEqual(ControlResult.delivered, owned.control(.interrupt));
+    try std.testing.expectEqual(SignalResult.delivered, owned.signal(.interrupt));
     try expectOutput(&owned, "interrupted");
 }
 
@@ -1567,4 +1197,147 @@ test "foreground termios assignments route exact bytes to process-group signals"
     try disabled.start(test_cols, test_rows);
     try expectOutput(&disabled, "ready");
     try std.testing.expect(!(try disabled.handleTermiosSignal(0x18)));
+}
+
+test "multiple owners interleave output through one caller poll set" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var first = try Owned.init(std.testing.allocator, "/bin/sh", "printf first; sleep 1", null, test_environment);
+    defer first.deinit();
+    var second = try Owned.init(std.testing.allocator, "/bin/sh", "printf second; sleep 1", null, test_environment);
+    defer second.deinit();
+    try first.start(test_cols, test_rows);
+    try second.start(test_cols, test_rows);
+    const first_fd = try first.masterFd();
+    const second_fd = try second.masterFd();
+    try std.testing.expect(first_fd != second_fd);
+    var first_seen = false;
+    var second_seen = false;
+    var first_bytes: [64]u8 = undefined;
+    var second_bytes: [64]u8 = undefined;
+    var first_len: usize = 0;
+    var second_len: usize = 0;
+    var rounds: u8 = 0;
+    while ((!first_seen or !second_seen) and rounds < test_waits_max) : (rounds += 1) {
+        var descriptors = [_]posix.pollfd{
+            .{ .fd = first_fd, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
+            .{ .fd = second_fd, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 },
+        };
+        const ready = try posix.poll(&descriptors, test_wait_ms);
+        try std.testing.expect(ready >= 0);
+        if (descriptors[0].revents != 0) {
+            first_len += first.read(first_bytes[first_len..]) catch |failure| switch (failure) {
+                error.WouldBlock => 0,
+                error.EndOfStream => 0,
+                else => return failure,
+            };
+            first_seen = std.mem.indexOf(u8, first_bytes[0..first_len], "first") != null;
+        }
+        if (descriptors[1].revents != 0) {
+            second_len += second.read(second_bytes[second_len..]) catch |failure| switch (failure) {
+                error.WouldBlock => 0,
+                error.EndOfStream => 0,
+                else => return failure,
+            };
+            second_seen = std.mem.indexOf(u8, second_bytes[0..second_len], "second") != null;
+        }
+    }
+    try std.testing.expect(first_seen and second_seen);
+    first.stop();
+    try std.testing.expectError(error.NotStarted, first.masterFd());
+}
+
+test "nonblocking write preserves empty and partial outcomes for caller retry" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "stty raw -echo; kill -STOP $$", null, test_environment);
+    defer owned.deinit();
+    try owned.start(test_cols, test_rows);
+    try std.testing.expectEqual(@as(usize, 0), try owned.write(""));
+    const bytes = try std.testing.allocator.alloc(u8, 8 * 1024 * 1024);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes, 'w');
+    const accepted_initial = try owned.write(bytes);
+    try std.testing.expect(accepted_initial > 0 and accepted_initial < bytes.len);
+    try std.testing.expectError(error.WouldBlock, owned.write(bytes[accepted_initial..]));
+
+    var draining = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null, test_environment);
+    defer draining.deinit();
+    try draining.start(test_cols, test_rows);
+    const retry_bytes = bytes[0 .. 64 * 1024];
+    var accepted: usize = 0;
+    var attempts: u8 = 0;
+    while (accepted < retry_bytes.len and attempts < 100) : (attempts += 1) {
+        const count = draining.write(retry_bytes[accepted..]) catch |failure| switch (failure) {
+            error.WouldBlock, error.Interrupted => 0,
+            else => return failure,
+        };
+        accepted += count;
+        if (count == 0) {
+            var descriptor = [_]posix.pollfd{.{ .fd = try draining.masterFd(), .events = posix.POLL.OUT | posix.POLL.HUP, .revents = 0 }};
+            const ready = try posix.poll(&descriptor, test_wait_ms);
+            try std.testing.expect(ready >= 0);
+        }
+    }
+    try std.testing.expectEqual(retry_bytes.len, accepted);
+}
+
+test "child observation distinguishes running normal exit and signal exit while draining" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var normal = try Owned.init(std.testing.allocator, "/bin/sh", "printf final; exit 7", null, test_environment);
+    defer normal.deinit();
+    try normal.start(test_cols, test_rows);
+    var normal_exit: ?ChildObservation = null;
+    var rounds: u8 = 0;
+    while (normal_exit == null and rounds < test_waits_max) : (rounds += 1) {
+        normal_exit = switch (try normal.observeChild()) {
+            .running => null,
+            .exited => |status| .{ .exited = status },
+        };
+        if (normal_exit == null) {
+            var descriptor = [_]posix.pollfd{.{ .fd = try normal.masterFd(), .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 }};
+            const ready = try posix.poll(&descriptor, 1);
+            try std.testing.expect(ready >= 0);
+            sleepStopSlice();
+        }
+    }
+    try std.testing.expectEqual(ChildObservation{ .exited = .{ .code = 7 } }, normal_exit.?);
+    try std.testing.expectEqual(ChildObservation{ .exited = .{ .code = 7 } }, try normal.observeChild());
+    var buffer: [64]u8 = undefined;
+    var used: usize = 0;
+    var saw_final = false;
+    var drain_rounds: u8 = 0;
+    while (!saw_final and used < buffer.len and drain_rounds < test_waits_max) : (drain_rounds += 1) {
+        const count = normal.read(buffer[used..]) catch |failure| switch (failure) {
+            error.WouldBlock, error.Interrupted => {
+                var descriptor = [_]posix.pollfd{.{ .fd = try normal.masterFd(), .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 }};
+                const ready = try posix.poll(&descriptor, test_wait_ms);
+                try std.testing.expect(ready >= 0);
+                continue;
+            },
+            error.EndOfStream => break,
+            else => return failure,
+        };
+        used += count;
+        saw_final = std.mem.indexOf(u8, buffer[0..used], "final") != null;
+    }
+    try std.testing.expect(saw_final);
+
+    var signaled = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 30", null, test_environment);
+    defer signaled.deinit();
+    try signaled.start(test_cols, test_rows);
+    try std.testing.expectEqual(SignalResult.delivered, signaled.signal(.terminate));
+    var signaled_exit: ?ChildObservation = null;
+    rounds = 0;
+    while (signaled_exit == null and rounds < test_waits_max) : (rounds += 1) {
+        signaled_exit = switch (try signaled.observeChild()) {
+            .running => null,
+            .exited => |status| .{ .exited = status },
+        };
+        if (signaled_exit == null) {
+            var descriptor = [_]posix.pollfd{.{ .fd = try signaled.masterFd(), .events = posix.POLL.HUP, .revents = 0 }};
+            const ready = try posix.poll(&descriptor, 1);
+            try std.testing.expect(ready >= 0);
+            sleepStopSlice();
+        }
+    }
+    try std.testing.expectEqual(ChildObservation{ .exited = .{ .signal = 15 } }, signaled_exit.?);
 }

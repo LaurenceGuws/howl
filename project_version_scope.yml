@@ -21,7 +21,7 @@ settled_capabilities:
 accepted_implementation:
   - The tracked Zig pin drives every workspace command; all concrete artifacts explicitly use self-hosted codegen and linking.
   - VT protocol behavior and deterministic evidence remain the terminal-semantics baseline.
-  - PTY Linux transport, transfer, process-lifecycle, cancellation, and cleanup behavior remain the transport baseline.
+  - PTY nonblocking Linux transport, borrowed-descriptor polling, one-shot nonblocking I/O, child observation, process-group cleanup, and foreground termios signaling remain the transport baseline.
   - Control composes VT mode 19997 with foreground PTY termios assignments for exact one-byte key signals.
   - >-
     Render independently selects native text and generated terminal glyphs; either or both may be absent, and only
