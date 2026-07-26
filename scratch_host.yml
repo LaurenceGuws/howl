@@ -1,151 +1,112 @@
 scratch:
   marathon: host_platform_chrome
-  status: review_ready
-  checkpoint: interactive_chrome
+  status: ready_for_worker
+  checkpoint: pane_composition
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
-  howl_vk:
-    commit: f774e36b8403f388b75a5bf355bd5897f5593521
-    boundary: Extract reusable Vulkan module
-  howl_wayland:
-    commit: 63c2d43
-    boundary: Extract reusable Wayland module
+  interactive_chrome:
+    commit: 5b8ac562ebed6479addd2bc7282fc18fac29a367
+    boundary: Connect interactive host chrome
     outcome:
-      - independent package owns reproducible xdg-shell, DMA-BUF, and DRM-syncobj protocol ABI
-      - bounded caller-neutral ordered and coalesced input facts
-      - exact xkbcommon keymap, modifier, keysym, UTF-8, and cleanup boundary
-      - Window retains exclusive Wayland dispatch and object ownership
-      - 19 operator-authorized listener callback contexts are the only new sensitive sites
+      - Window publishes caller-neutral Wayland input facts only
+      - Renderer owns chord capture, Host chrome actions, topology mutation, Vulkan redraw, and completion publication
+      - corrected operator mappings preserve bare Alt arrows and Ctrl Tab for terminal applications
+      - primary pointer presses switch tabs or focus panes; floating focus raises the pane
+      - no-op actions publish no GPU revision
     receipts:
-      - Wayland, Host, and root checks/tests passed in all four optimize modes
-      - scanner reproducibility, source audit, protocol validation, YAML, formatting, and diff checks passed
-      - bounded live runs preserved ring reuse, resize generations, input drainage, and retirement
-  render_chrome_ownership:
-    commit: c6bc24e
-    boundary: Harden backend-neutral chrome ownership
-    outcome:
-      - Render owns caller-neutral stable tab and pane identities, tiled and floating composition, pane-owned selection, clipping, and topmost hit testing
-      - Host owns bounded topology, identity issuance, focus, mutation, and action policy
-      - an editor-like consumer composes native text and chrome without terminal, Vulkan, Wayland, or thread dependencies
-    receipts:
-      - all 32 Render capability and optimization check/test combinations passed
-      - Host and root check/test passed in all four optimize modes
+      - operator visual and temporary per-pane probe gates passed
+      - all package and workspace optimize-mode checks and tests passed
       - source audit, protocol validation, YAML, formatting, and diff checks passed
-      - Debug and ReleaseSafe live rings preserved pixels, reuse, resize, and orderly retirement
+
+architecture_correction:
+  decision: >-
+    Terminal execution is not owned by Renderer and does not use one OS thread or
+    one Zig fiber per terminal. One terminal runtime OS thread initially owns up to
+    64 logical terminal owners and polls every PTY descriptor.
+  logical_terminal_owner:
+    owns:
+      - one howl-pty instance
+      - one howl-vt instance
+      - one howl-render terminal projection baseline
+      - one stable pane identity and never-reused incarnation
+  renderer:
+    receives: newest-complete immutable backend-neutral pane updates
+    owns: retained pane visuals, surface-wide batching, Vulkan mutation, and GPU completion
+  references:
+    alacritty: >-
+      FairMutex uses a reservation lock plus data lock to prevent immediate
+      reacquisition starvation. Howl prefers exclusive VT ownership; the mechanism
+      is evidence only if a small residual shared lock earns its existence.
+    zellij: >-
+      A serialized ScreenInstruction loop orders screen and chrome mutation while
+      asynchronous terminal readers deliver PTY bytes. Howl adopts the ordering
+      lesson without its unbounded channel graph or architecture.
+    zig: >-
+      Pinned std.Io.Evented uses Linux io_uring and stackful fibers, but currently
+      reserves roughly 60 MiB per fiber. It is not selected for one-task-per-terminal
+      execution without a separate measured proof.
 
 checkpoint:
-  id: interactive_chrome
-  status: review_ready
+  id: pane_composition
+  status: ready_for_worker
   objective: >-
-    Turn the existing typed Wayland key and pointer facts into visible,
-    transactional tab and pane actions on the Renderer thread, preserving the
-    operator-selected chrome traversal behavior while keeping Wayland free of product
-    policy and Render free of mutable application state.
-  authorities:
-    - dc6c00f^:howl-window/src/window.zig for historical action behavior and physical release capture
-    - /home/home/personal/projects/dev_references/terminals/zellij
-    - /home/home/personal/projects/dev_references/terminals/foot
-    - /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
+    Replace the current single chrome draw source with bounded composition of
+    multiple independent immutable pane updates, images, and Host chrome into one
+    ordered Vulkan surface batch. This checkpoint prepares the consumer boundary;
+    it does not create PTYs, VTs, terminal threads, or a permanent simulator API.
+  ownership:
+    producer_contract:
+      - each update is self-contained and remains valid without borrowing producer state
+      - stable PaneId, incarnation, and monotonic pane revision identify replacement
+      - newest complete update replaces the retained update for exactly one live pane
+    renderer:
+      - validates identity, incarnation, revision, geometry, aliases, and capacities before mutation
+      - retains the newest complete visual facts required for redraw and context reconstruction
+      - composes visible tiled panes, floating panes, images, cursor, selection, and chrome in exact phase order
+      - drops stale updates without changing retained state or GPU work
+    host_topology:
+      - remains the authority for live panes, active tab, visibility, focus, clipping, and floating order
+      - rejects or retires updates whose identity no longer names the same live pane incarnation
   positive_scope:
-    - keep howl-wayland responsible only for typed keysyms, semantic modifier facts, physical key identity, keyboard-reset facts, and ordered pointer facts
-    - publish one caller-neutral keyboard-reset occurrence when the keymap is replaced so the Host capture owner can clear stale physical keys
-    - keep action matching, physical-key capture, topology mutation, and redraw policy in howl-host
-    - execute each matched chord once on physical press and consume its captured release
-    - clear captured keys on keyboard leave and keymap replacement
-    - ignore repeated events for captured host chords; never repeat topology mutations
-    - preserve the operator-selected default mappings:
-        - Ctrl+Shift+T creates and activates a tab
-        - Ctrl+Shift+Enter splits the focused pane horizontally
-        - Ctrl+Shift+Backslash or Ctrl+Shift+Bar splits it vertically
-        - Ctrl+Shift+W closes the focused pane
-        - Ctrl+Shift+Q closes the active tab
-        - Ctrl+Alt+Left/Right/Up/Down resizes the focused divider in that direction
-        - Ctrl+Shift+Comma/Less and Ctrl+Shift+Period/Greater reorder the active tab left or right
-        - Ctrl+Shift+Left/Right traverses the tab bar backward or forward
-        - Ctrl+Shift+Up/Down remains unmatched for a later session rail
-        - Shift+Alt+Left/Right/Up/Down focuses the nearest pane in that direction
-        - bare Alt+Left/Right/Up/Down remains unmatched for caller defaults
-    - accept Caps Lock and Num Lock alongside bindings while rejecting extra Shift, Control, Alt, Super, Hyper, or Meta where not specified
-    - route primary pointer presses through Render hit testing so tab hits switch tabs and pane hits focus them; focusing a floating pane raises it
-    - mutate a candidate topology first and retain the previous topology on capacity, geometry, identity, or action failure
-    - after a successful action, rebuild chrome from the newest topology, redraw an available released slot, and publish a new completion without waiting for a Wayland frame callback
-    - keep Window limited to protocol input publication and compositor-paced presentation of completed GPU revisions
-    - preserve current ring replacement, same-generation slot reuse, release observation, and reverse retirement
+    - derive the smallest immutable pane-update contract from existing howl-render terminal and image projections
+    - preserve caller-owned terminal selection and image identity semantics
+    - retain one newest-complete update for every live pane, including hidden tabs
+    - compose only visible panes while hidden updates continue replacing retained state
+    - batch all visible pane visuals and Host chrome into one Vulkan submission
+    - preserve current independent GPU progress, frame pacing, slot reuse, resize generations, and reverse retirement
   exclusions:
-    - configuration parsing or reload
-    - PTY, VT, terminal simulation, terminal input encoding, replies, or consequences
-    - viewport and scrollback key mappings
-    - selection gestures, clipboard, scrollbar dragging, floating-pane dragging, or pointer resize gestures
-    - synthetic widgets, command buses, RPC, generic event systems, or compatibility aliases
-    - Vulkan, Wayland, threads, presentation, or mutable application state inside howl-render
+    - PTY creation, descriptor polling, child lifecycle, and terminal runtime thread
+    - howl-vt construction, feeds, replies, consequences, or input encoding
+    - fake permanent terminal, simulator, event bus, command, RPC, or backend framework
+    - one OS thread or Zig fiber per pane
+    - Vulkan, Wayland, threads, or mutable application state inside howl-render
   transactions:
-    - a recognized press is captured before mutation; capture saturation fails without topology mutation
-    - failed topology actions preserve all tab, pane, focus, order, geometry, label, and identity bytes
-    - stable identities are never reused and failed actions consume no identity
-    - redraw publication occurs only after topology mutation and chrome projection both succeed
-    - input draining preserves arrival order and never holds the shared Boundary lock while applying policy or mutating Vulkan
-    - a captured release is consumed even if modifier state changed after the press
-    - unmatched keys remain available for the later terminal owner without compatibility routing
+    - malformed, aliased, oversized, stale, or wrong-incarnation updates preserve all retained pane and GPU staging bytes
+    - update replacement commits only after complete validation and owned-copy admission
+    - hidden-pane replacement performs no draw but becomes visible on the next tab switch
+    - pane close retires retained visual ownership only after the topology identity is no longer renderable
+    - context reconstruction uses retained complete updates and does not borrow producer storage
   deterministic_proofs:
-    - every accepted keysym and exact modifier combination maps to the intended action
-    - lock modifiers are ignored and every extra non-lock modifier rejects the binding
-    - press/repeated/release, duplicate press, keyboard leave, keymap replacement, and sixteen-key capture saturation
-    - create, split both axes, close pane/tab, directional tab traversal/reorder, directional focus, and divider resize mutate exact retained facts
-    - first/last directional tab traversal and reorder boundaries are deterministic
-    - failed capacity, geometry, identity, capture, projection, and redraw admission preserve retained topology and output
-    - tab and pane pointer hits, floating topmost hit, focus, raise, outside-surface, and non-primary-button behavior
-    - hidden-tab state remains retained and newest chrome appears immediately after switching back
-    - successful actions produce increasing GPU completion revisions without coupling Render progress to Window pacing
+    - two tiled and overlapping floating pane updates compose in exact topology order
+    - terminal text, decorations, cursor, pane-owned selection, images, borders, labels, and scrollbars preserve phase and clipping
+    - stale revision, wrong incarnation, unknown pane, malformed geometry, aliases, and every capacity failure roll back byte-exactly
+    - hidden updates coalesce to the newest complete state and appear immediately when revealed
+    - close and identity churn cannot resurrect retained visuals
+    - full recovery and Vulkan context reconstruction reproduce the same visible batch
   regression_gates:
-    - Wayland, Render, Host, and root checks/tests in all four optimize modes
-    - source audit, protocol validation, YAML, formatting, and diff checks
-    - operator manually exercises every accepted chord and primary pointer focus through visible chrome when the worker requests the gate
+    - Render, Host, and root check/test in all four optimize modes
+    - source audit, protocol validation, YAML, formatting, SPIR-V validation, and diff checks
     - Debug and ReleaseSafe live rings preserve same-generation reuse, resize, and orderly retirement
+    - request the operator to visually inspect the composed multi-pane surface after deterministic proofs pass
   review_boundary:
     - leave implementation uncommitted
-    - report exact mapping table, capture semantics, action failures, file/public-symbol delta, and remaining pointer/terminal gaps
-    - request the operator's visual interaction gate only after deterministic owner proofs pass
-    - provide one stable manual command and a concise exact interaction checklist for that gate
-  evidence:
-    manual_gate_correction:
-      failure: second keyboard focus entry rejected a valid receive-side wl_array with alloc zero and nonzero size
-      authority: Wayland 1.25 connection.c sets received array size, alloc zero, and data to the demarshalled payload
-      correction: bounded unaligned byte copying validates size and key count without treating alloc as input capacity
-      interaction_corrections:
-        - keymap-derived real modifier masks suppress only aliased virtual Meta and Hyper facts while retaining genuinely distinct masks
-        - focused pane frames retain all four overlay edges while unfocused tiled borders keep single-owner shared edges
-        - compositor minimum-size protocol facts prevent impossible zero-area tiled surfaces
-        - superseded resize construction aborts after the current slot instead of building a stale complete ring
-        - configure geometry derives from a stable current-layout basis refreshed only by topology mutations, preventing cumulative rounding drift
-        - boundary focus and already-focused pointer actions produce no candidate and therefore no GPU completion revision
-        - a temporary bounded per-pane probe distinguished unmatched input, captured releases, actions, pointer focus, and GPU completion revisions, then was deleted after the operator gate
-      focused_receipt:
-        - Wayland, Render, and Host Debug check/test pass
-        - source audit and diff check pass
-      operator_receipt:
-        - every observable key and pointer mapping passed
-        - unmatched per-pane input, captured repeats and releases, action capture counts, pointer focus, no-op revisions, and changed GPU revisions passed through the temporary probe
-        - focus leave and re-entry passed
-        - focused two-by-two pane frames retained all four edges
-        - continuous resize passed through generation 970 and revision 2892 without cumulative pane drift
-        - compositor close retired the Vulkan surface cleanly
-        - captured release after modifier change remains deterministic-only until a terminal consumer exists
-    binding_contract:
-      source: operator-corrected interactive_chrome visual contract
-      facts:
-        - HostAction is a finite closed enum
-        - exact non-lock modifier matching chooses actions
-        - Caps Lock and Num Lock do not suppress actions
-        - one fixed 16-key capture retains physical keycodes
-        - matched presses act once and captured releases never reach the terminal path
-    current_boundaries:
-      - howl-wayland input owns bounded ordered physical facts and coalesced snapshots without host policy
-      - Window resolves keysyms and UTF-8 using its xkb state, then copies facts into Boundary
-      - Renderer exclusively owns Topology and Vulkan mutation
-      - howl-render chrome remains immutable-input, bounded-output, and backend-neutral
+    - report the exact pane-update contract, retained byte bounds, phase order, public-symbol delta, and rollback receipts
+    - do not begin deterministic VT transcript or PTY integration work
 
 next:
-  - reviewer verifies exact mappings, capture, rollback, redraw independence, and manual input receipt
-  - commit one coherent interactive chrome checkpoint
-  - advance to per-pane PTY and VT lifecycle composition
+  - worker implements pane_composition and requests operator visual inspection
+  - reviewer closes pane_composition
+  - terminal_contract_receipt proves the producer boundary with multiple real VT instances
+  - terminal_runtime adds one caller-driven PTY and VT runtime thread
+  - parity_and_freeze closes the marathon

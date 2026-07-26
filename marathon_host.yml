@@ -7,13 +7,14 @@ marathon:
   objective: >-
     Build small reusable Wayland and Vulkan Zig packages, mature backend-neutral
     Render text and multiplexing chrome, and prove a first-party Vulkan host whose
-    remaining real-terminal integration is a bounded PTY and VT lifecycle task.
+    real-terminal integration uses one bounded terminal runtime to own many PTY,
+    VT, and terminal-projection lifetimes without coupling them to Wayland or Vulkan.
 
 baseline:
   version: 0.1.3-dev
   head:
-    hash: b03db424c7af379f1027b8a348bc15eca7061630
-    subject: Render persistent Vulkan chrome
+    hash: 5b8ac562ebed6479addd2bc7282fc18fac29a367
+    subject: Connect interactive host chrome
   foundation:
     hash: ee3a497ceb10ed98917c68bd34acab37c79ce97f
     subject: Establish Vulkan host foundation
@@ -24,7 +25,9 @@ baseline:
     render_text: 5f4c1e1eacb01c4e67b84e7822db25fe1f9d0a47
     render_chrome: 4a2c90db3f9d0af81ed031c78f574a9c5538cc31
     vk: f774e36b8403f388b75a5bf355bd5897f5593521
-    wayland: 63c2d43
+    wayland: 63c2d4341f604eff645ab532860dcd1c80b3a2b1
+    render_chrome_ownership: c6bc24e60f4749f7975743d36329a148bdddd6f3
+    interactive_chrome: 5b8ac562ebed6479addd2bc7282fc18fac29a367
   proven_runtime:
     - one Main lifetime, one Window thread, and one Render thread
     - compositor-selected DMA-BUF device and format/modifier tuple
@@ -52,7 +55,14 @@ authorities:
     role: Zig module maturity, exact bounds, transactions, failure, and cleanup
   zellij:
     path: /home/home/personal/projects/dev_references/terminals/zellij
-    role: familiar multiplexing vocabulary, interaction ideology, tabs, panes, and focus behavior
+    role: >-
+      familiar multiplexing vocabulary and interaction ideology plus lessons from
+      serialized screen mutation, ordered PTY-byte delivery, tabs, panes, and focus behavior
+  alacritty:
+    path: /home/home/personal/projects/dev_references/terminals/alacritty
+    role: >-
+      compact PTY event-loop and fair-lock mechanics; its shared-terminal mutex is
+      evidence for starvation prevention, not authority to share mutable VT in Howl
   rule: >-
     References establish facts and sharpen design. Howl derives its own smallest
     ownership and API shape; no reference donates architecture wholesale.
@@ -77,10 +87,19 @@ target_ownership:
       - Vulkan mutation and GPU resource lifetime
       - tab and pane state consumed through backend-neutral Render contracts
       - input-action interpretation
-      - future PTY polling and VT mutation
+      - retained newest-complete immutable visual update for each live pane
       - independent GPU updates and completed-surface notification
     excludes:
-      - Wayland dispatch and compositor presentation pacing
+      - Wayland dispatch, compositor presentation pacing, PTY polling, and VT mutation
+  terminal_runtime:
+    owns:
+      - one initial OS thread and one caller-managed poll set
+      - up to 64 logical terminal owners without one OS thread or fiber per terminal
+      - one PTY, one VT, one terminal-projection baseline, and one incarnation per live terminal pane
+      - bounded fair PTY reads, VT feeds, replies, writes, resize, child observation, and cleanup
+      - conversion of borrowed VT facts into immutable backend-neutral pane updates
+    excludes:
+      - Wayland objects, chrome topology, Vulkan mutation, GPU resources, and presentation pacing
   presentation_boundary:
     owns:
       - bounded copied Window-to-Render facts
@@ -92,6 +111,39 @@ target_ownership:
       - Render GPU completion wakes Window.
       - Window never wakes Render merely to pace presentation.
       - Render never waits for Window to observe a completed GPU revision.
+  terminal_boundary:
+    owns:
+      - bounded unmatched focused input tagged with stable pane identity and incarnation
+      - bounded resize, create, close, and stop facts
+      - newest-complete immutable pane updates with monotonic per-pane revisions
+      - directional wakeups without shared mutable PTY, VT, projection, or GPU state
+    rules:
+      - Renderer forwards only input not captured by Host chrome policy.
+      - Terminal runtime rejects stale pane identities and incarnations before mutation.
+      - No borrowed VT view or projection storage crosses the boundary.
+      - Terminal runtime never waits for Renderer to draw or Window to present.
+      - Renderer never locks or borrows a live terminal owner.
+
+terminal_scheduling:
+  initial_shape:
+    - one terminal runtime OS thread owns every logical terminal owner
+    - one explicit readiness set covers every borrowed PTY descriptor and the runtime wake descriptor
+    - ready terminals are serviced in stable round-robin order with a bounded byte and operation budget per turn
+    - hidden terminals receive the same progress opportunity as visible terminals
+    - CPU-heavy VT work yields at the explicit per-turn bound rather than at hidden scheduler points
+  growth_rule: >-
+    If measured workload exceeds one runtime thread, shard complete terminal owners
+    across a small fixed number of runtime threads without changing package or pane-update
+    contracts. Do not introduce one OS thread per terminal.
+  lock_rule: >-
+    Prefer exclusive terminal ownership and copied boundary facts over a shared terminal
+    mutex. Alacritty's fair mutex may inform a small proven residual lock only if ownership
+    cannot remove it; it is not the default terminal transport.
+  zig_io_rule: >-
+    The pinned Zig Evented backend is a future implementation candidate, not an accepted
+    architecture dependency. Its Linux stackful fibers currently reserve roughly 60 MiB
+    per fiber, so one fiber per terminal requires separate measured proof before adoption.
+    std.Io remains valuable as an injected I/O and nondeterminism contract.
 
 enduring_packages:
   howl_wayland:
@@ -132,7 +184,7 @@ enduring_packages:
       - Wayland and Vulkan runtime policy
       - DMA-BUF and explicit-synchronization ring
       - key and pointer action mapping
-      - future one-PTY and one-VT lifetime per terminal pane
+      - one bounded terminal runtime owning one PTY and VT lifetime per terminal pane
 
 bounds:
   tabs: 8
@@ -162,6 +214,7 @@ scope:
     - exact historical Howl tab, split, focus, resize, reorder, close, and quit mappings
     - multiple backend-neutral pane contents composed into one Vulkan surface
     - real howl-vt transcript fixtures proving the future terminal-facing seam
+    - one caller-driven terminal runtime polling all live howl-pty descriptors fairly
     - matched EGL-history behavior and bounded Vulkan performance receipts
   excluded:
     - generic UI, widget, event-bus, backend, render-graph, or configuration framework
@@ -169,6 +222,7 @@ scope:
     - fake permanent terminal, pane-content, RPC, command, or simulator interfaces
     - VT protocol expansion
     - PTY child integration before the terminal-facing proof gate
+    - one OS thread or Zig fiber per terminal
     - remote control, sessions, plugins, and configuration reload
     - Vulkan swapchains, EGL, GLES, and implicit synchronization
 
@@ -194,8 +248,9 @@ transactions:
     - Context and surface reconstruction preserve first failure and reverse cleanup.
   future_terminal:
     - One future pane owns one PTY, one VT, retained projection baseline, viewport, and image identities.
-    - Render mutates terminal and GPU state; Window never borrows terminal state.
-    - VT dirtiness is consumed only after caller-retained projection admission.
+    - Terminal runtime mutates PTY and VT state; Render alone mutates GPU state; Window borrows neither.
+    - VT dirtiness is consumed only after terminal-runtime admission into an immutable pane update.
+    - No borrowed VT or projection storage crosses from Terminal runtime to Renderer.
     - Hidden terminals continue consuming bytes and expose newest state when shown.
 
 checkpoints:
@@ -244,40 +299,59 @@ checkpoints:
       - unmatched input preserved for the future focused terminal
   - id: pane_composition
     outcome: >-
-      Compose multiple independent backend-neutral pane projections, images, and
-      chrome in exact phase order on one Vulkan surface.
+      Compose multiple independent immutable pane updates, images, and chrome in
+      exact phase order on one Vulkan surface without borrowing their producer state.
     commit_boundary: Compose bounded pane visuals
     proof:
       - tiled and floating clip/order
       - text, decorations, cursor, selection, images, borders, labels, and scrollbars
       - hidden-tab retention and newest-state reveal
       - generation replacement, context reconstruction, and failure isolation
+      - newest-complete per-pane replacement and stale update rejection
   - id: terminal_contract_receipt
     outcome: >-
-      Feed deterministic transcripts into real howl-vt instances and render their
-      borrowed facts in multiple panes without introducing PTYs or a simulator API.
+      Feed deterministic transcripts into multiple real howl-vt instances under one
+      terminal-runtime owner and render immutable updates in multiple panes without
+      introducing PTYs or a simulator API.
     commit_boundary: Prove multi-terminal render contract
     proof:
       - ordinary text, Unicode shaping, DEC/OSC66, cursor, selection, scrollback, and images
       - resize, hidden progress, tab switching, sparse/full recovery, and lifetime
       - no borrowed VT state survives the caller operation
+      - stable round-robin progress and bounded work under one noisy terminal
+      - immutable update replacement, stale identity rejection, and producer rollback
+  - id: terminal_runtime
+    outcome: >-
+      Add one OS thread that owns all logical terminal panes, polls every borrowed
+      howl-pty descriptor, mutates each howl-vt instance, and publishes immutable
+      backend-neutral pane updates without changing Window, Render, or package ownership.
+    commit_boundary: Run bounded PTY and VT terminal owners
+    proof:
+      - create, resize, focused input, partial write, replies, child observation, close, and reverse cleanup
+      - one poll set with up to 64 live terminals and no per-terminal OS thread or fiber
+      - bounded stable round-robin service under noisy, quiet, hidden, blocked, and exited terminals
+      - stale pane/incarnation input and update rejection
+      - hidden progress and newest-state reveal
+      - no shared mutable PTY, VT, projection, or GPU state
+      - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
   - id: parity_and_freeze
     outcome: >-
-      Establish that adding real PTY lifetimes needs no Wayland, Vulkan, Render,
-      chrome, input, or VT contract redesign.
+      Freeze the completed PTY, VT, immutable pane-update, Vulkan composition, and
+      interactive chrome path without widening package or thread ownership.
     commit_boundary: Freeze interactive Vulkan host foundation
     proof:
       - exact historical mapping and visible-behavior matrix
-      - deterministic geometry and Hyprland pixel gates
+      - deterministic geometry receipts and operator-requested visual gates
       - matched grid/frame CPU, GPU, RSS, draw, upload, and pacing receipts
       - full root/package all-mode gates, source audit, protocol validation, and clean shutdown
 
 final_acceptance:
   terminal_integration_shape:
-    - create one PTY and VT owner per pane
-    - poll all borrowed PTY descriptors from Render
-    - feed bytes and project borrowed VT facts
-    - encode unmatched focused input
+    - create one logical PTY, VT, and projection owner per terminal pane
+    - poll all borrowed PTY descriptors from one terminal runtime OS thread
+    - feed bytes and publish immutable backend-neutral pane updates
+    - route unmatched focused input to the terminal runtime by stable identity and incarnation
+    - keep Window, Renderer, and terminal runtime mutation ownership disjoint
     - resize from pane geometry
     - drain replies and ordered consequences
     - retire each pane in reverse ownership order
