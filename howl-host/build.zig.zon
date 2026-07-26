@@ -6,6 +6,7 @@
     .dependencies = .{
         .howl_render = .{ .path = "../howl-render" },
         .howl_vk = .{ .path = "../howl-vk" },
+        .howl_wayland = .{ .path = "../howl-wayland" },
     },
     .paths = .{
         "build.zig",
@@ -13,6 +14,5 @@
         "LICENSES",
         "src",
         "test",
-        "vendor",
     },
 }

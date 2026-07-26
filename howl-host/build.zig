@@ -5,20 +5,6 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const run_font = b.option([]const u8, "font", "Absolute font path passed to the live host");
     const headers = b.addWriteFiles();
-    const window_header = headers.add("window-native.h",
-        \\#ifdef _FORTIFY_SOURCE
-        \\#undef _FORTIFY_SOURCE
-        \\#endif
-        \\#define _FORTIFY_SOURCE 0
-        \\#include <wayland-client.h>
-        \\#include "xdg-shell-client-protocol.h"
-        \\#include "linux-dmabuf-v1-client-protocol.h"
-        \\#include "linux-drm-syncobj-v1-client-protocol.h"
-        \\#include <sys/mman.h>
-        \\#include <unistd.h>
-        \\#include <poll.h>
-        \\#include <errno.h>
-    );
     const renderer_header = headers.add("renderer-native.h",
         \\#ifdef _FORTIFY_SOURCE
         \\#undef _FORTIFY_SOURCE
@@ -39,14 +25,11 @@ pub fn build(b: *std.Build) void {
         \\#endif
         \\#define _FORTIFY_SOURCE 0
         \\#include <sys/eventfd.h>
+        \\#include <sys/mman.h>
         \\#include <unistd.h>
         \\#include <errno.h>
         \\#include <poll.h>
     );
-    const window_translate = b.addTranslateC(.{ .root_source_file = window_header, .target = target, .optimize = optimize });
-    window_translate.addIncludePath(b.path("vendor/xdg-shell"));
-    window_translate.addIncludePath(b.path("vendor/linux-dmabuf"));
-    window_translate.addIncludePath(b.path("vendor/linux-drm-syncobj"));
     const renderer_translate = b.addTranslateC(.{ .root_source_file = renderer_header, .target = target, .optimize = optimize });
     renderer_translate.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
     const host_translate = b.addTranslateC(.{ .root_source_file = host_header, .target = target, .optimize = optimize });
@@ -65,6 +48,7 @@ pub fn build(b: *std.Build) void {
         .terminal = false,
     });
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
+    const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
     const chrome_state = b.createModule(.{
         .root_source_file = b.path("src/chrome_state.zig"),
@@ -92,23 +76,10 @@ pub fn build(b: *std.Build) void {
     root.addImport("chrome_draw", chrome_draw);
     root.addImport("gpu_chrome", gpu_chrome);
     root.addImport("howl_vk", vk.module("howl_vk"));
-    root.addImport("window_c", window_translate.createModule());
+    root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("renderer_c", renderer_translate.createModule());
     root.addImport("host_c", host_c);
-    root.addCSourceFiles(.{
-        .root = b.path("vendor"),
-        .files = &.{
-            "xdg-shell/xdg-shell-protocol.c",
-            "linux-dmabuf/linux-dmabuf-v1-protocol.c",
-            "linux-drm-syncobj/linux-drm-syncobj-v1-protocol.c",
-        },
-        .flags = &.{},
-    });
-    root.addIncludePath(b.path("vendor/xdg-shell"));
-    root.addIncludePath(b.path("vendor/linux-dmabuf"));
-    root.addIncludePath(b.path("vendor/linux-drm-syncobj"));
     root.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
-    root.linkSystemLibrary("wayland-client", .{});
     root.linkSystemLibrary("vulkan", .{});
     root.linkSystemLibrary("drm", .{});
     const executable = b.addExecutable(.{ .name = "howl-host", .root_module = root, .use_llvm = false, .use_lld = false });
@@ -132,10 +103,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     test_shared.addImport("host_c", host_c);
+    test_shared.addImport("howl_wayland", wayland.module("howl_wayland"));
     test_module.addImport("shared", test_shared);
     test_module.addImport("host_c", host_c);
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("howl_render", render.module("howl_render"));
+    test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = false, .use_lld = false });
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");

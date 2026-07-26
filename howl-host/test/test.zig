@@ -3,6 +3,7 @@ const c = @import("host_c");
 const shared = @import("shared");
 const chrome_state = @import("chrome_state");
 const render = @import("howl_render");
+const wayland = @import("howl_wayland");
 
 fn boundary() !shared.Boundary {
     return shared.Boundary.init(std.testing.io);
@@ -163,6 +164,25 @@ test "directional wakes follow fact ownership" {
     try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
     try expectReadable(value.windowFd());
     try value.drainWindowWake();
+}
+
+test "Window input facts cross the shared boundary without policy" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .keysym = 0, .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
+    try value.publishMotion(.{ .time = 18, .point = .{ .x = 12.5, .y = 8.25 } });
+    try value.publishModifiers(.{ .serial = 9, .depressed = 1, .latched = 2, .locked = 4, .group = 3 });
+    try value.publishRepeat(.{ .rate = 25, .delay = 500 });
+    try expectReadable(value.renderFd());
+    try value.drainRenderWake();
+    const event = value.takeInput().?.key;
+    try std.testing.expectEqual(@as(u32, 44), event.keycode);
+    try std.testing.expectEqual(@as(u32, 17), event.time);
+    try std.testing.expectEqual(wayland.input.KeyState.repeated, event.state);
+    const snapshot = value.takeInputSnapshots();
+    try std.testing.expectEqual(@as(u32, 1), snapshot.modifiers.depressed);
+    try std.testing.expectEqual(@as(u32, 25), snapshot.repeat.?.rate);
+    try std.testing.expectEqual(@as(f64, 12.5), snapshot.motion.?.point.x);
 }
 
 test "configure facts coalesce and stale generations cannot cross the boundary" {

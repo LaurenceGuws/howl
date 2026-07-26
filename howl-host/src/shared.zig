@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = @import("host_c");
+const wayland = @import("howl_wayland");
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
@@ -122,6 +123,7 @@ pub const Boundary = struct {
     window_stopped: bool = false,
     render_stopped: bool = false,
     failure: ?Failure = null,
+    input: wayland.input.State = .{},
     render_fd: i32,
     window_fd: i32,
 
@@ -169,6 +171,110 @@ pub const Boundary = struct {
     /// Drains all pending Window wakes without blocking.
     pub fn drainWindowWake(self: *Boundary) error{Signal}!void {
         try drain(self.window_fd);
+    }
+
+    /// Appends one exact Wayland occurrence for Render without policy.
+    pub fn publishInput(self: *Boundary, event: wayland.input.Ordered) error{ Stopping, InputFull, InputRevisionOverflow }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.input.push(event) catch |failure| {
+            self.mutex.unlock(self.io);
+            return switch (failure) {
+                error.OrderedFull => error.InputFull,
+                error.RevisionOverflow => error.InputRevisionOverflow,
+            };
+        };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Replaces the coalesced pointer snapshot and wakes Render.
+    pub fn publishMotion(self: *Boundary, motion: wayland.input.Motion) error{ Stopping, InputRevisionOverflow }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.input.setMotion(motion) catch |failure| {
+            self.mutex.unlock(self.io);
+            return switch (failure) {
+                error.RevisionOverflow => error.InputRevisionOverflow,
+                error.OrderedFull => error.InputRevisionOverflow,
+            };
+        };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Replaces exact depressed/latched/locked/group masks and wakes Render.
+    pub fn publishModifiers(self: *Boundary, modifiers: wayland.input.Modifiers) error{ Stopping, InputRevisionOverflow }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.input.setModifiers(modifiers) catch |failure| {
+            self.mutex.unlock(self.io);
+            return switch (failure) {
+                error.RevisionOverflow => error.InputRevisionOverflow,
+                error.OrderedFull => error.InputRevisionOverflow,
+            };
+        };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Replaces keyboard repeat timing and wakes Render with the new fact.
+    pub fn publishRepeat(self: *Boundary, repeat: wayland.input.Repeat) error{ Stopping, InputRevisionOverflow }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.input.setRepeat(repeat) catch |failure| {
+            self.mutex.unlock(self.io);
+            return switch (failure) {
+                error.RevisionOverflow => error.InputRevisionOverflow,
+                error.OrderedFull => error.InputRevisionOverflow,
+            };
+        };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Replaces the newest configure fact, including zero unspecified values.
+    pub fn publishInputConfigure(self: *Boundary, width: u32, height: u32) error{ Stopping, InputRevisionOverflow }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.input.setConfigure(width, height) catch |failure| {
+            self.mutex.unlock(self.io);
+            return switch (failure) {
+                error.RevisionOverflow => error.InputRevisionOverflow,
+                error.OrderedFull => error.InputRevisionOverflow,
+            };
+        };
+        self.mutex.unlock(self.io);
+        signal(self.render_fd);
+    }
+
+    /// Removes one oldest input occurrence for Render.
+    pub fn takeInput(self: *Boundary) ?wayland.input.Ordered {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.input.take();
+    }
+
+    /// Takes coalesced motion/configure facts and copies the latest masks.
+    pub fn takeInputSnapshots(self: *Boundary) wayland.input.Snapshot {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.input.takeSnapshots();
     }
 
     /// Replaces the copied feedback fact and wakes Render.

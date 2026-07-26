@@ -371,7 +371,11 @@ fn waitRenderWake(boundary: *shared.Boundary) !void {
     var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
     while (true) {
         const result = c.poll(&descriptor, 1, 2_000);
-        if (result > 0) return boundary.drainRenderWake();
+        if (result > 0) {
+            try boundary.drainRenderWake();
+            drainInput(boundary);
+            return;
+        }
         if (result == 0) return error.WakeTimeout;
         if (std.c.errno(result) != .INTR) return error.Wake;
     }
@@ -381,9 +385,29 @@ fn waitRenderWakeBlocking(boundary: *shared.Boundary) !void {
     var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
     while (true) {
         const result = c.poll(&descriptor, 1, -1);
-        if (result > 0) return boundary.drainRenderWake();
+        if (result > 0) {
+            try boundary.drainRenderWake();
+            drainInput(boundary);
+            return;
+        }
         if (result < 0 and std.c.errno(result) == .INTR) continue;
         return error.Wake;
+    }
+}
+
+/// Drains exact Window input facts without applying host or chrome policy.
+/// The next renderer checkpoint will route these facts to terminal/input
+/// consumers; this slice proves only bounded cross-thread transport.
+fn drainInput(boundary: *shared.Boundary) void {
+    var ordered: usize = 0;
+    while (boundary.takeInput()) |event| {
+        switch (event) {
+            .key, .keyboard_enter, .keyboard_leave, .button, .axis, .pointer_enter, .pointer_leave => ordered += 1,
+        }
+    }
+    const snapshot = boundary.takeInputSnapshots();
+    if (ordered != 0) {
+        std.debug.print("Render input facts ordered={d} revision={d}\n", .{ ordered, snapshot.revision });
     }
 }
 

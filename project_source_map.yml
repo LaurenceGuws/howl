@@ -55,7 +55,15 @@ accepted:
   howl-vk/src/abi.zig: maintained minimal Vulkan 1.4.357 mechanical ABI
   howl-vk/src/dispatch.zig: typed ExternalImageDispatch procedure loading and validation
   howl-vk/src/proofs.zig: Vulkan ABI size, signature, closure, and dispatch proofs
-  howl-host/vendor/xdg-shell: Wayland-protocols 1.49 generated xdg-shell client ABI
-  howl-host/vendor/linux-dmabuf: Wayland-protocols 1.49 generated linux-dmabuf-v1 client ABI
-  howl-host/vendor/linux-drm-syncobj: Wayland-protocols 1.49 generated linux-drm-syncobj-v1 client ABI
-  howl-host/LICENSES: exact Vulkan and Wayland generated-source provenance and license facts
+  howl-wayland/build.zig: independent Wayland protocol package build and scanner reproducibility step
+  howl-wayland/build.zig.zon: Wayland package identity and source boundary
+  howl-wayland/src/root.zig: curated Wayland ABI, input, and xkbcommon package root
+  howl-wayland/src/input.zig: bounded caller-neutral ordered and coalesced input facts
+  howl-wayland/src/xkb.zig: borrowed keymap-byte xkbcommon object lifetime boundary
+  howl-wayland/src/wayland-native.h: named Translate-C ABI input
+  howl-wayland/src/xkb-native.h: private xkbcommon Translate-C ABI input
+  howl-wayland/src/proofs.zig: package closure, input, and xkb lifetime proofs
+  howl-wayland/tools/verify_generated.sh: byte-for-byte wayland-scanner reproducibility proof
+  howl-wayland/protocol: reproducibly generated xdg-shell, DMA-BUF, and DRM-syncobj client ABI
+  howl-wayland/LICENSES: protocol and system-library provenance
+  howl-host/LICENSES: exact Vulkan and runtime-library provenance and license facts

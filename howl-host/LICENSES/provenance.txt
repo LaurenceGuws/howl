@@ -1,35 +1,5 @@
-Howl host vendored ABI provenance
-=================================
-
-Wayland protocols
------------------
-
-The three generated protocol families derive from Wayland-protocols tag 1.49,
-commit ee78491a237eaff9389a0ccf8680521d074407d3, licensed MIT. They were
-generated with wayland-scanner 1.25.0. Each generated header embeds the
-applicable complete copyright and MIT permission notice.
-
-- xdg-shell XML SHA-256:
-  7ba7f9c8473deee674cb1f154a18abd0bb0cc072604fc055b0c15e459fc4c7df
-- linux-dmabuf-v1 XML SHA-256:
-  2735bb4589cbb364dfcb6a821dd3abbf0c0257956b716b9691718ddfd453df4c
-- linux-drm-syncobj-v1 XML SHA-256:
-  5ede41a56eced6aa635caa7ab2996066bff9fd211620dbf9f73aafab740bec71
-
-Generated output SHA-256:
-
-- xdg-shell-client-protocol.h:
-  23778840e17096e2b83138aadc171d626b6f3b8e05bf29ba5ccdd65cb92fbb5a
-- xdg-shell-protocol.c:
-  6acb725de29bab4d19a0ef629f1e97ed4fe05e8028f147daa4685f388077aaf3
-- linux-dmabuf-v1-client-protocol.h:
-  b7462c78063740a1e30487f103ed339110811cd1e37045a95d3c1f68d426ce2b
-- linux-dmabuf-v1-protocol.c:
-  ff4bd7f4531b127bea87063c865d991250119aef27dd0537bdafa571d9a69604
-- linux-drm-syncobj-v1-client-protocol.h:
-  0f4dbcd59c96e1e8ae83967bb90db1d388c1f6fc96fe7ca542156db5f63cb152
-- linux-drm-syncobj-v1-protocol.c:
-  61c832d4bce58be7f6f7bfbdc4838d1b9ec25af6a5a8fbc0c7abf3a29dbcde43
+Howl host runtime provenance
+============================
 
 Runtime libraries
 -----------------
