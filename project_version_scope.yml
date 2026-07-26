@@ -1,79 +1,48 @@
 version:
   current: 0.1.3-dev
-  status: reconstructed single-terminal foundation
+  status: reconstructed dependency foundation and bounded Vulkan host mechanism
 
 objective: >-
-  Preserve independently useful terminal capabilities and one direct first-party single-terminal executable while
-  keeping deferred presentation and multiplexing work outside the accepted foundation.
+  Preserve independently useful PTY, VT, and Render packages while establishing
+  one direct first-party Wayland/Vulkan lifetime foundation.
 
 settled_capabilities:
   - name: vt
-    acceptance: owns terminal semantics, state, input encoding, replies, consequences, and borrowed semantic views
+    acceptance: caller-neutral terminal emulation, replies, input encoding, and ordered semantic consequences
   - name: pty
-    acceptance: owns exact Linux PTY transport and child-process lifecycle
-  - name: control
-    acceptance: optional ID-addressable PTY and VT composition with bounded operations and no rendering relation
+    acceptance: caller-polled Linux PTY and child-process lifecycle
   - name: render
-    acceptance: backend-neutral terminal visual knowledge and plain values without runtime policy
+    acceptance: reusable text plus backend-neutral terminal, image, and chrome projection
   - name: executable
-    acceptance: howl-host owns one concrete Wayland, EGL/GLES, input, retained-visual, and lifecycle composition
+    acceptance: >-
+      three Vulkan DMA-BUF slots, per-slot DRM release timelines, directional
+      Window/Render eventfds, compositor-paced commits, and reverse cleanup
 
 accepted_implementation:
-  - The tracked Zig pin drives every workspace command; all concrete artifacts explicitly use self-hosted codegen and linking.
-  - VT protocol behavior and deterministic evidence remain the terminal-semantics baseline.
-  - PTY nonblocking Linux transport, borrowed-descriptor polling, one-shot nonblocking I/O, child observation, process-group cleanup, and foreground termios signaling remain the transport baseline.
-  - Control composes VT mode 19997 with foreground PTY termios assignments for exact one-byte key signals.
-  - >-
-    Render independently selects native text and generated terminal glyphs; either or both may be absent, and only
-    native text selection links libc, FreeType, and HarfBuzz.
-  - Render terminal projection writes backend-neutral visual patches into caller buffers and owns no runtime policy.
-  - VT retains bounded Kitty raw images and animation frames plus bounded explicit-RGB Sixel images in one common terminal image plane.
-  - >-
-    Render terminal text preparation discovers one homogeneous run at a time, preserves unresolved visual facts, and
-    returns exact native, generated, or no-glyph output ownership.
-  - >-
-    Howl-host directly composes one Control terminal, one Wayland window, and one EGL/GLES render thread with bounded
-    keyboard and pointer admission, title, bell, and ordered notification presentation, exact terminal completion,
-    and cleanup.
-  - >-
-    Howl-host owns primary-history view intent and exact scrollbar presentation while VT retains history,
-    semantic row facts, eviction, reflow, and alternate-screen truth.
-  - >-
-    VT owns bounded text extraction; Control exposes bounded local operations; Howl-host owns pointer gestures,
-    exact clipboard chords, nonblocking Wayland UTF-8 clipboard transfer, ordered OSC 52
-    system-clipboard set/query policy, and one-time Kitty paste-event reads.
-  - >-
-    Howl-host draws retained DEC single/double-width and double-height row geometry plus normal, raised, and lowered
-    cell baselines from backend-neutral render facts without changing shaping or texture identity.
-  - Howl-host presents retained cursor blink intent with one bounded monotonic timer and no VT/render timing policy.
-  - Howl-host transactionally answers ordered color-preference queries from its fixed dark presentation policy.
-  - >-
-    Howl-host validates ordered OSC 22 operations, retains independent bounded primary and alternate pointer stacks,
-    answers exact queries, and applies supported shapes through optional Wayland cursor-shape-v1.
-  - >-
-    Howl-host accepts application-opted-in incoming Wayland drops as copy-only opaque bounded MIME bytes through
-    Kitty OSC 72; filesystem, remote-file, move, and outgoing-drag behavior is excluded.
-  - >-
-    Howl-host consumes ordered window operations, requests Wayland minimization, and transactionally reports only
-    normal state, unavailable zero position/screen facts, and its retained title.
+  - The tracked Zig pin drives every workspace and child command.
+  - Window alone dispatches Wayland and presents completed copied slot facts.
+  - Render alone mutates Vulkan and observes per-slot DRM release timelines.
+  - Main constructs shared roots, joins both owners, and retires shared lifetime last.
+  - Render progress is independent of Wayland frame callbacks.
+  - The host selects Vulkan by the compositor DMA-BUF device identity and queries the exact format/modifier tuple.
+  - The maintained Vulkan ABI derives from Vulkan-Headers v1.4.357.
+  - Generated Wayland ABIs derive from Wayland-protocols 1.49 using wayland-scanner 1.25.0.
+  - Every accepted family and Host manifest uses version 0.1.3-dev.
 
 invariants:
-  - every module allocation uses an explicit caller-provided allocator
   - bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary
-  - control contains no rendering relation
-  - render contains no thread, publication lifecycle, GPU device, window, layout, or presentation policy
-  - howl-host is one first-party executable and does not constrain independent embedders
-  - private development carries no downstream source or ABI compatibility obligation
+  - Render owns no runtime threads, GPU objects, Wayland objects, or presentation policy
+  - Window never acknowledges Render completion or gates GPU mutation
+  - every exported descriptor has one owner and every ownership transfer is explicit
+  - source audit and protocol catalogue validation pass without diagnostics
 
 deferred:
-  - tabs, panes, sessions, and multiplexing
-  - remaining ordered host-consequence presentation beyond notification, attention bell, OSC 52 clipboard, and
-    window-control policy
+  - PTY, VT, and Render composition inside the host
+  - keyboard, pointer, clipboard, terminal consequences, tabs, panes, sessions, and multiplexing
+  - performance work and production-sized surfaces
 
 gates:
-  - permanent authorities and active planning YAML parse
-  - every accepted allocation boundary exposes its caller-provided allocator
-  - selected render capability graphs prove native and generated dependency exclusion
-  - retained VT, PTY, control, and render behavior has exact focused proof
-  - source audit and protocol catalogue validation pass for accepted source
-  - rejected source and compatibility boundaries remain deleted
+  - permanent authorities parse
+  - root and child all-mode checks and tests pass
+  - bounded Debug and ReleaseSafe live rings retire cleanly
+  - source audit, protocol validation, formatting, and diff checks pass

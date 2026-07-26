@@ -1,12 +1,13 @@
 .{
     .name = .howl_host,
-    .version = "0.1.4-dev",
+    .version = "0.1.3-dev",
     .fingerprint = 0x0aa0307a0f82dcd9,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
     .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",
+        "LICENSES",
         "src",
         "test",
         "vendor",

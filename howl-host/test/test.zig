@@ -11,21 +11,84 @@ test "feedback and ring offers transfer complete copied ownership" {
     defer value.deinit();
     try value.publishFeedback(.{ .device = 0x1234, .fourcc = 0x34324241, .modifier = 7 });
     try std.testing.expectEqual(@as(u64, 0x1234), value.readFeedback().?.device);
+    const offers = try realOffers();
+    try value.publishOffers(offers);
+    const taken = value.takeOffers().?;
+    for (taken) |offer| {
+        try std.testing.expect(offer.dma_fd >= 0);
+        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.dma_fd));
+        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.acquire_timeline_fd));
+        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.release_timeline_fd));
+    }
+    try std.testing.expect(value.takeOffers() == null);
+}
+
+test "malformed offers preserve Boundary and caller descriptor ownership" {
+    var value = try boundary();
+    defer value.deinit();
+    var offers = try realOffers();
+    offers[1].plane_count = shared.plane_limit + 1;
+    try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
+    try std.testing.expectEqual(@as(u8, 0), value.offer_count);
+    try std.testing.expect(value.takeOffers() == null);
+    closeOffers(offers);
+
+    offers = try realOffers();
+    const displaced = offers[2].dma_fd;
+    offers[2].dma_fd = -1;
+    try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
+    try std.testing.expectEqual(@as(u8, 0), value.offer_count);
+    try std.testing.expect(value.takeOffers() == null);
+    try std.testing.expectEqual(@as(c_int, 0), c.close(displaced));
+    offers[2].dma_fd = -1;
+    closeOffers(offers);
+}
+
+test "pending offers remain exact and reject a second ownership transfer" {
+    var value = try boundary();
+    defer value.deinit();
+    const first = try realOffers();
+    const second = try realOffers();
+    try value.publishOffers(first);
+    const retained_count = value.offer_count;
+    const retained_first_fd = value.offers[0].?.dma_fd;
+    try std.testing.expectError(error.OffersPending, value.publishOffers(second));
+    try std.testing.expectEqual(retained_count, value.offer_count);
+    try std.testing.expectEqual(retained_first_fd, value.offers[0].?.dma_fd);
+    const taken = value.takeOffers().?;
+    try std.testing.expectEqual(retained_first_fd, taken[0].dma_fd);
+    closeOffers(taken);
+    closeOffers(second);
+}
+
+test "Boundary cleanup closes every retained offered descriptor" {
+    var value = try boundary();
     const planes = [shared.plane_limit]shared.Plane{
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
     };
-    const offers = [_]shared.SlotOffer{
-        .{ .dma_fd = 3, .acquire_timeline_fd = 9, .release_timeline_fd = 4, .plane_count = 1, .planes = planes },
-        .{ .dma_fd = 5, .acquire_timeline_fd = 10, .release_timeline_fd = 6, .plane_count = 1, .planes = planes },
-        .{ .dma_fd = 7, .acquire_timeline_fd = 11, .release_timeline_fd = 8, .plane_count = 1, .planes = planes },
-    };
+    var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+        .dma_fd = -1,
+        .acquire_timeline_fd = -1,
+        .release_timeline_fd = -1,
+        .plane_count = 1,
+        .planes = planes,
+    });
+    errdefer closeOffers(offers);
+    for (&offers) |*offer| {
+        offer.dma_fd = try eventDescriptor();
+        offer.acquire_timeline_fd = try eventDescriptor();
+        offer.release_timeline_fd = try eventDescriptor();
+    }
     try value.publishOffers(offers);
-    const taken = value.takeOffers().?;
-    try std.testing.expectEqual(@as(i32, 7), taken[2].dma_fd);
-    try std.testing.expect(value.takeOffers() == null);
+    value.deinit();
+    for (offers) |offer| {
+        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.dma_fd));
+        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.acquire_timeline_fd));
+        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.release_timeline_fd));
+    }
 }
 
 test "completion queue is bounded ordered and never acknowledges Render" {
@@ -64,18 +127,6 @@ test "stop is monotonic and preserves the first runtime failure" {
     try std.testing.expect(stopped.window and stopped.render);
 }
 
-test "eventfd lifetime failure becomes the first runtime failure" {
-    var value = try boundary();
-    defer value.deinit();
-    const descriptor = value.window_fd;
-    value.window_fd = -1;
-    value.requestStop(null);
-    value.window_fd = descriptor;
-    try std.testing.expectEqual(shared.Failure.signal, value.failure.?);
-    value.requestStop(.window);
-    try std.testing.expectEqual(shared.Failure.signal, value.failure.?);
-}
-
 test "directional wakes follow fact ownership" {
     var value = try boundary();
     defer value.deinit();
@@ -91,4 +142,41 @@ fn expectReadable(descriptor: i32) !void {
     var poll_descriptor = c.pollfd{ .fd = descriptor, .events = c.POLLIN, .revents = 0 };
     try std.testing.expectEqual(@as(c_int, 1), c.poll(&poll_descriptor, 1, 0));
     try std.testing.expect((poll_descriptor.revents & c.POLLIN) != 0);
+}
+
+fn eventDescriptor() !i32 {
+    const value = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+    if (value < 0) return error.Descriptor;
+    return value;
+}
+
+fn realOffers() ![shared.slot_count]shared.SlotOffer {
+    const planes = [shared.plane_limit]shared.Plane{
+        .{ .offset = 0, .stride = 256 },
+        .{ .offset = 0, .stride = 256 },
+        .{ .offset = 0, .stride = 256 },
+        .{ .offset = 0, .stride = 256 },
+    };
+    var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+        .dma_fd = -1,
+        .acquire_timeline_fd = -1,
+        .release_timeline_fd = -1,
+        .plane_count = 1,
+        .planes = planes,
+    });
+    errdefer closeOffers(offers);
+    for (&offers) |*offer| {
+        offer.dma_fd = try eventDescriptor();
+        offer.acquire_timeline_fd = try eventDescriptor();
+        offer.release_timeline_fd = try eventDescriptor();
+    }
+    return offers;
+}
+
+fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
+    for (offers) |offer| {
+        if (offer.dma_fd >= 0) std.debug.assert(c.close(offer.dma_fd) == 0);
+        if (offer.acquire_timeline_fd >= 0) std.debug.assert(c.close(offer.acquire_timeline_fd) == 0);
+        if (offer.release_timeline_fd >= 0) std.debug.assert(c.close(offer.release_timeline_fd) == 0);
+    }
 }

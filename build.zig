@@ -5,7 +5,6 @@ const std = @import("std");
 const children = [_][]const u8{
     "howl-vt",
     "howl-pty",
-    "howl-control",
     "howl-render",
     "howl-host",
 };
@@ -47,33 +46,7 @@ pub fn build(b: *std.Build) void {
     addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, cpu, true);
     const host = b.step("run:host", "Run the first-party Wayland host");
     addChildBuild(b, host, "howl-host", "run", optimize, target, cpu, true);
-    const latest_host = b.step("run:host:latest", "Run the unchanged latest single-terminal host");
-    addChildBuildWithOption(b, latest_host, "howl-host", "run", optimize, target, cpu, "source", "latest");
-
     b.default_step = check;
-}
-
-fn addChildBuildWithOption(
-    b: *std.Build,
-    parent: *std.Build.Step,
-    child: []const u8,
-    step: []const u8,
-    optimize: std.builtin.OptimizeMode,
-    target: ?[]const u8,
-    cpu: ?[]const u8,
-    option: []const u8,
-    value: []const u8,
-) void {
-    const command = b.addSystemCommand(&.{ b.graph.zig_exe, "build", step });
-    command.setName(b.fmt("{s} {s} ({s})", .{ child, step, value }));
-    command.setCwd(b.path(child));
-    command.addArg(b.fmt("-Doptimize={s}", .{@tagName(optimize)}));
-    command.addArg(b.fmt("-D{s}={s}", .{ option, value }));
-    if (target) |target_value| command.addArg(b.fmt("-Dtarget={s}", .{target_value}));
-    if (cpu) |cpu_value| command.addArg(b.fmt("-Dcpu={s}", .{cpu_value}));
-    command.addArg("--");
-    command.addPassthruArgs();
-    parent.dependOn(&command.step);
 }
 
 fn addChildBuild(

@@ -26,11 +26,10 @@ const State = struct {
     feedback_complete: bool = false,
     feedback_device: u64 = 0,
     tranche_device: u64 = 0,
-    tranche_flags: u32 = 0,
     table_fd: i32 = -1,
     table_size: usize = 0,
     table_map: ?[*]const u8 = null,
-    formats: [format_limit]struct { fourcc: u32, modifier: u64, device: u64, flags: u32 } = undefined,
+    formats: [format_limit]struct { fourcc: u32, modifier: u64, device: u64 } = undefined,
     format_count: u8 = 0,
     buffers: [shared.slot_count]?*c.wl_buffer = .{ null, null, null },
     acquire_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
@@ -62,6 +61,8 @@ const State = struct {
     }
 };
 
+/// Runs the sole Wayland owner until the shared Boundary requests retirement.
+/// All operational failures are recorded as the first Window runtime failure.
 pub fn run(boundary: *shared.Boundary) void {
     runFallible(boundary) catch |failure| {
         std.debug.print("Window failure: {s}\n", .{@errorName(failure)});
@@ -106,7 +107,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
         if (!boundary.isWindowRingReady()) {
             if (boundary.takeOffers()) |offers| {
                 try constructRing(&state, offers);
-                try boundary.markWindowRingReady();
+                boundary.markWindowRingReady();
             }
         }
         if (state.frame_callback == null) {
@@ -270,7 +271,7 @@ fn copyDevice(array: ?*c.wl_array) u64 {
     if (value.size < 8) return 0;
     var bytes: [8]u8 = undefined;
     @memcpy(&bytes, @as([*]const u8, @ptrCast(value.data))[0..8]);
-    return std.mem.readInt(u64, &bytes, .little);
+    return std.mem.bytesToValue(u64, &bytes);
 }
 fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
@@ -279,7 +280,6 @@ fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*
 fn trancheDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     state.tranche_device = 0;
-    state.tranche_flags = 0;
 }
 fn trancheTarget(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
@@ -295,21 +295,20 @@ fn trancheFormats(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, indice
         if (state.format_count == format_limit) return;
         var encoded: [2]u8 = undefined;
         @memcpy(&encoded, bytes[index * 2 ..][0..2]);
-        const table_index = std.mem.readInt(u16, &encoded, .little);
+        const table_index = std.mem.bytesToValue(u16, &encoded);
         const offset = @as(usize, table_index) * 16;
         if (offset + 16 > state.table_size) continue;
         state.formats[state.format_count] = .{
-            .fourcc = std.mem.readInt(u32, table[offset..][0..4], .little),
-            .modifier = std.mem.readInt(u64, table[offset + 8 ..][0..8], .little),
+            .fourcc = std.mem.bytesToValue(u32, table[offset..][0..4]),
+            .modifier = std.mem.bytesToValue(u64, table[offset + 8 ..][0..8]),
             .device = state.tranche_device,
-            .flags = state.tranche_flags,
         };
         state.format_count += 1;
     }
 }
 fn trancheFlags(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, flags: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    state.tranche_flags = flags;
+    if (state.feedback_complete or flags & ~@as(u32, 1) != 0) state.boundary.requestStop(.window);
 }
 const feedback_listener = c.zwp_linux_dmabuf_feedback_v1_listener{
     .done = feedbackDone,

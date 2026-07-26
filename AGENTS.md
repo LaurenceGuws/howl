@@ -84,5 +84,6 @@ validates root evidence, and provides development aliases.
 Workspace commands use `./.zig/zig`; child-local commands inherit that pin or
 use `../.zig/zig`. Never substitute ambient Zig for the tracked `.zigversion`.
 
-QAgent directly consumes the `howl-control` and `howl-vt` packages. It pressures
-Howl through use without owning Howl's domain or importing application policy.
+QAgent is an experimental embedder outside the accepted package graph. It may
+pressure Howl through use without owning Howl's domain or importing application
+policy.

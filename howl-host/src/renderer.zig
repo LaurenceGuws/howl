@@ -5,10 +5,7 @@ const c = @import("renderer_c");
 const shared = @import("shared.zig");
 const vk = @import("vulkan");
 
-const SlotStage = enum { empty, image, memory, offered, live };
-
 const Slot = struct {
-    stage: SlotStage = .empty,
     image: vk.VkImage = null,
     memory: vk.VkDeviceMemory = null,
     release_handle: u32 = 0,
@@ -30,6 +27,8 @@ const OfferedFds = struct {
     timeline: i32 = -1,
 };
 
+/// Runs the sole Vulkan/DRM owner until the bounded ring completes or fails.
+/// All operational failures are recorded as the first Render runtime failure.
 pub fn run(boundary: *shared.Boundary) void {
     runFallible(boundary) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
@@ -45,7 +44,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     var application = std.mem.zeroes(vk.VkApplicationInfo);
     application.sType = vk.VK_STRUCTURE_TYPE_APPLICATION_INFO;
     application.pApplicationName = "howl-host";
-    application.applicationVersion = vk.VK_MAKE_VERSION(0, 1, 4);
+    application.applicationVersion = vk.VK_MAKE_VERSION(0, 1, 3);
     application.pEngineName = "none";
     application.engineVersion = 0;
     application.apiVersion = vk.VK_API_VERSION_1_3;
@@ -139,7 +138,6 @@ fn runFallible(boundary: *shared.Boundary) !void {
     try boundary.publishOffers(offers);
     for (&offered_fds) |*fds| fds.* = .{};
     try waitWindowRing(boundary);
-    for (&slots) |*slot| slot.stage = .live;
 
     var pool_info = std.mem.zeroes(vk.VkCommandPoolCreateInfo);
     pool_info.sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -369,7 +367,6 @@ fn constructSlot(slot: *Slot, device: vk.VkDevice, memory_properties: vk.VkPhysi
     info.sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE;
     info.initialLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED;
     if (vk.vkCreateImage(device, &info, null, &slot.image) != vk.VK_SUCCESS) return error.Image;
-    slot.stage = .image;
     var requirements: vk.VkMemoryRequirements = undefined;
     vk.vkGetImageMemoryRequirements(device, slot.image, &requirements);
     var memory_type: ?u32 = null;
@@ -392,7 +389,6 @@ fn constructSlot(slot: *Slot, device: vk.VkDevice, memory_properties: vk.VkPhysi
     allocation.allocationSize = requirements.size;
     allocation.memoryTypeIndex = memory_type orelse return error.Memory;
     if (vk.vkAllocateMemory(device, &allocation, null, &slot.memory) != vk.VK_SUCCESS) return error.Memory;
-    slot.stage = .memory;
     if (vk.vkBindImageMemory(device, slot.image, slot.memory, 0) != vk.VK_SUCCESS) return error.Memory;
     var actual = std.mem.zeroes(vk.VkImageDrmFormatModifierPropertiesEXT);
     actual.sType = vk.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
@@ -414,7 +410,6 @@ fn constructSlot(slot: *Slot, device: vk.VkDevice, memory_properties: vk.VkPhysi
     if (c.drmSyncobjCreate(drm_fd, 0, &slot.release_handle) != 0) return error.Syncobj;
     if (c.drmSyncobjHandleToFD(drm_fd, slot.release_handle, &offered_fds.timeline) != 0) return error.Syncobj;
     offer.* = .{ .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
-    slot.stage = .offered;
 }
 
 fn render(device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, wait_semaphore: ?vk.VkSemaphore, get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {

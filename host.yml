@@ -1,593 +1,87 @@
 host:
   name: Howl
-  plan: native_linux_terminal_multiplexer
-  status: operator_review
-  base_commit: 217ec14
-  planning_only: true
+  version: 0.1.3-dev
+  status: foundation_review
+  scope: bounded_wayland_vulkan_color_ring
 
-product:
-  intent:
-    - Build a world-class native Linux terminal multiplexer.
-    - Keep it direct, bounded, defensive, and native to pinned Zig.
-    - Present Vulkan-rendered content through Wayland DMA-BUF buffers with explicit
-      synchronization.
-  behavior:
-    - One process opens one visible Wayland window containing ordered named tabs.
-    - Each tab contains a bounded tiled arrangement of terminal panes.
-    - Every pane has a stable identity, visible label, independent viewport, selection,
-      scrollbar, and one real Control terminal.
-    - Hidden tabs continue processing terminal output.
-    - Exited panes retain their final admitted visual and remain unavailable until closed.
-    - Keyboard and pointer input resolve through the active tab and focused pane.
-    - Clipboard, notifications, title, bell, working-directory, and window consequences
-      remain explicit runtime policy.
-    - Rendering advances whenever terminal, input, animation, or lifecycle state changes;
-      it never waits for a Wayland frame callback.
-    - Wayland presents the newest completed GPU surface at compositor pace.
-  operator_flow:
-    - Launch Howl.
-    - Use the host CLI to list stable tab identity, pane identity, availability, and exact
-      Control ID.
-    - Give one Control ID to a Codex or QAgent worker.
-    - The worker remotely inspects or controls that exact terminal through howl-control.
-    - Focus, tab hiding, tab reordering, rendering, and child exit do not change the ID.
-
-bounds:
-  tabs: 16
-  visible_panes_per_tab: 16
-  live_terminals: 64
-  ordered_input_occurrences: 256
-  image_slots_per_generation: 3
-  simultaneous_image_generations: 2
-  maximum_image_slots_during_resize: 6
-  tab_name_bytes: 128
-  grid:
-    columns: 512
-    rows: 256
-  pane_minimum:
-    columns: 2
-    rows: 1
-  identities:
-    TabId: globally_never_reused_nonzero_u64
-    PaneId: globally_never_reused_nonzero_u64
-    ControlId: exact_Control_endpoint_identity
-    RenderRevision: globally_never_reused_nonzero_u64
+intent:
+  - Prove enduring Main, Window, Render, and shared-boundary ownership.
+  - Preserve the successful three-slot Vulkan DMA-BUF presentation mechanism.
+  - Exclude terminal-product composition until the native lifetime foundation is accepted.
 
 owners:
   Main:
-    purpose: construct, stop, join, and destroy process owners
     owns:
-      - allocator and std.Io roots
-      - arguments and host CLI operation
-      - shared Window/Render boundary storage
-      - Vulkan loader, instance, physical-device selection, device, and queue lifetime
-      - DRM render-node descriptor lifetime
-      - fixed GPU image allocation lifetime
+      - std.Io root
+      - shared boundary lifetime
       - Window and Render thread handles
-      - first fatal process result
+      - joining and final process failure
     rules:
-      - Finish native construction before Render begins GPU mutation.
-      - Do not touch Vulkan runtime state while Render is alive.
-      - Destroy Vulkan only after Render joins and Window releases every Wayland wrapper
-        over exported image storage.
+      - Join both owners before destroying the shared boundary.
   Window:
-    purpose: own Wayland, collect physical input, and present completed surfaces
     owns:
-      - wl_display connection and event dispatch
-      - registry, compositor, wl_surface, xdg_surface, and xdg_toplevel
-      - seat, keyboard, pointer, touch, data-device, offers, sources, and callbacks
-      - linux-dmabuf feedback
-      - one wl_buffer for each live GPU image slot
-      - linux-drm-syncobj surface and timeline protocol objects
-      - frame callbacks and presentation-time feedback
-      - newest copied Wayland state
-      - bounded ordered physical occurrences
-    reads:
-      - newest completed GPU slot identity and synchronization points
-    writes:
-      - Wayland state and physical occurrences for Render
-      - presentation and compositor-release facts for the image ring
-    excludes:
-      - terminal, VT, Control, tab, and pane policy
-      - Vulkan commands and composition
+      - Wayland connection, registry, surface, xdg-shell objects, and callbacks
+      - DMA-BUF feedback and wl_buffer wrappers
+      - DRM-syncobj Wayland timeline wrappers
+      - frame callbacks and compositor-paced commits
+    rules:
+      - Commit at most one ready slot per frame opportunity.
+      - Never acknowledge Render or gate GPU mutation.
+      - Never call Vulkan or observe DRM release completion.
   Render:
-    purpose: own the terminal product and mutate GPU content
     owns:
-      - Screen, ordered tabs, active tab, tiled pane layouts, and pane focus
-      - all live terminal lifecycles and retained visuals
-      - input interpretation and product consequences
-      - tab bar, pane labels, viewports, selections, and scrollbars
-      - clipboard policy
-      - Vulkan runtime objects, caches, composition, and drawing
-      - GPU image content and completed revisions
-      - DRM syncobj handles and timeline points
-      - render pacing
-    progress_sources:
-      - direct Control wakes
-      - physical input and Wayland configuration changes
-      - animation and cursor deadlines
-      - compositor image release
-      - shutdown
+      - Vulkan instance, physical device selection, device, queue, commands, images, and memory
+      - DRM render-node descriptor and syncobjs
+      - per-slot release observation and exclusive/external ownership transitions
+      - completed render revisions
     rules:
-      - Render is the only runtime caller of Vulkan.
-      - Render never calls Wayland.
-      - Terminal and GPU progress is independent of frame callbacks.
-  Control_reader:
-    count: one_per_live_terminal
-    maximum: 64
+      - Match the compositor DMA-BUF device through VkPhysicalDeviceDrmPropertiesEXT.
+      - Query the exact format, modifier, plane, memory, and external-handle facts.
+      - Destroy slots only after Window retires its wrappers.
+  Boundary:
     owns:
-      - PTY read progress and Control model mutation
-    publishes:
-      - cumulative progress wake directly to Render
-  Control_endpoint:
-    count: zero_or_one_per_live_terminal
-    maximum: 64
-    owns:
-      - local external inspection and control requests
-    publishes:
-      - exact Control ID to Main's host CLI discovery surface
+      - copied feedback, slot offers, completion queue, stop, and retirement facts
+      - Render-to-Window and Window-to-Render eventfds
+      - first runtime failure
 
-boundaries:
-  Window_to_Render:
-    synchronization:
-      - mutex-protected complete-state publication
-      - monotonically increasing produced and consumed generations
-      - one coalesced pending wake
-      - one stopped wake
-    latest_state:
-      - configured Window logical width and height
-      - integer buffer scale
-      - Window activation
-      - keyboard enter state for the Window surface
-      - current keyboard modifiers
-      - current pointer position in Window coordinates
-      - pointer-enter serial
-      - data offer, MIME facts, actions, and protocol serials
-      - complete linux-dmabuf feedback generation
-      - compositor frame-ready generation
-    ordered_occurrences:
-      - key press, release, and committed text
-      - pointer button press and release
-      - pointer axis source, values, stops, and frame boundaries
-      - touch down, motion, up, cancel, and frame
-      - data-offer enter, leave, drop, and selection replacement
-      - compositor close
-    rules:
-      - Latest state coalesces to its newest complete value.
-      - Ordered occurrences never coalesce or overwrite.
-      - When full, Window pauses further Wayland reads, wakes Render, and resumes when
-        capacity returns.
-      - Render alone converts physical facts into product behavior.
-  Render_to_Window:
-    synchronization:
-      - mutex-protected slot publication
-      - monotonically increasing produced and consumed generations
-      - one coalesced dirty wake
-      - one stopped wake
-    facts:
-      - image generation
-      - completed slot index
-      - completed render revision
-      - acquire timeline point
-      - release timeline point reserved for presentation
-      - fatal or stopped state
-    rules:
-      - No terminal, tab, pane, cell, draw, or composition fact crosses.
-      - Window selects the newest complete compatible slot.
-      - Window acknowledges it only after issuing its Wayland commit.
-      - Several completed revisions may coalesce to the newest.
-  Control_to_Render:
-    synchronization:
-      - one fixed pending bit per occupied terminal slot
-      - one Render wake descriptor
-      - Control's cumulative wake generation
-    identity: globally_never_reused_PaneId
-    rules:
-      - Repeated pane wakes coalesce without acknowledging terminal dirtiness.
-      - Retirement clears registry occupancy and pending wake before teardown.
-      - A delayed wake for a retired PaneId cannot address a later terminal.
+ring:
+  slots: 3
+  completed_revisions: 4
+  reuse:
+    - present slot 0
+    - present slot 1
+    - present slot 2
+    - observe slot 0 release
+    - acquire slot 0 from external ownership
+    - render and present slot 0 again
 
-lifetimes:
-  tab:
-    construct:
-      - Allocate and validate its bounded name.
-      - Construct its first pane and terminal before publication.
-      - Commit stable TabId and ordered entry together.
-    mutate:
-      - Rename, reorder, and switch through candidate-copy transactions.
-    retire:
-      - Close child panes in reverse stable order.
-      - Remove the tab and select deterministic active-tab fallback.
-  pane:
-    construct:
-      - Preflight target rectangle and aggregate bounds.
-      - Construct terminal, retained visual storage, and endpoint.
-      - Commit PaneId, registry entry, and tiled placement together.
-    mutate:
-      - Split one rectangle into two exact rectangles.
-      - Resolve direct pointer and directional focus from current geometry.
-      - Resize complete shared divider boundaries.
-      - Fill close vacancies through bounded local neighboring geometry.
-    retire:
-      - Commit topology.
-      - Make wake identity unreachable.
-      - Stop endpoint and reader.
-      - Deinitialize terminal and retained state in reverse order.
-      - Never reuse PaneId.
-  terminal:
-    construct:
-      - Create one real howl-control Terminal and local endpoint.
-      - Complete child, reader, model, wake, and retained storage before pane publication.
-    progress:
-      - Visible and hidden terminals remain live.
-      - Render borrows visual state synchronously and copies the complete render-required
-        state into retained storage.
-      - DirtyToken acknowledgement follows successful retained admission.
-      - Synchronized output withholds admission and acknowledgement until release.
-    exit:
-      - Attempt final retained admission.
-      - Retain final admitted visual, PaneId, and Control ID.
-      - Mark the pane unavailable until deliberate close.
-    resize:
-      - Preflight every capacity and resize in stable order.
-      - Roll back prior terminal resizes in reverse order on recoverable failure.
-      - Treat rollback failure as fatal.
-  ControlId:
-    begins: after_endpoint_construction
-    becomes_visible: after_pane_publication
-    stable_across:
-      - focus
-      - tab hiding and reordering
-      - rendering
-      - child exit
-    ends: deliberate_pane_or_tab_retirement
-  retained_visual:
-    owner: Render
-    contains:
-      - cells and row geometry
-      - cursor and render-relevant modes
-      - terminal images and generations
-      - title, availability, and render-relevant consequences
-    transaction:
-      - construct and validate candidate
-      - replace admitted state
-      - acknowledge exact DirtyToken
-  GPU_surface_generation:
-    construct:
-      - Select a compositor-advertised, Vulkan-renderable, exportable format/modifier.
-      - Construct three Vulkan images, memory allocations, and per-slot syncobj timelines.
-      - Export DMA-BUF plane descriptors and exact layout.
-      - Window creates all wl_buffers and timeline proxies.
-      - Publish only when every slot is complete.
-    resize:
-      - Keep the old generation presentable.
-      - Build and publish one complete candidate generation.
-      - Retire the old generation after every attached release point signals.
-      - Coalesce further size changes while one generation retires.
-    destroy:
-      - Window destroys proxies and wl_buffers and closes retained DMA-BUF FDs.
-      - Render destroys runtime Vulkan resources and DRM syncobj handles after draining.
-      - Main frees images and memory after both owners join.
+synchronization:
+  render_to_window:
+    - completed slot revision
+    - directional eventfd signal
+  window_to_render:
+    - DMA-BUF feedback
+    - ring construction complete
+    - Window retired
+    - directional eventfd signal
+  exclusions:
+    - presentation acknowledgement
+    - sleep polling
+    - frame-callback gating of Render
+    - shared Vulkan mutation
 
-presentation:
-  bootstrap:
-    - Main starts Window in bootstrap mode.
-    - Window connects, creates its surface role, obtains complete linux-dmabuf surface
-      feedback, publishes it, and waits.
-    - Main selects the Vulkan device, opens its DRM render node, and creates the image ring.
-    - Window creates every wl_buffer and explicit-sync protocol object.
-    - Main starts Render only after all native slot pairs exist.
-    - Window enters ordinary dispatch and presentation.
-  device_selection:
-    - Decode each compositor sampling-tranche dev_t.
-    - Select the VkPhysicalDevice whose VkPhysicalDeviceDrmPropertiesEXT primary or render
-      major/minor matches the tranche.
-    - Open that physical device's render node.
-    - Prove one common fourcc/modifier is color-renderable and DMA-BUF exportable.
-  image_construction:
-    - Create VkImage with DRM_FORMAT_MODIFIER_EXT tiling.
-    - Chain VkExternalMemoryImageCreateInfo with DMA_BUF_BIT_EXT.
-    - Supply compositor modifiers through VkImageDrmFormatModifierListCreateInfoEXT.
-    - Allocate with VkExportMemoryAllocateInfo and dedicated allocation when required.
-    - Bind memory, query modifier and plane layouts, and export with vkGetMemoryFdKHR.
-    - Window adds consecutive planes with u32-bounded offset and stride and uses asynchronous
-      linux-dmabuf creation.
-  render_completion:
-    - Render records composition and the final external-read image transition.
-    - Queue submission signals an exportable binary semaphore.
-    - vkGetSemaphoreFdKHR exports SYNC_FD.
-    - A nonnegative FD is imported into the slot acquire timeline point with
-      DRM_IOCTL_SYNCOBJ_FD_TO_HANDLE using IMPORT_SYNC_FILE and TIMELINE flags, then closed.
-    - A Vulkan -1 already-signaled payload signals the acquire point through
-      DRM_IOCTL_SYNCOBJ_TIMELINE_SIGNAL.
-    - Render publishes the slot only after the acquire point exists.
-  window_commit:
-    - Set the slot acquire and release points.
-    - Attach its existing wl_buffer.
-    - Damage the whole buffer.
-    - Request frame and presentation feedback.
-    - Commit wl_surface.
-  release:
-    - Give every slot a distinct release timeline.
-    - Register its next release point with DRM_IOCTL_SYNCOBJ_EVENTFD.
-    - Let the eventfd wake Render.
-    - Prove the point with zero-time DRM_IOCTL_SYNCOBJ_TIMELINE_WAIT before reuse.
-  slot_state:
-    - free_to_rendering_by_Render
-    - rendering_to_complete_by_Render
-    - complete_to_attached_by_Window
-    - unattached_complete_to_free_when_superseded_by_Render
-    - attached_to_released_by_compositor
-    - released_to_free_by_Render
-    - retiring_to_destroyed_by_Window_then_Render_then_Main
-  saturation:
-    - Never overwrite an attached slot.
-    - When all slots are busy, retain accumulated dirtiness, process other work, and wait.
-    - Allocate no additional slot.
+current_exclusions:
+  - PTY and child lifecycle
+  - VT and terminal semantic projection
+  - text, images, and chrome rendering
+  - keyboard, pointer, clipboard, and terminal consequence policy
+  - tabs, panes, sessions, remote control, and multiplexing
+  - Vulkan swapchains, EGL, GLES, and implicit synchronization
 
-source:
-  files:
-    main.zig:
-      owns:
-        - process entry, arguments, and host CLI
-        - native bootstrap and shared boundaries
-        - thread start, shutdown, join, and lifetime destruction
-        - Vulkan loader and lifetime roots
-    window.zig:
-      owns:
-        - Wayland connection, objects, callbacks, polling, and teardown
-        - physical input collection
-        - clipboard and data-device protocol mechanics
-        - DMA-BUF feedback, wl_buffers, explicit sync, and presentation
-    renderer.zig:
-      owns:
-        - Screen, Tab, and TiledPanes
-        - runtime thread, input interpretation, and consequences
-        - tab bar, labels, viewport, selection, scrollbar, and composition
-        - Vulkan runtime, text, glyph, image, clipping, batching, and pacing
-    terminal.zig:
-      owns:
-        - bounded PaneId-to-Control registry
-        - Control wake ingress and Control-ID lifetime
-        - retained visual admission
-        - construction, resize, exit, close, and shutdown transactions
-    test.zig:
-      owns:
-        - complete public-method analysis
-        - deterministic ownership, transaction, failure, concurrency, and bounds tests
-        - opt-in real Control integration tests
-  rule:
-    - These are the five Zig source files.
-    - Generated Wayland protocol and Vulkan binding artifacts are build outputs.
-
-transactions:
-  rule:
-    - Validate bounds before mutation.
-    - Construct candidate ownership completely.
-    - Publish one valid state.
-    - On recoverable failure, clean candidates in reverse and preserve prior bytes and
-      allocations exactly.
-    - Report fatal state honestly when native side effects cannot be rolled back.
-  fixed_storage:
-    Screen: 16_tabs_and_64_live_panes
-    Tab: 16_visible_panes_and_128_name_bytes
-    TerminalRegistry: 64_entries_and_64_pending_bits
-    InputQueue: 256_entries
-    ImageRing: 3_active_or_6_with_one_retiring_generation
-  shutdown:
-    - Main publishes stopped and wakes Window and Render.
-    - Window stops input, detaches visible content, and dispatches release while connected.
-    - Render stops new admission, drains GPU work, and retires terminals in reverse.
-    - Window destroys wrappers over GPU storage and joins.
-    - Render destroys runtime Vulkan and DRM synchronization and joins.
-    - Main frees images, device, instance, DRM fd, loader, and shared storage.
-
-checkpoints:
-  - id: native_bootstrap_and_surface_ring
-    status: first_worker
-    objective:
-      - Launch one Wayland window backed by a three-slot Vulkan DMA-BUF image ring.
-      - Render independent color revisions on Render.
-      - Present the newest completed slot on Window with explicit synchronization.
-    work:
-      main.zig:
-        - Build shared state, Window bootstrap, Vulkan lifetime roots, DRM node, image
-          allocations, and threads.
-        - Generate the minimum Vulkan bindings from pinned vk.xml and verify ABI against
-          pinned vulkan_core.h.
-      window.zig:
-        - Bind required globals and obtain complete surface DMA-BUF feedback.
-        - Construct wl_buffers and timeline proxies.
-        - Present newest slots and record frame/presentation feedback.
-      renderer.zig:
-        - Own Render thread, command recording, synchronization, solid-color composition,
-          slot saturation, revisions, and release observation.
-      terminal.zig:
-        - Add only shared lifetime types genuinely required by this checkpoint.
-      test.zig:
-        - Prove generations, slot state, saturation, resize replacement, wakeups, and shutdown
-          without a compositor.
-    native_gate:
-      Wayland:
-        - wl_compositor
-        - xdg_wm_base
-        - zwp_linux_dmabuf_v1_version_4_or_newer
-        - wp_linux_drm_syncobj_manager_v1_version_1
-        - wp_presentation_version_1_or_newer
-      Vulkan:
-        api_minimum: 1.3
-        extensions:
-          - VK_EXT_external_memory_dma_buf
-          - VK_EXT_image_drm_format_modifier
-          - VK_EXT_physical_device_drm
-          - VK_KHR_external_memory_fd
-          - VK_KHR_external_semaphore_fd
-        features:
-          - synchronization2
-          - dynamicRendering
-      bindings:
-        - Emit only used commands, types, constants, and dependencies.
-        - Verify size, alignment, field offset, constant, and signature ABI.
-        - Record exact generated byte count and reject more than 65536 bytes.
-    vertical_result:
-      - Howl opens under supported Hyprland and continuously displays changing Vulkan colors
-        without EGL or a Vulkan swapchain.
-      - Window makes no Vulkan call and Render makes no Wayland call.
-      - GPU revisions continue while frame callbacks are delayed.
-      - Three busy slots backpressure without overwrite or allocation.
-      - Resize retains the old generation until replacement is complete.
-      - Shutdown releases all objects, FDs, and threads.
-    assignment:
-      - Implement this checkpoint only from clean accepted base 217ec14.
-      - Do not implement terminals, multiplexing UI, text, clipboard, or input policy.
-      - Return uncommitted code, generated-source accounting, native-object accounting,
-        deterministic tests, and manual Hyprland evidence.
-
-  - id: terminal_lifecycle
-    depends_on: native_bootstrap_and_surface_ring
-    objective:
-      - Add one real Control terminal, retained visual, and discoverable endpoint.
-    vertical_result:
-      - Howl launches and renders one shell.
-      - The host CLI exposes its Control ID for remote inspection/control.
-      - Construction rollback, synchronized withholding, admission-before-acknowledgement,
-        stale wake rejection, exit retention, and shutdown are proved.
-
-  - id: screen_tabs_and_tiled_panes
-    depends_on: terminal_lifecycle
-    objective:
-      - Integrate Screen, ordered tabs, rectangle-derived tiled panes, and real lifecycles.
-    vertical_result:
-      - Host CLI operations create, split, resize, focus, rename, reorder, switch, and close
-        real panes and tabs.
-      - All tab, visible-pane, and live-terminal bounds and hidden progress are proved.
-
-  - id: physical_input_and_interaction
-    depends_on: screen_tabs_and_tiled_panes
-    objective:
-      - Collect lossless physical input in Window and interpret it entirely in Render.
-    vertical_result:
-      - Every visible terminal is interactively controllable without Window knowing pane
-        identity or terminal modes.
-
-  - id: text_images_and_composition
-    depends_on: physical_input_and_interaction
-    objective:
-      - Add bounded font shaping, glyph atlases, terminal images, decorations, cursors,
-        clipping, batching, and complete pane composition.
-    vertical_result:
-      - Unicode, styles, DEC geometry, OSC 66, graphics, cursors, selections, and odd pane
-        edges render correctly.
-
-  - id: multiplexer_chrome
-    depends_on: text_images_and_composition
-    objective:
-      - Add tab bar, pane labels, availability, viewports, scrollbars, and hit geometry.
-    vertical_result:
-      - Users can understand and navigate every tab, pane, history position, availability,
-        and Control identity visually.
-
-  - id: clipboard_drop_and_consequences
-    depends_on: multiplexer_chrome
-    objective:
-      - Complete clipboard, selection, drop, title, bell, notification, directory, and
-        window consequences.
-    vertical_result:
-      - Platform transfers and consequences work across panes without terminal policy in
-        Window.
-
-  - id: performance_and_release
-    depends_on: clipboard_drop_and_consequences
-    objective:
-      - Harden, measure, audit, and accept the complete multiplexer.
-    vertical_result:
-      - The full five-file host becomes the reviewed production implementation.
-
-verification:
-  deterministic:
-    - native object ownership and reverse cleanup counters
-    - FD baseline restoration
-    - simultaneous publication and consumption
-    - lost-wake resistance
-    - latest-state coalescing
-    - ordered-input saturation
-    - GPU-slot saturation and out-of-order release
-    - explicit-sync failure
-    - resize replacement
-    - terminal construction and topology rollback
-    - retained admission before DirtyToken acknowledgement
-    - synchronized-output withholding
-    - hidden progress and exit retention
-    - endpoint lifetime and stale PaneId wake
-    - 16 tabs, 16 visible panes, and 64 live terminals
-    - T-junction, pinwheel, non-slicing, minimum, and hostile geometry
-    - shutdown with Window, Render, 64 readers, 64 endpoints, and attached slots active
-  performance:
-    startup:
-      - process start to first committed GPU surface
-      - process start to first terminal visual
-    progress:
-      - Control wake to retained admission
-      - retained admission to completed revision
-      - completed revision to Wayland commit
-    render:
-      - no steady-state allocation after capacities and caches are warm
-      - no more than six presentation images
-      - compose CPU time, queue time, GPU completion, superseded revisions, and saturation
-    scale:
-      - 1 visible and 1 live terminal
-      - 16 visible and 16 live terminals
-      - 16 visible and 64 live terminals
-  hyprland_manual:
-    target:
-      compositor: Hyprland
-      observed_version: 0.55.4
-      GPU: NVIDIA_GeForce_RTX_3060
-      driver: NVIDIA_610.43.03
-    gates:
-      - launch and first surface
-      - independent GPU revisions with delayed frame callbacks
-      - saturation, release, resize, and output-scale replacement
-      - ASCII, Unicode, styles, cursor, selection, decorations, and graphics
-      - odd splits and 16 visible panes
-      - hidden output followed by immediate activation
-      - tab bar, labels, viewport, and scrollbar interaction
-      - clipboard, paste, drop, title, bell, and notification
-      - exit final-visual retention
-      - CLI Control-ID discovery and remote inspection/control
-      - shutdown during output, endpoint traffic, resize, and attached buffers
-
-scope:
-  current:
-    - Linux and Wayland
-    - Hyprland as supported manual compositor
-    - Vulkan 1.3 runtime with Vulkan 1.4.350 headers and registry
-    - DMA-BUF with DRM syncobj explicit synchronization
-    - NVIDIA proprietary driver as first supported GPU target
-    - integer wl_surface buffer scale
-    - one visible top-level Window
-    - 16 tabs, 16 visible panes per tab, and 64 live terminals
-    - main.zig, window.zig, renderer.zig, terminal.zig, and test.zig
-  exact_startup_failures:
-    - missing required Wayland interface or version
-    - missing Vulkan loader, command, API version, extension, or feature
-    - no Vulkan device matching a compositor sampling tranche
-    - no shared renderable and exportable format/modifier
-    - DMA-BUF export or Wayland import failure
-    - SYNC_FD export or DRM syncobj failure
-  unresolved:
-    - id: aggregate_memory_budget
-      decision:
-        - Set maximum CPU retained-visual and GPU cache memory for 64 live terminals,
-          excluding the fixed six presentation images.
-      required_by: text_images_and_composition
-    - id: fractional_scale
-      decision:
-        - Decide whether a later checkpoint adopts wp_fractional_scale_v1 and wp_viewporter.
-      current_behavior: integer_buffer_scale_only
-      required_by: performance_and_release
-
-review:
-  approval_effect:
-    - Approval assigns native_bootstrap_and_surface_ring.
-    - Later checkpoints require their own handoff and review.
+acceptance:
+  - deterministic owner and boundary tests pass in every optimize mode
+  - Debug and ReleaseSafe live rings complete and retire cleanly
+  - root workspace and every surviving child check and test pass
+  - source audit and protocol catalogue validation pass
+  - tracked Vulkan and generated Wayland provenance is exact
+  - no stale deleted-package or historical graphics ownership remains in current authorities

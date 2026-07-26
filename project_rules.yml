@@ -7,11 +7,10 @@ rules:
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
-  - VT owns terminal semantics, state, dirty facts, input encoding, replies, and terminal consequences.
+  - VT owns terminal semantics, state and mutation facts, input encoding, replies, and terminal consequences.
   - PTY owns Linux transport, descriptors, child processes, process-group cleanup, and foreground termios signaling.
-  - Control optionally composes PTY and VT through bounded operations and has no rendering relation.
   - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
-  - Howl-host owns its concrete Wayland, EGL/GLES, input, retained-visual, render-thread, and presentation lifecycle.
+  - Howl-host owns its concrete Wayland, Vulkan, DMA-BUF, explicit synchronization, render-thread, and presentation lifecycle.
   - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
   - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
   - Every concrete artifact explicitly selects self-hosted Zig code generation and linking under the tracked compiler pin.

@@ -5,22 +5,19 @@ project:
 
 capabilities:
   vt:
-    role: terminal parsing, semantics, state, dirty facts, input encoding, replies, and terminal consequences
+    role: terminal parsing, semantic state and mutation facts, input encoding, replies, and terminal consequences
   pty:
     role: Linux PTY transport and child-process lifecycle
-  control:
-    role: optional ID-addressable composition of PTY and VT with bounded operations and interfaces
   render:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
-    role: first-party single-terminal Wayland, EGL/GLES, input, retained visuals, rendering, and presentation
-    status: accepted foundation with primary-history viewport, selection, UTF-8 clipboard including OSC 52 and one-time Kitty paste-event policy, DEC text and cursor-blink presentation, fixed dark color preference, pointer-shape stacks, and bounded notification and window-control policy; multiplexing remains outside
+    role: first-party Wayland, Vulkan, DMA-BUF, and explicit-synchronization lifetime foundation
+    status: bounded three-slot color-ring foundation; terminal composition and product input remain deferred
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator
   composition:
     - embedders may use VT and PTY independently
-    - control has no rendering relation
     - render owns no threads, publication lifecycle, GPU device, window, layout, or presentation policy
     - howl-host is one concrete first-party composition, not the only valid route through the family
 
@@ -33,4 +30,4 @@ workspace:
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: single-terminal foundation implemented; deferred capabilities remain separate work
+  status: dependency packages frozen and bounded Vulkan color-ring foundation implemented; terminal composition remains deferred

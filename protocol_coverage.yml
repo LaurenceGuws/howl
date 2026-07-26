@@ -3,7 +3,7 @@ schema: 3
 howl_schema:
   support: [full, partial, missing, unassessed]
   disposition: [none, active, delegated, deferred, excluded]
-  owner: [howl-vt, howl-host, howl-control, howl-render, howl-pty]
+  owner: [howl-vt, howl-host, howl-render, howl-pty]
   defaults: {full_disposition: none, incomplete_disposition: active, owner: howl-vt}
   meaning:
     support: implemented behavior relative to the pinned reference
@@ -839,13 +839,13 @@ references:
         recognition: delegated
         records:
           libvterm.apc.fallback: {raw: "APC Pb ST", effect: delegate payload to configured APC fallback,
-            conditions: &howl_string_fallback_condition Howl retains only complete payloads within its 2 KiB aggregate
-              bound and its first-party host consumes them in order without a logging or presentation effect.,
+            conditions: &howl_string_fallback_condition Howl VT retains only complete payloads within its 2 KiB
+              aggregate bound; caller policy remains deferred.,
             howl: &howl_string_fallback_howl {support: partial, disposition: excluded,
               rationale: Howl deliberately has no generic diagnostic fallback or product logging hook.,
-              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
-              path: howl-control/src/howl_control.zig,
-              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "APC PM and SOS retain bounded ordered fallback payloads"}}}
       on_pm:
         source: state.c
         line: 1953
@@ -1365,14 +1365,13 @@ references:
             effect: media copy request
             conditions: >-
               iTerm2 maps 4 to print-and-end capture, 5 to begin capture, and every other scalar to print screen;
-              Howl retains every exact command in an eight-entry FIFO and its first-party host consumes each without
-              printer or capture effects.
+              Howl VT retains every exact command in an eight-entry FIFO; printer and capture policy remain deferred.
             relevance: host consequence
             howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately owns no printer or terminal-output capture policy.,
-              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
-                path: howl-control/src/howl_control.zig,
-                symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+                path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "low priority private modes and media copy retain caller-neutral state"}}
           iterm2.csi.save_or_margins: {raw: "CSI Pm s", effect: save cursor or set horizontal margins,
             conditions: iTerm2 treats parameterless CSI s as DECSLRM under DECLRMM while Howl saves the cursor,
             howl: {support: partial, disposition: excluded,
@@ -1629,15 +1628,15 @@ references:
           iterm2.osc.highlight_fg: {raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           iterm2.osc.pointer: {raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            conditions: "Howl validates the portable CSS shape set, retains independent 16-entry primary and alternate
-              stacks, and issues optional Wayland cursor-shape requests; it deliberately omits iTerm2's X11
-              compatibility names and bounds pending operations to eight.",
+            conditions: "Howl VT retains ordered bounded caller-neutral pointer-shape requests; pointer presentation
+              and policy remain deferred.",
             relevance: host consequence, howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately supports the portable Kitty CSS vocabulary and a fixed eight-occurrence
                 admission bound rather than iTerm2's additional X11 aliases.,
               residual: iTerm2 additionally accepts platform-specific X11 cursor names and does not share Howl's FIFO bound.,
-              source: howl-host/src/pointer_shape.zig, symbol: State.apply, proof: {path: howl-host/src/pointer_shape.zig,
-                symbol: "pointer stacks retain banks eviction queries and rollback"}}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 22 retains ordered bounded caller-neutral requests"}}}
           iterm2.osc.kvp_50: {raw: "OSC 50 ; key=value (BEL|ST)", effect: legacy iTerm key-value command,
             howl: {support: missing, disposition: excluded,
               rationale: This iTerm product integration is outside the complete Howl family.}}
@@ -1714,13 +1713,13 @@ references:
         conditions: trusted-session checks guard host-sensitive effects
         records:
           iterm2.osc1337.file: {raw: "OSC 1337 ; File=Pm : base64 (BEL|ST)", effect: transfer or display file,
-            conditions: &iterm_file_transfer_condition "Howl retains exact packets up to its 2 KiB iTerm OSC bound
-              in an eight-entry cross-protocol FIFO; its first-party host consumes each without filesystem effects",
+            conditions: &iterm_file_transfer_condition "Howl VT retains exact packets up to its 2 KiB iTerm OSC
+              bound in an eight-entry cross-protocol FIFO; filesystem policy remains deferred",
             relevance: host consequence, howl: &iterm_file_transfer_howl {support: partial, disposition: excluded,
               rationale: Howl deliberately excludes application-directed file decoding storage and presentation.,
-              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
-                path: howl-control/src/howl_control.zig,
-                symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}}
           iterm2.osc1337.multipart_file: {raw: "OSC 1337 ; MultipartFile=Pm (BEL|ST)",
             effect: begin multipart file transfer, conditions: *iterm_file_transfer_condition,
             relevance: host consequence, howl: *iterm_file_transfer_howl}
@@ -1991,14 +1990,13 @@ references:
             raw: "DCS + p Pt ST"
             effect: set termcap or terminfo values
             conditions: >-
-              iTerm2 validates names and mutates terminal key mappings; Howl retains each exact command in an
-              16-entry cross-family FIFO sharing a 2 KiB aggregate bound; its first-party host consumes each without
-              mutating key mappings.
+              iTerm2 validates names and mutates terminal key mappings; Howl VT retains each exact command in a
+              16-entry cross-family FIFO sharing a 2 KiB aggregate bound; caller mapping policy remains deferred.
             howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately keeps terminal input mapping fixed instead of accepting child terminfo mutation.,
-              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
-              path: howl-control/src/howl_control.zig,
-              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "DCS configuration commands retain bounded cross-family order"}}
           iterm2.dcs.xtgettcap: {raw: "DCS + q Pt ST", effect: query termcap or terminfo values, relevance: query,
             conditions: "Howl answers Co, colors, RGB, Tc, and Su without exposing term identity, profile, key mapping,
               or arbitrary terminfo",
@@ -2797,16 +2795,14 @@ references:
             raw: "CSI ? 5522 h|l"
             effect: toggle extended paste events
             conditions: >-
-              Howl retains, reports through mode queries and state snapshots, saves, restores, and resets the mode; the embedder still owns Kitty's
-              permission-sensitive OSC 5522 clipboard exchange; howl-host sends a one-time-password UTF-8 MIME event
-              for an operator paste and admits exactly one matching read; Howl also cancels pending wrap at the mode boundary.
+              Howl retains, reports through mode queries, saves, restores, and resets the mode; caller permission and
+              clipboard policy remain deferred. Howl also cancels pending wrap at the mode boundary.
             relevance: input
             howl: {support: partial, disposition: excluded,
-              rationale: Howl deliberately grants only one operator-triggered UTF-8 clipboard read and excludes
-                general permission prompts, primary selection, and arbitrary MIME policy.,
-              source: howl-host/src/window.zig, symbol: Window.requestClipboardPaste, proof: {
-              path: howl-host/src/clipboard.zig,
-              symbol: "Kitty paste event and granted read use exact bounded framing"}}
+              rationale: Howl deliberately leaves permission prompts, selection, and MIME policy to the caller.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "low priority private modes and media copy retain caller-neutral state"}}
           kitty.mode.application_escape:
             raw: "CSI ? 7727 h|l"
             effect: reject application escape mode
@@ -2823,17 +2819,16 @@ references:
             raw: "CSI ? 19997 h|l"
             effect: toggle terminal-generated termios signals
             conditions: >-
-              Howl routes a one-byte encoded key matching the foreground PTY's enabled VINTR, VQUIT, or VSUSP
-              assignment directly to that process group. Other events and native failures retain the PTY byte path.
-              Howl reports and saves the mode and cancels pending wrap at its boundary; Kitty does none of those three.
+              Howl VT reports and saves the mode and cancels pending wrap at its boundary. PTY signal routing remains
+              deferred composition; Kitty does none of those three.
             relevance: input
             howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately preserves query, save/restore, and pending-wrap mutation truth for every
                 accepted DEC mode rather than reproducing Kitty's hidden mode exception.,
               residual: Kitty neither reports nor saves mode 19997 and does not cancel pending wrap at its boundary.,
-              source: howl-control/src/howl_control.zig, symbol: Terminal.transferInput, proof: {
-              path: howl-control/src/howl_control.zig,
-              symbol: "mode 19997 routes one-byte encoded keys through foreground termios signals"}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.termiosSignalsEnabled, proof: {
+              path: howl-vt/test/unit/terminal_modes_test.zig,
+              symbol: "low priority private modes and media copy retain caller-neutral state"}}
       dispatch_csi:
         source: vt-parser.c
         line: 1114
@@ -3024,14 +3019,14 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "device and status queries retain exact scalar transcripts and origin coordinates"}}}
           kitty.csi.decdsr: {raw: "CSI ? [Ps=0] n", effect: report DEC status,
-            conditions: "Howl retains up to 16 ordered private 996 queries and its host transactionally replies with
-              its fixed dark preference; Howl also supports DEC locator statuses 55 and 56, which Kitty ignores.",
+            conditions: "Howl VT retains up to 16 ordered private 996 queries and exposes a transactional typed reply;
+              caller color policy remains deferred. Howl also supports DEC locator statuses 55 and 56, which Kitty ignores.",
             howl: {support: partial, disposition: excluded,
               rationale: *howl_report_policy_difference,
-              residual: Howl reports one fixed dark executable preference and additionally implements DEC locator statuses.,
-              source: howl-host/src/window.zig, symbol: Window.applyColorPreferenceQueries,
-              proof: {path: howl-control/src/howl_control.zig,
-                symbol: "host color-preference query transfer consumes only after complete delivery"}}}
+              residual: Caller color-preference policy is deferred; Howl additionally implements DEC locator statuses.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.replyColorPreference,
+              proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
+                symbol: "Kitty color-preference queries retain ordered intent and transactional replies"}}}
           kitty.csi.save_cursor: {raw: "CSI s", effect: save cursor,
             conditions: "Howl additionally retains cursor visibility plus cell-domain protection, hyperlink, font, and
               baseline rendition",
@@ -3297,16 +3292,15 @@ references:
           kitty.osc.highlight_fg: {raw: "OSC 19 ; color (BEL|ST)", effect: set or query highlight foreground,
             conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           kitty.osc.pointer: {raw: "OSC 22 ; shape (BEL|ST)", effect: set pointer shape,
-            conditions: "Howl implements the complete portable shape vocabulary, independent primary and alternate
-              16-entry stacks, reset ordering, support/current/default/grabbed queries, transactional replies, and
-              optional Wayland cursor-shape presentation; its pending occurrence FIFO is fixed at eight.",
+            conditions: "Howl VT retains the complete portable shape vocabulary as ordered caller-neutral requests
+              and serializes typed caller replies; presentation policy remains deferred.",
             relevance: host consequence, howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately bounds every ordered host consequence rather than accepting an unbounded
                 same-feed burst.,
               residual: A burst exceeding eight unconsumed OSC 22 occurrences is rejected transactionally.,
-              source: howl-host/src/window.zig, symbol: Window.applyPointerShapeRequests,
-              proof: {path: howl-host/src/pointer_shape.zig,
-                symbol: "pointer stacks retain banks eviction queries and rollback"}}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.replyPointerShape,
+              proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 22 query reply is one direct transactional operation"}}}
           kitty.osc.reset_fg:
             raw: "OSC 110 (BEL|ST)"
             effect: reset foreground
@@ -3365,24 +3359,23 @@ references:
             raw: "OSC 5522 ; metadata ; payload ST"
             effect: Kitty clipboard extension
             conditions: >-
-              Howl retains exact encoded packets up to 8 KiB in the shared eight-entry clipboard FIFO, accepts BEL
-              termination, and howl-host parses bounded metadata and MIME payloads, grants one operator-triggered UTF-8
-              read, replies transactionally, and rejects unsupported requests.
+              Howl VT retains exact encoded packets up to 8 KiB in the shared eight-entry clipboard FIFO and accepts
+              BEL termination; permission, MIME, and clipboard policy remain deferred.
             relevance: host consequence
             howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately excludes arbitrary MIME, write transactions, primary selection, persistent
                 grants, and interactive permission prompts.,
-              source: howl-host/src/window.zig, symbol: Window.applyKittyClipboard, proof: {
-              path: howl-control/src/howl_control.zig,
-              symbol: "Kitty clipboard packet copy and reply preserve exact FIFO identity"}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "Kitty OSC 5522 shares ordered clipboard admission without caller policy"}}
           kitty.osc.text_size:
             raw: "OSC TEXT_SIZE_CODE ; Pt (BEL|ST)"
             effect: control text sizing
             relevance: terminal presentation
             conditions: >-
               Howl parses fragmented s/w/n/d/v/h metadata, retains bounded 7x7 cell clusters, expands mutation and
-              selection damage across complete clusters, and renders scale/fraction/alignment through its copied visual
-              facts and GLES owner.
+              selection damage across complete clusters, and projects scale/fraction/alignment through backend-neutral
+              Render facts.
             howl:
               support: partial
               disposition: excluded
@@ -3404,9 +3397,8 @@ references:
             effect: drag and drop control
             relevance: host consequence
             conditions: >-
-              Howl parses and retains bounded ordered OSC 72 commands, supports chunked incoming MIME registration,
-              advertises copy-only Wayland offers with exact terminal-local cell/pixel coordinates, and returns opaque
-              requested MIME bytes in bounded base64 chunks. It never interprets text/uri-list or accesses paths.
+              Howl VT parses and retains bounded ordered OSC 72 commands and serializes typed caller events.
+              Wayland data transfer and filesystem policy remain deferred.
             howl:
               support: partial
               disposition: excluded
@@ -3414,12 +3406,11 @@ references:
                 Remote file and directory requests, move/delete effects, outgoing drags, filesystem traversal, and
                 primary-selection policy are absent.
               rationale: >-
-                Howl deliberately limits OSC 72 to application-opted-in incoming opaque Wayland copy data; filesystem,
-                remote-transfer, move, and outgoing-source authority are outside the terminal family.
+                Howl deliberately leaves filesystem, remote-transfer, move, and data-source authority to callers.
               source: howl-vt/src/terminal.zig
               symbol: parseDragDrop
-              proof: {path: howl-host/src/drop.zig,
-                symbol: "chunk chain is ordered bounded and registration commits on completion"}
+              proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "OSC 72 parses fragmented ordered commands with exact rejection and consumption"}
           kitty.osc.shell_mark:
             raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
             effect: update shell integration mark
@@ -3434,15 +3425,14 @@ references:
             raw: "OSC FILE_TRANSFER_CODE ; Pt (BEL|ST)"
             effect: transfer file
             conditions: >-
-              Howl retains exact encoded packets up to 8 KiB in an eight-entry cross-protocol FIFO; command parsing,
-              transfer sessions, authorization, filesystem effects, and replies are deliberately absent; the
-              first-party host consumes each packet in order.
+              Howl VT retains exact encoded packets up to 8 KiB in an eight-entry cross-protocol FIFO; transfer
+              sessions, authorization, filesystem effects, and replies remain deferred.
             relevance: host consequence
             howl: {support: partial, disposition: excluded,
               rationale: Howl deliberately excludes child-directed filesystem transfer and authorization policy.,
-              source: howl-host/src/window.zig, symbol: Window.discardUnsupportedConsequences, proof: {
-              path: howl-control/src/howl_control.zig,
-              symbol: "unsupported ordered consequence identities drain exactly without payload borrows"}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.consequenceHead, proof: {
+              path: howl-vt/test/unit/terminal_osc_test.zig,
+              symbol: "iTerm and Kitty file transfers retain one opaque ordered stream"}}
           kitty.osc.color_push: {raw: "OSC 30001 (BEL|ST)", effect: sequential color-stack push,
             conditions: ten slots, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: pushState, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,

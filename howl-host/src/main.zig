@@ -5,7 +5,15 @@ const renderer = @import("renderer.zig");
 const shared = @import("shared.zig");
 const window = @import("window.zig");
 
-pub fn main() !void {
+const MainError = std.Thread.SpawnError || error{
+    Signal,
+    OwnerDidNotStop,
+    HostFailure,
+};
+
+/// Owns process-root construction, joins both runtime owners, and reports the
+/// first construction or owner failure after reverse cleanup.
+pub fn main() MainError!void {
     var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
     defer threaded.deinit();
     var boundary = try shared.Boundary.init(threaded.io());

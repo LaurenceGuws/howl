@@ -20,11 +20,6 @@ accepted:
   howl-pty/build.zig: PTY package build, coherent translated Linux headers, and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
   howl-pty/src/howl_pty.zig: Linux PTY transport, foreground termios signals, and child-process lifecycle
-  howl-control/build.zig: control package build and direct VT/PTY dependency graph
-  howl-control/build.zig.zon: control package identity and source boundary
-  howl-control/src/client.zig: identity, endpoint, codec, and bounded request ownership
-  howl-control/src/howl_control.zig: optional ID-addressable PTY and VT composition with transactional input, signal, and consequence replies
-  howl-control/src/test.zig: control transport, lifecycle, and terminal-operation proofs
   howl-render/build.zig: independently selected capability graphs and native-text-only translated headers
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
   howl-render/src/root*.zig: curated roots for selected render capabilities
@@ -43,15 +38,13 @@ accepted:
   howl-render/LICENSES: render-owned asset and native-library provenance
   howl-host/build.zig: first-party executable build, install, run, proof, and distinct translated native-header ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
-  howl-host/manual-fixtures: bounded compositor-visible development receipts, not installed runtime assets
-  howl-host/assets/howl_window_icon.png: exact provenance-tracked logo used by the static graphics manual receipt
-  howl-host/src/main.zig: operator shell selection, window entry, serve, and primitive control inspection
-  howl-host/src/window.zig: one Wayland window, one Control terminal, input, retained visuals, ordered consequence policy, and lifecycle
-  howl-host/src/renderer.zig: one render thread and concrete EGL/GLES cell, image texture, DEC geometry, baseline, and decoration owner
-  howl-host/src/viewport.zig: host scroll intent and exact scrollbar paint/hit geometry
-  howl-host/src/clipboard.zig: bounded UTF-8 clipboard transfers plus Kitty paste-event parsing and framing
-  howl-host/src/drop.zig: bounded Kitty OSC 72 application intent and opaque Wayland MIME identity
-  howl-host/src/pointer_shape.zig: bounded primary and alternate OSC 22 stack and query policy
-  howl-host/vendor/cursor-shape: generated optional Wayland cursor-shape protocol bindings
-  howl-host/vendor/xdg-system-bell: generated optional Wayland system-bell protocol bindings
-  howl-host/LICENSES: host native-library and generated-protocol provenance
+  howl-host/manual-fixtures: bounded compositor-visible color-ring receipt
+  howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
+  howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
+  howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
+  howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, three-slot ownership, and release observation
+  howl-host/vendor/vulkan/vulkan.zig: maintained minimal Vulkan 1.4.357 Zig ABI used by the host
+  howl-host/vendor/xdg-shell: Wayland-protocols 1.49 generated xdg-shell client ABI
+  howl-host/vendor/linux-dmabuf: Wayland-protocols 1.49 generated linux-dmabuf-v1 client ABI
+  howl-host/vendor/linux-drm-syncobj: Wayland-protocols 1.49 generated linux-drm-syncobj-v1 client ABI
+  howl-host/LICENSES: exact Vulkan and Wayland generated-source provenance and license facts
