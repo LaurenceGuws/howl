@@ -32,7 +32,7 @@ fn input() chrome.Input {
     };
 }
 
-test "chrome output order and shared edge ownership are deterministic" {
+test "chrome output order and focused edge overlay are deterministic" {
     var output: [16]chrome.Primitive = undefined;
     var text: [64]u8 = undefined;
     const result = try chrome.project(input(), &output, &text);
@@ -40,7 +40,36 @@ test "chrome output order and shared edge ownership are deterministic" {
     try std.testing.expect(result.primitives[0] == .fill);
     try std.testing.expect(result.primitives[1] == .fill);
     try std.testing.expect(result.primitives[2] == .label);
-    try std.testing.expect(result.primitives[5].border.edges.right == false);
+    try std.testing.expect(result.primitives[5].border.edges.right);
+}
+
+test "every focused pane in a two by two tile has a complete frame" {
+    var panes = [_]chrome.Pane{
+        .{ .id = @fromBackingInt(@intCast(1)), .rect = .{ .x = 0, .y = 2, .width = 40, .height = 19 }, .label = "", .focused = false, .scroll = null, .layer = .tiled },
+        .{ .id = @fromBackingInt(@intCast(2)), .rect = .{ .x = 40, .y = 2, .width = 40, .height = 19 }, .label = "", .focused = false, .scroll = null, .layer = .tiled },
+        .{ .id = @fromBackingInt(@intCast(3)), .rect = .{ .x = 0, .y = 21, .width = 40, .height = 19 }, .label = "", .focused = false, .scroll = null, .layer = .tiled },
+        .{ .id = @fromBackingInt(@intCast(4)), .rect = .{ .x = 40, .y = 21, .width = 40, .height = 19 }, .label = "", .focused = false, .scroll = null, .layer = .tiled },
+    };
+    var value = input();
+    value.panes = &panes;
+    for (0..panes.len) |focused| {
+        for (&panes, 0..) |*pane, index| pane.focused = index == focused;
+        var primitives: [32]chrome.Primitive = undefined;
+        var text: [32]u8 = undefined;
+        const output = try chrome.project(value, &primitives, &text);
+        var found = false;
+        for (output.primitives) |primitive| switch (primitive) {
+            .border => |border| {
+                if (border.rect.x == panes[focused].rect.x and border.rect.y == panes[focused].rect.y) {
+                    try std.testing.expect(border.edges.top and border.edges.right and border.edges.bottom and border.edges.left);
+                    try std.testing.expectEqual(value.style.foreground, border.color);
+                    found = true;
+                }
+            },
+            else => {},
+        };
+        try std.testing.expect(found);
+    }
 }
 
 test "chrome rejects insufficient output without mutation" {

@@ -65,6 +65,14 @@ pub fn build(b: *std.Build) void {
     const chrome_options = b.addOptions();
     chrome_options.addOption([]const u8, "test_font_path", b.root.joinString(b.allocator, "../howl-render/testdata/primary.ttf") catch @panic("OOM"));
     chrome_draw.addImport("host_build_options", chrome_options.createModule());
+    const input_actions = b.createModule(.{
+        .root_source_file = b.path("src/input_actions.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    input_actions.addImport("chrome_state", chrome_state);
+    input_actions.addImport("howl_render", render.module("howl_render"));
+    input_actions.addImport("howl_wayland", wayland.module("howl_wayland"));
     const gpu_chrome = b.createModule(.{
         .root_source_file = b.path("src/gpu_chrome.zig"),
         .target = target,
@@ -74,6 +82,7 @@ pub fn build(b: *std.Build) void {
     gpu_chrome.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("chrome_state", chrome_state);
     root.addImport("chrome_draw", chrome_draw);
+    root.addImport("input_actions", input_actions);
     root.addImport("gpu_chrome", gpu_chrome);
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
@@ -107,6 +116,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("shared", test_shared);
     test_module.addImport("host_c", host_c);
     test_module.addImport("chrome_state", chrome_state);
+    test_module.addImport("input_actions", input_actions);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = false, .use_lld = false });
@@ -118,5 +128,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_chrome_tests.step);
     const draw_tests = b.addTest(.{ .root_module = chrome_draw, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(draw_tests).step);
+    const input_action_tests = b.addTest(.{ .root_module = input_actions, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(input_action_tests).step);
     b.default_step = check;
 }

@@ -69,6 +69,7 @@ const State = struct {
     xkb_keymap: ?wayland.xkb.Keymap = null,
     xkb_state: ?wayland.xkb.State = null,
     keyboard_modifiers: wayland.input.Modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 },
+    keyboard_semantic_modifiers: wayland.input.SemanticModifiers = .{},
     pointer_motion: ?wayland.input.Motion = null,
 
     fn deinit(self: *State) void {
@@ -145,6 +146,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
     if (c.xdg_toplevel_add_listener(state.toplevel.?, &toplevel_listener, &state) != 0) return error.Listener;
     c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan ring");
+    c.xdg_toplevel_set_min_size(state.toplevel.?, shared.surface_min, shared.surface_min);
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
     try boundary.publishConfigure(if (state.configured_width == 0) 640 else state.configured_width, if (state.configured_height == 0) 480 else state.configured_height);
@@ -391,6 +393,8 @@ fn keyboardKeymap(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, format: u32, fd:
     if (state.xkb_keymap) |*old| old.deinit();
     state.xkb_keymap = keymap;
     state.xkb_state = keyboard_state;
+    state.keyboard_semantic_modifiers = .{};
+    state.boundary.publishInput(.{ .keyboard_reset = {} }) catch inputFailure(state);
 }
 
 fn keyboardEnter(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface, keys: [*c]c.wl_array) callconv(.c) void {
@@ -398,15 +402,13 @@ fn keyboardEnter(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surf
     if (keyboard != state.keyboard or surface != state.surface) return state.boundary.requestStop(.window);
     if (keys == null) return state.boundary.requestStop(.window);
     const key_array: *allowzero c.wl_array = &keys[0];
-    if (key_array.alloc < key_array.size or key_array.size % @sizeOf(u32) != 0 or key_array.size / @sizeOf(u32) > wayland.input.pressed_key_limit or (key_array.size != 0 and key_array.data == null) or (key_array.size != 0 and @intFromPtr(key_array.data) % @alignOf(u32) != 0)) return state.boundary.requestStop(.window);
-    var pressed = std.mem.zeroes([wayland.input.pressed_key_limit]u32);
-    const bytes: [*]const u8 = @ptrCast(key_array.data);
-    for (0..key_array.size / @sizeOf(u32)) |index| {
-        var value: u32 = 0;
-        @memcpy(std.mem.asBytes(&value), bytes[index * @sizeOf(u32) ..][0..@sizeOf(u32)]);
-        pressed[index] = value;
-    }
-    state.boundary.publishInput(.{ .keyboard_enter = .{ .serial = serial, .pressed_count = @intCast(key_array.size / @sizeOf(u32)), .pressed = pressed } }) catch inputFailure(state);
+    if (key_array.size != 0 and key_array.data == null) return state.boundary.requestStop(.window);
+    const bytes: []const u8 = if (key_array.size == 0)
+        &.{}
+    else
+        @as([*]const u8, @ptrCast(key_array.data))[0..key_array.size];
+    const enter = wayland.input.keyboardEnter(serial, bytes) catch return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .keyboard_enter = enter }) catch inputFailure(state);
 }
 
 fn keyboardLeave(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface) callconv(.c) void {
@@ -429,7 +431,7 @@ fn keyboardKey(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, time: 
     const xkb_key = key + 8;
     const keysym = if (state.xkb_state) |*keyboard_state| keyboard_state.keySym(xkb_key) else return state.boundary.requestStop(.window);
     const text_len = if (state.xkb_state) |*keyboard_state| keyboard_state.keyUtf8(xkb_key, &text) catch return state.boundary.requestStop(.window) else return state.boundary.requestStop(.window);
-    state.boundary.publishInput(.{ .key = .{ .keycode = key, .time = time, .state = key_state, .serial = serial, .modifiers = state.keyboard_modifiers, .keysym = keysym, .text_len = @intCast(text_len), .text = text } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .key = .{ .keycode = key, .time = time, .state = key_state, .serial = serial, .modifiers = state.keyboard_modifiers, .semantic_modifiers = state.keyboard_semantic_modifiers, .keysym = @fromBackingInt(@intCast(keysym)), .text_len = @intCast(text_len), .text = text } }) catch inputFailure(state);
 }
 
 fn keyboardModifiers(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
@@ -438,6 +440,7 @@ fn keyboardModifiers(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, 
     state.keyboard_modifiers = .{ .serial = serial, .depressed = depressed, .latched = latched, .locked = locked, .group = group };
     if (state.xkb_state) |*keyboard_state| {
         if (keyboard_state.updateModifiers(.{ .depressed = depressed, .latched = latched, .locked = locked, .group = group })) {}
+        state.keyboard_semantic_modifiers = keyboard_state.semanticModifiers();
     }
     state.boundary.publishModifiers(state.keyboard_modifiers) catch inputFailure(state);
 }

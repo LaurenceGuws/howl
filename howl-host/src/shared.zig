@@ -6,6 +6,8 @@ const wayland = @import("howl_wayland");
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
+/// Minimum compositor-configured surface extent retained by the host.
+pub const surface_min: i32 = 64;
 /// Bounds the DRM memory-plane facts copied for one slot.
 pub const plane_limit: usize = 4;
 /// Bounds one compositor-selected pixel dimension for this bounded host.
@@ -525,6 +527,18 @@ pub const Boundary = struct {
         self.completion_count += 1;
         self.mutex.unlock(self.io);
         signal(self.window_fd);
+    }
+
+    /// Reports whether Render can append one completion for the active Window
+    /// ring. Window is the only consumer, so capacity cannot decrease between
+    /// this preflight and a same-thread publication.
+    pub fn canPublishCompletion(self: *Boundary, generation: u64) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return !self.stop_requested and
+            generation != 0 and
+            generation == self.window_ring_generation and
+            self.completion_count < slot_count;
     }
 
     /// Removes and copies the oldest completed revision for Window.

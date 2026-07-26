@@ -9,6 +9,7 @@ const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
 const chrome_draw = @import("chrome_draw");
 const gpu_chrome = @import("gpu_chrome");
+const input_actions = @import("input_actions");
 
 const chrome_appearance = chrome_state.Appearance{
     .style = .{
@@ -21,6 +22,7 @@ const chrome_appearance = chrome_state.Appearance{
 };
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
+
 const Slot = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -32,6 +34,8 @@ const Slot = struct {
     external: bool = false,
     attachment: gpu_chrome.Attachment = .{},
     owned_bytes: u64 = 0,
+    release_point: u64 = 0,
+    clear_color: [4]f32 = .{ 0, 0, 0, 1 },
 
     fn deinit(self: *Slot, device: vk.VkDevice, drm_fd: i32, gpu_bytes: *u64) void {
         self.attachment.deinit(device);
@@ -206,6 +210,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         queue_active = true;
         try render(&graphics, device, queue, family, command, slot, colors[index], initial_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
+        slot.release_point = 1;
     }
     std.debug.print("Render ring submitted revisions=3 slots=3 generation={d}\n", .{initial_surface.generation});
 
@@ -220,16 +225,21 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     defer vk.vkDestroySemaphore(device, release_wait, null);
     try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, initial_chrome, &labels, &labels_omission_reported, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
+    rings[0][0].release_point = 2;
     std.debug.print("Render same-generation reuse slot=0 acquire={d} release=2 generation={d}\n", .{ next_acquire_point, initial_surface.generation });
     next_acquire_point += 1;
 
     var active_ring: usize = 0;
     var active_generation = initial_surface.generation;
+    var actions = input_actions.State{};
     while (!boundary.shouldStop()) {
         if (boundary.takeConfigure()) |surface| {
             if (surface.generation <= active_generation) continue;
+            chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) }) catch |failure| switch (failure) {
+                error.InvalidGeometry => continue,
+                else => return failure,
+            };
             try checkGpuBudget(surface.width, surface.height);
-            try chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) });
             const resized_chrome = try chrome.project(chrome_appearance, &.{}, &chrome_primitives, &chrome_text);
             if (resized_chrome.primitives.len == 0) return error.Chrome;
             const replacement = 1 - active_ring;
@@ -241,12 +251,17 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
                 if (fds.acquire >= 0) closeDescriptor(fds.acquire);
                 if (fds.timeline >= 0) closeDescriptor(fds.timeline);
             };
+            var superseded = false;
             for (&rings[replacement], 0..) |*slot, index| {
                 try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, surface, &dispatch, drm_fd, &replacement_offers[index], &replacement_fds[index], &gpu_bytes);
                 if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &replacement_fds[index].acquire) != 0) return error.Syncobj;
                 replacement_offers[index].acquire_timeline_fd = replacement_fds[index].acquire;
+                if (!boundary.isLatestGeneration(surface.generation)) {
+                    superseded = true;
+                    break;
+                }
             }
-            if (!boundary.isLatestGeneration(surface.generation)) {
+            if (superseded) {
                 for (&replacement_fds) |*fds| {
                     if (fds.dma >= 0) closeDescriptor(fds.dma);
                     if (fds.acquire >= 0) closeDescriptor(fds.acquire);
@@ -281,6 +296,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             for (&rings[active_ring], 0..) |*slot, index| {
                 try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, next_acquire_point);
                 try boundary.publishCompletion(.{ .generation = surface.generation, .revision = next_acquire_point, .slot = @intCast(index), .acquire_point = next_acquire_point, .release_point = 1 });
+                slot.release_point = 1;
                 next_acquire_point += 1;
             }
             try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
@@ -288,6 +304,27 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             try waitWindowRingRetired(boundary, old_generation);
             for (&rings[old_ring]) |*slot| slot.deinit(device, drm_fd, &gpu_bytes);
         }
+        try drainInput(
+            boundary,
+            &actions,
+            &chrome,
+            chrome_appearance,
+            &chrome_primitives,
+            &chrome_text,
+            &graphics,
+            device,
+            queue,
+            family,
+            command,
+            &rings[active_ring],
+            active_generation,
+            &labels,
+            &labels_omission_reported,
+            &dispatch,
+            drm_fd,
+            acquire_handle,
+            &next_acquire_point,
+        );
         try waitRenderWakeBlocking(boundary);
     }
     try waitReleasePoints(boundary, active_generation, &rings[active_ring], drm_fd);
@@ -373,7 +410,6 @@ fn waitRenderWake(boundary: *shared.Boundary) !void {
         const result = c.poll(&descriptor, 1, 2_000);
         if (result > 0) {
             try boundary.drainRenderWake();
-            drainInput(boundary);
             return;
         }
         if (result == 0) return error.WakeTimeout;
@@ -387,7 +423,6 @@ fn waitRenderWakeBlocking(boundary: *shared.Boundary) !void {
         const result = c.poll(&descriptor, 1, -1);
         if (result > 0) {
             try boundary.drainRenderWake();
-            drainInput(boundary);
             return;
         }
         if (result < 0 and std.c.errno(result) == .INTR) continue;
@@ -395,20 +430,147 @@ fn waitRenderWakeBlocking(boundary: *shared.Boundary) !void {
     }
 }
 
-/// Drains exact Window input facts without applying host or chrome policy.
-/// The next renderer checkpoint will route these facts to terminal/input
-/// consumers; this slice proves only bounded cross-thread transport.
-fn drainInput(boundary: *shared.Boundary) void {
-    var ordered: usize = 0;
+fn drainInput(
+    boundary: *shared.Boundary,
+    actions: *input_actions.State,
+    topology: *chrome_state.Topology,
+    appearance: chrome_state.Appearance,
+    primitives: *[256]render_api.chrome.Primitive,
+    text: *[(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8,
+    graphics: *gpu_chrome.Context,
+    device: vk.VkDevice,
+    queue: vk.VkQueue,
+    family: u32,
+    command: vk.VkCommandBuffer,
+    slots: *[shared.slot_count]Slot,
+    generation: u64,
+    labels: *chrome_draw.Engine,
+    labels_omission_reported: *bool,
+    dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
+    drm_fd: i32,
+    acquire_handle: u32,
+    next_acquire_point: *u64,
+) !void {
     while (boundary.takeInput()) |event| {
-        switch (event) {
-            .key, .keyboard_enter, .keyboard_leave, .button, .axis, .pointer_enter, .pointer_leave => ordered += 1,
+        const candidate: ?chrome_state.Topology = switch (event) {
+            .key => |key| switch (actions.key(key) catch continue) {
+                .action => |action| input_actions.candidate(topology, action) catch continue,
+                .consumed, .unmatched => null,
+            },
+            .keyboard_leave, .keyboard_reset => reset: {
+                actions.clear();
+                break :reset null;
+            },
+            .button => |button| input_actions.pointerCandidate(topology, appearance, button) catch continue,
+            .keyboard_enter, .axis, .pointer_enter, .pointer_leave => null,
+        };
+        if (candidate) |next| {
+            try redrawChrome(
+                boundary,
+                topology,
+                next,
+                appearance,
+                primitives,
+                text,
+                graphics,
+                device,
+                queue,
+                family,
+                command,
+                slots,
+                generation,
+                labels,
+                labels_omission_reported,
+                dispatch,
+                drm_fd,
+                acquire_handle,
+                next_acquire_point,
+            );
         }
     }
-    const snapshot = boundary.takeInputSnapshots();
-    if (ordered != 0) {
-        std.debug.print("Render input facts ordered={d} revision={d}\n", .{ ordered, snapshot.revision });
+}
+
+fn redrawChrome(
+    boundary: *shared.Boundary,
+    topology: *chrome_state.Topology,
+    candidate: chrome_state.Topology,
+    appearance: chrome_state.Appearance,
+    primitives: *[256]render_api.chrome.Primitive,
+    text: *[(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8,
+    graphics: *gpu_chrome.Context,
+    device: vk.VkDevice,
+    queue: vk.VkQueue,
+    family: u32,
+    command: vk.VkCommandBuffer,
+    slots: *[shared.slot_count]Slot,
+    generation: u64,
+    labels: *chrome_draw.Engine,
+    labels_omission_reported: *bool,
+    dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
+    drm_fd: i32,
+    acquire_handle: u32,
+    next_acquire_point: *u64,
+) !void {
+    const output = try candidate.project(appearance, &.{}, primitives, text);
+    if (output.primitives.len == 0) return error.Chrome;
+    const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
+    if (!boundary.canPublishCompletion(generation)) return error.CompletionUnavailable;
+    const slot = &slots[slot_index];
+    const acquire_point = next_acquire_point.*;
+    const following_acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
+    const release_point = std.math.add(u64, slot.release_point, 1) catch return error.RevisionOverflow;
+    var release_sync_fd: i32 = -1;
+    if (c.drmSyncobjExportSyncFile(drm_fd, slot.release_handle, &release_sync_fd) != 0) return error.Syncobj;
+    errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
+    const release_wait = try importReleaseSemaphore(device, dispatch, &release_sync_fd);
+    defer vk.vkDestroySemaphore(device, release_wait, null);
+    try render(
+        graphics,
+        device,
+        queue,
+        family,
+        command,
+        slot,
+        slot.clear_color,
+        output,
+        labels,
+        labels_omission_reported,
+        release_wait,
+        dispatch,
+        drm_fd,
+        acquire_handle,
+        acquire_point,
+    );
+    try boundary.publishCompletion(.{
+        .generation = generation,
+        .revision = acquire_point,
+        .slot = @intCast(slot_index),
+        .acquire_point = acquire_point,
+        .release_point = release_point,
+    });
+    slot.release_point = release_point;
+    next_acquire_point.* = following_acquire_point;
+    topology.* = candidate;
+    std.debug.print("Render interactive chrome generation={d} revision={d} slot={d} release={d}\n", .{ generation, acquire_point, slot_index, release_point });
+}
+
+fn releasedSlot(
+    boundary: *shared.Boundary,
+    generation: u64,
+    slots: *[shared.slot_count]Slot,
+    drm_fd: i32,
+) !usize {
+    const facts = boundary.releaseFacts(generation) orelse return error.NoReleasedSlot;
+    var first_candidate: ?usize = null;
+    for (0..shared.slot_count) |index| {
+        const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(index))) != 0;
+        if (!presented or facts.release_points[index] != slots[index].release_point) continue;
+        if (first_candidate == null) first_candidate = index;
+        if (try timelineReady(drm_fd, slots[index].release_handle, slots[index].release_point)) return index;
     }
+    const index = first_candidate orelse return error.NoReleasedSlot;
+    try waitTimeline(drm_fd, slots[index].release_handle, slots[index].release_point);
+    return index;
 }
 
 const Physical = struct {
@@ -685,6 +847,7 @@ fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue,
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;
+    slot.clear_color = color;
 }
 
 fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {
@@ -693,6 +856,20 @@ fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {
     const flags = c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT | c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
     if (c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, try deadline(), flags, null) != 0) return error.ReleaseAvailability;
     if (c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, try deadline(), 0, null) != 0) return error.ReleaseCompletion;
+}
+
+fn timelineReady(drm_fd: i32, handle: u32, point: u64) !bool {
+    var handles = [_]u32{handle};
+    var points = [_]u64{point};
+    const timeout = std.math.cast(i64, try monotonicNow()) orelse return error.Clock;
+    const flags = c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT | c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
+    const available = c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, timeout, flags, null);
+    if (available == -c.ETIME) return false;
+    if (available != 0) return error.ReleaseAvailability;
+    const complete = c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, timeout, 0, null);
+    if (complete == -c.ETIME) return false;
+    if (complete != 0) return error.ReleaseCompletion;
+    return true;
 }
 
 fn importReleaseSemaphore(device: vk.VkDevice, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, sync_fd: *i32) !vk.VkSemaphore {
@@ -716,11 +893,14 @@ fn importReleaseSemaphore(device: vk.VkDevice, dispatch: *const howl_vk.dispatch
 }
 
 fn deadline() !i64 {
+    return @intCast(try std.math.add(u64, try monotonicNow(), 2_000_000_000));
+}
+
+fn monotonicNow() !u64 {
     var now: c.timespec = undefined;
     if (c.clock_gettime(c.CLOCK_MONOTONIC, &now) != 0) return error.Clock;
     const seconds = try std.math.mul(u64, @intCast(now.tv_sec), 1_000_000_000);
-    const current = try std.math.add(u64, seconds, @intCast(now.tv_nsec));
-    return @intCast(try std.math.add(u64, current, 2_000_000_000));
+    return try std.math.add(u64, seconds, @intCast(now.tv_nsec));
 }
 
 fn closeDescriptor(descriptor: i32) void {

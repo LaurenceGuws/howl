@@ -45,6 +45,7 @@ accepted:
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
   howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, generation-tagged rings, and release observation
   howl-host/src/chrome_state.zig: Renderer-owned bounded tab and tiled/floating pane topology, transactional geometry/focus policy, and immutable chrome composition
+  howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and transactional topology candidates
   howl-host/src/chrome_draw.zig: bounded native-label shaping, shared alpha-atlas residency, and Vulkan-ready chrome vertices, indices, and draw facts
   howl-host/src/gpu_chrome.zig: Host-owned solid and alpha-text Vulkan pipelines, shared GPU atlas, mapped bounded staging, and per-slot framebuffer ownership
   howl-host/shaders: maintained GLSL sources and compilation provenance for the two chrome pipelines
@@ -59,7 +60,7 @@ accepted:
   howl-wayland/build.zig: independent Wayland protocol package build and scanner reproducibility step
   howl-wayland/build.zig.zon: Wayland package identity and source boundary
   howl-wayland/src/root.zig: curated Wayland ABI, input, and xkbcommon package root
-  howl-wayland/src/input.zig: bounded caller-neutral ordered and coalesced input facts
+  howl-wayland/src/input.zig: bounded caller-neutral ordered and coalesced input facts, typed keysyms, and semantic modifier facts
   howl-wayland/src/xkb.zig: borrowed keymap-byte xkbcommon object lifetime boundary
   howl-wayland/src/wayland-native.h: named Translate-C ABI input
   howl-wayland/src/xkb-native.h: private xkbcommon Translate-C ABI input

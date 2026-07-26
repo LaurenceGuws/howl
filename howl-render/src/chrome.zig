@@ -159,9 +159,9 @@ pub const Hit = union(enum) {
 pub const BorderEdges = packed struct(u4) {
     /// Emits the top edge.
     top: bool = true,
-    /// Emits the right edge unless a neighboring pane owns it.
+    /// Emits the right edge when structurally owned or needed for focus.
     right: bool = true,
-    /// Emits the bottom edge unless a neighboring pane owns it.
+    /// Emits the bottom edge when structurally owned or needed for focus.
     bottom: bool = true,
     /// Emits the left edge.
     left: bool = true,
@@ -414,7 +414,9 @@ fn contains(rect: Rect, point: Point) bool {
 }
 fn edgeMask(pane: Pane, panes: []const Pane) BorderEdges {
     var edges = BorderEdges{};
-    if (pane.layer == .floating) return edges;
+    // Shared-edge suppression owns ordinary tiled structure. Focus is an
+    // overlay fact and must remain complete on every pane edge.
+    if (pane.layer == .floating or pane.focused) return edges;
     const left = @as(i64, pane.rect.x);
     const top = @as(i64, pane.rect.y);
     const right = left + pane.rect.width;

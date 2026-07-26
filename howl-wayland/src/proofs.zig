@@ -4,7 +4,7 @@ const wayland = @import("howl_wayland");
 test "ordered facts retain exact protocol order and saturate transactionally" {
     var state = wayland.input.State{};
     for (0..wayland.input.capacity) |index| {
-        try state.push(.{ .key = .{ .keycode = @intCast(index), .time = @intCast(index + 10), .state = .pressed, .serial = @intCast(index), .modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 }, .keysym = 0, .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
+        try state.push(.{ .key = .{ .keycode = @intCast(index), .time = @intCast(index + 10), .state = .pressed, .serial = @intCast(index), .modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
     }
     const retained = state.take().?.key;
     try std.testing.expectEqual(@as(u32, 0), retained.keycode);
@@ -13,6 +13,8 @@ test "ordered facts retain exact protocol order and saturate transactionally" {
     try std.testing.expectEqual(@as(u16, wayland.input.capacity), state.orderedCount());
     try std.testing.expectEqual(@as(u32, 1), state.take().?.key.keycode);
     while (state.take()) |_| {}
+    try state.push(.{ .keyboard_reset = {} });
+    try std.testing.expect(state.take().? == .keyboard_reset);
     try std.testing.expectEqual(@as(u16, 0), state.orderedCount());
 }
 
@@ -39,13 +41,30 @@ test "ordered pointer facts retain occurrence coordinates under later motion" {
     try std.testing.expectEqual(@as(u32, 10), event.time);
 }
 
+test "keyboard enter copies unaligned receive arrays without allocation metadata" {
+    var storage = std.mem.zeroes([9]u8);
+    const first: u32 = 17;
+    const second: u32 = 29;
+    @memcpy(storage[1..5], std.mem.asBytes(&first));
+    @memcpy(storage[5..9], std.mem.asBytes(&second));
+    const enter = try wayland.input.keyboardEnter(41, storage[1..]);
+    try std.testing.expectEqual(@as(u32, 41), enter.serial);
+    try std.testing.expectEqual(@as(u8, 2), enter.pressed_count);
+    try std.testing.expectEqual(first, enter.pressed[0]);
+    try std.testing.expectEqual(second, enter.pressed[1]);
+    try std.testing.expectError(error.InvalidPressedKeys, wayland.input.keyboardEnter(1, storage[1..4]));
+    var oversized: [(wayland.input.pressed_key_limit + 1) * @sizeOf(u32)]u8 = undefined;
+    try std.testing.expectError(error.InvalidPressedKeys, wayland.input.keyboardEnter(1, &oversized));
+}
+
 test "key facts retain causal modifiers and repeated state" {
     var state = wayland.input.State{};
     const modifiers = wayland.input.Modifiers{ .serial = 44, .depressed = 1, .latched = 2, .locked = 4, .group = 3 };
-    try state.push(.{ .key = .{ .keycode = 30, .time = 55, .state = .repeated, .serial = 56, .modifiers = modifiers, .keysym = 0x41, .text_len = 1, .text = [_]u8{'A'} ++ std.mem.zeroes([wayland.input.key_text_limit - 1]u8) } });
+    try state.push(.{ .key = .{ .keycode = 30, .time = 55, .state = .repeated, .serial = 56, .modifiers = modifiers, .semantic_modifiers = .{ .shift = true }, .keysym = @fromBackingInt(@intCast(0x41)), .text_len = 1, .text = [_]u8{'A'} ++ std.mem.zeroes([wayland.input.key_text_limit - 1]u8) } });
     const key = state.take().?.key;
     try std.testing.expectEqual(wayland.input.KeyState.repeated, key.state);
     try std.testing.expectEqual(modifiers.serial, key.modifiers.serial);
+    try std.testing.expect(key.semantic_modifiers.shift);
     try std.testing.expectEqual(@as(u8, 1), key.text_len);
     try std.testing.expectEqual(@as(u8, 'A'), key.text[0]);
 }

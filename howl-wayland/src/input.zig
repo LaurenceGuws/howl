@@ -23,14 +23,51 @@ pub const AxisSource = enum { wheel, finger, continuous, wheel_tilt };
 pub const RelativeDirection = enum { identical, inverted };
 /// Four protocol modifier masks plus group, without convenience booleans.
 pub const Modifiers = struct { serial: u32, depressed: u32, latched: u32, locked: u32, group: u32 };
-/// Ordered keyboard fact. The keymap owns interpretation of keycode.
+/// Effective semantic modifier facts resolved by the current xkb keymap.
+/// Caps Lock and Num Lock remain distinct so callers can ignore only locks.
+pub const SemanticModifiers = packed struct(u8) {
+    shift: bool = false,
+    control: bool = false,
+    alt: bool = false,
+    super: bool = false,
+    hyper: bool = false,
+    meta: bool = false,
+    caps_lock: bool = false,
+    num_lock: bool = false,
+};
+/// Non-exhaustive xkb keysym identity carried without application policy.
+pub const Keysym = enum(u32) {
+    tab = 0xff09,
+    enter = 0xff0d,
+    left = 0xff51,
+    up = 0xff52,
+    right = 0xff53,
+    down = 0xff54,
+    iso_left_tab = 0xfe20,
+    comma = 0x002c,
+    period = 0x002e,
+    less = 0x003c,
+    greater = 0x003e,
+    q_upper = 0x0051,
+    t_upper = 0x0054,
+    w_upper = 0x0057,
+    backslash = 0x005c,
+    q = 0x0071,
+    t = 0x0074,
+    w = 0x0077,
+    bar = 0x007c,
+    _,
+};
+/// Ordered keyboard fact retaining physical identity plus interpretation from
+/// the keymap active when the occurrence was received.
 pub const Key = struct {
     keycode: u32,
     time: u32,
     state: KeyState,
     serial: u32,
     modifiers: Modifiers,
-    keysym: u32,
+    semantic_modifiers: SemanticModifiers,
+    keysym: Keysym,
     text_len: u8,
     text: [key_text_limit]u8,
 };
@@ -65,10 +102,28 @@ pub const Configure = struct { width: u32, height: u32, revision: u64 };
 /// Coalesced snapshots consumed by the embedding runtime.
 pub const Snapshot = struct { motion: ?Motion, modifiers: Modifiers, repeat: ?Repeat, configure: ?Configure, revision: u64 };
 /// Ordered facts that must never coalesce.
-pub const Ordered = union(enum) { key: Key, keyboard_enter: KeyboardEnter, keyboard_leave: KeyboardLeave, button: Button, axis: struct { event: AxisEvent, point: ?Point }, pointer_enter: PointerEnter, pointer_leave: PointerLeave };
+pub const Ordered = union(enum) { key: Key, keyboard_reset: void, keyboard_enter: KeyboardEnter, keyboard_leave: KeyboardLeave, button: Button, axis: struct { event: AxisEvent, point: ?Point }, pointer_enter: PointerEnter, pointer_leave: PointerLeave };
 
 /// Exact bounded-state failures. Revision exhaustion is never wrapped.
 pub const Error = error{ OrderedFull, RevisionOverflow };
+/// Exact malformed keyboard-enter pressed-key payload failure.
+pub const PressedKeysError = error{InvalidPressedKeys};
+
+/// Copies one receive-side Wayland keyboard-enter key array. The bytes may be
+/// unaligned; libwayland's received `wl_array.alloc` is intentionally zero and
+/// is not an input-capacity fact.
+pub fn keyboardEnter(serial: u32, bytes: []const u8) PressedKeysError!KeyboardEnter {
+    if (bytes.len % @sizeOf(u32) != 0 or bytes.len / @sizeOf(u32) > pressed_key_limit) return error.InvalidPressedKeys;
+    var result = KeyboardEnter{
+        .serial = serial,
+        .pressed_count = @intCast(bytes.len / @sizeOf(u32)),
+        .pressed = std.mem.zeroes([pressed_key_limit]u32),
+    };
+    for (0..result.pressed_count) |index| {
+        @memcpy(std.mem.asBytes(&result.pressed[index]), bytes[index * @sizeOf(u32) ..][0..@sizeOf(u32)]);
+    }
+    return result;
+}
 
 /// Fixed-storage input state. Queue indices and count are private so callers
 /// cannot break ring invariants or manufacture stale revisions.

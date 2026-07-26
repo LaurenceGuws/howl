@@ -46,6 +46,7 @@ pub const Error = error{
 const Pane = struct {
     id: PaneId,
     rect: chrome.Rect,
+    basis_rect: chrome.Rect,
     focused: bool,
     label: [max_label_bytes]u8 = undefined,
     label_len: u8 = 0,
@@ -72,6 +73,7 @@ pub const Topology = struct {
     next_pane_id: u64 = 1,
     live_panes: u16 = 0,
     surface: chrome.Size,
+    basis_surface: chrome.Size,
     tab_bar_height: u16,
 
     fn contentTop(self: *const Topology) u16 {
@@ -83,7 +85,7 @@ pub const Topology = struct {
     /// for a positive pane area.
     pub fn init(surface: chrome.Size, tab_bar_height: u16) Error!Topology {
         if (surface.width == 0 or surface.height == 0) return error.InvalidGeometry;
-        var result = Topology{ .surface = surface, .tab_bar_height = tab_bar_height };
+        var result = Topology{ .surface = surface, .basis_surface = surface, .tab_bar_height = tab_bar_height };
         const first_tab = try result.createTabInternal("main", false);
         if (@backingInt(first_tab) == 0) return error.InvalidId;
         try validateLayout(&result);
@@ -118,6 +120,36 @@ pub const Topology = struct {
         return self.tabs[self.active_tab].id;
     }
 
+    /// Returns the active tab's ordered index.
+    pub fn activeTabIndex(self: *const Topology) usize {
+        return self.active_tab;
+    }
+
+    /// Returns the active tab's exact focused pane identity.
+    pub fn focusedPaneId(self: *const Topology) PaneId {
+        const tab = &self.tabs[self.active_tab];
+        for (tab.panes[0..tab.pane_count]) |pane| if (pane.focused) return pane.id;
+        @panic("validated topology lost focused pane");
+    }
+
+    /// Returns one retained pane's composition layer.
+    pub fn paneLayer(self: *const Topology, id: PaneId) ?chrome.PaneLayer {
+        const location = self.findPane(id) orelse return null;
+        return self.tabs[location.tab].panes[location.pane].layer;
+    }
+
+    /// Reports whether one retained floating pane is already topmost in its
+    /// tab's deterministic composition order.
+    pub fn floatingPaneIsTopmost(self: *const Topology, id: PaneId) bool {
+        const location = self.findPane(id) orelse return false;
+        const tab = &self.tabs[location.tab];
+        if (tab.panes[location.pane].layer != .floating) return false;
+        for (tab.panes[location.pane + 1 .. tab.pane_count]) |pane| {
+            if (pane.layer == .floating) return false;
+        }
+        return true;
+    }
+
     /// Checks positive, non-overlapping, complete coverage and one focus fact
     /// for every retained tab. This is a deterministic owner invariant proof.
     pub fn validate(self: *const Topology) Error!void {
@@ -126,13 +158,19 @@ pub const Topology = struct {
 
     /// Creates and activates an empty blank tab with one pane.
     pub fn createTab(self: *Topology, label: []const u8) Error!TabId {
-        return self.createTabInternal(label, true);
+        var candidate = self.*;
+        const id = try candidate.createTabInternal(label, true);
+        candidate.syncBasis();
+        try validateLayout(&candidate);
+        self.* = candidate;
+        return id;
     }
 
     /// Closes one tab and activates its nearest surviving neighbor.
     pub fn closeTab(self: *Topology, id: TabId) Error!void {
         var candidate = self.*;
         try candidate.closeTabInPlace(id);
+        candidate.syncBasis();
         try validateLayout(&candidate);
         self.* = candidate;
     }
@@ -192,11 +230,12 @@ pub const Topology = struct {
         try validateFloatingRect(&candidate, rect);
         const id = try candidate.takePaneId();
         for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = false;
-        var pane = Pane{ .id = id, .rect = rect, .focused = true, .layer = .floating };
+        var pane = Pane{ .id = id, .rect = rect, .basis_rect = rect, .focused = true, .layer = .floating };
         copyLabel(&pane.label, &pane.label_len, label);
         tab.panes[tab.pane_count] = pane;
         tab.pane_count += 1;
         candidate.live_panes += 1;
+        candidate.syncBasis();
         try validateLayout(&candidate);
         self.* = candidate;
         return id;
@@ -209,6 +248,7 @@ pub const Topology = struct {
         if (candidate.tabs[location.tab].panes[location.pane].layer != .floating) return error.InvalidId;
         try validateFloatingRect(&candidate, rect);
         candidate.tabs[location.tab].panes[location.pane].rect = rect;
+        candidate.syncBasis();
         try validateLayout(&candidate);
         self.* = candidate;
     }
@@ -259,19 +299,20 @@ pub const Topology = struct {
     pub fn resizeSurface(self: *Topology, surface: chrome.Size) Error!void {
         if (surface.width == 0 or surface.height == 0) return error.InvalidGeometry;
         var candidate = self.*;
-        const old_width = self.surface.width;
-        const old_top = self.contentTop();
+        const old_width = self.basis_surface.width;
+        const old_top = @min(self.tab_bar_height, self.basis_surface.height - 1);
         const new_top = @min(self.tab_bar_height, surface.height - 1);
-        const old_content_height = self.surface.height - old_top;
+        const old_content_height = self.basis_surface.height - old_top;
         const new_content_height = surface.height - new_top;
         candidate.surface = surface;
         for (candidate.tabs[0..candidate.tab_count]) |*tab| {
             for (tab.panes[0..tab.pane_count]) |*pane| {
-                const right = std.math.add(i64, pane.rect.x, pane.rect.width) catch return error.ArithmeticOverflow;
-                const bottom = std.math.add(i64, pane.rect.y, pane.rect.height) catch return error.ArithmeticOverflow;
-                const new_x = try scaleEdge(pane.rect.x, old_width, surface.width);
+                const basis = pane.basis_rect;
+                const right = std.math.add(i64, basis.x, basis.width) catch return error.ArithmeticOverflow;
+                const bottom = std.math.add(i64, basis.y, basis.height) catch return error.ArithmeticOverflow;
+                const new_x = try scaleEdge(basis.x, old_width, surface.width);
                 const new_right = try scaleEdge(right, old_width, surface.width);
-                const relative_y = std.math.sub(i64, pane.rect.y, old_top) catch return error.InvalidGeometry;
+                const relative_y = std.math.sub(i64, basis.y, old_top) catch return error.InvalidGeometry;
                 const relative_bottom = std.math.sub(i64, bottom, old_top) catch return error.InvalidGeometry;
                 const new_y = @as(i64, new_top) + try scaleEdge(relative_y, old_content_height, new_content_height);
                 const new_bottom = @as(i64, new_top) + try scaleEdge(relative_bottom, old_content_height, new_content_height);
@@ -322,6 +363,7 @@ pub const Topology = struct {
             self.* = original;
             return failure;
         };
+        self.syncBasis();
         return second.id;
     }
 
@@ -435,6 +477,7 @@ pub const Topology = struct {
         }
         if (left_count == 0 or right_count == 0) return error.InvalidGeometry;
         try validateLayout(&candidate);
+        candidate.syncBasis();
         self.* = candidate;
     }
 
@@ -455,6 +498,7 @@ pub const Topology = struct {
             for (tab.panes[0..tab.pane_count]) |*pane| pane.focused = false;
             tab.panes[@min(location.pane, tab.pane_count - 1)].focused = true;
         }
+        candidate.syncBasis();
         try validateLayout(&candidate);
         self.* = candidate;
     }
@@ -528,7 +572,8 @@ pub const Topology = struct {
         const pane_id: PaneId = @fromBackingInt(self.next_pane_id);
         var tab = Tab{ .id = id, .pane_count = 1 };
         copyLabel(&tab.label, &tab.label_len, label);
-        tab.panes[0] = .{ .id = pane_id, .rect = .{ .x = 0, .y = self.contentTop(), .width = self.surface.width, .height = self.surface.height - self.contentTop() }, .focused = true };
+        const rect = chrome.Rect{ .x = 0, .y = self.contentTop(), .width = self.surface.width, .height = self.surface.height - self.contentTop() };
+        tab.panes[0] = .{ .id = pane_id, .rect = rect, .basis_rect = rect, .focused = true };
         self.tabs[self.tab_count] = tab;
         if (activate) self.active_tab = self.tab_count;
         self.tab_count += 1;
@@ -543,6 +588,15 @@ pub const Topology = struct {
         const value = self.next_pane_id;
         self.next_pane_id += 1;
         return @fromBackingInt(@intCast(value));
+    }
+
+    fn syncBasis(self: *Topology) void {
+        self.basis_surface = self.surface;
+        for (self.tabs[0..self.tab_count]) |*tab| {
+            for (tab.panes[0..tab.pane_count]) |*pane| {
+                pane.basis_rect = pane.rect;
+            }
+        }
     }
 
     fn findTab(self: *const Topology, id: TabId) ?usize {
@@ -804,6 +858,36 @@ test "topology mutations preserve tiled coverage through resize and closure" {
     try state.validate();
     try state.closePane(root);
     try state.validate();
+}
+
+test "hostile surface collapse preserves the complete retained topology" {
+    var state = try Topology.init(.{ .width = 320, .height = 240 }, 24);
+    const root = state.paneId(0, 0).?;
+    const right = try state.split(root, .vertical);
+    const lower_right = try state.split(right, .horizontal);
+    const lower_left = try state.split(root, .horizontal);
+    try std.testing.expect(lower_right != lower_left);
+    const before = state;
+    try std.testing.expectError(error.InvalidGeometry, state.resizeSurface(.{ .width = 1, .height = 1 }));
+    try std.testing.expectEqualDeep(before, state);
+    try std.testing.expectEqual(chrome.Size{ .width = 320, .height = 240 }, state.surface);
+}
+
+test "continuous resize derives from one stable current-layout basis" {
+    var state = try Topology.init(.{ .width = 321, .height = 241 }, 24);
+    const root = state.paneId(0, 0).?;
+    const right = try state.split(root, .vertical);
+    const lower_right = try state.split(right, .horizontal);
+    const lower_left = try state.split(root, .horizontal);
+    try std.testing.expect(lower_right != lower_left);
+    try state.resizeDivider(root, 7, .vertical);
+    const basis = state;
+    for (0..128) |_| {
+        try state.resizeSurface(.{ .width = 997, .height = 613 });
+        try state.resizeSurface(.{ .width = 173, .height = 89 });
+        try state.resizeSurface(.{ .width = 321, .height = 241 });
+    }
+    try std.testing.expectEqualDeep(basis, state);
 }
 
 test "connected T junction divider and close preserve complete tiling" {

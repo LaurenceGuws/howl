@@ -3,6 +3,7 @@
 //! keymap bytes and releases them in reverse order.
 
 const c = @import("xkb_c");
+const input = @import("input.zig");
 
 /// Exact failures from context and keymap construction.
 pub const Error = error{ ContextUnavailable, InvalidKeymap, StateUnavailable, KeyText, OutputTooSmall };
@@ -53,10 +54,15 @@ pub const Keymap = struct {
 pub const State = struct {
     /// Internal mutable xkbcommon state owner.
     storage: StateStorage,
+    modifier_masks: ModifierMasks,
+    effective_modifiers: u32 = 0,
 
     /// Creates mutable keyboard state for a compiled keymap.
     pub fn init(keymap: *Keymap) Error!State {
-        return .{ .storage = .{ .ptr = c.xkb_state_new(keymap.storage.ptr) orelse return error.StateUnavailable } };
+        return .{
+            .storage = .{ .ptr = c.xkb_state_new(keymap.storage.ptr) orelse return error.StateUnavailable },
+            .modifier_masks = ModifierMasks.init(keymap.storage.ptr),
+        };
     }
 
     /// Releases keyboard state before its keymap.
@@ -83,9 +89,67 @@ pub const State = struct {
         return c.xkb_state_key_get_one_sym(self.storage.ptr, @intCast(keycode));
     }
 
+    /// Resolves semantic facts through the current keymap's real modifier
+    /// encodings. Virtual aliases contribute only genuinely distinct bits.
+    pub fn semanticModifiers(self: *State) input.SemanticModifiers {
+        return self.modifier_masks.semantic(self.effective_modifiers);
+    }
+
     /// Applies the exact depressed, latched, and locked modifier masks.
     pub fn updateModifiers(self: *State, modifiers: struct { depressed: u32, latched: u32, locked: u32, group: u32 }) bool {
+        self.effective_modifiers = modifiers.depressed | modifiers.latched | modifiers.locked;
         return c.xkb_state_update_mask(self.storage.ptr, modifiers.depressed, modifiers.latched, modifiers.locked, 0, 0, modifiers.group) != 0;
+    }
+};
+
+const ModifierMasks = struct {
+    shift: u32,
+    control: u32,
+    alt: u32,
+    super: u32,
+    hyper: u32,
+    meta: u32,
+    caps_lock: u32,
+    num_lock: u32,
+
+    fn init(keymap: *c.xkb_keymap) ModifierMasks {
+        return fromMappings(
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_SHIFT),
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_CTRL),
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_ALT),
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_LOGO),
+            c.xkb_keymap_mod_get_mask(keymap, "Hyper"),
+            c.xkb_keymap_mod_get_mask(keymap, "Meta"),
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_CAPS),
+            c.xkb_keymap_mod_get_mask(keymap, c.XKB_MOD_NAME_NUM),
+        );
+    }
+
+    fn fromMappings(shift: u32, control: u32, alt: u32, super: u32, hyper: u32, meta: u32, caps_lock: u32, num_lock: u32) ModifierMasks {
+        const canonical = shift | control | alt | super | caps_lock | num_lock;
+        return .{
+            .shift = shift,
+            .control = control,
+            .alt = alt,
+            .super = super,
+            .hyper = hyper & ~canonical,
+            .meta = meta & ~canonical,
+            .caps_lock = caps_lock,
+            .num_lock = num_lock,
+        };
+    }
+
+    fn semantic(self: ModifierMasks, effective: u32) input.SemanticModifiers {
+        return .{
+            .shift = effective & self.shift != 0,
+            .control = effective & self.control != 0,
+            .alt = effective & self.alt != 0,
+            .super = effective & self.super != 0,
+            .hyper = effective & self.hyper != 0,
+            .meta = effective & self.meta != 0,
+            .caps_lock = effective & self.caps_lock != 0,
+            .num_lock = effective & self.num_lock != 0,
+        };
     }
 };
 
@@ -93,6 +157,17 @@ test "xkb context rejects malformed borrowed keymap bytes without ownership tran
     var context = try Context.init();
     defer context.deinit();
     try std.testing.expectError(error.InvalidKeymap, Keymap.fromBuffer(&context, "not a keymap"));
+}
+
+test "semantic modifier aliases do not reject canonical Alt or Super" {
+    const aliased = ModifierMasks.fromMappings(1, 2, 4, 8, 4, 8, 64, 128);
+    const alt = aliased.semantic(4);
+    try std.testing.expect(alt.alt and !alt.hyper and !alt.meta);
+    const super = aliased.semantic(8);
+    try std.testing.expect(super.super and !super.hyper and !super.meta);
+    const distinct_masks = ModifierMasks.fromMappings(1, 2, 4, 8, 16, 32, 64, 128);
+    const distinct = distinct_masks.semantic(16 | 32);
+    try std.testing.expect(distinct.hyper and distinct.meta);
 }
 
 const std = @import("std");

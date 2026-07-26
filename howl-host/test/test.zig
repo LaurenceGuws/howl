@@ -114,11 +114,15 @@ test "completion queue is bounded ordered and never acknowledges Render" {
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?);
     value.markWindowRingReady(1);
+    try std.testing.expect(value.canPublishCompletion(1));
+    try std.testing.expect(!value.canPublishCompletion(2));
     try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
     try value.publishCompletion(.{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
     try value.publishCompletion(.{ .generation = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 });
+    try std.testing.expect(!value.canPublishCompletion(1));
     try std.testing.expectError(error.CompletionLimit, value.publishCompletion(.{ .generation = 1, .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 }));
     try std.testing.expectEqual(@as(u64, 1), value.takeCompletion().?.revision);
+    try std.testing.expect(value.canPublishCompletion(1));
     try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
     try std.testing.expectEqual(@as(u64, 3), value.takeCompletion().?.revision);
     try std.testing.expect(value.takeCompletion() == null);
@@ -169,7 +173,7 @@ test "directional wakes follow fact ownership" {
 test "Window input facts cross the shared boundary without policy" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .keysym = 0, .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
+    try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
     try value.publishMotion(.{ .time = 18, .point = .{ .x = 12.5, .y = 8.25 } });
     try value.publishModifiers(.{ .serial = 9, .depressed = 1, .latched = 2, .locked = 4, .group = 3 });
     try value.publishRepeat(.{ .rate = 25, .delay = 500 });
