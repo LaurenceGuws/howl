@@ -13,6 +13,41 @@ const owner_limit: usize = 64;
 const operation_limit: usize = 128;
 const input_limit: usize = 256;
 const lifecycle_batch_limit: usize = 128;
+/// Maximum terminal sources admitted by one visible-set transaction.
+pub const visible_member_limit: usize = 16;
+
+/// Identifies one exact terminal source required by a visible-set candidate.
+pub const VisibleMember = struct {
+    /// Identifies the globally non-reused pane.
+    pane: PaneId,
+    /// Identifies the Composer-issued source owned by that pane.
+    source: canvas.SourceId,
+};
+
+/// Copies one latest bounded Renderer-owned visible-set request.
+pub const VisibleSetRequest = struct {
+    /// Identifies a nonzero, monotonically issued candidate.
+    revision: u64,
+    /// Stores every exact member in caller composition order.
+    members: [visible_member_limit]VisibleMember,
+    /// Bounds the initialized member prefix.
+    count: u8,
+};
+
+/// Reports whether an exact visible-set candidate may commit composition.
+pub const VisibleSetStatus = enum {
+    pending,
+    ready,
+    stale,
+};
+
+/// Copies Host-owned transfer facts used by terminal visible-set classification.
+pub const VisibleTransferFact = struct {
+    /// Identifies an immutable publication still owned by the pool, if any.
+    ready: ?pool_storage.Token,
+    /// Records the newest producer revision accepted by Composer.
+    accepted_revision: canvas.ProducerRevision,
+};
 
 /// Reports fixed pool construction or native wake-descriptor failure.
 pub const BoundaryInitError = error{
@@ -345,10 +380,32 @@ const Entry = struct {
     source: canvas.SourceId,
     descriptor_index: u8,
     ready: ?pool_storage.Token = null,
+    accepted_revision: canvas.ProducerRevision = @fromBackingInt(0),
     retry_wake_issued: bool = false,
     pool_active: bool = false,
     pool_retiring: bool = false,
     state: EntryState = .registered,
+};
+
+const VisiblePhase = enum {
+    requested,
+    prepared,
+    committing,
+};
+
+/// Associates one requested source with its actual extracted producer revision.
+pub const VisibleRequirement = struct {
+    /// Identifies the exact requested pane and source.
+    member: VisibleMember,
+    /// Identifies the update Composer must accept before reveal.
+    revision: canvas.ProducerRevision,
+};
+
+const VisibleRequestState = struct {
+    request: VisibleSetRequest,
+    requirements: [visible_member_limit]VisibleRequirement = undefined,
+    requirement_count: u8 = 0,
+    phase: VisiblePhase = .requested,
 };
 
 const DrainClaim = struct {
@@ -406,6 +463,11 @@ pub const Boundary = struct {
     stopping: bool = false,
     stopped: bool = false,
     failed: bool = false,
+    visible_high_water: u64 = 0,
+    visible_request: ?VisibleRequestState = null,
+    visible_members: [visible_member_limit]VisibleMember = undefined,
+    visible_member_count: u8 = 0,
+    visible_initialized: bool = false,
 
     /// Creates directional nonblocking eventfds without allocating pane storage.
     pub fn init(
@@ -802,6 +864,253 @@ pub const Boundary = struct {
         };
     }
 
+    /// Replaces the latest visible-set request without exposing partial membership.
+    pub fn publishVisibleSet(
+        self: *Boundary,
+        revision: u64,
+        members: []const VisibleMember,
+    ) (error{
+        InvalidCandidateRevision,
+        InvalidPane,
+        DuplicatePane,
+        Stopping,
+    })!void {
+        if (revision == 0 or members.len > visible_member_limit)
+            return error.InvalidCandidateRevision;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        if (revision <= self.visible_high_water)
+            return error.InvalidCandidateRevision;
+        for (members, 0..) |member, member_index| {
+            if (@backingInt(member.pane) == 0 or @backingInt(member.source) == 0)
+                return error.InvalidPane;
+            const index = self.find(member.pane) orelse return error.InvalidPane;
+            const entry = self.entries[index].?;
+            if (entry.source != member.source or
+                (entry.state != .registered and entry.state != .live))
+                return error.InvalidPane;
+            for (members[0..member_index]) |prior|
+                if (prior.pane == member.pane or prior.source == member.source)
+                    return error.DuplicatePane;
+        }
+        if (self.visible_request) |prior| {
+            self.pool.cancelGroup(prior.request.revision) catch |failure| switch (failure) {
+                error.Stale => {},
+            };
+        }
+        var request = VisibleSetRequest{
+            .revision = revision,
+            .members = undefined,
+            .count = @intCast(members.len),
+        };
+        @memcpy(request.members[0..members.len], members);
+        self.visible_request = .{ .request = request };
+        self.visible_high_water = revision;
+        signal(self.terminal_fd);
+    }
+
+    /// Copies the latest request for exclusive terminal-thread preparation.
+    pub fn visibleSetRequest(self: *Boundary) ?VisibleSetRequest {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return null;
+        if (state.phase != .requested) return null;
+        return state.request;
+    }
+
+    /// Copies exact publication and Composer facts for one requested member.
+    pub fn visibleTransferFact(
+        self: *Boundary,
+        revision: u64,
+        member: VisibleMember,
+    ) error{Stale}!VisibleTransferFact {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return error.Stale;
+        if (state.request.revision != revision) return error.Stale;
+        const index = self.find(member.pane) orelse return error.Stale;
+        const entry = self.entries[index].?;
+        if (entry.source != member.source or !entry.pool_active or
+            (entry.state != .registered and entry.state != .live))
+            return error.Stale;
+        return .{
+            .ready = entry.ready,
+            .accepted_revision = entry.accepted_revision,
+        };
+    }
+
+    /// Atomically reserves every requested producer requiring fresh extraction.
+    pub fn reserveVisibleGroup(
+        self: *Boundary,
+        revision: u64,
+        members: []const pool_storage.Member,
+    ) pool_storage.ReserveError!pool_storage.Group {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return error.Stale;
+        if (state.request.revision != revision or state.phase != .requested)
+            return error.Stale;
+        for (members) |member| {
+            var requested = false;
+            for (state.request.members[0..state.request.count]) |value| {
+                if (value.pane == member.pane_id and value.source == member.source_id) {
+                    requested = true;
+                    break;
+                }
+            }
+            if (!requested) return error.Stale;
+            const index = self.find(member.pane_id) orelse return error.Stale;
+            const entry = self.entries[index].?;
+            if (entry.source != member.source_id or
+                entry.descriptor_index != member.descriptor_index or
+                !entry.pool_active or entry.pool_retiring or entry.ready != null or
+                (entry.state != .registered and entry.state != .live))
+                return error.Stale;
+        }
+        return self.pool.reserveGroup(revision, members);
+    }
+
+    /// Marks a completely published visible-set preparation with actual revisions.
+    pub fn completeVisibleSet(
+        self: *Boundary,
+        revision: u64,
+        requirements: []const VisibleRequirement,
+        group_reserved: bool,
+    ) error{ Partial, Stale }!void {
+        if (requirements.len > visible_member_limit) return error.Stale;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = if (self.visible_request) |*value| value else return error.Stale;
+        if (state.request.revision != revision or state.phase != .requested or
+            requirements.len != state.request.count)
+            return error.Stale;
+        for (requirements, 0..) |requirement, index| {
+            if (requirement.member.pane != state.request.members[index].pane or
+                requirement.member.source != state.request.members[index].source or
+                @backingInt(requirement.revision) == 0)
+                return error.Stale;
+            const entry_index = self.find(requirement.member.pane) orelse
+                return error.Stale;
+            const entry = self.entries[entry_index].?;
+            if (entry.source != requirement.member.source or
+                (entry.ready != null and
+                    entry.ready.?.producer_revision != requirement.revision) or
+                (entry.ready == null and
+                    @backingInt(entry.accepted_revision) <
+                        @backingInt(requirement.revision)))
+                return error.Stale;
+        }
+        if (group_reserved) try self.pool.completeGroup(revision);
+        @memcpy(state.requirements[0..requirements.len], requirements);
+        state.requirement_count = @intCast(requirements.len);
+        state.phase = .prepared;
+        signal(self.renderer_fd);
+    }
+
+    /// Releases one incomplete extraction group and cancels its exact request.
+    ///
+    /// Pool candidate revisions are never reused. Renderer observes the stale
+    /// request and may issue a strictly newer candidate for the same desired
+    /// visible set.
+    pub fn abortVisibleGroup(
+        self: *Boundary,
+        revision: u64,
+    ) error{Stale}!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return error.Stale;
+        if (state.request.revision != revision or state.phase != .requested)
+            return error.Stale;
+        try self.pool.cancelGroup(revision);
+        self.visible_request = null;
+        signal(self.renderer_fd);
+    }
+
+    /// Reports whether every exact candidate member is accepted by Composer.
+    pub fn visibleSetStatus(
+        self: *Boundary,
+        revision: u64,
+    ) VisibleSetStatus {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return .stale;
+        if (state.request.revision != revision) return .stale;
+        for (state.request.members[0..state.request.count]) |member| {
+            const index = self.find(member.pane) orelse return .stale;
+            const entry = self.entries[index].?;
+            if (entry.source != member.source or
+                (entry.state != .registered and entry.state != .live))
+                return .stale;
+        }
+        if (state.phase != .prepared) return .pending;
+        for (state.requirements[0..state.requirement_count]) |requirement| {
+            const index = self.find(requirement.member.pane) orelse return .stale;
+            const entry = self.entries[index].?;
+            if (entry.source != requirement.member.source or
+                (entry.state != .registered and entry.state != .live))
+                return .stale;
+            if (@backingInt(entry.accepted_revision) <
+                @backingInt(requirement.revision))
+                return .pending;
+        }
+        return .ready;
+    }
+
+    /// Exclusively claims one synchronized request for Renderer composition.
+    pub fn claimVisibleSet(
+        self: *Boundary,
+        revision: u64,
+    ) error{Stale}!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = if (self.visible_request) |*value| value else return error.Stale;
+        if (state.request.revision != revision or state.phase != .prepared)
+            return error.Stale;
+        for (state.requirements[0..state.requirement_count]) |requirement| {
+            const index = self.find(requirement.member.pane) orelse return error.Stale;
+            const entry = self.entries[index].?;
+            if (entry.source != requirement.member.source or
+                (entry.state != .registered and entry.state != .live) or
+                @backingInt(entry.accepted_revision) <
+                    @backingInt(requirement.revision))
+                return error.Stale;
+        }
+        state.phase = .committing;
+    }
+
+    /// Restores a failed Renderer composition claim for exact retry.
+    pub fn releaseVisibleSetClaim(
+        self: *Boundary,
+        revision: u64,
+    ) error{Stale}!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = if (self.visible_request) |*value| value else return error.Stale;
+        if (state.request.revision != revision or state.phase != .committing)
+            return error.Stale;
+        state.phase = .prepared;
+    }
+
+    /// Retires one synchronized request after successful composition mutation.
+    pub fn commitVisibleSet(
+        self: *Boundary,
+        revision: u64,
+    ) error{Stale}!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const state = self.visible_request orelse return error.Stale;
+        if (state.request.revision != revision or state.phase != .committing)
+            return error.Stale;
+        @memcpy(
+            self.visible_members[0..state.request.count],
+            state.request.members[0..state.request.count],
+        );
+        self.visible_member_count = state.request.count;
+        self.visible_initialized = true;
+        self.visible_request = null;
+    }
+
     /// Reserves one shared block before consumptive terminal update extraction.
     pub fn reserveUpdate(
         self: *Boundary,
@@ -819,6 +1128,15 @@ pub const Boundary = struct {
             return error.Stale;
         if (entry.pool_retiring) return error.Stale;
         if (entry.ready != null) return error.Busy;
+        if (self.visible_request != null) return error.GroupPriority;
+        var visible = false;
+        for (self.visible_members[0..self.visible_member_count]) |value| {
+            if (value.pane == member.pane_id and value.source == member.source_id) {
+                visible = true;
+                break;
+            }
+        }
+        if (self.visible_initialized and !visible) return error.GroupPriority;
         return self.pool.reserve(member);
     }
 
@@ -913,6 +1231,7 @@ pub const Boundary = struct {
                 {
                     entry.ready = null;
                     entry.retry_wake_issued = false;
+                    entry.accepted_revision = token.producer_revision;
                 }
             }
             self.mutex.unlock(self.io);
@@ -1398,6 +1717,133 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     try boundary.markRetired(pane);
     try std.testing.expectEqual(pane, boundary.takeRetired().?.pane);
     try boundary.finishRetired(pane);
+}
+
+test "latest visible set waits for exact Composer accepted revisions" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(50);
+    const source: canvas.SourceId = @fromBackingInt(1);
+    try boundary.register(pane, source, 1, 1);
+    const created = boundary.takeLifecycle().?;
+    try std.testing.expect(std.meta.activeTag(created) == .create);
+    const pooled = try boundary.activateTransfer(pane);
+    const member = VisibleMember{ .pane = pane, .source = source };
+    try boundary.publishVisibleSet(1, &.{member});
+    const request = boundary.visibleSetRequest().?;
+    try std.testing.expectEqual(@as(u64, 1), request.revision);
+    const group = try boundary.reserveVisibleGroup(1, &.{pooled});
+    const commands = [_]canvas.Input{
+        .{ .solid = .{
+            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        } },
+        .{ .solid = .{
+            .rect = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+            .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
+        } },
+    };
+    try boundary.publishUpdate(group.tokens[0], .{
+        .revision = @fromBackingInt(7),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &commands,
+    });
+    try boundary.completeVisibleSet(1, &.{.{
+        .member = member,
+        .revision = @fromBackingInt(7),
+    }}, true);
+    try std.testing.expectEqual(VisibleSetStatus.pending, boundary.visibleSetStatus(1));
+
+    var narrow = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 16,
+    });
+    defer narrow.deinit();
+    try std.testing.expectEqual(source, try narrow.registerSource());
+    const rejected = try boundary.drainReady(&narrow);
+    try std.testing.expectEqual(@as(usize, 0), rejected.accepted);
+    try std.testing.expectEqual(
+        @as(?canvas.Composer.Error, error.CommandLimit),
+        rejected.rejected,
+    );
+    try std.testing.expectEqual(VisibleSetStatus.pending, boundary.visibleSetStatus(1));
+
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 4,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 16,
+    });
+    defer composer.deinit();
+    try std.testing.expectEqual(source, try composer.registerSource());
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(VisibleSetStatus.ready, boundary.visibleSetStatus(1));
+    try boundary.claimVisibleSet(1);
+    try boundary.releaseVisibleSetClaim(1);
+    try std.testing.expectEqual(VisibleSetStatus.ready, boundary.visibleSetStatus(1));
+    try boundary.claimVisibleSet(1);
+    try boundary.commitVisibleSet(1);
+    try std.testing.expectEqual(VisibleSetStatus.stale, boundary.visibleSetStatus(1));
+
+    try boundary.publishVisibleSet(2, &.{member});
+    try boundary.publishVisibleSet(3, &.{member});
+    try std.testing.expectEqual(VisibleSetStatus.stale, boundary.visibleSetStatus(2));
+    try std.testing.expectEqual(@as(u64, 3), boundary.visibleSetRequest().?.revision);
+    try boundary.close(pane);
+    try std.testing.expectEqual(VisibleSetStatus.stale, boundary.visibleSetStatus(3));
+}
+
+test "visible group with fifteen free blocks does not partially reserve sixteen" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    var pooled: [17]pool_storage.Member = undefined;
+    var requested: [visible_member_limit]VisibleMember = undefined;
+    for (0..17) |index| {
+        const pane: PaneId = @fromBackingInt(@intCast(index + 1));
+        const source: canvas.SourceId = @fromBackingInt(@intCast(index + 1));
+        try boundary.register(pane, source, 1, 1);
+        const created = boundary.takeLifecycle().?;
+        try std.testing.expect(std.meta.activeTag(created) == .create);
+        pooled[index] = try boundary.activateTransfer(pane);
+        if (index != 0) requested[index - 1] = .{ .pane = pane, .source = source };
+    }
+    const unrelated = try boundary.reserveUpdate(pooled[0]);
+    try boundary.publishVisibleSet(1, &requested);
+    try std.testing.expectError(
+        error.NoCapacity,
+        boundary.reserveVisibleGroup(1, pooled[1..]),
+    );
+    try std.testing.expectError(error.Stale, boundary.abortVisibleGroup(1));
+    const partial_capacity = try boundary.reserveVisibleGroup(1, pooled[1..16]);
+    try std.testing.expectEqual(@as(u8, 15), partial_capacity.count);
+    try boundary.abortVisibleGroup(1);
+    try std.testing.expectEqual(VisibleSetStatus.stale, boundary.visibleSetStatus(1));
+    try boundary.publishVisibleSet(2, &requested);
+    const retried = try boundary.reserveVisibleGroup(2, pooled[1..16]);
+    try std.testing.expectEqual(@as(u8, 15), retried.count);
+    try boundary.abortVisibleGroup(2);
+    try boundary.cancelUpdate(unrelated);
 }
 
 test "completed token blocks same entry until clear and cannot corrupt reuse" {

@@ -396,7 +396,7 @@ checkpoints:
       - Composer rejection retains ready bytes and receives one bounded deferred Renderer retry wake
       - scoped Renderer drain ownership restores ready on every noncompletion exit
   - id: terminal_visible_set
-    status: active
+    status: review_ready
     outcome: >-
       Add the bounded latest VisibleSetRequest and all-or-none reservation needed
       to reveal up to sixteen pane sources without partial topology mutation.
@@ -406,6 +406,19 @@ checkpoints:
       - exact candidate revision, PaneId, SourceId, and ProducerRevision checks
       - cancellation, supersession, closure, and stale-token rollback
       - final composition switch occurs only after every requested source is accepted
+    current_slice:
+      - Boundary owns one latest bounded request and exact accepted producer revisions
+      - terminal runtime reserves only fresh extraction members as one all-or-none group
+      - Renderer retains candidate placements and preserves prior composition until every source is accepted
+      - successful reveal commits visible membership; hidden ordinary updates remain dirty for later reveal
+      - operator baseline exposed fabricated Unicode modifier input and missing style ownership
+      - correction preserves named modifier identity and terminal-local optional glyph omission while retaining exact malformed-glyph failures
+    current_acceptance_target:
+      - one full-size active terminal tab with stable PTY/VT/Render/Vulkan progress
+      - preserved tab/pane topology, mappings, visible-set ownership, and Window/Renderer/terminal-thread boundaries
+      - u32 indices and 32768-command geometry are approved prerequisites for real TUI playback
+      - the 106042528-byte fixed pool is measured temporary debt, not final memory policy
+      - sixteen simultaneous maximum panes, font resizing, and performance parity remain deferred
   - id: terminal_pool_freeze
     status: planned
     outcome: >-
@@ -419,12 +432,12 @@ checkpoints:
   - id: surface_admission_design
     status: planned
     outcome: >-
-      Select the finite supported visible workload and exact CPU/GPU admission
-      contract before widening Composer or Vulkan storage.
+      Measure and later optimize the finite supported visible workload after the
+      stable full-size single-tab checkpoint is committed.
     commit_boundary: Record bounded surface admission contract
     proof:
       - complete command, resource, pixel, and surface-image equations
-      - explicit u32-index or based-u16-batch decision
+      - explicit aggregate CPU/GPU and atlas decision for any future multi-pane widening
       - separate Alpha8 and RGBA8 extent and packability rules
       - queried Vulkan requirements remain authoritative under the 512 MiB bound
       - evidence and authority changes only

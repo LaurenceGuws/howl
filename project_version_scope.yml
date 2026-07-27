@@ -40,9 +40,11 @@ invariants:
   - source audit and protocol catalogue validation pass without diagnostics
 
 deferred:
-  - PTY, VT, and terminal composition inside the host
-  - keyboard and pointer action policy, clipboard, terminal consequences, sessions, and interactive multiplexing
-  - performance work and production-sized surfaces
+  - runtime font-size configuration and resizing
+  - asciinema/rain performance parity and CPU/RSS optimization
+  - final terminal parity/freeze receipt
+  - maximum sixteen-pane Composer/Vulkan/atlas admission
+  - floating interaction and scrollbar parity
 
 gates:
   - permanent authorities parse

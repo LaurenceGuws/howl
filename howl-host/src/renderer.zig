@@ -28,6 +28,11 @@ const chrome_appearance = chrome_state.Appearance{
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
 
+const RetiredTerminalSource = struct {
+    pane: render_api.chrome.PaneId,
+    source: render_api.canvas.SourceId,
+};
+
 const CanvasWork = struct {
     composer: *render_api.canvas.Composer,
     content: *render_api.chrome.Content,
@@ -46,6 +51,14 @@ const CanvasWork = struct {
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
     terminal_rejection_reported: bool = false,
+    next_visible_revision: u64 = 1,
+    visible_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined,
+    visible_count: u8 = 0,
+    pending_visible_revision: ?u64 = null,
+    pending_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined,
+    pending_count: u8 = 0,
+    retired_sources: [64]RetiredTerminalSource = undefined,
+    retired_source_count: u8 = 0,
 };
 
 const Slot = struct {
@@ -526,8 +539,13 @@ fn buildCanvasPlan(
     text: []u8,
 ) !vk_surface.Plan {
     while (work.terminals.takeRetired()) |retired| {
-        try work.composer.removeSource(retired.source);
-        try work.terminals.finishRetired(retired.pane);
+        if (work.retired_source_count == work.retired_sources.len)
+            return error.InvalidTopology;
+        work.retired_sources[work.retired_source_count] = .{
+            .pane = retired.pane,
+            .source = retired.source,
+        };
+        work.retired_source_count += 1;
     }
     const output = try topology.project(appearance, &.{}, primitives, text);
     try work.content.apply(output);
@@ -550,21 +568,57 @@ fn buildCanvasPlan(
             work.terminal_rejection_reported = true;
         }
     }
-    var placements: [chrome_state.max_live_panes + 1]render_api.canvas.Composer.Placement = undefined;
-    var placement_count: usize = 0;
+    var desired: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined;
+    var desired_members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember = undefined;
+    var desired_count: usize = 0;
+    var desired_complete = true;
     const active_tab = topology.activeTabIndex();
     for (0..topology.paneCount(active_tab)) |pane_index| {
         const pane = topology.paneId(active_tab, pane_index) orelse
             return error.InvalidTopology;
-        const source = work.terminals.sourceFor(pane) orelse continue;
+        const source = work.terminals.sourceFor(pane) orelse {
+            desired_complete = false;
+            continue;
+        };
+        if (desired_count == desired.len) return error.InvalidTopology;
         const rect = topology.paneRect(pane) orelse return error.InvalidTopology;
-        placements[placement_count] = .{
+        desired[desired_count] = .{
             .source = source,
             .origin = .{ .x = rect.x, .y = rect.y },
             .clip = rect,
         };
-        placement_count += 1;
+        desired_members[desired_count] = .{ .pane = pane, .source = source };
+        desired_count += 1;
     }
+    if (desired_complete)
+        try updateVisibleComposition(
+            work,
+            desired[0..desired_count],
+            desired_members[0..desired_count],
+        );
+    var claimed_visible_revision: ?u64 = null;
+    if (work.pending_visible_revision) |revision| {
+        if (desired_complete and
+            placementsEqual(
+                desired[0..desired_count],
+                work.pending_placements[0..work.pending_count],
+            ) and
+            work.terminals.visibleSetStatus(revision) == .ready)
+        {
+            try work.terminals.claimVisibleSet(revision);
+            claimed_visible_revision = revision;
+        }
+    }
+    errdefer if (claimed_visible_revision) |revision|
+        work.terminals.releaseVisibleSetClaim(revision) catch
+            @panic("visible-set composition claim could not be restored");
+    var placements: [terminal_handoff.visible_member_limit + 1]render_api.canvas.Composer.Placement = undefined;
+    const terminal_placements = if (claimed_visible_revision != null)
+        work.pending_placements[0..work.pending_count]
+    else
+        work.visible_placements[0..work.visible_count];
+    var placement_count: usize = terminal_placements.len;
+    @memcpy(placements[0..placement_count], terminal_placements);
     placements[placement_count] = .{
         .source = work.source,
         .origin = .{ .x = 0, .y = 0 },
@@ -575,6 +629,33 @@ fn buildCanvasPlan(
         .surface = output.surface,
         .sources = placements[0..placement_count],
     });
+    if (claimed_visible_revision) |revision| {
+        try work.terminals.commitVisibleSet(revision);
+        @memcpy(
+            work.visible_placements[0..work.pending_count],
+            work.pending_placements[0..work.pending_count],
+        );
+        work.visible_count = work.pending_count;
+        work.pending_visible_revision = null;
+        work.pending_count = 0;
+        claimed_visible_revision = null;
+    }
+    var retired_index: usize = 0;
+    while (retired_index < work.retired_source_count) {
+        const retired = work.retired_sources[retired_index];
+        if (placementContainsSource(
+            work.visible_placements[0..work.visible_count],
+            retired.source,
+        )) {
+            retired_index += 1;
+            continue;
+        }
+        try work.composer.removeSource(retired.source);
+        try work.terminals.finishRetired(retired.pane);
+        work.retired_source_count -= 1;
+        work.retired_sources[retired_index] =
+            work.retired_sources[work.retired_source_count];
+    }
     const surface_resident = try work.residency.enumerate(work.surface_residencies);
     for (surface_resident, 0..) |value, index| {
         work.canvas_residencies[index] = .{
@@ -606,6 +687,57 @@ fn buildCanvasPlan(
     try work.residency.stage(generic);
     errdefer work.residency.discard();
     return try work.builder.build(work.residency, generic);
+}
+
+fn updateVisibleComposition(
+    work: *CanvasWork,
+    desired: []const render_api.canvas.Composer.Placement,
+    members: []const terminal_handoff.VisibleMember,
+) !void {
+    std.debug.assert(desired.len == members.len);
+    if (work.pending_visible_revision) |revision| {
+        if (placementsEqual(
+            desired,
+            work.pending_placements[0..work.pending_count],
+        )) {
+            switch (work.terminals.visibleSetStatus(revision)) {
+                .pending => return,
+                .stale => {
+                    work.pending_visible_revision = null;
+                    work.pending_count = 0;
+                },
+                .ready => {
+                    return;
+                },
+            }
+        }
+    }
+    if (placementsEqual(desired, work.visible_placements[0..work.visible_count]))
+        return;
+    const revision = work.next_visible_revision;
+    work.next_visible_revision = std.math.add(u64, revision, 1) catch
+        return error.RevisionOverflow;
+    try work.terminals.publishVisibleSet(revision, members);
+    @memcpy(work.pending_placements[0..desired.len], desired);
+    work.pending_count = @intCast(desired.len);
+    work.pending_visible_revision = revision;
+}
+
+fn placementsEqual(
+    left: []const render_api.canvas.Composer.Placement,
+    right: []const render_api.canvas.Composer.Placement,
+) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| if (!std.meta.eql(a, b)) return false;
+    return true;
+}
+
+fn placementContainsSource(
+    placements: []const render_api.canvas.Composer.Placement,
+    source: render_api.canvas.SourceId,
+) bool {
+    for (placements) |placement| if (placement.source == source) return true;
+    return false;
 }
 
 fn adaptCanvasFrame(

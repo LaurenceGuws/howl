@@ -300,6 +300,8 @@ const Logical = struct {
     child_exit: ?pty.ChildExit = null,
     stream_closed: bool = false,
     dirty: bool = true,
+    last_published_revision: render.canvas.ProducerRevision = @fromBackingInt(0),
+    last_published_geometry: ?terminal_render.Content.Geometry = null,
 
     /// Constructs and starts one shell owner transactionally.
     fn init(
@@ -549,6 +551,8 @@ const Logical = struct {
             => return failure,
         };
         update_consumed = false;
+        self.last_published_revision = update.revision;
+        self.last_published_geometry = self.geometry;
         return true;
     }
 
@@ -756,6 +760,8 @@ fn runFallible(
                 try runtime.applyInput(input);
             }
             boundary.rearmTerminalWork();
+            if (try runtime.prepareVisibleSet(boundary))
+                boundary.publishReady();
             if (try runtime.servicePending() != 0) boundary.publishReady();
         }
         for (owner_set.descriptors[0..owner_set.count], descriptors[1..descriptor_count]) |*owner_descriptor, descriptor| {
@@ -940,6 +946,101 @@ const Runtime = struct {
             if (turn.published_update) published += 1;
         }
         return published;
+    }
+
+    /// Prepares the latest complete visible set without consuming a partial group.
+    fn prepareVisibleSet(
+        self: *Runtime,
+        boundary: *handoff.Boundary,
+    ) ServiceError!bool {
+        const request = boundary.visibleSetRequest() orelse return false;
+        var requirements: [handoff.visible_member_limit]handoff.VisibleRequirement = undefined;
+        var needed_members: [handoff.visible_member_limit]terminal_pool.Member = undefined;
+        var needed_positions: [handoff.visible_member_limit]u8 = undefined;
+        var needed_count: usize = 0;
+
+        for (request.members[0..request.count], 0..) |member, position| {
+            const owner_index = self.find(member.pane) orelse return false;
+            const owner = &self.owners[owner_index].?;
+            const pooled = switch (owner.transfer) {
+                .pooled => |value| value,
+                .dedicated => return false,
+            };
+            if (pooled.member.source_id != member.source) return false;
+            const fact = boundary.visibleTransferFact(request.revision, member) catch
+                return false;
+            const geometry_current = owner.last_published_geometry != null and
+                std.meta.eql(owner.last_published_geometry.?, owner.geometry);
+            if (fact.ready) |token| {
+                if (owner.dirty or !geometry_current or
+                    token.producer_revision != owner.last_published_revision)
+                    return false;
+                requirements[position] = .{
+                    .member = member,
+                    .revision = token.producer_revision,
+                };
+                continue;
+            }
+            if (!owner.dirty and geometry_current and
+                @backingInt(owner.last_published_revision) != 0 and
+                @backingInt(fact.accepted_revision) >=
+                    @backingInt(owner.last_published_revision))
+            {
+                requirements[position] = .{
+                    .member = member,
+                    .revision = owner.last_published_revision,
+                };
+                continue;
+            }
+            needed_members[needed_count] = pooled.member;
+            needed_positions[needed_count] = @intCast(position);
+            needed_count += 1;
+        }
+
+        if (needed_count == 0) {
+            boundary.completeVisibleSet(
+                request.revision,
+                requirements[0..request.count],
+                false,
+            ) catch return false;
+            return true;
+        }
+        const group = boundary.reserveVisibleGroup(
+            request.revision,
+            needed_members[0..needed_count],
+        ) catch |failure| switch (failure) {
+            error.NoCapacity, error.Busy, error.GroupPriority, error.Stale => return false,
+            else => return failure,
+        };
+        var group_active = true;
+        defer if (group_active)
+            boundary.abortVisibleGroup(request.revision) catch {};
+        for (group.tokens[0..group.count], 0..) |token, group_index| {
+            const position = needed_positions[group_index];
+            const member = request.members[position];
+            const owner_index = self.find(member.pane) orelse return false;
+            const owner = &self.owners[owner_index].?;
+            const pooled = switch (owner.transfer) {
+                .pooled => |value| value,
+                .dedicated => return false,
+            };
+            if (!try owner.publishReservedPooled(pooled, token, &self.work))
+                return false;
+            owner.dirty = false;
+            requirements[position] = .{
+                .member = member,
+                .revision = owner.last_published_revision,
+            };
+        }
+        boundary.completeVisibleSet(
+            request.revision,
+            requirements[0..request.count],
+            true,
+        ) catch |failure| switch (failure) {
+            error.Stale, error.Partial => return false,
+        };
+        group_active = false;
+        return true;
     }
 
     /// Applies one terminal-boundary lifecycle fact under exclusive runtime ownership.
@@ -1752,6 +1853,71 @@ test "runtime admits observes and retires real shell owners transactionally" {
     try std.testing.expectError(error.UnknownPane, runtime.remove(first));
     try runtime.remove(second);
     try std.testing.expectEqual(@as(u8, 0), runtime.count);
+}
+
+test "visible-set preparation publishes hidden newest state through real Content" {
+    var boundary = try handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer boundary.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 4096,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 4096,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(81);
+    const source = try composer.registerSource();
+    try boundary.register(pane, source, 8, 2);
+    const created = boundary.takeLifecycle().?;
+    try std.testing.expect(std.meta.activeTag(created) == .create);
+    const pooled = try boundary.activateTransfer(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        8,
+        2,
+        .{ .pooled = .{ .boundary = &boundary, .member = pooled } },
+    );
+    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
+    try boundary.publishVisibleSet(1, &.{visible});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
+    try boundary.claimVisibleSet(1);
+    try boundary.commitVisibleSet(1);
+    const first_revision =
+        runtime.owners[runtime.find(pane).?].?.last_published_revision;
+
+    try boundary.publishVisibleSet(2, &.{});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try boundary.claimVisibleSet(2);
+    try boundary.commitVisibleSet(2);
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    try std.testing.expect((try owner.machine.feed("newest")).state_changed);
+    owner.dirty = true;
+    try std.testing.expect(!(try owner.publishIfDirty(&runtime.work)));
+    try std.testing.expect(owner.dirty);
+
+    try boundary.publishVisibleSet(3, &.{visible});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(3));
+    try boundary.claimVisibleSet(3);
+    try boundary.commitVisibleSet(3);
+    try std.testing.expect(
+        @backingInt(owner.last_published_revision) > @backingInt(first_revision),
+    );
 }
 
 test "PTY resize failure discards prepared VT and later live resize commits" {
