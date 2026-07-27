@@ -88,6 +88,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     terminal_pool.addImport("howl_render", render.module("howl_render"));
+    terminal_handoff.addImport("terminal_pool", terminal_pool);
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -98,6 +99,7 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("howl_vt", vt.module("howl_vt"));
     terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
+    terminal_runtime.addImport("terminal_pool", terminal_pool);
     const terminal_runtime_facts = b.addOptions();
     terminal_runtime_facts.addOption(
         []const u8,

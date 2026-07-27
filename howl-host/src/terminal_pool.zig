@@ -1,15 +1,12 @@
 //! Owns fixed shared storage for immutable terminal producer updates.
 //!
-//! This owner is intentionally independent of the running `PendingSlot`
-//! boundary. It proves finite allocation, descriptor identity, block
-//! reservation, and retirement before publication is migrated.
-//!
 //! The terminal thread exclusively owns descriptors, group admission, block
 //! reservation, publication, and retirement. Renderer owns only
-//! `beginDrain`, `retryDrain`, and `completeDrain`. Renderer acquires a ready
-//! block before reading immutable metadata and never mutates descriptor
-//! storage. Terminal detaches a descriptor only after acquire-observing the
-//! associated block as free or atomically claiming ready ownership itself.
+//! `beginDrain`, `drainingUpdate`, `retryDrain`, and `completeDrain`. Renderer
+//! acquires a ready block before reading immutable metadata and payload and
+//! never mutates descriptor storage. Terminal detaches a descriptor only after
+//! acquire-observing the associated block as free or atomically claiming ready
+//! ownership itself.
 
 const std = @import("std");
 const render = @import("howl_render");
@@ -54,6 +51,12 @@ pub const TransitionError = error{
     InvalidCounts,
     InvalidProducerRevision,
     Stale,
+};
+
+/// Reports malformed or oversized canonical producer payload publication.
+pub const PublishError = TransitionError || error{
+    ArithmeticOverflow,
+    InvalidPixels,
 };
 
 /// Reports a descriptor whose block ownership prevents retirement.
@@ -408,8 +411,77 @@ pub const Pool = struct {
         clearGroup(meta);
     }
 
-    /// Publishes immutable counts and an exact newer producer revision.
-    pub fn publish(
+    /// Copies and publishes one canonical immutable producer update.
+    ///
+    /// The complete byte count is checked before payload mutation. Successful
+    /// release publication transfers immutable payload ownership to Renderer.
+    pub fn publishUpdate(
+        self: *Pool,
+        token: Token,
+        update: canvas.ProducerUpdate,
+    ) PublishError!Token {
+        if (update.uploads.len > resource_limit or
+            update.removals.len > resource_limit or
+            update.commands.len > command_limit)
+            return error.InvalidCounts;
+        const descriptor = try self.claimDescriptor(token);
+        const owner = try self.claimBlock(token, .reserved);
+        if (@backingInt(update.revision) == 0 or
+            @backingInt(update.revision) <= @backingInt(descriptor.revision))
+            return error.InvalidProducerRevision;
+        var pixel_count: usize = 0;
+        for (update.uploads) |upload| {
+            pixel_count = std.math.add(
+                usize,
+                pixel_count,
+                upload.pixels.bytes.len,
+            ) catch return error.ArithmeticOverflow;
+            if (pixel_count > pixel_limit) return error.InvalidPixels;
+        }
+        const uploads = self.blockUploads(token.block_index);
+        const removals = self.blockRemovals(token.block_index);
+        const commands = self.blockCommands(token.block_index);
+        const pixels = self.blockPixels(token.block_index);
+        var pixel_offset: usize = 0;
+        for (update.uploads, 0..) |upload, index| {
+            const source_bytes = upload.pixels.bytes;
+            @memcpy(
+                pixels[pixel_offset..][0..source_bytes.len],
+                source_bytes,
+            );
+            uploads[index] = upload;
+            uploads[index].pixels.bytes =
+                pixels[pixel_offset..][0..source_bytes.len];
+            pixel_offset += source_bytes.len;
+        }
+        @memcpy(removals[0..update.removals.len], update.removals);
+        @memcpy(commands[0..update.commands.len], update.commands);
+        owner.revision = update.revision;
+        owner.upload_count = update.uploads.len;
+        owner.removal_count = update.removals.len;
+        owner.command_count = update.commands.len;
+        descriptor.revision = update.revision;
+        descriptor.upload_count = update.uploads.len;
+        descriptor.removal_count = update.removals.len;
+        descriptor.command_count = update.commands.len;
+        owner.state.store(@backingInt(BlockState.ready), .release);
+        var published = token;
+        published.producer_revision = update.revision;
+        return published;
+    }
+
+    /// Discards one unconsumed terminal reservation without publishing bytes.
+    pub fn cancel(
+        self: *Pool,
+        token: Token,
+    ) TransitionError!void {
+        const descriptor = try self.claimDescriptor(token);
+        std.debug.assert(descriptor.block_index == token.block_index);
+        const owner = try self.claimBlock(token, .reserved);
+        releaseBlock(owner);
+    }
+
+    fn publishMetadata(
         self: *Pool,
         token: Token,
         revision: canvas.ProducerRevision,
@@ -464,6 +536,25 @@ pub const Pool = struct {
         if (@backingInt(token.producer_revision) == 0 or
             owner.revision != token.producer_revision)
             return error.Stale;
+    }
+
+    /// Borrows the immutable canonical update held by Renderer drainage.
+    ///
+    /// The slices remain valid until `retryDrain` or `completeDrain` transfers
+    /// ownership. No terminal-thread operation may access this block meanwhile.
+    pub fn drainingUpdate(
+        self: *Pool,
+        token: Token,
+    ) TransitionError!canvas.ProducerUpdate {
+        const owner = try self.claimBlock(token, .draining);
+        if (owner.revision != token.producer_revision)
+            return error.Stale;
+        return .{
+            .revision = owner.revision,
+            .uploads = self.blockUploads(token.block_index)[0..owner.upload_count],
+            .removals = self.blockRemovals(token.block_index)[0..owner.removal_count],
+            .commands = self.blockCommands(token.block_index)[0..owner.command_count],
+        };
     }
 
     /// Republishes unchanged immutable bytes after Renderer rejection.
@@ -662,6 +753,18 @@ pub const Pool = struct {
             if (blockState(owner) == .free and !self.blockReferenced(index))
                 return @intCast(index);
         }
+        for (0..block_limit) |index| {
+            const owner = self.blockOwner(index);
+            if (blockState(owner) != .free) continue;
+            for (self.descriptors()) |*descriptor| {
+                if (descriptor.block_index == null or
+                    descriptor.block_index.? != index)
+                    continue;
+                descriptor.block_index = null;
+                descriptor.candidate_revision = 0;
+                return @intCast(index);
+            }
+        }
         return null;
     }
 
@@ -710,6 +813,46 @@ pub const Pool = struct {
         const offset = self.layout.blocks_offset +
             index * self.layout.block_stride;
         return pointerAt(BlockOwner, self.bytes(), offset);
+    }
+
+    fn blockUploads(self: *Pool, index: usize) []canvas.ResourceUpload {
+        const block = blockLayout();
+        return sliceAt(
+            canvas.ResourceUpload,
+            self.bytes(),
+            self.blockOffset(index) + block.uploads_offset,
+            resource_limit,
+        );
+    }
+
+    fn blockRemovals(self: *Pool, index: usize) []canvas.ResourceRemoval {
+        const block = blockLayout();
+        return sliceAt(
+            canvas.ResourceRemoval,
+            self.bytes(),
+            self.blockOffset(index) + block.removals_offset,
+            resource_limit,
+        );
+    }
+
+    fn blockCommands(self: *Pool, index: usize) []canvas.Input {
+        const block = blockLayout();
+        return sliceAt(
+            canvas.Input,
+            self.bytes(),
+            self.blockOffset(index) + block.commands_offset,
+            command_limit,
+        );
+    }
+
+    fn blockPixels(self: *Pool, index: usize) []u8 {
+        const block = blockLayout();
+        return self.bytes()[self.blockOffset(index) + block.pixels_offset ..][0..pixel_limit];
+    }
+
+    fn blockOffset(self: *const Pool, index: usize) usize {
+        std.debug.assert(index < block_limit);
+        return self.layout.blocks_offset + index * self.layout.block_stride;
     }
 
     fn blockIndex(self: *Pool, owner: *BlockOwner) u8 {
@@ -871,6 +1014,11 @@ fn calculateBlockLayout() error{ArithmeticOverflow}!BlockLayout {
     };
 }
 
+fn blockLayout() BlockLayout {
+    return calculateBlockLayout() catch
+        @panic("terminal pool compile-time layout overflow");
+}
+
 fn calculateLayout() error{ArithmeticOverflow}!Layout {
     const block = try calculateBlockLayout();
     var cursor: usize = 0;
@@ -964,7 +1112,7 @@ test "group reservation is atomic and cancellation is exact" {
     }
     try std.testing.expectError(
         error.Stale,
-        pool.publish(first, @fromBackingInt(@intCast(1)), 0, 0, 1),
+        pool.publishMetadata(first, @fromBackingInt(@intCast(1)), 0, 0, 1),
     );
     for (members) |member| {
         try pool.beginRetire(
@@ -1006,7 +1154,7 @@ test "group completion rejects partial publication and preserves successful bloc
         );
     }
     const group = try pool.reserveGroup(50, &.{ first, second });
-    const first_ready = try pool.publish(
+    const first_ready = try pool.publishMetadata(
         group.tokens[0],
         @fromBackingInt(@intCast(1)),
         1,
@@ -1026,7 +1174,7 @@ test "group completion rejects partial publication and preserves successful bloc
     );
     try std.testing.expectError(error.GroupPriority, pool.reserve(ordinary));
 
-    const second_ready = try pool.publish(
+    const second_ready = try pool.publishMetadata(
         group.tokens[1],
         @fromBackingInt(@intCast(1)),
         1,
@@ -1051,7 +1199,7 @@ test "group completion rejects partial publication and preserves successful bloc
     try pool.beginDrain(first_ready);
     try pool.completeDrain(first_ready);
     try pool.completeDrain(second_ready);
-    const ordinary_ready = try pool.publish(
+    const ordinary_ready = try pool.publishMetadata(
         ordinary_token,
         @fromBackingInt(@intCast(1)),
         0,
@@ -1114,7 +1262,7 @@ test "fifteen free blocks and invalid groups preserve state" {
         error.InvalidCandidateRevision,
         pool.reserveGroup(0, members[1..2]),
     );
-    const published = try pool.publish(
+    const published = try pool.publishMetadata(
         ordinary,
         @fromBackingInt(@intCast(1)),
         0,
@@ -1163,14 +1311,14 @@ test "group cancellation preserves unrelated ownership and payload bytes" {
     }
 
     const reserved = try pool.reserve(members[0]);
-    const ready = try pool.publish(
+    const ready = try pool.publishMetadata(
         try pool.reserve(members[1]),
         @fromBackingInt(@intCast(1)),
         1,
         1,
         1,
     );
-    const draining = try pool.publish(
+    const draining = try pool.publishMetadata(
         try pool.reserve(members[2]),
         @fromBackingInt(@intCast(1)),
         1,
@@ -1211,7 +1359,7 @@ test "group cancellation preserves unrelated ownership and payload bytes" {
         try std.testing.expectEqual(mark, pool.bytes()[offset]);
     }
 
-    const reserved_ready = try pool.publish(
+    const reserved_ready = try pool.publishMetadata(
         reserved,
         @fromBackingInt(@intCast(1)),
         0,
@@ -1264,13 +1412,13 @@ test "ordinary priority stale tokens and retirement preserve ownership" {
     );
     try std.testing.expectError(
         error.InvalidCounts,
-        pool.publish(reserved, @fromBackingInt(@intCast(3)), resource_limit + 1, 0, 0),
+        pool.publishMetadata(reserved, @fromBackingInt(@intCast(3)), resource_limit + 1, 0, 0),
     );
     try std.testing.expectError(
         error.InvalidProducerRevision,
-        pool.publish(reserved, @fromBackingInt(@intCast(0)), 0, 0, 0),
+        pool.publishMetadata(reserved, @fromBackingInt(@intCast(0)), 0, 0, 0),
     );
-    const published = try pool.publish(
+    const published = try pool.publishMetadata(
         reserved,
         @fromBackingInt(@intCast(2)),
         resource_limit,
@@ -1289,7 +1437,7 @@ test "ordinary priority stale tokens and retirement preserve ownership" {
     try std.testing.expectError(error.Stale, pool.beginDrain(published));
 
     const second_token = try pool.reserve(second);
-    const second_published = try pool.publish(
+    const second_published = try pool.publishMetadata(
         second_token,
         @fromBackingInt(@intCast(1)),
         1,
@@ -1321,28 +1469,28 @@ test "every token identity and revision rejects stale storage claims" {
     wrong.descriptor_index = descriptor_limit;
     try std.testing.expectError(
         error.Stale,
-        pool.publish(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
+        pool.publishMetadata(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
     );
     wrong = reserved;
     wrong.pane_id = @fromBackingInt(@intCast(93));
     try std.testing.expectError(
         error.Stale,
-        pool.publish(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
+        pool.publishMetadata(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
     );
     wrong = reserved;
     wrong.source_id = @fromBackingInt(@intCast(94));
     try std.testing.expectError(
         error.Stale,
-        pool.publish(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
+        pool.publishMetadata(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
     );
     wrong = reserved;
     wrong.candidate_revision = 8;
     try std.testing.expectError(
         error.Stale,
-        pool.publish(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
+        pool.publishMetadata(wrong, @fromBackingInt(@intCast(1)), 0, 0, 0),
     );
 
-    const published = try pool.publish(
+    const published = try pool.publishMetadata(
         reserved,
         @fromBackingInt(@intCast(7)),
         0,
@@ -1413,7 +1561,7 @@ test "reservation and candidate identities never repeat across reuse" {
     try pool.register(member.descriptor_index, member.pane_id, member.source_id);
 
     const old_reserved = try pool.reserve(member);
-    const old_ready = try pool.publish(
+    const old_ready = try pool.publishMetadata(
         old_reserved,
         @fromBackingInt(@intCast(1)),
         0,
@@ -1427,12 +1575,12 @@ test "reservation and candidate identities never repeat across reuse" {
     try std.testing.expectEqual(old_reserved.block_index, replacement.block_index);
     try std.testing.expectError(
         error.Stale,
-        pool.publish(old_reserved, @fromBackingInt(@intCast(2)), 0, 0, 1),
+        pool.publishMetadata(old_reserved, @fromBackingInt(@intCast(2)), 0, 0, 1),
     );
     try std.testing.expectError(error.Stale, pool.beginDrain(old_ready));
     try std.testing.expectError(error.Stale, pool.retryDrain(old_ready));
     try std.testing.expectError(error.Stale, pool.completeDrain(old_ready));
-    const replacement_ready = try pool.publish(
+    const replacement_ready = try pool.publishMetadata(
         replacement,
         @fromBackingInt(@intCast(2)),
         0,
@@ -1457,7 +1605,7 @@ test "reservation and candidate identities never repeat across reuse" {
     try std.testing.expectError(error.Stale, pool.cancelGroup(9));
     try std.testing.expectError(
         error.Stale,
-        pool.publish(
+        pool.publishMetadata(
             first_group.tokens[0],
             @fromBackingInt(@intCast(3)),
             0,
@@ -1613,7 +1761,7 @@ fn raceFixture(
     revision: u64,
 ) !Token {
     try pool.register(member.descriptor_index, member.pane_id, member.source_id);
-    const token = try pool.publish(
+    const token = try pool.publishMetadata(
         try pool.reserve(member),
         @fromBackingInt(@intCast(revision)),
         1,

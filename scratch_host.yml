@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: terminal_pool_handoff
+  checkpoint: terminal_visible_set
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -58,11 +58,11 @@ planned_checkpoints:
     product_scope: Host pool storage and proofs only
     commit_boundary: Add bounded terminal handoff pool storage
   - id: terminal_pool_handoff
-    status: active
+    status: accepted
     product_scope: terminal publication and Renderer drainage through shared blocks
     commit_boundary: Share terminal update handoff blocks
   - id: terminal_visible_set
-    status: pending
+    status: active
     product_scope: bounded latest visible-set request and group reservation
     commit_boundary: Reserve visible terminal updates transactionally
   - id: terminal_pool_freeze
@@ -647,7 +647,7 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - implement and review terminal_pool_handoff without visible-set behavior
+  - implement and review terminal_visible_set without pool-freeze or capacity widening
   - reviewer commits each accepted checkpoint before the next checkpoint begins
   - preserve surface widening for surface_admission_design and later checkpoints
 
@@ -666,8 +666,8 @@ terminal_pool_storage:
     block_count: 16
     descriptor_count: 64
   retained_runtime_path:
-    dedicated_pending_slot: unchanged
-    terminal_pool_handoff: not_started
+    dedicated_pending_slot: retained_as_parity_evidence_only
+    terminal_pool_handoff: active
     visible_set_behavior: not_started
   proofs:
     - checked arithmetic rejects addition and multiplication overflow before allocation
@@ -697,6 +697,59 @@ terminal_pool_storage:
     - Host and workspace check and test pass in all four optimization modes
     - disposable pending-pool arithmetic receipt passes in all four modes
     - source audit and protocol catalogue validation pass
+    - durable YAML parses with duplicate-key rejection
+    - pinned formatting and git diff check pass
+    - no GUI or compositor process was launched
+
+terminal_pool_handoff:
+  status: accepted
+  scope:
+    - ordinary one-pane terminal publication and Renderer drainage only
+    - reserve shared storage before consumptive terminal.Content.takeUpdate
+    - copy canonical Canvas uploads, removals, commands, and pixel bytes
+    - release/acquire immutable ownership transfer
+    - exact Composer rejection retry and acceptance release
+    - dedicated PendingSlot remains only as parity evidence until terminal_pool_freeze
+  implementation:
+    - Boundary owns one fixed terminal_pool.Pool instead of allocating one PendingSlot per production entry
+    - entry descriptor indices map exact PaneId and Composer SourceId identities
+    - terminal Logical owners retain only the Boundary and terminal_pool.Member needed for ordinary reservation
+    - Renderer drains only published terminal_pool.Token values and never reads descriptor storage
+    - Composer rejection performs draining to ready without changing copied bytes
+    - Composer acceptance clears block metadata before release-store free and then clears the matching entry token
+    - retirement competes for ready ownership and retries while reserved or draining
+    - reserveUpdate holds the Boundary mutex while validating exact entry identity, active descriptor, live lifecycle, nonretiring state, and absent ready token
+    - one private PoolReservation releases every claimed block unless successful publication disarms it
+    - stale publication caused by close or retirement after reservation is recoverable non-publication: the exact reservation is cancelled and the pane is marked for full Content recovery
+    - malformed counts, pixels, revision, arithmetic, or impossible block ownership from canonical Content remain fatal invariant failures after unconditional reservation cleanup
+    - the consumed sparse update is never described as retryable; only the subsequent complete recovery is publishable
+    - Composer rejection restores ready and issues at most one deferred Renderer wake for that token; Renderer retains the old frame instead of terminating
+    - one private DrainClaim restores draining to ready on every ordinary early exit and disarms only after explicit rejection restoration or accepted completion
+  parity:
+    - private dedicated Transfer branch remains exercised by the established PendingSlot and scheduler tests
+    - production lifecycle creation activates only pooled descriptors
+    - no compatibility type or package-root export was added
+  exclusions:
+    - no VisibleSetRequest or group reveal integration
+    - no dedicated PendingSlot deletion
+    - no Composer, Vulkan, atlas, topology, or GUI change
+    - terminal_pool_freeze has not begun
+  current_proofs:
+    - canonical pixel bytes remain immutable after producer storage changes
+    - Renderer rejection republishes the exact ready token and later acceptance releases it
+    - the real two-owner runtime uses one shared Content.Work and distinct pooled publications
+    - sixteen occupied blocks preserve real PTY progress; after one release the terminal thread acquire-observes free, detaches the prior descriptor, and publishes the waiting owner with the same Work
+    - close waits for draining ownership and retires the descriptor exactly once
+    - completed drainage with an uncleared entry token rejects producer reservation without claiming a block
+    - clearing the matching old token permits a newer publication
+    - the real Logical.publishReservedPooled path proves close after reservation causes post-extraction stale recovery, exact cancellation, and later global block reuse
+    - abandoning a successfully acquired Renderer DrainClaim restores the exact ready token for later drainage
+    - another descriptor reuses global free storage while stale entry and token facts remain unable to claim it
+    - reserved, ready, and draining retirement boundaries strand no token or block
+  validation:
+    - focused pool tests pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+    - Host and workspace check and test pass in all four optimization modes
+    - source audit and protocol validation pass
     - durable YAML parses with duplicate-key rejection
     - pinned formatting and git diff check pass
     - no GUI or compositor process was launched

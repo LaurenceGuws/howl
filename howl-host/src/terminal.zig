@@ -7,8 +7,40 @@ const vt = @import("howl_vt");
 const wayland = @import("howl_wayland");
 const facts = @import("terminal_runtime_facts");
 const handoff = @import("terminal_handoff");
+const terminal_pool = @import("terminal_pool");
 const terminal_render = render.terminal;
 const terminal_images = render.terminal_images;
+
+const PooledTransfer = struct {
+    boundary: *handoff.Boundary,
+    member: terminal_pool.Member,
+};
+
+const Transfer = union(enum) {
+    dedicated: *handoff.PendingSlot,
+    pooled: PooledTransfer,
+};
+
+const PoolReservation = struct {
+    boundary: *handoff.Boundary,
+    token: terminal_pool.Token,
+    active: bool = true,
+
+    fn publish(
+        self: *PoolReservation,
+        update: render.canvas.ProducerUpdate,
+    ) terminal_pool.PublishError!void {
+        try self.boundary.publishUpdate(self.token, update);
+        self.active = false;
+    }
+
+    fn deinit(self: *PoolReservation) void {
+        if (!self.active) return;
+        self.boundary.cancelUpdate(self.token) catch
+            @panic("pooled terminal reservation cleanup failed");
+        self.active = false;
+    }
+};
 
 /// Maximum logical terminal owners serviced by one runtime thread.
 const owner_limit: usize = 64;
@@ -64,7 +96,8 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     error{ StaleContainerRequest, ContainerReplyMismatch } ||
     terminal_render.Error || terminal_render.Content.RecoverError ||
     terminal_render.Content.ApplyError || terminal_images.Error ||
-    handoff.PublishError;
+    handoff.PublishError || terminal_pool.ReserveError ||
+    terminal_pool.TransitionError || terminal_pool.PublishError;
 /// Reports a fallible VT candidate or PTY kernel resize before VT commit.
 const ResizeError = vt.Terminal.ResizeError || pty.ResizeError;
 
@@ -239,6 +272,12 @@ const VisualState = struct {
         }
         self.image_generation = update.generation;
     }
+
+    fn requireRecovery(self: *VisualState) void {
+        self.initialized = false;
+        self.image_identity_count = 0;
+        self.image_generation = 0;
+    }
 };
 
 /// Exclusively owns one logical terminal's PTY, VT, and child-write queue.
@@ -249,7 +288,7 @@ const Logical = struct {
     machine: vt.Terminal,
     content: render.terminal.Content,
     visual: *VisualState,
-    slot: *handoff.PendingSlot,
+    transfer: Transfer,
     geometry: terminal_render.Content.Geometry,
     writes: WriteQueue = .{},
     /// The oldest caller-neutral consequence observed by this owner. Query and
@@ -270,7 +309,7 @@ const Logical = struct {
         cols: u16,
         rows: u16,
         fonts: *render.terminal_text.FontMap,
-        slot: *handoff.PendingSlot,
+        transfer: Transfer,
     ) LogicalInitError!Logical {
         if (@backingInt(pane) == 0) return error.InvalidPane;
         const cell_count = std.math.mul(usize, rows, cols) catch
@@ -305,7 +344,7 @@ const Logical = struct {
             .machine = machine,
             .content = content,
             .visual = visual,
-            .slot = slot,
+            .transfer = transfer,
             .geometry = paneGeometry(cols, rows),
         };
     }
@@ -430,12 +469,47 @@ const Logical = struct {
         work: *render.terminal.Content.Work,
     ) ServiceError!bool {
         if (!self.dirty) return false;
-        self.slot.reserve() catch |failure| switch (failure) {
-            error.Pending => return false,
+        const published = switch (self.transfer) {
+            .dedicated => |slot| try self.publishDedicated(slot, work),
+            .pooled => |pooled| try self.publishPooled(pooled, work),
+        };
+        if (published) self.dirty = false;
+        return published;
+    }
+
+    fn publishPooled(
+        self: *Logical,
+        pooled: PooledTransfer,
+        work: *render.terminal.Content.Work,
+    ) ServiceError!bool {
+        const token = pooled.boundary.reserveUpdate(pooled.member) catch |failure| switch (failure) {
+            error.Busy, error.NoCapacity, error.GroupPriority => return false,
             else => return failure,
         };
+        return self.publishReservedPooled(pooled, token, work);
+    }
+
+    fn publishReservedPooled(
+        self: *Logical,
+        pooled: PooledTransfer,
+        token: terminal_pool.Token,
+        work: *render.terminal.Content.Work,
+    ) ServiceError!bool {
+        // Close may legitimately move the Boundary entry to closing after
+        // reservation and before publication. That exact Stale result cancels
+        // the block and forces full recovery below. Malformed counts, pixels,
+        // revisions, arithmetic, or pool ownership from canonical Content are
+        // invariant failures and remain fatal after the same cleanup.
+        var reservation = PoolReservation{
+            .boundary = pooled.boundary,
+            .token = token,
+        };
+        defer reservation.deinit();
+        var update_consumed = false;
+        defer {
+            if (update_consumed) self.visual.requireRecovery();
+        }
         self.visual.project(&self.machine, &self.content) catch |failure| {
-            self.slot.cancelReserved();
             switch (failure) {
                 error.InsufficientCells,
                 error.InsufficientPatches,
@@ -451,7 +525,59 @@ const Logical = struct {
                 else => return failure,
             }
         };
-        self.slot.publishReserved(&self.content, work, self.geometry) catch |failure| switch (failure) {
+        const update = self.content.takeUpdate(work, self.geometry) catch |failure| {
+            switch (failure) {
+                error.CommandLimit,
+                error.DecorationLimit,
+                error.GlyphLimit,
+                error.MaskLimit,
+                error.ResourceMutationLimit,
+                error.UploadByteLimit,
+                => return false,
+                else => return failure,
+            }
+        };
+        update_consumed = true;
+        reservation.publish(update) catch |failure| switch (failure) {
+            error.Stale => return false,
+            error.InvalidCounts,
+            error.InvalidPixels,
+            error.InvalidProducerRevision,
+            error.ArithmeticOverflow,
+            error.Busy,
+            => return failure,
+        };
+        update_consumed = false;
+        return true;
+    }
+
+    fn publishDedicated(
+        self: *Logical,
+        slot: *handoff.PendingSlot,
+        work: *render.terminal.Content.Work,
+    ) ServiceError!bool {
+        slot.reserve() catch |failure| switch (failure) {
+            error.Pending => return false,
+            else => return failure,
+        };
+        self.visual.project(&self.machine, &self.content) catch |failure| {
+            slot.cancelReserved();
+            switch (failure) {
+                error.InsufficientCells,
+                error.InsufficientPatches,
+                error.InsufficientImagePixels,
+                error.InsufficientImageUploads,
+                error.InsufficientImageRemovals,
+                error.InsufficientImagePlacements,
+                error.ImageLimit,
+                error.ImagePixelLimit,
+                error.PlacementLimit,
+                error.ResourceMutationLimit,
+                => return false,
+                else => return failure,
+            }
+        };
+        slot.publishReserved(&self.content, work, self.geometry) catch |failure| switch (failure) {
             error.CommandLimit,
             error.DecorationLimit,
             error.GlyphLimit,
@@ -461,7 +587,6 @@ const Logical = struct {
             => return false,
             else => return failure,
         };
-        self.dirty = false;
         return true;
     }
 
@@ -548,7 +673,8 @@ const RuntimeError = error{
     OwnerLimit,
     DuplicatePane,
     UnknownPane,
-} || LogicalInitError;
+} || LogicalInitError || terminal_pool.RegisterError ||
+    terminal_pool.RetireError;
 /// Reports exact owner service or native poll failure for one runtime round.
 const PollError = ServiceError || error{PollFailed};
 
@@ -563,6 +689,9 @@ const PollRound = struct {
     published: usize = 0,
 };
 
+/// Reports exact process-root terminal-boundary construction failures.
+pub const BoundaryInitError = handoff.BoundaryInitError;
+
 /// Reports exact typed lifecycle application and slot-retirement contention.
 const LifecycleError = RuntimeError || ResizeError || error{UnknownPane};
 
@@ -570,7 +699,7 @@ const LifecycleError = RuntimeError || ResizeError || error{UnknownPane};
 pub fn initBoundary(
     io: std.Io,
     allocator: std.mem.Allocator,
-) error{Signal}!handoff.Boundary {
+) BoundaryInitError!handoff.Boundary {
     return handoff.Boundary.init(io, allocator, contentLimits());
 }
 
@@ -634,11 +763,6 @@ fn runFallible(
         const owner_round = try runtime.servicePollSet(&owner_set);
         if (owner_round.published != 0) boundary.publishReady();
     }
-    for (runtime.owners) |*maybe_owner| {
-        const owner = if (maybe_owner.*) |*value| value else continue;
-        const discarded = try owner.slot.retire();
-        if (discarded) {}
-    }
 }
 
 /// Owns the fixed logical-terminal collection and stable poll scheduling.
@@ -701,7 +825,7 @@ const Runtime = struct {
         command: ?[]const u8,
         cols: u16,
         rows: u16,
-        slot: *handoff.PendingSlot,
+        transfer: Transfer,
     ) RuntimeError!void {
         if (self.find(pane) != null) return error.DuplicatePane;
         if (self.count == owner_limit) return error.OwnerLimit;
@@ -713,7 +837,7 @@ const Runtime = struct {
             cols,
             rows,
             self.fonts,
-            slot,
+            transfer,
         );
         errdefer owner.deinit();
         const index = self.freeIndex() orelse return error.OwnerLimit;
@@ -812,7 +936,7 @@ const Runtime = struct {
     ) LifecycleError!void {
         switch (operation) {
             .create => |create| {
-                const slot = boundary.terminalSlot(create.pane) orelse
+                const member = boundary.activateTransfer(create.pane) catch
                     return error.UnknownPane;
                 try self.add(
                     create.pane,
@@ -820,7 +944,10 @@ const Runtime = struct {
                     null,
                     create.cols,
                     create.rows,
-                    slot,
+                    .{ .pooled = .{
+                        .boundary = boundary,
+                        .member = member,
+                    } },
                 );
                 try boundary.markLive(create.pane);
                 return;
@@ -1000,7 +1127,7 @@ test "older VT replies remain ordered before newly encoded input" {
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     const summary = try owner.machine.feed("\x1b[5n");
     try std.testing.expect(summary.state_changed);
@@ -1040,7 +1167,7 @@ test "repeated consequences are consumed by exact identity without stalling prog
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(7));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect((try owner.machine.feed("\x07\x07")).state_changed);
     const first = owner.machine.consequenceHead().?;
@@ -1065,7 +1192,7 @@ test "reply-required consequences receive bounded Host replies and clear the hea
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(70));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
 
     try std.testing.expect((try owner.machine.feed("\x1b]52;c;?\x07")).state_changed);
@@ -1109,7 +1236,7 @@ test "realistic configured sparse terminal fits the production Composer candidat
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(10));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 240, 100, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 240, 100, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect((try owner.machine.feed(
         "\x1b[4mHowl terminal runtime\x1b[0m\r\n$ ",
@@ -1124,11 +1251,11 @@ test "realistic configured sparse terminal fits the production Composer candidat
     try std.testing.expect(update.commands.len <= admitted_commands);
     try std.testing.expect(update.uploads.len <= admitted_resources);
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
+        .sources = 2,
         .retained_resources = 128,
         .retained_commands = 4096,
         .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
+        .composition_sources = 2,
         .candidate_resources = admitted_resources,
         .candidate_commands = admitted_commands,
         .candidate_pixel_bytes = 4 * 1024 * 1024,
@@ -1147,7 +1274,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(71));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 100, 50, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 100, 50, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     const transcript = try std.testing.allocator.alloc(u8, 5_000 * 6);
     defer std.testing.allocator.free(transcript);
@@ -1183,15 +1310,14 @@ test "close racing an occupied slot retries and retires exactly once" {
     defer composer.deinit();
     const source_id = try composer.registerSource();
     try boundary.register(pane, source_id, 8, 2);
-    const slot = boundary.terminalSlot(pane).?;
-    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, slot);
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
+    const owner_index = runtime.find(pane).?;
+    const pooled = runtime.owners[owner_index].?.transfer.pooled;
+    const reserved = try boundary.reserveUpdate(pooled.member);
     try boundary.close(pane);
-    try slot.reserve();
-    const create = boundary.takeLifecycle().?;
-    try std.testing.expect(std.meta.activeTag(create) == .create);
     try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
     try std.testing.expect(runtime.pending_close == pane);
-    slot.cancelReserved();
+    try boundary.cancelUpdate(reserved);
     try runtime.retryPendingClose(&boundary);
     try std.testing.expect(runtime.pending_close == null);
     const retired = boundary.takeRetired().?;
@@ -1223,14 +1349,13 @@ test "two-owner renderer drainage retires one source without stale drainage" {
     const second_source = try composer.registerSource();
     try boundary.register(first, first_source, 8, 2);
     try boundary.register(second, second_source, 8, 2);
-    try runtime.add(first, "/bin/sh", "sleep 1", 8, 2, boundary.terminalSlot(first).?);
-    try runtime.add(second, "/bin/sh", "sleep 1", 8, 2, boundary.terminalSlot(second).?);
-    try boundary.markLive(first);
-    try boundary.markLive(second);
-    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
-    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
     try std.testing.expect(try runtime.servicePending() == 2);
-    try std.testing.expectEqual(@as(usize, 2), try boundary.drainReady(&composer));
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        (try boundary.drainReady(&composer)).accepted,
+    );
     var wake = std.posix.pollfd{ .fd = boundary.terminalFd(), .events = std.posix.POLL.IN, .revents = 0 };
     try std.testing.expectEqual(@as(usize, 1), @as(usize, @intCast(try std.posix.poll((&wake)[0..1], 0))));
     try boundary.drainTerminalWake();
@@ -1240,9 +1365,132 @@ test "two-owner renderer drainage retires one source without stale drainage" {
     try std.testing.expectEqual(first, retired.pane);
     try composer.removeSource(retired.source);
     try boundary.finishRetired(first);
-    try std.testing.expectEqual(@as(usize, 0), try boundary.drainReady(&composer));
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try boundary.drainReady(&composer)).accepted,
+    );
     try std.testing.expect(runtime.find(first) == null);
     try std.testing.expect(runtime.find(second) != null);
+}
+
+test "pool exhaustion preserves PTY progress and shared Work reuse" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 1024,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(21));
+    const source = try composer.registerSource();
+    try boundary.register(pane, source, 8, 2);
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
+
+    var reservations: [16]terminal_pool.Token = undefined;
+    for (&reservations, 0..) |*token, index| {
+        const identity: u64 = @intCast(index + 100);
+        const dummy_pane: render.chrome.PaneId =
+            @fromBackingInt(identity);
+        const dummy_source: render.canvas.SourceId =
+            @fromBackingInt(identity);
+        try boundary.register(dummy_pane, dummy_source, 1, 1);
+        try std.testing.expect(
+            std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+        );
+        const member = try boundary.activateTransfer(dummy_pane);
+        token.* = try boundary.reserveUpdate(member);
+    }
+    try std.testing.expectEqual(@as(usize, 0), try runtime.servicePending());
+
+    var progressed = false;
+    for (0..128) |_| {
+        try std.testing.expect(try runtime.pollOnce(20) <= 1);
+        const view = runtime.owners[runtime.find(pane).?].?.machine.semanticView(0);
+        if (view.cellAt(0, 0) != 0) {
+            progressed = true;
+            break;
+        }
+    }
+    try std.testing.expect(progressed);
+    try std.testing.expectEqual(@as(usize, 0), try runtime.servicePending());
+
+    try boundary.cancelUpdate(reservations[0]);
+    try std.testing.expectEqual(@as(usize, 1), try runtime.servicePending());
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.drainReady(&composer)).accepted,
+    );
+    for (reservations[1..]) |token| try boundary.cancelUpdate(token);
+}
+
+test "consumed publication failure releases reservation and forces recovery" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 128,
+        .retained_commands = 1024,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 2,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(22));
+    const source = try composer.registerSource();
+    try boundary.register(pane, source, 8, 2);
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    const pooled = owner.transfer.pooled;
+    const token = try boundary.reserveUpdate(pooled.member);
+    try boundary.close(pane);
+    try std.testing.expect(
+        !try owner.publishReservedPooled(pooled, token, &runtime.work),
+    );
+    try std.testing.expect(!owner.visual.initialized);
+    try runtime.applyLifecycle(&boundary, boundary.takeLifecycle().?, "/bin/sh");
+    const retired = boundary.takeRetired().?;
+    try composer.removeSource(retired.source);
+    try boundary.finishRetired(retired.pane);
+
+    const replacement: render.chrome.PaneId =
+        @fromBackingInt(@intCast(23));
+    const replacement_source = try composer.registerSource();
+    try boundary.register(replacement, replacement_source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const replacement_member = try boundary.activateTransfer(replacement);
+    const replacement_token = try boundary.reserveUpdate(replacement_member);
+    try boundary.publishUpdate(replacement_token, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    const drainage = try boundary.drainReady(&composer);
+    try std.testing.expectEqual(@as(usize, 1), drainage.accepted);
+    try std.testing.expect(drainage.rejected == null);
+    try boundary.close(replacement);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
+    try std.testing.expect(try boundary.retireTransfer(replacement));
+    try boundary.markRetired(replacement);
+    const replacement_retired = boundary.takeRetired().?;
+    try composer.removeSource(replacement_retired.source);
+    try boundary.finishRetired(replacement_retired.pane);
 }
 
 test "multiple real PTYs share one bounded poll set without noisy starvation" {
@@ -1328,7 +1576,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
         "i=0; while [ $i -lt 2000000 ]; do printf x; i=$((i+1)); done; exit 0",
         16,
         16,
-        &noisy_slot,
+        .{ .dedicated = &noisy_slot },
     );
     try runtime.add(
         quiet_id,
@@ -1336,7 +1584,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
         "while IFS= read -r line; do printf q; done",
         16,
         16,
-        &quiet_slot,
+        .{ .dedicated = &quiet_slot },
     );
     try noisy_slot.reserve();
     noisy_reserved = true;
@@ -1407,14 +1655,14 @@ test "runtime admits observes and retires real shell owners transactionally" {
     const second: render.chrome.PaneId = @fromBackingInt(@intCast(2));
     try std.testing.expectError(
         error.InvalidPane,
-        runtime.add(@fromBackingInt(@intCast(0)), "/bin/sh", "exit 0", 16, 16, &first_slot),
+        runtime.add(@fromBackingInt(@intCast(0)), "/bin/sh", "exit 0", 16, 16, .{ .dedicated = &first_slot }),
     );
-    try runtime.add(first, "/bin/sh", "printf first; exit 0", 16, 16, &first_slot);
+    try runtime.add(first, "/bin/sh", "printf first; exit 0", 16, 16, .{ .dedicated = &first_slot });
     try std.testing.expectError(
         error.DuplicatePane,
-        runtime.add(first, "/bin/sh", "exit 0", 16, 16, &first_slot),
+        runtime.add(first, "/bin/sh", "exit 0", 16, 16, .{ .dedicated = &first_slot }),
     );
-    try runtime.add(second, "/bin/sh", "printf second; exit 0", 16, 16, &second_slot);
+    try runtime.add(second, "/bin/sh", "printf second; exit 0", 16, 16, .{ .dedicated = &second_slot });
     var rounds: usize = 0;
     while (rounds < 1024) : (rounds += 1) {
         const serviced = try runtime.pollOnce(20);
@@ -1464,7 +1712,7 @@ test "PTY resize failure discards prepared VT and later live resize commits" {
         slot.deinit();
     }
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 4, 2, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 4, 2, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     const before = owner.machine.semanticSequence();
     try owner.resize(7, 3);
@@ -1509,7 +1757,7 @@ test "one runtime thread publishes a real shell through the copied slot" {
         try std.testing.expect(ready <= 1);
         if (ready != 0) {
             try boundary.drainRendererWake();
-            drained += try boundary.drainReady(&composer);
+            drained += (try boundary.drainReady(&composer)).accepted;
             if (drained != 0) break;
         }
         descriptor.revents = 0;
@@ -1552,7 +1800,7 @@ test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
     const status = boundary.status();
     try std.testing.expect(status.stopped);
     try std.testing.expect(!status.failed);
-    try std.testing.expect(boundary.terminalSlot(pane) == null);
+    try std.testing.expect(boundary.sourceFor(pane) == null);
     try std.testing.expect(boundary.takeLifecycle() == null);
 }
 
@@ -1565,7 +1813,7 @@ test "interpreted unmatched keys route by PaneId under current VT modes" {
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, &slot);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 8, 2, .{ .dedicated = &slot });
     var key = std.mem.zeroes(wayland.input.Key);
     key.state = .pressed;
     key.keysym = @fromBackingInt(@intCast('a'));
@@ -1606,7 +1854,7 @@ test "reaped child final output remains drainable without a busy HUP loop" {
         8,
         2,
         &fonts,
-        &slot,
+        .{ .dedicated = &slot },
     );
     defer owner.deinit();
     var work = try render.terminal.Content.Work.init(

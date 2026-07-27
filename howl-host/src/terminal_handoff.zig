@@ -5,6 +5,7 @@ const render = @import("howl_render");
 const wayland = @import("howl_wayland");
 const vt = @import("howl_vt");
 const c = @import("host_c");
+const pool_storage = @import("terminal_pool");
 const canvas = render.canvas;
 const terminal = render.terminal;
 const PaneId = render.chrome.PaneId;
@@ -12,6 +13,27 @@ const owner_limit: usize = 64;
 const operation_limit: usize = 128;
 const input_limit: usize = 256;
 const lifecycle_batch_limit: usize = 128;
+
+/// Reports fixed pool construction or native wake-descriptor failure.
+pub const BoundaryInitError = error{
+    ArithmeticOverflow,
+    OutOfMemory,
+    Signal,
+};
+
+/// Reports immutable pool-drain transition failure.
+pub const DrainError = pool_storage.TransitionError;
+
+/// Reports one bounded Renderer drainage pass without consuming rejection.
+pub const DrainResult = struct {
+    /// Counts updates accepted into Composer and released to pool reuse.
+    accepted: usize,
+    /// Preserves the first exact Composer rejection after restoring ready.
+    rejected: ?canvas.Composer.Error,
+};
+
+/// Reports stale lifecycle identity or pooled retirement contention.
+pub const TransferRetireError = error{UnknownPane} || pool_storage.RetireError;
 
 /// Reports invalid construction limits or allocation failure.
 pub const InitError = error{
@@ -321,8 +343,40 @@ const EntryState = enum {
 const Entry = struct {
     pane: PaneId,
     source: canvas.SourceId,
-    slot: PendingSlot,
+    descriptor_index: u8,
+    ready: ?pool_storage.Token = null,
+    retry_wake_issued: bool = false,
+    pool_active: bool = false,
+    pool_retiring: bool = false,
     state: EntryState = .registered,
+};
+
+const DrainClaim = struct {
+    pool: *pool_storage.Pool,
+    token: pool_storage.Token,
+    active: bool = true,
+
+    fn update(self: *DrainClaim) canvas.ProducerUpdate {
+        return self.pool.drainingUpdate(self.token) catch
+            @panic("claimed terminal pool block metadata became invalid");
+    }
+
+    fn reject(self: *DrainClaim) void {
+        self.pool.retryDrain(self.token) catch
+            @panic("claimed terminal pool block could not return to ready");
+        self.active = false;
+    }
+
+    fn complete(self: *DrainClaim) void {
+        self.pool.completeDrain(self.token) catch
+            @panic("claimed terminal pool block could not complete");
+        self.active = false;
+    }
+
+    fn deinit(self: *DrainClaim) void {
+        if (!self.active) return;
+        self.reject();
+    }
 };
 
 /// Owns fixed terminal lifecycle facts, copied update slots, and directional wakes.
@@ -332,10 +386,11 @@ const Entry = struct {
 /// Neither wake direction acknowledges presentation or GPU progress.
 pub const Boundary = struct {
     io: std.Io,
-    allocator: std.mem.Allocator,
     limits: terminal.Content.Limits,
+    pool: pool_storage.Pool,
     mutex: std.Io.Mutex = .init,
     entries: [owner_limit]?Entry = @splat(null),
+    descriptor_issued: [owner_limit]bool = @splat(false),
     operations: [operation_limit]Lifecycle = undefined,
     operation_head: u8 = 0,
     operation_count: u8 = 0,
@@ -357,30 +412,41 @@ pub const Boundary = struct {
         io: std.Io,
         allocator: std.mem.Allocator,
         limits: terminal.Content.Limits,
-    ) error{Signal}!Boundary {
+    ) BoundaryInitError!Boundary {
         const terminal_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (terminal_fd < 0) return error.Signal;
         errdefer closeDescriptor(terminal_fd);
         const renderer_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (renderer_fd < 0) return error.Signal;
+        errdefer closeDescriptor(renderer_fd);
+        const pool = try pool_storage.Pool.init(allocator);
         return .{
             .io = io,
-            .allocator = allocator,
             .limits = limits,
+            .pool = pool,
             .terminal_fd = terminal_fd,
             .renderer_fd = renderer_fd,
         };
     }
 
-    /// Retires every slot and closes both wakes after runtime owners join.
+    /// Retires every descriptor and closes both wakes after runtime owners join.
     pub fn deinit(self: *Boundary) void {
         for (&self.entries) |*maybe_entry| if (maybe_entry.*) |*entry| {
-            const discarded = entry.slot.retire() catch
-                @panic("terminal slot remained in transfer during final cleanup");
-            if (discarded) {}
-            entry.slot.deinit();
+            if (entry.pool_active and !entry.pool_retiring)
+                self.pool.beginRetire(
+                    entry.descriptor_index,
+                    entry.pane,
+                    entry.source,
+                ) catch @panic("terminal pool descriptor cleanup failed");
+            if (entry.pool_active)
+                self.pool.finishRetire(
+                    entry.descriptor_index,
+                    entry.pane,
+                    entry.source,
+                ) catch @panic("terminal pool block remained in transfer during final cleanup");
             maybe_entry.* = null;
         };
+        self.pool.deinit();
         closeDescriptor(self.renderer_fd);
         closeDescriptor(self.terminal_fd);
         self.* = undefined;
@@ -404,15 +470,20 @@ pub const Boundary = struct {
         const cells = std.math.mul(usize, cols, rows) catch
             return error.InvalidPane;
         if (cells > self.limits.cells) return error.InvalidPane;
-        var slot = try PendingSlot.init(self.allocator, self.limits);
-        errdefer slot.deinit();
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping) return error.OperationLimit;
         if (self.find(pane) != null) return error.DuplicatePane;
         const index = self.freeUnreservedIndex() orelse return error.OwnerLimit;
-        try self.pushLocked(.{ .create = .{ .pane = pane, .cols = cols, .rows = rows } });
-        self.entries[index] = .{ .pane = pane, .source = source, .slot = slot };
+        if (self.operation_count + self.reserved_operation_count == self.operations.len)
+            return error.OperationLimit;
+        self.pushReservedLocked(.{ .create = .{ .pane = pane, .cols = cols, .rows = rows } });
+        self.entries[index] = .{
+            .pane = pane,
+            .source = source,
+            .descriptor_index = @intCast(index),
+        };
+        self.descriptor_issued[index] = true;
         signal(self.terminal_fd);
     }
 
@@ -430,7 +501,6 @@ pub const Boundary = struct {
         inputs: [2]TerminalInput = undefined,
         input_count: usize,
         registration: ?Registration,
-        slot: ?PendingSlot,
         committed: bool = false,
 
         /// Publishes every prepared fact allocation-free, or reports shutdown.
@@ -450,9 +520,9 @@ pub const Boundary = struct {
                 boundary.entries[index] = .{
                     .pane = registration.pane,
                     .source = registration.source,
-                    .slot = self.slot.?,
+                    .descriptor_index = @intCast(index),
                 };
-                self.slot = null;
+                boundary.descriptor_issued[index] = true;
             }
             boundary.reserved_operation_count -= @intCast(self.operation_count);
             boundary.reserved_input_count -= @intCast(self.input_count);
@@ -487,8 +557,6 @@ pub const Boundary = struct {
             boundary.reserved_entry_index = null;
             boundary.lifecycle_candidate_active = false;
             boundary.mutex.unlock(boundary.io);
-            if (self.slot) |*slot| slot.deinit();
-            self.slot = null;
             self.committed = true;
         }
     };
@@ -510,12 +578,9 @@ pub const Boundary = struct {
     } || InitError)!PreparedLifecycle {
         if (operations.len > lifecycle_batch_limit or inputs.len > 2)
             return error.OperationLimit;
-        var slot: ?PendingSlot = null;
-        errdefer if (slot) |*value| value.deinit();
         if (registration) |value| {
             if (@backingInt(value.pane) == 0 or @backingInt(value.source) == 0)
                 return error.InvalidPane;
-            slot = try PendingSlot.init(self.allocator, self.limits);
         }
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -560,11 +625,9 @@ pub const Boundary = struct {
             .operation_count = operations.len,
             .input_count = inputs.len,
             .registration = registration,
-            .slot = slot,
         };
         @memcpy(prepared.operations[0..operations.len], operations);
         @memcpy(prepared.inputs[0..inputs.len], inputs);
-        slot = null;
         self.reserved_operation_count += @intCast(operations.len);
         self.reserved_input_count += @intCast(inputs.len);
         self.reserved_entry_index = if (registration != null)
@@ -717,12 +780,76 @@ pub const Boundary = struct {
         });
     }
 
-    /// Borrows one admitted slot for terminal publication.
-    pub fn terminalSlot(self: *Boundary, pane: PaneId) ?*PendingSlot {
+    /// Activates one exact pool descriptor under terminal-thread ownership.
+    pub fn activateTransfer(
+        self: *Boundary,
+        pane: PaneId,
+    ) pool_storage.RegisterError!pool_storage.Member {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        const index = self.find(pane) orelse return null;
-        return &self.entries[index].?.slot;
+        const index = self.find(pane) orelse return error.InvalidDescriptor;
+        const entry = &self.entries[index].?;
+        try self.pool.register(
+            entry.descriptor_index,
+            entry.pane,
+            entry.source,
+        );
+        entry.pool_active = true;
+        return .{
+            .descriptor_index = entry.descriptor_index,
+            .pane_id = entry.pane,
+            .source_id = entry.source,
+        };
+    }
+
+    /// Reserves one shared block before consumptive terminal update extraction.
+    pub fn reserveUpdate(
+        self: *Boundary,
+        member: pool_storage.Member,
+    ) pool_storage.ReserveError!pool_storage.Token {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(member.pane_id) orelse return error.Stale;
+        const entry = &self.entries[index].?;
+        if (entry.descriptor_index != member.descriptor_index or
+            entry.source != member.source_id or
+            !entry.pool_active)
+            return error.Stale;
+        if (entry.state != .registered and entry.state != .live)
+            return error.Stale;
+        if (entry.pool_retiring) return error.Stale;
+        if (entry.ready != null) return error.Busy;
+        return self.pool.reserve(member);
+    }
+
+    /// Cancels one reserved block after producer construction failure.
+    pub fn cancelUpdate(
+        self: *Boundary,
+        token: pool_storage.Token,
+    ) pool_storage.TransitionError!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        try self.pool.cancel(token);
+    }
+
+    /// Copies canonical Canvas facts and release-publishes immutable ownership.
+    pub fn publishUpdate(
+        self: *Boundary,
+        token: pool_storage.Token,
+        update: canvas.ProducerUpdate,
+    ) pool_storage.PublishError!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(token.pane_id) orelse return error.Stale;
+        const entry = &self.entries[index].?;
+        if (entry.descriptor_index != token.descriptor_index or
+            entry.source != token.source_id or !entry.pool_active or
+            (entry.state != .registered and entry.state != .live) or
+            entry.pool_retiring or entry.ready != null)
+            return error.Stale;
+        const published = try self.pool.publishUpdate(token, update);
+        entry.ready = published;
+        entry.retry_wake_issued = false;
     }
 
     /// Copies one admitted Composer source for an exact live or pending pane.
@@ -733,33 +860,69 @@ pub const Boundary = struct {
         return self.entries[index].?.source;
     }
 
-    /// Applies every ready immutable update to its exact Composer source.
+    /// Applies every pooled immutable update to its exact Composer source.
     pub fn drainReady(
         self: *Boundary,
         composer: *canvas.Composer,
-    ) canvas.Composer.Error!usize {
-        var slots: [owner_limit]*PendingSlot = undefined;
-        var sources: [owner_limit]canvas.SourceId = undefined;
+    ) DrainError!DrainResult {
+        var tokens: [owner_limit]pool_storage.Token = undefined;
         var count: usize = 0;
         self.mutex.lockUncancelable(self.io);
         for (&self.entries) |*maybe_entry| {
             const entry = if (maybe_entry.*) |*value| value else continue;
             if (entry.state == .retired or entry.state == .removing)
                 continue;
-            slots[count] = &entry.slot;
-            sources[count] = entry.source;
+            if (entry.ready == null) continue;
+            tokens[count] = entry.ready.?;
             count += 1;
         }
         self.mutex.unlock(self.io);
         var drained: usize = 0;
-        for (slots[0..count], sources[0..count]) |slot, source| {
-            if (try slot.drain(composer, source)) drained += 1;
+        var rejected: ?canvas.Composer.Error = null;
+        for (tokens[0..count]) |token| {
+            self.pool.beginDrain(token) catch |failure| switch (failure) {
+                error.Busy, error.Stale => continue,
+                else => return failure,
+            };
+            var claim = DrainClaim{ .pool = &self.pool, .token = token };
+            defer claim.deinit();
+            const update = claim.update();
+            composer.apply(token.source_id, update) catch |failure| {
+                claim.reject();
+                self.mutex.lockUncancelable(self.io);
+                if (self.find(token.pane_id)) |index| {
+                    const entry = &self.entries[index].?;
+                    if (entry.ready != null and
+                        entry.ready.?.reservation_id == token.reservation_id and
+                        !entry.retry_wake_issued)
+                    {
+                        entry.retry_wake_issued = true;
+                        signal(self.renderer_fd);
+                    }
+                }
+                self.mutex.unlock(self.io);
+                if (rejected == null) rejected = failure;
+                continue;
+            };
+            claim.complete();
+            self.mutex.lockUncancelable(self.io);
+            if (self.find(token.pane_id)) |index| {
+                const entry = &self.entries[index].?;
+                if (entry.ready != null and
+                    entry.ready.?.reservation_id == token.reservation_id)
+                {
+                    entry.ready = null;
+                    entry.retry_wake_issued = false;
+                }
+            }
+            self.mutex.unlock(self.io);
+            drained += 1;
         }
         if (drained != 0) self.publishDrained();
-        return drained;
+        return .{ .accepted = drained, .rejected = rejected };
     }
 
-    /// Attempts terminal-side transfer retirement for one closing pane.
+    /// Attempts terminal-side pooled descriptor retirement for one closing pane.
     ///
     /// A concurrent producer copy or Renderer drain returns false without
     /// changing entry or slot state; the terminal runtime retries after the
@@ -767,16 +930,30 @@ pub const Boundary = struct {
     pub fn retireTransfer(
         self: *Boundary,
         pane: PaneId,
-    ) error{UnknownPane}!bool {
+    ) TransferRetireError!bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const index = self.find(pane) orelse return error.UnknownPane;
         const entry = &self.entries[index].?;
         if (entry.state != .closing) return error.UnknownPane;
-        const discarded = entry.slot.retire() catch |failure| switch (failure) {
+        if (!entry.pool_retiring) {
+            try self.pool.beginRetire(
+                entry.descriptor_index,
+                entry.pane,
+                entry.source,
+            );
+            entry.pool_retiring = true;
+        }
+        self.pool.finishRetire(
+            entry.descriptor_index,
+            entry.pane,
+            entry.source,
+        ) catch |failure| switch (failure) {
             error.Busy => return false,
+            else => return failure,
         };
-        if (discarded) {}
+        entry.ready = null;
+        entry.retry_wake_issued = false;
         return true;
     }
 
@@ -813,7 +990,7 @@ pub const Boundary = struct {
         return null;
     }
 
-    /// Releases one slot only after Renderer removes its Composer source.
+    /// Releases one descriptor entry after Renderer removes its Composer source.
     pub fn finishRetired(
         self: *Boundary,
         pane: PaneId,
@@ -823,7 +1000,6 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return error.UnknownPane;
         const entry = &self.entries[index].?;
         if (entry.state != .removing) return error.UnknownPane;
-        entry.slot.deinit();
         self.entries[index] = null;
     }
 
@@ -901,7 +1077,8 @@ pub const Boundary = struct {
                 @as(usize, value) == index
             else
                 false;
-            if (entry == null and !reserved) return index;
+            if (entry == null and !reserved and !self.descriptor_issued[index])
+                return index;
         }
         return null;
     }
@@ -988,7 +1165,7 @@ test "prepared lifecycle discard is byte-silent and commit publishes once" {
         candidate.deinit();
     }
     try std.testing.expect(boundary.takeLifecycle() == null);
-    try std.testing.expect(boundary.terminalSlot(pane) == null);
+    try std.testing.expect(boundary.sourceFor(pane) == null);
 
     var candidate = try boundary.prepareLifecycle(
         &operations,
@@ -1006,7 +1183,7 @@ test "prepared lifecycle discard is byte-silent and commit publishes once" {
     try candidate.commit();
     try std.testing.expectEqual(operations[0], boundary.takeLifecycle().?);
     try std.testing.expect(boundary.takeLifecycle() == null);
-    try std.testing.expect(boundary.terminalSlot(pane) != null);
+    try std.testing.expectEqual(source, boundary.sourceFor(pane).?);
 }
 
 test "shutdown respects lifecycle reservation and cancels candidate without panic" {
@@ -1053,7 +1230,7 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
     );
     try boundary.drainTerminalWake();
     try std.testing.expectError(error.Stopping, candidate.commit());
-    try std.testing.expect(boundary.terminalSlot(pane) == null);
+    try std.testing.expect(boundary.sourceFor(pane) == null);
     try std.testing.expect(boundary.takeLifecycle() == null);
     try std.testing.expect(boundary.takeInput() == null);
     candidate.deinit();
@@ -1084,21 +1261,288 @@ test "closing transfer waits for Renderer draining ownership" {
     const source: canvas.SourceId = @fromBackingInt(@intCast(42));
     try boundary.register(pane, source, 1, 1);
     try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
-    try boundary.close(pane);
-    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .close);
-    const slot = boundary.terminalSlot(pane).?;
-    slot.copyTaken(.{
+    const member = try boundary.activateTransfer(pane);
+    const reserved = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(reserved, .{
         .revision = @fromBackingInt(@intCast(1)),
         .uploads = &.{},
         .removals = &.{},
         .commands = &.{},
     });
-    slot.storeState(.ready, .release);
-    try std.testing.expectEqual(@as(?State, null), slot.claim(.ready, .draining));
+    try boundary.close(pane);
+    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .close);
+    const ready = boundary.entries[0].?.ready.?;
+    try boundary.pool.beginDrain(ready);
     try std.testing.expect(!try boundary.retireTransfer(pane));
-    slot.storeState(.free, .release);
+    try boundary.pool.completeDrain(ready);
     try std.testing.expect(try boundary.retireTransfer(pane));
+    try std.testing.expectError(error.Stale, boundary.retireTransfer(pane));
+    try boundary.markRetired(pane);
+    try std.testing.expectEqual(pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(pane);
+}
+
+test "pooled publication copies bytes retries rejection and releases acceptance" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(@intCast(33));
+    const source: canvas.SourceId = @fromBackingInt(@intCast(1));
+    try boundary.register(pane, source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const member = try boundary.activateTransfer(pane);
+    var pixels = [_]u8{ 1, 2, 3, 4 };
+    const upload = canvas.ResourceUpload{
+        .resource = .{
+            .resource = @fromBackingInt(@intCast(1)),
+            .generation = @fromBackingInt(@intCast(1)),
+        },
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &pixels,
+            .width = 2,
+            .height = 2,
+            .stride = 2,
+        },
+    };
+    const commands = [_]canvas.Input{
+        .{ .solid = .{
+            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        } },
+        .{ .solid = .{
+            .rect = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+            .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
+        } },
+    };
+    const reserved = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(reserved, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{upload},
+        .removals = &.{},
+        .commands = &commands,
+    });
+    pixels = @splat(9);
+    const ready = boundary.entries[0].?.ready.?;
+    try boundary.pool.beginDrain(ready);
+    var abandoned_claim = DrainClaim{
+        .pool = &boundary.pool,
+        .token = ready,
+    };
+    const borrowed = abandoned_claim.update();
+    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, borrowed.uploads[0].pixels.bytes);
+    abandoned_claim.deinit();
+    try boundary.pool.beginDrain(ready);
+    try boundary.pool.retryDrain(ready);
+
+    var narrow = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 16,
+    });
+    defer narrow.deinit();
+    try std.testing.expectEqual(source, try narrow.registerSource());
+    const rejected = try boundary.drainReady(&narrow);
+    try std.testing.expectEqual(@as(usize, 0), rejected.accepted);
+    try std.testing.expectEqual(
+        @as(?canvas.Composer.Error, error.CommandLimit),
+        rejected.rejected,
+    );
+    var retry_wake = std.posix.pollfd{
+        .fd = boundary.rendererFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        @as(usize, @intCast(try std.posix.poll((&retry_wake)[0..1], 0))),
+    );
+    try boundary.drainRendererWake();
+    try boundary.pool.beginDrain(ready);
+    try boundary.pool.retryDrain(ready);
+
+    var accepted = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 4,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 16,
+    });
+    defer accepted.deinit();
+    try std.testing.expectEqual(source, try accepted.registerSource());
+    const accepted_result = try boundary.drainReady(&accepted);
+    try std.testing.expectEqual(@as(usize, 1), accepted_result.accepted);
+    try std.testing.expect(accepted_result.rejected == null);
+    try std.testing.expect(boundary.entries[0].?.ready == null);
+
+    try boundary.close(pane);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
     try std.testing.expect(try boundary.retireTransfer(pane));
+    try boundary.markRetired(pane);
+    try std.testing.expectEqual(pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(pane);
+}
+
+test "completed token blocks same entry until clear and cannot corrupt reuse" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const first_pane: PaneId = @fromBackingInt(@intCast(34));
+    const first_source: canvas.SourceId = @fromBackingInt(@intCast(1));
+    try boundary.register(first_pane, first_source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const first = try boundary.activateTransfer(first_pane);
+    const first_reserved = try boundary.reserveUpdate(first);
+    try boundary.publishUpdate(first_reserved, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    const completed = boundary.entries[0].?.ready.?;
+    try boundary.pool.beginDrain(completed);
+    try boundary.pool.completeDrain(completed);
+    try std.testing.expectError(error.Busy, boundary.reserveUpdate(first));
+
+    boundary.mutex.lockUncancelable(boundary.io);
+    boundary.entries[0].?.ready = null;
+    boundary.mutex.unlock(boundary.io);
+    const second_reserved = try boundary.reserveUpdate(first);
+    try boundary.publishUpdate(second_reserved, .{
+        .revision = @fromBackingInt(@intCast(2)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    const second_completed = boundary.entries[0].?.ready.?;
+    try boundary.pool.beginDrain(second_completed);
+    try boundary.pool.completeDrain(second_completed);
+
+    const other_pane: PaneId = @fromBackingInt(@intCast(35));
+    const other_source: canvas.SourceId = @fromBackingInt(@intCast(2));
+    try boundary.register(other_pane, other_source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const other = try boundary.activateTransfer(other_pane);
+    const other_reserved = try boundary.reserveUpdate(other);
+    try boundary.publishUpdate(other_reserved, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    try std.testing.expectError(
+        error.Stale,
+        boundary.pool.beginDrain(second_completed),
+    );
+
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 4,
+        .retained_commands = 4,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 2,
+        .candidate_resources = 4,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 16,
+    });
+    defer composer.deinit();
+    try std.testing.expectEqual(first_source, try composer.registerSource());
+    try std.testing.expectEqual(other_source, try composer.registerSource());
+    const drainage = try boundary.drainReady(&composer);
+    try std.testing.expectEqual(@as(usize, 1), drainage.accepted);
+    try std.testing.expect(drainage.rejected == null);
+
+    try boundary.close(first_pane);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
+    try std.testing.expect(try boundary.retireTransfer(first_pane));
+    try boundary.markRetired(first_pane);
+    try std.testing.expectEqual(first_pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(first_pane);
+    try boundary.close(other_pane);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
+    try std.testing.expect(try boundary.retireTransfer(other_pane));
+    try boundary.markRetired(other_pane);
+    try std.testing.expectEqual(other_pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(other_pane);
+}
+
+test "retirement releases reserved and ready boundaries without stranded state" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(2, 2, 8),
+    );
+    defer boundary.deinit();
+    const reserved_pane: PaneId = @fromBackingInt(@intCast(36));
+    const reserved_source: canvas.SourceId = @fromBackingInt(@intCast(1));
+    try boundary.register(reserved_pane, reserved_source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const reserved_member = try boundary.activateTransfer(reserved_pane);
+    const reserved = try boundary.reserveUpdate(reserved_member);
+    try boundary.close(reserved_pane);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
+    try std.testing.expect(!try boundary.retireTransfer(reserved_pane));
+    try boundary.cancelUpdate(reserved);
+    try std.testing.expect(try boundary.retireTransfer(reserved_pane));
+    try boundary.markRetired(reserved_pane);
+    try std.testing.expectEqual(reserved_pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(reserved_pane);
+
+    const ready_pane: PaneId = @fromBackingInt(@intCast(37));
+    const ready_source: canvas.SourceId = @fromBackingInt(@intCast(2));
+    try boundary.register(ready_pane, ready_source, 1, 1);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const ready_member = try boundary.activateTransfer(ready_pane);
+    const ready_reserved = try boundary.reserveUpdate(ready_member);
+    try boundary.publishUpdate(ready_reserved, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    try boundary.close(ready_pane);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
+    );
+    try std.testing.expect(try boundary.retireTransfer(ready_pane));
+    try std.testing.expect(boundary.entries[1].?.ready == null);
+    try boundary.markRetired(ready_pane);
+    try std.testing.expectEqual(ready_pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(ready_pane);
 }
 
 test "bounded terminal turn re-arms retained input work" {

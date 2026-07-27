@@ -374,7 +374,7 @@ checkpoints:
       - all-or-none reservation rollback and reverse cleanup
       - no runtime, Composer, Render, Vulkan, or public-root integration
   - id: terminal_pool_handoff
-    status: active
+    status: accepted
     outcome: >-
       Move terminal publication and Renderer drainage from dedicated per-pane
       PendingSlot allocations onto the shared pool while preserving immutable
@@ -385,8 +385,18 @@ checkpoints:
       - Renderer rejection republishes the exact immutable block
       - close, cancellation, Work reuse, and drain races preserve ownership
       - pool exhaustion does not stop PTY, VT, or another owner's progress
+    current_slice:
+      - production Boundary owns one shared Pool and no per-entry PendingSlot allocation
+      - ordinary terminal publication copies canonical Canvas facts into one reserved block
+      - Renderer alone applies ready blocks to Composer and releases accepted ownership
+      - dedicated PendingSlot remains private parity evidence until terminal_pool_freeze
+      - VisibleSetRequest and group reveal behavior remain excluded
+      - Boundary mutex validation makes entry readiness and pool reservation one transaction
+      - close/retirement stale publication after extraction is recoverable and schedules full producer recovery; malformed canonical output remains fatal after cleanup
+      - Composer rejection retains ready bytes and receives one bounded deferred Renderer retry wake
+      - scoped Renderer drain ownership restores ready on every noncompletion exit
   - id: terminal_visible_set
-    status: planned
+    status: active
     outcome: >-
       Add the bounded latest VisibleSetRequest and all-or-none reservation needed
       to reveal up to sixteen pane sources without partial topology mutation.

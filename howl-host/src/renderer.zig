@@ -40,6 +40,7 @@ const CanvasWork = struct {
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
+    terminal_rejection_reported: bool = false,
 };
 
 const Slot = struct {
@@ -516,8 +517,18 @@ fn buildCanvasPlan(
         try work.composer.apply(work.source, update);
         work.producer_revision = producer_revision;
     }
-    const drained = try work.terminals.drainReady(work.composer);
-    if (drained > chrome_state.max_live_panes) return error.InvalidFrame;
+    const drainage = try work.terminals.drainReady(work.composer);
+    if (drainage.accepted > chrome_state.max_live_panes)
+        return error.InvalidFrame;
+    if (drainage.rejected) |failure| {
+        if (!work.terminal_rejection_reported) {
+            std.debug.print(
+                "Terminal Canvas update retained after Composer rejection: {s}\n",
+                .{@errorName(failure)},
+            );
+            work.terminal_rejection_reported = true;
+        }
+    }
     var placements: [chrome_state.max_live_panes + 1]render_api.canvas.Composer.Placement = undefined;
     var placement_count: usize = 0;
     const active_tab = topology.activeTabIndex();

@@ -7,6 +7,7 @@ const terminal_runtime = @import("terminal_runtime");
 const window = @import("window.zig");
 
 const MainError = std.Thread.SpawnError || error{
+    ArithmeticOverflow,
     Signal,
     OwnerDidNotStop,
     HostFailure,
