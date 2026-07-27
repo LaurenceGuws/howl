@@ -121,6 +121,7 @@ pub const Boundary = struct {
     completions: [slot_count]Completion = undefined,
     completion_head: u8 = 0,
     completion_count: u8 = 0,
+    completion_reserved: u8 = 0,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -511,7 +512,7 @@ pub const Boundary = struct {
             self.mutex.unlock(self.io);
             return error.InvalidRevision;
         }
-        if (self.completion_count == slot_count) {
+        if (self.completion_count + self.completion_reserved == slot_count) {
             self.mutex.unlock(self.io);
             return error.CompletionLimit;
         }
@@ -529,6 +530,80 @@ pub const Boundary = struct {
         signal(self.window_fd);
     }
 
+    /// Owns one validated completion reservation until exposure or discard.
+    pub const PreparedCompletions = struct {
+        boundary: *Boundary,
+        values: [slot_count]Completion = undefined,
+        count: u8,
+        completed: bool = false,
+
+        /// Exposes every reserved completion and wakes Window as one infallible step.
+        pub fn commit(self: *PreparedCompletions) void {
+            if (self.completed) @panic("completion reservation already completed");
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            defer boundary.mutex.unlock(boundary.io);
+            std.debug.assert(boundary.completion_reserved >= self.count);
+            boundary.completion_reserved -= self.count;
+            for (self.values[0..self.count]) |completion| {
+                std.debug.assert(boundary.completion_count < slot_count);
+                const tail = (boundary.completion_head + boundary.completion_count) %
+                    slot_count;
+                boundary.completions[tail] = completion;
+                boundary.completion_count += 1;
+            }
+            self.completed = true;
+            signal(boundary.window_fd);
+        }
+
+        /// Releases reserved capacity without exposing any completion.
+        pub fn deinit(self: *PreparedCompletions) void {
+            if (self.completed) return;
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            std.debug.assert(boundary.completion_reserved >= self.count);
+            boundary.completion_reserved -= self.count;
+            boundary.mutex.unlock(boundary.io);
+            self.completed = true;
+        }
+    };
+
+    /// Validates and reserves an ordered completion batch without waking Window.
+    pub fn prepareCompletions(
+        self: *Boundary,
+        completions: []const Completion,
+    ) error{ Stopping, CompletionLimit, InvalidRevision }!PreparedCompletions {
+        if (completions.len == 0 or completions.len > slot_count)
+            return error.CompletionLimit;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stop_requested) return error.Stopping;
+        if (completions.len >
+            slot_count - self.completion_count - self.completion_reserved)
+            return error.CompletionLimit;
+        var prior_revision: u64 = if (self.completion_count == 0)
+            0
+        else
+            self.completions[
+                (self.completion_head + self.completion_count - 1) % slot_count
+            ].revision;
+        for (completions) |completion| {
+            if (completion.generation == 0 or
+                completion.generation != self.window_ring_generation or
+                completion.revision == 0 or completion.slot >= slot_count or
+                completion.revision <= prior_revision)
+                return error.InvalidRevision;
+            prior_revision = completion.revision;
+        }
+        var prepared = PreparedCompletions{
+            .boundary = self,
+            .count = @intCast(completions.len),
+        };
+        @memcpy(prepared.values[0..completions.len], completions);
+        self.completion_reserved += @intCast(completions.len);
+        return prepared;
+    }
+
     /// Reports whether Render can append one completion for the active Window
     /// ring. Window is the only consumer, so capacity cannot decrease between
     /// this preflight and a same-thread publication.
@@ -538,7 +613,7 @@ pub const Boundary = struct {
         return !self.stop_requested and
             generation != 0 and
             generation == self.window_ring_generation and
-            self.completion_count < slot_count;
+            self.completion_count + self.completion_reserved < slot_count;
     }
 
     /// Removes and copies the oldest completed revision for Window.

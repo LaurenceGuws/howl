@@ -20,7 +20,7 @@ test "ordered facts retain exact protocol order and saturate transactionally" {
 
 test "coalesced facts preserve exact masks and checked revisions" {
     var state = wayland.input.State{};
-    try state.setMotion(.{ .time = 11, .point = .{ .x = 1, .y = 2 } });
+    try state.setMotion(.{ .time = 11, .point = .{ .x = 1, .y = 2 }, .semantic_modifiers = .{} });
     try state.setModifiers(.{ .serial = 7, .depressed = 1, .latched = 2, .locked = 4, .group = 3 });
     try state.setRepeat(.{ .rate = 25, .delay = 500 });
     try state.setConfigure(0, 480);
@@ -33,12 +33,47 @@ test "coalesced facts preserve exact masks and checked revisions" {
 test "ordered pointer facts retain occurrence coordinates under later motion" {
     var state = wayland.input.State{};
     const first = wayland.input.Point{ .x = 3, .y = 4 };
-    try state.push(.{ .button = .{ .button = 1, .time = 10, .state = .pressed, .serial = 2, .point = first } });
-    try state.setMotion(.{ .time = 11, .point = .{ .x = 90, .y = 91 } });
+    try state.push(.{ .button = .{
+        .button = 1,
+        .time = 10,
+        .state = .pressed,
+        .serial = 2,
+        .point = first,
+        .semantic_modifiers = .{},
+    } });
+    try state.setMotion(.{ .time = 11, .point = .{ .x = 90, .y = 91 }, .semantic_modifiers = .{ .control = true } });
     const event = state.take().?.button;
     try std.testing.expectEqual(first.x, event.point.x);
     try std.testing.expectEqual(first.y, event.point.y);
     try std.testing.expectEqual(@as(u32, 10), event.time);
+}
+
+test "pointer occurrences retain their causal semantic modifiers" {
+    var state = wayland.input.State{};
+    const earlier = wayland.input.SemanticModifiers{ .shift = true };
+    try state.push(.{ .button = .{
+        .button = 1,
+        .time = 10,
+        .state = .pressed,
+        .serial = 2,
+        .point = .{ .x = 3, .y = 4 },
+        .semantic_modifiers = earlier,
+    } });
+    try state.push(.{ .axis = .{
+        .event = .{ .value120 = .{ .axis = .vertical, .value = 120 } },
+        .point = .{ .x = 3, .y = 4 },
+        .semantic_modifiers = earlier,
+    } });
+    try state.setMotion(.{
+        .time = 11,
+        .point = .{ .x = 90, .y = 91 },
+        .semantic_modifiers = .{ .alt = true },
+    });
+    const button = state.take().?.button;
+    const axis = state.take().?.axis;
+    try std.testing.expectEqualDeep(earlier, button.semantic_modifiers);
+    try std.testing.expectEqualDeep(earlier, axis.semantic_modifiers);
+    try std.testing.expect(state.motionSnapshot().?.semantic_modifiers.alt);
 }
 
 test "keyboard enter copies unaligned receive arrays without allocation metadata" {

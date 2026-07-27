@@ -44,10 +44,55 @@ const SgrStackEntry = struct {
 fn advanceIdentity(value: *u64) void {
     value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
 }
-test "terminal resize commits both screen banks or preserves both exactly" {
+test "terminal resize allocation failures preserve primary state" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
+}
+
+test "terminal resize allocation failures preserve alternate state" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
+}
+
+test "terminal resize report allocation failures preserve state" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
+}
+
+test "prepared resize allocation failures and discard preserve state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareResizeDiscardTransaction, .{});
+}
+
+fn prepareResizeDiscardTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    const fed = try terminal.feed("AB\r\nCD");
+    try std.testing.expect(fed.state_changed);
+    const semantic_sequence = terminal.semanticSequence();
+    const view_before = terminal.semanticView(0);
+    const cursor_row = view_before.cursor_row;
+    const cursor_col = view_before.cursor_col;
+    const history_rows = view_before.history_count;
+
+    var prepared = terminal.prepareResize(3, 5) catch |failure| {
+        try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cols);
+        return failure;
+    };
+    prepared.deinit();
+
+    const discarded = terminal.semanticView(0);
+    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 2), discarded.rows);
+    try std.testing.expectEqual(@as(u16, 4), discarded.cols);
+    try std.testing.expectEqual(cursor_row, discarded.cursor_row);
+    try std.testing.expectEqual(cursor_col, discarded.cursor_col);
+    try std.testing.expectEqual(history_rows, discarded.history_count);
+
+    var reused = try terminal.prepareResize(3, 5);
+    defer reused.deinit();
+    reused.commit();
+    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cols);
 }
 
 fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
@@ -66,6 +111,24 @@ fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
         return failure;
     };
     try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
+}
+
+test "prepared resize commits exact eight-bit report once" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 17);
+    const configured = try terminal.feed("\x1b[?2048h\x1b G");
+    try std.testing.expect(configured.state_changed);
+    const semantic_sequence = terminal.semanticSequence();
+
+    var prepared = try terminal.prepareResize(3, 5);
+    defer prepared.deinit();
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+    prepared.commit();
+
+    try std.testing.expectEqualStrings("\x9b48;3;5;51;45t", terminal.replyBytes());
+    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
 }
 
 fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
@@ -5711,6 +5774,16 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
 
 // Public terminal composition and lifecycle.
 
+// Owns resize implementation state without widening Terminal's public surface
+// to Screen or reflow storage.
+const PreparedResizeState = struct {
+    primary: Screen,
+    alternate: Screen,
+    replies: replies.Buffer,
+    semantic_sequence: u64,
+    reply_len: u32,
+};
+
 /// caller-neutral terminal state and protocol engine.
 pub const Terminal = struct {
     /// Borrows a unified history-and-screen view until terminal mutation.
@@ -5835,7 +5908,66 @@ pub const Terminal = struct {
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ConsequenceLimit, ReplyLimit } || std.mem.Allocator.Error;
+    pub const ResizeError = error{ InvalidDimensions, ReplyLimit } ||
+        std.mem.Allocator.Error;
+    /// Owns a complete fallible resize candidate bound to one Terminal.
+    ///
+    /// This value is single-owner and non-copying. The referenced Terminal
+    /// must remain at a stable address, and must not be mutated by any other
+    /// operation, until `commit` or `deinit`. `commit` is single-use,
+    /// allocation-free, and infallible. Ordinary deferred `deinit` is safe
+    /// both before and after commit.
+    pub const PreparedResize = struct {
+        terminal: *Terminal,
+        state: ?*PreparedResizeState,
+        committed: bool = false,
+
+        /// Commits both prepared screens and every resize side effect exactly once.
+        pub fn commit(self: *PreparedResize) void {
+            if (self.committed or !self.terminal.resize_prepared)
+                @panic("prepared resize is no longer live");
+            const state = self.state orelse
+                @panic("prepared resize has no candidate");
+            if (self.terminal.semantic_sequence != state.semantic_sequence or
+                self.terminal.reply_buffer.len() != state.reply_len)
+                @panic("terminal mutated during prepared resize");
+            var primary = state.primary;
+            var alternate = state.alternate;
+            std.mem.swap(Screen, &self.terminal.screen_state.primary, &primary);
+            std.mem.swap(Screen, &self.terminal.screen_state.alternate, &alternate);
+            primary.deinit(self.terminal.allocator);
+            alternate.deinit(self.terminal.allocator);
+            var old_replies = state.replies;
+            std.mem.swap(
+                replies.Buffer,
+                &self.terminal.reply_buffer,
+                &old_replies,
+            );
+            old_replies.deinit();
+            const primary_changed = self.terminal.graphics.clearBank(.primary);
+            const alternate_changed = self.terminal.graphics.clearBank(.alternate);
+            std.debug.assert(!primary_changed or self.terminal.graphics.generation() != 0);
+            std.debug.assert(!alternate_changed or self.terminal.graphics.generation() != 0);
+            advanceIdentity(&self.terminal.semantic_sequence);
+            self.terminal.allocator.destroy(state);
+            self.state = null;
+            self.terminal.resize_prepared = false;
+            self.committed = true;
+        }
+
+        /// Discards uncommitted candidate ownership and ends the mutation exclusion.
+        pub fn deinit(self: *PreparedResize) void {
+            if (self.state) |state| {
+                state.primary.deinit(self.terminal.allocator);
+                state.alternate.deinit(self.terminal.allocator);
+                state.replies.deinit();
+                self.terminal.allocator.destroy(state);
+            }
+            self.state = null;
+            if (!self.committed) self.terminal.resize_prepared = false;
+            self.committed = true;
+        }
+    };
     /// Reports a zero cell-pixel dimension before any screen mutation.
     pub const CellPixelSizeError = error{InvalidDimensions};
     /// Copies one nonzero caller-provided terminal cell size in logical pixels.
@@ -6132,6 +6264,12 @@ pub const Terminal = struct {
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
+    resize_prepared: bool = false,
+    fn requireNoPreparedResize(self: *const Terminal) void {
+        if (self.resize_prepared)
+            @panic("terminal mutation during prepared resize");
+    }
+
     fn initWithScreens(
         allocator: std.mem.Allocator,
         stream_state: TerminalStreamState,
@@ -6187,6 +6325,7 @@ pub const Terminal = struct {
 
     /// Release Terminal resources.
     pub fn deinit(self: *Terminal) void {
+        self.requireNoPreparedResize();
         const allocator = self.allocator;
         self.graphics.deinit();
         self.consequences.deinit();
@@ -6198,6 +6337,7 @@ pub const Terminal = struct {
 
     /// Applies a borrowed byte slice and reports mutation; failures reset transient parser state.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!FeedSummary {
+        self.requireNoPreparedResize();
         var stream = TerminalStream.init(self);
         return stream.nextSliceSummary(bytes);
     }
@@ -6222,30 +6362,67 @@ pub const Terminal = struct {
     /// Both dimensions must be nonzero. Invalid dimensions or allocation
     /// failure leave both screens and terminal semantic identity unchanged.
     pub fn resize(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
-        try validateDimensions(rows, cols);
-        const output_before = byteCount(self.reply_buffer.bytes());
-        errdefer self.reply_buffer.truncate(output_before);
-        if (self.modes.inband_resize_notifications) try self.appendInbandResizeReport(rows, cols);
-        try self.screen_state.resize(self.allocator, rows, cols);
-        const primary_graphics_changed = self.graphics.clearBank(.primary);
-        const alternate_graphics_changed = self.graphics.clearBank(.alternate);
-        std.debug.assert(!primary_graphics_changed or self.graphics.generation() != 0);
-        std.debug.assert(!alternate_graphics_changed or self.graphics.generation() != 0);
-        advanceIdentity(&self.semantic_sequence);
+        var prepared = try self.prepareResize(rows, cols);
+        defer prepared.deinit();
+        prepared.commit();
     }
 
-    // Appends one exact iTerm2/Kitty mode-2048 resize report when caller pixel facts are known.
-    fn appendInbandResizeReport(self: *Terminal, rows: u16, cols: u16) ResizeError!void {
-        const cell = self.cellPixelSize() orelse return;
+    /// Prepares both terminal screens and exact resize effects without mutation.
+    ///
+    /// The returned owner excludes every other Terminal mutation until it is
+    /// committed or discarded.
+    pub fn prepareResize(
+        self: *Terminal,
+        rows: u16,
+        cols: u16,
+    ) ResizeError!PreparedResize {
+        self.requireNoPreparedResize();
+        try validateDimensions(rows, cols);
+        var report_bytes: [98]u8 = undefined;
+        const report_len = self.prepareResizeReport(rows, cols, &report_bytes);
+        var prepared_replies = replies.Buffer.init(self.allocator);
+        errdefer prepared_replies.deinit();
+        prepared_replies.copyFramingFrom(&self.reply_buffer);
+        try prepared_replies.append(self.reply_buffer.bytes());
+        try prepared_replies.append(report_bytes[0..report_len]);
+        var primary = try self.screen_state.primary.prepareResize(self.allocator, rows, cols);
+        errdefer primary.deinit(self.allocator);
+        var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
+        errdefer alternate.deinit(self.allocator);
+        const state = try self.allocator.create(PreparedResizeState);
+        state.* = .{
+            .primary = primary,
+            .alternate = alternate,
+            .replies = prepared_replies,
+            .semantic_sequence = self.semantic_sequence,
+            .reply_len = self.reply_buffer.len(),
+        };
+        const result = PreparedResize{
+            .terminal = self,
+            .state = state,
+        };
+        self.resize_prepared = true;
+        return result;
+    }
+
+    fn prepareResizeReport(
+        self: *const Terminal,
+        rows: u16,
+        cols: u16,
+        output: *[98]u8,
+    ) u8 {
+        if (!self.modes.inband_resize_notifications) return 0;
+        const cell = self.cellPixelSize() orelse return 0;
         const pixel_height = @as(u64, cell.height) * @as(u64, rows);
         const pixel_width = @as(u64, cell.width) * @as(u64, cols);
-        var scratch: [96]u8 = undefined;
+        const prefix = if (self.reply_buffer.eight_bit_controls) "\x9b" else "\x1b[";
+        @memcpy(output[0..prefix.len], prefix);
         const payload = std.fmt.bufPrint(
-            scratch[0..],
+            output[prefix.len..],
             "48;{d};{d};{d};{d}t",
             .{ rows, cols, pixel_height, pixel_width },
         ) catch unreachable;
-        try self.reply_buffer.appendCsi(.terminal, payload);
+        return @intCast(prefix.len + payload.len);
     }
 
     /// Sets nonzero cell pixels on both screens; zero dimensions are rejected unchanged.
@@ -6254,6 +6431,7 @@ pub const Terminal = struct {
         width: u32,
         height: u32,
     ) CellPixelSizeError!void {
+        self.requireNoPreparedResize();
         if (width == 0 or height == 0) return error.InvalidDimensions;
         const previous = self.screen_state.primary.cellPixelSize();
         if (previous) |cell| {
@@ -6277,6 +6455,7 @@ pub const Terminal = struct {
         self: *Terminal,
         preference: ColorSchemePreference,
     ) replies.AppendError!bool {
+        self.requireNoPreparedResize();
         if (!self.modes.color_preference_notifications) return false;
         try self.reply_buffer.appendCsi(
             .kitty,
@@ -6292,6 +6471,7 @@ pub const Terminal = struct {
         generation: u64,
         preference: ColorSchemePreference,
     ) ColorPreferenceReplyError!void {
+        self.requireNoPreparedResize();
         const consequence = self.consequenceHead() orelse return error.StaleColorPreferenceQuery;
         if (consequence.id() != generation or
             std.meta.activeTag(consequence) != .color_preference_query)
@@ -6306,6 +6486,7 @@ pub const Terminal = struct {
 
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
+        self.requireNoPreparedResize();
         self.screen_state.reset();
         self.screen_state.primary.insert_mode = false;
         self.screen_state.alternate.insert_mode = false;
@@ -7017,6 +7198,7 @@ pub const Terminal = struct {
         self: *Terminal,
         id: u64,
     ) ConsumeConsequenceError!void {
+        self.requireNoPreparedResize();
         const head = self.consequenceHead() orelse return error.StaleConsequence;
         if (head.id() != id) return error.StaleConsequence;
         switch (head) {
@@ -7193,6 +7375,7 @@ pub const Terminal = struct {
         scratch: *InputScratch,
         event: InputEvent,
     ) InputError!EncodedInput {
+        self.requireNoPreparedResize();
         return switch (event) {
             .bytes => |bytes| .{ .bytes = bytes },
             .key => |key| .{ .bytes = try self.encodeKeyInput(scratch, key) },
@@ -7279,6 +7462,7 @@ pub const Terminal = struct {
     ///
     /// A count larger than `replyBytes().len` preserves the complete queue.
     pub fn consumeReplyBytes(self: *Terminal, count: usize) ReplyConsumeError!void {
+        self.requireNoPreparedResize();
         try self.reply_buffer.consumePrefix(count);
         advanceIdentity(&self.semantic_sequence);
     }
@@ -7292,6 +7476,7 @@ pub const Terminal = struct {
         generation: u64,
         allocator: std.mem.Allocator,
     ) error{ OutOfMemory, StaleClipboardRequest }!?[]u8 {
+        self.requireNoPreparedResize();
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
@@ -7334,6 +7519,7 @@ pub const Terminal = struct {
 
     /// Queue one caller-approved OSC 52 reply and consume its query only after complete bounded serialization.
     pub fn replyClipboard(self: *Terminal, generation: u64, bytes: []const u8) ClipboardReplyError!bool {
+        self.requireNoPreparedResize();
         const consequence = self.consequenceHead() orelse return error.StaleClipboardRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .clipboard)
             return error.StaleClipboardRequest;
@@ -7351,6 +7537,7 @@ pub const Terminal = struct {
         generation: u64,
         payload: []const u8,
     ) PointerShapeReplyError!void {
+        self.requireNoPreparedResize();
         const consequence = self.consequenceHead() orelse return error.StalePointerShape;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .pointer_shape)
             return error.StalePointerShape;
@@ -7468,6 +7655,7 @@ pub const Terminal = struct {
         generation: u64,
         reply: ContainerReply,
     ) ContainerReplyError!void {
+        self.requireNoPreparedResize();
         const consequence = self.consequenceHead() orelse return error.StaleContainerRequest;
         if (consequence.id() != generation or std.meta.activeTag(consequence) != .container)
             return error.StaleContainerRequest;
@@ -7479,6 +7667,27 @@ pub const Terminal = struct {
         errdefer output.truncate(start);
         try appendContainerReply(output, self.allocator, reply);
         self.consequences.consumeHead(generation) catch return error.StaleContainerRequest;
+        advanceIdentity(&self.semantic_sequence);
+    }
+
+    /// Declines one matching FIFO-head container query without fabricating facts.
+    ///
+    /// The embedder uses this when it owns no truthful reply value. No protocol
+    /// bytes are emitted; exact identity validation and consumption are atomic.
+    pub fn declineContainerQuery(
+        self: *Terminal,
+        generation: u64,
+    ) error{ StaleContainerRequest, ContainerReplyMismatch }!void {
+        self.requireNoPreparedResize();
+        const consequence = self.consequenceHead() orelse
+            return error.StaleContainerRequest;
+        if (consequence.id() != generation or
+            std.meta.activeTag(consequence) != .container)
+            return error.StaleContainerRequest;
+        if (!isContainerQuery(consequence.container.request))
+            return error.ContainerReplyMismatch;
+        self.consequences.consumeHead(generation) catch
+            return error.StaleContainerRequest;
         advanceIdentity(&self.semantic_sequence);
     }
 
@@ -7664,6 +7873,21 @@ test "terminal retains every bounded bell and remains reusable" {
     const reused = try vt.feed("y");
     try std.testing.expect(reused.state_changed);
     try std.testing.expectEqual(@as(u21, 'y'), vt.semanticView(0).cellAt(0, 1));
+}
+
+test "container query may be declined by exact identity without fabricated reply" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 2);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("\x1b[13t")).state_changed);
+    const occurrence = terminal.consequenceHead().?.container;
+    try std.testing.expect(occurrence.request == .report_position);
+    try terminal.declineContainerQuery(occurrence.generation);
+    try std.testing.expect(terminal.consequenceHead() == null);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectError(
+        error.StaleContainerRequest,
+        terminal.declineContainerQuery(occurrence.generation),
+    );
 }
 
 test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {

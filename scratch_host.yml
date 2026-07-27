@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: terminal_contract_receipt
+  checkpoint: terminal_runtime
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -29,6 +29,16 @@ accepted:
     receipts:
       - all package, Host executable, and workspace optimize-mode gates passed
       - operator confirmed interaction, resizing, slot reuse, and orderly Vulkan retirement
+  terminal_contract_receipt:
+    commit: ba5f054308665fc93266f853e781c300136c976f
+    boundary: Prove terminal render handoff
+    outcome:
+      - terminal Content updates cross one bounded atomic copied slot per pane
+      - slot admission precedes consumptive update extraction under matched limits
+      - occupied retirement and Composer retry preserve exact ownership
+    receipts:
+      - two real VT producers compose through distinct Composer sources
+      - all deterministic package and workspace gates passed
 
 architecture_correction:
   decision: >-
@@ -59,13 +69,402 @@ architecture_correction:
       execution without a separate measured proof.
 
 checkpoint:
-  id: terminal_contract_receipt
-  status: review_ready
+  id: terminal_runtime
+  status: correction_review_pre_pool
   objective: >-
-    Prove with two real howl-vt terminals that borrowed consumptive
-    terminal.Content updates cross one atomically synchronized fixed copied
-    pending slot per pane and compose independently without PTY construction
-    or a production runtime thread.
+    Run real shell terminals through one caller-driven terminal runtime OS
+    thread that exclusively owns every PTY, VT, projection, image identity,
+    terminal Content, and child-bound byte queue.
+  maturity_rule:
+    - Existing package contracts are audited starting points, not untouchable law.
+    - Record an exact failing consumer, invariant, owner, and current symbol before correcting a package boundary.
+    - Prefer the smallest owner-native deletion, typing, bound, or ownership correction over Host compatibility glue.
+    - Continue independent runtime work while a material public-contract change awaits operator review.
+  gui:
+    status: initialization_authorized_and_passed
+    rule: >-
+      Operator authorized initialization-only Host launches. No Hyprland
+      control, synthetic input, or screenshots are authorized.
+    receipt: >-
+      ReleaseSafe reached generation 2 and steady shell-backed Canvas revisions
+      after the realistic-pane and resize-recovery corrections.
+  settled_bounds:
+    logical_terminals: 64
+    read_bytes_per_turn: 65536
+    read_syscalls_per_turn: 4
+    write_bytes_per_turn: 65536
+    write_syscalls_per_turn: 4
+    child_write_queue_bytes: 65536
+    input_occurrences_global: 256
+    lifecycle_operations_global: 128
+    lifecycle_operations_per_wake_turn: 8
+    input_occurrences_per_wake_turn: 8
+  pre_pool_commit_boundary:
+    includes:
+      - VT PreparedResize transaction
+      - one terminal runtime thread with fixed owner table and real PTY polling
+      - sparse atomic Render Content state and one shared Content.Work
+      - one dedicated immutable PendingSlot allocation per admitted pane
+      - causal Wayland pointer position and semantic-modifier facts
+    excludes:
+      - shared PendingSlot pool and VisibleSetRequest
+      - Composer or Vulkan capacity widening
+      - u16 batch or u32 index selection
+      - atlas-capacity widening
+    next_checkpoint: approved_16_block_pending_slot_pool
+  memory_receipt:
+    durable_census: .zig/work/terminal-runtime-memory/receipt.yml
+    review_boundary:
+      status: accepted_pre_pool_implementation_boundary
+      implemented:
+        - sparse Content.apply validates completely then copies only affected rows
+        - production-boundary copy accounting and real two-PTY fairness receipts
+        - takeUpdate-only Content.Work contract
+      next_isolated_checkpoint:
+        - approved fair global 16-block PendingSlot pool
+      unresolved_surface_decisions:
+        - one u32 Vulkan index stream versus explicit based-u16 batches
+    abi_sizes_bytes:
+      logical_owner: 206832
+      visual_projection_state: 692296
+      pending_slot_owner: 120
+      terminal_content_owner: 776
+    excluded_variable_owners:
+      - howl-vt screen, history, graphics and consequence allocations
+      - howl-pty environment, argv and kernel descriptors
+      - one thread-local FontMap and native FreeType faces shared only within the terminal runtime thread
+      - HarfBuzz internal storage preallocated for 4096 glyphs per Content; the native library does not expose its byte count
+    conclusion: >-
+      The accepted pre-pool shape retains independent Content state per owner,
+      one terminal-thread-exclusive Work, and one maximum dedicated PendingSlot
+      per owner. The resulting 64-owner fixed subtotal remains too large for the
+      final lifecycle policy; the approved global pool is deliberately not
+      implemented in this commit.
+    ownership_classes:
+      per_terminal_retained:
+        bytes: 2233160
+        includes: logical owner, independent Content projection/image/glyph/mask candidates, complete Host visual state, identities, and ordered child writes
+      terminal_thread_ephemeral:
+        bytes: 9519120
+        includes: takeUpdate derived draws, Canvas output, upload construction, shaping and raster only
+      per_pane_pending_handoff:
+        bytes: 4563064
+        total_for_64: 292036096
+      renderer_and_vulkan:
+        consistent_composer: 89913224
+        consistent_host_frame_copies: 91176960
+        consistent_cpu_residency_banks: 152887424
+        consistent_frame_builder: 93749248
+        total_simultaneous_renderer_cpu: 427726856
+        simultaneous_cpu_one_owner: 444042200
+        simultaneous_cpu_sixteen_owners: 545985560
+        simultaneous_cpu_sixty_four_owners: 872204312
+        gpu_equation: fixed queried owners + queried atlases + queried staging + six times queried surface requirement <= 536870912
+    correction: >-
+      Content now has one projection bank; complete recovery preflight makes
+      replacement infallible. Image and glyph/mask candidate banks remain
+      Content-owned. Sparse apply validates the complete transaction before
+      mutation and writes only affected rows. Implemented Content.Work is
+      limited to takeUpdate shaping, raster, derived draws, upload construction,
+      and borrowed output.
+    executable_experiments:
+      package: .zig/work/terminal-runtime-memory
+      modes: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+      content_work: >-
+        Two owners alternate one Work; owner state and local identities remain
+        independent, failure preserves both, copied pending bytes survive Work
+        reuse, and undersized Work is rejected before mutation. Production
+        Render tests now prove the same boundary.
+      copy_mechanics: >-
+        Real terminal.Content boundary measurements prove clean apply copies zero,
+        one 32-cell row copies 1665 bytes, full recovery copies 213120 bytes,
+        and image-only apply copies no terminal cells. All measured operations
+        allocate zero after initialization.
+      pending_slot: >-
+        Real publication copied 1224 empty bytes, 3404 ordinary-text bytes, and
+        1368 image-bearing bytes. A capacity-shape fixture copies 4,535,872
+        bytes across 648 upload slots, 648 removal slots, and 4,096 commands;
+        this is not a claim that one producer update reaches all of those facts.
+        Per-owner maximum allocation, a fair global maximum
+        block pool, and unproven size classes are compared durably.
+      scheduler: >-
+        Two real PTYs exercised the production Runtime.pollOnce path for
+        sustained rounds with one slot occupied for 48 rounds. The quiet owner
+        drained 12 updates while noisy publication was blocked; each drain was
+        attempted immediately after pollOnce, the RoundRobin proof separately
+        establishes one turn per owner, and the cursor advanced through the
+        rounds. Noisy publication resumed after freeing its slot.
+      capacity: >-
+        Checked actual-type formulas expose the one-pane 4096/1024 command and
+        1024/128 resource mismatch, the complete sixteen-pane chain, CPU banks,
+        compares one u32 stream with explicitly based u16 batches, replaces the
+        64x64 receipt extrapolation with the queried six-surface equation, and
+        keeps format-specific atlas packing unresolved.
+    alternatives:
+      shared_content_work:
+        status: rejected_complete_candidate_copy_shape
+      row_granular_retention_plus_ephemeral_work:
+        status: implemented
+        per_terminal_retained_bytes: 2233160
+        per_pane_pending_bytes: 4563064
+        one_shared_work_bytes: 9519120
+        sixteen_owner_total: 118258704
+        sixty_four_owner_total: 444477456
+        contract: >-
+          Content keeps independently owned projection/image/glyph/mask
+          retained and candidate entries. apply and recover retain their
+          signatures. One terminal-thread-exclusive Work is used only for
+          takeUpdate shaping, raster, derived draws, uploads, and borrowed
+          output.
+        public_api:
+          added: [Content.Work, Content.Work.init, Content.Work.deinit]
+          changed: [Content.takeUpdate]
+          unchanged: [Content.apply, Content.recover]
+          status: implemented_under_operator_authorization
+      sparse_undo_journal:
+        status: viable_not_recommended
+        reason: lower permanent storage but materially more complex cross-domain rollback
+      pending_storage:
+        per_owner_maximum:
+          bytes_for_64: 292036096
+        global_maximum_block_pool:
+          exact_16_blocks_and_64_descriptors: 73012520
+          reveal_policy: >-
+            The ignored approved design classifies members from Host-owned
+            publication, Composer acceptance, dirty, geometry, and block facts.
+            Stale ready or draining blocks release before one all-or-none
+            visible-set reservation. No pool or VisibleSetRequest exists in
+            tracked product source yet.
+          status: approved_next_checkpoint_not_implemented
+        size_classes:
+          status: unearned
+          blocker: text glyph uploads can consume the full upload-byte bound and takeUpdate is consumptive
+      vulkan_geometry:
+        u32:
+          index_bytes: 1622016
+          added_bytes_over_u16: 811008
+          index_bind_calls: 1
+          public_change: Plan and FrameBuilder index element type
+        explicit_u16_batches:
+          candidate_batches_for_67584_quads: 5
+          index_bytes: 811008
+          index_bind_calls: 5
+          public_change: one Batch noun plus bounded Plan batch slice
+        status: evidence_only_selection_unresolved
+      fixed_per_pane:
+        status: unearned_without_one_aggregate_budget
+      complete_chain_widening:
+        status: exact_count_and_byte_shape_but_packability_unproven
+      aggregate_lifecycle_admission:
+        status: exact_transaction_shape_but_packability_reservation_unproven
+  scheduling:
+    - one wake descriptor plus one borrowed PTY master descriptor per live owner
+    - stable round-robin cursor advances once per poll or pending-service round
+    - each ready owner receives only the fixed read, write, consequence, projection, and lifecycle budget
+    - pending visual publication never prevents PTY reads, reply collection, writes, or another owner turn
+  consequences:
+    policy: >-
+      Each observed head is handled by exact identity. Clipboard queries receive
+      an empty caller-neutral reply, screen-cell queries receive current terminal
+      geometry, unowned container state/position/title queries are explicitly
+      declined without fabricated bytes, and color-preference queries receive
+      dark. Reply or decline consumes the matching head transactionally;
+      non-query families use the explicit unsupported policy and are consumed.
+      No query can indefinitely retain the VT head or gate PTY reads.
+    variants:
+      clipboard: query_replied_empty; non_query_explicit_unsupported_consumed
+      notification: explicit_unsupported_consumed_after_identity_classification
+      pointer_shape: explicit_unsupported_consumed_after_identity_classification
+      file_transfer: explicit_unsupported_consumed_after_identity_classification
+      drag_drop: explicit_unsupported_consumed_after_identity_classification
+      container: screen_cells_replied; unowned_state_position_title_declined_without_bytes; action_explicit_unsupported_consumed
+      color_preference_query: replied_dark
+      bell: explicit_unsupported_consumed_after_identity_classification
+      legacy_control: explicit_unsupported_consumed_after_identity_classification
+      media_copy: explicit_unsupported_consumed_after_identity_classification
+      dcs: explicit_unsupported_consumed_after_identity_classification
+      string_control: explicit_unsupported_consumed_after_identity_classification
+    correction_status:
+      consequence_progress: implemented_and_proven
+      close_drain_retry: implemented_and_proven
+      one_pane_admission: bounded_to_composer_candidate
+      remaining_blocker: >-
+        Larger terminal Content and sixteen-pane Composer/Vulkan admission remain
+        separate future design work; current terminal panes reject geometry above
+        the conservative admitted cell bound before PTY/VT construction.
+      init_receipt: >-
+        Authorized ReleaseSafe initialization reached generation 2, constructed
+        the real shell owner, recovered its configured geometry, and continued
+        publishing terminal Canvas revisions. No automated input or compositor
+        tooling was used.
+      lifecycle_transaction: >-
+        Boundary.prepareLifecycle reserves exact lifecycle/input queue counts
+        and any new owner index. Competing input and lifecycle producers account
+        for those reservations. Shutdown is a separate monotonic fact: it
+        requires no ring capacity, cancels queued lifecycle/input facts, wakes
+        the runtime, and makes prepared commit return Stopping. Shared completion
+        preparation reserves exact queue capacity without waking Window.
+        Renderer commits lifecycle and topology first, then exposes the reserved
+        completion as the final infallible step.
+  progress:
+    - howl-host now directly depends on howl-pty.
+    - one terminal.zig owner contains bounded write retention, exact VT reply transfer, stable round-robin scheduling, PTY/VT/Content construction, and reverse cleanup.
+    - two real PTYs share one poll set under a noisy producer without starving quiet output.
+    - a fixed 64-owner Runtime admits unique PaneId values, polls borrowed master descriptors, observes children, and retires owners.
+    - source audit required no new admission.
+    - Terminal.PreparedResize now owns complete primary and alternate candidates, a complete candidate reply buffer containing the exact in-band report, and single-use commit/discard lifetime.
+    - direct Terminal.resize is prepare plus immediate commit; the independent 0.1.4-dev consumer exercises the typed prepared owner.
+    - Logical.resize prepares VT, applies PTY kernel geometry, then commits VT infallibly.
+    - the complete allocation sweep exposed and corrected a private Screen output-line clone rollback defect before it could enter the public transaction.
+    - logical owners now retain complete projection baselines, image identities, terminal Content, and one accepted atomic PendingSlot; occupied slots do not stop PTY turns.
+    - real empty-shell initialization exposed a private Render defect where terminal Content rejected VT's valid initial empty image generation zero.
+    - terminal Content now admits only that exact uninitialized empty image fact; nonempty and post-initialization zero generations remain stale.
+    - one production-shaped terminal thread now polls its directional wake plus every borrowed PTY master, constructs a real shell owner, and publishes through the copied slot to a Composer source.
+    - terminal-to-Renderer and Renderer-to-terminal eventfds carry ready-slot and freed-slot facts without presentation acknowledgement.
+    - bounded lifecycle and input turns re-arm the terminal eventfd when accepted work remains.
+    - the production poll path applies the same stable round-robin order proved by the direct runtime tests.
+    - older pending VT replies are admitted and retained before newly encoded user input.
+    - terminal Content now applies sparse projection plus an optional image update as one validated transaction and advances ProducerRevision once.
+    - projection-only, image-only, combined, and hostile image rejection proofs preserve exact retained command/resource state.
+    - every Wayland pointer motion, button, and axis callback copies its causal semantic modifiers; later coalesced motion/modifier state cannot rewrite queued occurrences.
+  deterministic_receipt:
+    package_modes:
+      howl_pty: Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall check/test pass
+      howl_vt: Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall check/test pass
+      howl_render: all eight capability graphs pass check/test in all four optimize modes
+      howl_host: Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall check/test pass
+      workspace: Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall check/test pass
+    specialized:
+      - VT simulation passes in Debug and ReleaseSafe
+      - VT fuzz passes in Debug and ReleaseSafe
+      - VT M7 benchmark passes in ReleaseFast
+      - independent VT 0.1.4-dev example passes check/test in Debug and ReleaseSafe
+      - protocol validation reports zero diagnostics
+      - source audit, pinned formatting, SPIR-V validation, YAML duplicate-key validation, and git diff check pass
+      - atomic Content projection-only, image-only, combined, and cross-domain rollback proofs pass
+      - causal pointer button, axis, and later-motion modifier proof passes
+      - field-by-field memory and complete visible-capacity receipt validates at .zig/work/terminal-runtime-memory/receipt.yml
+      - ignored Content.Work and capacity executables pass in all four optimize modes
+    gui: initialization-only ReleaseSafe receipt passed; visual/input gate remains operator-owned
+  integration_pressure:
+    atomic_terminal_visual_update:
+      owner: howl-render terminal.Content
+      current_symbols:
+        - howl_render.terminal.Content.apply
+        - howl_render.terminal.Content.recover
+      invariant: >-
+        One accepted VT semantic mutation must update retained cells, geometry,
+        cursor, image identities, placements, and resource deltas together or
+        preserve the complete prior Content state.
+      finding: >-
+        The former split projection/image mutations could commit independently.
+        The accepted apply operation now validates both domains before one
+        infallible retained-state commit.
+      operator_decision: authorized
+      accepted_contract:
+        - Content.apply(projection, optional image update) validates both candidates before retained mutation
+        - projection-only and image-only transactions are valid without replaying stale image generations
+        - successful application commits every retained visual domain and ProducerRevision exactly once
+        - applyProjection and applyImages are deleted without compatibility wrappers
+        - recover remains the complete-state transaction
+      status: implemented_and_proven
+    causal_pointer_modifiers:
+      owner: howl-wayland input boundary
+      current_symbols:
+        - howl_wayland.input.Button
+        - howl_wayland.input.AxisEvent
+        - howl_wayland.input.Snapshot
+        - howl_vt.Terminal.InputEvent.mouse
+      invariant: >-
+        A terminal mouse occurrence must carry the semantic modifier state and
+        terminal-relative coordinates that existed at that ordered occurrence.
+      finding: >-
+        Button preserves its exact point but not interpreted modifiers. Axis
+        preserves a point per callback while source, value, discrete/value120,
+        direction, stop, and frame arrive as separate occurrences. Reading the
+        later coalesced modifier snapshot in Renderer would manufacture causal
+        state and cannot be used for exact VT mouse encoding.
+      operator_decision: authorized
+      accepted_contract:
+        - Motion, Button, and each Ordered.axis wrapper copy callback-time SemanticModifiers
+        - raw Wayland modifier masks remain separately retained
+        - later coalesced modifier state is never substituted for an earlier pointer occurrence
+      status: implemented_with_package_causal_order_proof
+    visible_resource_capacity:
+      owner: howl-vk.surface and Host Composer instantiation
+      current_symbols:
+        - howl_vk.surface.max_quads
+        - howl_vk.surface.max_commands
+        - render.canvas.Composer.Limits
+        - renderer CanvasWork fixed frame and residency arrays
+      invariant: >-
+        The admitted active tab may contain sixteen terminal panes. Their
+        complete clipped Canvas contributions must either fit one factual frame
+        or fail at lifecycle admission before topology mutation.
+      finding: >-
+        Current Vulkan geometry admits 4096 quads and 1024 draw commands while
+        one terminal Content currently admits 4096 cells and commands. The
+        existing single-chrome Host arrays admit only 512 resources. Those
+        independent old bounds do not prove the complete sixteen-pane workload.
+      equation:
+        sixteen_terminal_commands: 65536
+        chrome_commands: 2048
+        combined_commands_and_quads: 67584
+        combined_resources: 16896
+        combined_sparse_pixel_bytes: 75497472
+        composer_candidate_commands_resources: [1024, 128]
+        composer_retained_commands_resources_pixels: [4096, 512, 16777216]
+        vulkan_current_quads_draws_resource_entries: [4096, 1024, 4096]
+        vulkan_current_alpha_rgba_bytes: [4194304, 4194304]
+      status: >-
+        Proven incomplete. The accepted sixteen-pane producer maxima exceed
+        Composer candidate and retained bounds, Host frame copies, Vulkan
+        quads/draws/resource entries, and physical alpha/RGBA stores. Atlas
+        byte totals also do not prove packing. Lifecycle admission cannot yet
+        claim sixteen complete visible panes; no independent widening is made.
+  blocker:
+    status: corrected
+    authorization: operator
+    owner: cross-owner Terminal runtime composition
+    failing_consumer: logical terminal resize transaction
+    current_symbols:
+      - howl_pty.Owned.resize(cols, rows)
+      - howl_vt.Terminal.resize(rows, cols)
+    invariant: >-
+      PTY kernel dimensions and VT semantic dimensions must change together or
+      both remain unchanged.
+    defect: >-
+      Both operations mutate immediately and either can fail. Calling PTY first
+      permits later VT allocation failure; calling VT first permits later PTY
+      ioctl failure. Neither package exposes preparation or reversible state,
+      so Host cannot provide rollback without duplicating package ownership.
+    smallest_owner_native_options:
+      - add a VT prepared-resize transaction whose allocation succeeds before PTY mutation and whose commit cannot fail
+      - add an exact reversible PTY resize fact, if kernel rollback can itself be made reliable
+    recommendation: accepted_and_implemented
+    approved_contract:
+      - var resize = try terminal.prepareResize(rows, cols)
+      - defer resize.deinit()
+      - try pty.resize(cols, rows)
+      - resize.commit()
+      - PreparedResize owns every candidate allocation and prepared reply byte
+      - commit is allocation-free, infallible, single-use, and bound to its creating Terminal
+      - deinit discards an uncommitted candidate and is safe after commit
+      - no Terminal mutation is permitted during the prepared lifetime
+      - direct Terminal.resize remains prepare plus immediate commit
+    correction_receipt:
+      - Terminal.PreparedResize owns both prepared screen banks and the exact optional in-band report.
+      - prepareResize validates dimensions, arithmetic, reply capacity, semantic identity, and every allocation before mutation.
+      - commit swaps both banks, clears graphics placements, appends the report once, and advances semantic identity once without allocation or failure.
+      - deinit discards candidates after PTY failure and remains safe after commit for ordinary defer use.
+      - direct resize and the independent 0.1.4-dev consumer exercise the same owner.
+    independent_work_completed:
+      - write queue saturation and ordered prefix preservation
+      - reply queue saturation without VT reply loss
+      - exhaustive twelve-variant consequence disposition
+      - real multi-PTY poll and child-exit observation
+      - stable bounded round-robin opportunities
+      - PTY, VT, Content, and thread-local FontMap construction rollback
   review_corrections:
     - PendingSlot now transfers ownership through release/acquire atomic states instead of unsynchronized fields.
     - Publication reserves a free slot before calling consumptive takeUpdate.
@@ -237,6 +636,25 @@ terminal_contract_receipt:
     owner_bytes_per_pane: 15224
     owner_bytes_for_64_panes: 974336
     evidence: .zig/work/terminal-contract-receipt/receipt.yml
+  current_one_pane_admission:
+    content_commands: 4096
+    pending_commands: 4096
+    composer_candidate_commands: 4096
+    content_resources: 128
+    pending_resources: 128
+    composer_candidate_resources: 128
+    admitted_cells: 32768
+    rule: >-
+      Boundary registration and resize reject rows*cols > 32768 before slot,
+      topology, PTY, VT, or Content mutation. Logical construction repeats the
+      check defensively. Render merges contiguous equal-color backgrounds, and
+      a 240x100 sparse shell fixture passes Content, PendingSlot, and the
+      4096-command/128-resource production Composer candidate. Dense hostile
+      output remains bounded by exact Content command/resource errors; complete
+      sixteen-pane/atlas admission remains unimplemented. A hostile alternating
+      background screen that exceeds 4096 commands remains dirty and retryable;
+      it does not terminate PTY polling, mutate pending bytes, or prevent later
+      publication after state pressure subsides.
   lifetime_transition:
     - PendingSlot.publish claims free to writing before touching terminal.Content
     - PendingSlot and terminal.Content use the same resources, commands, and upload-byte limits
@@ -258,6 +676,13 @@ terminal_contract_receipt:
     - occupied-slot retirement discards pending bytes, rejects later drainage/publication, and new SourceId and PaneId values are strictly newer
     - empty backend residency reproduces identical uploads, removals, commands, pixels, and FrameRevision
     - allocation, mismatched-limit admission, terminal production, and Composer-drain failures preserve ownership and slot reuse
+    - repeated and mixed VT consequences are handled by exact identity; reply-required clipboard, container, and color queries serialize bounded replies and clear the head
+    - a close dequeued during PendingSlot writing/draining is retained as one retryable lifecycle fact and retires once after drainage
+    - prepared lifecycle discard changes no queue, entry, source, or topology fact; exact queue and owner reservations survive competing producers
+    - prepared completions remain invisible to Window until lifecycle and topology commit, then expose as one infallible wake
+    - shutdown racing a fully reserved 128-operation lifecycle candidate succeeds out of band, cancels queued work, returns Stopping from candidate commit, and releases every reservation on discard
+    - the real terminal runtime loop observes the monotonic shutdown wake and retires without consuming a Lifecycle shutdown variant
+    - hostile Canvas command pressure remains recoverable with Content dirty, PendingSlot reusable, and runtime progress intact
   validation:
     - Host and workspace check/test pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
     - source audit and protocol validation pass

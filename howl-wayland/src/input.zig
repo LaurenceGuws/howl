@@ -72,7 +72,15 @@ pub const Key = struct {
     text: [key_text_limit]u8,
 };
 /// Ordered pointer-button fact with its protocol serial and timestamp.
-pub const Button = struct { button: u32, time: u32, state: ButtonState, serial: u32, point: Point };
+pub const Button = struct {
+    button: u32,
+    time: u32,
+    state: ButtonState,
+    serial: u32,
+    point: Point,
+    /// Semantic keyboard modifiers active for this exact button callback.
+    semantic_modifiers: SemanticModifiers,
+};
 /// Ordered pointer-axis fact; each union arm is one exact protocol callback.
 pub const AxisEvent = union(enum) {
     value: struct { axis: Axis, time: u32, value: f64 },
@@ -94,7 +102,12 @@ pub const PointerEnter = struct { serial: u32, point: Point };
 /// Ordered pointer leave fact; serial is not discarded.
 pub const PointerLeave = struct { serial: u32 };
 /// Latest motion snapshot. Motion events may coalesce.
-pub const Motion = struct { time: u32, point: Point };
+pub const Motion = struct {
+    time: u32,
+    point: Point,
+    /// Semantic keyboard modifiers active for this exact motion callback.
+    semantic_modifiers: SemanticModifiers,
+};
 /// Repeat timing delivered by wl_keyboard.repeat_info.
 pub const Repeat = struct { rate: u32, delay: u32 };
 /// Latest compositor configure dimensions and checked revision.
@@ -102,7 +115,22 @@ pub const Configure = struct { width: u32, height: u32, revision: u64 };
 /// Coalesced snapshots consumed by the embedding runtime.
 pub const Snapshot = struct { motion: ?Motion, modifiers: Modifiers, repeat: ?Repeat, configure: ?Configure, revision: u64 };
 /// Ordered facts that must never coalesce.
-pub const Ordered = union(enum) { key: Key, keyboard_reset: void, keyboard_enter: KeyboardEnter, keyboard_leave: KeyboardLeave, button: Button, axis: struct { event: AxisEvent, point: ?Point }, pointer_enter: PointerEnter, pointer_leave: PointerLeave };
+pub const Ordered = union(enum) {
+    key: Key,
+    keyboard_reset: void,
+    keyboard_enter: KeyboardEnter,
+    keyboard_leave: KeyboardLeave,
+    button: Button,
+    axis: struct {
+        event: AxisEvent,
+        /// Pointer position active for this exact axis callback.
+        point: Point,
+        /// Semantic keyboard modifiers active for this exact axis callback.
+        semantic_modifiers: SemanticModifiers,
+    },
+    pointer_enter: PointerEnter,
+    pointer_leave: PointerLeave,
+};
 
 /// Exact bounded-state failures. Revision exhaustion is never wrapped.
 pub const Error = error{ OrderedFull, RevisionOverflow };

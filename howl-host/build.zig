@@ -47,6 +47,10 @@ pub fn build(b: *std.Build) void {
         .generated_glyphs = false,
         .terminal = true,
     });
+    const pty = b.dependency("howl_pty", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
     const vt = b.dependency("howl_vt", .{
         .target = target,
@@ -72,8 +76,37 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/terminal_handoff.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     terminal_handoff.addImport("howl_render", render.module("howl_render"));
+    terminal_handoff.addImport("howl_vt", vt.module("howl_vt"));
+    terminal_handoff.addImport("howl_wayland", wayland.module("howl_wayland"));
+    terminal_handoff.addImport("host_c", host_c);
+    const terminal_runtime = b.createModule(.{
+        .root_source_file = b.path("src/terminal.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_runtime.addImport("howl_pty", pty.module("howl_pty"));
+    terminal_runtime.addImport("howl_render", render.module("howl_render"));
+    terminal_runtime.addImport("howl_vt", vt.module("howl_vt"));
+    terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
+    terminal_runtime.addImport("terminal_handoff", terminal_handoff);
+    const terminal_runtime_facts = b.addOptions();
+    terminal_runtime_facts.addOption(
+        []const u8,
+        "font_path",
+        b.root.joinString(
+            b.allocator,
+            "../howl-render/testdata/primary.ttf",
+        ) catch @panic("OOM"),
+    );
+    terminal_runtime.addImport(
+        "terminal_runtime_facts",
+        terminal_runtime_facts.createModule(),
+    );
+    root.addImport("terminal_handoff", terminal_handoff);
+    root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("chrome_state", chrome_state);
     root.addImport("input_actions", input_actions);
     root.addImport("howl_vk", vk.module("howl_vk"));
@@ -110,6 +143,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
+    test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
     test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
@@ -122,8 +156,18 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_chrome_tests.step);
     const input_action_tests = b.addTest(.{ .root_module = input_actions, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(input_action_tests).step);
-    const handoff_tests = b.addTest(.{ .root_module = terminal_handoff, .use_llvm = false, .use_lld = false });
+    const handoff_tests = b.addTest(.{
+        .root_module = terminal_handoff,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     test_step.dependOn(&b.addRunArtifact(handoff_tests).step);
+    const terminal_runtime_tests = b.addTest(.{
+        .root_module = terminal_runtime,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(terminal_runtime_tests).step);
     const terminal_contract = b.createModule(.{
         .root_source_file = b.path("test/terminal_contract_test.zig"),
         .target = target,

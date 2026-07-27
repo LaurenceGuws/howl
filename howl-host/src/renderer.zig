@@ -9,6 +9,7 @@ const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
 const vk_surface = howl_vk.surface;
 const input_actions = @import("input_actions");
+const terminal_handoff = @import("terminal_handoff");
 
 const chrome_appearance = chrome_state.Appearance{
     .style = .{
@@ -38,6 +39,7 @@ const CanvasWork = struct {
     canvas_residencies: []render_api.canvas.Residency,
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
+    terminals: *terminal_handoff.Boundary,
 };
 
 const Slot = struct {
@@ -72,15 +74,25 @@ const OfferedFds = struct {
 
 /// Runs the sole Vulkan/DRM owner until the bounded ring completes or fails.
 /// All operational failures are recorded as the first Render runtime failure.
-pub fn run(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_path: []const u8) void {
-    runFallible(boundary, allocator, font_path) catch |failure| {
+pub fn run(
+    boundary: *shared.Boundary,
+    terminals: *terminal_handoff.Boundary,
+    allocator: std.mem.Allocator,
+    font_path: []const u8,
+) void {
+    runFallible(boundary, terminals, allocator, font_path) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
     boundary.markStopped(.render);
 }
 
-fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_path: []const u8) !void {
+fn runFallible(
+    boundary: *shared.Boundary,
+    terminals: *terminal_handoff.Boundary,
+    allocator: std.mem.Allocator,
+    font_path: []const u8,
+) !void {
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
     try checkGpuBudget(initial_surface.width, initial_surface.height);
@@ -92,7 +104,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         .retained_pixel_bytes = 16 * 1024 * 1024,
         .composition_sources = chrome_state.max_live_panes + 1,
         .candidate_resources = 128,
-        .candidate_commands = 1024,
+        .candidate_commands = 4096,
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
@@ -141,7 +153,17 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         .canvas_residencies = &canvas_residencies,
         .builder = &surface_builder,
         .residency = &surface_residency,
+        .terminals = terminals,
     };
+    const initial_pane = chrome.paneId(0, 0) orelse return error.InvalidTopology;
+    const initial_rect = chrome.paneRect(initial_pane) orelse return error.InvalidTopology;
+    const initial_source = try composer.registerSource();
+    try terminals.register(
+        initial_pane,
+        initial_source,
+        @max(@as(u16, 1), initial_rect.width / 8),
+        @max(@as(u16, 1), initial_rect.height / 16),
+    );
     var chrome_primitives: [256]render_api.chrome.Primitive = undefined;
     var chrome_text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
@@ -305,13 +327,17 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     var active_ring: usize = 0;
     var active_generation = initial_surface.generation;
     var actions = input_actions.State{};
+    var terminal_redraw_pending = false;
     while (!boundary.shouldStop()) {
         if (boundary.takeConfigure()) |surface| {
             if (surface.generation <= active_generation) continue;
-            chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) }) catch |failure| switch (failure) {
+            const prior_chrome = chrome;
+            var candidate_chrome = chrome;
+            candidate_chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) }) catch |failure| switch (failure) {
                 error.InvalidGeometry => continue,
                 else => return failure,
             };
+            try validateTerminalTopology(&candidate_chrome);
             try checkGpuBudget(surface.width, surface.height);
             const replacement = 1 - active_ring;
             for (&rings[replacement]) |*slot| slot.* = .{};
@@ -360,18 +386,39 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             };
             for (&replacement_fds) |*fds| fds.* = .{};
             try waitWindowRing(boundary, surface.generation);
+            var terminal_candidate = try prepareTerminalTopology(
+                &canvas_work,
+                &prior_chrome,
+                &candidate_chrome,
+            );
+            defer terminal_candidate.deinit();
+            var completion_batch: [shared.slot_count]shared.Completion = undefined;
+            var candidate_acquire = next_acquire_point;
+            for (&rings[replacement], 0..) |*slot, index| {
+                const resized_plan = try buildCanvasPlan(&canvas_work, &candidate_chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+                errdefer surface_residency.discard();
+                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
+                completion_batch[index] = .{
+                    .generation = surface.generation,
+                    .revision = candidate_acquire,
+                    .slot = @intCast(index),
+                    .acquire_point = candidate_acquire,
+                    .release_point = 1,
+                };
+                candidate_acquire = std.math.add(u64, candidate_acquire, 1) catch
+                    return error.RevisionOverflow;
+            }
+            var prepared_completions = try boundary.prepareCompletions(&completion_batch);
+            defer prepared_completions.deinit();
+            try terminal_candidate.commit();
+            chrome = candidate_chrome;
+            prepared_completions.commit();
+            for (&rings[replacement]) |*slot| slot.release_point = 1;
+            next_acquire_point = candidate_acquire;
             const old_ring = active_ring;
             const old_generation = active_generation;
             active_ring = replacement;
             active_generation = surface.generation;
-            for (&rings[active_ring], 0..) |*slot, index| {
-                const resized_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
-                errdefer surface_residency.discard();
-                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, next_acquire_point);
-                try boundary.publishCompletion(.{ .generation = surface.generation, .revision = next_acquire_point, .slot = @intCast(index), .acquire_point = next_acquire_point, .release_point = 1 });
-                slot.release_point = 1;
-                next_acquire_point += 1;
-            }
             try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
             boundary.requestWindowRingRetirement(old_generation);
             try waitWindowRingRetired(boundary, old_generation);
@@ -397,7 +444,41 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             acquire_handle,
             &next_acquire_point,
         );
-        try waitRenderWakeBlocking(boundary);
+        terminal_redraw_pending =
+            (try waitRenderWakeBlocking(boundary, terminals)) or
+            terminal_redraw_pending;
+        const terminal_status = terminals.status();
+        if (terminal_status.stopped)
+            return if (terminal_status.failed)
+                error.TerminalRuntime
+            else
+                error.TerminalStopped;
+        if (terminal_redraw_pending) {
+            redrawChrome(
+                boundary,
+                &chrome,
+                chrome,
+                &canvas_work,
+                chrome_appearance,
+                &chrome_primitives,
+                &chrome_text,
+                &graphics,
+                device,
+                queue,
+                family,
+                command,
+                &rings[active_ring],
+                active_generation,
+                &dispatch,
+                drm_fd,
+                acquire_handle,
+                &next_acquire_point,
+            ) catch |failure| switch (failure) {
+                error.NoReleasedSlot => continue,
+                else => return failure,
+            };
+            terminal_redraw_pending = false;
+        }
     }
     try waitReleasePoints(boundary, active_generation, &rings[active_ring], drm_fd);
     boundary.requestWindowRingRetirement(active_generation);
@@ -422,6 +503,10 @@ fn buildCanvasPlan(
     primitives: []render_api.chrome.Primitive,
     text: []u8,
 ) !vk_surface.Plan {
+    while (work.terminals.takeRetired()) |retired| {
+        try work.composer.removeSource(retired.source);
+        try work.terminals.finishRetired(retired.pane);
+    }
     const output = try topology.project(appearance, &.{}, primitives, text);
     try work.content.apply(output);
     const update = try work.content.takeUpdate();
@@ -431,12 +516,33 @@ fn buildCanvasPlan(
         try work.composer.apply(work.source, update);
         work.producer_revision = producer_revision;
     }
-    const placement = render_api.canvas.Composer.Placement{
+    const drained = try work.terminals.drainReady(work.composer);
+    if (drained > chrome_state.max_live_panes) return error.InvalidFrame;
+    var placements: [chrome_state.max_live_panes + 1]render_api.canvas.Composer.Placement = undefined;
+    var placement_count: usize = 0;
+    const active_tab = topology.activeTabIndex();
+    for (0..topology.paneCount(active_tab)) |pane_index| {
+        const pane = topology.paneId(active_tab, pane_index) orelse
+            return error.InvalidTopology;
+        const source = work.terminals.sourceFor(pane) orelse continue;
+        const rect = topology.paneRect(pane) orelse return error.InvalidTopology;
+        placements[placement_count] = .{
+            .source = source,
+            .origin = .{ .x = rect.x, .y = rect.y },
+            .clip = rect,
+        };
+        placement_count += 1;
+    }
+    placements[placement_count] = .{
         .source = work.source,
         .origin = .{ .x = 0, .y = 0 },
         .clip = .{ .x = 0, .y = 0, .width = output.surface.width, .height = output.surface.height },
     };
-    try work.composer.setComposition(.{ .surface = output.surface, .sources = &.{placement} });
+    placement_count += 1;
+    try work.composer.setComposition(.{
+        .surface = output.surface,
+        .sources = placements[0..placement_count],
+    });
     const surface_resident = try work.residency.enumerate(work.surface_residencies);
     for (surface_resident, 0..) |value, index| {
         work.canvas_residencies[index] = .{
@@ -613,13 +719,22 @@ fn waitRenderWake(boundary: *shared.Boundary) !void {
     }
 }
 
-fn waitRenderWakeBlocking(boundary: *shared.Boundary) !void {
-    var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
+fn waitRenderWakeBlocking(
+    boundary: *shared.Boundary,
+    terminals: *terminal_handoff.Boundary,
+) !bool {
+    var descriptors = [_]c.pollfd{
+        .{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 },
+        .{ .fd = terminals.rendererFd(), .events = c.POLLIN, .revents = 0 },
+    };
     while (true) {
-        const result = c.poll(&descriptor, 1, -1);
+        const result = c.poll(&descriptors, descriptors.len, -1);
         if (result > 0) {
-            try boundary.drainRenderWake();
-            return;
+            if (descriptors[0].revents & c.POLLIN != 0)
+                try boundary.drainRenderWake();
+            const terminal_dirty = descriptors[1].revents & c.POLLIN != 0;
+            if (terminal_dirty) try terminals.drainRendererWake();
+            return terminal_dirty;
         }
         if (result < 0 and std.c.errno(result) == .INTR) continue;
         return error.Wake;
@@ -650,14 +765,36 @@ fn drainInput(
         const candidate: ?chrome_state.Topology = switch (event) {
             .key => |key| switch (actions.key(key) catch continue) {
                 .action => |action| input_actions.candidate(topology, action) catch continue,
-                .consumed, .unmatched => null,
+                .consumed => null,
+                .unmatched => unmatched: {
+                    try canvas_work.terminals.publishKey(
+                        topology.focusedPaneId(),
+                        key,
+                    );
+                    break :unmatched null;
+                },
             },
-            .keyboard_leave, .keyboard_reset => reset: {
+            .keyboard_leave => reset: {
+                try canvas_work.terminals.publishFocus(
+                    topology.focusedPaneId(),
+                    .{ .focus = .out },
+                );
+                actions.clear();
+                break :reset null;
+            },
+            .keyboard_reset => reset: {
                 actions.clear();
                 break :reset null;
             },
             .button => |button| input_actions.pointerCandidate(topology, appearance, button) catch continue,
-            .keyboard_enter, .axis, .pointer_enter, .pointer_leave => null,
+            .keyboard_enter => enter: {
+                try canvas_work.terminals.publishFocus(
+                    topology.focusedPaneId(),
+                    .{ .focus = .in },
+                );
+                break :enter null;
+            },
+            .axis, .pointer_enter, .pointer_leave => null,
         };
         if (candidate) |next| {
             try redrawChrome(
@@ -684,6 +821,131 @@ fn drainInput(
     }
 }
 
+const PreparedTerminalTopology = struct {
+    composer: *render_api.canvas.Composer,
+    lifecycle: terminal_handoff.Boundary.PreparedLifecycle,
+    new_source: ?render_api.canvas.SourceId,
+    committed: bool = false,
+
+    fn commit(self: *PreparedTerminalTopology) error{Stopping}!void {
+        try self.lifecycle.commit();
+        self.committed = true;
+    }
+
+    fn deinit(self: *PreparedTerminalTopology) void {
+        if (self.committed) return;
+        self.lifecycle.deinit();
+        if (self.new_source) |source|
+            self.composer.removeSource(source) catch
+                @panic("prepared terminal source rollback failed");
+    }
+};
+
+fn prepareTerminalTopology(
+    work: *CanvasWork,
+    current: *const chrome_state.Topology,
+    candidate: *const chrome_state.Topology,
+) !PreparedTerminalTopology {
+    var operations: [128]terminal_handoff.Lifecycle = undefined;
+    var operation_count: usize = 0;
+    var inputs: [2]terminal_handoff.TerminalInput = undefined;
+    var input_count: usize = 0;
+    var new_panes: usize = 0;
+    var registration_pane: ?render_api.chrome.PaneId = null;
+    for (0..candidate.tabCount()) |tab_index| {
+        for (0..candidate.paneCount(tab_index)) |pane_index| {
+            const pane = candidate.paneId(tab_index, pane_index) orelse
+                return error.InvalidTopology;
+            const rect = candidate.paneRect(pane) orelse
+                return error.InvalidTopology;
+            const grid = terminalGrid(rect);
+            if (!topologyContains(current, pane)) {
+                operations[operation_count] = .{ .create = .{
+                    .pane = pane,
+                    .cols = grid.cols,
+                    .rows = grid.rows,
+                } };
+                operation_count += 1;
+                new_panes += 1;
+                registration_pane = pane;
+            } else {
+                const old_rect = current.paneRect(pane) orelse
+                    return error.InvalidTopology;
+                const old_grid = terminalGrid(old_rect);
+                if (old_grid.cols != grid.cols or old_grid.rows != grid.rows) {
+                    operations[operation_count] = .{ .resize = .{
+                        .pane = pane,
+                        .cols = grid.cols,
+                        .rows = grid.rows,
+                    } };
+                    operation_count += 1;
+                }
+            }
+        }
+    }
+    if (current.focusedPaneId() != candidate.focusedPaneId()) {
+        inputs[input_count] = .{ .focus = .{
+            .pane = current.focusedPaneId(),
+            .event = .{ .focus = .out },
+        } };
+        input_count += 1;
+        inputs[input_count] = .{ .focus = .{
+            .pane = candidate.focusedPaneId(),
+            .event = .{ .focus = .in },
+        } };
+        input_count += 1;
+    }
+    for (0..current.tabCount()) |tab_index| {
+        for (0..current.paneCount(tab_index)) |pane_index| {
+            const pane = current.paneId(tab_index, pane_index) orelse
+                return error.InvalidTopology;
+            if (!topologyContains(candidate, pane)) {
+                operations[operation_count] = .{ .close = pane };
+                operation_count += 1;
+            }
+        }
+    }
+    // Current Host actions admit at most one new terminal owner per redraw;
+    // rejecting a wider candidate before any registration keeps slot/source
+    // construction transactional without a second lifecycle pool.
+    if (new_panes > 1) return error.TerminalCapacity;
+    const source = if (registration_pane != null)
+        try work.composer.registerSource()
+    else
+        null;
+    errdefer if (source) |value|
+        work.composer.removeSource(value) catch
+            @panic("new terminal source rollback failed");
+    const registration: ?terminal_handoff.Registration = if (source) |value|
+        .{ .pane = registration_pane.?, .source = value }
+    else
+        null;
+    const lifecycle = try work.terminals.prepareLifecycle(
+        operations[0..operation_count],
+        inputs[0..input_count],
+        registration,
+    );
+    return .{
+        .composer = work.composer,
+        .lifecycle = lifecycle,
+        .new_source = source,
+    };
+}
+
+fn topologyContains(
+    topology: *const chrome_state.Topology,
+    pane: render_api.chrome.PaneId,
+) bool {
+    return topology.paneRect(pane) != null;
+}
+
+fn terminalGrid(rect: render_api.chrome.Rect) struct { cols: u16, rows: u16 } {
+    return .{
+        .cols = @max(@as(u16, 1), rect.width / 8),
+        .rows = @max(@as(u16, 1), rect.height / 16),
+    };
+}
+
 fn redrawChrome(
     boundary: *shared.Boundary,
     topology: *chrome_state.Topology,
@@ -704,10 +966,12 @@ fn redrawChrome(
     acquire_handle: u32,
     next_acquire_point: *u64,
 ) !void {
+    const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
+    if (!boundary.canPublishCompletion(generation))
+        return error.CompletionUnavailable;
+    try validateTerminalTopology(&candidate);
     const composer_plan = try buildCanvasPlan(canvas_work, &candidate, appearance, primitives, text);
     errdefer canvas_work.residency.discard();
-    const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
-    if (!boundary.canPublishCompletion(generation)) return error.CompletionUnavailable;
     const slot = &slots[slot_index];
     const acquire_point = next_acquire_point.*;
     const following_acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
@@ -735,17 +999,41 @@ fn redrawChrome(
         acquire_handle,
         acquire_point,
     );
-    try boundary.publishCompletion(.{
+    // Terminal lifecycle admission is the final candidate step. Rendering has
+    // completed, but no Window completion is published until every create,
+    // resize, and close fact is accepted.
+    var terminal_candidate = try prepareTerminalTopology(canvas_work, topology, &candidate);
+    defer terminal_candidate.deinit();
+    const completion = shared.Completion{
         .generation = generation,
         .revision = acquire_point,
         .slot = @intCast(slot_index),
         .acquire_point = acquire_point,
         .release_point = release_point,
-    });
+    };
+    var prepared_completion = try boundary.prepareCompletions(&.{completion});
+    defer prepared_completion.deinit();
+    try terminal_candidate.commit();
+    topology.* = candidate;
+    prepared_completion.commit();
     slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
-    topology.* = candidate;
     std.debug.print("Render interactive chrome generation={d} revision={d} slot={d} release={d}\n", .{ generation, acquire_point, slot_index, release_point });
+}
+
+fn validateTerminalTopology(candidate: *const chrome_state.Topology) !void {
+    for (0..candidate.tabCount()) |tab_index| {
+        for (0..candidate.paneCount(tab_index)) |pane_index| {
+            const pane = candidate.paneId(tab_index, pane_index) orelse
+                return error.InvalidTopology;
+            const rect = candidate.paneRect(pane) orelse
+                return error.InvalidTopology;
+            const grid = terminalGrid(rect);
+            const cells = std.math.mul(usize, grid.cols, grid.rows) catch
+                return error.TerminalCapacity;
+            if (cells > 32_768) return error.TerminalCapacity;
+        }
+    }
 }
 
 fn releasedSlot(

@@ -190,10 +190,8 @@ pub const Content = struct {
         ResourceMutationLimit,
         IdentityExhausted,
     };
-    /// Reports malformed, incompatible, or exhausted sparse projection state.
-    pub const ProjectionUpdateError = error{ InvalidUpdate, IdentityExhausted };
-    /// Reports exact retained-image acceptance or identity failure.
-    pub const ImageUpdateError = error{
+    /// Reports malformed, stale, incompatible, or exhausted sparse terminal state.
+    pub const ApplyError = error{
         InvalidUpdate,
         StaleUpdate,
         ArithmeticOverflow,
@@ -205,6 +203,7 @@ pub const Content = struct {
     };
     /// Reports complete Canvas transfer, shaping, raster, or capacity failure.
     pub const TakeError = error{
+        WorkTooSmall,
         InvalidProjection,
         InvalidGeometry,
         InvalidUpdate,
@@ -219,14 +218,115 @@ pub const Content = struct {
         OutOfMemory,
     } || text.PrepareError || text.RasterError;
 
+    /// Owns one terminal thread's reusable shaping, raster, and transfer storage.
+    ///
+    /// A Work may serve any Content whose work-facing limits do not exceed its
+    /// capacities. ProducerUpdate upload, pixel, and command slices borrow this
+    /// storage until the next Work operation; its removal slice borrows the
+    /// producing Content until that Content's next operation.
+    pub const Work = struct {
+        allocator: std.mem.Allocator,
+        limits: Limits,
+        draws: []Draw,
+        cursor_indices: []u16,
+        image_indices: []u16,
+        decoration_pixels: []u8,
+        canvas_inputs: []canvas.Input,
+        uploads: []canvas.ResourceUpload,
+        upload_pixels: []u8,
+        raster_arena: []u8,
+        native_shape_owner: NativeShapeBuffer,
+        native_codepoints: if (features.native_text) []u32 else void,
+        native_clusters: if (features.native_text) []u32 else void,
+        native_glyphs: if (features.native_text) []NativeShapedGlyph else void,
+        native_positioned: if (features.native_text) []text.PositionedGlyph else void,
+
+        /// Allocates all ephemeral storage transactionally.
+        pub fn init(allocator: std.mem.Allocator, limits: Limits) InitError!Work {
+            try validateLimits(limits);
+            const draws = allocator.alloc(Draw, limits.commands) catch return error.OutOfMemory;
+            errdefer allocator.free(draws);
+            const cursor_indices = allocator.alloc(u16, limits.commands) catch return error.OutOfMemory;
+            errdefer allocator.free(cursor_indices);
+            const image_indices = allocator.alloc(u16, limits.placements) catch return error.OutOfMemory;
+            errdefer allocator.free(image_indices);
+            const decoration_pixels = allocator.alloc(u8, limits.decoration_bytes) catch return error.OutOfMemory;
+            errdefer allocator.free(decoration_pixels);
+            const canvas_inputs = allocator.alloc(canvas.Input, limits.commands) catch return error.OutOfMemory;
+            errdefer allocator.free(canvas_inputs);
+            const uploads = allocator.alloc(canvas.ResourceUpload, limits.resources_per_update) catch return error.OutOfMemory;
+            errdefer allocator.free(uploads);
+            const upload_pixels = allocator.alloc(u8, limits.upload_bytes) catch return error.OutOfMemory;
+            errdefer allocator.free(upload_pixels);
+            const raster_arena = allocator.alloc(u8, limits.raster_bytes) catch return error.OutOfMemory;
+            errdefer allocator.free(raster_arena);
+            var result = Work{
+                .allocator = allocator,
+                .limits = limits,
+                .draws = draws,
+                .cursor_indices = cursor_indices,
+                .image_indices = image_indices,
+                .decoration_pixels = decoration_pixels,
+                .canvas_inputs = canvas_inputs,
+                .uploads = uploads,
+                .upload_pixels = upload_pixels,
+                .raster_arena = raster_arena,
+                .native_shape_owner = if (features.native_text) undefined else {},
+                .native_codepoints = if (features.native_text) undefined else {},
+                .native_clusters = if (features.native_text) undefined else {},
+                .native_glyphs = if (features.native_text) undefined else {},
+                .native_positioned = if (features.native_text) undefined else {},
+            };
+            if (comptime features.native_text) {
+                result.native_codepoints = allocator.alloc(u32, limits.commands) catch return error.OutOfMemory;
+                errdefer allocator.free(result.native_codepoints);
+                result.native_clusters = allocator.alloc(u32, limits.commands) catch return error.OutOfMemory;
+                errdefer allocator.free(result.native_clusters);
+                result.native_glyphs = allocator.alloc(NativeShapedGlyph, limits.commands) catch return error.OutOfMemory;
+                errdefer allocator.free(result.native_glyphs);
+                result.native_positioned = allocator.alloc(text.PositionedGlyph, limits.commands) catch return error.OutOfMemory;
+                errdefer allocator.free(result.native_positioned);
+                result.native_shape_owner = NativeShapeBuffer.init(@intCast(limits.commands)) catch
+                    return error.OutOfMemory;
+            }
+            return result;
+        }
+
+        /// Releases all ephemeral storage in reverse allocation order.
+        pub fn deinit(self: *Work) void {
+            if (comptime features.native_text) {
+                self.native_shape_owner.deinit();
+                self.allocator.free(self.native_positioned);
+                self.allocator.free(self.native_glyphs);
+                self.allocator.free(self.native_clusters);
+                self.allocator.free(self.native_codepoints);
+            }
+            self.allocator.free(self.raster_arena);
+            self.allocator.free(self.upload_pixels);
+            self.allocator.free(self.uploads);
+            self.allocator.free(self.canvas_inputs);
+            self.allocator.free(self.decoration_pixels);
+            self.allocator.free(self.image_indices);
+            self.allocator.free(self.cursor_indices);
+            self.allocator.free(self.draws);
+            self.* = undefined;
+        }
+
+        fn accepts(self: *const Work, limits: Limits) bool {
+            return self.limits.commands >= limits.commands and
+                self.limits.placements >= limits.placements and
+                self.limits.decoration_bytes >= limits.decoration_bytes and
+                self.limits.resources_per_update >= limits.resources_per_update and
+                self.limits.upload_bytes >= limits.upload_bytes and
+                self.limits.raster_bytes >= limits.raster_bytes;
+        }
+    };
+
     allocator: std.mem.Allocator,
     limits: Limits,
     fonts: if (features.native_text) *text.FontMap else void,
-    cells_a: []Cell,
-    cells_b: []Cell,
-    geometry_a: []LineGeometry,
-    geometry_b: []LineGeometry,
-    projection_a_active: bool = true,
+    cells: []Cell,
+    geometry: []LineGeometry,
     rows: u16 = 0,
     cols: u16 = 0,
     cursor: Cursor = undefined,
@@ -257,24 +357,11 @@ pub const Content = struct {
     next_resource_id: u64 = 1,
     pending_removals: []canvas.ResourceRemoval,
     pending_removal_count: usize = 0,
-    draws: []Draw,
-    cursor_indices: []u16,
-    image_indices: []u16,
-    decoration_pixels: []u8,
-    canvas_inputs: []canvas.Input,
-    uploads: []canvas.ResourceUpload,
-    upload_pixels: []u8,
-    raster_arena: []u8,
-    native_shape_owner: NativeShapeBuffer,
-    native_codepoints: if (features.native_text) []u32 else void,
-    native_clusters: if (features.native_text) []u32 else void,
-    native_glyphs: if (features.native_text) []NativeShapedGlyph else void,
-    native_positioned: if (features.native_text) []text.PositionedGlyph else void,
     producer_revision: u64 = 1,
     last_geometry: ?PaneGeometry = null,
     initialized: bool = false,
 
-    /// Allocates every retained, candidate, and work bound transactionally.
+    /// Allocates retained and per-Content candidate storage transactionally.
     ///
     /// `fonts` is borrowed for the complete Content lifetime when native text
     /// is selected. No mutation allocates after successful initialization.
@@ -284,14 +371,10 @@ pub const Content = struct {
         fonts: if (features.native_text) *text.FontMap else void,
     ) InitError!Content {
         try validateLimits(limits);
-        const cells_a = allocator.alloc(Cell, limits.cells) catch return error.OutOfMemory;
-        errdefer allocator.free(cells_a);
-        const cells_b = allocator.alloc(Cell, limits.cells) catch return error.OutOfMemory;
-        errdefer allocator.free(cells_b);
-        const geometry_a = allocator.alloc(LineGeometry, limits.rows) catch return error.OutOfMemory;
-        errdefer allocator.free(geometry_a);
-        const geometry_b = allocator.alloc(LineGeometry, limits.rows) catch return error.OutOfMemory;
-        errdefer allocator.free(geometry_b);
+        const cells = allocator.alloc(Cell, limits.cells) catch return error.OutOfMemory;
+        errdefer allocator.free(cells);
+        const geometry = allocator.alloc(LineGeometry, limits.rows) catch return error.OutOfMemory;
+        errdefer allocator.free(geometry);
         const images_a = allocator.alloc(ImageEntry, limits.images) catch return error.OutOfMemory;
         errdefer allocator.free(images_a);
         const images_b = allocator.alloc(ImageEntry, limits.images) catch return error.OutOfMemory;
@@ -321,31 +404,12 @@ pub const Content = struct {
         errdefer allocator.free(mask_candidate_pixels);
         const removals = allocator.alloc(canvas.ResourceRemoval, limits.resources_per_update) catch return error.OutOfMemory;
         errdefer allocator.free(removals);
-        const draws = allocator.alloc(Draw, limits.commands) catch return error.OutOfMemory;
-        errdefer allocator.free(draws);
-        const cursor_indices = allocator.alloc(u16, limits.commands) catch return error.OutOfMemory;
-        errdefer allocator.free(cursor_indices);
-        const image_indices = allocator.alloc(u16, limits.placements) catch return error.OutOfMemory;
-        errdefer allocator.free(image_indices);
-        const decoration_pixels = allocator.alloc(u8, limits.decoration_bytes) catch return error.OutOfMemory;
-        errdefer allocator.free(decoration_pixels);
-        const canvas_inputs = allocator.alloc(canvas.Input, limits.commands) catch return error.OutOfMemory;
-        errdefer allocator.free(canvas_inputs);
-        const uploads = allocator.alloc(canvas.ResourceUpload, limits.resources_per_update) catch return error.OutOfMemory;
-        errdefer allocator.free(uploads);
-        const upload_pixels = allocator.alloc(u8, limits.upload_bytes) catch return error.OutOfMemory;
-        errdefer allocator.free(upload_pixels);
-        const raster_arena = allocator.alloc(u8, limits.raster_bytes) catch return error.OutOfMemory;
-        errdefer allocator.free(raster_arena);
-
-        var result = Content{
+        return .{
             .allocator = allocator,
             .limits = limits,
             .fonts = fonts,
-            .cells_a = cells_a,
-            .cells_b = cells_b,
-            .geometry_a = geometry_a,
-            .geometry_b = geometry_b,
+            .cells = cells,
+            .geometry = geometry,
             .images_a = images_a,
             .images_b = images_b,
             .image_pixels_a = image_pixels_a,
@@ -359,52 +423,11 @@ pub const Content = struct {
             .mask_pixels = mask_pixels,
             .mask_candidate_pixels = mask_candidate_pixels,
             .pending_removals = removals,
-            .draws = draws,
-            .cursor_indices = cursor_indices,
-            .image_indices = image_indices,
-            .decoration_pixels = decoration_pixels,
-            .canvas_inputs = canvas_inputs,
-            .uploads = uploads,
-            .upload_pixels = upload_pixels,
-            .raster_arena = raster_arena,
-            .native_shape_owner = if (features.native_text) undefined else {},
-            .native_codepoints = if (features.native_text) undefined else {},
-            .native_clusters = if (features.native_text) undefined else {},
-            .native_glyphs = if (features.native_text) undefined else {},
-            .native_positioned = if (features.native_text) undefined else {},
         };
-        if (comptime features.native_text) {
-            result.native_codepoints = allocator.alloc(u32, limits.commands) catch return error.OutOfMemory;
-            errdefer allocator.free(result.native_codepoints);
-            result.native_clusters = allocator.alloc(u32, limits.commands) catch return error.OutOfMemory;
-            errdefer allocator.free(result.native_clusters);
-            result.native_glyphs = allocator.alloc(NativeShapedGlyph, limits.commands) catch return error.OutOfMemory;
-            errdefer allocator.free(result.native_glyphs);
-            result.native_positioned = allocator.alloc(text.PositionedGlyph, limits.commands) catch return error.OutOfMemory;
-            errdefer allocator.free(result.native_positioned);
-            result.native_shape_owner = NativeShapeBuffer.init(@intCast(limits.commands)) catch
-                return error.OutOfMemory;
-        }
-        return result;
     }
 
-    /// Releases native scratch and every allocation in reverse ownership order.
+    /// Releases retained and per-Content candidate allocations in reverse order.
     pub fn deinit(self: *Content) void {
-        if (comptime features.native_text) {
-            self.native_shape_owner.deinit();
-            self.allocator.free(self.native_positioned);
-            self.allocator.free(self.native_glyphs);
-            self.allocator.free(self.native_clusters);
-            self.allocator.free(self.native_codepoints);
-        }
-        self.allocator.free(self.raster_arena);
-        self.allocator.free(self.upload_pixels);
-        self.allocator.free(self.uploads);
-        self.allocator.free(self.canvas_inputs);
-        self.allocator.free(self.decoration_pixels);
-        self.allocator.free(self.image_indices);
-        self.allocator.free(self.cursor_indices);
-        self.allocator.free(self.draws);
         self.allocator.free(self.pending_removals);
         self.allocator.free(self.mask_candidate_pixels);
         self.allocator.free(self.mask_pixels);
@@ -418,33 +441,64 @@ pub const Content = struct {
         self.allocator.free(self.image_pixels_a);
         self.allocator.free(self.images_b);
         self.allocator.free(self.images_a);
-        self.allocator.free(self.geometry_b);
-        self.allocator.free(self.geometry_a);
-        self.allocator.free(self.cells_b);
-        self.allocator.free(self.cells_a);
+        self.allocator.free(self.geometry);
+        self.allocator.free(self.cells);
         self.* = undefined;
     }
 
     /// Replaces incompatible or explicitly recovered terminal and image state.
+    ///
+    /// Recovery may retain an unchanged image generation when it carries no
+    /// resource mutation; sparse application still requires every supplied
+    /// image generation to advance.
     pub fn recover(
         self: *Content,
         full: ProjectionBaseline,
         image_update: images.Update,
     ) RecoverError!void {
         try self.validateFullProjection(full);
-        try self.validateImageUpdate(image_update, full.rows, full.cols);
+        try self.validateImageUpdate(image_update, full.rows, full.cols, true);
         try self.canAdvanceRevision();
-        try self.replaceProjection(full);
-        try self.commitImages(image_update);
+        self.replaceProjection(full);
+        self.commitImages(image_update);
         self.producer_revision += 1;
         self.initialized = true;
     }
 
-    /// Applies one compatible sparse terminal projection transactionally.
-    pub fn applyProjection(
+    /// Applies one compatible sparse projection and optional image transaction.
+    ///
+    /// The complete projection and optional image candidate are validated
+    /// before mutation. Only affected rows are then copied; an image candidate
+    /// commits through its already-validated inactive bank. Cursor, resource
+    /// deltas, identities, and producer revision commit exactly once. Failure
+    /// preserves every retained domain and revision byte-for-byte.
+    pub fn apply(
         self: *Content,
+        projection_update: Update,
+        image_update: ?images.Update,
+    ) ApplyError!void {
+        try self.validateProjectionUpdate(projection_update);
+        if (image_update) |update|
+            try self.validateImageUpdate(update, self.rows, self.cols, false);
+        try self.canAdvanceRevision();
+
+        for (projection_update.row_patches) |patch| {
+            const start = @as(usize, patch.row) * self.cols + patch.start_col;
+            @memcpy(
+                self.cells[start..][0..patch.cell_count],
+                projection_update.cells[patch.cell_offset..][0..patch.cell_count],
+            );
+            self.geometry[patch.row] = patch.geometry;
+        }
+        if (image_update) |update| self.commitImages(update);
+        self.cursor = projection_update.cursor;
+        self.producer_revision += 1;
+    }
+
+    fn validateProjectionUpdate(
+        self: *const Content,
         update: Update,
-    ) ProjectionUpdateError!void {
+    ) error{InvalidUpdate}!void {
         if (!self.initialized or update.full or update.rows != self.rows or update.cols != self.cols)
             return error.InvalidUpdate;
         if (update.cursor.visible and
@@ -474,37 +528,9 @@ pub const Content = struct {
             ) catch return error.InvalidUpdate;
         }
         if (expected_cells != update.cells.len) return error.InvalidUpdate;
-        try self.canAdvanceRevision();
-        const target_cells = self.inactiveCells();
-        const target_geometry = self.inactiveGeometry();
-        const count = @as(usize, self.rows) * self.cols;
-        @memcpy(target_cells[0..count], self.activeCells()[0..count]);
-        @memcpy(target_geometry[0..self.rows], self.activeGeometry()[0..self.rows]);
-        for (update.row_patches) |patch| {
-            const start = @as(usize, patch.row) * self.cols + patch.start_col;
-            @memcpy(
-                target_cells[start..][0..patch.cell_count],
-                update.cells[patch.cell_offset..][0..patch.cell_count],
-            );
-            target_geometry[patch.row] = patch.geometry;
-        }
-        self.projection_a_active = !self.projection_a_active;
-        self.cursor = update.cursor;
-        self.producer_revision += 1;
     }
 
-    /// Applies exact image deltas and complete placements transactionally.
-    pub fn applyImages(self: *Content, update: images.Update) ImageUpdateError!void {
-        if (!self.initialized) return error.InvalidUpdate;
-        try self.validateImageUpdate(update, self.rows, self.cols);
-        try self.canAdvanceRevision();
-        try self.commitImages(update);
-        self.producer_revision += 1;
-    }
-
-    fn commitImages(self: *Content, update: images.Update) ImageUpdateError!void {
-        if (update.generation == 0 or update.generation <= self.image_revision)
-            return error.StaleUpdate;
+    fn commitImages(self: *Content, update: images.Update) void {
         const target_entries = self.inactiveImages();
         const target_pixels = self.inactiveImagePixels();
         var target_count: usize = 0;
@@ -538,28 +564,18 @@ pub const Content = struct {
                 }
                 continue;
             }
-            if (target_count == target_entries.len) return error.ImageLimit;
-            if (pixel_count > target_pixels.len - entry.pixel_count) return error.ImagePixelLimit;
             const source_pixels = self.activeImagePixels()[entry.pixel_offset..][0..entry.pixel_count];
             @memcpy(target_pixels[pixel_count..][0..entry.pixel_count], source_pixels);
-            var copied = entry;
-            copied.pixel_offset = pixel_count;
-            target_entries[target_count] = copied;
+            var copied_entry = entry;
+            copied_entry.pixel_offset = pixel_count;
+            target_entries[target_count] = copied_entry;
             target_count += 1;
             pixel_count += entry.pixel_count;
         }
         for (update.uploads) |upload| {
-            if (upload.identity.id == 0 or upload.identity.generation == 0)
-                return error.InvalidUpdate;
-            const width = std.math.cast(u16, upload.width) orelse return error.InvalidUpdate;
-            const height = std.math.cast(u16, upload.height) orelse return error.InvalidUpdate;
-            const end = std.math.add(usize, upload.pixel_offset, upload.pixel_count) catch
-                return error.ArithmeticOverflow;
-            if (width == 0 or height == 0 or end > update.pixels.len)
-                return error.InvalidUpdate;
-            const required = std.math.mul(usize, @as(usize, width) * 4, height) catch
-                return error.ArithmeticOverflow;
-            if (required != upload.pixel_count) return error.InvalidUpdate;
+            const width: u16 = @intCast(upload.width);
+            const height: u16 = @intCast(upload.height);
+            const end = upload.pixel_offset + upload.pixel_count;
             var resource: canvas.LocalResourceRef = undefined;
             var active_found: ?ImageEntry = null;
             for (self.activeImages()[0..self.image_count]) |entry|
@@ -568,17 +584,17 @@ pub const Content = struct {
                     break;
                 };
             if (active_found) |old| {
-                if (upload.identity.generation <= old.identity.generation)
-                    return error.StaleUpdate;
                 resource = .{
                     .resource = old.resource.resource,
                     .generation = @fromBackingInt(@intCast(upload.identity.generation)),
                 };
             } else {
-                resource = try issueResource(&next_id, upload.identity.generation);
+                resource = .{
+                    .resource = @fromBackingInt(@intCast(next_id)),
+                    .generation = @fromBackingInt(@intCast(upload.identity.generation)),
+                };
+                next_id += 1;
             }
-            if (target_count == target_entries.len) return error.ImageLimit;
-            if (pixel_count > target_pixels.len - upload.pixel_count) return error.ImagePixelLimit;
             @memcpy(
                 target_pixels[pixel_count..][0..upload.pixel_count],
                 update.pixels[upload.pixel_offset..end],
@@ -612,14 +628,17 @@ pub const Content = struct {
     /// The caller must first secure its destination capacity, then copy or
     /// synchronously apply the returned slices before any further Content
     /// operation. A successful call consumes pending uploads and removals and
-    /// commits current glyph and decoration resources. Returned slices borrow
-    /// Content storage until the next operation. No acknowledgement follows.
+    /// commits current glyph and decoration resources. Upload, pixel, and
+    /// command slices borrow Work until its next operation; removals borrow
+    /// Content until its next operation. No acknowledgement follows.
     pub fn takeUpdate(
         self: *Content,
+        work: *Work,
         geometry: Geometry,
     ) TakeError!canvas.ProducerUpdate {
         if (!self.initialized) return error.InvalidProjection;
-        var fixed = std.heap.FixedBufferAllocator.init(self.raster_arena);
+        if (!work.accepts(self.limits)) return error.WorkTooSmall;
+        var fixed = std.heap.FixedBufferAllocator.init(work.raster_arena);
         self.glyph_candidate_count = 0;
         self.mask_candidate_count = 0;
         self.mask_candidate_pixel_count = 0;
@@ -640,7 +659,8 @@ pub const Content = struct {
         }
         for (self.activeImages()[0..self.image_count]) |entry| {
             if (!entry.dirty) continue;
-            try self.appendUpload(
+            try appendUpload(
+                work,
                 &upload_count,
                 &upload_bytes,
                 entry.resource,
@@ -663,19 +683,20 @@ pub const Content = struct {
             },
             .fonts = self.fonts,
             .buffers = .{
-                .inputs = self.draws,
-                .cursor_glyphs = self.cursor_indices,
-                .image_order = self.image_indices,
-                .decoration_pixels = self.decoration_pixels,
+                .inputs = work.draws,
+                .cursor_glyphs = work.cursor_indices,
+                .image_order = work.image_indices,
+                .decoration_pixels = work.decoration_pixels,
                 .text = if (features.native_text) .{
-                    .shaper = &self.native_shape_owner,
-                    .codepoints = self.native_codepoints,
-                    .clusters = self.native_clusters,
-                    .shaped = self.native_glyphs,
-                    .positioned = self.native_positioned,
+                    .shaper = &work.native_shape_owner,
+                    .codepoints = work.native_codepoints,
+                    .clusters = work.native_clusters,
+                    .shaped = work.native_glyphs,
+                    .positioned = work.native_positioned,
                 } else {},
             },
             .content = self,
+            .work = work,
             .upload_count = &upload_count,
             .upload_bytes = &upload_bytes,
         };
@@ -689,9 +710,9 @@ pub const Content = struct {
         try build.imagesFor(true);
         const glyph_changed = try self.appendRetiredGlyphs();
         const mask_changed = try self.appendRetiredMasks();
-        if (build.input_used > self.canvas_inputs.len) return error.CommandLimit;
+        if (build.input_used > work.canvas_inputs.len) return error.CommandLimit;
         for (build.buffers.inputs[0..build.input_used], 0..) |draw, index|
-            self.canvas_inputs[index] = drawInput(draw);
+            work.canvas_inputs[index] = drawInput(draw);
         if (geometry_changed or glyph_changed or mask_changed)
             try self.advanceRevision();
         std.mem.swap([]GlyphEntry, &self.glyphs, &self.glyph_candidates);
@@ -710,9 +731,9 @@ pub const Content = struct {
         }
         const result = canvas.ProducerUpdate{
             .revision = @fromBackingInt(@intCast(self.producer_revision)),
-            .uploads = self.uploads[0..upload_count],
+            .uploads = work.uploads[0..upload_count],
             .removals = self.pending_removals[0..self.pending_removal_count],
-            .commands = self.canvas_inputs[0..build.input_used],
+            .commands = work.canvas_inputs[0..build.input_used],
         };
         self.pending_removal_count = 0;
         return result;
@@ -761,13 +782,9 @@ pub const Content = struct {
         return changed;
     }
 
-    fn replaceProjection(self: *Content, full: ProjectionBaseline) RecoverError!void {
-        try self.validateFullProjection(full);
-        const target_cells = self.inactiveCells();
-        const target_geometry = self.inactiveGeometry();
-        @memcpy(target_cells[0..full.cells.len], full.cells);
-        @memcpy(target_geometry[0..full.geometry.len], full.geometry);
-        self.projection_a_active = !self.projection_a_active;
+    fn replaceProjection(self: *Content, full: ProjectionBaseline) void {
+        @memcpy(self.cells[0..full.cells.len], full.cells);
+        @memcpy(self.geometry[0..full.geometry.len], full.geometry);
         self.rows = full.rows;
         self.cols = full.cols;
         self.cursor = full.cursor;
@@ -792,13 +809,23 @@ pub const Content = struct {
         update: images.Update,
         rows: u16,
         cols: u16,
-    ) ImageUpdateError!void {
-        if (update.generation == 0 or update.generation <= self.image_revision)
+        allow_unchanged_generation: bool,
+    ) ApplyError!void {
+        const initial_empty = !self.initialized and update.generation == 0 and
+            update.content_generation == 0 and update.uploads.len == 0 and
+            update.removals.len == 0 and update.placements.len == 0;
+        const unchanged_recovery = allow_unchanged_generation and
+            update.generation == self.image_revision and
+            update.content_generation == self.image_content_revision and
+            update.uploads.len == 0 and update.removals.len == 0;
+        if (!initial_empty and !unchanged_recovery and
+            (update.generation == 0 or update.generation < self.image_revision or
+                (!allow_unchanged_generation and update.generation == self.image_revision)))
             return error.StaleUpdate;
-        if (update.content_generation == 0 or
+        if (!initial_empty and !unchanged_recovery and (update.content_generation == 0 or
             update.content_generation < self.image_content_revision or
             ((update.uploads.len != 0 or update.removals.len != 0) and
-                update.content_generation <= self.image_content_revision))
+                update.content_generation <= self.image_content_revision)))
             return error.StaleUpdate;
         if (update.placements.len > self.limits.placements) return error.PlacementLimit;
         var retained_count = self.image_count;
@@ -855,7 +882,7 @@ pub const Content = struct {
         if (retained_count > self.limits.images) return error.ImageLimit;
         if (retained_bytes > self.limits.image_bytes) return error.ImagePixelLimit;
         if (removals > self.pending_removals.len or
-            update.uploads.len > self.uploads.len)
+            update.uploads.len > self.limits.resources_per_update)
             return error.ResourceMutationLimit;
         if (new_resources > 0 and
             self.next_resource_id > std.math.maxInt(u64) - new_resources)
@@ -914,22 +941,6 @@ pub const Content = struct {
             return error.IdentityExhausted;
     }
 
-    fn activeCells(self: *const Content) []Cell {
-        return if (self.projection_a_active) self.cells_a else self.cells_b;
-    }
-
-    fn inactiveCells(self: *Content) []Cell {
-        return if (self.projection_a_active) self.cells_b else self.cells_a;
-    }
-
-    fn activeGeometry(self: *const Content) []LineGeometry {
-        return if (self.projection_a_active) self.geometry_a else self.geometry_b;
-    }
-
-    fn inactiveGeometry(self: *Content) []LineGeometry {
-        return if (self.projection_a_active) self.geometry_b else self.geometry_a;
-    }
-
     fn activeImages(self: *const Content) []ImageEntry {
         return if (self.images_a_active) self.images_a else self.images_b;
     }
@@ -961,7 +972,7 @@ pub const Content = struct {
     }
 
     fn appendUpload(
-        self: *Content,
+        work: *Work,
         count: *usize,
         bytes_used: *usize,
         resource: canvas.LocalResourceRef,
@@ -970,7 +981,7 @@ pub const Content = struct {
         height: u16,
         bytes: []const u8,
     ) TakeError!void {
-        if (count.* >= self.uploads.len) return error.ResourceMutationLimit;
+        if (count.* >= work.uploads.len) return error.ResourceMutationLimit;
         const bytes_per_pixel: usize = if (format == .rgba8) 4 else 1;
         const validation_result = switch (format) {
             .alpha8 => canvas_validation.alpha8(bytes.len, width, height, width),
@@ -985,12 +996,12 @@ pub const Content = struct {
             error.ArithmeticOverflow => error.ArithmeticOverflow,
             else => error.InvalidUpdate,
         };
-        if (bytes_used.* > self.upload_pixels.len or
-            bytes.len > self.upload_pixels.len - bytes_used.*)
+        if (bytes_used.* > work.upload_pixels.len or
+            bytes.len > work.upload_pixels.len - bytes_used.*)
             return error.UploadByteLimit;
-        const destination = self.upload_pixels[bytes_used.*..][0..bytes.len];
+        const destination = work.upload_pixels[bytes_used.*..][0..bytes.len];
         @memcpy(destination, bytes);
-        self.uploads[count.*] = .{
+        work.uploads[count.*] = .{
             .resource = resource,
             .format = format,
             .pixels = .{
@@ -1006,6 +1017,7 @@ pub const Content = struct {
 
     fn glyph(
         self: *Content,
+        work: *Work,
         allocator: std.mem.Allocator,
         fonts: if (features.native_text) *text.FontMap else void,
         key: text.GlyphKey,
@@ -1032,7 +1044,8 @@ pub const Content = struct {
         else
             null;
         if (resource) |value|
-            try self.appendUpload(
+            try appendUpload(
+                work,
                 upload_count,
                 upload_bytes,
                 value,
@@ -1055,6 +1068,7 @@ pub const Content = struct {
 
     fn mask(
         self: *Content,
+        work: *Work,
         pixels: []const u8,
         width: u16,
         height: u16,
@@ -1102,7 +1116,8 @@ pub const Content = struct {
             return &self.mask_candidates[self.mask_candidate_count - 1];
         }
         const resource = try issueResource(&self.next_resource_id, 1);
-        try self.appendUpload(
+        try appendUpload(
+            work,
             upload_count,
             upload_bytes,
             resource,
@@ -1134,8 +1149,8 @@ pub const Content = struct {
             .rows = self.rows,
             .cols = self.cols,
             .cursor = self.cursor,
-            .cells = self.activeCells()[0..count],
-            .geometry = self.activeGeometry()[0..self.rows],
+            .cells = self.cells[0..count],
+            .geometry = self.geometry[0..self.rows],
         };
     }
 };
@@ -1146,6 +1161,7 @@ const Build = struct {
     fonts: if (features.native_text) *text.FontMap else void,
     buffers: WorkBuffers,
     content: *Content,
+    work: *Content.Work,
     upload_count: *usize,
     upload_bytes: *usize,
     input_used: usize = 0,
@@ -1158,11 +1174,19 @@ const Build = struct {
             var col: usize = 0;
             while (col < self.input.projection.cols) : (col += 1) {
                 const cell_value = self.cell(row, col);
+                var run: usize = 1;
+                while (col + run < self.input.projection.cols and
+                    std.meta.eql(
+                        self.cell(row, col + run).background,
+                        cell_value.background,
+                    ))
+                    run += 1;
                 try self.append(.{ .solid = .{
-                    .rect = try self.cellRect(row, col, 1, 1),
+                    .rect = try self.cellRect(row, col, @intCast(run), 1),
                     .clip = self.input.geometry.clip,
                     .color = color(cell_value.background),
                 } });
+                col += run - 1;
             }
         }
     }
@@ -1316,6 +1340,7 @@ const Build = struct {
         value: text.PositionedGlyph,
     ) Content.TakeError!void {
         const cached = try self.content.glyph(
+            self.work,
             self.allocator,
             self.fonts,
             value.key,
@@ -1554,6 +1579,7 @@ const Build = struct {
         }
         self.decoration_used += count;
         const mask = try self.content.mask(
+            self.work,
             pixels,
             line.width,
             pattern_height,

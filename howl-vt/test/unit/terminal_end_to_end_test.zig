@@ -1701,8 +1701,19 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).placementCount());
     try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
     try std.testing.expect(terminal.images(0).placement(0) == null);
-    try terminal.resize(4, 5);
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Ga=p,i=7\x1b\\")).state_changed,
+    );
+    try std.testing.expect(terminal.images(0).placement(1) != null);
+    var discarded = try terminal.prepareResize(4, 5);
+    discarded.deinit();
+    try std.testing.expect(terminal.images(0).placement(1) != null);
+    var committed = try terminal.prepareResize(4, 5);
+    defer committed.deinit();
+    committed.commit();
     try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    try std.testing.expect(terminal.images(0).placement(0) == null);
+    try std.testing.expect(terminal.images(0).placement(1) == null);
     terminal.hardReset();
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
 }

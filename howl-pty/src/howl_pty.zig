@@ -1257,7 +1257,22 @@ test "nonblocking write preserves empty and partial outcomes for caller retry" {
     @memset(bytes, 'w');
     const accepted_initial = try owned.write(bytes);
     try std.testing.expect(accepted_initial > 0 and accepted_initial < bytes.len);
-    try std.testing.expectError(error.WouldBlock, owned.write(bytes[accepted_initial..]));
+    var accepted_stopped = accepted_initial;
+    var saw_would_block = false;
+    for (0..256) |_| {
+        const count = owned.write(bytes[accepted_stopped..]) catch |failure| switch (failure) {
+            error.WouldBlock => {
+                saw_would_block = true;
+                break;
+            },
+            error.Interrupted => continue,
+            else => return failure,
+        };
+        try std.testing.expect(count > 0);
+        accepted_stopped += count;
+        try std.testing.expect(accepted_stopped < bytes.len);
+    }
+    try std.testing.expect(saw_would_block);
 
     var draining = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null, test_environment);
     defer draining.deinit();

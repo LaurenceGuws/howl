@@ -13,8 +13,8 @@ marathon:
 baseline:
   version: 0.1.3-dev
   head:
-    hash: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
-    subject: Freeze retained rendering and Vulkan surface
+    hash: ba5f054308665fc93266f853e781c300136c976f
+    subject: Prove terminal render handoff
   foundation:
     hash: ee3a497ceb10ed98917c68bd34acab37c79ce97f
     subject: Establish Vulkan host foundation
@@ -29,6 +29,7 @@ baseline:
     render_chrome_ownership: c6bc24e60f4749f7975743d36329a148bdddd6f3
     interactive_chrome: 5b8ac562ebed6479addd2bc7282fc18fac29a367
     howl_vk_surface: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
+    terminal_contract_receipt: ba5f054308665fc93266f853e781c300136c976f
   proven_runtime:
     - one Main lifetime, one Window thread, and one Render thread
     - compositor-selected DMA-BUF device and format/modifier tuple
@@ -310,7 +311,8 @@ checkpoints:
       - generation replacement, context reconstruction, and failure isolation
       - newest-complete per-pane replacement and stale update rejection
   - id: terminal_contract_receipt
-    status: review_ready
+    status: accepted
+    commit: ba5f054308665fc93266f853e781c300136c976f
     outcome: >-
       Feed deterministic transcripts into multiple real howl-vt instances under one
       terminal-runtime owner and render immutable updates in multiple panes without
@@ -325,6 +327,7 @@ checkpoints:
       - qualification preserves colliding pane-local resource identities
       - empty-residency full recovery and byte-exact saturation/rollback
   - id: terminal_runtime
+    status: active
     outcome: >-
       Add one OS thread that owns all logical terminal panes, polls every borrowed
       howl-pty descriptor, mutates each howl-vt instance, and publishes immutable
@@ -337,6 +340,23 @@ checkpoints:
       - stale or retired PaneId input and update rejection
       - hidden progress and newest-state reveal
       - Unicode shaping, DEC and OSC66 geometry, cursor, selection, scrollback, and resize
+      - atomic sparse terminal projection plus optional image transaction with byte-exact rollback
+      - every VT consequence family receives an explicit bounded disposition, exact-identity consumption or typed bounded query reply, and continued PTY progress
+      - dequeued close retries across writing/draining PendingSlot ownership and retires exactly once without terminating the runtime
+      - realistic single-pane admission is bounded coherently with PendingSlot and Composer candidate limits before PTY/VT construction
+      - prepared lifecycle candidates preserve terminal owners, Composer sources, topology, and queues until completion publication succeeds
+      - lifecycle and completion reservations make topology commit precede the final Window-visible completion wake
+      - shutdown remains an out-of-band monotonic wake fact independent of lifecycle-ring capacity
+      - admitted producer pressure is recoverable backpressure and cannot terminate PTY service
+      - pointer motion, button, and axis facts preserve callback-time semantic modifiers independently of later coalesced masks
+      - field-by-field terminal owner memory census and one-, sixteen-, and sixty-four-owner admission alternatives
+      - complete sixteen-visible-pane capacity equation across Composer and Vulkan execution
+      - executable real-Content clean, one-row, recovery, image-only, extraction, and immutable-handoff copy receipts
+      - Content apply and recover retain their signatures; takeUpdate borrows one implemented terminal-thread-exclusive shaping/raster/draw/upload/output Work
+      - Content-retained projection, image, glyph, and mask candidates remain independently owned
+      - real PendingSlot publications and two-PTY scheduler backpressure receipts replace synthetic copy and opportunity loops
+      - sixteen-pane geometry selects an explicit u32 or based-u16-batch contract and admits six queried simultaneous surface-image requirements
+      - format-specific resource extent and atlas packability admission before topology mutation
       - no shared mutable PTY, VT, projection, or GPU state
       - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
   - id: parity_and_freeze

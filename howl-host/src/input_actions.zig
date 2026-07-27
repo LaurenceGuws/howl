@@ -378,11 +378,11 @@ test "directional and pointer no-ops produce no topology candidate" {
     const before = topology;
     try std.testing.expect((try candidate(&topology, .focus_left)) == null);
     try std.testing.expectEqualDeep(before, topology);
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 80, .y = 60 } })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 80, .y = 60 }, .semantic_modifiers = .{} })) == null);
     try std.testing.expectEqualDeep(before, topology);
     const floating = try topology.createFloatingPane(.{ .x = 20, .y = 30, .width = 80, .height = 50 }, "float");
     const floating_before = topology;
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 } })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })) == null);
     try std.testing.expectEqual(floating, topology.focusedPaneId());
     try std.testing.expectEqualDeep(floating_before, topology);
 }
@@ -398,12 +398,12 @@ test "primary pointer selects tabs focuses panes and raises floating order" {
         .tab_active_background = .{ .r = 13, .g = 14, .b = 15, .a = 16 },
         .tab_inactive_background = .{ .r = 17, .g = 18, .b = 19, .a = 20 },
     };
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 10, .y = 10 } })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 10, .y = 10 }, .semantic_modifiers = .{} })).?;
     try std.testing.expectEqual(@as(usize, 0), topology.activeTabIndex());
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 120, .y = 90 } })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 120, .y = 90 }, .semantic_modifiers = .{} })).?;
     try std.testing.expectEqual(tiled, topology.focusedPaneId());
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 } })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })).?;
     try std.testing.expectEqual(floating, topology.focusedPaneId());
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = 2, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 } })) == null);
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = -1, .y = 40 } })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = 2, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = -1, .y = 40 }, .semantic_modifiers = .{} })) == null);
 }

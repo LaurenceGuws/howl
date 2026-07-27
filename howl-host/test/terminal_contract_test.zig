@@ -17,6 +17,7 @@ const cell_count: usize = rows * cols;
 const Producer = struct {
     machine: vt.Terminal,
     content: terminal.Content,
+    work: *terminal.Content.Work,
     baseline_cells: [cell_count]terminal.Cell = undefined,
     baseline_geometry: [rows]terminal.LineGeometry = undefined,
     baseline_cursor: terminal.Cursor = undefined,
@@ -34,6 +35,7 @@ const Producer = struct {
     fn init(
         allocator: std.mem.Allocator,
         fonts: *render.terminal_text.FontMap,
+        work: *terminal.Content.Work,
     ) !Producer {
         var machine = try vt.Terminal.init(allocator, rows, cols);
         errdefer machine.deinit();
@@ -43,7 +45,7 @@ const Producer = struct {
             fonts,
         );
         errdefer content.deinit();
-        return .{ .machine = machine, .content = content };
+        return .{ .machine = machine, .content = content, .work = work };
     }
 
     fn deinit(self: *Producer) void {
@@ -85,13 +87,15 @@ const Producer = struct {
             selectionStyle(),
         );
         try std.testing.expect(!projected.full);
-        try self.content.applyProjection(projected);
-        self.commitProjection(projected);
         const current_images = self.machine.images(0);
-        if (current_images.generation != self.image_generation) {
-            const image_update = try self.projectImages();
-            try self.content.applyImages(image_update);
-            self.commitImageIdentities(image_update);
+        const image_update = if (current_images.generation != self.image_generation)
+            try self.projectImages()
+        else
+            null;
+        try self.content.apply(projected, image_update);
+        self.commitProjection(projected);
+        if (image_update) |update| {
+            self.commitImageIdentities(update);
         }
     }
 
@@ -100,7 +104,7 @@ const Producer = struct {
         slot: *terminal_handoff.PendingSlot,
         placement: terminal.Content.Geometry,
     ) !void {
-        try slot.publish(&self.content, placement);
+        try slot.publish(&self.content, self.work, placement);
     }
 
     fn baseline(self: *const Producer) terminal.ProjectionBaseline {
@@ -277,6 +281,49 @@ fn sourceCommandsEqual(
     }
 }
 
+fn pendingCopiedBytes(slot: *const terminal_handoff.PendingSlot) usize {
+    var pixels: usize = 0;
+    for (slot.uploads[0..slot.upload_count]) |upload|
+        pixels += upload.pixels.bytes.len;
+    return pixels +
+        slot.upload_count * @sizeOf(canvas.ResourceUpload) +
+        slot.removal_count * @sizeOf(canvas.ResourceRemoval) +
+        slot.command_count * @sizeOf(canvas.Input);
+}
+
+test "real PendingSlot publication copies coherent terminal updates" {
+    var fonts = try render.terminal_text.FontMap.init(
+        std.testing.allocator,
+        &.{.{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = facts.font_path, .pixel_height = 16 },
+        }},
+    );
+    defer fonts.deinit();
+    var work = try terminal.Content.Work.init(std.testing.allocator, contentLimits());
+    defer work.deinit();
+    const transcripts = [_][]const u8{
+        "",
+        "ordinary text",
+        "\x1b_Ga=T,f=32,s=2,v=2,i=7;AQIDBAUGBwgJCgsMDQ4PEA==\x1b\\",
+    };
+    for (transcripts) |transcript| {
+        var producer = try Producer.init(std.testing.allocator, &fonts, &work);
+        defer producer.deinit();
+        if (transcript.len != 0) try producer.feed(transcript);
+        try producer.recover();
+        var slot = try terminal_handoff.PendingSlot.init(
+            std.testing.allocator,
+            contentLimits(),
+        );
+        defer slot.deinit();
+        try producer.publish(&slot, geometry(0));
+        const copied = pendingCopiedBytes(&slot);
+        try std.testing.expect(copied != 0 or transcript.len == 0);
+        try std.testing.expect(try slot.retire());
+    }
+}
+
 test "two real terminals cross copied slots into distinct Composer sources" {
     var fonts = try render.terminal_text.FontMap.init(
         std.testing.allocator,
@@ -286,9 +333,11 @@ test "two real terminals cross copied slots into distinct Composer sources" {
         }},
     );
     defer fonts.deinit();
-    var first = try Producer.init(std.testing.allocator, &fonts);
+    var work = try terminal.Content.Work.init(std.testing.allocator, contentLimits());
+    defer work.deinit();
+    var first = try Producer.init(std.testing.allocator, &fonts, &work);
     defer first.deinit();
-    var second = try Producer.init(std.testing.allocator, &fonts);
+    var second = try Producer.init(std.testing.allocator, &fonts, &work);
     defer second.deinit();
     try first.feed(
         "\x1b[31mleft A" ++

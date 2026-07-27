@@ -141,6 +141,34 @@ test "invalid and stale revisions preserve queued completion" {
     try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
 }
 
+test "completion batch validates fully before publishing any member" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishConfigure(64, 64);
+    try value.publishOffers(try realOffers());
+    closeOffers(value.takeOffers().?);
+    value.markWindowRingReady(1);
+    const valid = [_]shared.Completion{
+        .{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 },
+        .{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 },
+        .{ .generation = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 },
+    };
+    var malformed = valid;
+    malformed[2].revision = 2;
+    try std.testing.expectError(
+        error.InvalidRevision,
+        value.prepareCompletions(&malformed),
+    );
+    try std.testing.expect(value.takeCompletion() == null);
+    var prepared = try value.prepareCompletions(&valid);
+    defer prepared.deinit();
+    try std.testing.expect(!value.canPublishCompletion(1));
+    prepared.commit();
+    for (valid) |expected|
+        try std.testing.expectEqual(expected, value.takeCompletion().?);
+    try std.testing.expect(value.takeCompletion() == null);
+}
+
 test "stop is monotonic and preserves the first runtime failure" {
     var value = try boundary();
     defer value.deinit();
@@ -174,7 +202,11 @@ test "Window input facts cross the shared boundary without policy" {
     var value = try boundary();
     defer value.deinit();
     try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
-    try value.publishMotion(.{ .time = 18, .point = .{ .x = 12.5, .y = 8.25 } });
+    try value.publishMotion(.{
+        .time = 18,
+        .point = .{ .x = 12.5, .y = 8.25 },
+        .semantic_modifiers = .{},
+    });
     try value.publishModifiers(.{ .serial = 9, .depressed = 1, .latched = 2, .locked = 4, .group = 3 });
     try value.publishRepeat(.{ .rate = 25, .delay = 500 });
     try expectReadable(value.renderFd());

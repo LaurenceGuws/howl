@@ -498,12 +498,13 @@ pub const Screen = struct {
         }
         for (source.output_lines.items, 0..) |slot, index| {
             const line = slot orelse continue;
+            const value: OutputLine.Value = switch (line.value) {
+                .text => |text| .{ .text = try allocator.dupe(u8, text) },
+                .loss => |loss| .{ .loss = loss },
+            };
             self.output_lines.items[index] = .{
                 .id = line.id,
-                .value = switch (line.value) {
-                    .text => |text| .{ .text = try allocator.dupe(u8, text) },
-                    .loss => |loss| .{ .loss = loss },
-                },
+                .value = value,
             };
         }
         self.output_lines_start = source.output_lines_start;

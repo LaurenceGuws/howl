@@ -138,6 +138,12 @@ pub const Topology = struct {
         return self.tabs[location.tab].panes[location.pane].layer;
     }
 
+    /// Copies one retained pane rectangle without exposing topology storage.
+    pub fn paneRect(self: *const Topology, id: PaneId) ?chrome.Rect {
+        const location = self.findPane(id) orelse return null;
+        return self.tabs[location.tab].panes[location.pane].rect;
+    }
+
     /// Reports whether one retained floating pane is already topmost in its
     /// tab's deterministic composition order.
     pub fn floatingPaneIsTopmost(self: *const Topology, id: PaneId) bool {

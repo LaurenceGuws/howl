@@ -103,6 +103,8 @@ test "capable root composes terminal and chrome producer updates" {
         &map,
     );
     defer terminal_content.deinit();
+    var terminal_work = try terminal.Content.Work.init(std.testing.allocator, terminal_content.limits);
+    defer terminal_work.deinit();
     const cells = [_]terminal.Cell{.{
         .codepoint = 'A',
         .combining_len = 0,
@@ -146,7 +148,7 @@ test "capable root composes terminal and chrome producer updates" {
         .removals = &.{},
         .placements = &.{},
     });
-    const terminal_update = try terminal_content.takeUpdate(.{
+    const terminal_update = try terminal_content.takeUpdate(&terminal_work, .{
         .x = 0,
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },

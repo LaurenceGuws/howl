@@ -156,7 +156,10 @@ test "resize changes emulator geometry and rejects zero dimensions" {
 
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
-    try terminal.resize(3, 10);
+    var prepared: howl_vt.Terminal.PreparedResize =
+        try terminal.prepareResize(3, 10);
+    defer prepared.deinit();
+    prepared.commit();
 
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 3), view.rows);

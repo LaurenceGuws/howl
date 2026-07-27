@@ -458,7 +458,11 @@ fn pointerEnter(data: ?*anyopaque, pointer: ?*c.wl_pointer, serial: u32, surface
     if (pointer != state.pointer or surface != state.surface) return state.boundary.requestStop(.window);
     state.pointer_motion = null;
     const point = wayland.input.Point{ .x = fixedPoint(x), .y = fixedPoint(y) };
-    state.pointer_motion = .{ .time = 0, .point = point };
+    state.pointer_motion = .{
+        .time = 0,
+        .point = point,
+        .semantic_modifiers = state.keyboard_semantic_modifiers,
+    };
     state.boundary.publishInput(.{ .pointer_enter = .{ .serial = serial, .point = point } }) catch inputFailure(state);
 }
 
@@ -472,7 +476,11 @@ fn pointerLeave(data: ?*anyopaque, pointer: ?*c.wl_pointer, serial: u32, surface
 fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, x: c.wl_fixed_t, y: c.wl_fixed_t) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
-    state.pointer_motion = .{ .time = time, .point = .{ .x = fixedPoint(x), .y = fixedPoint(y) } };
+    state.pointer_motion = .{
+        .time = time,
+        .point = .{ .x = fixedPoint(x), .y = fixedPoint(y) },
+        .semantic_modifiers = state.keyboard_semantic_modifiers,
+    };
     state.boundary.publishMotion(state.pointer_motion.?) catch inputFailure(state);
 }
 
@@ -485,7 +493,14 @@ fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, serial: u32, time: 
         else => return state.boundary.requestStop(.window),
     };
     const motion = state.pointer_motion orelse return state.boundary.requestStop(.window);
-    state.boundary.publishInput(.{ .button = .{ .button = button, .time = time, .state = button_state, .serial = serial, .point = motion.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .button = .{
+        .button = button,
+        .time = time,
+        .state = button_state,
+        .serial = serial,
+        .point = motion.point,
+        .semantic_modifiers = state.keyboard_semantic_modifiers,
+    } }) catch inputFailure(state);
 }
 
 fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32, value: c.wl_fixed_t) callconv(.c) void {
@@ -497,18 +512,20 @@ fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32,
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .value = .{ .axis = direction, .time = time, .value = fixedPoint(value) } }, .point = point.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .value = .{ .axis = direction, .time = time, .value = fixedPoint(value) } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerFrame(data: ?*anyopaque, pointer: ?*c.wl_pointer) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .frame = {} }, .point = null } }) catch inputFailure(state);
+    const point = state.pointer_motion orelse return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .frame = {} }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerSource(data: ?*anyopaque, pointer: ?*c.wl_pointer, source: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
+    const point = state.pointer_motion orelse return state.boundary.requestStop(.window);
     const value: wayland.input.AxisSource = switch (source) {
         0 => .wheel,
         1 => .finger,
@@ -516,7 +533,7 @@ fn pointerSource(data: ?*anyopaque, pointer: ?*c.wl_pointer, source: u32) callco
         3 => .wheel_tilt,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .source = value }, .point = null } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .source = value }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerStop(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32) callconv(.c) void {
@@ -528,7 +545,7 @@ fn pointerStop(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32)
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .stop = .{ .axis = direction, .time = time } }, .point = point.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .stop = .{ .axis = direction, .time = time } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerDiscrete(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value: i32) callconv(.c) void {
@@ -540,7 +557,7 @@ fn pointerDiscrete(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value:
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .discrete = .{ .axis = direction, .value = value } }, .point = point.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .discrete = .{ .axis = direction, .value = value } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerValue120(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value: i32) callconv(.c) void {
@@ -552,7 +569,7 @@ fn pointerValue120(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value:
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .value120 = .{ .axis = direction, .value = value } }, .point = point.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .value120 = .{ .axis = direction, .value = value } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerRelativeDirection(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, direction: u32) callconv(.c) void {
@@ -569,7 +586,7 @@ fn pointerRelativeDirection(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u3
         1 => .inverted,
         else => return state.boundary.requestStop(.window),
     };
-    state.boundary.publishInput(.{ .axis = .{ .event = .{ .relative_direction = .{ .axis = value, .direction = relative } }, .point = point.point } }) catch inputFailure(state);
+    state.boundary.publishInput(.{ .axis = .{ .event = .{ .relative_direction = .{ .axis = value, .direction = relative } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 const pointer_listener = c.wl_pointer_listener{ .enter = pointerEnter, .leave = pointerLeave, .motion = pointerMotion, .button = pointerButton, .axis = pointerAxis, .frame = pointerFrame, .axis_source = pointerSource, .axis_stop = pointerStop, .axis_discrete = pointerDiscrete, .axis_value120 = pointerValue120, .axis_relative_direction = pointerRelativeDirection };
