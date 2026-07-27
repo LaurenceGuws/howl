@@ -1,7 +1,8 @@
 //! Deterministic proofs for caller-neutral chrome geometry and ownership.
 
 const std = @import("std");
-const chrome = @import("howl_render").chrome;
+const render = @import("howl_render");
+const chrome = render.chrome;
 
 fn input() chrome.Input {
     return .{

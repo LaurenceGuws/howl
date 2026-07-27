@@ -6,12 +6,30 @@ const selected = @import("selected_capabilities");
 const fonts = if (selected.native_text) @import("test_fonts") else struct {};
 const terminal = render.terminal;
 const terminal_text = render.terminal_text;
+const canvas = render.canvas;
 
 const metrics = terminal_text.CellMetrics{
     .width_px = 8,
     .height_px = 16,
     .baseline_px = 12,
 };
+
+fn contentLimits() terminal.Content.Limits {
+    return .{
+        .cells = 16,
+        .rows = 4,
+        .images = 8,
+        .placements = 8,
+        .image_bytes = 4096,
+        .glyphs = 32,
+        .masks = 16,
+        .commands = 64,
+        .resources_per_update = 32,
+        .upload_bytes = 8192,
+        .raster_bytes = 8192,
+        .decoration_bytes = 1024,
+    };
+}
 
 test "terminal text public surface follows selected sources" {
     try std.testing.expectEqual(selected.native_text, @hasDecl(terminal_text, "FontStyle"));
@@ -43,6 +61,936 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expect(@hasDecl(terminal_text, "RasterError"));
     try std.testing.expect(@hasDecl(terminal_text, "prepareNextRun"));
     try std.testing.expect(@hasDecl(terminal_text, "rasterizeGlyph"));
+    try std.testing.expect(@hasDecl(terminal, "Content"));
+}
+
+test "retained terminal content emits one complete producer update" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = if (selected.native_text)
+        try terminal.Content.init(std.testing.allocator, contentLimits(), &map)
+    else
+        try terminal.Content.init(std.testing.allocator, contentLimits(), {});
+    defer content.deinit();
+
+    const cells = [_]terminal.Cell{cell(if (selected.native_text) 'A' else 0x2500)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    const baseline = terminal.ProjectionBaseline{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    };
+    try content.recover(baseline, emptyImages());
+    const update = try content.takeUpdate(.{
+        .x = 0,
+        .y = 0,
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .metrics = metrics,
+        .underline_y = 14,
+        .underline_height = 1,
+        .strike_y = 8,
+        .strike_height = 1,
+    });
+    try std.testing.expect(@backingInt(update.revision) != 0);
+    try std.testing.expect(update.commands.len >= 1);
+    try std.testing.expect(update.commands[0] == .solid);
+    const resized = try content.takeUpdate(contentGeometry(7, 16));
+    try std.testing.expectEqual(
+        @backingInt(update.revision) + 1,
+        @backingInt(resized.revision),
+    );
+    try std.testing.expectEqual(@as(u16, 7), resized.commands[0].solid.clip.width);
+    const resized_revision = @backingInt(resized.revision);
+    var resized_commands: [4]canvas.Input = undefined;
+    try std.testing.expect(resized.commands.len <= resized_commands.len);
+    @memcpy(resized_commands[0..resized.commands.len], resized.commands);
+    const resized_command_count = resized.commands.len;
+    const drained = try content.takeUpdate(contentGeometry(7, 16));
+    try std.testing.expectEqual(resized_revision, @backingInt(drained.revision));
+    try std.testing.expectEqual(@as(usize, 0), drained.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), drained.removals.len);
+    try std.testing.expectEqualDeep(
+        resized_commands[0..resized_command_count],
+        drained.commands,
+    );
+}
+
+test "retained terminal content applies sparse rows and rejects malformed updates byte-exactly" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    var cells = [_]terminal.Cell{ cell(0), cell(0), cell(0), cell(0) };
+    cells[0].background.r = 1;
+    cells[1].background.r = 2;
+    cells[2].background.r = 3;
+    cells[3].background.r = 4;
+    const row_geometry = [_]terminal.LineGeometry{ .single_width, .double_width };
+    try content.recover(.{
+        .rows = 2,
+        .cols = 2,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const before = try content.takeUpdate(contentGeometry(16, 32));
+    const before_revision = @backingInt(before.revision);
+    try std.testing.expectEqual(@as(u8, 3), before.commands[2].solid.color.r);
+
+    var changed = cell(0);
+    changed.background.r = 9;
+    const patches = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 1,
+        .cell_offset = 0,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 1,
+        .damage_end = 1,
+    }};
+    try content.applyProjection(.{
+        .rows = 2,
+        .cols = 2,
+        .full = false,
+        .cells = &.{changed},
+        .row_patches = &patches,
+        .cursor = hiddenCursor(),
+    });
+    const after = try content.takeUpdate(contentGeometry(16, 32));
+    try std.testing.expectEqual(before_revision + 1, @backingInt(after.revision));
+    try std.testing.expectEqual(@as(u8, 1), after.commands[0].solid.color.r);
+    try std.testing.expectEqual(@as(u8, 9), after.commands[1].solid.color.r);
+    try std.testing.expectEqual(@as(u8, 3), after.commands[2].solid.color.r);
+    try std.testing.expectEqual(@as(u8, 4), after.commands[3].solid.color.r);
+
+    const malformed = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 0,
+        .cell_offset = 1,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 0,
+        .damage_end = 0,
+    }};
+    try std.testing.expectError(error.InvalidUpdate, content.applyProjection(.{
+        .rows = 2,
+        .cols = 2,
+        .full = false,
+        .cells = &.{changed},
+        .row_patches = &malformed,
+        .cursor = hiddenCursor(),
+    }));
+    const overflowing = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 0,
+        .cell_offset = std.math.maxInt(usize),
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 0,
+        .damage_end = 0,
+    }};
+    try std.testing.expectError(error.InvalidUpdate, content.applyProjection(.{
+        .rows = 2,
+        .cols = 2,
+        .full = false,
+        .cells = &.{changed},
+        .row_patches = &overflowing,
+        .cursor = hiddenCursor(),
+    }));
+    const unchanged = try content.takeUpdate(contentGeometry(16, 32));
+    try std.testing.expectEqual(@backingInt(after.revision), @backingInt(unchanged.revision));
+    try std.testing.expectEqualDeep(after.commands, unchanged.commands);
+}
+
+test "retained terminal content preserves exact image replacement removal and ordering" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    const cells = [_]terminal.Cell{cell(0)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    const first_pixels = [_]u8{ 1, 2, 3, 255 };
+    const first_upload = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 7, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    const first_placement = [_]render.terminal_images.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+        .pixel_width = 1,
+        .pixel_height = 1,
+        .z = -1,
+    }};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &first_pixels,
+        .uploads = &first_upload,
+        .removals = &.{},
+        .placements = &first_placement,
+    });
+    const first = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
+    try std.testing.expectEqual(canvas.ResourceFormat.rgba8, first.uploads[0].format);
+    try std.testing.expect(first.commands[0] == .solid);
+    try std.testing.expect(first.commands[1] == .rgba);
+    const resource_id = @backingInt(first.uploads[0].resource.resource);
+
+    const replacement_pixels = [_]u8{ 9, 8, 7, 255 };
+    const replacement_upload = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 7, .generation = 2 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    var replacement_placement = first_placement;
+    replacement_placement[0].generation = 2;
+    try content.applyImages(.{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &replacement_pixels,
+        .uploads = &replacement_upload,
+        .removals = &.{},
+        .placements = &replacement_placement,
+    });
+    const replacement = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), replacement.uploads.len);
+    try std.testing.expectEqual(
+        resource_id,
+        @backingInt(replacement.uploads[0].resource.resource),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 2),
+        @backingInt(replacement.uploads[0].resource.generation),
+    );
+    try std.testing.expectEqualSlices(u8, &replacement_pixels, replacement.uploads[0].pixels.bytes);
+    const replacement_revision = @backingInt(replacement.revision);
+    try std.testing.expectError(error.StaleUpdate, content.applyImages(.{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &replacement_placement,
+    }));
+    const unknown_placement = [_]render.terminal_images.ImagePlacement{.{
+        .image_id = 99,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+        .pixel_width = 1,
+        .pixel_height = 1,
+    }};
+    try std.testing.expectError(error.InvalidUpdate, content.applyImages(.{
+        .generation = 3,
+        .content_generation = 2,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &unknown_placement,
+    }));
+    const still_replacement = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(
+        replacement_revision,
+        @backingInt(still_replacement.revision),
+    );
+
+    var animated_placement = replacement_placement;
+    animated_placement[0].generation = 9;
+    animated_placement[0].z = 1;
+    try content.applyImages(.{
+        .generation = 3,
+        .content_generation = 2,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &animated_placement,
+    });
+    const animated = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), animated.uploads.len);
+    try std.testing.expect(animated.commands[animated.commands.len - 1] == .rgba);
+
+    try content.applyImages(.{
+        .generation = 4,
+        .content_generation = 3,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{7},
+        .placements = &.{},
+    });
+    const removed = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), removed.removals.len);
+    try std.testing.expectEqual(resource_id, @backingInt(removed.removals[0].resource.resource));
+    try std.testing.expectEqual(@as(usize, 0), removed.uploads.len);
+}
+
+test "image deltas require initialization and remove only transferred generations" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    try std.testing.expectError(error.InvalidUpdate, content.applyImages(emptyImages()));
+    const cells = [_]terminal.Cell{cell(0)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+
+    const pixels = [_]u8{ 1, 2, 3, 255 };
+    const created = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 11, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    try content.applyImages(.{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &pixels,
+        .uploads = &created,
+        .removals = &.{},
+        .placements = &.{},
+    });
+    try content.applyImages(.{
+        .generation = 3,
+        .content_generation = 3,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{11},
+        .placements = &.{},
+    });
+    const never_transferred = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), never_transferred.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), never_transferred.removals.len);
+
+    const recreated = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 11, .generation = 2 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    try content.applyImages(.{
+        .generation = 4,
+        .content_generation = 4,
+        .pixels = &pixels,
+        .uploads = &recreated,
+        .removals = &.{},
+        .placements = &.{},
+    });
+    const transferred = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), transferred.uploads.len);
+    const transferred_resource = transferred.uploads[0].resource;
+
+    const replacement_pixels = [_]u8{ 9, 8, 7, 255 };
+    const replacement = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 11, .generation = 3 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    try content.applyImages(.{
+        .generation = 5,
+        .content_generation = 5,
+        .pixels = &replacement_pixels,
+        .uploads = &replacement,
+        .removals = &.{},
+        .placements = &.{},
+    });
+    try content.applyImages(.{
+        .generation = 6,
+        .content_generation = 6,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{11},
+        .placements = &.{},
+    });
+    const replacement_never_transferred = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), replacement_never_transferred.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), replacement_never_transferred.removals.len);
+    try std.testing.expectEqualDeep(
+        transferred_resource,
+        replacement_never_transferred.removals[0].resource,
+    );
+}
+
+test "retained terminal glyph resources rasterize once and survive sparse updates" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    const codepoint: u21 = if (selected.native_text) 'A' else 0x2500;
+    const cells = [_]terminal.Cell{cell(codepoint)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    const block_cursor = terminal.Cursor{
+        .row = 0,
+        .col = 0,
+        .visible = true,
+        .shape = .block,
+        .blink = false,
+        .color = .{ .r = 10, .g = 20, .b = 30 },
+        .text_color = .{ .r = 40, .g = 50, .b = 60 },
+    };
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = block_cursor,
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const first = try content.takeUpdate(contentGeometry(8, 16));
+    var glyph_uploads: usize = 0;
+    for (first.uploads) |upload| if (upload.format == .alpha8) {
+        glyph_uploads += 1;
+    };
+    try std.testing.expectEqual(@as(usize, 1), glyph_uploads);
+    var cursor_fill = false;
+    var recolored_glyph = false;
+    for (first.commands) |command| switch (command) {
+        .solid => |solid| cursor_fill = cursor_fill or
+            std.meta.eql(solid.color, canvas.Color{ .r = 10, .g = 20, .b = 30, .a = 255 }),
+        .alpha_mask => |mask| recolored_glyph = recolored_glyph or
+            std.meta.eql(mask.color, canvas.Color{ .r = 40, .g = 50, .b = 60, .a = 255 }),
+        .rgba => {},
+    };
+    try std.testing.expect(cursor_fill);
+    try std.testing.expect(recolored_glyph);
+    const first_revision = @backingInt(first.revision);
+
+    const second = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(first_revision, @backingInt(second.revision));
+    try std.testing.expectEqual(@as(usize, 0), second.uploads.len);
+
+    var changed = cells[0];
+    changed.background.b = 22;
+    const patch = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 0,
+        .cell_offset = 0,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 0,
+        .damage_end = 0,
+    }};
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 1,
+        .full = false,
+        .cells = &.{changed},
+        .row_patches = &patch,
+        .cursor = block_cursor,
+    });
+    const sparse = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), sparse.uploads.len);
+    try std.testing.expectEqual(@as(u8, 22), sparse.commands[0].solid.color.b);
+
+    changed.codepoint = if (selected.native_text) 'B' else 0x2502;
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 1,
+        .full = false,
+        .cells = &.{changed},
+        .row_patches = &patch,
+        .cursor = block_cursor,
+    });
+    const replaced = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), replaced.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), replaced.removals.len);
+    try std.testing.expect(
+        @backingInt(replaced.uploads[0].resource.resource) >
+            @backingInt(replaced.removals[0].resource.resource),
+    );
+}
+
+test "zero-area native glyphs retain metrics without logical resources" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    const patch = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 0,
+        .cell_offset = 0,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 0,
+        .damage_end = 0,
+    }};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &.{cell(' ')},
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const blank = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), blank.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), blank.removals.len);
+
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 1,
+        .full = false,
+        .cells = &.{cell('A')},
+        .row_patches = &patch,
+        .cursor = hiddenCursor(),
+    });
+    const visible = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), visible.uploads.len);
+
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 1,
+        .full = false,
+        .cells = &.{cell(' ')},
+        .row_patches = &patch,
+        .cursor = hiddenCursor(),
+    });
+    const blank_again = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), blank_again.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), blank_again.removals.len);
+
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 1,
+        .full = false,
+        .cells = &.{cell(0)},
+        .row_patches = &patch,
+        .cursor = hiddenCursor(),
+    });
+    const retired_blank = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 0), retired_blank.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), retired_blank.removals.len);
+}
+
+test "retained terminal content preserves audited decoration placement and color" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    var cells = [_]terminal.Cell{ cell(0), cell(0), cell(0) };
+    cells[0].underline = true;
+    cells[0].underline_style = .double;
+    cells[0].underline_color = .{ .r = 1, .g = 2, .b = 3 };
+    cells[0].strikethrough = true;
+    cells[0].foreground = .{ .r = 4, .g = 5, .b = 6 };
+    cells[1].underline = true;
+    cells[1].underline_style = .dotted;
+    cells[2].underline = true;
+    cells[2].underline_style = .curly;
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 3,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const update = try content.takeUpdate(contentGeometry(24, 16));
+    try std.testing.expectEqual(@as(usize, 8), update.commands.len);
+    try std.testing.expectEqual(@as(i32, 12), update.commands[3].solid.rect.y);
+    try std.testing.expectEqual(@as(i32, 14), update.commands[4].solid.rect.y);
+    try std.testing.expectEqualDeep(
+        canvas.Color{ .r = 4, .g = 5, .b = 6, .a = 255 },
+        update.commands[5].solid.color,
+    );
+    try std.testing.expect(update.commands[6] == .alpha_mask);
+    try std.testing.expect(update.commands[7] == .alpha_mask);
+    try std.testing.expectEqual(@as(usize, 2), update.uploads.len);
+    try std.testing.expectEqual(canvas.ResourceFormat.alpha8, update.uploads[0].format);
+    try std.testing.expectEqual(canvas.ResourceFormat.alpha8, update.uploads[1].format);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0 },
+        update.uploads[0].pixels.bytes,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 255, 0, 255, 0, 255, 0, 255, 255, 0, 255, 0, 255, 0, 255, 0 },
+        update.uploads[1].pixels.bytes,
+    );
+
+    const unchanged = try content.takeUpdate(contentGeometry(24, 16));
+    try std.testing.expectEqual(@as(usize, 0), unchanged.uploads.len);
+    try std.testing.expectEqual(@backingInt(update.revision), @backingInt(unchanged.revision));
+}
+
+test "decoration masks retire transactionally across geometry churn" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var limits = contentLimits();
+    limits.masks = 1;
+    var content = if (selected.native_text)
+        try terminal.Content.init(std.testing.allocator, limits, &map)
+    else
+        try terminal.Content.init(std.testing.allocator, limits, {});
+    defer content.deinit();
+
+    var decorated = cell(0);
+    decorated.underline = true;
+    decorated.underline_style = .dotted;
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &.{decorated},
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const first = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), first.removals.len);
+    const first_resource = first.uploads[0].resource;
+
+    var seven = contentGeometry(7, 16);
+    seven.metrics.width_px = 7;
+    const second = try content.takeUpdate(seven);
+    try std.testing.expectEqual(@as(usize, 1), second.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), second.removals.len);
+    try std.testing.expectEqualDeep(first_resource, second.removals[0].resource);
+    const second_resource = second.uploads[0].resource;
+
+    var six = contentGeometry(6, 16);
+    six.metrics.width_px = 6;
+    const third = try content.takeUpdate(six);
+    try std.testing.expectEqual(@as(usize, 1), third.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), third.removals.len);
+    try std.testing.expectEqualDeep(second_resource, third.removals[0].resource);
+    const third_resource = third.uploads[0].resource;
+
+    var conflicting = [_]terminal.Cell{ decorated, decorated };
+    conflicting[1].underline_style = .curly;
+    try content.recover(.{
+        .rows = 1,
+        .cols = 2,
+        .cursor = hiddenCursor(),
+        .cells = &conflicting,
+        .geometry = &row_geometry,
+    }, .{
+        .generation = 2,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    try std.testing.expectError(
+        error.MaskLimit,
+        content.takeUpdate(contentGeometry(12, 16)),
+    );
+    conflicting[1].underline_style = .dotted;
+    const patch = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 1,
+        .cell_offset = 0,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 1,
+        .damage_end = 1,
+    }};
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 2,
+        .full = false,
+        .cells = conflicting[1..],
+        .row_patches = &patch,
+        .cursor = hiddenCursor(),
+    });
+    const recovered = try content.takeUpdate(contentGeometry(12, 16));
+    try std.testing.expectEqual(@as(usize, 1), recovered.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), recovered.removals.len);
+    try std.testing.expectEqualDeep(third_resource, recovered.removals[0].resource);
+    try std.testing.expectEqual(
+        @backingInt(third_resource.resource) + 1,
+        @backingInt(recovered.uploads[0].resource.resource),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 0, 0, 0, 0, 0, 0, 255, 0, 255, 0, 255, 0, 255, 0 },
+        recovered.uploads[0].pixels.bytes,
+    );
+}
+
+test "retained terminal content preserves OSC 66 scaling alignment and clipping" {
+    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    var cells = [_]terminal.Cell{cell(0x2500)};
+    cells[0].sizing = .{
+        .width = 4,
+        .height = 2,
+        .subscale_n = 1,
+        .subscale_d = 2,
+        .vertical_align = 2,
+        .horizontal_align = 1,
+    };
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const update = try content.takeUpdate(.{
+        .x = 3,
+        .y = 5,
+        .clip = .{ .x = 3, .y = 5, .width = 32, .height = 16 },
+        .metrics = metrics,
+        .underline_y = 14,
+        .underline_height = 1,
+        .strike_y = 8,
+        .strike_height = 1,
+    });
+    try std.testing.expectEqual(@as(usize, 2), update.commands.len);
+    try std.testing.expectEqualDeep(
+        canvas.Rect{ .x = 3, .y = 5, .width = 8, .height = 16 },
+        update.commands[0].solid.rect,
+    );
+    try std.testing.expectEqualDeep(
+        canvas.Rect{ .x = 19, .y = 13, .width = 8, .height = 16 },
+        update.commands[1].alpha_mask.destination,
+    );
+    try std.testing.expectEqualDeep(
+        canvas.Rect{ .x = 19, .y = 13, .width = 8, .height = 8 },
+        update.commands[1].alpha_mask.clip,
+    );
+}
+
+test "retained terminal content preserves DEC double-width placement" {
+    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+    const cells = [_]terminal.Cell{cell(0x2500)};
+    const row_geometry = [_]terminal.LineGeometry{.double_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const update = try content.takeUpdate(contentGeometry(16, 16));
+    try std.testing.expectEqualDeep(
+        canvas.Rect{ .x = 0, .y = 0, .width = 16, .height = 16 },
+        update.commands[0].solid.rect,
+    );
+    try std.testing.expectEqualDeep(
+        canvas.Rect{ .x = 0, .y = 0, .width = 16, .height = 16 },
+        update.commands[1].alpha_mask.destination,
+    );
+}
+
+test "retained terminal content construction rolls back every owned allocation" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        constructContent,
+        .{&map},
+    );
+}
+
+test "glyph cache capacity failure rolls back identity and remains reusable" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var limits = contentLimits();
+    limits.glyphs = 1;
+    var content = if (selected.native_text)
+        try terminal.Content.init(std.testing.allocator, limits, &map)
+    else
+        try terminal.Content.init(std.testing.allocator, limits, {});
+    defer content.deinit();
+
+    const first_codepoint: u21 = if (selected.native_text) 'A' else 0x2500;
+    const second_codepoint: u21 = if (selected.native_text) 'B' else 0x2502;
+    const cells = [_]terminal.Cell{ cell(first_codepoint), cell(second_codepoint) };
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 2,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    try std.testing.expectError(
+        error.GlyphLimit,
+        content.takeUpdate(contentGeometry(16, 16)),
+    );
+
+    const replacement = cell(first_codepoint);
+    const patch = [_]terminal.RowPatch{.{
+        .row = 0,
+        .start_col = 1,
+        .cell_offset = 0,
+        .cell_count = 1,
+        .geometry = .single_width,
+        .damage_start = 1,
+        .damage_end = 1,
+    }};
+    try content.applyProjection(.{
+        .rows = 1,
+        .cols = 2,
+        .full = false,
+        .cells = &.{replacement},
+        .row_patches = &patch,
+        .cursor = hiddenCursor(),
+    });
+    const recovered = try content.takeUpdate(contentGeometry(16, 16));
+    try std.testing.expectEqual(@as(usize, 1), recovered.uploads.len);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        @backingInt(recovered.uploads[0].resource.resource),
+    );
+}
+
+test "incompatible sparse geometry requires explicit full recovery" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+
+    const cells = [_]terminal.Cell{cell(0)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    try std.testing.expectError(error.InvalidUpdate, content.applyProjection(.{
+        .rows = 1,
+        .cols = 2,
+        .full = false,
+        .cells = &.{},
+        .row_patches = &.{},
+        .cursor = hiddenCursor(),
+    }));
+    const two_cells = [_]terminal.Cell{ cell(0), cell(0) };
+    try content.recover(.{
+        .rows = 1,
+        .cols = 2,
+        .cursor = hiddenCursor(),
+        .cells = &two_cells,
+        .geometry = &row_geometry,
+    }, .{
+        .generation = 2,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    const recovered = try content.takeUpdate(contentGeometry(16, 16));
+    try std.testing.expectEqual(@as(usize, 2), recovered.commands.len);
+}
+
+test "image capacity rejection preserves retained bytes and generation" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var limits = contentLimits();
+    limits.image_bytes = 4;
+    var content = if (selected.native_text)
+        try terminal.Content.init(std.testing.allocator, limits, &map)
+    else
+        try terminal.Content.init(std.testing.allocator, limits, {});
+    defer content.deinit();
+
+    const cells = [_]terminal.Cell{cell(0)};
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    const original_pixels = [_]u8{ 1, 2, 3, 4 };
+    const upload = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 1, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    const placement = [_]render.terminal_images.ImagePlacement{.{
+        .image_id = 1,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+        .pixel_width = 1,
+        .pixel_height = 1,
+    }};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &original_pixels,
+        .uploads = &upload,
+        .removals = &.{},
+        .placements = &placement,
+    });
+    const accepted = try content.takeUpdate(contentGeometry(8, 16));
+    const accepted_revision = @backingInt(accepted.revision);
+
+    const oversized_pixels = [_]u8{ 9, 9, 9, 9, 8, 8, 8, 8 };
+    const oversized = [_]render.terminal_images.ImageUpload{.{
+        .identity = .{ .id = 1, .generation = 2 },
+        .width = 2,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 8,
+    }};
+    var oversized_placement = placement;
+    oversized_placement[0].generation = 2;
+    try std.testing.expectError(error.ImagePixelLimit, content.applyImages(.{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &oversized_pixels,
+        .uploads = &oversized,
+        .removals = &.{},
+        .placements = &oversized_placement,
+    }));
+    const unchanged = try content.takeUpdate(contentGeometry(8, 16));
+    try std.testing.expectEqual(accepted_revision, @backingInt(unchanged.revision));
+    try std.testing.expectEqual(@as(usize, 0), unchanged.uploads.len);
+    try std.testing.expect(unchanged.commands[unchanged.commands.len - 1] == .rgba);
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        @backingInt(unchanged.commands[unchanged.commands.len - 1].rgba.resource.resource.generation),
+    );
 }
 
 test "generated and no-glyph runs retain exact coverage without allocation" {
@@ -558,6 +1506,33 @@ fn initMap() !Map {
     return {};
 }
 
+fn initContent(map: *Map) !terminal.Content {
+    if (comptime selected.native_text)
+        return terminal.Content.init(std.testing.allocator, contentLimits(), map);
+    return terminal.Content.init(std.testing.allocator, contentLimits(), {});
+}
+
+fn constructContent(allocator: std.mem.Allocator, map: *Map) !void {
+    var content = if (comptime selected.native_text)
+        try terminal.Content.init(allocator, contentLimits(), map)
+    else
+        try terminal.Content.init(allocator, contentLimits(), {});
+    content.deinit();
+}
+
+fn contentGeometry(width: u16, height: u16) terminal.Content.Geometry {
+    return .{
+        .x = 0,
+        .y = 0,
+        .clip = .{ .x = 0, .y = 0, .width = width, .height = height },
+        .metrics = metrics,
+        .underline_y = 14,
+        .underline_height = 1,
+        .strike_y = 8,
+        .strike_height = 1,
+    };
+}
+
 fn deinitMap(map: *Map) void {
     if (comptime selected.native_text) map.deinit();
 }
@@ -623,5 +1598,28 @@ fn cell(codepoint: u21) terminal.Cell {
         .underline_style = .none,
         .selected = false,
         .link_id = 0,
+    };
+}
+
+fn hiddenCursor() terminal.Cursor {
+    return .{
+        .row = 0,
+        .col = 0,
+        .visible = false,
+        .shape = .none,
+        .blink = false,
+        .color = .{ .r = 0, .g = 0, .b = 0 },
+        .text_color = .{ .r = 0, .g = 0, .b = 0 },
+    };
+}
+
+fn emptyImages() render.terminal_images.Update {
+    return .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
     };
 }

@@ -2,6 +2,192 @@
 
 const std = @import("std");
 const vk = @import("howl_vk");
+const surface = vk.surface;
+
+test "surface contract is analyzed with generic draw storage" {
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(surface.Vertex));
+    try std.testing.expect(surface.max_vertices >= surface.max_quads);
+    const clip = surface.Rect{ .x = 0, .y = 0, .width = 1, .height = 1 };
+    const command = surface.Command{ .kind = .solid, .first_index = 0, .index_count = 0, .clip = clip };
+    const plan = surface.Plan{ .vertices = &.{}, .indices = &.{}, .commands = &.{command}, .atlas_changed = false };
+    try std.testing.expectEqual(@as(usize, 1), plan.commands.len);
+}
+
+test "surface residency stages and commits transactionally" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 32 });
+    defer store.deinit();
+    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(.{ .revision = 1, .uploads = &.{
+        .{ .resource = key, .kind = .alpha_mask, .width = 2, .height = 2, .stride = 2, .pixels = &pixels },
+    }, .removals = &.{}, .commands = &.{} });
+    var output: [2]surface.Residency = undefined;
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
+    try store.complete();
+    const resident = try store.enumerate(&output);
+    try std.testing.expectEqual(@as(usize, 1), resident.len);
+    try std.testing.expectEqual(key, resident[0].resource);
+}
+
+test "surface residency rejects malformed uploads without active mutation" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
+    defer store.deinit();
+    const bad = surface.Upload{ .resource = .{ .key = .{ .source = 1, .local = 1 }, .generation = 1 }, .kind = .alpha_mask, .width = 2, .height = 2, .stride = 1, .pixels = &.{ 1, 2, 3, 4 } };
+    try std.testing.expectError(error.InvalidFrame, store.stage(.{ .revision = 1, .uploads = &.{bad}, .removals = &.{}, .commands = &.{} }));
+    var output: [1]surface.Residency = undefined;
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
+}
+
+test "surface residency replaces and removes exact generations" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 32 });
+    defer store.deinit();
+    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 7 }, .generation = 1 };
+    const second = surface.ResourceGeneration{ .key = first.key, .generation = 2 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(frame(1, &.{upload(first, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    try store.stage(frame(2, &.{upload(second, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    var output: [2]surface.Residency = undefined;
+    var resident = try store.enumerate(&output);
+    try std.testing.expectEqual(@as(usize, 1), resident.len);
+    try std.testing.expectEqual(second, resident[0].resource);
+    try store.stage(frame(3, &.{}, &.{.{ .resource = second }}, &.{}));
+    try store.complete();
+    resident = try store.enumerate(&output);
+    try std.testing.expectEqual(@as(usize, 0), resident.len);
+}
+
+test "surface residency rejects stale generations and preserves active bytes" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
+    defer store.deinit();
+    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 2 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(frame(1, &.{upload(key, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    const stale = surface.ResourceGeneration{ .key = key.key, .generation = 1 };
+    try std.testing.expectError(error.GenerationMismatch, store.stage(frame(2, &.{upload(stale, &pixels)}, &.{}, &.{})));
+    var output: [1]surface.Residency = undefined;
+    const resident = try store.enumerate(&output);
+    try std.testing.expectEqual(key, resident[0].resource);
+}
+
+test "surface candidate discard models failed GPU application" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 16 });
+    defer store.deinit();
+    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const second = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 2 }, .generation = 1 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(frame(1, &.{upload(first, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    try store.stage(frame(2, &.{upload(second, &pixels)}, &.{}, &.{}));
+    store.discard();
+    var output: [2]surface.Residency = undefined;
+    const resident = try store.enumerate(&output);
+    try std.testing.expectEqual(@as(usize, 1), resident.len);
+    try std.testing.expectEqual(first, resident[0].resource);
+    try store.stage(frame(3, &.{upload(second, &pixels)}, &.{}, &.{}));
+    try store.complete();
+    try std.testing.expectEqual(@as(usize, 2), (try store.enumerate(&output)).len);
+}
+
+test "atlas facts commit only through the completion boundary" {
+    var context = surface.Context{};
+    try std.testing.expect(!context.atlas_initialized);
+    try std.testing.expect(!context.image_atlas_initialized);
+    // A recording or submission failure does not call complete, so both
+    // layout facts remain at their prior values.
+    context.complete(.{ .alpha_initialized = true, .image_initialized = true });
+    try std.testing.expect(context.atlas_initialized);
+    try std.testing.expect(context.image_atlas_initialized);
+    // Later replacement recording can require both transitions again, but a
+    // failed operation leaves the established facts unchanged.
+    context.complete(.{ .alpha_initialized = false, .image_initialized = false });
+    try std.testing.expect(context.atlas_initialized);
+    try std.testing.expect(context.image_atlas_initialized);
+}
+
+test "surface capacity failure rolls back and complete candidate rebuilds geometry" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 4 });
+    defer store.deinit();
+    var builder = try surface.FrameBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    const command = surface.FrameCommand{ .alpha_mask = .{
+        .rect = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .resource = key,
+        .color = .{ 1, 1, 1, 1 },
+    } };
+    const too_many = [_]surface.Upload{ upload(key, &pixels), upload(.{ .key = .{ .source = 2, .local = 1 }, .generation = 1 }, &pixels) };
+    try std.testing.expectError(error.Capacity, store.stage(frame(1, &too_many, &.{}, &.{command})));
+    var output: [1]surface.Residency = undefined;
+    try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
+    const accepted = frame(2, &.{upload(key, &pixels)}, &.{}, &.{command});
+    try store.stage(accepted);
+    const plan = try builder.build(&store, accepted);
+    try std.testing.expectEqual(@as(usize, 1), plan.commands.len);
+    try store.complete();
+}
+
+test "surface sparse frame rebuilds complete physical residency" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 32 });
+    defer store.deinit();
+    var builder = try surface.FrameBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const second = surface.ResourceGeneration{ .key = .{ .source = 2, .local = 1 }, .generation = 1 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try store.stage(frame(1, &.{ upload(first, &pixels), upload(second, &pixels) }, &.{}, &.{}));
+    try store.complete();
+    const commands = [_]surface.FrameCommand{
+        alphaCommand(first, 0),
+        alphaCommand(second, 2),
+    };
+    const sparse = frame(2, &.{}, &.{}, &commands);
+    try store.stage(sparse);
+    const plan = try builder.build(&store, sparse);
+    try std.testing.expectEqual(@as(usize, 2), plan.commands.len);
+    try std.testing.expect(plan.atlas_changed);
+    try store.complete();
+}
+
+test "surface unknown command resource rejects candidate and remains reusable" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
+    defer store.deinit();
+    const known = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const unknown = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 2 }, .generation = 1 };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try std.testing.expectError(
+        error.GenerationMismatch,
+        store.stage(frame(1, &.{upload(known, &pixels)}, &.{}, &.{alphaCommand(unknown, 0)})),
+    );
+    try store.stage(frame(2, &.{upload(known, &pixels)}, &.{}, &.{alphaCommand(known, 0)}));
+    try store.complete();
+}
+
+fn upload(resource: surface.ResourceGeneration, pixels: []const u8) surface.Upload {
+    return .{ .resource = resource, .kind = .alpha_mask, .width = 2, .height = 2, .stride = 2, .pixels = pixels };
+}
+
+fn alphaCommand(resource: surface.ResourceGeneration, x: i32) surface.FrameCommand {
+    return .{ .alpha_mask = .{
+        .rect = .{ .x = x, .y = 0, .width = 2, .height = 2 },
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 8 },
+        .resource = resource,
+        .color = .{ 1, 1, 1, 1 },
+    } };
+}
+
+fn frame(
+    revision: u64,
+    uploads: []const surface.Upload,
+    removals: []const surface.Removal,
+    commands: []const surface.FrameCommand,
+) surface.Frame {
+    return .{ .revision = revision, .uploads = uploads, .removals = removals, .commands = commands };
+}
 
 test "consumed ABI sizes, alignments, constants, and signatures" {
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(vk.abi.VkInstance));

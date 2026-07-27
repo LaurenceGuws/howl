@@ -2,7 +2,8 @@
 
 const std = @import("std");
 const vt = @import("howl_vt");
-const terminal = @import("howl_render").terminal;
+const render = @import("howl_render");
+const terminal = render.terminal;
 
 comptime {
     std.testing.refAllDecls(@import("image_projection_test.zig"));

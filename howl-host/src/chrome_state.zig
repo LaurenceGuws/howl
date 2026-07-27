@@ -428,7 +428,10 @@ pub const Topology = struct {
         var movement: i64 = delta;
         if (!hasOpposite(tab, location.pane, orientation, edge, source)) {
             edge = if (orientation == .vertical) source.x else source.y;
-            movement = -@as(i64, delta);
+            // Delta is the requested physical divider movement.  The same
+            // sign applies whether the divider is the pane's trailing or
+            // leading edge; this keeps Up/Down and Left/Right opposite.
+            movement = @as(i64, delta);
         }
         var span_start: i64 = if (orientation == .vertical) source.y else source.x;
         var span_end = span_start + if (orientation == .vertical) source.height else source.width;

@@ -29,9 +29,15 @@ accepted:
   howl-render/src/image_projection.zig: stateless VT image-plane projection into caller buffers
   howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
   howl-render/src/image_projection_test.zig: image projection identity, placement, capacity, and alias proofs
+  howl-render/src/canvas.zig: canonical clipped Canvas facts, retained logical resources, and ordered Composer frames
+  howl-render/src/canvas_validation.zig: private shared Canvas identity, extent, and pixel-plane validation
+  howl-render/src/canvas_test.zig: Canvas syntax, Composer retention, revision, residency, recovery, alias, and rollback proofs
   howl-render/src/chrome.zig: caller-neutral stable identities, tab bar, tiled/floating pane frames, labels, scrollbars, selection, and hit projection
   howl-render/src/chrome_test.zig: deterministic chrome geometry, overlap order, clipping, hit, capacity, rollback, and alias proofs
   howl-render/src/chrome_reuse_test.zig: independent editor-like native-text and chrome reuse proof through the curated package root
+  howl-render/src/chrome_native.zig: native-capable Chrome Content retention and Canvas update production
+  howl-render/src/terminal_canvas.zig: native/generated-capable terminal Content retention and Canvas update production
+  howl-render/src/vertical_test.zig: capable-root terminal/chrome producer-to-Composer composition proof
   howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
@@ -43,20 +49,18 @@ accepted:
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: exclusive Vulkan mutation, DRM synchronization, generation-tagged rings, and release observation
+  howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation
   howl-host/src/chrome_state.zig: Renderer-owned bounded tab and tiled/floating pane topology, transactional geometry/focus policy, and immutable chrome composition
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and transactional topology candidates
-  howl-host/src/chrome_draw.zig: bounded native-label shaping, shared alpha-atlas residency, and Vulkan-ready chrome vertices, indices, and draw facts
-  howl-host/src/gpu_chrome.zig: Host-owned solid and alpha-text Vulkan pipelines, shared GPU atlas, mapped bounded staging, and per-slot framebuffer ownership
-  howl-host/shaders: maintained GLSL sources and compilation provenance for the two chrome pipelines
-  howl-host/src/shaders: checked SPIR-V consumed directly by the Vulkan owner
+  howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
+  howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner
   howl-vk/build.zig: independent Vulkan ABI and dispatch package build and proofs
   howl-vk/build.zig.zon: Vulkan package identity and source boundary
   howl-vk/LICENSES: Vulkan-Headers provenance and license facts
   howl-vk/src/root.zig: curated Vulkan ABI and dispatch package root
   howl-vk/src/abi.zig: maintained minimal Vulkan 1.4.357 mechanical ABI
   howl-vk/src/dispatch.zig: typed ExternalImageDispatch procedure loading and validation
-  howl-vk/src/proofs.zig: Vulkan ABI size, signature, closure, and dispatch proofs
+  howl-vk/src/proofs.zig: Vulkan ABI, dispatch, generic surface residency, rollback, and cleanup proofs
   howl-wayland/build.zig: independent Wayland protocol package build and scanner reproducibility step
   howl-wayland/build.zig.zon: Wayland package identity and source boundary
   howl-wayland/src/root.zig: curated Wayland ABI, input, and xkbcommon package root

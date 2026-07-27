@@ -2,7 +2,8 @@
 
 const std = @import("std");
 const vt = @import("howl_vt");
-const images = @import("howl_render").terminal_images;
+const render = @import("howl_render");
+const images = render.terminal_images;
 
 const Storage = struct {
     pixels: [64]u8 = undefined,

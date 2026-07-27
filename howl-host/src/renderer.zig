@@ -7,8 +7,7 @@ const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
-const chrome_draw = @import("chrome_draw");
-const gpu_chrome = @import("gpu_chrome");
+const vk_surface = howl_vk.surface;
 const input_actions = @import("input_actions");
 
 const chrome_appearance = chrome_state.Appearance{
@@ -23,6 +22,24 @@ const chrome_appearance = chrome_state.Appearance{
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
 
+const CanvasWork = struct {
+    composer: *render_api.canvas.Composer,
+    content: *render_api.chrome.Content,
+    source: render_api.canvas.SourceId,
+    producer_revision: u64 = 0,
+    frame_uploads: []render_api.canvas.ResourceUploadFact,
+    frame_removals: []render_api.canvas.FrameResourceRef,
+    frame_commands: []render_api.canvas.Command,
+    frame_pixels: []u8,
+    surface_uploads: []vk_surface.Upload,
+    surface_removals: []vk_surface.Removal,
+    surface_commands: []vk_surface.FrameCommand,
+    surface_residencies: []vk_surface.Residency,
+    canvas_residencies: []render_api.canvas.Residency,
+    builder: *vk_surface.FrameBuilder,
+    residency: *vk_surface.ResidencyStore,
+};
+
 const Slot = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -32,7 +49,7 @@ const Slot = struct {
     plane_count: u8 = 0,
     planes: [shared.plane_limit]shared.Plane = undefined,
     external: bool = false,
-    attachment: gpu_chrome.Attachment = .{},
+    attachment: vk_surface.Attachment = .{},
     owned_bytes: u64 = 0,
     release_point: u64 = 0,
     clear_color: [4]f32 = .{ 0, 0, 0, 1 },
@@ -68,9 +85,63 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     const initial_surface = try waitConfigure(boundary);
     try checkGpuBudget(initial_surface.width, initial_surface.height);
     var chrome = try chrome_state.Topology.init(.{ .width = @intCast(initial_surface.width), .height = @intCast(initial_surface.height) }, chrome_state.default_tab_bar_height);
-    var labels = try chrome_draw.Engine.init(allocator, font_path);
-    defer labels.deinit();
-    var labels_omission_reported = false;
+    var composer = try render_api.canvas.Composer.init(allocator, .{
+        .sources = chrome_state.max_live_panes + 1,
+        .retained_resources = 512,
+        .retained_commands = 4096,
+        .retained_pixel_bytes = 16 * 1024 * 1024,
+        .composition_sources = chrome_state.max_live_panes + 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    const chrome_source = try composer.registerSource();
+    var chrome_content = try render_api.chrome.Content.init(allocator, .{
+        .primitives = 256,
+        .text_bytes = (chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes,
+        .label_scalars = 4096,
+        .shaped_glyphs = 4096,
+        .glyphs = 512,
+        .commands = 2048,
+        .resources_per_update = 512,
+        .upload_bytes = 8 * 1024 * 1024,
+        .raster_bytes = 512 * 1024,
+    }, .{ .primary = font_path, .pixel_height = 16 });
+    defer chrome_content.deinit();
+    const frame_uploads = try allocator.alloc(render_api.canvas.ResourceUploadFact, 512);
+    defer allocator.free(frame_uploads);
+    const frame_removals = try allocator.alloc(render_api.canvas.FrameResourceRef, 512);
+    defer allocator.free(frame_removals);
+    const frame_commands = try allocator.alloc(render_api.canvas.Command, 4096);
+    defer allocator.free(frame_commands);
+    const frame_pixels = try allocator.alloc(u8, 8 * 1024 * 1024);
+    defer allocator.free(frame_pixels);
+    var surface_uploads: [512]vk_surface.Upload = undefined;
+    var surface_removals: [512]vk_surface.Removal = undefined;
+    var surface_commands: [4096]vk_surface.FrameCommand = undefined;
+    var surface_residencies: [512]vk_surface.Residency = undefined;
+    var canvas_residencies: [512]render_api.canvas.Residency = undefined;
+    var surface_builder = try vk_surface.FrameBuilder.init(allocator);
+    defer surface_builder.deinit();
+    var surface_residency = try vk_surface.ResidencyStore.init(allocator, .{ .resources = 512, .pixel_bytes = 8 * 1024 * 1024 });
+    defer surface_residency.deinit();
+    var canvas_work = CanvasWork{
+        .composer = &composer,
+        .content = &chrome_content,
+        .source = chrome_source,
+        .frame_uploads = frame_uploads,
+        .frame_removals = frame_removals,
+        .frame_commands = frame_commands,
+        .frame_pixels = frame_pixels,
+        .surface_uploads = &surface_uploads,
+        .surface_removals = &surface_removals,
+        .surface_commands = &surface_commands,
+        .surface_residencies = &surface_residencies,
+        .canvas_residencies = &canvas_residencies,
+        .builder = &surface_builder,
+        .residency = &surface_residency,
+    };
     var chrome_primitives: [256]render_api.chrome.Primitive = undefined;
     var chrome_text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
@@ -142,7 +213,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     var memory_properties: vk.VkPhysicalDeviceMemoryProperties = undefined;
     vk.vkGetPhysicalDeviceMemoryProperties(physical, &memory_properties);
     var gpu_bytes: u64 = 0;
-    var graphics = try gpu_chrome.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
+    var graphics = try vk_surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
@@ -203,12 +274,12 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         .{ 0.12, 0.48, 0.20, 1 },
         .{ 0.52, 0.16, 0.56, 1 },
     };
-    const initial_chrome = try chrome.project(chrome_appearance, &.{}, &chrome_primitives, &chrome_text);
-    if (initial_chrome.primitives.len == 0) return error.Chrome;
     var next_acquire_point: u64 = 4;
     for (&rings[0], 0..) |*slot, index| {
         queue_active = true;
-        try render(&graphics, device, queue, family, command, slot, colors[index], initial_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, index + 1);
+        const composer_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+        errdefer surface_residency.discard();
+        try render(&graphics, device, queue, family, command, slot, colors[index], composer_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
         slot.release_point = 1;
     }
@@ -223,7 +294,9 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
     const release_wait = try importReleaseSemaphore(device, &dispatch, &release_sync_fd);
     defer vk.vkDestroySemaphore(device, release_wait, null);
-    try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, initial_chrome, &labels, &labels_omission_reported, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
+    const reuse_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+    errdefer surface_residency.discard();
+    try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
     rings[0][0].release_point = 2;
     std.debug.print("Render same-generation reuse slot=0 acquire={d} release=2 generation={d}\n", .{ next_acquire_point, initial_surface.generation });
@@ -240,8 +313,6 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
                 else => return failure,
             };
             try checkGpuBudget(surface.width, surface.height);
-            const resized_chrome = try chrome.project(chrome_appearance, &.{}, &chrome_primitives, &chrome_text);
-            if (resized_chrome.primitives.len == 0) return error.Chrome;
             const replacement = 1 - active_ring;
             for (&rings[replacement]) |*slot| slot.* = .{};
             var replacement_offers: [shared.slot_count]shared.SlotOffer = undefined;
@@ -294,7 +365,9 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             active_ring = replacement;
             active_generation = surface.generation;
             for (&rings[active_ring], 0..) |*slot, index| {
-                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_chrome, &labels, &labels_omission_reported, null, &dispatch, drm_fd, acquire_handle, next_acquire_point);
+                const resized_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+                errdefer surface_residency.discard();
+                try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, next_acquire_point);
                 try boundary.publishCompletion(.{ .generation = surface.generation, .revision = next_acquire_point, .slot = @intCast(index), .acquire_point = next_acquire_point, .release_point = 1 });
                 slot.release_point = 1;
                 next_acquire_point += 1;
@@ -307,6 +380,7 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
         try drainInput(
             boundary,
             &actions,
+            &canvas_work,
             &chrome,
             chrome_appearance,
             &chrome_primitives,
@@ -318,8 +392,6 @@ fn runFallible(boundary: *shared.Boundary, allocator: std.mem.Allocator, font_pa
             command,
             &rings[active_ring],
             active_generation,
-            &labels,
-            &labels_omission_reported,
             &dispatch,
             drm_fd,
             acquire_handle,
@@ -341,6 +413,130 @@ fn checkGpuBudget(width: u32, height: u32) !void {
     // exact VkMemoryRequirements.size alongside the shared atlas/staging.
     const bytes = std.math.mul(u64, pixels, 4 * shared.slot_count * 2) catch return error.GpuMemoryLimit;
     if (bytes > gpu_memory_limit) return error.GpuMemoryLimit;
+}
+
+fn buildCanvasPlan(
+    work: *CanvasWork,
+    topology: *const chrome_state.Topology,
+    appearance: chrome_state.Appearance,
+    primitives: []render_api.chrome.Primitive,
+    text: []u8,
+) !vk_surface.Plan {
+    const output = try topology.project(appearance, &.{}, primitives, text);
+    try work.content.apply(output);
+    const update = try work.content.takeUpdate();
+    const producer_revision = @backingInt(update.revision);
+    if (producer_revision < work.producer_revision) return error.InvalidRevision;
+    if (producer_revision > work.producer_revision) {
+        try work.composer.apply(work.source, update);
+        work.producer_revision = producer_revision;
+    }
+    const placement = render_api.canvas.Composer.Placement{
+        .source = work.source,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = output.surface.width, .height = output.surface.height },
+    };
+    try work.composer.setComposition(.{ .surface = output.surface, .sources = &.{placement} });
+    const surface_resident = try work.residency.enumerate(work.surface_residencies);
+    for (surface_resident, 0..) |value, index| {
+        work.canvas_residencies[index] = .{
+            .resource = canvasResource(value.resource),
+            .format = switch (value.kind) {
+                .alpha_mask => .alpha8,
+                .rgba => .rgba8,
+                .solid => return error.InvalidFrame,
+            },
+            .size = .{ .width = value.width, .height = value.height },
+        };
+    }
+    const frame = try work.composer.frame(work.canvas_residencies[0..surface_resident.len], .{
+        .uploads = work.frame_uploads,
+        .removals = work.frame_removals,
+        .commands = work.frame_commands,
+        .pixels = work.frame_pixels,
+    });
+    const generic = try adaptCanvasFrame(frame, work.surface_uploads, work.surface_removals, work.surface_commands);
+    std.debug.print(
+        "Canvas frame rev={d} uploads={d} removals={d} commands={d}\n",
+        .{
+            generic.revision,
+            generic.uploads.len,
+            generic.removals.len,
+            generic.commands.len,
+        },
+    );
+    try work.residency.stage(generic);
+    errdefer work.residency.discard();
+    return try work.builder.build(work.residency, generic);
+}
+
+fn adaptCanvasFrame(
+    frame: render_api.canvas.Composer.Frame,
+    uploads: []vk_surface.Upload,
+    removals: []vk_surface.Removal,
+    commands: []vk_surface.FrameCommand,
+) !vk_surface.Frame {
+    if (frame.uploads.len > uploads.len or frame.removals.len > removals.len or frame.commands.len > commands.len) return error.Capacity;
+    for (frame.uploads, 0..) |value, index| {
+        const end = std.math.add(usize, value.pixel_offset, value.pixel_count) catch return error.ArithmeticOverflow;
+        if (end > frame.pixels.len) return error.Capacity;
+        uploads[index] = .{
+            .resource = surfaceResource(value.resource),
+            .kind = switch (value.format) {
+                .alpha8 => .alpha_mask,
+                .rgba8 => .rgba,
+            },
+            .width = value.size.width,
+            .height = value.size.height,
+            .stride = value.stride,
+            .pixels = frame.pixels[value.pixel_offset..end],
+        };
+    }
+    for (frame.removals, 0..) |value, index| removals[index] = .{ .resource = surfaceResource(value) };
+    for (frame.commands, 0..) |value, index| commands[index] = switch (value) {
+        .solid => |solid| .{ .solid = .{ .rect = surfaceRect(solid.rect), .clip = surfaceRect(solid.rect), .color = surfaceColor(solid.color) } },
+        .alpha_mask => |mask| .{ .alpha_mask = .{
+            .rect = surfaceRect(mask.destination),
+            .clip = surfaceRect(mask.clip),
+            .resource = surfaceResource(mask.resource.resource),
+            .source = if (mask.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
+            .color = surfaceColor(mask.color),
+        } },
+        .rgba => |rgba| .{ .rgba = .{
+            .rect = surfaceRect(rgba.destination),
+            .clip = surfaceRect(rgba.clip),
+            .resource = surfaceResource(rgba.resource.resource),
+            .source = if (rgba.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
+        } },
+    };
+    return .{
+        .revision = @backingInt(frame.revision),
+        .uploads = uploads[0..frame.uploads.len],
+        .removals = removals[0..frame.removals.len],
+        .commands = commands[0..frame.commands.len],
+    };
+}
+
+fn surfaceResource(value: render_api.canvas.FrameResourceRef) vk_surface.ResourceGeneration {
+    return .{ .key = .{ .source = @backingInt(value.key.source), .local = @backingInt(value.key.resource) }, .generation = @backingInt(value.generation) };
+}
+
+fn canvasResource(value: vk_surface.ResourceGeneration) render_api.canvas.FrameResourceRef {
+    return .{
+        .key = .{
+            .source = @fromBackingInt(@intCast(value.key.source)),
+            .resource = @fromBackingInt(@intCast(value.key.local)),
+        },
+        .generation = @fromBackingInt(@intCast(value.generation)),
+    };
+}
+
+fn surfaceRect(value: render_api.canvas.Rect) vk_surface.Rect {
+    return .{ .x = value.x, .y = value.y, .width = value.width, .height = value.height };
+}
+
+fn surfaceColor(value: render_api.canvas.Color) [4]f32 {
+    return .{ @as(f32, @floatFromInt(value.r)) / 255.0, @as(f32, @floatFromInt(value.g)) / 255.0, @as(f32, @floatFromInt(value.b)) / 255.0, @as(f32, @floatFromInt(value.a)) / 255.0 };
 }
 
 fn waitFeedback(boundary: *shared.Boundary) !shared.Feedback {
@@ -433,19 +629,18 @@ fn waitRenderWakeBlocking(boundary: *shared.Boundary) !void {
 fn drainInput(
     boundary: *shared.Boundary,
     actions: *input_actions.State,
+    canvas_work: *CanvasWork,
     topology: *chrome_state.Topology,
     appearance: chrome_state.Appearance,
     primitives: *[256]render_api.chrome.Primitive,
     text: *[(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8,
-    graphics: *gpu_chrome.Context,
+    graphics: *vk_surface.Context,
     device: vk.VkDevice,
     queue: vk.VkQueue,
     family: u32,
     command: vk.VkCommandBuffer,
     slots: *[shared.slot_count]Slot,
     generation: u64,
-    labels: *chrome_draw.Engine,
-    labels_omission_reported: *bool,
     dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
     drm_fd: i32,
     acquire_handle: u32,
@@ -469,6 +664,7 @@ fn drainInput(
                 boundary,
                 topology,
                 next,
+                canvas_work,
                 appearance,
                 primitives,
                 text,
@@ -479,8 +675,6 @@ fn drainInput(
                 command,
                 slots,
                 generation,
-                labels,
-                labels_omission_reported,
                 dispatch,
                 drm_fd,
                 acquire_handle,
@@ -494,25 +688,24 @@ fn redrawChrome(
     boundary: *shared.Boundary,
     topology: *chrome_state.Topology,
     candidate: chrome_state.Topology,
+    canvas_work: *CanvasWork,
     appearance: chrome_state.Appearance,
     primitives: *[256]render_api.chrome.Primitive,
     text: *[(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8,
-    graphics: *gpu_chrome.Context,
+    graphics: *vk_surface.Context,
     device: vk.VkDevice,
     queue: vk.VkQueue,
     family: u32,
     command: vk.VkCommandBuffer,
     slots: *[shared.slot_count]Slot,
     generation: u64,
-    labels: *chrome_draw.Engine,
-    labels_omission_reported: *bool,
     dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
     drm_fd: i32,
     acquire_handle: u32,
     next_acquire_point: *u64,
 ) !void {
-    const output = try candidate.project(appearance, &.{}, primitives, text);
-    if (output.primitives.len == 0) return error.Chrome;
+    const composer_plan = try buildCanvasPlan(canvas_work, &candidate, appearance, primitives, text);
+    errdefer canvas_work.residency.discard();
     const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
     if (!boundary.canPublishCompletion(generation)) return error.CompletionUnavailable;
     const slot = &slots[slot_index];
@@ -532,9 +725,10 @@ fn redrawChrome(
         command,
         slot,
         slot.clear_color,
-        output,
-        labels,
-        labels_omission_reported,
+        composer_plan,
+        canvas_work.builder.alpha_pixels,
+        canvas_work.builder.rgba_pixels,
+        canvas_work.residency,
         release_wait,
         dispatch,
         drm_fd,
@@ -695,7 +889,7 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     return error.Modifier;
 }
 
-fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: shared.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
+fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: shared.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
     slot.width = surface.width;
     slot.height = surface.height;
     var selected_modifier = modifier;
@@ -772,16 +966,9 @@ fn constructSlot(slot: *Slot, graphics: *const gpu_chrome.Context, device: vk.Vk
     offer.* = .{ .generation = surface.generation, .width = surface.width, .height = surface.height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
 }
 
-fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, chrome_output: render_api.chrome.Output, labels: *chrome_draw.Engine, labels_omission_reported: *bool, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
-    const plan = try labels.build(.{ .width = @intCast(slot.width), .height = @intCast(slot.height) }, chrome_output);
-    if (plan.labels_omitted and !labels_omission_reported.*) {
-        std.debug.print("Chrome labels omitted under bounded residency; solid chrome remains complete\n", .{});
-        labels_omission_reported.* = true;
-    }
-    if (acquire_point == 1) {
-        std.debug.print("Chrome plan vertices={d} indices={d} draws={d} glyphs={d}\n", .{ plan.vertices.len, plan.indices.len, plan.commands.len, labels.atlas_count });
-    }
-    try graphics.stage(plan, labels.atlas_pixels);
+fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: *vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
+    errdefer residency_commit.discard();
+    try graphics.stage(surface_plan, alpha_pixels, rgba_pixels, slot.width, slot.height);
     if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
     begin.sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -800,7 +987,7 @@ fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue,
         .subresourceRange = range,
     };
     vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, null, 0, null, 1, &barrier);
-    graphics.record(command, slot.attachment, slot.width, slot.height, plan, color);
+    const recording = try graphics.record(command, slot.attachment, slot.width, slot.height, surface_plan, color);
     barrier.srcAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask = 0;
     barrier.oldLayout = vk.VK_IMAGE_LAYOUT_GENERAL;
@@ -844,6 +1031,8 @@ fn render(graphics: *gpu_chrome.Context, device: vk.VkDevice, queue: vk.VkQueue,
     if (c.drmSyncobjImportSyncFile(drm_fd, temporary, sync_fd) != 0) return error.Syncobj;
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
+    graphics.complete(recording);
+    try residency_commit.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;

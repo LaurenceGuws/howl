@@ -31,7 +31,7 @@ pub fn rasterizeGeneratedPowerlineAlpha(
         0xe0be => rasterizePowerlineCornerTriangle(pixels, width, height, .top_right),
         0xe0d6 => rasterizePowerlineTriangle(pixels, width, height, false, false),
         0xe0d7 => rasterizePowerlineTriangle(pixels, width, height, true, false),
-        // The sole generated classifier admits only these implemented ranges.
+        // The sole generated classifier accepts only these implemented ranges.
         else => return error.UnsupportedGlyph,
     }
 }

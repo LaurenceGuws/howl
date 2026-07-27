@@ -56,15 +56,6 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     chrome_state.addImport("howl_render", render.module("howl_render"));
-    const chrome_draw = b.createModule(.{
-        .root_source_file = b.path("src/chrome_draw.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    chrome_draw.addImport("howl_render", render.module("howl_render"));
-    const chrome_options = b.addOptions();
-    chrome_options.addOption([]const u8, "test_font_path", b.root.joinString(b.allocator, "../howl-render/testdata/primary.ttf") catch @panic("OOM"));
-    chrome_draw.addImport("host_build_options", chrome_options.createModule());
     const input_actions = b.createModule(.{
         .root_source_file = b.path("src/input_actions.zig"),
         .target = target,
@@ -73,17 +64,8 @@ pub fn build(b: *std.Build) void {
     input_actions.addImport("chrome_state", chrome_state);
     input_actions.addImport("howl_render", render.module("howl_render"));
     input_actions.addImport("howl_wayland", wayland.module("howl_wayland"));
-    const gpu_chrome = b.createModule(.{
-        .root_source_file = b.path("src/gpu_chrome.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    gpu_chrome.addImport("chrome_draw", chrome_draw);
-    gpu_chrome.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("chrome_state", chrome_state);
-    root.addImport("chrome_draw", chrome_draw);
     root.addImport("input_actions", input_actions);
-    root.addImport("gpu_chrome", gpu_chrome);
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("renderer_c", renderer_translate.createModule());
@@ -126,8 +108,6 @@ pub fn build(b: *std.Build) void {
     const chrome_tests = b.addTest(.{ .root_module = chrome_state, .use_llvm = false, .use_lld = false });
     const run_chrome_tests = b.addRunArtifact(chrome_tests);
     test_step.dependOn(&run_chrome_tests.step);
-    const draw_tests = b.addTest(.{ .root_module = chrome_draw, .use_llvm = false, .use_lld = false });
-    test_step.dependOn(&b.addRunArtifact(draw_tests).step);
     const input_action_tests = b.addTest(.{ .root_module = input_actions, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(input_action_tests).step);
     b.default_step = check;

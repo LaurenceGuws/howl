@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
-  status: ready_for_worker
-  checkpoint: pane_composition
+  status: active
+  checkpoint: howl_vk_surface
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -29,7 +29,7 @@ architecture_correction:
       - one howl-pty instance
       - one howl-vt instance
       - one howl-render terminal projection baseline
-      - one stable pane identity and never-reused incarnation
+      - one stable globally never-reused pane identity
   renderer:
     receives: newest-complete immutable backend-neutral pane updates
     owns: retained pane visuals, surface-wide batching, Vulkan mutation, and GPU completion
@@ -48,26 +48,59 @@ architecture_correction:
       execution without a separate measured proof.
 
 checkpoint:
-  id: pane_composition
-  status: ready_for_worker
+  id: howl_vk_surface
+  status: review_ready
   objective: >-
     Replace the current single chrome draw source with bounded composition of
     multiple independent immutable pane updates, images, and Host chrome into one
-    ordered Vulkan surface batch. This checkpoint prepares the consumer boundary;
-    it does not create PTYs, VTs, terminal threads, or a permanent simulator API.
+    ordered Vulkan surface batch. This checkpoint preserves the accepted Render
+    contracts while moving reusable Vulkan execution into howl-vk.surface.
+
+howl_vk_surface:
+  status: review_ready
+  findings:
+    - Render public freeze accepted in .zig/work/render-index/end_state.yml.
+    - Generic GPU execution moved from Host gpu_chrome into howl-vk.surface.
+    - Host owns one canvas.Composer and the current Chrome source; no placeholder source is issued for panes without content producers.
+    - Host converts factual howl-vk.surface residency into canvas.Residency before each read-only frame derivation.
+    - howl-vk.surface owns double-banked qualified resource bytes, sparse generation replacement/removal, complete physical atlas reconstruction, and commit/discard.
+    - Active residency changes only after the submitted Vulkan work completes.
+    - Atlas layout facts and CPU ResidencyStore facts commit together immediately after GPU completion, before DRM transfer/publication.
+    - Recording, submission, and pre-completion failure leave both owners unchanged; post-completion DRM failure does not roll back the committed candidate.
+    - Plan preflight validates dimensions, bounds, indices, draw ranges, and scissors before mapped staging or Vulkan recording; clear-only plans remain valid.
+    - Host retains runtime Vulkan/DRM/Wayland ring and explicit Canvas-to-surface value adaptation.
+    - Host shader owner and gpu_chrome source are deleted; package SPIR-V is validated.
+    - Host pane_composition and chrome_draw prototype owners and PaneIncarnation are deleted.
+  review_gate:
+    - howl-vk all-mode package checks/tests passed
+    - reachable Host executable and workspace all-mode checks passed
+    - source audit, shader validation, YAML, formatting, and diff check passed
+    - operator visual live-ring gate passed without automated Hyprland input
+  visual_receipt:
+    status: operator_passed
+    optimize: ReleaseSafe
+    facts:
+      - persistent surface rendered without Buffer failure
+      - interactive chrome revisions committed and paced by frame callbacks
+      - slot reuse and release generations advanced monotonically
+      - operator confirmed tab, split, focus, resize, traversal, reorder, close, and pointer behavior
+      - operator confirmed resize and orderly compositor shutdown at revision 71
+  next_slice:
+    - reviewer accepts howl_vk_surface
+    - later terminal producer integration introduces PaneId to SourceId mappings only for real producer lifetimes
   ownership:
     producer_contract:
       - each update is self-contained and remains valid without borrowing producer state
-      - stable PaneId, incarnation, and monotonic pane revision identify replacement
+      - Composer-issued SourceId and monotonic ProducerRevision identify replacement
       - newest complete update replaces the retained update for exactly one live pane
     renderer:
-      - validates identity, incarnation, revision, geometry, aliases, and capacities before mutation
+      - validates source identity, revision, geometry, and capacities before mutation
       - retains the newest complete visual facts required for redraw and context reconstruction
       - composes visible tiled panes, floating panes, images, cursor, selection, and chrome in exact phase order
       - drops stale updates without changing retained state or GPU work
     host_topology:
       - remains the authority for live panes, active tab, visibility, focus, clipping, and floating order
-      - rejects or retires updates whose identity no longer names the same live pane incarnation
+      - removes the Composer source when a live pane identity retires
   positive_scope:
     - derive the smallest immutable pane-update contract from existing howl-render terminal and image projections
     - preserve caller-owned terminal selection and image identity semantics
@@ -82,7 +115,7 @@ checkpoint:
     - one OS thread or Zig fiber per pane
     - Vulkan, Wayland, threads, or mutable application state inside howl-render
   transactions:
-    - malformed, aliased, oversized, stale, or wrong-incarnation updates preserve all retained pane and GPU staging bytes
+    - malformed, oversized, stale, or retired-source updates preserve retained Composer and GPU residency bytes
     - update replacement commits only after complete validation and owned-copy admission
     - hidden-pane replacement performs no draw but becomes visible on the next tab switch
     - pane close retires retained visual ownership only after the topology identity is no longer renderable
@@ -90,7 +123,7 @@ checkpoint:
   deterministic_proofs:
     - two tiled and overlapping floating pane updates compose in exact topology order
     - terminal text, decorations, cursor, pane-owned selection, images, borders, labels, and scrollbars preserve phase and clipping
-    - stale revision, wrong incarnation, unknown pane, malformed geometry, aliases, and every capacity failure roll back byte-exactly
+    - stale revision, retired source, unknown pane, malformed geometry, and every capacity failure roll back byte-exactly
     - hidden updates coalesce to the newest complete state and appear immediately when revealed
     - close and identity churn cannot resurrect retained visuals
     - full recovery and Vulkan context reconstruction reproduce the same visible batch
@@ -103,10 +136,41 @@ checkpoint:
     - leave implementation uncommitted
     - report the exact pane-update contract, retained byte bounds, phase order, public-symbol delta, and rollback receipts
     - do not begin deterministic VT transcript or PTY integration work
+  implementation:
+    update_contract:
+      - globally never-reused PaneId plus nonzero monotonic producer revision
+      - complete copied background, UTF-8 text runs, decorations, pane-owned selections, cursor, decoded RGBA images, and placements
+      - stale revisions are no-ops; unknown identity, retired source, malformed geometry/text/image, and capacity failures preserve retained bytes
+    retained_bounds:
+      panes: 64
+      bytes_total: 17293312
+      text_bytes_per_pane: 4096
+      text_runs_per_pane: 128
+      decorations_per_pane: 32
+      selections_per_pane: 32
+      images_per_pane: 8
+      image_bytes_per_pane: 262144
+      visible_surface_draws: 3488
+      rgba_image_atlas_bytes: 4194304
+    phase_order:
+      - pane_background
+      - image_below_text
+      - selection
+      - text
+      - decoration
+      - cursor
+      - image_above_text
+      - host_chrome
+    receipts:
+      - Host, Render, and workspace check/test pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+      - source audit, protocol validation, YAML, pinned formatting, SPIR-V validation, and diff checks pass
+      - deterministic proofs cover hidden replacement/reveal, tiled/floating order, phase order, stale and hostile rollback, source retirement, allocation/capacity failure, image packing, and reconstruction equivalence
+      - no sensitive-source or allowlist change
+      - operator screenshot receipt confirmed distinct tiled pane backgrounds, copied pane labels, decoration/selection/cursor phases, sampled RGBA checkerboards, and Host chrome above pane content
+      - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - worker implements pane_composition and requests operator visual inspection
-  - reviewer closes pane_composition
+  - reviewer accepts the completed howl_vk_surface boundary
   - terminal_contract_receipt proves the producer boundary with multiple real VT instances
   - terminal_runtime adds one caller-driven PTY and VT runtime thread
   - parity_and_freeze closes the marathon

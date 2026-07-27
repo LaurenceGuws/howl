@@ -17,7 +17,7 @@ pub fn rasterizeGeneratedSextantAlpha(
         0x1fb00...0x1fb13 => @as(u8, @intCast(codepoint - 0x1fb00 + 1)),
         0x1fb14...0x1fb27 => @as(u8, @intCast(codepoint - 0x1fb00 + 2)),
         0x1fb28...0x1fb3b => @as(u8, @intCast(codepoint - 0x1fb00 + 3)),
-        // The public classifier admits only the complete sextant range.
+        // The public classifier accepts only the complete sextant range.
         else => return error.UnsupportedGlyph,
     };
     rasterizeSextantAlpha(pixels, width, height, sextant);

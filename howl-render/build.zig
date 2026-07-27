@@ -45,13 +45,25 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const canvas_validation = b.createModule(.{
+        .root_source_file = b.path("src/canvas_validation.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const canvas = b.createModule(.{
+        .root_source_file = b.path("src/canvas.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    canvas.addImport("canvas_validation", canvas_validation);
+    module.addImport("canvas", canvas);
+    test_module.addImport("canvas", canvas);
     const chrome = b.createModule(.{
         .root_source_file = b.path("src/chrome.zig"),
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("chrome", chrome);
-    test_module.addImport("chrome", chrome);
+    chrome.addImport("canvas", canvas);
 
     var test_fonts: ?*std.Build.Module = null;
     var production_native: ?*std.Build.Module = null;
@@ -83,6 +95,29 @@ pub fn build(b: *std.Build) void {
         tested_native = tested;
         test_module.addImport("native_text", tested);
     }
+    if (native_enabled) {
+        const production_chrome = chromeNativeModule(
+            b,
+            target,
+            optimize,
+            chrome,
+            canvas,
+            production_native.?,
+        );
+        module.addImport("chrome", production_chrome);
+        const tested_chrome = chromeNativeModule(
+            b,
+            target,
+            optimize,
+            chrome,
+            canvas,
+            tested_native.?,
+        );
+        test_module.addImport("chrome", tested_chrome);
+    } else {
+        module.addImport("chrome", chrome);
+        test_module.addImport("chrome", chrome);
+    }
     var generated_module: ?*std.Build.Module = null;
     if (generated_enabled) {
         const generated = b.createModule(.{
@@ -96,6 +131,7 @@ pub fn build(b: *std.Build) void {
     }
     var terminal_proofs: ?*std.Build.Module = null;
     var terminal_module: ?*std.Build.Module = null;
+    var image_module: ?*std.Build.Module = null;
     if (terminal_enabled) {
         const vt = (b.lazyDependency("howl_vt", .{
             .target = target,
@@ -108,14 +144,13 @@ pub fn build(b: *std.Build) void {
         });
         terminal.addImport("howl_vt", vt);
         terminal_module = terminal;
-        module.addImport("terminal_projection", terminal);
-        test_module.addImport("terminal_projection", terminal);
         const images = b.createModule(.{
             .root_source_file = b.path("src/image_projection.zig"),
             .target = target,
             .optimize = optimize,
         });
         images.addImport("howl_vt", vt);
+        image_module = images;
         module.addImport("image_projection", images);
         test_module.addImport("image_projection", images);
         const proofs = b.createModule(.{
@@ -128,6 +163,10 @@ pub fn build(b: *std.Build) void {
         terminal_proofs = proofs;
     }
     if (terminal_enabled and (native_enabled or generated_enabled)) {
+        const terminal_features = b.addOptions();
+        terminal_features.addOption(bool, "native_text", native_enabled);
+        terminal_features.addOption(bool, "generated_glyphs", generated_enabled);
+        const terminal_features_module = terminal_features.createModule();
         const production_text = terminalTextModule(
             b,
             target,
@@ -137,6 +176,7 @@ pub fn build(b: *std.Build) void {
             terminal_module.?,
             production_native,
             generated_module,
+            terminal_features_module,
         );
         module.addImport("terminal_text_capability", production_text);
         const tested_text = terminalTextModule(
@@ -148,8 +188,39 @@ pub fn build(b: *std.Build) void {
             terminal_module.?,
             tested_native,
             generated_module,
+            terminal_features_module,
         );
         test_module.addImport("terminal_text_capability", tested_text);
+
+        const production_terminal = b.createModule(.{
+            .root_source_file = b.path("src/terminal_canvas.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        production_terminal.addImport("terminal_projection_impl", terminal_module.?);
+        production_terminal.addImport("image_projection", image_module.?);
+        production_terminal.addImport("terminal_text_capability", production_text);
+        production_terminal.addImport("canvas", canvas);
+        production_terminal.addImport("canvas_validation", canvas_validation);
+        production_terminal.addImport("terminal_canvas_features", terminal_features_module);
+        module.addImport("terminal_projection", production_terminal);
+
+        const tested_terminal = b.createModule(.{
+            .root_source_file = b.path("src/terminal_canvas.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+        tested_terminal.addImport("terminal_projection_impl", terminal_module.?);
+        tested_terminal.addImport("image_projection", image_module.?);
+        tested_terminal.addImport("terminal_text_capability", tested_text);
+        tested_terminal.addImport("canvas", canvas);
+        tested_terminal.addImport("canvas_validation", canvas_validation);
+        tested_terminal.addImport("terminal_canvas_features", terminal_features_module);
+        test_module.addImport("terminal_projection", tested_terminal);
+    }
+    if (terminal_enabled and !(native_enabled or generated_enabled)) {
+        module.addImport("terminal_projection", terminal_module.?);
+        test_module.addImport("terminal_projection", terminal_module.?);
     }
 
     const selected = b.addOptions();
@@ -163,6 +234,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     capability_tests.addImport("howl_render", test_module);
+    capability_tests.addImport("canvas", canvas);
     capability_tests.addImport("selected_capabilities", selected.createModule());
     if (test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
 
@@ -202,6 +274,7 @@ fn terminalTextModule(
     terminal: *std.Build.Module,
     native: ?*std.Build.Module,
     generated: ?*std.Build.Module,
+    features: *std.Build.Module,
 ) *std.Build.Module {
     const root = if (native_enabled and generated_enabled)
         b.path("src/terminal_text_all.zig")
@@ -214,20 +287,36 @@ fn terminalTextModule(
         .target = target,
         .optimize = optimize,
     });
-    const options = b.addOptions();
-    options.addOption(bool, "native_text", native_enabled);
-    options.addOption(bool, "generated_glyphs", generated_enabled);
     const impl = b.createModule(.{
         .root_source_file = b.path("src/terminal_text.zig"),
         .target = target,
         .optimize = optimize,
     });
-    impl.addImport("terminal_text_features", options.createModule());
+    impl.addImport("terminal_text_features", features);
     impl.addImport("terminal_projection", terminal);
     if (native) |selected| impl.addImport("native_text", selected);
     if (generated) |selected| impl.addImport("generated_glyphs", selected);
     capability.addImport("terminal_text_impl", impl);
     return capability;
+}
+
+fn chromeNativeModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    chrome: *std.Build.Module,
+    canvas: *std.Build.Module,
+    native: *std.Build.Module,
+) *std.Build.Module {
+    const wrapper = b.createModule(.{
+        .root_source_file = b.path("src/chrome_native.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    wrapper.addImport("chrome_impl", chrome);
+    wrapper.addImport("canvas", canvas);
+    wrapper.addImport("native_text", native);
+    return wrapper;
 }
 
 fn nativeModule(

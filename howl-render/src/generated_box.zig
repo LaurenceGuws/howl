@@ -46,7 +46,7 @@ pub fn rasterizeGeneratedBoxAlpha(
         0x256e => rasterizeRoundedCorner(pixels, width, height, .top_right, box_drawing),
         0x256f => rasterizeRoundedCorner(pixels, width, height, .bottom_right, box_drawing),
         0x2570 => rasterizeRoundedCorner(pixels, width, height, .bottom_left, box_drawing),
-        // The caller admits only the complete Unicode box range.
+        // The caller accepts only the complete Unicode box range.
         else => return error.UnsupportedGlyph,
     }
 }

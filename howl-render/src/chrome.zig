@@ -1,6 +1,7 @@
 //! Projects caller-supplied chrome facts into bounded backend-neutral primitives.
 
 const std = @import("std");
+const canvas = @import("canvas");
 
 /// Describes projection failures before any caller storage is changed.
 pub const Error = error{
@@ -23,37 +24,14 @@ pub const TabId = enum(u64) { _ };
 /// Stable caller identity for one pane. Render never issues or retains it.
 pub const PaneId = enum(u64) { _ };
 
-/// Names a bounded surface in caller coordinates.
-pub const Size = struct {
-    /// Supplies the nonzero surface width in pixels.
-    width: u16,
-    /// Supplies the nonzero surface height in pixels.
-    height: u16,
-};
+/// Uses the canonical Canvas surface extent.
+pub const Size = canvas.Size;
 
-/// Names a caller rectangle, allowing negative coordinates for clipping.
-pub const Rect = struct {
-    /// Supplies the signed left coordinate.
-    x: i32,
-    /// Supplies the signed top coordinate.
-    y: i32,
-    /// Supplies the nonzero width.
-    width: u16,
-    /// Supplies the nonzero height.
-    height: u16,
-};
+/// Uses the canonical Canvas signed rectangle.
+pub const Rect = canvas.Rect;
 
-/// Defines explicit RGBA channel order for chrome colors.
-pub const Color = packed struct(u32) {
-    /// Red channel.
-    r: u8,
-    /// Green channel.
-    g: u8,
-    /// Blue channel.
-    b: u8,
-    /// Alpha channel.
-    a: u8,
-};
+/// Uses the canonical Canvas RGBA color.
+pub const Color = canvas.Color;
 
 /// Supplies caller-selected foreground, background, and frame colors.
 pub const Style = struct {
@@ -181,6 +159,8 @@ pub const Primitive = union(enum) {
 
 /// Borrows accepted primitives and copied label bytes until caller storage is reused.
 pub const Output = struct {
+    /// Retains the nonzero surface that clipped every primitive.
+    surface: Size,
     /// Borrows the initialized primitive prefix of caller storage.
     primitives: []const Primitive,
     /// Borrows copied UTF-8 label bytes in caller text storage.
@@ -315,7 +295,11 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
             used += 1;
         };
     }
-    return .{ .primitives = primitives[0..used], .text = text_storage[0..text_used] };
+    return .{
+        .surface = input.surface,
+        .primitives = primitives[0..used],
+        .text = text_storage[0..text_used],
+    };
 }
 
 /// Returns the topmost caller identity at `point` without allocation or retained
@@ -381,6 +365,7 @@ fn overlapsRanges(a: usize, a_len: usize, b: usize, b_len: usize) bool {
     if (a_len == 0 or b_len == 0) return false;
     return if (a <= b) b - a < a_len else a - b < b_len;
 }
+
 fn byteLen(count: usize, size: usize) Error!usize {
     return std.math.mul(usize, count, size) catch return error.ArithmeticOverflow;
 }

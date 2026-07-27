@@ -110,10 +110,10 @@ pub fn candidate(current: *const chrome_state.Topology, action: Action) chrome_s
         },
         .close_pane => try next.closePane(next.focusedPaneId()),
         .close_tab => try next.closeTab(next.activeTabId()),
-        .resize_left => try next.resizeDivider(next.focusedPaneId(), resize_step, .vertical),
-        .resize_right => try next.resizeDivider(next.focusedPaneId(), -resize_step, .vertical),
-        .resize_up => try next.resizeDivider(next.focusedPaneId(), resize_step, .horizontal),
-        .resize_down => try next.resizeDivider(next.focusedPaneId(), -resize_step, .horizontal),
+        .resize_left => try next.resizeDivider(next.focusedPaneId(), -resize_step, .vertical),
+        .resize_right => try next.resizeDivider(next.focusedPaneId(), resize_step, .vertical),
+        .resize_up => try next.resizeDivider(next.focusedPaneId(), -resize_step, .horizontal),
+        .resize_down => try next.resizeDivider(next.focusedPaneId(), resize_step, .horizontal),
         .focus_left => {
             const previous = next.focusedPaneId();
             const focused = try next.focusDirection(.left);
@@ -364,7 +364,7 @@ test "directional resize grows the focused pane toward the requested boundary" {
         .tab_inactive_background = .{ .r = 13, .g = 14, .b = 15, .a = 255 },
     };
     try std.testing.expectEqual(right, (try topology.hitTest(appearance, .{ .x = 164, .y = 40 })).?.pane);
-    topology = (try candidate(&topology, .resize_left)).?;
+    topology = (try candidate(&topology, .resize_right)).?;
     try std.testing.expectEqual(left, (try topology.hitTest(appearance, .{ .x = 164, .y = 40 })).?.pane);
 }
 
