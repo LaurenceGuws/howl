@@ -361,7 +361,7 @@ checkpoints:
       - no shared mutable PTY, VT, projection, or GPU state
       - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
   - id: terminal_pool_storage
-    status: planned
+    status: accepted
     outcome: >-
       Add the fixed sixteen-block shared immutable-update pool and its descriptor,
       owner-token, reservation, cancellation, and cleanup mechanics without
@@ -374,7 +374,7 @@ checkpoints:
       - all-or-none reservation rollback and reverse cleanup
       - no runtime, Composer, Render, Vulkan, or public-root integration
   - id: terminal_pool_handoff
-    status: planned
+    status: active
     outcome: >-
       Move terminal publication and Renderer drainage from dedicated per-pane
       PendingSlot allocations onto the shared pool while preserving immutable

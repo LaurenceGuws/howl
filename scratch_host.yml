@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: terminal_pool_storage
+  checkpoint: terminal_pool_handoff
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -54,11 +54,11 @@ accepted:
 
 planned_checkpoints:
   - id: terminal_pool_storage
-    status: active
+    status: accepted
     product_scope: Host pool storage and proofs only
     commit_boundary: Add bounded terminal handoff pool storage
   - id: terminal_pool_handoff
-    status: pending
+    status: active
     product_scope: terminal publication and Renderer drainage through shared blocks
     commit_boundary: Share terminal update handoff blocks
   - id: terminal_visible_set
@@ -279,14 +279,14 @@ terminal_runtime_receipt:
         per_owner_maximum:
           bytes_for_64: 292036096
         global_maximum_block_pool:
-          exact_16_blocks_and_64_descriptors: 73012520
+          exact_16_blocks_and_64_descriptors: 73012384
           reveal_policy: >-
             The ignored approved design classifies members from Host-owned
             publication, Composer acceptance, dirty, geometry, and block facts.
             Stale ready or draining blocks release before one all-or-none
             visible-set reservation. No pool or VisibleSetRequest exists in
             tracked product source yet.
-          status: approved_next_checkpoint_not_implemented
+          status: implemented_storage_only_unintegrated
         size_classes:
           status: unearned
           blocker: text glyph uploads can consume the full upload-byte bound and takeUpdate is consumptive
@@ -647,9 +647,59 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - implement and review terminal_pool_storage without runtime integration
+  - implement and review terminal_pool_handoff without visible-set behavior
   - reviewer commits each accepted checkpoint before the next checkpoint begins
   - preserve surface widening for surface_admission_design and later checkpoints
+
+terminal_pool_storage:
+  status: accepted
+  owner: howl-host/src/terminal_pool.zig
+  integration: none
+  allocation:
+    backing_allocations: 1
+    requested_bytes: 73012384
+    metadata_offset: 0
+    request_storage: deferred
+    descriptors_offset: 32
+    blocks_offset: 4128
+    block_stride: 4563016
+    block_count: 16
+    descriptor_count: 64
+  retained_runtime_path:
+    dedicated_pending_slot: unchanged
+    terminal_pool_handoff: not_started
+    visible_set_behavior: not_started
+  proofs:
+    - checked arithmetic rejects addition and multiplication overflow before allocation
+    - the single backing allocation rolls back on allocation failure
+    - sixteen free blocks reserve as one exact group
+    - fifteen free blocks reject the complete group without mutation
+    - invalid and duplicate member sets reject without mutation
+    - stale cancellation leaves the exact active group unchanged
+    - matching cancellation releases only matching reserved blocks
+    - unrelated reserved, ready, and draining state and payload markers remain unchanged
+    - group priority rejects ordinary reservation
+    - nonzero reservation identities and candidate revisions never repeat
+    - exhaustion rejects before metadata, descriptors, blocks, or payload mutation
+    - stale descriptor, PaneId, SourceId, reservation, ProducerRevision, and candidate facts reject
+    - retiring descriptors wait for reserved and draining blocks and discard ready blocks
+    - deterministic state proofs force both Renderer-first and retirement-first ready ownership outcomes
+    - one-shot two-thread begin-drain, complete-drain, and retry-drain races prove exclusive ownership and uncorrupted observed outcomes without claiming scheduler exhaustiveness
+    - Renderer never mutates descriptor storage and block metadata clears before free publication
+    - partial and stale group completion preserve priority and bytes; complete publication clears priority while retaining ready and draining blocks
+    - reverse cleanup requires inactive or retired descriptors and free blocks
+  exclusions_confirmed:
+    - no PendingSlot replacement or runtime publication
+    - no Canvas, Composer, Render, VT, PTY, Wayland, Vulkan, topology, or GPU-limit change
+    - no package-root or allowlist widening
+  validation:
+    - focused pool tests pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+    - Host and workspace check and test pass in all four optimization modes
+    - disposable pending-pool arithmetic receipt passes in all four modes
+    - source audit and protocol catalogue validation pass
+    - durable YAML parses with duplicate-key rejection
+    - pinned formatting and git diff check pass
+    - no GUI or compositor process was launched
 
 terminal_contract_receipt:
   status: accepted

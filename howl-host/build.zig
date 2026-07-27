@@ -82,6 +82,12 @@ pub fn build(b: *std.Build) void {
     terminal_handoff.addImport("howl_vt", vt.module("howl_vt"));
     terminal_handoff.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_handoff.addImport("host_c", host_c);
+    const terminal_pool = b.createModule(.{
+        .root_source_file = b.path("src/terminal_pool.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_pool.addImport("howl_render", render.module("howl_render"));
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -121,6 +127,13 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile the host");
     check.dependOn(&executable.step);
+    const terminal_pool_check = b.addObject(.{
+        .name = "howl-host-terminal-pool-check",
+        .root_module = terminal_pool,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&terminal_pool_check.step);
     const run = b.addRunArtifact(executable);
     if (run_font) |font| run.addArgs(&.{ "--font", font });
     b.step("run", "Run the bounded live color ring").dependOn(&run.step);
@@ -143,6 +156,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
+    test_module.addImport("terminal_pool", terminal_pool);
     test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
@@ -162,6 +176,15 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     test_step.dependOn(&b.addRunArtifact(handoff_tests).step);
+    const terminal_pool_tests = b.addTest(.{
+        .root_module = terminal_pool,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    const run_terminal_pool_tests = b.addRunArtifact(terminal_pool_tests);
+    test_step.dependOn(&run_terminal_pool_tests.step);
+    b.step("test-pool", "Run fixed terminal pool storage proofs")
+        .dependOn(&run_terminal_pool_tests.step);
     const terminal_runtime_tests = b.addTest(.{
         .root_module = terminal_runtime,
         .use_llvm = false,
