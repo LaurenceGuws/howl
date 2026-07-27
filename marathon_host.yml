@@ -13,8 +13,8 @@ marathon:
 baseline:
   version: 0.1.3-dev
   head:
-    hash: ba5f054308665fc93266f853e781c300136c976f
-    subject: Prove terminal render handoff
+    hash: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
+    subject: Build terminal runtime and render handoff
   foundation:
     hash: ee3a497ceb10ed98917c68bd34acab37c79ce97f
     subject: Establish Vulkan host foundation
@@ -30,6 +30,7 @@ baseline:
     interactive_chrome: 5b8ac562ebed6479addd2bc7282fc18fac29a367
     howl_vk_surface: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
     terminal_contract_receipt: ba5f054308665fc93266f853e781c300136c976f
+    terminal_runtime: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
   proven_runtime:
     - one Main lifetime, one Window thread, and one Render thread
     - compositor-selected DMA-BUF device and format/modifier tuple
@@ -38,6 +39,8 @@ baseline:
     - persistent resize generations and reverse retirement
     - Vulkan solid and alpha-text chrome pixels
     - bounded tabs, tiled panes, labels, borders, and scrollbars
+    - one terminal runtime thread fairly polling real PTY and VT owners
+    - transactional terminal lifecycle, resize, consequence, and immutable Render handoff
 
 authorities:
   wayland:
@@ -327,7 +330,8 @@ checkpoints:
       - qualification preserves colliding pane-local resource identities
       - empty-residency full recovery and byte-exact saturation/rollback
   - id: terminal_runtime
-    status: active
+    status: accepted
+    commit: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
     outcome: >-
       Add one OS thread that owns all logical terminal panes, polls every borrowed
       howl-pty descriptor, mutates each howl-vt instance, and publishes immutable
@@ -350,16 +354,102 @@ checkpoints:
       - admitted producer pressure is recoverable backpressure and cannot terminate PTY service
       - pointer motion, button, and axis facts preserve callback-time semantic modifiers independently of later coalesced masks
       - field-by-field terminal owner memory census and one-, sixteen-, and sixty-four-owner admission alternatives
-      - complete sixteen-visible-pane capacity equation across Composer and Vulkan execution
       - executable real-Content clean, one-row, recovery, image-only, extraction, and immutable-handoff copy receipts
       - Content apply and recover retain their signatures; takeUpdate borrows one implemented terminal-thread-exclusive shaping/raster/draw/upload/output Work
       - Content-retained projection, image, glyph, and mask candidates remain independently owned
       - real PendingSlot publications and two-PTY scheduler backpressure receipts replace synthetic copy and opportunity loops
-      - sixteen-pane geometry selects an explicit u32 or based-u16-batch contract and admits six queried simultaneous surface-image requirements
-      - format-specific resource extent and atlas packability admission before topology mutation
       - no shared mutable PTY, VT, projection, or GPU state
       - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
+  - id: terminal_pool_storage
+    status: planned
+    outcome: >-
+      Add the fixed sixteen-block shared immutable-update pool and its descriptor,
+      owner-token, reservation, cancellation, and cleanup mechanics without
+      changing the running dedicated-slot path.
+    commit_boundary: Add bounded terminal handoff pool storage
+    proof:
+      - one checked contiguous allocation with exact offsets and byte accounting
+      - independent descriptor and block state machines
+      - stale identity and revision rejection
+      - all-or-none reservation rollback and reverse cleanup
+      - no runtime, Composer, Render, Vulkan, or public-root integration
+  - id: terminal_pool_handoff
+    status: planned
+    outcome: >-
+      Move terminal publication and Renderer drainage from dedicated per-pane
+      PendingSlot allocations onto the shared pool while preserving immutable
+      canonical Canvas updates and fair PTY progress.
+    commit_boundary: Share terminal update handoff blocks
+    proof:
+      - reservation precedes consumptive takeUpdate
+      - Renderer rejection republishes the exact immutable block
+      - close, cancellation, Work reuse, and drain races preserve ownership
+      - pool exhaustion does not stop PTY, VT, or another owner's progress
+  - id: terminal_visible_set
+    status: planned
+    outcome: >-
+      Add the bounded latest VisibleSetRequest and all-or-none reservation needed
+      to reveal up to sixteen pane sources without partial topology mutation.
+    commit_boundary: Reserve visible terminal updates transactionally
+    proof:
+      - synchronized, current-ready, stale, dirty, and never-published classification
+      - exact candidate revision, PaneId, SourceId, and ProducerRevision checks
+      - cancellation, supersession, closure, and stale-token rollback
+      - final composition switch occurs only after every requested source is accepted
+  - id: terminal_pool_freeze
+    status: planned
+    outcome: >-
+      Delete dedicated PendingSlot allocation and compatibility residue after
+      every live terminal owner uses the accepted shared pool.
+    commit_boundary: Freeze shared terminal handoff ownership
+    proof:
+      - obsolete storage, methods, tests, and comments removed
+      - final Host memory census and public-disposition audit
+      - no package-root or allowlist widening
+  - id: surface_admission_design
+    status: planned
+    outcome: >-
+      Select the finite supported visible workload and exact CPU/GPU admission
+      contract before widening Composer or Vulkan storage.
+    commit_boundary: Record bounded surface admission contract
+    proof:
+      - complete command, resource, pixel, and surface-image equations
+      - explicit u32-index or based-u16-batch decision
+      - separate Alpha8 and RGBA8 extent and packability rules
+      - queried Vulkan requirements remain authoritative under the 512 MiB bound
+      - evidence and authority changes only
+  - id: surface_admission_cpu
+    status: planned
+    outcome: >-
+      Implement the accepted Composer, copied-frame, geometry, and transactional
+      topology admission limits without making Render Vulkan-shaped.
+    commit_boundary: Admit bounded multi-pane Canvas frames
+    proof:
+      - complete CPU candidate succeeds or rejects before topology mutation
+      - recovery, alias, arithmetic, capacity, and allocation rollback
+      - selected index or batch contract is exact and bounded
+  - id: surface_admission_vulkan
+    status: planned
+    outcome: >-
+      Implement queried Vulkan staging, residency, and separate Alpha8/RGBA8
+      atlas admission for the accepted visible workload.
+    commit_boundary: Admit bounded Vulkan terminal surfaces
+    proof:
+      - physical packing and queried allocation requirements
+      - replacement, eviction recovery, resize, and failure rollback
+      - total admitted ownership remains below 512 MiB
+  - id: sixteen_pane_integration
+    status: planned
+    outcome: >-
+      Connect visible-set reservation through Composer and Vulkan so an admitted
+      sixteen-pane tab commits atomically while hidden tabs retain newest state.
+    commit_boundary: Integrate admitted terminal pane sets
+    proof:
+      - transactional topology create, reveal, resize, close, and supersession
+      - hidden progress and newest-state reveal
+      - deterministic gates followed by operator-driven visual validation
   - id: parity_and_freeze
+    status: planned
     outcome: >-
       Freeze the completed PTY, VT, immutable pane-update, Vulkan composition, and
       interactive chrome path without widening package or thread ownership.

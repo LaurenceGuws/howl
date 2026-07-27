@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: terminal_runtime
+  checkpoint: terminal_pool_storage
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -39,6 +39,56 @@ accepted:
     receipts:
       - two real VT producers compose through distinct Composer sources
       - all deterministic package and workspace gates passed
+  terminal_runtime:
+    commit: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
+    boundary: Build terminal runtime and render handoff
+    outcome:
+      - one runtime thread fairly polls real PTY and VT owners
+      - terminal lifecycle, resize, consequence handling, and shutdown are transactional
+      - immutable Canvas updates cross dedicated bounded PendingSlot ownership
+      - realistic shell initialization and recoverable Render pressure are proven
+    receipts:
+      - workspace and affected-package optimize-mode gates passed
+      - VT simulation, fuzz, M7, audit, protocol, YAML, formatting, and diff checks passed
+      - operator-authorized initialization reached stable generation-2 shell rendering
+
+planned_checkpoints:
+  - id: terminal_pool_storage
+    status: active
+    product_scope: Host pool storage and proofs only
+    commit_boundary: Add bounded terminal handoff pool storage
+  - id: terminal_pool_handoff
+    status: pending
+    product_scope: terminal publication and Renderer drainage through shared blocks
+    commit_boundary: Share terminal update handoff blocks
+  - id: terminal_visible_set
+    status: pending
+    product_scope: bounded latest visible-set request and group reservation
+    commit_boundary: Reserve visible terminal updates transactionally
+  - id: terminal_pool_freeze
+    status: pending
+    product_scope: delete dedicated slots and freeze Host handoff ownership
+    commit_boundary: Freeze shared terminal handoff ownership
+  - id: surface_admission_design
+    status: pending
+    product_scope: evidence and accepted limits only
+    commit_boundary: Record bounded surface admission contract
+  - id: surface_admission_cpu
+    status: pending
+    product_scope: Composer, copied-frame, and geometry admission
+    commit_boundary: Admit bounded multi-pane Canvas frames
+  - id: surface_admission_vulkan
+    status: pending
+    product_scope: queried Vulkan storage and format-specific atlas admission
+    commit_boundary: Admit bounded Vulkan terminal surfaces
+  - id: sixteen_pane_integration
+    status: pending
+    product_scope: visible-set through topology, Composer, and Vulkan
+    commit_boundary: Integrate admitted terminal pane sets
+  - id: parity_and_freeze
+    status: pending
+    product_scope: observable parity, cleanup, and 0.1.4-dev freeze
+    commit_boundary: Freeze interactive Vulkan host foundation
 
 architecture_correction:
   decision: >-
@@ -68,9 +118,10 @@ architecture_correction:
       reserves roughly 60 MiB per fiber. It is not selected for one-task-per-terminal
       execution without a separate measured proof.
 
-checkpoint:
+terminal_runtime_receipt:
   id: terminal_runtime
-  status: correction_review_pre_pool
+  status: accepted
+  commit: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
   objective: >-
     Run real shell terminals through one caller-driven terminal runtime OS
     thread that exclusively owns every PTY, VT, projection, image identity,
@@ -596,14 +647,15 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - reviewer accepts terminal_contract_receipt
-  - terminal_runtime adds one caller-driven PTY and VT runtime thread
-  - parity_and_freeze closes the marathon
+  - implement and review terminal_pool_storage without runtime integration
+  - reviewer commits each accepted checkpoint before the next checkpoint begins
+  - preserve surface widening for surface_admission_design and later checkpoints
 
 terminal_contract_receipt:
-  status: review_ready
+  status: accepted
+  commit: ba5f054308665fc93266f853e781c300136c976f
   ownership:
-    terminal_runtime_future:
+    terminal_runtime:
       - one OS thread owns up to 64 logical terminal owners
       - each logical owner owns one howl-pty, one howl-vt.Terminal, and one howl-render terminal.Content
     renderer:
