@@ -16,7 +16,7 @@ const PaneId = render.chrome.PaneId;
 const descriptor_limit: usize = 64;
 const block_limit: usize = 16;
 const resource_limit: usize = 1024;
-const command_limit: usize = 4096;
+const command_limit: usize = 32_768;
 const pixel_limit: usize = 4 * 1024 * 1024;
 
 /// Reports invalid fixed-layout arithmetic or allocation failure.
@@ -1053,12 +1053,12 @@ test "fixed pool layout matches checked executable receipt" {
     try std.testing.expectEqual(@as(usize, 72), block.uploads_offset);
     try std.testing.expectEqual(@as(usize, 57_416), block.removals_offset);
     try std.testing.expectEqual(@as(usize, 73_800), block.commands_offset);
-    try std.testing.expectEqual(@as(usize, 368_712), block.pixels_offset);
-    try std.testing.expectEqual(@as(usize, 4_563_016), block.total);
+    try std.testing.expectEqual(@as(usize, 2_433_096), block.pixels_offset);
+    try std.testing.expectEqual(@as(usize, 6_627_400), block.total);
     try std.testing.expectEqual(@as(usize, 0), layout.metadata_offset);
     try std.testing.expectEqual(@as(usize, 32), layout.descriptors_offset);
     try std.testing.expectEqual(@as(usize, 4_128), layout.blocks_offset);
-    try std.testing.expectEqual(@as(usize, 73_012_384), layout.total);
+    try std.testing.expectEqual(@as(usize, 106_042_528), layout.total);
     try std.testing.expectError(
         error.ArithmeticOverflow,
         checkedAdd(std.math.maxInt(usize), 1),

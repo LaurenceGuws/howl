@@ -3,6 +3,11 @@
 const std = @import("std");
 const c = @import("renderer_c");
 const shared = @import("shared.zig");
+
+const terminal_retained_resource_limit: usize = 512 + 128 + 8;
+const chrome_retained_resource_limit: usize = 512;
+const frame_resource_limit: usize = 2048;
+const frame_command_limit: usize = 32_768;
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const render_api = @import("howl_render");
@@ -100,12 +105,12 @@ fn runFallible(
     var chrome = try chrome_state.Topology.init(.{ .width = @intCast(initial_surface.width), .height = @intCast(initial_surface.height) }, chrome_state.default_tab_bar_height);
     var composer = try render_api.canvas.Composer.init(allocator, .{
         .sources = chrome_state.max_live_panes + 1,
-        .retained_resources = 512,
-        .retained_commands = 4096,
+        .retained_resources = frame_resource_limit,
+        .retained_commands = frame_command_limit,
         .retained_pixel_bytes = 16 * 1024 * 1024,
         .composition_sources = chrome_state.max_live_panes + 1,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
+        .candidate_resources = 1024,
+        .candidate_commands = frame_command_limit,
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
@@ -122,22 +127,38 @@ fn runFallible(
         .raster_bytes = 512 * 1024,
     }, .{ .primary = font_path, .pixel_height = 16 });
     defer chrome_content.deinit();
-    const frame_uploads = try allocator.alloc(render_api.canvas.ResourceUploadFact, 512);
+    const frame_uploads = try allocator.alloc(
+        render_api.canvas.ResourceUploadFact,
+        frame_resource_limit,
+    );
     defer allocator.free(frame_uploads);
-    const frame_removals = try allocator.alloc(render_api.canvas.FrameResourceRef, 512);
+    const frame_removals = try allocator.alloc(
+        render_api.canvas.FrameResourceRef,
+        frame_resource_limit,
+    );
     defer allocator.free(frame_removals);
-    const frame_commands = try allocator.alloc(render_api.canvas.Command, 4096);
+    const frame_commands = try allocator.alloc(
+        render_api.canvas.Command,
+        frame_command_limit,
+    );
     defer allocator.free(frame_commands);
     const frame_pixels = try allocator.alloc(u8, 8 * 1024 * 1024);
     defer allocator.free(frame_pixels);
-    var surface_uploads: [512]vk_surface.Upload = undefined;
-    var surface_removals: [512]vk_surface.Removal = undefined;
-    var surface_commands: [4096]vk_surface.FrameCommand = undefined;
-    var surface_residencies: [512]vk_surface.Residency = undefined;
-    var canvas_residencies: [512]render_api.canvas.Residency = undefined;
+    var surface_uploads: [frame_resource_limit]vk_surface.Upload = undefined;
+    var surface_removals: [frame_resource_limit]vk_surface.Removal = undefined;
+    const surface_commands = try allocator.alloc(
+        vk_surface.FrameCommand,
+        frame_command_limit,
+    );
+    defer allocator.free(surface_commands);
+    var surface_residencies: [frame_resource_limit]vk_surface.Residency = undefined;
+    var canvas_residencies: [frame_resource_limit]render_api.canvas.Residency = undefined;
     var surface_builder = try vk_surface.FrameBuilder.init(allocator);
     defer surface_builder.deinit();
-    var surface_residency = try vk_surface.ResidencyStore.init(allocator, .{ .resources = 512, .pixel_bytes = 8 * 1024 * 1024 });
+    var surface_residency = try vk_surface.ResidencyStore.init(allocator, .{
+        .resources = frame_resource_limit,
+        .pixel_bytes = 8 * 1024 * 1024,
+    });
     defer surface_residency.deinit();
     var canvas_work = CanvasWork{
         .composer = &composer,
@@ -149,7 +170,7 @@ fn runFallible(
         .frame_pixels = frame_pixels,
         .surface_uploads = &surface_uploads,
         .surface_removals = &surface_removals,
-        .surface_commands = &surface_commands,
+        .surface_commands = surface_commands,
         .surface_residencies = &surface_residencies,
         .canvas_residencies = &canvas_residencies,
         .builder = &surface_builder,
@@ -677,13 +698,14 @@ fn waitConfigure(boundary: *shared.Boundary) !shared.SurfaceConfig {
 }
 
 fn waitWindowRing(boundary: *shared.Boundary, generation: u64) !void {
-    var wakes: u8 = 0;
-    while (wakes < 8) : (wakes += 1) {
+    const absolute = std.math.add(u64, try monotonicNow(), 2_000_000_000) catch
+        return error.Clock;
+    while (true) {
         if (boundary.isWindowRingReady(generation)) return;
         if (boundary.shouldStop()) return error.Stopping;
-        try waitRenderWake(boundary);
+        if (!try waitRenderWakeUntil(boundary, absolute))
+            return error.WindowRingTimeout;
     }
-    return error.WindowRingTimeout;
 }
 
 fn waitReleasePoints(boundary: *shared.Boundary, generation: u64, slots: *[shared.slot_count]Slot, drm_fd: i32) !void {
@@ -726,6 +748,35 @@ fn waitRenderWake(boundary: *shared.Boundary) !void {
             return;
         }
         if (result == 0) return error.WakeTimeout;
+        if (std.c.errno(result) != .INTR) return error.Wake;
+    }
+}
+
+fn waitRenderWakeUntil(boundary: *shared.Boundary, absolute: u64) !bool {
+    var descriptor = c.pollfd{
+        .fd = boundary.renderFd(),
+        .events = c.POLLIN,
+        .revents = 0,
+    };
+    while (true) {
+        const now = try monotonicNow();
+        if (now >= absolute) return false;
+        const remaining = absolute - now;
+        const milliseconds = std.math.divCeil(
+            u64,
+            remaining,
+            std.time.ns_per_ms,
+        ) catch return error.Clock;
+        const timeout: i32 = @intCast(@min(
+            milliseconds,
+            @as(u64, std.math.maxInt(i32)),
+        ));
+        const result = c.poll(&descriptor, 1, timeout);
+        if (result > 0) {
+            try boundary.drainRenderWake();
+            return true;
+        }
+        if (result == 0) return false;
         if (std.c.errno(result) != .INTR) return error.Wake;
     }
 }
@@ -895,11 +946,16 @@ fn prepareTerminalTopology(
         }
     }
     if (current.focusedPaneId() != candidate.focusedPaneId()) {
-        inputs[input_count] = .{ .focus = .{
-            .pane = current.focusedPaneId(),
-            .event = .{ .focus = .out },
-        } };
-        input_count += 1;
+        // A closing focused owner is destroyed before copied input is
+        // serviced, so it neither needs nor may receive a later focus-out.
+        // Surviving owners still receive the exact focus transition.
+        if (shouldPublishFocusOut(current, candidate)) {
+            inputs[input_count] = .{ .focus = .{
+                .pane = current.focusedPaneId(),
+                .event = .{ .focus = .out },
+            } };
+            input_count += 1;
+        }
         inputs[input_count] = .{ .focus = .{
             .pane = candidate.focusedPaneId(),
             .event = .{ .focus = .in },
@@ -948,6 +1004,39 @@ fn topologyContains(
     pane: render_api.chrome.PaneId,
 ) bool {
     return topology.paneRect(pane) != null;
+}
+
+fn shouldPublishFocusOut(
+    current: *const chrome_state.Topology,
+    candidate: *const chrome_state.Topology,
+) bool {
+    return current.focusedPaneId() != candidate.focusedPaneId() and
+        topologyContains(candidate, current.focusedPaneId());
+}
+
+test "focused close omits stale focus-out while surviving focus change retains it" {
+    var current = try chrome_state.Topology.init(
+        .{ .width = 320, .height = 240 },
+        chrome_state.default_tab_bar_height,
+    );
+    const first = current.focusedPaneId();
+    const second = try current.split(first, .horizontal);
+    var surviving = current;
+    try surviving.focusPane(first);
+    try std.testing.expect(shouldPublishFocusOut(&current, &surviving));
+    var closing = current;
+    try closing.closePane(second);
+    try std.testing.expect(!shouldPublishFocusOut(&current, &closing));
+}
+
+test "one complete terminal and Chrome resource set fits every runtime bank" {
+    try std.testing.expect(
+        terminal_retained_resource_limit <= 1024,
+    );
+    try std.testing.expect(
+        terminal_retained_resource_limit + chrome_retained_resource_limit <=
+            frame_resource_limit,
+    );
 }
 
 fn terminalGrid(rect: render_api.chrome.Rect) struct { cols: u16, rows: u16 } {

@@ -15,7 +15,7 @@ pub const Command = struct { kind: Kind, first_index: u32, index_count: u32, cli
 /// Bounded caller-owned geometry and upload-change facts consumed synchronously.
 pub const Plan = struct {
     vertices: []const Vertex,
-    indices: []const u16,
+    indices: []const u32,
     commands: []const Command,
     atlas_changed: bool,
     image_atlas_changed: bool = false,
@@ -72,13 +72,13 @@ pub const image_atlas_extent: u16 = 1024;
 /// Byte capacity of the RGBA atlas.
 pub const image_atlas_bytes: usize = @as(usize, image_atlas_extent) * image_atlas_extent * 4;
 /// Maximum quads accepted in one plan.
-pub const max_quads: usize = 4096;
+pub const max_quads: usize = 32_768;
 /// Maximum vertices accepted in one plan.
 pub const max_vertices: usize = max_quads * 4;
 /// Maximum indices accepted in one plan.
 pub const max_indices: usize = max_quads * 6;
 /// Maximum ordered draw commands accepted in one plan.
-pub const max_commands: usize = 1024;
+pub const max_commands: usize = max_quads;
 
 const vertex_shader align(4) = @embedFile("shaders/chrome.vert.spv").*;
 const solid_shader align(4) = @embedFile("shaders/solid.frag.spv").*;
@@ -86,8 +86,8 @@ const text_shader align(4) = @embedFile("shaders/text.frag.spv").*;
 const image_shader align(4) = @embedFile("shaders/image.frag.spv").*;
 
 const vertex_bytes = @sizeOf(Vertex) * max_vertices;
-const index_bytes = @sizeOf(u16) * max_indices;
-const index_offset = std.mem.alignForward(usize, vertex_bytes, @alignOf(u16));
+const index_bytes = @sizeOf(u32) * max_indices;
+const index_offset = std.mem.alignForward(usize, vertex_bytes, @alignOf(u32));
 const atlas_offset = std.mem.alignForward(usize, index_offset + index_bytes, 4);
 const image_atlas_offset = std.mem.alignForward(usize, atlas_offset + atlas_bytes, 4);
 const staging_bytes = image_atlas_offset + image_atlas_bytes;
@@ -281,7 +281,7 @@ pub const Context = struct {
         var buffers = [_]vk.VkBuffer{self.staging_buffer};
         var offsets = [_]vk.VkDeviceSize{0};
         vk.vkCmdBindVertexBuffers(command, 0, 1, &buffers, &offsets);
-        vk.vkCmdBindIndexBuffer(command, self.staging_buffer, index_offset, vk.VK_INDEX_TYPE_UINT16);
+        vk.vkCmdBindIndexBuffer(command, self.staging_buffer, index_offset, vk.VK_INDEX_TYPE_UINT32);
         var bound: ?Kind = null;
         for (plan.commands) |item| {
             if (bound == null or bound.? != item.kind) {
@@ -709,24 +709,44 @@ pub const FrameBuilder = struct {
     allocator: std.mem.Allocator,
     alpha_pixels: []u8,
     rgba_pixels: []u8,
-    entries: [max_quads]Packed = undefined,
+    entries: []Packed,
     packed_count: usize = 0,
-    vertices: [max_vertices]Vertex = undefined,
+    vertices: []Vertex,
     vertex_count: usize = 0,
-    indices: [max_indices]u16 = undefined,
+    indices: []u32,
     index_count: usize = 0,
-    commands: [max_commands]Command = undefined,
+    commands: []Command,
     command_count: usize = 0,
 
-    /// Allocates the two complete atlas candidates once.
+    /// Allocates complete bounded atlas and geometry candidates once.
     pub fn init(allocator: std.mem.Allocator) BuildError!FrameBuilder {
         const alpha = allocator.alloc(u8, atlas_bytes) catch return error.OutOfMemory;
         errdefer allocator.free(alpha);
         const rgba = allocator.alloc(u8, image_atlas_bytes) catch return error.OutOfMemory;
-        return .{ .allocator = allocator, .alpha_pixels = alpha, .rgba_pixels = rgba };
+        errdefer allocator.free(rgba);
+        const entries = allocator.alloc(Packed, max_quads) catch return error.OutOfMemory;
+        errdefer allocator.free(entries);
+        const vertices = allocator.alloc(Vertex, max_vertices) catch return error.OutOfMemory;
+        errdefer allocator.free(vertices);
+        const indices = allocator.alloc(u32, max_indices) catch return error.OutOfMemory;
+        errdefer allocator.free(indices);
+        const commands = allocator.alloc(Command, max_commands) catch return error.OutOfMemory;
+        return .{
+            .allocator = allocator,
+            .alpha_pixels = alpha,
+            .rgba_pixels = rgba,
+            .entries = entries,
+            .vertices = vertices,
+            .indices = indices,
+            .commands = commands,
+        };
     }
 
     pub fn deinit(self: *FrameBuilder) void {
+        self.allocator.free(self.commands);
+        self.allocator.free(self.indices);
+        self.allocator.free(self.vertices);
+        self.allocator.free(self.entries);
         self.allocator.free(self.rgba_pixels);
         self.allocator.free(self.alpha_pixels);
         self.* = undefined;
@@ -801,8 +821,8 @@ pub const FrameBuilder = struct {
             self.vertices[vertex_count + 1] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(rect.y) }, .uv = .{ uv[2], uv[1] }, .color = color };
             self.vertices[vertex_count + 2] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ uv[2], uv[3] }, .color = color };
             self.vertices[vertex_count + 3] = .{ .position = .{ @floatFromInt(rect.x), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ uv[0], uv[3] }, .color = color };
-            const base: u16 = @intCast(vertex_count);
-            @memcpy(self.indices[index_count .. index_count + 6], &[_]u16{ base, base + 1, base + 2, base, base + 2, base + 3 });
+            const base: u32 = @intCast(vertex_count);
+            @memcpy(self.indices[index_count .. index_count + 6], &[_]u32{ base, base + 1, base + 2, base, base + 2, base + 3 });
             self.commands[command_count] = .{ .kind = kind, .first_index = @intCast(index_count), .index_count = 6, .clip = clip };
             vertex_count += 4;
             index_count += 6;

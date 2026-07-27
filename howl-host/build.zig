@@ -104,7 +104,7 @@ pub fn build(b: *std.Build) void {
     terminal_runtime_facts.addOption(
         []const u8,
         "font_path",
-        b.root.joinString(
+        run_font orelse b.root.joinString(
             b.allocator,
             "../howl-render/testdata/primary.ttf",
         ) catch @panic("OOM"),

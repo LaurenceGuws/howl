@@ -71,6 +71,7 @@ const State = struct {
     keyboard_modifiers: wayland.input.Modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 },
     keyboard_semantic_modifiers: wayland.input.SemanticModifiers = .{},
     pointer_motion: ?wayland.input.Motion = null,
+    pointer_axis_motion: ?wayland.input.Motion = null,
 
     fn deinit(self: *State) void {
         if (self.xkb_state) |*value| value.deinit();
@@ -512,13 +513,14 @@ fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32,
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .value = .{ .axis = direction, .time = time, .value = fixedPoint(value) } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
 fn pointerFrame(data: ?*anyopaque, pointer: ?*c.wl_pointer) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
-    const point = state.pointer_motion orelse return state.boundary.requestStop(.window);
+    const point = takeAxisFramePoint(&state.pointer_axis_motion) orelse return;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .frame = {} }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
@@ -533,6 +535,7 @@ fn pointerSource(data: ?*anyopaque, pointer: ?*c.wl_pointer, source: u32) callco
         3 => .wheel_tilt,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .source = value }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
@@ -545,6 +548,7 @@ fn pointerStop(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32)
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .stop = .{ .axis = direction, .time = time } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
@@ -557,6 +561,7 @@ fn pointerDiscrete(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value:
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .discrete = .{ .axis = direction, .value = value } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
@@ -569,6 +574,7 @@ fn pointerValue120(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u32, value:
         1 => .horizontal,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .value120 = .{ .axis = direction, .value = value } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
@@ -586,10 +592,31 @@ fn pointerRelativeDirection(data: ?*anyopaque, pointer: ?*c.wl_pointer, axis: u3
         1 => .inverted,
         else => return state.boundary.requestStop(.window),
     };
+    state.pointer_axis_motion = point;
     state.boundary.publishInput(.{ .axis = .{ .event = .{ .relative_direction = .{ .axis = value, .direction = relative } }, .point = point.point, .semantic_modifiers = state.keyboard_semantic_modifiers } }) catch inputFailure(state);
 }
 
+fn takeAxisFramePoint(point: *?wayland.input.Motion) ?wayland.input.Motion {
+    const result = point.*;
+    point.* = null;
+    return result;
+}
+
 const pointer_listener = c.wl_pointer_listener{ .enter = pointerEnter, .leave = pointerLeave, .motion = pointerMotion, .button = pointerButton, .axis = pointerAxis, .frame = pointerFrame, .axis_source = pointerSource, .axis_stop = pointerStop, .axis_discrete = pointerDiscrete, .axis_value120 = pointerValue120, .axis_relative_direction = pointerRelativeDirection };
+
+test "pointer frame consumes only retained axis occurrence position" {
+    var none: ?wayland.input.Motion = null;
+    try std.testing.expect(takeAxisFramePoint(&none) == null);
+    const expected = wayland.input.Motion{
+        .time = 9,
+        .point = .{ .x = 4, .y = 7 },
+        .semantic_modifiers = .{ .shift = true },
+    };
+    var retained: ?wayland.input.Motion = expected;
+    try std.testing.expectEqual(expected, takeAxisFramePoint(&retained).?);
+    try std.testing.expect(retained == null);
+    try std.testing.expect(takeAxisFramePoint(&retained) == null);
+}
 
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));

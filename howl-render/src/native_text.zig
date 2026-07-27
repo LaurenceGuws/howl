@@ -43,6 +43,7 @@ pub const ShapeError = error{
     InsufficientGlyphs,
     HarfBuzzBuffer,
     InvalidShapeResult,
+    InvalidGlyphIdentity,
     MissingGlyph,
 };
 
@@ -328,6 +329,19 @@ pub const FontSet = struct {
         };
     }
 
+    /// Returns the first configured face covering one complete valid sequence.
+    ///
+    /// A null result identifies optional font coverage absence. Invalid Unicode
+    /// remains an exact caller error and cannot be normalized as a missing glyph.
+    pub fn faceFor(
+        self: *FontSet,
+        codepoints: []const u32,
+    ) error{ InvalidText, TextTooLong }!?u8 {
+        try validateCodepoints(codepoints);
+        const index = self.selectFace(codepoints) orelse return null;
+        return @intCast(index);
+    }
+
     /// Exclusively borrows one native face and rasterizes monochrome or gray
     /// coverage into the requested pixel width. Scalable glyphs wider than
     /// that width are proportionally rerendered, while fixed bitmaps are
@@ -495,8 +509,8 @@ fn faceSupportsSequence(font: *c.hb_font_t, codepoints: []const u32) bool {
 fn validateGlyphInfo(
     info: c.hb_glyph_info_t,
     cluster_count: usize,
-) error{ MissingGlyph, InvalidShapeResult }!void {
-    if (info.codepoint == 0) return error.MissingGlyph;
+) error{ InvalidGlyphIdentity, InvalidShapeResult }!void {
+    if (info.codepoint == 0) return error.InvalidGlyphIdentity;
     if (info.cluster >= cluster_count) return error.InvalidShapeResult;
 }
 
@@ -531,8 +545,13 @@ test "shape output ceiling rejects before caller storage" {
 fn validateText(text: Text) error{ InvalidText, TextTooLong }!void {
     if (text.codepoints.len == 0 or text.codepoints.len != text.clusters.len)
         return error.InvalidText;
-    if (text.codepoints.len > max_codepoints) return error.TextTooLong;
-    for (text.codepoints) |codepoint| {
+    try validateCodepoints(text.codepoints);
+}
+
+fn validateCodepoints(codepoints: []const u32) error{ InvalidText, TextTooLong }!void {
+    if (codepoints.len == 0) return error.InvalidText;
+    if (codepoints.len > max_codepoints) return error.TextTooLong;
+    for (codepoints) |codepoint| {
         if (codepoint > 0x10ffff or codepoint >= 0xd800 and codepoint <= 0xdfff)
             return error.InvalidText;
     }
@@ -1159,7 +1178,7 @@ test "HarfBuzz empty sentinels are rejected as failed owners" {
 
 test "shaped missing glyph and cluster failures remain distinct" {
     var info = std.mem.zeroes(c.hb_glyph_info_t);
-    try std.testing.expectError(error.MissingGlyph, validateGlyphInfo(info, 1));
+    try std.testing.expectError(error.InvalidGlyphIdentity, validateGlyphInfo(info, 1));
     info.codepoint = 1;
     info.cluster = 1;
     try std.testing.expectError(error.InvalidShapeResult, validateGlyphInfo(info, 1));

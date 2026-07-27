@@ -289,18 +289,18 @@ const Bounds = struct { first: u16, end: u16, kind: RunKind };
 pub fn prepareNextRunNative(
     fonts: *FontMap,
     input: RowInput,
-    cell: u16,
+    start_cell: u16,
     scratch: NativeScratch,
 ) PrepareError!PreparedRun {
     comptime std.debug.assert(features.native_text);
-    const bounds = try runBounds(input, cell);
+    const bounds = try runBounds(input, start_cell);
     return switch (bounds.kind) {
         .none => noGlyphRun(input, bounds),
         .generated => if (features.generated_glyphs)
             try generatedRun(input, bounds)
         else
             noGlyphRun(input, bounds),
-        .native => |facts| nativeRun(fonts, input, bounds, facts.font, scratch),
+        .native => |facts| nativeRun(fonts, input, start_cell, bounds, facts.font, scratch),
     };
 }
 
@@ -433,13 +433,46 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
 fn nativeRun(
     fonts: *FontMap,
     input: RowInput,
+    start_cell: u16,
     bounds: Bounds,
     font_key: FontKey,
     scratch: NativeScratch,
 ) PrepareError!PreparedRun {
     const set = fonts.get(font_key) orelse return error.MissingFontConfiguration;
+    var selected_bounds = bounds;
+    var selected_face: ?u8 = null;
+    var selected_end: u16 = undefined;
+    while (true) {
+        selected_face = null;
+        selected_end = selected_bounds.first;
+        while (selected_end < bounds.end) : (selected_end += 1) {
+            const cell = input.cells[selected_end];
+            const count = 1 + cell.combining_len;
+            var coverage: [1 + terminal.max_combining]u32 = undefined;
+            coverage[0] = cell.codepoint;
+            for (cell.combining[0..cell.combining_len], 1..) |combining, index|
+                coverage[index] = combining;
+            const face = try set.faceFor(coverage[0..count]);
+            if (selected_end == selected_bounds.first) {
+                if (face == null) {
+                    if (selected_bounds.first < start_cell) {
+                        selected_bounds.first = start_cell;
+                        break;
+                    }
+                    selected_bounds.end = selected_bounds.first + 1;
+                    return noGlyphRun(input, selected_bounds);
+                }
+                selected_face = face;
+                continue;
+            }
+            if (face == null or face.? != selected_face.?) break;
+        }
+        if (selected_end > start_cell) break;
+        selected_bounds.first = start_cell;
+    }
+    selected_bounds.end = selected_end;
     var scalar_count: usize = 0;
-    for (input.cells[bounds.first..bounds.end]) |cell| {
+    for (input.cells[selected_bounds.first..selected_bounds.end]) |cell| {
         std.debug.assert(cell.codepoint != 0 and !cell.invisible);
         scalar_count += 1 + cell.combining_len;
     }
@@ -449,15 +482,15 @@ fn nativeRun(
     const codepoints = scratch.codepoints[0..scalar_count];
     const clusters = scratch.clusters[0..scalar_count];
     var used: usize = 0;
-    var col = bounds.first;
-    while (col < bounds.end) : (col += 1) {
+    var col = selected_bounds.first;
+    while (col < selected_bounds.end) : (col += 1) {
         const cell = input.cells[col];
         codepoints[used] = cell.codepoint;
-        clusters[used] = col - bounds.first;
+        clusters[used] = col - selected_bounds.first;
         used += 1;
         for (cell.combining[0..cell.combining_len]) |combining| {
             codepoints[used] = combining;
-            clusters[used] = col - bounds.first;
+            clusters[used] = col - selected_bounds.first;
             used += 1;
         }
     }
@@ -473,7 +506,7 @@ fn nativeRun(
     // Synchronous shaping has released scalar staging; reuse it for unordered cluster coverage.
     const cluster_ends = clusterEnds(
         shaped.glyphs,
-        bounds.end - bounds.first,
+        selected_bounds.end - selected_bounds.first,
         scratch.clusters,
     );
     var pen_x: i64 = 0;
@@ -481,8 +514,8 @@ fn nativeRun(
     for (shaped.glyphs, positioned) |glyph, *output| {
         const local_start: u16 = @intCast(glyph.cluster);
         const local_end: u16 = @intCast(cluster_ends[local_start]);
-        const source_start = bounds.first + local_start;
-        const source_end = bounds.first + local_end;
+        const source_start = selected_bounds.first + local_start;
+        const source_end = selected_bounds.first + local_end;
         const x = pen_x + glyph.x_offset;
         const y = pen_y + glyph.y_offset;
         output.* = .{
@@ -503,11 +536,11 @@ fn nativeRun(
         pen_y = std.math.add(i64, pen_y, glyph.y_advance) catch return error.InvalidPlacement;
     }
     return .{
-        .first_cell = bounds.first,
-        .end_cell = bounds.end,
-        .baseline = baselineOf(bounds.kind),
+        .first_cell = selected_bounds.first,
+        .end_cell = selected_bounds.end,
+        .baseline = baselineOf(selected_bounds.kind),
         .geometry = input.geometry,
-        .sizing = switch (bounds.kind) {
+        .sizing = switch (selected_bounds.kind) {
             .native => |facts| facts.sizing,
             else => .{},
         },

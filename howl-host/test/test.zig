@@ -183,6 +183,16 @@ test "stop is monotonic and preserves the first runtime failure" {
     try std.testing.expect(stopped.window and stopped.render);
 }
 
+test "clean stop cannot be relabeled by a later owner callback" {
+    var value = try boundary();
+    defer value.deinit();
+    value.requestStop(null);
+    value.requestStop(.window);
+    value.requestStop(.render);
+    try std.testing.expect(value.shouldStop());
+    try std.testing.expect(value.failure == null);
+}
+
 test "directional wakes follow fact ownership" {
     var value = try boundary();
     defer value.deinit();

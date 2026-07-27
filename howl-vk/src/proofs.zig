@@ -153,6 +153,38 @@ test "surface sparse frame rebuilds complete physical residency" {
     try store.complete();
 }
 
+test "surface admits the complete quad command capacity" {
+    var store = try surface.ResidencyStore.init(std.testing.allocator, .{
+        .resources = 1,
+        .pixel_bytes = 1,
+    });
+    defer store.deinit();
+    var builder = try surface.FrameBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    const commands = try std.testing.allocator.alloc(
+        surface.FrameCommand,
+        surface.max_commands,
+    );
+    defer std.testing.allocator.free(commands);
+    for (commands, 0..) |*command, index| command.* = .{ .solid = .{
+        .rect = .{
+            .x = @intCast(index % 64),
+            .y = @intCast(index / 64),
+            .width = 1,
+            .height = 1,
+        },
+        .clip = .{ .x = 0, .y = 0, .width = 64, .height = 64 },
+        .color = .{ 1, 1, 1, 1 },
+    } };
+    const complete = frame(1, &.{}, &.{}, commands);
+    try store.stage(complete);
+    const plan = try builder.build(&store, complete);
+    try std.testing.expectEqual(surface.max_quads, plan.commands.len);
+    try std.testing.expectEqual(surface.max_vertices, plan.vertices.len);
+    try std.testing.expectEqual(surface.max_indices, plan.indices.len);
+    try store.complete();
+}
+
 test "surface unknown command resource rejects candidate and remains reusable" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
     defer store.deinit();

@@ -57,9 +57,10 @@ const write_calls_per_turn: usize = 4;
 const projection_cell_limit: usize = 32_768;
 const projection_row_limit: usize = 128;
 /// Current one-pane admission shared with PendingSlot and Composer's candidate frame.
-const admitted_commands: usize = 4096;
-/// Current one-pane resource admission shared with PendingSlot and Composer's candidate frame.
-const admitted_resources: usize = 128;
+const admitted_commands: usize = 32_768;
+/// Complete one-pane retained-resource turnover shared with PendingSlot and
+/// Composer's candidate frame: glyphs, decoration masks, and terminal images.
+const admitted_resources: usize = 512 + 128 + image_limit;
 /// Current realistic single-pane geometry bound; sparse output remains subject
 /// to the independently checked command/resource limits.
 const admitted_cells: usize = 32_768;
@@ -788,10 +789,24 @@ const Runtime = struct {
         errdefer allocator.destroy(fonts);
         fonts.* = try render.terminal_text.FontMap.init(
             allocator,
-            &.{.{
-                .key = .{ .slot = 0, .style = .normal },
-                .native = .{ .primary = font_path, .pixel_height = 16 },
-            }},
+            &.{
+                .{
+                    .key = .{ .slot = 0, .style = .normal },
+                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .bold },
+                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .italic },
+                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .bold_italic },
+                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                },
+            },
         );
         errdefer fonts.deinit();
         const work = try render.terminal.Content.Work.init(allocator, contentLimits());
@@ -1252,7 +1267,7 @@ test "realistic configured sparse terminal fits the production Composer candidat
     try std.testing.expect(update.uploads.len <= admitted_resources);
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
         .sources = 2,
-        .retained_resources = 128,
+        .retained_resources = admitted_resources,
         .retained_commands = 4096,
         .retained_pixel_bytes = 4 * 1024 * 1024,
         .composition_sources = 2,
@@ -1265,6 +1280,67 @@ test "realistic configured sparse terminal fits the production Composer candidat
     try composer.apply(source, update);
 }
 
+test "alternate-screen exit publishes complete retained resource turnover" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(72);
+    try runtime.add(pane, "/bin/sh", "sleep 1", 100, 5, .{ .dedicated = &slot });
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = admitted_resources,
+        .retained_commands = admitted_commands,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = admitted_resources,
+        .candidate_commands = admitted_commands,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    const source = try composer.registerSource();
+
+    try owner.visual.project(&owner.machine, &owner.content);
+    try composer.apply(
+        source,
+        try owner.content.takeUpdate(&runtime.work, owner.geometry),
+    );
+
+    try std.testing.expect((try owner.machine.feed("\x1b[?1049h")).state_changed);
+    const styles = [_][]const u8{ "\x1b[0m", "\x1b[1m", "\x1b[3m", "\x1b[1;3m" };
+    var position: [16]u8 = undefined;
+    var alternate_changed = false;
+    for (styles, 0..) |style, row| {
+        const move = try std.fmt.bufPrint(&position, "\x1b[{d};1H", .{row + 1});
+        alternate_changed = (try owner.machine.feed(move)).state_changed or
+            alternate_changed;
+        alternate_changed = (try owner.machine.feed(style)).state_changed or
+            alternate_changed;
+        var scalar: u8 = 33;
+        while (scalar <= 126) : (scalar += 1) {
+            const byte = [_]u8{scalar};
+            alternate_changed = (try owner.machine.feed(&byte)).state_changed or
+                alternate_changed;
+        }
+    }
+    try std.testing.expect(alternate_changed);
+    try owner.visual.project(&owner.machine, &owner.content);
+    const alternate = try owner.content.takeUpdate(&runtime.work, owner.geometry);
+    try std.testing.expect(alternate.uploads.len > 128);
+    try composer.apply(source, alternate);
+
+    try std.testing.expect((try owner.machine.feed("\x1b[?1049l")).state_changed);
+    try owner.visual.project(&owner.machine, &owner.content);
+    const primary = try owner.content.takeUpdate(&runtime.work, owner.geometry);
+    try std.testing.expect(primary.removals.len > 128);
+    try std.testing.expect(primary.removals.len <= admitted_resources);
+    try composer.apply(source, primary);
+}
+
 test "hostile admitted command pressure remains recoverable and retryable" {
     var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
     defer {
@@ -1274,11 +1350,11 @@ test "hostile admitted command pressure remains recoverable and retryable" {
     var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(71));
-    try runtime.add(pane, "/bin/sh", "sleep 1", 100, 50, .{ .dedicated = &slot });
+    try runtime.add(pane, "/bin/sh", "sleep 1", 256, 128, .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
-    const transcript = try std.testing.allocator.alloc(u8, 5_000 * 6);
+    const transcript = try std.testing.allocator.alloc(u8, admitted_cells * 6);
     defer std.testing.allocator.free(transcript);
-    for (0..5_000) |index| {
+    for (0..admitted_cells) |index| {
         const sequence = if (index % 2 == 0) "\x1b[40m " else "\x1b[41m ";
         @memcpy(transcript[index * 6 ..][0..6], sequence);
     }
@@ -1821,6 +1897,18 @@ test "interpreted unmatched keys route by PaneId under current VT modes" {
     key.text_len = 1;
     try runtime.applyKey(.{ .pane = pane, .key = key });
     try std.testing.expectEqualStrings("a", runtime.owners[runtime.find(pane).?].?.writes.pending());
+    for ([_]u32{ 0xffe1, 0xffe3, 0xffe9, 0xffeb }) |keysym| {
+        key.keysym = @fromBackingInt(keysym);
+        key.text_len = 0;
+        key.state = .pressed;
+        try runtime.applyKey(.{ .pane = pane, .key = key });
+        key.state = .released;
+        try runtime.applyKey(.{ .pane = pane, .key = key });
+    }
+    try std.testing.expectEqualStrings(
+        "a",
+        runtime.owners[runtime.find(pane).?].?.writes.pending(),
+    );
     try std.testing.expectError(
         error.UnknownPane,
         runtime.applyKey(.{
@@ -2002,11 +2090,71 @@ fn terminalKey(
         0xff55 => .{ .named = .page_up },
         0xff56 => .{ .named = .page_down },
         0xff57 => .{ .named = .end },
+        0xff7f => .{ .named = .num_lock },
+        0xffe1 => .{ .named = .left_shift },
+        0xffe2 => .{ .named = .right_shift },
+        0xffe3 => .{ .named = .left_control },
+        0xffe4 => .{ .named = .right_control },
+        0xffe5 => .{ .named = .caps_lock },
+        0xffe7 => .{ .named = .left_meta },
+        0xffe8 => .{ .named = .right_meta },
+        0xffe9 => .{ .named = .left_alt },
+        0xffea => .{ .named = .right_alt },
+        0xffeb => .{ .named = .left_super },
+        0xffec => .{ .named = .right_super },
+        0xffed => .{ .named = .left_hyper },
+        0xffee => .{ .named = .right_hyper },
         0xffff => .{ .named = .delete },
         else => |value| vt.Terminal.Key.initUnicode(
             std.math.cast(u21, value) orelse return error.InvalidUnicodeScalar,
         ),
     };
+}
+
+test "modifier keysyms retain named physical identity instead of fabricated Unicode" {
+    const KeyName = @FieldType(vt.Terminal.Key, "named");
+    const cases = [_]struct { keysym: u32, expected: KeyName }{
+        .{ .keysym = 0xffe1, .expected = .left_shift },
+        .{ .keysym = 0xffe2, .expected = .right_shift },
+        .{ .keysym = 0xffe3, .expected = .left_control },
+        .{ .keysym = 0xffe4, .expected = .right_control },
+        .{ .keysym = 0xffe9, .expected = .left_alt },
+        .{ .keysym = 0xffea, .expected = .right_alt },
+        .{ .keysym = 0xffeb, .expected = .left_super },
+        .{ .keysym = 0xffec, .expected = .right_super },
+    };
+    for (cases) |case| {
+        const key = try terminalKey(@fromBackingInt(case.keysym));
+        try std.testing.expectEqual(
+            vt.Terminal.Key{ .named = case.expected },
+            key,
+        );
+    }
+}
+
+test "configured operator font styles and optional missing cells remain renderable" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(83);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        8,
+        2,
+        .{ .dedicated = &slot },
+    );
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    try std.testing.expect(
+        (try owner.machine.feed("\x1b[1mA\x1b[3mB\x1b[0m\xef\xbf\xa1")).state_changed,
+    );
+    owner.dirty = true;
+    try std.testing.expect(try owner.publishIfDirty(&runtime.work));
 }
 
 fn selectionStyle() terminal_render.SelectionStyle {

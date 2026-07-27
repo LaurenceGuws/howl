@@ -55,6 +55,10 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     });
     defer fallback.deinit();
     try std.testing.expectEqual(@as(u8, 1), fallback.face_index);
+    try std.testing.expectEqual(@as(?u8, 0), try set.faceFor(&ascii));
+    try std.testing.expectEqual(@as(?u8, 1), try set.faceFor(&symbol));
+    try std.testing.expectEqual(@as(?u8, null), try set.faceFor(&.{0x10ffff}));
+    try std.testing.expectError(error.InvalidText, set.faceFor(&.{0xd800}));
 
     // Only the fallback carries the explicit zero + VS1 cmap mapping.
     const variation = [_]u32{ '0', 0xfe00 };

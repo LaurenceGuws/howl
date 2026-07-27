@@ -1528,15 +1528,15 @@ test "native missing tuple and glyph failures preserve reusable scratch" {
         ),
     );
     var missing = [_]terminal.Cell{cell(0x10ffff)};
-    try std.testing.expectError(
-        error.MissingGlyph,
-        terminal_text.prepareNextRun(
-            &map,
-            input(&missing, 0, 0),
-            0,
-            scratch.borrow(),
-        ),
+    const omitted = try terminal_text.prepareNextRun(
+        &map,
+        input(&missing, 0, 0),
+        0,
+        scratch.borrow(),
     );
+    try std.testing.expect(omitted.glyphs == .none);
+    try std.testing.expectEqual(@as(u16, 0), omitted.first_cell);
+    try std.testing.expectEqual(@as(u16, 1), omitted.end_cell);
     var ordinary = [_]terminal.Cell{cell('A')};
     const reusable = try terminal_text.prepareNextRun(
         &map,
@@ -1607,6 +1607,25 @@ test "native combining clusters reuse caller storage" {
     );
     try std.testing.expectEqual(first_pointer, reused.glyphs.native.ptr);
     try std.testing.expect(!std.meta.eql(first_key, reused.glyphs.native[0].key));
+}
+
+test "native optional coverage omission preserves adjacent terminal glyphs" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{ cell('A'), cell(0x10ffff), cell('B') };
+    const row = input(&cells, 0, 2);
+    const before = try terminal_text.prepareNextRun(&map, row, 0, scratch.borrow());
+    try std.testing.expect(before.glyphs == .native);
+    try std.testing.expectEqual(@as(u16, 1), before.end_cell);
+    const missing = try terminal_text.prepareNextRun(&map, row, 1, scratch.borrow());
+    try std.testing.expect(missing.glyphs == .none);
+    try std.testing.expectEqual(@as(u16, 2), missing.end_cell);
+    const after = try terminal_text.prepareNextRun(&map, row, 2, scratch.borrow());
+    try std.testing.expect(after.glyphs == .native);
+    try std.testing.expectEqual(@as(u16, 3), after.end_cell);
 }
 
 test "native scratch capacity failures preserve unwritten destinations" {

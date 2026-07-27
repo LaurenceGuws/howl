@@ -630,8 +630,9 @@ pub const Boundary = struct {
     /// Makes stop monotonic, preserves the first failure, and wakes both owners.
     pub fn requestStop(self: *Boundary, failure: ?Failure) void {
         self.mutex.lockUncancelable(self.io);
+        const first = !self.stop_requested;
         self.stop_requested = true;
-        if (self.failure == null) self.failure = failure;
+        if (first) self.failure = failure;
         self.mutex.unlock(self.io);
         signal(self.window_fd);
         signal(self.render_fd);
