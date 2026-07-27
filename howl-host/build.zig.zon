@@ -6,6 +6,7 @@
     .dependencies = .{
         .howl_render = .{ .path = "../howl-render" },
         .howl_vk = .{ .path = "../howl-vk" },
+        .howl_vt = .{ .path = "../howl-vt" },
         .howl_wayland = .{ .path = "../howl-wayland" },
     },
     .paths = .{

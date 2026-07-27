@@ -45,9 +45,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .native_text = true,
         .generated_glyphs = false,
-        .terminal = false,
+        .terminal = true,
     });
     const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
+    const vt = b.dependency("howl_vt", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
     const chrome_state = b.createModule(.{
@@ -64,6 +68,12 @@ pub fn build(b: *std.Build) void {
     input_actions.addImport("chrome_state", chrome_state);
     input_actions.addImport("howl_render", render.module("howl_render"));
     input_actions.addImport("howl_wayland", wayland.module("howl_wayland"));
+    const terminal_handoff = b.createModule(.{
+        .root_source_file = b.path("src/terminal_handoff.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_handoff.addImport("howl_render", render.module("howl_render"));
     root.addImport("chrome_state", chrome_state);
     root.addImport("input_actions", input_actions);
     root.addImport("howl_vk", vk.module("howl_vk"));
@@ -99,7 +109,9 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("host_c", host_c);
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("input_actions", input_actions);
+    test_module.addImport("terminal_handoff", terminal_handoff);
     test_module.addImport("howl_render", render.module("howl_render"));
+    test_module.addImport("howl_vt", vt.module("howl_vt"));
     test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     const tests = b.addTest(.{ .root_module = test_module, .use_llvm = false, .use_lld = false });
     const run_tests = b.addRunArtifact(tests);
@@ -110,5 +122,32 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_chrome_tests.step);
     const input_action_tests = b.addTest(.{ .root_module = input_actions, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(input_action_tests).step);
+    const handoff_tests = b.addTest(.{ .root_module = terminal_handoff, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(handoff_tests).step);
+    const terminal_contract = b.createModule(.{
+        .root_source_file = b.path("test/terminal_contract_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_contract.addImport("chrome_state", chrome_state);
+    terminal_contract.addImport("howl_render", render.module("howl_render"));
+    terminal_contract.addImport("howl_vt", vt.module("howl_vt"));
+    terminal_contract.addImport("terminal_handoff", terminal_handoff);
+    const terminal_test_facts = b.addOptions();
+    terminal_test_facts.addOption(
+        []const u8,
+        "font_path",
+        b.root.joinString(
+            b.allocator,
+            "../howl-render/testdata/primary.ttf",
+        ) catch @panic("OOM"),
+    );
+    terminal_contract.addImport("terminal_test_facts", terminal_test_facts.createModule());
+    const terminal_contract_tests = b.addTest(.{
+        .root_module = terminal_contract,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(terminal_contract_tests).step);
     b.default_step = check;
 }

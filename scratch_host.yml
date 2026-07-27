@@ -1,7 +1,7 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: howl_vk_surface
+  checkpoint: terminal_contract_receipt
   purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
 
 accepted:
@@ -18,6 +18,17 @@ accepted:
       - operator visual and temporary per-pane probe gates passed
       - all package and workspace optimize-mode checks and tests passed
       - source audit, protocol validation, YAML, formatting, and diff checks passed
+  howl_vk_surface:
+    commit: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
+    boundary: Freeze retained rendering and Vulkan surface
+    outcome:
+      - Render owns canonical terminal and chrome Content plus canvas Composer
+      - howl-vk owns generic qualified residency, staging, recording, and GPU cleanup
+      - Host owns Composer instances, explicit Render-to-Vulkan adaptation, topology, and runtime orchestration
+      - complete plan preflight precedes mapped staging and Vulkan recording
+    receipts:
+      - all package, Host executable, and workspace optimize-mode gates passed
+      - operator confirmed interaction, resizing, slot reuse, and orderly Vulkan retirement
 
 architecture_correction:
   decision: >-
@@ -48,16 +59,33 @@ architecture_correction:
       execution without a separate measured proof.
 
 checkpoint:
-  id: howl_vk_surface
+  id: terminal_contract_receipt
   status: review_ready
   objective: >-
-    Replace the current single chrome draw source with bounded composition of
-    multiple independent immutable pane updates, images, and Host chrome into one
-    ordered Vulkan surface batch. This checkpoint preserves the accepted Render
-    contracts while moving reusable Vulkan execution into howl-vk.surface.
+    Prove with two real howl-vt terminals that borrowed consumptive
+    terminal.Content updates cross one atomically synchronized fixed copied
+    pending slot per pane and compose independently without PTY construction
+    or a production runtime thread.
+  review_corrections:
+    - PendingSlot now transfers ownership through release/acquire atomic states instead of unsynchronized fields.
+    - Publication reserves a free slot before calling consumptive takeUpdate.
+    - Slot storage derives from the same terminal.Content.Limits authority, leaving no fallible copy after consumption.
+    - Producer failure restores free state while terminal.Content rolls back its own candidate transaction.
+    - Pane retirement can discard a ready immutable update before removing its Composer source.
+    - An actual two-thread proof observes copied bytes only after release/acquire transfer.
+  displaced_obligations:
+    terminal_runtime:
+      - Unicode shaping
+      - DEC and OSC66 geometry
+      - cursor and selection
+      - scrollback and resize
+      - bounded noisy-terminal fairness
+    parity_and_freeze:
+      - tab switching preserves all newest terminal visual facts
 
 howl_vk_surface:
-  status: review_ready
+  status: accepted
+  commit: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
   findings:
     - Render public freeze accepted in .zig/work/render-index/end_state.yml.
     - Generic GPU execution moved from Host gpu_chrome into howl-vk.surface.
@@ -86,7 +114,6 @@ howl_vk_surface:
       - operator confirmed tab, split, focus, resize, traversal, reorder, close, and pointer behavior
       - operator confirmed resize and orderly compositor shutdown at revision 71
   next_slice:
-    - reviewer accepts howl_vk_surface
     - later terminal producer integration introduces PaneId to SourceId mappings only for real producer lifetimes
   ownership:
     producer_contract:
@@ -170,7 +197,68 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - reviewer accepts the completed howl_vk_surface boundary
-  - terminal_contract_receipt proves the producer boundary with multiple real VT instances
+  - reviewer accepts terminal_contract_receipt
   - terminal_runtime adds one caller-driven PTY and VT runtime thread
   - parity_and_freeze closes the marathon
+
+terminal_contract_receipt:
+  status: review_ready
+  ownership:
+    terminal_runtime_future:
+      - one OS thread owns up to 64 logical terminal owners
+      - each logical owner owns one howl-pty, one howl-vt.Terminal, and one howl-render terminal.Content
+    renderer:
+      - owns canvas.Composer, Vulkan mutation, retained backend residency, and surface batching
+    window:
+      - owns Wayland I/O and presentation only
+  handoff:
+    - one fixed-capacity copied pending slot per live PaneId
+    - slot stores canonical canvas facts and copied pixels without Host visual vocabulary
+    - atomic free, writing, ready, draining, and retired states transfer exclusive ownership
+    - release publication and acquire drainage make copied bytes cross-thread safe
+    - slot admission precedes terminal.Content.takeUpdate
+    - occupied pane slots do not block servicing or publishing another pane
+    - takeUpdate is not called for a pane unless its slot was atomically reserved
+  exclusions:
+    - PTY construction, polling, child lifecycle, keyboard encoding, replies, consequences, and runtime threads
+    - Canvas, terminal.Content, Composer, howl-vk, or Render file splitting
+    - RPC, callbacks, acknowledgement choreography, generic event buses, and unbounded queues
+    - GUI launch or compositor automation
+  findings:
+    - Host terminal_handoff.PendingSlot copies only canonical Canvas uploads, removals, commands, and pixel bytes
+    - each logical producer retains its own terminal projection baseline and image identities
+    - two real VT instances feed distinct text and Kitty image transcripts through independent Content owners
+  copied_slot_bound:
+    uploads: 32
+    removals: 32
+    commands: 64
+    pixel_bytes: 8192
+    allocator_bytes_per_pane: 15104
+    owner_bytes_per_pane: 15224
+    owner_bytes_for_64_panes: 974336
+    evidence: .zig/work/terminal-contract-receipt/receipt.yml
+  lifetime_transition:
+    - PendingSlot.publish claims free to writing before touching terminal.Content
+    - PendingSlot and terminal.Content use the same resources, commands, and upload-byte limits
+    - a mismatched limits authority fails before takeUpdate and restores the slot to free
+    - takeUpdate failure restores the slot to free and Content rolls back its candidate transaction
+    - after successful takeUpdate the bounds-matched copy is infallible and rewrites upload slices into slot-owned storage
+    - writing to ready release publishes all copied bytes; ready to draining acquire grants Renderer exclusive access
+    - producer VT storage and projection work may change without changing the occupied slot
+    - Renderer calls PendingSlot.drain, which applies to one Composer SourceId and clears only after acceptance
+    - Composer rejection republishes the immutable occupied slot for later exact drainage
+    - retirement atomically discards a ready update before its Composer source is removed
+  proofs:
+    - two pane-local resource ID collisions remain distinct after Composer qualification
+    - occupied-slot saturation preserves copied bytes and leaves another pane independently serviceable
+    - an occupied publication attempt does not consume queued text and Kitty image replacement state
+    - a two-thread release/acquire proof observes the exact immutable copied pixels
+    - hidden updates preserve FrameRevision and byte-exact visible output
+    - reveal advances once and contains the newest hidden producer commands
+    - occupied-slot retirement discards pending bytes, rejects later drainage/publication, and new SourceId and PaneId values are strictly newer
+    - empty backend residency reproduces identical uploads, removals, commands, pixels, and FrameRevision
+    - allocation, mismatched-limit admission, terminal production, and Composer-drain failures preserve ownership and slot reuse
+  validation:
+    - Host and workspace check/test pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+    - source audit and protocol validation pass
+    - YAML, pinned formatting, and diff checks pass

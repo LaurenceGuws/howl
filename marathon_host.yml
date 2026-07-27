@@ -13,8 +13,8 @@ marathon:
 baseline:
   version: 0.1.3-dev
   head:
-    hash: 5b8ac562ebed6479addd2bc7282fc18fac29a367
-    subject: Connect interactive host chrome
+    hash: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
+    subject: Freeze retained rendering and Vulkan surface
   foundation:
     hash: ee3a497ceb10ed98917c68bd34acab37c79ce97f
     subject: Establish Vulkan host foundation
@@ -28,6 +28,7 @@ baseline:
     wayland: 63c2d4341f604eff645ab532860dcd1c80b3a2b1
     render_chrome_ownership: c6bc24e60f4749f7975743d36329a148bdddd6f3
     interactive_chrome: 5b8ac562ebed6479addd2bc7282fc18fac29a367
+    howl_vk_surface: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
   proven_runtime:
     - one Main lifetime, one Window thread, and one Render thread
     - compositor-selected DMA-BUF device and format/modifier tuple
@@ -95,7 +96,7 @@ target_ownership:
     owns:
       - one initial OS thread and one caller-managed poll set
       - up to 64 logical terminal owners without one OS thread or fiber per terminal
-      - one PTY, one VT, one terminal-projection baseline, and one incarnation per live terminal pane
+      - one PTY, one VT, one terminal-projection baseline, and one globally non-reused PaneId per live terminal pane
       - bounded fair PTY reads, VT feeds, replies, writes, resize, child observation, and cleanup
       - conversion of borrowed VT facts into immutable backend-neutral pane updates
     excludes:
@@ -113,13 +114,13 @@ target_ownership:
       - Render never waits for Window to observe a completed GPU revision.
   terminal_boundary:
     owns:
-      - bounded unmatched focused input tagged with stable pane identity and incarnation
+      - bounded unmatched focused input tagged with the stable globally non-reused PaneId
       - bounded resize, create, close, and stop facts
       - newest-complete immutable pane updates with monotonic per-pane revisions
       - directional wakeups without shared mutable PTY, VT, projection, or GPU state
     rules:
       - Renderer forwards only input not captured by Host chrome policy.
-      - Terminal runtime rejects stale pane identities and incarnations before mutation.
+      - Terminal runtime rejects stale or retired PaneId values before mutation.
       - No borrowed VT view or projection storage crosses the boundary.
       - Terminal runtime never waits for Renderer to draw or Window to present.
       - Renderer never locks or borrows a live terminal owner.
@@ -309,17 +310,20 @@ checkpoints:
       - generation replacement, context reconstruction, and failure isolation
       - newest-complete per-pane replacement and stale update rejection
   - id: terminal_contract_receipt
+    status: review_ready
     outcome: >-
       Feed deterministic transcripts into multiple real howl-vt instances under one
       terminal-runtime owner and render immutable updates in multiple panes without
       introducing PTYs or a simulator API.
     commit_boundary: Prove multi-terminal render contract
     proof:
-      - ordinary text, Unicode shaping, DEC/OSC66, cursor, selection, scrollback, and images
-      - resize, hidden progress, tab switching, sparse/full recovery, and lifetime
-      - no borrowed VT state survives the caller operation
-      - stable round-robin progress and bounded work under one noisy terminal
-      - immutable update replacement, stale identity rejection, and producer rollback
+      - two real terminals produce distinct text and image facts through existing Render owners
+      - borrowed consumptive updates cross release/acquire ownership as immutable fixed-capacity canonical Canvas copies
+      - slot admission precedes takeUpdate and shared Content limits make the consumed copy infallible
+      - one occupied pane slot does not prevent another pane from progressing
+      - hidden progress, newest-state reveal, occupied-slot retirement, and fresh identities
+      - qualification preserves colliding pane-local resource identities
+      - empty-residency full recovery and byte-exact saturation/rollback
   - id: terminal_runtime
     outcome: >-
       Add one OS thread that owns all logical terminal panes, polls every borrowed
@@ -330,8 +334,9 @@ checkpoints:
       - create, resize, focused input, partial write, replies, child observation, close, and reverse cleanup
       - one poll set with up to 64 live terminals and no per-terminal OS thread or fiber
       - bounded stable round-robin service under noisy, quiet, hidden, blocked, and exited terminals
-      - stale pane/incarnation input and update rejection
+      - stale or retired PaneId input and update rejection
       - hidden progress and newest-state reveal
+      - Unicode shaping, DEC and OSC66 geometry, cursor, selection, scrollback, and resize
       - no shared mutable PTY, VT, projection, or GPU state
       - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
   - id: parity_and_freeze
@@ -341,6 +346,7 @@ checkpoints:
     commit_boundary: Freeze interactive Vulkan host foundation
     proof:
       - exact historical mapping and visible-behavior matrix
+      - tab switching preserves newest terminal state and all terminal visual facts
       - deterministic geometry receipts and operator-requested visual gates
       - matched grid/frame CPU, GPU, RSS, draw, upload, and pacing receipts
       - full root/package all-mode gates, source audit, protocol validation, and clean shutdown
@@ -350,7 +356,7 @@ final_acceptance:
     - create one logical PTY, VT, and projection owner per terminal pane
     - poll all borrowed PTY descriptors from one terminal runtime OS thread
     - feed bytes and publish immutable backend-neutral pane updates
-    - route unmatched focused input to the terminal runtime by stable identity and incarnation
+    - route unmatched focused input to the terminal runtime by globally non-reused PaneId
     - keep Window, Renderer, and terminal runtime mutation ownership disjoint
     - resize from pane geometry
     - drain replies and ordered consequences

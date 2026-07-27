@@ -1,0 +1,510 @@
+//! Proves the copied two-terminal producer boundary before runtime threading.
+
+const std = @import("std");
+const vt = @import("howl_vt");
+const render = @import("howl_render");
+const terminal_handoff = @import("terminal_handoff");
+const chrome_state = @import("chrome_state");
+const facts = @import("terminal_test_facts");
+
+const terminal = render.terminal;
+const terminal_images = render.terminal_images;
+const canvas = render.canvas;
+
+const rows: u16 = 2;
+const cols: u16 = 8;
+const cell_count: usize = rows * cols;
+const Producer = struct {
+    machine: vt.Terminal,
+    content: terminal.Content,
+    baseline_cells: [cell_count]terminal.Cell = undefined,
+    baseline_geometry: [rows]terminal.LineGeometry = undefined,
+    baseline_cursor: terminal.Cursor = undefined,
+    work_cells: [cell_count]terminal.Cell = undefined,
+    work_rows: [rows]terminal.RowPatch = undefined,
+    image_pixels: [64]u8 = undefined,
+    image_uploads: [8]terminal_images.ImageUpload = undefined,
+    image_removals: [8]u32 = undefined,
+    image_placements: [8]terminal_images.ImagePlacement = undefined,
+    image_identities: [8]terminal_images.ImageIdentity = undefined,
+    image_identity_count: usize = 0,
+    image_generation: u64 = 0,
+    initialized: bool = false,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        fonts: *render.terminal_text.FontMap,
+    ) !Producer {
+        var machine = try vt.Terminal.init(allocator, rows, cols);
+        errdefer machine.deinit();
+        var content = try terminal.Content.init(
+            allocator,
+            contentLimits(),
+            fonts,
+        );
+        errdefer content.deinit();
+        return .{ .machine = machine, .content = content };
+    }
+
+    fn deinit(self: *Producer) void {
+        self.content.deinit();
+        self.machine.deinit();
+        self.* = undefined;
+    }
+
+    fn feed(self: *Producer, bytes: []const u8) !void {
+        const summary = try self.machine.feed(bytes);
+        try std.testing.expect(summary.state_changed);
+    }
+
+    fn recover(self: *Producer) !void {
+        const projected = try terminal.project(
+            self.machine.semanticView(0),
+            self.machine.presentation(),
+            .full,
+            .{ .cells = &self.work_cells, .rows = &self.work_rows },
+            null,
+            selectionStyle(),
+        );
+        try std.testing.expect(projected.full);
+        self.commitProjection(projected);
+        const image_update = try self.projectImages();
+        try self.content.recover(self.baseline(), image_update);
+        self.commitImageIdentities(image_update);
+        self.initialized = true;
+    }
+
+    fn refresh(self: *Producer) !void {
+        try std.testing.expect(self.initialized);
+        const projected = try terminal.project(
+            self.machine.semanticView(0),
+            self.machine.presentation(),
+            .{ .incremental = self.baseline() },
+            .{ .cells = &self.work_cells, .rows = &self.work_rows },
+            null,
+            selectionStyle(),
+        );
+        try std.testing.expect(!projected.full);
+        try self.content.applyProjection(projected);
+        self.commitProjection(projected);
+        const current_images = self.machine.images(0);
+        if (current_images.generation != self.image_generation) {
+            const image_update = try self.projectImages();
+            try self.content.applyImages(image_update);
+            self.commitImageIdentities(image_update);
+        }
+    }
+
+    fn publish(
+        self: *Producer,
+        slot: *terminal_handoff.PendingSlot,
+        placement: terminal.Content.Geometry,
+    ) !void {
+        try slot.publish(&self.content, placement);
+    }
+
+    fn baseline(self: *const Producer) terminal.ProjectionBaseline {
+        return .{
+            .rows = rows,
+            .cols = cols,
+            .cursor = self.baseline_cursor,
+            .cells = &self.baseline_cells,
+            .geometry = &self.baseline_geometry,
+        };
+    }
+
+    fn commitProjection(self: *Producer, update: terminal.Update) void {
+        for (update.row_patches) |patch| {
+            if (patch.cell_count != 0) {
+                const destination = @as(usize, patch.row) * cols + patch.start_col;
+                @memcpy(
+                    self.baseline_cells[destination..][0..patch.cell_count],
+                    update.cells[patch.cell_offset..][0..patch.cell_count],
+                );
+            }
+            self.baseline_geometry[patch.row] = patch.geometry;
+        }
+        self.baseline_cursor = update.cursor;
+    }
+
+    fn projectImages(self: *Producer) !terminal_images.Update {
+        return terminal_images.project(self.machine.images(0), .{
+            .retained = self.image_identities[0..self.image_identity_count],
+            .pixels = &self.image_pixels,
+            .uploads = &self.image_uploads,
+            .removals = &self.image_removals,
+            .placements = &self.image_placements,
+        });
+    }
+
+    fn commitImageIdentities(
+        self: *Producer,
+        update: terminal_images.Update,
+    ) void {
+        for (update.removals) |removed| {
+            var index: usize = 0;
+            while (index < self.image_identity_count) : (index += 1) {
+                if (self.image_identities[index].id != removed) continue;
+                std.mem.copyForwards(
+                    terminal_images.ImageIdentity,
+                    self.image_identities[index .. self.image_identity_count - 1],
+                    self.image_identities[index + 1 .. self.image_identity_count],
+                );
+                self.image_identity_count -= 1;
+                break;
+            }
+        }
+        for (update.uploads) |upload| {
+            var found = false;
+            for (self.image_identities[0..self.image_identity_count]) |*identity| {
+                if (identity.id != upload.identity.id) continue;
+                identity.* = upload.identity;
+                found = true;
+                break;
+            }
+            if (!found) {
+                self.image_identities[self.image_identity_count] = upload.identity;
+                self.image_identity_count += 1;
+            }
+        }
+        self.image_generation = update.generation;
+    }
+};
+
+const FrameStorage = struct {
+    uploads: [64]canvas.ResourceUploadFact = undefined,
+    removals: [64]canvas.FrameResourceRef = undefined,
+    commands: [256]canvas.Command = undefined,
+    pixels: [64 * 1024]u8 = undefined,
+
+    fn buffers(self: *FrameStorage) canvas.Composer.FrameBuffers {
+        return .{
+            .uploads = &self.uploads,
+            .removals = &self.removals,
+            .commands = &self.commands,
+            .pixels = &self.pixels,
+        };
+    }
+};
+
+fn contentLimits() terminal.Content.Limits {
+    return .{
+        .cells = cell_count,
+        .rows = rows,
+        .images = 8,
+        .placements = 8,
+        .image_bytes = 4096,
+        .glyphs = 32,
+        .masks = 16,
+        .commands = 64,
+        .resources_per_update = 32,
+        .upload_bytes = 8192,
+        .raster_bytes = 8192,
+        .decoration_bytes = 1024,
+    };
+}
+
+fn geometry(x: i32) terminal.Content.Geometry {
+    return .{
+        .x = x,
+        .y = 0,
+        .clip = .{ .x = x, .y = 0, .width = 64, .height = 32 },
+        .metrics = .{ .width_px = 8, .height_px = 16, .baseline_px = 12 },
+        .underline_y = 14,
+        .underline_height = 1,
+        .strike_y = 8,
+        .strike_height = 1,
+    };
+}
+
+fn selectionStyle() terminal.SelectionStyle {
+    return .{
+        .foreground = .{ .r = 255, .g = 255, .b = 255 },
+        .background = .{ .r = 0, .g = 0, .b = 0 },
+    };
+}
+
+fn commandSource(command: canvas.Command) ?canvas.SourceId {
+    return switch (command) {
+        .solid => null,
+        .alpha_mask => |value| value.resource.resource.key.source,
+        .rgba => |value| value.resource.resource.key.source,
+    };
+}
+
+fn expectFrameEqual(
+    expected: canvas.Composer.Frame,
+    actual: canvas.Composer.Frame,
+) !void {
+    try std.testing.expectEqual(expected.revision, actual.revision);
+    try std.testing.expectEqualSlices(
+        canvas.ResourceUploadFact,
+        expected.uploads,
+        actual.uploads,
+    );
+    try std.testing.expectEqualSlices(
+        canvas.FrameResourceRef,
+        expected.removals,
+        actual.removals,
+    );
+    try std.testing.expectEqualSlices(canvas.Command, expected.commands, actual.commands);
+    try std.testing.expectEqualSlices(u8, expected.pixels, actual.pixels);
+}
+
+fn sourceCommandsEqual(
+    left: canvas.Composer.Frame,
+    right: canvas.Composer.Frame,
+    source: canvas.SourceId,
+) bool {
+    var left_index: usize = 0;
+    var right_index: usize = 0;
+    while (true) {
+        while (left_index < left.commands.len and
+            commandSource(left.commands[left_index]) != source)
+            left_index += 1;
+        while (right_index < right.commands.len and
+            commandSource(right.commands[right_index]) != source)
+            right_index += 1;
+        if (left_index == left.commands.len or right_index == right.commands.len)
+            return left_index == left.commands.len and
+                right_index == right.commands.len;
+        if (!std.meta.eql(
+            left.commands[left_index],
+            right.commands[right_index],
+        )) return false;
+        left_index += 1;
+        right_index += 1;
+    }
+}
+
+test "two real terminals cross copied slots into distinct Composer sources" {
+    var fonts = try render.terminal_text.FontMap.init(
+        std.testing.allocator,
+        &.{.{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = facts.font_path, .pixel_height = 16 },
+        }},
+    );
+    defer fonts.deinit();
+    var first = try Producer.init(std.testing.allocator, &fonts);
+    defer first.deinit();
+    var second = try Producer.init(std.testing.allocator, &fonts);
+    defer second.deinit();
+    try first.feed(
+        "\x1b[31mleft A" ++
+            "\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\",
+    );
+    try second.feed(
+        "\x1b[34mright B" ++
+            "\x1b_Ga=T,f=32,s=1,v=1,i=8;BQYHCA==\x1b\\",
+    );
+    try first.recover();
+    try second.recover();
+
+    var mismatched_limits = contentLimits();
+    mismatched_limits.commands -= 1;
+    var mismatched_slot = try terminal_handoff.PendingSlot.init(
+        std.testing.allocator,
+        mismatched_limits,
+    );
+    defer mismatched_slot.deinit();
+    try std.testing.expectError(
+        error.InvalidContentLimits,
+        first.publish(&mismatched_slot, geometry(0)),
+    );
+    try std.testing.expect(!(try mismatched_slot.retire()));
+
+    var first_slot = try terminal_handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer first_slot.deinit();
+    var second_slot = try terminal_handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer second_slot.deinit();
+    var invalid_geometry = geometry(0);
+    invalid_geometry.metrics.width_px = 0;
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        first.publish(&first_slot, invalid_geometry),
+    );
+    try first.publish(&first_slot, geometry(0));
+    try second.publish(&second_slot, geometry(0));
+
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 3,
+        .retained_resources = 64,
+        .retained_commands = 256,
+        .retained_pixel_bytes = 64 * 1024,
+        .composition_sources = 2,
+        .candidate_resources = 32,
+        .candidate_commands = 64,
+        .candidate_pixel_bytes = 8192,
+    });
+    defer composer.deinit();
+    const first_source = try composer.registerSource();
+    const second_source = try composer.registerSource();
+
+    // The second pane remains pending while the first pane continues to
+    // progress and publish a newer complete state. Its VT may advance, but its
+    // Content is not drained again until the pending slot becomes free.
+    try second.feed(
+        "\rqueued" ++
+            "\x1b_Ga=t,f=32,s=1,v=1,i=8;CQoLDA==\x1b\\",
+    );
+    try second.refresh();
+    try std.testing.expectError(
+        error.Pending,
+        second.publish(&second_slot, geometry(0)),
+    );
+    try std.testing.expect(try first_slot.drain(&composer, first_source));
+    try first.feed("\rnew");
+    try first.refresh();
+    try first.publish(&first_slot, geometry(0));
+    try std.testing.expectError(
+        error.Pending,
+        second.publish(&second_slot, geometry(0)),
+    );
+    try std.testing.expect(try first_slot.drain(&composer, first_source));
+    try std.testing.expect(try second_slot.drain(&composer, second_source));
+    try second.publish(&second_slot, geometry(0));
+    try std.testing.expect(try second_slot.drain(&composer, second_source));
+
+    try composer.setComposition(.{
+        .surface = .{ .width = 128, .height = 32 },
+        .sources = &.{
+            .{
+                .source = first_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 64, .height = 32 },
+            },
+            .{
+                .source = second_source,
+                .origin = .{ .x = 64, .y = 0 },
+                .clip = .{ .x = 64, .y = 0, .width = 64, .height = 32 },
+            },
+        },
+    });
+    var complete_storage: FrameStorage = .{};
+    const complete = try composer.frame(&.{}, complete_storage.buffers());
+    var first_text_seen = false;
+    var second_text_seen = false;
+    for (complete.commands) |command| {
+        const source = commandSource(command) orelse continue;
+        if (source == first_source) {
+            try std.testing.expect(!second_text_seen);
+            first_text_seen = true;
+        } else if (source == second_source) {
+            second_text_seen = true;
+        }
+    }
+    try std.testing.expect(first_text_seen and second_text_seen);
+
+    var collision = false;
+    for (complete.uploads) |left| for (complete.uploads) |right| {
+        if (left.resource.key.source == right.resource.key.source) continue;
+        if (left.resource.key.resource == right.resource.key.resource) {
+            collision = true;
+            break;
+        }
+    };
+    try std.testing.expect(collision);
+
+    // Empty backend residency is a complete deterministic recovery.
+    var recovery_storage: FrameStorage = .{};
+    const recovered = try composer.frame(&.{}, recovery_storage.buffers());
+    try expectFrameEqual(complete, recovered);
+
+    // Hide the second source, accept its newest terminal state, and prove the
+    // derived visible frame remains byte-exact until reveal.
+    try composer.setComposition(.{
+        .surface = .{ .width = 128, .height = 32 },
+        .sources = &.{.{
+            .source = first_source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 64, .height = 32 },
+        }},
+    });
+    var hidden_before_storage: FrameStorage = .{};
+    const hidden_before = try composer.frame(&.{}, hidden_before_storage.buffers());
+    try second.feed("\rnewest");
+    try second.refresh();
+    try second.publish(&second_slot, geometry(0));
+    try std.testing.expect(try second_slot.drain(&composer, second_source));
+    var hidden_after_storage: FrameStorage = .{};
+    const hidden_after = try composer.frame(&.{}, hidden_after_storage.buffers());
+    try expectFrameEqual(hidden_before, hidden_after);
+
+    try composer.setComposition(.{
+        .surface = .{ .width = 128, .height = 32 },
+        .sources = &.{
+            .{
+                .source = first_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 64, .height = 32 },
+            },
+            .{
+                .source = second_source,
+                .origin = .{ .x = 64, .y = 0 },
+                .clip = .{ .x = 64, .y = 0, .width = 64, .height = 32 },
+            },
+        },
+    });
+    var revealed_storage: FrameStorage = .{};
+    const revealed = try composer.frame(&.{}, revealed_storage.buffers());
+    try std.testing.expectEqual(
+        @as(u64, @backingInt(hidden_after.revision)) + 1,
+        @backingInt(revealed.revision),
+    );
+    var newest_second_seen = false;
+    for (revealed.commands) |command| {
+        if (commandSource(command) == second_source) newest_second_seen = true;
+    }
+    try std.testing.expect(newest_second_seen);
+    try std.testing.expect(
+        !sourceCommandsEqual(complete, revealed, second_source),
+    );
+
+    // Closing a pane discards its immutable pending update before retiring the
+    // Composer source; the slot can neither drain nor publish afterward.
+    try second.feed("\rretiring");
+    try second.refresh();
+    try second.publish(&second_slot, geometry(0));
+    try std.testing.expect(try second_slot.retire());
+    try composer.removeSource(second_source);
+    try std.testing.expect(!(try second_slot.drain(
+        &composer,
+        second_source,
+    )));
+    try std.testing.expectError(
+        error.Retired,
+        second.publish(&second_slot, geometry(0)),
+    );
+    try std.testing.expectError(
+        error.RetiredSource,
+        composer.apply(second_source, .{
+            .revision = @fromBackingInt(@intCast(999)),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+        }),
+    );
+    const later_source = try composer.registerSource();
+    try std.testing.expect(
+        @backingInt(later_source) > @backingInt(second_source),
+    );
+
+    var topology = try chrome_state.Topology.init(
+        .{ .width = 128, .height = 64 },
+        chrome_state.default_tab_bar_height,
+    );
+    const root = topology.focusedPaneId();
+    const retired_pane = try topology.split(root, .vertical);
+    try topology.closePane(retired_pane);
+    const later_pane = try topology.split(root, .vertical);
+    try std.testing.expect(
+        @backingInt(later_pane) > @backingInt(retired_pane),
+    );
+}

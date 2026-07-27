@@ -52,6 +52,8 @@ accepted:
   howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation
   howl-host/src/chrome_state.zig: Renderer-owned bounded tab and tiled/floating pane topology, transactional geometry/focus policy, and immutable chrome composition
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and transactional topology candidates
+  howl-host/src/terminal_handoff.zig: allocation-once release/acquire terminal Content transfer into canonical Canvas facts and exact Composer drainage
+  howl-host/test/terminal_contract_test.zig: deterministic two-VT projection, synchronized copied handoff, producer rollback, occupied retirement, Composer qualification, visibility, and recovery proof
   howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
   howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner
   howl-vk/build.zig: independent Vulkan ABI and dispatch package build and proofs
