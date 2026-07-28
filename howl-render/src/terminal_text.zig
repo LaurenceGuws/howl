@@ -517,32 +517,21 @@ fn nativeRun(
         selected_bounds.end - selected_bounds.first,
         scratch.clusters,
     );
-    var pen_x: i64 = 0;
-    var pen_y: i64 = 0;
-    for (shaped.glyphs, positioned) |glyph, *output| {
-        const local_start: u16 = @intCast(glyph.cluster);
-        const local_end: u16 = @intCast(cluster_ends[local_start]);
-        const source_start = selected_bounds.first + local_start;
-        const source_end = selected_bounds.first + local_end;
-        const x = pen_x + glyph.x_offset;
-        const y = pen_y + glyph.y_offset;
-        output.* = .{
-            .key = .{ .native = .{
-                .font = font_key,
-                .face_index = shaped.face_index,
-                .glyph_id = glyph.id,
-                .cell_span = source_end - source_start,
-            } },
-            .source_start = source_start,
-            .source_end = source_end,
-            .x_26_6 = std.math.cast(i32, x) orelse return error.InvalidPlacement,
-            .y_26_6 = std.math.cast(i32, y) orelse return error.InvalidPlacement,
-            .x_advance_26_6 = glyph.x_advance,
-            .y_advance_26_6 = glyph.y_advance,
-        };
-        pen_x = std.math.add(i64, pen_x, glyph.x_advance) catch return error.InvalidPlacement;
-        pen_y = std.math.add(i64, pen_y, glyph.y_advance) catch return error.InvalidPlacement;
-    }
+    const run_len = selected_bounds.end - selected_bounds.first;
+    @memcpy(scratch.codepoints[0..run_len], cluster_ends);
+    const retained_ends = scratch.codepoints[0..run_len];
+    const cluster_pens = scratch.clusters[0..run_len];
+    try positionNativeGlyphs(
+        shaped.glyphs,
+        run_len,
+        selected_bounds.first,
+        input.metrics.width_px,
+        font_key,
+        shaped.face_index,
+        retained_ends,
+        cluster_pens,
+        positioned,
+    );
     return .{
         .first_cell = selected_bounds.first,
         .end_cell = selected_bounds.end,
@@ -556,7 +545,128 @@ fn nativeRun(
     };
 }
 
-fn clusterEnds(glyphs: []const native.Glyph, run_len: u16, storage: []u32) []const u32 {
+const cluster_seen: u32 = 1 << 31;
+const cluster_end_mask: u32 = cluster_seen - 1;
+
+fn checkedClusterPosition(
+    pen_x: i64,
+    pen_y: i64,
+    glyph: native.Glyph,
+    cluster_cell: u16,
+    cell_width_px: u16,
+    cluster_pen_x: i32,
+) error{InvalidPlacement}!void {
+    const local_x = std.math.sub(
+        i64,
+        std.math.add(i64, pen_x, glyph.x_offset) catch
+            return error.InvalidPlacement,
+        cluster_pen_x,
+    ) catch return error.InvalidPlacement;
+    const cell_origin = std.math.mul(
+        i64,
+        cluster_cell,
+        std.math.mul(i64, cell_width_px, 64) catch
+            return error.InvalidPlacement,
+    ) catch return error.InvalidPlacement;
+    const x = std.math.add(i64, cell_origin, local_x) catch
+        return error.InvalidPlacement;
+    const y = std.math.add(i64, pen_y, glyph.y_offset) catch
+        return error.InvalidPlacement;
+    if (std.math.cast(i32, x) == null or std.math.cast(i32, y) == null)
+        return error.InvalidPlacement;
+}
+
+fn checkedSourceSpan(
+    first_cell: u16,
+    local_start: u16,
+    local_end: u16,
+) error{InvalidPlacement}!void {
+    const source_start = std.math.add(u16, first_cell, local_start) catch
+        return error.InvalidPlacement;
+    const source_end = std.math.add(u16, first_cell, local_end) catch
+        return error.InvalidPlacement;
+    if (source_end <= source_start) return error.InvalidPlacement;
+}
+
+fn positionNativeGlyphs(
+    glyphs: []const native.Glyph,
+    run_len: u16,
+    first_cell: u16,
+    cell_width_px: u16,
+    font_key: FontKey,
+    face_index: u8,
+    cluster_facts: []u32,
+    cluster_pens: []u32,
+    output: []PositionedGlyph,
+) error{InvalidPlacement}!void {
+    if (run_len == 0 or cluster_facts.len < run_len or cluster_pens.len < run_len or
+        output.len != glyphs.len)
+        return error.InvalidPlacement;
+    for (cluster_facts[0..run_len]) |*facts| facts.* &= cluster_end_mask;
+
+    // Discover each cluster's first shaped pen and validate the complete
+    // translation before changing caller output.
+    var pen_x: i64 = 0;
+    var pen_y: i64 = 0;
+    for (glyphs) |glyph| {
+        if (glyph.cluster >= run_len) return error.InvalidPlacement;
+        const local_start: u16 = @intCast(glyph.cluster);
+        const facts = &cluster_facts[local_start];
+        const local_end = facts.* & cluster_end_mask;
+        if (local_end <= local_start or local_end > run_len)
+            return error.InvalidPlacement;
+        if (facts.* & cluster_seen == 0) {
+            const cluster_pen = std.math.cast(i32, pen_x) orelse
+                return error.InvalidPlacement;
+            cluster_pens[local_start] = @bitCast(cluster_pen);
+            facts.* |= cluster_seen;
+        }
+        try checkedClusterPosition(
+            pen_x,
+            pen_y,
+            glyph,
+            local_start,
+            cell_width_px,
+            @bitCast(cluster_pens[local_start]),
+        );
+        try checkedSourceSpan(first_cell, local_start, @intCast(local_end));
+        pen_x = std.math.add(i64, pen_x, glyph.x_advance) catch
+            return error.InvalidPlacement;
+        pen_y = std.math.add(i64, pen_y, glyph.y_advance) catch
+            return error.InvalidPlacement;
+    }
+
+    // Every operation below was checked against these immutable inputs.
+    pen_x = 0;
+    pen_y = 0;
+    for (glyphs, output) |glyph, *positioned| {
+        const local_start: u16 = @intCast(glyph.cluster);
+        const local_end: u16 = @intCast(cluster_facts[local_start] & cluster_end_mask);
+        const source_start = first_cell + local_start;
+        const source_end = first_cell + local_end;
+        const cluster_pen_x: i32 = @bitCast(cluster_pens[local_start]);
+        const local_x = pen_x + glyph.x_offset - cluster_pen_x;
+        const cell_origin = @as(i64, local_start) * cell_width_px * 64;
+        positioned.* = .{
+            .key = .{ .native = .{
+                .font = font_key,
+                .face_index = face_index,
+                .glyph_id = glyph.id,
+                .cell_span = source_end - source_start,
+            } },
+            .source_start = source_start,
+            .source_end = source_end,
+            .x_26_6 = @intCast(cell_origin + local_x),
+            .y_26_6 = @intCast(pen_y + glyph.y_offset),
+            .x_advance_26_6 = glyph.x_advance,
+            .y_advance_26_6 = glyph.y_advance,
+        };
+        pen_x += glyph.x_advance;
+        pen_y += glyph.y_advance;
+    }
+}
+
+fn clusterEnds(glyphs: []const native.Glyph, run_len: u16, storage: []u32) []u32 {
     std.debug.assert(run_len > 0);
     std.debug.assert(storage.len >= run_len);
     const ends = storage[0..run_len];
@@ -611,6 +721,227 @@ test "cluster ends are independent of shaped glyph order and repetition" {
     unordered[4].cluster = 1;
     const unordered_ends = clusterEnds(&unordered, 4, &storage);
     try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4 }, unordered_ends);
+}
+
+fn testGlyph(cluster: u32, advance: i32, offset: i32) native.Glyph {
+    return .{
+        .id = 1,
+        .cluster = cluster,
+        .x_advance = advance,
+        .y_advance = 0,
+        .x_offset = offset,
+        .y_offset = 0,
+    };
+}
+
+fn positionTestGlyphs(
+    glyphs: []const native.Glyph,
+    run_len: u16,
+    cell_width_px: u16,
+    cluster_facts: []u32,
+    cluster_pens: []u32,
+    output: []PositionedGlyph,
+) !void {
+    const ends = clusterEnds(glyphs, run_len, cluster_facts);
+    try positionNativeGlyphs(
+        glyphs,
+        run_len,
+        0,
+        cell_width_px,
+        .{ .style = .normal, .slot = 0 },
+        0,
+        ends,
+        cluster_pens,
+        output,
+    );
+}
+
+test "terminal clusters use the cell lattice without rewriting native advances" {
+    if (comptime !features.native_text) return error.SkipZigTest;
+
+    var glyphs: [4]native.Glyph = undefined;
+    for (&glyphs, 0..) |*glyph, cell_index|
+        glyph.* = testGlyph(@intCast(cell_index), 544, 0);
+    var facts: [4]u32 = undefined;
+    var pens: [4]u32 = undefined;
+    var positioned: [4]PositionedGlyph = undefined;
+    try positionTestGlyphs(&glyphs, 4, 9, &facts, &pens, &positioned);
+    for (positioned, 0..) |position, cell_index| {
+        try std.testing.expectEqual(@as(i32, @intCast(cell_index * 576)), position.x_26_6);
+        try std.testing.expectEqual(@as(i32, 544), position.x_advance_26_6);
+    }
+
+    for ([_]struct { width: u16, advance: i32 }{
+        .{ .width = 8, .advance = 512 },
+        .{ .width = 9, .advance = 576 },
+    }) |matching_case| {
+        const matching = [_]native.Glyph{
+            testGlyph(0, matching_case.advance, 0),
+            testGlyph(1, matching_case.advance, 0),
+        };
+        var matching_facts: [2]u32 = undefined;
+        var matching_pens: [2]u32 = undefined;
+        var matching_output: [2]PositionedGlyph = undefined;
+        try positionTestGlyphs(
+            &matching,
+            2,
+            matching_case.width,
+            &matching_facts,
+            &matching_pens,
+            &matching_output,
+        );
+        try std.testing.expectEqual(matching_case.advance, matching_output[1].x_26_6);
+        try std.testing.expectEqual(matching_case.advance, matching_output[1].x_advance_26_6);
+    }
+}
+
+test "terminal clusters retain one origin across repetition and negative pens" {
+    if (comptime !features.native_text) return error.SkipZigTest;
+
+    const unordered = [_]native.Glyph{
+        testGlyph(2, 100, 0),
+        testGlyph(0, 100, 0),
+        testGlyph(2, 0, 0),
+    };
+    var unordered_facts: [3]u32 = undefined;
+    var unordered_pens: [3]u32 = undefined;
+    var unordered_output: [3]PositionedGlyph = undefined;
+    try positionTestGlyphs(
+        &unordered,
+        3,
+        9,
+        &unordered_facts,
+        &unordered_pens,
+        &unordered_output,
+    );
+    try std.testing.expectEqual(@as(i32, 1152), unordered_output[0].x_26_6);
+    try std.testing.expectEqual(@as(i32, 0), unordered_output[1].x_26_6);
+    try std.testing.expectEqual(@as(i32, 1352), unordered_output[2].x_26_6);
+
+    const negative = [_]native.Glyph{
+        testGlyph(0, -1, 0),
+        testGlyph(1, 100, 0),
+        testGlyph(1, 0, 0),
+    };
+    var negative_facts: [2]u32 = undefined;
+    var negative_pens: [2]u32 = undefined;
+    var negative_output: [3]PositionedGlyph = undefined;
+    try positionTestGlyphs(
+        &negative,
+        2,
+        9,
+        &negative_facts,
+        &negative_pens,
+        &negative_output,
+    );
+    try std.testing.expectEqual(std.math.maxInt(u32), negative_pens[1]);
+    try std.testing.expectEqual(@as(i32, 576), negative_output[1].x_26_6);
+    try std.testing.expectEqual(@as(i32, 676), negative_output[2].x_26_6);
+}
+
+test "terminal clusters preserve combining placement and ligature coverage" {
+    if (comptime !features.native_text) return error.SkipZigTest;
+
+    var combining = [_]native.Glyph{
+        testGlyph(0, 300, 10),
+        testGlyph(0, 0, -20),
+    };
+    combining[1].y_offset = -64;
+    var combining_facts: [1]u32 = undefined;
+    var combining_pens: [1]u32 = undefined;
+    var combining_output: [2]PositionedGlyph = undefined;
+    try positionTestGlyphs(
+        &combining,
+        1,
+        9,
+        &combining_facts,
+        &combining_pens,
+        &combining_output,
+    );
+    try std.testing.expectEqual(@as(i32, 10), combining_output[0].x_26_6);
+    try std.testing.expectEqual(@as(i32, 280), combining_output[1].x_26_6);
+    try std.testing.expectEqual(@as(i32, -64), combining_output[1].y_26_6);
+
+    const ligature = [_]native.Glyph{
+        testGlyph(0, 700, 0),
+        testGlyph(2, 544, 0),
+    };
+    var ligature_facts: [3]u32 = undefined;
+    var ligature_pens: [3]u32 = undefined;
+    var ligature_output: [2]PositionedGlyph = undefined;
+    try positionTestGlyphs(
+        &ligature,
+        3,
+        9,
+        &ligature_facts,
+        &ligature_pens,
+        &ligature_output,
+    );
+    try std.testing.expectEqual(@as(i32, 0), ligature_output[0].x_26_6);
+    try std.testing.expectEqual(@as(u16, 0), ligature_output[0].source_start);
+    try std.testing.expectEqual(@as(u16, 2), ligature_output[0].source_end);
+    try std.testing.expectEqual(@as(u16, 2), switch (ligature_output[0].key) {
+        .native => |key| key.cell_span,
+        else => return error.TestUnexpectedResult,
+    });
+}
+
+test "terminal cluster arithmetic failures do not alter caller output" {
+    if (comptime !features.native_text) return error.SkipZigTest;
+
+    const glyphs = [_]native.Glyph{
+        testGlyph(0, 544, 0),
+        testGlyph(1, 0, std.math.maxInt(i32)),
+    };
+    var facts = [_]u32{ 1, 2 };
+    var pens: [2]u32 = undefined;
+    var output: [2]PositionedGlyph = undefined;
+    @memset(std.mem.asBytes(&output), 0xa5);
+    var before: [@sizeOf(@TypeOf(output))]u8 = undefined;
+    @memcpy(&before, std.mem.asBytes(&output));
+    try std.testing.expectError(
+        error.InvalidPlacement,
+        positionNativeGlyphs(
+            &glyphs,
+            2,
+            0,
+            9,
+            .{ .style = .normal, .slot = 0 },
+            0,
+            &facts,
+            &pens,
+            &output,
+        ),
+    );
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&output));
+}
+
+test "generated terminal placement remains cell exact" {
+    if (comptime !features.generated_glyphs) return error.SkipZigTest;
+
+    var cells = [_]terminal.Cell{std.mem.zeroes(terminal.Cell)};
+    cells[0].codepoint = 0x250c;
+    cells[0].baseline = .normal;
+    cells[0].sizing = .{};
+    const run = try generatedRun(.{
+        .cells = &cells,
+        .affected_start = 0,
+        .affected_end = 0,
+        .geometry = .single_width,
+        .metrics = .{ .width_px = 9, .height_px = 17, .baseline_px = 13 },
+    }, .{
+        .first = 0,
+        .end = 1,
+        .kind = .{ .generated = .{} },
+    });
+    const positioned = switch (run.glyphs) {
+        .generated => |glyph| glyph,
+        else => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(i32, 0), positioned.x_26_6);
+    try std.testing.expectEqual(@as(i32, 576), positioned.x_advance_26_6);
+    try std.testing.expectEqual(@as(u16, 0), positioned.source_start);
+    try std.testing.expectEqual(@as(u16, 1), positioned.source_end);
 }
 
 fn nativeRaster(allocator: std.mem.Allocator, fonts: *FontMap, key: NativeGlyphKey) RasterError!Raster {
