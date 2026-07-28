@@ -11,6 +11,9 @@ rules:
   - PTY owns Linux transport, descriptors, child processes, process-group cleanup, and foreground termios signaling.
   - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
   - Howl-host owns its concrete Wayland, Vulkan, DMA-BUF, explicit synchronization, render-thread, and presentation lifecycle.
+  - Terminal font size is one Host terminal base plus one pane-local signed mutation; new terminal panes start at zero mutation, hidden panes retain it, and Chrome font state remains independent.
+  - Equal resolved terminal font configurations may share immutable cache entries, but changing or retiring one pane never mutates another pane's accepted font state or resources.
+  - Terminal font caches retain active working sets only; zero-user entries begin deterministic retirement subject to copied-update and GPU-release ownership.
   - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
   - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
   - Every concrete artifact explicitly selects self-hosted Zig code generation and linking under the tracked compiler pin.

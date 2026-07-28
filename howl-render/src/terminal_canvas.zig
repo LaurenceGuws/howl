@@ -102,14 +102,14 @@ const Draw = union(enum) {
     alpha_mask: struct {
         destination: canvas.Rect,
         clip: canvas.Rect,
-        resource: canvas.LocalResourceRef,
+        resource: canvas.ResourceRef,
         size: canvas.Size,
         color: canvas.Color,
     },
     rgba: struct {
         destination: canvas.Rect,
         clip: canvas.Rect,
-        resource: canvas.LocalResourceRef,
+        resource: canvas.ResourceRef,
         size: canvas.Size,
         source: ?canvas.SourceRect,
     },
@@ -117,8 +117,8 @@ const Draw = union(enum) {
 
 const ImageEntry = struct {
     identity: images.ImageIdentity,
-    resource: canvas.LocalResourceRef,
-    transferred: ?canvas.LocalResourceRef,
+    resource: canvas.ResourceRef,
+    transferred: ?canvas.ResourceRef,
     width: u16,
     height: u16,
     pixel_offset: usize,
@@ -128,7 +128,7 @@ const ImageEntry = struct {
 
 const GlyphEntry = struct {
     key: text.GlyphKey,
-    resource: ?canvas.LocalResourceRef,
+    resource: ?canvas.ResourceRef,
     width: u16,
     height: u16,
     left: i16,
@@ -137,7 +137,7 @@ const GlyphEntry = struct {
 
 const MaskEntry = struct {
     hash: u64,
-    resource: canvas.LocalResourceRef,
+    resource: canvas.ResourceRef,
     width: u16,
     height: u16,
     pixel_offset: usize,
@@ -486,7 +486,7 @@ pub const Content = struct {
         try self.validateImageUpdate(image_update, full.rows, full.cols, true);
         try self.canAdvanceRevision();
         self.replaceProjection(full);
-        self.commitImages(image_update);
+        try self.commitImages(image_update);
         self.producer_revision += 1;
         self.initialized = true;
     }
@@ -516,7 +516,7 @@ pub const Content = struct {
             );
             self.geometry[patch.row] = patch.geometry;
         }
-        if (image_update) |update| self.commitImages(update);
+        if (image_update) |update| try self.commitImages(update);
         self.cursor = projection_update.cursor;
         self.producer_revision += 1;
     }
@@ -556,7 +556,10 @@ pub const Content = struct {
         if (expected_cells != update.cells.len) return error.InvalidUpdate;
     }
 
-    fn commitImages(self: *Content, update: images.Update) void {
+    fn commitImages(
+        self: *Content,
+        update: images.Update,
+    ) error{IdentityExhausted}!void {
         const target_entries = self.inactiveImages();
         const target_pixels = self.inactiveImagePixels();
         var target_count: usize = 0;
@@ -602,7 +605,7 @@ pub const Content = struct {
             const width: u16 = @intCast(upload.width);
             const height: u16 = @intCast(upload.height);
             const end = upload.pixel_offset + upload.pixel_count;
-            var resource: canvas.LocalResourceRef = undefined;
+            var resource: canvas.ResourceRef = undefined;
             var active_found: ?ImageEntry = null;
             for (self.activeImages()[0..self.image_count]) |entry|
                 if (entry.identity.id == upload.identity.id) {
@@ -616,7 +619,8 @@ pub const Content = struct {
                 };
             } else {
                 resource = .{
-                    .resource = @fromBackingInt(@intCast(next_id)),
+                    .resource = canvas.ResourceId.local(next_id) catch
+                        return error.IdentityExhausted,
                     .generation = @fromBackingInt(@intCast(upload.identity.generation)),
                 };
                 next_id += 1;
@@ -910,9 +914,17 @@ pub const Content = struct {
         if (removals > self.pending_removals.len or
             update.uploads.len > self.limits.resources_per_update)
             return error.ResourceMutationLimit;
-        if (new_resources > 0 and
-            self.next_resource_id > std.math.maxInt(u64) - new_resources)
+        const new_resource_count = std.math.cast(u64, new_resources) orelse
             return error.IdentityExhausted;
+        if (new_resource_count > 0) {
+            if (self.next_resource_id == 0 or
+                self.next_resource_id > canvas.ResourceId.max_identity)
+                return error.IdentityExhausted;
+            const remaining = canvas.ResourceId.max_identity -
+                self.next_resource_id + 1;
+            if (new_resource_count > remaining)
+                return error.IdentityExhausted;
+        }
         for (update.placements) |placement| {
             if (placement.image_id == 0 or placement.generation == 0 or
                 placement.row >= rows or placement.col >= cols)
@@ -1001,7 +1013,7 @@ pub const Content = struct {
         work: *Work,
         count: *usize,
         bytes_used: *usize,
-        resource: canvas.LocalResourceRef,
+        resource: canvas.ResourceRef,
         format: canvas.ResourceFormat,
         width: u16,
         height: u16,
@@ -1794,13 +1806,13 @@ fn validateLimits(limits: Content.Limits) Content.InitError!void {
 fn issueResource(
     next: *u64,
     generation: u64,
-) error{ InvalidUpdate, IdentityExhausted }!canvas.LocalResourceRef {
+) error{ InvalidUpdate, IdentityExhausted }!canvas.ResourceRef {
     canvas_validation.localIdentity(next.*, generation) catch return error.InvalidUpdate;
     const id = next.*;
-    if (id == std.math.maxInt(u64)) return error.IdentityExhausted;
+    if (id > canvas.ResourceId.max_identity) return error.IdentityExhausted;
     next.* += 1;
     return .{
-        .resource = @fromBackingInt(@intCast(id)),
+        .resource = canvas.ResourceId.local(id) catch return error.IdentityExhausted,
         .generation = @fromBackingInt(@intCast(generation)),
     };
 }
@@ -1984,11 +1996,223 @@ fn i32Coordinate(value: i64) Content.TakeError!i32 {
 }
 
 test "local resource identity exhaustion rejects before counter mutation" {
-    var next = std.math.maxInt(u64);
+    var next = canvas.ResourceId.max_identity + 1;
     try std.testing.expectError(error.IdentityExhausted, issueResource(&next, 1));
-    try std.testing.expectEqual(std.math.maxInt(u64), next);
+    try std.testing.expectEqual(canvas.ResourceId.max_identity + 1, next);
+    next = canvas.ResourceId.max_identity;
+    const last = try issueResource(&next, 1);
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity,
+        try last.resource.identity(),
+    );
+    try std.testing.expectEqual(canvas.ResourceId.max_identity + 1, next);
     next = 1;
     const first = try issueResource(&next, 1);
     try std.testing.expectEqual(@as(u64, 1), @backingInt(first.resource));
     try std.testing.expectEqual(@as(u64, 2), next);
+}
+
+test "terminal image identity boundary is transactional and remains local" {
+    if (comptime features.native_text) return error.SkipZigTest;
+
+    const limits = Content.Limits{
+        .cells = 1,
+        .rows = 1,
+        .images = 3,
+        .placements = 1,
+        .image_bytes = 12,
+        .glyphs = 1,
+        .masks = 1,
+        .commands = 4,
+        .resources_per_update = 5,
+        .upload_bytes = 16,
+        .raster_bytes = 16,
+        .decoration_bytes = 8,
+    };
+    var content = try Content.init(std.testing.allocator, limits, {});
+    defer content.deinit();
+    @memset(std.mem.asBytes(content.images_a), 0);
+    @memset(std.mem.asBytes(content.images_b), 0);
+    @memset(content.image_pixels_a, 0);
+    @memset(content.image_pixels_b, 0);
+    @memset(std.mem.asBytes(content.placements_a), 0);
+    @memset(std.mem.asBytes(content.placements_b), 0);
+    @memset(std.mem.asBytes(content.pending_removals), 0);
+
+    const cell = std.mem.zeroes(Cell);
+    const baseline = ProjectionBaseline{
+        .rows = 1,
+        .cols = 1,
+        .cursor = std.mem.zeroes(Cursor),
+        .cells = &.{cell},
+        .geometry = &.{.single_width},
+    };
+    const initial_pixels = [_]u8{ 1, 2, 3, 4 };
+    const initial_upload = images.ImageUpload{
+        .identity = .{ .id = 7, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    };
+    try content.recover(baseline, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &initial_pixels,
+        .uploads = &.{initial_upload},
+        .removals = &.{},
+        .placements = &.{},
+    });
+
+    const two_pixels = [_]u8{ 5, 6, 7, 8, 9, 10, 11, 12 };
+    const two_uploads = [_]images.ImageUpload{
+        .{
+            .identity = .{ .id = 8, .generation = 1 },
+            .width = 1,
+            .height = 1,
+            .pixel_offset = 0,
+            .pixel_count = 4,
+        },
+        .{
+            .identity = .{ .id = 9, .generation = 1 },
+            .width = 1,
+            .height = 1,
+            .pixel_offset = 4,
+            .pixel_count = 4,
+        },
+    };
+    content.next_resource_id = canvas.ResourceId.max_identity;
+    const images_a_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.asBytes(content.images_a),
+    );
+    defer std.testing.allocator.free(images_a_before);
+    const images_b_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.asBytes(content.images_b),
+    );
+    defer std.testing.allocator.free(images_b_before);
+    const pixels_a_before = try std.testing.allocator.dupe(u8, content.image_pixels_a);
+    defer std.testing.allocator.free(pixels_a_before);
+    const pixels_b_before = try std.testing.allocator.dupe(u8, content.image_pixels_b);
+    defer std.testing.allocator.free(pixels_b_before);
+    const removals_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.asBytes(content.pending_removals),
+    );
+    defer std.testing.allocator.free(removals_before);
+    const active_before = content.images_a_active;
+    const count_before = content.image_count;
+    const pixel_count_before = content.image_pixel_count;
+    const removal_count_before = content.pending_removal_count;
+    const image_revision_before = content.image_revision;
+    const content_revision_before = content.image_content_revision;
+    const producer_revision_before = content.producer_revision;
+
+    try std.testing.expectError(error.IdentityExhausted, content.recover(baseline, .{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &two_pixels,
+        .uploads = &two_uploads,
+        .removals = &.{},
+        .placements = &.{},
+    }));
+    try std.testing.expectEqualSlices(u8, images_a_before, std.mem.asBytes(content.images_a));
+    try std.testing.expectEqualSlices(u8, images_b_before, std.mem.asBytes(content.images_b));
+    try std.testing.expectEqualSlices(u8, pixels_a_before, content.image_pixels_a);
+    try std.testing.expectEqualSlices(u8, pixels_b_before, content.image_pixels_b);
+    try std.testing.expectEqualSlices(
+        u8,
+        removals_before,
+        std.mem.asBytes(content.pending_removals),
+    );
+    try std.testing.expectEqual(active_before, content.images_a_active);
+    try std.testing.expectEqual(count_before, content.image_count);
+    try std.testing.expectEqual(pixel_count_before, content.image_pixel_count);
+    try std.testing.expectEqual(removal_count_before, content.pending_removal_count);
+    try std.testing.expectEqual(image_revision_before, content.image_revision);
+    try std.testing.expectEqual(content_revision_before, content.image_content_revision);
+    try std.testing.expectEqual(producer_revision_before, content.producer_revision);
+    try std.testing.expectEqual(canvas.ResourceId.max_identity, content.next_resource_id);
+
+    content.next_resource_id = canvas.ResourceId.max_identity + 1;
+    try std.testing.expectError(error.IdentityExhausted, content.recover(baseline, .{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = two_pixels[0..4],
+        .uploads = two_uploads[0..1],
+        .removals = &.{},
+        .placements = &.{},
+    }));
+    try std.testing.expectEqualSlices(u8, images_a_before, std.mem.asBytes(content.images_a));
+    try std.testing.expectEqualSlices(u8, images_b_before, std.mem.asBytes(content.images_b));
+    try std.testing.expectEqualSlices(u8, pixels_a_before, content.image_pixels_a);
+    try std.testing.expectEqualSlices(u8, pixels_b_before, content.image_pixels_b);
+    try std.testing.expectEqualSlices(
+        u8,
+        removals_before,
+        std.mem.asBytes(content.pending_removals),
+    );
+    try std.testing.expectEqual(active_before, content.images_a_active);
+    try std.testing.expectEqual(count_before, content.image_count);
+    try std.testing.expectEqual(pixel_count_before, content.image_pixel_count);
+    try std.testing.expectEqual(removal_count_before, content.pending_removal_count);
+    try std.testing.expectEqual(image_revision_before, content.image_revision);
+    try std.testing.expectEqual(content_revision_before, content.image_content_revision);
+    try std.testing.expectEqual(producer_revision_before, content.producer_revision);
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity + 1,
+        content.next_resource_id,
+    );
+
+    const replacement_pixels = [_]u8{ 13, 14, 15, 16 };
+    const replacement = images.ImageUpload{
+        .identity = .{ .id = 7, .generation = 2 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    };
+    try content.recover(baseline, .{
+        .generation = 2,
+        .content_generation = 2,
+        .pixels = &replacement_pixels,
+        .uploads = &.{replacement},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity + 1,
+        content.next_resource_id,
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        try content.activeImages()[0].resource.resource.identity(),
+    );
+
+    content.next_resource_id = canvas.ResourceId.max_identity;
+    try content.recover(baseline, .{
+        .generation = 3,
+        .content_generation = 3,
+        .pixels = two_pixels[0..4],
+        .uploads = two_uploads[0..1],
+        .removals = &.{},
+        .placements = &.{},
+    });
+    var found_last = false;
+    for (content.activeImages()[0..content.image_count]) |entry| {
+        try std.testing.expect(!entry.resource.resource.isShared());
+        if (entry.identity.id == 8) {
+            found_last = true;
+            try std.testing.expectEqual(
+                canvas.ResourceId.max_identity,
+                try entry.resource.resource.identity(),
+            );
+        }
+    }
+    try std.testing.expect(found_last);
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity + 1,
+        content.next_resource_id,
+    );
 }

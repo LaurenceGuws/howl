@@ -71,8 +71,59 @@ pub const SourceRect = struct {
     height: u16,
 };
 
-/// Identifies one logical resource only within one producer source.
-pub const LocalResourceId = enum(u64) { _ };
+/// Identifies one resource in the disjoint local or shared namespace.
+///
+/// The high bit selects shared ownership. The remaining 63 bits contain one
+/// nonzero identity. Callers construct values through `local` or `shared`;
+/// accepting boundaries validate the source/namespace relationship again.
+pub const ResourceId = enum(u64) {
+    _,
+
+    const shared_bit: u64 = @as(u64, 1) << 63;
+    /// Largest identity admitted independently in either namespace.
+    pub const max_identity: u64 = shared_bit - 1;
+    /// Reports malformed zero or exhausted identity input.
+    pub const InitError = error{InvalidIdentity};
+
+    /// Constructs one source-local identity.
+    pub fn local(identity_value: u64) InitError!ResourceId {
+        if (identity_value == 0 or identity_value > max_identity)
+            return error.InvalidIdentity;
+        return @fromBackingInt(@intCast(identity_value));
+    }
+
+    /// Constructs one source-independent shared identity.
+    pub fn shared(identity_value: u64) InitError!ResourceId {
+        if (identity_value == 0 or identity_value > max_identity)
+            return error.InvalidIdentity;
+        return @fromBackingInt(@intCast(identity_value | shared_bit));
+    }
+
+    /// Validates and preserves one already encoded namespace identity.
+    pub fn fromEncoded(encoded: u64) InitError!ResourceId {
+        const result: ResourceId = @fromBackingInt(@intCast(encoded));
+        try result.validate();
+        return result;
+    }
+
+    /// Validates the nonzero encoded identity without changing it.
+    pub fn validate(self: ResourceId) InitError!void {
+        if (@backingInt(self) & max_identity == 0)
+            return error.InvalidIdentity;
+    }
+
+    /// Reports whether this value selects shared ownership.
+    pub fn isShared(self: ResourceId) bool {
+        return @backingInt(self) & shared_bit != 0;
+    }
+
+    /// Returns the nonzero identity without its namespace bit.
+    pub fn identity(self: ResourceId) InitError!u64 {
+        const value = @backingInt(self) & max_identity;
+        try self.validate();
+        return value;
+    }
+};
 
 /// Identifies one Composer-issued collision-free source scope.
 pub const SourceId = enum(u64) { _ };
@@ -92,28 +143,72 @@ pub const ResourceFormat = enum(u8) {
     rgba8,
 };
 
-/// Refers to one producer-local logical resource generation.
-pub const LocalResourceRef = struct {
-    /// Identifies a resource within one producer source.
-    resource: LocalResourceId,
+/// Refers to one producer resource generation in either namespace.
+pub const ResourceRef = struct {
+    /// Identifies the namespace and exact logical resource.
+    resource: ResourceId,
     /// Identifies the exact resource content generation.
     generation: ResourceGeneration,
-};
-
-/// Qualifies one local resource identity with its Composer-issued source.
-pub const FrameResourceKey = struct {
-    /// Identifies the collision-free producer scope.
-    source: SourceId,
-    /// Identifies the resource within that source.
-    resource: LocalResourceId,
 };
 
 /// Refers to one exact resource generation in a derived frame.
 pub const FrameResourceRef = struct {
-    /// Supplies the collision-free source and local identity.
-    key: FrameResourceKey,
+    /// Supplies the collision-free local source, or zero for shared.
+    source: SourceId,
+    /// Identifies the disjoint local or shared resource.
+    resource: ResourceId,
     /// Identifies the exact resource content generation.
     generation: ResourceGeneration,
+
+    /// Constructs one phase-qualified frame reference.
+    pub fn init(
+        source: SourceId,
+        resource: ResourceId,
+        generation: ResourceGeneration,
+    ) error{ InvalidIdentity, InvalidGeneration }!FrameResourceRef {
+        const result = FrameResourceRef{
+            .source = source,
+            .resource = resource,
+            .generation = generation,
+        };
+        try result.validate();
+        return result;
+    }
+
+    /// Qualifies one local producer resource with its nonzero source.
+    pub fn local(
+        source: SourceId,
+        value: ResourceRef,
+    ) error{ InvalidIdentity, InvalidGeneration }!FrameResourceRef {
+        const result = FrameResourceRef{
+            .source = source,
+            .resource = value.resource,
+            .generation = value.generation,
+        };
+        try result.validate();
+        return result;
+    }
+
+    /// Qualifies one source-independent shared producer resource.
+    pub fn shared(
+        value: ResourceRef,
+    ) error{ InvalidIdentity, InvalidGeneration }!FrameResourceRef {
+        const result = FrameResourceRef{
+            .source = @fromBackingInt(@intCast(0)),
+            .resource = value.resource,
+            .generation = value.generation,
+        };
+        try result.validate();
+        return result;
+    }
+
+    /// Validates namespace, source, identity and generation facts.
+    pub fn validate(self: FrameResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
+        try self.resource.validate();
+        if ((@backingInt(self.source) == 0) != self.resource.isShared())
+            return error.InvalidIdentity;
+        if (@backingInt(self.generation) == 0) return error.InvalidGeneration;
+    }
 };
 
 /// Borrows one bounded pixel plane for logical resource acceptance.
@@ -131,7 +226,7 @@ pub const Pixels = struct {
 /// Supplies one producer-local resource upload without transferring bytes.
 pub const ResourceUpload = struct {
     /// Identifies the accepted local resource generation.
-    resource: LocalResourceRef,
+    resource: ResourceRef,
     /// Selects the stored pixel representation.
     format: ResourceFormat,
     /// Borrows complete pixel bytes for the duration of acceptance.
@@ -144,7 +239,7 @@ pub const ResourceUpload = struct {
 /// Removes one exact producer-local resource generation.
 pub const ResourceRemoval = struct {
     /// Identifies the exact logical generation to remove.
-    resource: LocalResourceRef,
+    resource: ResourceRef,
 };
 
 /// Describes one backend-retained frame resource without transferring ownership.
@@ -174,9 +269,9 @@ pub const ResourceUploadFact = struct {
 };
 
 /// Selects one retained producer-local resource region.
-pub const LocalResourceView = struct {
+pub const ResourceView = struct {
     /// Identifies the exact local resource generation.
-    resource: LocalResourceRef,
+    resource: ResourceRef,
     /// Declares the stored pixel representation.
     format: ResourceFormat,
     /// Declares the complete retained extent.
@@ -215,7 +310,7 @@ pub const Input = union(enum) {
         /// Restricts drawing in caller coordinates.
         clip: Rect,
         /// Selects one alpha resource region.
-        resource: LocalResourceView,
+        resource: ResourceView,
         /// Colors the sampled alpha mask.
         color: Color,
     },
@@ -226,7 +321,7 @@ pub const Input = union(enum) {
         /// Restricts drawing in caller coordinates.
         clip: Rect,
         /// Selects one RGBA resource region.
-        resource: LocalResourceView,
+        resource: ResourceView,
     },
 };
 
@@ -370,7 +465,7 @@ pub const Composer = struct {
     };
 
     const Resource = struct {
-        local: LocalResourceRef,
+        local: ResourceRef,
         format: ResourceFormat,
         size: Size,
         stride: usize,
@@ -799,7 +894,7 @@ pub const Composer = struct {
         self: *const Composer,
         destination: Rect,
         clip: Rect,
-        view: LocalResourceView,
+        view: ResourceView,
         format: ResourceFormat,
         removals: []const ResourceRemoval,
     ) Composer.Error!void {
@@ -900,11 +995,12 @@ pub const Composer = struct {
         if (residency.len > self.resources.len) return error.InvalidResidency;
         for (residency, 0..) |value, index| {
             validateResidency(value) catch return error.InvalidResidency;
-            const source_value = @backingInt(value.resource.key.source);
+            const source_value = @backingInt(value.resource.source);
             if (source_value == 0 or source_value >= self.next_source_id)
                 return error.InvalidResidency;
             for (residency[0..index]) |prior| {
-                if (std.meta.eql(prior.resource.key, value.resource.key))
+                if (prior.resource.source == value.resource.source and
+                    prior.resource.resource == value.resource.resource)
                     return error.InvalidResidency;
             }
         }
@@ -1110,7 +1206,7 @@ pub const Composer = struct {
         self: *const Composer,
         placement: Placement,
         source: Source,
-        local: LocalResourceRef,
+        local: ResourceRef,
     ) Composer.Error!bool {
         for (self.commands[source.command_start .. source.command_start + source.command_count]) |command| switch (command) {
             .solid => {},
@@ -1132,14 +1228,14 @@ pub const Composer = struct {
         self: *const Composer,
         residency: Residency,
     ) Composer.Error!bool {
-        const placement_index = self.placementIndex(residency.resource.key.source) orelse
+        const placement_index = self.placementIndex(residency.resource.source) orelse
             return false;
         const source = self.sources[
             @intCast(@backingInt(self.composition[placement_index].source) - 1)
         ];
         const resource = findResource(
             self.resources[source.resource_start .. source.resource_start + source.resource_count],
-            residency.resource.key.resource,
+            residency.resource.resource,
         ) orelse return false;
         return try self.resourceVisible(
             self.composition[placement_index],
@@ -1217,7 +1313,7 @@ fn mapFactError(err: ResourceFactError) Composer.Error {
 
 fn findUpload(
     uploads: []const ResourceUpload,
-    id: LocalResourceId,
+    id: ResourceId,
 ) ?ResourceUpload {
     for (uploads) |upload| {
         if (upload.resource.resource == id) return upload;
@@ -1227,7 +1323,7 @@ fn findUpload(
 
 fn findRemoval(
     removals: []const ResourceRemoval,
-    id: LocalResourceId,
+    id: ResourceId,
 ) ?ResourceRemoval {
     for (removals) |removal| {
         if (removal.resource.resource == id) return removal;
@@ -1237,7 +1333,7 @@ fn findRemoval(
 
 fn findResource(
     resources: []const Composer.Resource,
-    id: LocalResourceId,
+    id: ResourceId,
 ) ?Composer.Resource {
     for (resources) |resource| {
         if (resource.local.resource == id) return resource;
@@ -1330,7 +1426,7 @@ fn resourceReferencedVisibly(
     surface: Size,
     placement: Composer.Placement,
     commands: []const Input,
-    resource: LocalResourceRef,
+    resource: ResourceRef,
 ) Composer.Error!bool {
     for (commands) |command| {
         const referenced = switch (command) {
@@ -1456,15 +1552,16 @@ fn mapCanvasGeometry(err: Error) Composer.Error {
 
 fn qualifyResource(
     source: SourceId,
-    local: LocalResourceRef,
+    local: ResourceRef,
 ) FrameResourceRef {
     return .{
-        .key = .{ .source = source, .resource = local.resource },
+        .source = source,
+        .resource = local.resource,
         .generation = local.generation,
     };
 }
 
-fn qualifyView(source: SourceId, local: LocalResourceView) FrameResourceView {
+fn qualifyView(source: SourceId, local: ResourceView) FrameResourceView {
     return .{
         .resource = qualifyResource(source, local.resource),
         .format = local.format,
@@ -1479,8 +1576,8 @@ fn residencyMatches(
     resource: Composer.Resource,
 ) bool {
     for (residency) |value| {
-        if (value.resource.key.source == source and
-            value.resource.key.resource == resource.local.resource)
+        if (value.resource.source == source and
+            value.resource.resource == resource.local.resource)
             return value.resource.generation == resource.local.generation and
                 value.format == resource.format and
                 std.meta.eql(value.size, resource.size);
@@ -1574,13 +1671,11 @@ pub fn project(
     return commands[0..used];
 }
 
-fn qualify(source: SourceId, resource: LocalResourceView) FrameResourceView {
+fn qualify(source: SourceId, resource: ResourceView) FrameResourceView {
     return .{
         .resource = .{
-            .key = .{
-                .source = source,
-                .resource = resource.resource.resource,
-            },
+            .source = source,
+            .resource = resource.resource.resource,
             .generation = resource.resource.generation,
         },
         .format = resource.format,
@@ -1603,21 +1698,14 @@ fn validate(input: Input, surface: Size) Error!?Rect {
     };
 }
 
-fn validateLocalView(view: LocalResourceView, required: ResourceFormat) Error!void {
-    try validation.localIdentity(
-        @backingInt(view.resource.resource),
-        @backingInt(view.resource.generation),
-    );
+fn validateLocalView(view: ResourceView, required: ResourceFormat) Error!void {
+    try validateLocalRef(view.resource);
     if (view.format != required) return error.FormatMismatch;
     try validateExtent(view.size, view.source);
 }
 
 fn validateFrameRef(resource: FrameResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
-    try validation.sourceIdentity(@backingInt(resource.key.source));
-    try validation.localIdentity(
-        @backingInt(resource.key.resource),
-        @backingInt(resource.generation),
-    );
+    try resource.validate();
 }
 
 fn validateSourceId(source: SourceId) error{InvalidIdentity}!void {
@@ -1647,17 +1735,20 @@ fn validateExtent(size: Size, source: ?SourceRect) error{ ExtentMismatch, Arithm
 }
 
 fn validateUpload(upload: ResourceUpload) ResourceFactError!void {
-    try validation.localIdentity(
-        @backingInt(upload.resource.resource),
-        @backingInt(upload.resource.generation),
-    );
+    try validateLocalRef(upload.resource);
     try validatePixels(upload.pixels, upload.format);
 }
 
 fn validateRemoval(removal: ResourceRemoval) ResourceFactError!void {
+    try validateLocalRef(removal.resource);
+}
+
+fn validateLocalRef(resource: ResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
+    if (resource.resource.isShared()) return error.InvalidIdentity;
+    const identity_value = try resource.resource.identity();
     try validation.localIdentity(
-        @backingInt(removal.resource.resource),
-        @backingInt(removal.resource.generation),
+        identity_value,
+        @backingInt(resource.generation),
     );
 }
 
@@ -1770,8 +1861,8 @@ fn overlaps(a: usize, a_len: usize, b: usize, b_len: usize) bool {
 }
 
 test "resource fact syntax is exact and stateless" {
-    const local = LocalResourceRef{
-        .resource = @fromBackingInt(@intCast(7)),
+    const local = ResourceRef{
+        .resource = try ResourceId.local(7),
         .generation = @fromBackingInt(@intCast(9)),
     };
     try validateUpload(.{
@@ -1780,13 +1871,7 @@ test "resource fact syntax is exact and stateless" {
         .pixels = .{ .bytes = &.{ 1, 2 }, .width = 2, .height = 1, .stride = 2 },
     });
     try validateRemoval(.{ .resource = local });
-    const frame = FrameResourceRef{
-        .key = .{
-            .source = @fromBackingInt(@intCast(3)),
-            .resource = local.resource,
-        },
-        .generation = local.generation,
-    };
+    const frame = try FrameResourceRef.local(@fromBackingInt(@intCast(3)), local);
     try validateResidency(.{
         .resource = frame,
         .format = .alpha8,
@@ -1811,13 +1896,7 @@ test "resource fact syntax is exact and stateless" {
             .pixels = .{ .bytes = &.{1}, .width = 1, .height = 1, .stride = 1 },
         }),
     );
-    try std.testing.expectError(
-        error.InvalidIdentity,
-        validateRemoval(.{ .resource = .{
-            .resource = @fromBackingInt(@intCast(0)),
-            .generation = local.generation,
-        } }),
-    );
+    try std.testing.expectError(error.InvalidIdentity, ResourceId.fromEncoded(0));
     var invalid_residency = Residency{
         .resource = frame,
         .format = .rgba8,
@@ -1828,7 +1907,7 @@ test "resource fact syntax is exact and stateless" {
         validateResidency(invalid_residency),
     );
     invalid_residency.size.width = 1;
-    invalid_residency.resource.key.source = @fromBackingInt(@intCast(0));
+    invalid_residency.resource.source = @fromBackingInt(@intCast(0));
     try std.testing.expectError(
         error.InvalidIdentity,
         validateResidency(invalid_residency),
@@ -1869,9 +1948,56 @@ test "resource fact syntax is exact and stateless" {
     );
 }
 
+test "compact resource namespaces preserve phase identity and reject malformed facts" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(ResourceRef));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(FrameResourceRef));
+    const local_id = try ResourceId.local(17);
+    const shared_id = try ResourceId.shared(17);
+    try std.testing.expect(local_id != shared_id);
+    try std.testing.expect(!local_id.isShared());
+    try std.testing.expect(shared_id.isShared());
+    try std.testing.expectEqual(@as(u64, 17), try local_id.identity());
+    try std.testing.expectEqual(@as(u64, 17), try shared_id.identity());
+    try std.testing.expectError(error.InvalidIdentity, ResourceId.local(0));
+    try std.testing.expectError(error.InvalidIdentity, ResourceId.shared(0));
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        ResourceId.local(ResourceId.max_identity + 1),
+    );
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        ResourceId.shared(ResourceId.max_identity + 1),
+    );
+
+    const generation: ResourceGeneration = @fromBackingInt(@intCast(3));
+    const source: SourceId = @fromBackingInt(@intCast(9));
+    const local_frame = try FrameResourceRef.local(source, .{
+        .resource = local_id,
+        .generation = generation,
+    });
+    const shared_frame = try FrameResourceRef.shared(.{
+        .resource = shared_id,
+        .generation = generation,
+    });
+    try local_frame.validate();
+    try shared_frame.validate();
+    try std.testing.expect(local_frame.source != shared_frame.source);
+    try std.testing.expect(local_frame.resource != shared_frame.resource);
+
+    var malformed = local_frame;
+    malformed.source = @fromBackingInt(@intCast(0));
+    try std.testing.expectError(error.InvalidIdentity, malformed.validate());
+    malformed = shared_frame;
+    malformed.source = source;
+    try std.testing.expectError(error.InvalidIdentity, malformed.validate());
+    malformed = local_frame;
+    malformed.generation = @fromBackingInt(@intCast(0));
+    try std.testing.expectError(error.InvalidGeneration, malformed.validate());
+}
+
 test "producer update syntax is canonical and complete" {
-    const local = LocalResourceRef{
-        .resource = @fromBackingInt(@intCast(4)),
+    const local = ResourceRef{
+        .resource = try ResourceId.local(4),
         .generation = @fromBackingInt(@intCast(7)),
     };
     const upload = ResourceUpload{
@@ -1926,6 +2052,171 @@ test "producer update syntax is canonical and complete" {
             .commands = &.{command},
         }),
     );
+}
+
+const ComposerRetainedSnapshot = struct {
+    source: Composer.Source,
+    resource: Composer.Resource,
+    command: Input,
+    pixels: [1]u8,
+    source_count: usize,
+    resource_count: usize,
+    command_count: usize,
+    pixel_count: usize,
+    next_source_id: u64,
+    frame_revision: u64,
+};
+
+fn composerRetainedSnapshot(composer: *const Composer) ComposerRetainedSnapshot {
+    return .{
+        .source = composer.sources[0],
+        .resource = composer.resources[0],
+        .command = composer.commands[0],
+        .pixels = .{composer.pixels[0]},
+        .source_count = composer.source_count,
+        .resource_count = composer.resource_count,
+        .command_count = composer.command_count,
+        .pixel_count = composer.pixel_count,
+        .next_source_id = composer.next_source_id,
+        .frame_revision = composer.frame_revision,
+    };
+}
+
+fn expectComposerRetained(
+    expected: ComposerRetainedSnapshot,
+    composer: *const Composer,
+) !void {
+    try std.testing.expectEqualDeep(expected, composerRetainedSnapshot(composer));
+}
+
+test "composer rejects shared producer facts without retained mutation" {
+    var composer = try Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 2,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 2,
+        .candidate_pixel_bytes = 2,
+    });
+    defer composer.deinit();
+    const source = try composer.registerSource();
+    const local_one = ResourceRef{
+        .resource = try ResourceId.local(1),
+        .generation = @fromBackingInt(1),
+    };
+    const baseline_upload = ResourceUpload{
+        .resource = local_one,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &.{0x5a},
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
+    const baseline_command = Input{ .alpha_mask = .{
+        .destination = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .resource = .{
+            .resource = local_one,
+            .format = .alpha8,
+            .size = .{ .width = 1, .height = 1 },
+        },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 4 },
+    } };
+    try composer.apply(source, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{baseline_upload},
+        .removals = &.{},
+        .commands = &.{baseline_command},
+    });
+    try composer.setComposition(.{
+        .surface = .{ .width = 1, .height = 1 },
+        .sources = &.{.{
+            .source = source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        }},
+    });
+    const before = composerRetainedSnapshot(&composer);
+    const shared = ResourceRef{
+        .resource = try ResourceId.shared(1),
+        .generation = @fromBackingInt(1),
+    };
+    const shared_upload = ResourceUpload{
+        .resource = shared,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &.{0xa5},
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
+    try std.testing.expectError(error.InvalidIdentity, composer.apply(source, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{shared_upload},
+        .removals = &.{},
+        .commands = &.{baseline_command},
+    }));
+    try expectComposerRetained(before, &composer);
+
+    try std.testing.expectError(error.InvalidIdentity, composer.apply(source, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{ResourceRemoval{ .resource = shared }},
+        .commands = &.{baseline_command},
+    }));
+    try expectComposerRetained(before, &composer);
+
+    var alpha_shared = baseline_command;
+    alpha_shared.alpha_mask.resource.resource = shared;
+    try std.testing.expectError(error.InvalidIdentity, composer.apply(source, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{alpha_shared},
+    }));
+    try expectComposerRetained(before, &composer);
+
+    const rgba_shared = Input{ .rgba = .{
+        .destination = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .resource = .{
+            .resource = shared,
+            .format = .rgba8,
+            .size = .{ .width = 1, .height = 1 },
+        },
+    } };
+    try std.testing.expectError(error.InvalidIdentity, composer.apply(source, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{rgba_shared},
+    }));
+    try expectComposerRetained(before, &composer);
+
+    const local_two = ResourceRef{
+        .resource = local_one.resource,
+        .generation = @fromBackingInt(2),
+    };
+    var replacement_upload = baseline_upload;
+    replacement_upload.resource = local_two;
+    replacement_upload.pixels.bytes = &.{0x7c};
+    var replacement_command = baseline_command;
+    replacement_command.alpha_mask.resource.resource = local_two;
+    try composer.apply(source, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{replacement_upload},
+        .removals = &.{},
+        .commands = &.{replacement_command},
+    });
+    try std.testing.expectEqual(@as(u64, 2), composer.sources[0].revision);
+    try std.testing.expectEqual(@as(u64, 1), composer.sources[0].local_high_water);
+    try std.testing.expectEqual(@as(u8, 0x7c), composer.pixels[0]);
+    try std.testing.expectEqual(before.frame_revision + 1, composer.frame_revision);
 }
 
 test "visible contribution exhaustion rejects only required frame increments" {

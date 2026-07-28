@@ -28,10 +28,80 @@ pub const Recording = struct {
     image_initialized: bool,
 };
 
-/// Identifies one resource within a caller-owned source scope.
-pub const ResourceKey = struct { source: u64, local: u64 };
-/// Identifies one exact resource content generation.
-pub const ResourceGeneration = struct { key: ResourceKey, generation: u64 };
+/// Identifies one exact generic resource generation.
+///
+/// The resource high bit selects the shared namespace. Local values require a
+/// nonzero caller-owned source; shared values require source zero.
+pub const ResourceGeneration = struct {
+    source: u64,
+    resource: u64,
+    generation: u64,
+
+    const shared_bit: u64 = @as(u64, 1) << 63;
+    /// Largest independently issuable identity in either namespace.
+    pub const max_identity: u64 = shared_bit - 1;
+    /// Reports malformed namespace, identity, source, or generation facts.
+    pub const InitError = error{ InvalidIdentity, InvalidGeneration };
+
+    /// Constructs and validates one generic resource fact mechanically.
+    pub fn init(
+        source: u64,
+        encoded_resource: u64,
+        generation: u64,
+    ) InitError!ResourceGeneration {
+        const identity_value = encoded_resource & max_identity;
+        if (identity_value == 0 or ((source == 0) !=
+            (encoded_resource & shared_bit != 0)))
+            return error.InvalidIdentity;
+        if (generation == 0) return error.InvalidGeneration;
+        return .{
+            .source = source,
+            .resource = encoded_resource,
+            .generation = generation,
+        };
+    }
+
+    /// Constructs one source-qualified local resource generation.
+    pub fn local(
+        source: u64,
+        identity_value: u64,
+        generation: u64,
+    ) InitError!ResourceGeneration {
+        if (identity_value == 0 or identity_value > max_identity)
+            return error.InvalidIdentity;
+        return init(source, identity_value, generation);
+    }
+
+    /// Constructs one source-independent shared resource generation.
+    pub fn shared(
+        identity_value: u64,
+        generation: u64,
+    ) InitError!ResourceGeneration {
+        if (identity_value == 0 or identity_value > max_identity)
+            return error.InvalidIdentity;
+        return init(0, identity_value | shared_bit, generation);
+    }
+
+    /// Reports whether this resource occupies the shared namespace.
+    pub fn isShared(self: ResourceGeneration) bool {
+        return self.resource & shared_bit != 0;
+    }
+
+    /// Returns the nonzero identity without its namespace bit.
+    pub fn identity(self: ResourceGeneration) InitError!u64 {
+        const value = self.resource & max_identity;
+        if (value == 0) return error.InvalidIdentity;
+        return value;
+    }
+
+    /// Validates the complete namespace and generation relationship.
+    pub fn validate(self: ResourceGeneration) InitError!void {
+        if (self.resource & max_identity == 0 or
+            ((self.source == 0) != self.isShared()))
+            return error.InvalidIdentity;
+        if (self.generation == 0) return error.InvalidGeneration;
+    }
+};
 /// Borrows one complete upload plane until frame application returns.
 pub const Upload = struct {
     resource: ResourceGeneration,
@@ -567,25 +637,25 @@ pub const ResidencyStore = struct {
         for (frame.uploads, 0..) |upload, index| {
             try validateUpload(upload);
             for (frame.uploads[0..index]) |prior| {
-                if (std.meta.eql(prior.resource.key, upload.resource.key)) return error.InvalidFrame;
+                if (sameIdentity(prior.resource, upload.resource)) return error.InvalidFrame;
             }
             for (frame.removals) |removal| {
-                if (std.meta.eql(removal.resource.key, upload.resource.key)) return error.InvalidFrame;
+                if (sameIdentity(removal.resource, upload.resource)) return error.InvalidFrame;
             }
         }
         for (frame.removals, 0..) |removal, index| {
             try validateResource(removal.resource);
             for (frame.removals[0..index]) |prior| {
-                if (std.meta.eql(prior.resource.key, removal.resource.key)) return error.InvalidFrame;
+                if (sameIdentity(prior.resource, removal.resource)) return error.InvalidFrame;
             }
         }
 
         for (self.active[0..self.active_count]) |entry| {
-            if (findRemoval(frame.removals, entry.resource.key)) |removal| {
+            if (findRemoval(frame.removals, entry.resource)) |removal| {
                 if (removal.resource.generation != entry.resource.generation) return error.GenerationMismatch;
                 continue;
             }
-            if (findUpload(frame.uploads, entry.resource.key)) |upload| {
+            if (findUpload(frame.uploads, entry.resource)) |upload| {
                 if (upload.resource.generation <= entry.resource.generation) return error.GenerationMismatch;
                 try self.appendCandidate(upload.resource, upload.kind, upload.width, upload.height, upload.stride, upload.pixels);
                 continue;
@@ -601,10 +671,10 @@ pub const ResidencyStore = struct {
         }
 
         for (frame.removals) |removal| {
-            if (findEntry(self.active[0..self.active_count], removal.resource.key) == null) return error.GenerationMismatch;
+            if (findEntry(self.active[0..self.active_count], removal.resource) == null) return error.GenerationMismatch;
         }
         for (frame.uploads) |upload| {
-            if (findEntry(self.active[0..self.active_count], upload.resource.key) != null) continue;
+            if (findEntry(self.active[0..self.active_count], upload.resource) != null) continue;
             try self.appendCandidate(upload.resource, upload.kind, upload.width, upload.height, upload.stride, upload.pixels);
         }
         try self.validateCommands(frame.commands);
@@ -863,7 +933,7 @@ fn uvRect(value: FrameBuilder.Packed, source: ?Rect) [4]f32 {
 }
 
 fn validateResource(resource: ResourceGeneration) ResidencyStore.StoreError!void {
-    if (resource.key.source == 0 or resource.key.local == 0 or resource.generation == 0) return error.InvalidFrame;
+    resource.validate() catch return error.InvalidFrame;
 }
 
 fn validateUpload(upload: Upload) ResidencyStore.StoreError!void {
@@ -880,8 +950,12 @@ fn validateRect(rect: Rect) ResidencyStore.StoreError!void {
     if (rect.width == 0 or rect.height == 0) return error.InvalidFrame;
 }
 
-fn findEntry(entries: []const ResidencyStore.Entry, key: ResourceKey) ?ResidencyStore.Entry {
-    for (entries) |entry| if (std.meta.eql(entry.resource.key, key)) return entry;
+fn sameIdentity(left: ResourceGeneration, right: ResourceGeneration) bool {
+    return left.source == right.source and left.resource == right.resource;
+}
+
+fn findEntry(entries: []const ResidencyStore.Entry, key: ResourceGeneration) ?ResidencyStore.Entry {
+    for (entries) |entry| if (sameIdentity(entry.resource, key)) return entry;
     return null;
 }
 
@@ -890,13 +964,13 @@ fn findExactEntry(entries: []const ResidencyStore.Entry, resource: ResourceGener
     return null;
 }
 
-fn findUpload(uploads: []const Upload, key: ResourceKey) ?Upload {
-    for (uploads) |upload| if (std.meta.eql(upload.resource.key, key)) return upload;
+fn findUpload(uploads: []const Upload, key: ResourceGeneration) ?Upload {
+    for (uploads) |upload| if (sameIdentity(upload.resource, key)) return upload;
     return null;
 }
 
-fn findRemoval(removals: []const Removal, key: ResourceKey) ?Removal {
-    for (removals) |removal| if (std.meta.eql(removal.resource.key, key)) return removal;
+fn findRemoval(removals: []const Removal, key: ResourceGeneration) ?Removal {
+    for (removals) |removal| if (sameIdentity(removal.resource, key)) return removal;
     return null;
 }
 

@@ -1,6 +1,6 @@
 version:
   current: 0.1.3-dev
-  status: reusable Vulkan and Wayland foundations accepted; backend-neutral chrome ownership is active
+  status: reusable Vulkan and Wayland foundations plus multiplexed terminal runtime accepted; pane-local font and text correctness ownership is active
 
 objective: >-
   Preserve independently useful PTY, VT, and Render packages while establishing
@@ -39,8 +39,12 @@ invariants:
   - every exported descriptor has one owner and every ownership transfer is explicit
   - source audit and protocol catalogue validation pass without diagnostics
 
+active:
+  - replace the provisional Host-wide terminal font-size mutation with one terminal base plus independent pane-local mutations
+  - derive a bounded Runtime-owned multi-size font cache from pinned Kitty evidence without introducing a global mutable singleton
+  - harden native, fallback, Nerd Font, ligature, generated-glyph, decoration, cursor, selection, DPI, and scaling correctness before performance benchmarking
+
 deferred:
-  - runtime font-size configuration and resizing
   - asciinema/rain performance parity and CPU/RSS optimization
   - final terminal parity/freeze receipt
   - maximum sixteen-pane Composer/Vulkan/atlas admission

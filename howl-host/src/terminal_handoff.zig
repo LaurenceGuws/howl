@@ -2087,7 +2087,7 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     var pixels = [_]u8{ 1, 2, 3, 4 };
     const upload = canvas.ResourceUpload{
         .resource = .{
-            .resource = @fromBackingInt(@intCast(1)),
+            .resource = try canvas.ResourceId.local(1),
             .generation = @fromBackingInt(@intCast(1)),
         },
         .format = .alpha8,
@@ -2656,7 +2656,7 @@ test "copied pending update is immutable saturated and reusable" {
         .revision = @fromBackingInt(@intCast(1)),
         .uploads = &.{.{
             .resource = .{
-                .resource = @fromBackingInt(@intCast(1)),
+                .resource = try canvas.ResourceId.local(1),
                 .generation = @fromBackingInt(@intCast(1)),
             },
             .format = .rgba8,
@@ -2793,7 +2793,10 @@ test "terminal receipt slot has exact bounded allocation" {
 test "release acquire transfers immutable bytes between threads" {
     var slot = try PendingSlot.init(std.testing.allocator, testLimits(1, 1, 4));
     defer slot.deinit();
-    var context = ThreadProof{ .slot = &slot };
+    var context = ThreadProof{
+        .slot = &slot,
+        .resource = try canvas.ResourceId.local(1),
+    };
     const producer = try std.Thread.spawn(.{}, ThreadProof.publish, .{&context});
     defer producer.join();
 
@@ -2821,7 +2824,7 @@ test "small PendingSlot fixture copies every configured slice" {
     for (&uploads, &removals, 0..) |*upload, *removal, index| {
         upload.* = .{
             .resource = .{
-                .resource = @fromBackingInt(@intCast(index + 1)),
+                .resource = try canvas.ResourceId.local(index + 1),
                 .generation = @fromBackingInt(@intCast(1)),
             },
             .format = .alpha8,
@@ -2833,7 +2836,7 @@ test "small PendingSlot fixture copies every configured slice" {
             },
         };
         removal.* = .{ .resource = .{
-            .resource = @fromBackingInt(@intCast(index + 5)),
+            .resource = try canvas.ResourceId.local(index + 5),
             .generation = @fromBackingInt(@intCast(1)),
         } };
     }
@@ -2884,7 +2887,7 @@ test "current Content bounds copy maximum capacity shape" {
         const width = base_width + @intFromBool(index < remainder);
         upload.* = .{
             .resource = .{
-                .resource = @fromBackingInt(@intCast(index + 1)),
+                .resource = try canvas.ResourceId.local(index + 1),
                 .generation = @fromBackingInt(@intCast(1)),
             },
             .format = .alpha8,
@@ -2896,7 +2899,9 @@ test "current Content bounds copy maximum capacity shape" {
             },
         };
         removal.* = .{ .resource = .{
-            .resource = @fromBackingInt(@intCast(resource_count + index + 1)),
+            .resource = try canvas.ResourceId.local(
+                resource_count + index + 1,
+            ),
             .generation = @fromBackingInt(@intCast(1)),
         } };
         offset += width;
@@ -2923,6 +2928,7 @@ test "current Content bounds copy maximum capacity shape" {
 
 const ThreadProof = struct {
     slot: *PendingSlot,
+    resource: canvas.ResourceId,
 
     fn publish(self: *ThreadProof) void {
         var pixels = [_]u8{ 1, 2, 3, 4 };
@@ -2931,7 +2937,7 @@ const ThreadProof = struct {
             .revision = @fromBackingInt(@intCast(1)),
             .uploads = &.{.{
                 .resource = .{
-                    .resource = @fromBackingInt(@intCast(1)),
+                    .resource = self.resource,
                     .generation = @fromBackingInt(@intCast(1)),
                 },
                 .format = .rgba8,

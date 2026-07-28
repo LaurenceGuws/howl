@@ -231,8 +231,8 @@ fn selectionStyle() terminal.SelectionStyle {
 fn commandSource(command: canvas.Command) ?canvas.SourceId {
     return switch (command) {
         .solid => null,
-        .alpha_mask => |value| value.resource.resource.key.source,
-        .rgba => |value| value.resource.resource.key.source,
+        .alpha_mask => |value| value.resource.resource.source,
+        .rgba => |value| value.resource.resource.source,
     };
 }
 
@@ -453,8 +453,8 @@ test "two real terminals cross copied slots into distinct Composer sources" {
 
     var collision = false;
     for (complete.uploads) |left| for (complete.uploads) |right| {
-        if (left.resource.key.source == right.resource.key.source) continue;
-        if (left.resource.key.resource == right.resource.key.resource) {
+        if (left.resource.source == right.resource.source) continue;
+        if (left.resource.resource == right.resource.resource) {
             collision = true;
             break;
         }

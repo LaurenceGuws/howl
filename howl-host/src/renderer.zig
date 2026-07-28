@@ -693,7 +693,7 @@ fn buildCanvasPlan(
     const surface_resident = try work.residency.enumerate(work.surface_residencies);
     for (surface_resident, 0..) |value, index| {
         work.canvas_residencies[index] = .{
-            .resource = canvasResource(value.resource),
+            .resource = try canvasResource(value.resource),
             .format = switch (value.kind) {
                 .alpha_mask => .alpha8,
                 .rgba => .rgba8,
@@ -785,7 +785,7 @@ fn adaptCanvasFrame(
         const end = std.math.add(usize, value.pixel_offset, value.pixel_count) catch return error.ArithmeticOverflow;
         if (end > frame.pixels.len) return error.Capacity;
         uploads[index] = .{
-            .resource = surfaceResource(value.resource),
+            .resource = try surfaceResource(value.resource),
             .kind = switch (value.format) {
                 .alpha8 => .alpha_mask,
                 .rgba8 => .rgba,
@@ -796,20 +796,22 @@ fn adaptCanvasFrame(
             .pixels = frame.pixels[value.pixel_offset..end],
         };
     }
-    for (frame.removals, 0..) |value, index| removals[index] = .{ .resource = surfaceResource(value) };
+    for (frame.removals, 0..) |value, index| removals[index] = .{
+        .resource = try surfaceResource(value),
+    };
     for (frame.commands, 0..) |value, index| commands[index] = switch (value) {
         .solid => |solid| .{ .solid = .{ .rect = surfaceRect(solid.rect), .clip = surfaceRect(solid.rect), .color = surfaceColor(solid.color) } },
         .alpha_mask => |mask| .{ .alpha_mask = .{
             .rect = surfaceRect(mask.destination),
             .clip = surfaceRect(mask.clip),
-            .resource = surfaceResource(mask.resource.resource),
+            .resource = try surfaceResource(mask.resource.resource),
             .source = if (mask.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
             .color = surfaceColor(mask.color),
         } },
         .rgba => |rgba| .{ .rgba = .{
             .rect = surfaceRect(rgba.destination),
             .clip = surfaceRect(rgba.clip),
-            .resource = surfaceResource(rgba.resource.resource),
+            .resource = try surfaceResource(rgba.resource.resource),
             .source = if (rgba.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
         } },
     };
@@ -821,18 +823,27 @@ fn adaptCanvasFrame(
     };
 }
 
-fn surfaceResource(value: render_api.canvas.FrameResourceRef) vk_surface.ResourceGeneration {
-    return .{ .key = .{ .source = @backingInt(value.key.source), .local = @backingInt(value.key.resource) }, .generation = @backingInt(value.generation) };
+fn surfaceResource(
+    value: render_api.canvas.FrameResourceRef,
+) error{InvalidFrame}!vk_surface.ResourceGeneration {
+    return vk_surface.ResourceGeneration.init(
+        @backingInt(value.source),
+        @backingInt(value.resource),
+        @backingInt(value.generation),
+    ) catch error.InvalidFrame;
 }
 
-fn canvasResource(value: vk_surface.ResourceGeneration) render_api.canvas.FrameResourceRef {
-    return .{
-        .key = .{
-            .source = @fromBackingInt(@intCast(value.key.source)),
-            .resource = @fromBackingInt(@intCast(value.key.local)),
-        },
-        .generation = @fromBackingInt(@intCast(value.generation)),
-    };
+fn canvasResource(
+    value: vk_surface.ResourceGeneration,
+) error{InvalidFrame}!render_api.canvas.FrameResourceRef {
+    const resource = render_api.canvas.ResourceId.fromEncoded(
+        value.resource,
+    ) catch return error.InvalidFrame;
+    return render_api.canvas.FrameResourceRef.init(
+        @fromBackingInt(@intCast(value.source)),
+        resource,
+        @fromBackingInt(@intCast(value.generation)),
+    ) catch return error.InvalidFrame;
 }
 
 fn surfaceRect(value: render_api.canvas.Rect) vk_surface.Rect {
@@ -1772,6 +1783,101 @@ test "one complete terminal and Chrome resource set fits every runtime bank" {
         terminal_retained_resource_limit + chrome_retained_resource_limit <=
             frame_resource_limit,
     );
+}
+
+test "compact resource adaptation preserves local and shared namespaces mechanically" {
+    try std.testing.expectEqual(
+        @as(usize, 16),
+        @sizeOf(render_api.canvas.ResourceRef),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 24),
+        @sizeOf(render_api.canvas.FrameResourceRef),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 56),
+        @sizeOf(render_api.canvas.ResourceUpload),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 72),
+        @sizeOf(render_api.canvas.Input),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 56),
+        @sizeOf(render_api.canvas.ResourceUploadFact),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 80),
+        @sizeOf(render_api.canvas.Command),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 24),
+        @sizeOf(vk_surface.ResourceGeneration),
+    );
+    const generation: render_api.canvas.ResourceGeneration = @fromBackingInt(@intCast(5));
+    const source: render_api.canvas.SourceId = @fromBackingInt(@intCast(7));
+    const local = try render_api.canvas.FrameResourceRef.local(source, .{
+        .resource = try render_api.canvas.ResourceId.local(11),
+        .generation = generation,
+    });
+    const colliding_local = try render_api.canvas.FrameResourceRef.local(
+        @fromBackingInt(@intCast(8)),
+        .{
+            .resource = try render_api.canvas.ResourceId.local(11),
+            .generation = generation,
+        },
+    );
+    const shared_resource = try render_api.canvas.FrameResourceRef.shared(.{
+        .resource = try render_api.canvas.ResourceId.shared(11),
+        .generation = generation,
+    });
+    const local_vk = try surfaceResource(local);
+    const colliding_local_vk = try surfaceResource(colliding_local);
+    const shared_vk = try surfaceResource(shared_resource);
+    try std.testing.expect(!std.meta.eql(local_vk, shared_vk));
+    try std.testing.expect(!std.meta.eql(local_vk, colliding_local_vk));
+    try std.testing.expectEqual(local, try canvasResource(local_vk));
+    try std.testing.expectEqual(
+        colliding_local,
+        try canvasResource(colliding_local_vk),
+    );
+    try std.testing.expectEqual(shared_resource, try canvasResource(shared_vk));
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    const frame = render_api.canvas.Composer.Frame{
+        .revision = @fromBackingInt(@intCast(13)),
+        .uploads = &.{.{
+            .resource = local,
+            .format = .rgba8,
+            .size = .{ .width = 1, .height = 1 },
+            .pixel_offset = 0,
+            .pixel_count = pixels.len,
+            .stride = 4,
+        }},
+        .removals = &.{},
+        .commands = &.{.{ .rgba = .{
+            .destination = .{ .x = 2, .y = 3, .width = 1, .height = 1 },
+            .clip = .{ .x = 2, .y = 3, .width = 1, .height = 1 },
+            .resource = .{
+                .resource = local,
+                .format = .rgba8,
+                .size = .{ .width = 1, .height = 1 },
+            },
+        } }},
+        .pixels = &pixels,
+    };
+    var uploads: [1]vk_surface.Upload = undefined;
+    var removals: [1]vk_surface.Removal = undefined;
+    var commands: [1]vk_surface.FrameCommand = undefined;
+    const adapted = try adaptCanvasFrame(
+        frame,
+        &uploads,
+        &removals,
+        &commands,
+    );
+    try std.testing.expectEqual(@as(u64, 13), adapted.revision);
+    try std.testing.expectEqual(local_vk, adapted.uploads[0].resource);
+    try std.testing.expectEqualSlices(u8, &pixels, adapted.uploads[0].pixels);
+    try std.testing.expectEqual(local_vk, adapted.commands[0].rgba.resource);
 }
 
 fn panePixels(rect: render_api.chrome.Rect) error{InvalidTopology}!render_api.canvas.Size {

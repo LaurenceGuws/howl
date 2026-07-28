@@ -4,7 +4,16 @@ const std = @import("std");
 const vk = @import("howl_vk");
 const surface = vk.surface;
 
+fn local(
+    source: u64,
+    resource: u64,
+    generation: u64,
+) !surface.ResourceGeneration {
+    return surface.ResourceGeneration.init(source, resource, generation);
+}
+
 test "surface contract is analyzed with generic draw storage" {
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(surface.ResourceGeneration));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(surface.Vertex));
     try std.testing.expect(surface.max_vertices >= surface.max_quads);
     const clip = surface.Rect{ .x = 0, .y = 0, .width = 1, .height = 1 };
@@ -13,10 +22,61 @@ test "surface contract is analyzed with generic draw storage" {
     try std.testing.expectEqual(@as(usize, 1), plan.commands.len);
 }
 
+test "surface compact namespaces reject malformed source combinations" {
+    const local_value = try surface.ResourceGeneration.local(4, 7, 2);
+    const shared_value = try surface.ResourceGeneration.shared(7, 2);
+    try std.testing.expect(!local_value.isShared());
+    try std.testing.expect(shared_value.isShared());
+    try std.testing.expectEqual(@as(u64, 7), try local_value.identity());
+    try std.testing.expectEqual(@as(u64, 7), try shared_value.identity());
+    try std.testing.expect(!std.meta.eql(local_value, shared_value));
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        surface.ResourceGeneration.init(0, 7, 2),
+    );
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        surface.ResourceGeneration.init(4, shared_value.resource, 2),
+    );
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        surface.ResourceGeneration.init(4, 0, 2),
+    );
+    try std.testing.expectError(
+        error.InvalidGeneration,
+        surface.ResourceGeneration.init(4, 7, 0),
+    );
+    var store = try surface.ResidencyStore.init(
+        std.testing.allocator,
+        .{ .resources = 1, .pixel_bytes = 4 },
+    );
+    defer store.deinit();
+    const malformed = surface.ResourceGeneration{
+        .source = 0,
+        .resource = 7,
+        .generation = 2,
+    };
+    const pixels = [_]u8{ 1, 2, 3, 4 };
+    try std.testing.expectError(
+        error.InvalidFrame,
+        store.stage(frame(
+            1,
+            &.{upload(malformed, &pixels)},
+            &.{},
+            &.{},
+        )),
+    );
+    var residency: [1]surface.Residency = undefined;
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try store.enumerate(&residency)).len,
+    );
+}
+
 test "surface residency stages and commits transactionally" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 32 });
     defer store.deinit();
-    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const key = try local(1, 1, 1);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try store.stage(.{ .revision = 1, .uploads = &.{
         .{ .resource = key, .kind = .alpha_mask, .width = 2, .height = 2, .stride = 2, .pixels = &pixels },
@@ -32,7 +92,7 @@ test "surface residency stages and commits transactionally" {
 test "surface residency rejects malformed uploads without active mutation" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
     defer store.deinit();
-    const bad = surface.Upload{ .resource = .{ .key = .{ .source = 1, .local = 1 }, .generation = 1 }, .kind = .alpha_mask, .width = 2, .height = 2, .stride = 1, .pixels = &.{ 1, 2, 3, 4 } };
+    const bad = surface.Upload{ .resource = try local(1, 1, 1), .kind = .alpha_mask, .width = 2, .height = 2, .stride = 1, .pixels = &.{ 1, 2, 3, 4 } };
     try std.testing.expectError(error.InvalidFrame, store.stage(.{ .revision = 1, .uploads = &.{bad}, .removals = &.{}, .commands = &.{} }));
     var output: [1]surface.Residency = undefined;
     try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
@@ -41,8 +101,8 @@ test "surface residency rejects malformed uploads without active mutation" {
 test "surface residency replaces and removes exact generations" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 32 });
     defer store.deinit();
-    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 7 }, .generation = 1 };
-    const second = surface.ResourceGeneration{ .key = first.key, .generation = 2 };
+    const first = try local(1, 7, 1);
+    const second = try local(first.source, first.resource, 2);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try store.stage(frame(1, &.{upload(first, &pixels)}, &.{}, &.{}));
     try store.complete();
@@ -61,11 +121,11 @@ test "surface residency replaces and removes exact generations" {
 test "surface residency rejects stale generations and preserves active bytes" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
     defer store.deinit();
-    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 2 };
+    const key = try local(1, 1, 2);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try store.stage(frame(1, &.{upload(key, &pixels)}, &.{}, &.{}));
     try store.complete();
-    const stale = surface.ResourceGeneration{ .key = key.key, .generation = 1 };
+    const stale = try local(key.source, key.resource, 1);
     try std.testing.expectError(error.GenerationMismatch, store.stage(frame(2, &.{upload(stale, &pixels)}, &.{}, &.{})));
     var output: [1]surface.Residency = undefined;
     const resident = try store.enumerate(&output);
@@ -75,8 +135,8 @@ test "surface residency rejects stale generations and preserves active bytes" {
 test "surface candidate discard models failed GPU application" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 2, .pixel_bytes = 16 });
     defer store.deinit();
-    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
-    const second = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 2 }, .generation = 1 };
+    const first = try local(1, 1, 1);
+    const second = try local(1, 2, 1);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try store.stage(frame(1, &.{upload(first, &pixels)}, &.{}, &.{}));
     try store.complete();
@@ -112,7 +172,7 @@ test "surface capacity failure rolls back and complete candidate rebuilds geomet
     defer store.deinit();
     var builder = try surface.FrameBuilder.init(std.testing.allocator);
     defer builder.deinit();
-    const key = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
+    const key = try local(1, 1, 1);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     const command = surface.FrameCommand{ .alpha_mask = .{
         .rect = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
@@ -120,7 +180,7 @@ test "surface capacity failure rolls back and complete candidate rebuilds geomet
         .resource = key,
         .color = .{ 1, 1, 1, 1 },
     } };
-    const too_many = [_]surface.Upload{ upload(key, &pixels), upload(.{ .key = .{ .source = 2, .local = 1 }, .generation = 1 }, &pixels) };
+    const too_many = [_]surface.Upload{ upload(key, &pixels), upload(try local(2, 1, 1), &pixels) };
     try std.testing.expectError(error.Capacity, store.stage(frame(1, &too_many, &.{}, &.{command})));
     var output: [1]surface.Residency = undefined;
     try std.testing.expectEqual(@as(usize, 0), (try store.enumerate(&output)).len);
@@ -136,8 +196,8 @@ test "surface sparse frame rebuilds complete physical residency" {
     defer store.deinit();
     var builder = try surface.FrameBuilder.init(std.testing.allocator);
     defer builder.deinit();
-    const first = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
-    const second = surface.ResourceGeneration{ .key = .{ .source = 2, .local = 1 }, .generation = 1 };
+    const first = try local(1, 1, 1);
+    const second = try local(2, 1, 1);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try store.stage(frame(1, &.{ upload(first, &pixels), upload(second, &pixels) }, &.{}, &.{}));
     try store.complete();
@@ -188,8 +248,8 @@ test "surface admits the complete quad command capacity" {
 test "surface unknown command resource rejects candidate and remains reusable" {
     var store = try surface.ResidencyStore.init(std.testing.allocator, .{ .resources = 1, .pixel_bytes = 8 });
     defer store.deinit();
-    const known = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 1 }, .generation = 1 };
-    const unknown = surface.ResourceGeneration{ .key = .{ .source = 1, .local = 2 }, .generation = 1 };
+    const known = try local(1, 1, 1);
+    const unknown = try local(1, 2, 1);
     const pixels = [_]u8{ 1, 2, 3, 4 };
     try std.testing.expectError(
         error.GenerationMismatch,

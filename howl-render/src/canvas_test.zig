@@ -5,9 +5,9 @@ const red = canvas.Color{ .r = 255, .g = 0, .b = 0, .a = 255 };
 const white = canvas.Color{ .r = 255, .g = 255, .b = 255, .a = 255 };
 const source: canvas.SourceId = @fromBackingInt(@intCast(11));
 
-fn local(id: u64, generation: u64) canvas.LocalResourceRef {
+fn local(id: u64, generation: u64) !canvas.ResourceRef {
     return .{
-        .resource = @fromBackingInt(@intCast(id)),
+        .resource = try canvas.ResourceId.local(id),
         .generation = @fromBackingInt(@intCast(generation)),
     };
 }
@@ -23,7 +23,7 @@ test "editor-like facts preserve clipped deterministic order and qualify resourc
             .destination = .{ .x = 4, .y = 2, .width = 8, .height = 4 },
             .clip = .{ .x = 0, .y = 0, .width = 16, .height = 10 },
             .resource = .{
-                .resource = local(7, 3),
+                .resource = try local(7, 3),
                 .format = .alpha8,
                 .size = .{ .width = 4, .height = 2 },
             },
@@ -33,7 +33,7 @@ test "editor-like facts preserve clipped deterministic order and qualify resourc
             .destination = .{ .x = 14, .y = 8, .width = 4, .height = 4 },
             .clip = .{ .x = 0, .y = 0, .width = 16, .height = 10 },
             .resource = .{
-                .resource = local(9, 5),
+                .resource = try local(9, 5),
                 .format = .rgba8,
                 .size = .{ .width = 2, .height = 2 },
             },
@@ -55,14 +55,14 @@ test "editor-like facts preserve clipped deterministic order and qualify resourc
         canvas.Rect{ .x = 4, .y = 2, .width = 8, .height = 4 },
         output[1].alpha_mask.clip,
     );
-    try std.testing.expectEqual(source, output[1].alpha_mask.resource.resource.key.source);
-    try std.testing.expectEqual(local(7, 3).resource, output[1].alpha_mask.resource.resource.key.resource);
-    try std.testing.expectEqual(local(7, 3).generation, output[1].alpha_mask.resource.resource.generation);
+    try std.testing.expectEqual(source, output[1].alpha_mask.resource.resource.source);
+    try std.testing.expectEqual((try local(7, 3)).resource, output[1].alpha_mask.resource.resource.resource);
+    try std.testing.expectEqual((try local(7, 3)).generation, output[1].alpha_mask.resource.resource.generation);
     try std.testing.expectEqualDeep(
         canvas.Rect{ .x = 14, .y = 8, .width = 2, .height = 2 },
         output[2].rgba.clip,
     );
-    try std.testing.expectEqual(source, output[2].rgba.resource.resource.key.source);
+    try std.testing.expectEqual(source, output[2].rgba.resource.resource.source);
 }
 
 test "fully clipped valid facts consume no output" {
@@ -106,7 +106,7 @@ test "identity format extent geometry and capacity failures preserve output" {
         .destination = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .resource = .{
-            .resource = local(1, 0),
+            .resource = try local(1, 0),
             .format = .alpha8,
             .size = .{ .width = 1, .height = 1 },
         },
@@ -119,7 +119,7 @@ test "identity format extent geometry and capacity failures preserve output" {
     try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&storage));
 
     var mismatch = invalid_generation;
-    mismatch.alpha_mask.resource.resource = local(1, 1);
+    mismatch.alpha_mask.resource.resource = try local(1, 1);
     mismatch.alpha_mask.resource.format = .rgba8;
     try std.testing.expectError(
         error.FormatMismatch,
@@ -237,7 +237,7 @@ test "input and output alias matrix is exact and transactional" {
 test "upload pixels remain producer-owned and are not copied per draw" {
     var pixels = [_]u8{ 1, 2, 3, 4 };
     const upload = canvas.ResourceUpload{
-        .resource = local(2, 4),
+        .resource = try local(2, 4),
         .format = .rgba8,
         .pixels = .{
             .bytes = &pixels,
@@ -267,7 +267,7 @@ test "upload pixels remain producer-owned and are not copied per draw" {
     try std.testing.expectEqual(@as(u8, 9), upload.pixels.bytes[0]);
     try std.testing.expectEqual(
         upload.resource.resource,
-        commands[0].rgba.resource.resource.key.resource,
+        commands[0].rgba.resource.resource.resource,
     );
     try std.testing.expectEqual(
         upload.resource.generation,
@@ -438,7 +438,7 @@ test "composer retains resources and derives partial and full recovery" {
     defer composer.deinit();
     const producer = try composer.registerSource();
     const pixels = [_]u8{ 1, 2, 3, 4 };
-    const resource = local(3, 1);
+    const resource = try local(3, 1);
     const upload = canvas.ResourceUpload{
         .resource = resource,
         .format = .rgba8,
@@ -473,7 +473,7 @@ test "composer retains resources and derives partial and full recovery" {
     const recovery = try composer.frame(&.{}, storage.buffers());
     try std.testing.expectEqual(@as(usize, 1), recovery.uploads.len);
     try std.testing.expectEqualSlices(u8, &pixels, recovery.pixels);
-    try std.testing.expectEqual(producer, recovery.uploads[0].resource.key.source);
+    try std.testing.expectEqual(producer, recovery.uploads[0].resource.source);
 
     var limited: FrameStorage = .{};
     @memset(std.mem.asBytes(&limited), 0xa5);
@@ -506,7 +506,7 @@ test "composer retains resources and derives partial and full recovery" {
 
     const replacement_pixels = [_]u8{ 5, 6, 7, 8 };
     const replacement = canvas.ResourceUpload{
-        .resource = local(3, 4),
+        .resource = try local(3, 4),
         .format = .rgba8,
         .pixels = .{
             .bytes = &replacement_pixels,
@@ -542,7 +542,7 @@ test "composer retains resources and derives partial and full recovery" {
         composer.apply(producer, .{
             .revision = @fromBackingInt(@intCast(3)),
             .uploads = &.{canvas.ResourceUpload{
-                .resource = local(2, 1),
+                .resource = try local(2, 1),
                 .format = .rgba8,
                 .pixels = replacement.pixels,
             }},
@@ -641,7 +641,7 @@ test "composer advances frames only for changed visible contributions" {
     try composer.apply(producer, .{
         .revision = @fromBackingInt(@intCast(3)),
         .uploads = &.{canvas.ResourceUpload{
-            .resource = local(5, 1),
+            .resource = try local(5, 1),
             .format = .alpha8,
             .pixels = .{
                 .bytes = &unused_pixels,
@@ -677,7 +677,7 @@ test "composer advances frames only for changed visible contributions" {
         .destination = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
         .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
         .resource = .{
-            .resource = local(5, 1),
+            .resource = try local(5, 1),
             .format = .alpha8,
             .size = .{ .width = 1, .height = 1 },
         },
@@ -771,7 +771,7 @@ test "composer rejects same-update conflicts and frame aliases transactionally" 
     const producer = try composer.registerSource();
     const pixels = [_]u8{255};
     const upload = canvas.ResourceUpload{
-        .resource = local(1, 1),
+        .resource = try local(1, 1),
         .format = .alpha8,
         .pixels = .{
             .bytes = &pixels,
@@ -791,12 +791,12 @@ test "composer rejects same-update conflicts and frame aliases transactionally" 
     );
     const skipped = [_]canvas.ResourceUpload{
         .{
-            .resource = local(7, 1),
+            .resource = try local(7, 1),
             .format = .alpha8,
             .pixels = upload.pixels,
         },
         .{
-            .resource = local(5, 1),
+            .resource = try local(5, 1),
             .format = .alpha8,
             .pixels = upload.pixels,
         },
@@ -812,7 +812,7 @@ test "composer rejects same-update conflicts and frame aliases transactionally" 
         composer.apply(producer, .{
             .revision = @fromBackingInt(@intCast(2)),
             .uploads = &.{canvas.ResourceUpload{
-                .resource = local(6, 1),
+                .resource = try local(6, 1),
                 .format = .alpha8,
                 .pixels = upload.pixels,
             }},

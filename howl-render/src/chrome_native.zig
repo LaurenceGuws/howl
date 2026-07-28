@@ -53,7 +53,7 @@ const GlyphKey = struct {
 
 const GlyphEntry = struct {
     key: GlyphKey,
-    resource: ?canvas.LocalResourceRef,
+    resource: ?canvas.ResourceRef,
     width: u16,
     height: u16,
     left: i16,
@@ -509,7 +509,7 @@ pub const Content = struct {
         self: *Content,
         upload_count: *usize,
         bytes_used: *usize,
-        resource: canvas.LocalResourceRef,
+        resource: canvas.ResourceRef,
         width: u16,
         height: u16,
         pixels: []const u8,
@@ -557,7 +557,7 @@ pub const Content = struct {
         self: *Content,
         destination: Rect,
         clip: Rect,
-        resource: canvas.LocalResourceRef,
+        resource: canvas.ResourceRef,
         size: Size,
         color: Color,
     ) TakeError!void {
@@ -613,13 +613,14 @@ pub const Content = struct {
             );
     }
 
-    fn issueResource(self: *Content) error{IdentityExhausted}!canvas.LocalResourceRef {
-        if (self.next_resource_id == 0 or self.next_resource_id == std.math.maxInt(u64))
+    fn issueResource(self: *Content) error{IdentityExhausted}!canvas.ResourceRef {
+        if (self.next_resource_id == 0 or
+            self.next_resource_id > canvas.ResourceId.max_identity)
             return error.IdentityExhausted;
         const value = self.next_resource_id;
         self.next_resource_id += 1;
         return .{
-            .resource = @fromBackingInt(@intCast(value)),
+            .resource = canvas.ResourceId.local(value) catch return error.IdentityExhausted,
             .generation = @fromBackingInt(@intCast(1)),
         };
     }
@@ -728,4 +729,27 @@ fn borderEdgeCoordinate(
         return error.ArithmeticOverflow;
     return std.math.cast(i32, exclusive - 1) orelse
         error.ArithmeticOverflow;
+}
+
+test "Chrome local resource exhaustion preserves its high-water mark" {
+    var content = std.mem.zeroes(Content);
+    content.next_resource_id = canvas.ResourceId.max_identity + 1;
+    try std.testing.expectError(
+        error.IdentityExhausted,
+        content.issueResource(),
+    );
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity + 1,
+        content.next_resource_id,
+    );
+    content.next_resource_id = canvas.ResourceId.max_identity;
+    const last = try content.issueResource();
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity,
+        try last.resource.identity(),
+    );
+    try std.testing.expectEqual(
+        canvas.ResourceId.max_identity + 1,
+        content.next_resource_id,
+    );
 }

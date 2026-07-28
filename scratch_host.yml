@@ -1,8 +1,8 @@
 scratch:
   marathon: host_platform_chrome
   status: active
-  checkpoint: terminal_visible_set
-  purpose: current checkpoint findings, commands, corrections, receipts, and review boundary
+  checkpoint: terminal_font_research
+  purpose: Kitty-led font-cache and text-correctness research index plus current review boundary
 
 accepted:
   interactive_chrome:
@@ -62,9 +62,14 @@ planned_checkpoints:
     product_scope: terminal publication and Renderer drainage through shared blocks
     commit_boundary: Share terminal update handoff blocks
   - id: terminal_visible_set
-    status: review_ready
+    status: accepted
+    commit: d5d1012
     product_scope: bounded latest visible-set request and group reservation
     commit_boundary: Reserve visible terminal updates transactionally
+  - id: terminal_font_research
+    status: active
+    product_scope: ignored evidence and operator decisions only
+    commit_boundary: Approve pane-local font and text contract
 
   - id: terminal_pool_freeze
     status: pending
@@ -92,9 +97,10 @@ planned_checkpoints:
     commit_boundary: Freeze interactive Vulkan host foundation
 
 terminal_visible_set:
-  status: implemented_review_ready
+  status: accepted
+  commit: d5d1012
   operator_gate:
-    status: baseline_retest_requested
+    status: passed_before_font-policy_research
     checklist: howl-host/temp_user_checklist.txt
     observed_failure:
       - modifier press reached terminal input as an unmatched XKB keysym
@@ -354,7 +360,7 @@ terminal_runtime_receipt:
     accepted_after_boundary:
       - u32 Vulkan indices and the 32768-command full-size single-tab path
       - Composer and Host frame capacity required by ordinary full-size TUIs
-    next_checkpoint: font_resizing_after_commit
+    next_checkpoint: terminal_font_research
   memory_receipt:
     durable_census: .zig/work/terminal-runtime-memory/receipt.yml
     review_boundary:
@@ -841,14 +847,16 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - review the uncommitted pane-pixel and lifecycle-admission implementation inside terminal_font_resize
-  - complete the Host-private font publication epoch as the next isolated slice
-  - perform Kitty-led terminal text parity work without benchmark-only paths
+  - create .zig/work/terminal-font-research as the ignored marathon, scratch, source-index, and executable-receipt cache
+  - study Kitty's multi-size FontGroup, active-user trimming, sprite cache, shaping, generated glyph, fallback, ligature, DPI, and resize behavior
+  - map those facts against current Howl ownership without proposing or changing product APIs
+  - stop for operator review on every UX or product decision
   - reviewer commits each accepted checkpoint before the next checkpoint begins
-  - preserve surface widening for surface_admission_design and later checkpoints
+  - do not plan performance benchmarking until the accepted text-feature matrix is implemented
 
 terminal_font_resize_lifecycle_admission:
-  status: implemented_uncommitted_review
+  status: committed_baseline_reopened_by_pane_local_policy
+  commit: 0d8771b
   fixed_storage:
     pending_topology_bytes: 20488
     runtime_admission_copy_bytes: 3352
@@ -868,7 +876,7 @@ terminal_font_resize_lifecycle_admission:
     - terminal application input continues to the accepted focused pane
     - topology actions fold prospectively; a second uncommitted creation preserves the first pending split
     - compositor resize coalesces independently
-    - newest font request coalesces while admission keeps the accepted FontMap stable
+    - the committed Host-wide font request is provisional and must not become authority for pane-local font ownership
   evidence:
     - initial create, resize, same-grid pixel resize, tiny clamp, zero extent, and over-admission
     - runtime-validation cancellation, stale result, monotonic revision and SourceId non-reuse
@@ -879,6 +887,26 @@ terminal_font_resize_lifecycle_admission:
     - audit, protocol, duplicate-key YAML, pinned formatting, and diff checks pass
     - initial admission observes both shared stop and terminal result wakes, so compositor closure cannot strand Renderer before Main joins owners
     - queued font work is consumed after the final admitted lifecycle operation; one-operation, nine-operation, rejection, and cancellation paths need no unrelated wake
+
+terminal_font_research:
+  status: active_evidence_only
+  product_source_changes: prohibited
+  ignored_root: .zig/work/terminal-font-research
+  accepted_direction:
+    terminal_base: one Host terminal base configuration, independent of the Window thread and Chrome font state
+    pane_state: one retained signed size mutation per terminal pane
+    new_pane: zero mutation at the current base
+    hidden_pane: retains its mutation
+    chrome: independent font state and cache ownership
+    focused_action: changes only the focused terminal pane
+    base_action: preserves every pane mutation and coherently changes all effective terminal sizes
+    cache: immutable equal-key sharing with eager zero-user retirement after copied-update and GPU-release safety
+    presentation: last complete pane visual remains visible until its coherent replacement is ready
+  research_gate:
+    - no global mutable singleton or generic cache framework
+    - no product API proposal before the Kitty and Howl ownership maps plus memory equations are complete
+    - no benchmark plan or benchmark-only path
+    - every ligature, fallback, Nerd Font, generated-glyph, DPI, scale, cursor, selection, and color-font product choice returns to the operator
 
 terminal_pool_storage:
   status: accepted

@@ -56,25 +56,25 @@ fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
     };
 }
 
-fn commandHasResource(command: canvas.Command, source: canvas.SourceId, local: canvas.LocalResourceId, generation: canvas.ResourceGeneration) bool {
+fn commandHasResource(command: canvas.Command, source: canvas.SourceId, local: canvas.ResourceId, generation: canvas.ResourceGeneration) bool {
     return switch (command) {
         .solid => false,
-        .alpha_mask => |value| value.resource.resource.key.source == source and
-            value.resource.resource.key.resource == local and
+        .alpha_mask => |value| value.resource.resource.source == source and
+            value.resource.resource.resource == local and
             value.resource.resource.generation == generation,
-        .rgba => |value| value.resource.resource.key.source == source and
-            value.resource.resource.key.resource == local and
+        .rgba => |value| value.resource.resource.source == source and
+            value.resource.resource.resource == local and
             value.resource.resource.generation == generation,
     };
 }
 
 fn frameHasUpload(frame: canvas.Composer.Frame, resource: canvas.FrameResourceRef) bool {
     for (frame.uploads) |upload| if (std.meta.eql(upload.resource, resource)) return true;
-    for (frame.commands) |command| if (commandHasResource(command, resource.key.source, resource.key.resource, resource.generation)) return true;
+    for (frame.commands) |command| if (commandHasResource(command, resource.source, resource.resource, resource.generation)) return true;
     return false;
 }
 
-fn frameHasCommandResource(frame: canvas.Composer.Frame, source: canvas.SourceId, local: canvas.LocalResourceRef) bool {
+fn frameHasCommandResource(frame: canvas.Composer.Frame, source: canvas.SourceId, local: canvas.ResourceRef) bool {
     for (frame.commands) |command| if (commandHasResource(command, source, local.resource, local.generation)) return true;
     return false;
 }
@@ -87,7 +87,7 @@ fn uploadCount(frame: canvas.Composer.Frame, resource: canvas.FrameResourceRef) 
     return count;
 }
 
-fn updateCommandHasResource(update: canvas.ProducerUpdate, local: canvas.LocalResourceRef) bool {
+fn updateCommandHasResource(update: canvas.ProducerUpdate, local: canvas.ResourceRef) bool {
     for (update.commands) |command| switch (command) {
         .solid => {},
         .alpha_mask => |value| if (std.meta.eql(value.resource.resource, local)) return true,
@@ -96,7 +96,7 @@ fn updateCommandHasResource(update: canvas.ProducerUpdate, local: canvas.LocalRe
     return false;
 }
 
-fn updateHasResource(update: canvas.ProducerUpdate, local: canvas.LocalResourceRef) bool {
+fn updateHasResource(update: canvas.ProducerUpdate, local: canvas.ResourceRef) bool {
     for (update.uploads) |upload| if (std.meta.eql(upload.resource, local)) return true;
     return updateCommandHasResource(update, local);
 }
@@ -232,9 +232,9 @@ test "capable root composes terminal and chrome producer updates" {
     var terminal_qualified = false;
     var chrome_qualified = false;
     for (frame.uploads) |upload| {
-        if (upload.resource.key.source == terminal_source)
+        if (upload.resource.source == terminal_source)
             terminal_qualified = true;
-        if (upload.resource.key.source == chrome_source)
+        if (upload.resource.source == chrome_source)
             chrome_qualified = true;
     }
     try std.testing.expect(terminal_qualified and chrome_qualified);
@@ -243,17 +243,17 @@ test "capable root composes terminal and chrome producer updates" {
     for (frame.commands) |command| switch (command) {
         .solid => {},
         .alpha_mask => |value| {
-            if (value.resource.resource.key.source == chrome_source)
+            if (value.resource.resource.source == chrome_source)
                 saw_chrome_command = true;
             if (saw_chrome_command and
-                value.resource.resource.key.source == terminal_source)
+                value.resource.resource.source == terminal_source)
                 saw_terminal_after_chrome = true;
         },
         .rgba => |value| {
-            if (value.resource.resource.key.source == chrome_source)
+            if (value.resource.resource.source == chrome_source)
                 saw_chrome_command = true;
             if (saw_chrome_command and
-                value.resource.resource.key.source == terminal_source)
+                value.resource.resource.source == terminal_source)
                 saw_terminal_after_chrome = true;
         },
     };
@@ -335,10 +335,10 @@ test "capable root composes terminal and chrome producer updates" {
     );
     for (hidden_update.uploads) |upload| {
         if (!updateCommandHasResource(hidden_update, upload.resource)) continue;
-        const qualified = canvas.FrameResourceRef{
-            .key = .{ .source = chrome_source, .resource = upload.resource.resource },
-            .generation = upload.resource.generation,
-        };
+        const qualified = try canvas.FrameResourceRef.local(
+            chrome_source,
+            upload.resource,
+        );
         if (!frameHasCommandResource(revealed_newest, chrome_source, upload.resource)) continue;
         try std.testing.expect(frameHasUpload(revealed_newest, qualified));
     }
@@ -355,14 +355,17 @@ test "capable root composes terminal and chrome producer updates" {
     try std.testing.expect(matched_newest_resources > 0);
     for (revealed_newest.commands) |command| switch (command) {
         .solid => {},
-        .alpha_mask => |value| if (value.resource.resource.key.source == chrome_source)
-            try std.testing.expect(updateHasResource(hidden_update, .{ .resource = value.resource.resource.key.resource, .generation = value.resource.resource.generation })),
-        .rgba => |value| if (value.resource.resource.key.source == chrome_source)
-            try std.testing.expect(updateHasResource(hidden_update, .{ .resource = value.resource.resource.key.resource, .generation = value.resource.resource.generation })),
+        .alpha_mask => |value| if (value.resource.resource.source == chrome_source)
+            try std.testing.expect(updateHasResource(hidden_update, .{ .resource = value.resource.resource.resource, .generation = value.resource.resource.generation })),
+        .rgba => |value| if (value.resource.resource.source == chrome_source)
+            try std.testing.expect(updateHasResource(hidden_update, .{ .resource = value.resource.resource.resource, .generation = value.resource.resource.generation })),
     };
     for (chrome_update.uploads) |upload| {
         if (!updateCommandHasResource(hidden_update, upload.resource))
-            try std.testing.expect(!frameHasUpload(revealed_newest, .{ .key = .{ .source = chrome_source, .resource = upload.resource.resource }, .generation = upload.resource.generation }));
+            try std.testing.expect(!frameHasUpload(
+                revealed_newest,
+                try canvas.FrameResourceRef.local(chrome_source, upload.resource),
+            ));
     }
 
     // Supplying only one currently resident resource exercises partial
@@ -511,14 +514,14 @@ test "shared FontMap owners invalidate independently without identity reuse" {
     try std.testing.expect(first_update.uploads.len > 0 and second_update.uploads.len > 0);
     try std.testing.expectEqual(@as(usize, 0), first_update.removals.len);
     try std.testing.expectEqual(@as(usize, 0), second_update.removals.len);
-    var first_old: [16]canvas.LocalResourceRef = undefined;
-    var second_old: [16]canvas.LocalResourceRef = undefined;
+    var first_old: [16]canvas.ResourceRef = undefined;
+    var second_old: [16]canvas.ResourceRef = undefined;
     var first_old_alpha: [16]canvas.ResourceUpload = undefined;
     var second_old_alpha: [16]canvas.ResourceUpload = undefined;
     var first_old_count: usize = 0;
     var second_old_count: usize = 0;
-    var first_image: ?canvas.LocalResourceRef = null;
-    var second_image: ?canvas.LocalResourceRef = null;
+    var first_image: ?canvas.ResourceRef = null;
+    var second_image: ?canvas.ResourceRef = null;
     for (first_update.uploads) |upload| {
         if (upload.format == .rgba8) first_image = upload.resource else {
             first_old[first_old_count] = upload.resource;
