@@ -24,11 +24,23 @@ fn contentLimits() terminal.Content.Limits {
         .glyphs = 32,
         .masks = 16,
         .commands = 64,
-        .resources_per_update = 32,
+        .resources_per_update = 56,
         .upload_bytes = 8192,
         .raster_bytes = 8192,
         .decoration_bytes = 1024,
     };
+}
+
+test "Content rejects removal capacity below glyph mask image retirement floor" {
+    var limits = contentLimits();
+    limits.resources_per_update -= 1;
+    if (comptime selected.native_text) {
+        var map = try initMap();
+        defer map.deinit();
+        try std.testing.expectError(error.InvalidLimits, terminal.Content.init(std.testing.allocator, limits, &map));
+    } else {
+        try std.testing.expectError(error.InvalidLimits, terminal.Content.init(std.testing.allocator, limits, {}));
+    }
 }
 
 test "terminal text public surface follows selected sources" {
@@ -1488,6 +1500,57 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
         error.InvalidRaster,
         terminal_text.rasterizeGlyph(std.testing.allocator, &default_map, key),
     );
+}
+
+test "native FontMap replacement swaps all styles and leaves retired owner" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const old_configs = [_]terminal_text.FontConfig{
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
+    };
+    const new_configs = [_]terminal_text.FontConfig{
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
+    };
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &old_configs);
+    defer map.deinit();
+    const address = &map;
+    const old_metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    var replacement = try terminal_text.FontMap.init(std.testing.allocator, &new_configs);
+    defer replacement.deinit();
+    map.replaceWith(&replacement);
+    try std.testing.expectEqual(address, &map);
+    try std.testing.expect(map.cellMetrics(.{ .slot = 0, .style = .normal }).?.height_px > old_metrics.height_px);
+    try std.testing.expect(map.cellMetrics(.{ .slot = 0, .style = .bold }).?.height_px == map.cellMetrics(.{ .slot = 0, .style = .normal }).?.height_px);
+    try std.testing.expect(replacement.cellMetrics(.{ .slot = 0, .style = .normal }).?.height_px == old_metrics.height_px);
+}
+
+test "failed replacement construction preserves the accepted FontMap" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const config = terminal_text.FontConfig{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+    };
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &.{config});
+    defer map.deinit();
+    const before = map.cellMetrics(config.key).?;
+    try std.testing.expectError(
+        error.OutOfMemory,
+        terminal_text.FontMap.init(std.testing.failing_allocator, &.{config}),
+    );
+    try std.testing.expectEqual(before, map.cellMetrics(config.key).?);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{cell('A')};
+    const run = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    try std.testing.expect(run.glyphs == .native);
+    var raster = try rasterize(&map, std.testing.allocator, run.glyphs.native[0].key);
+    defer raster.deinit();
+    try std.testing.expect(raster.width != 0 and raster.height != 0);
 }
 
 test "terminal cell span bounds oversized native raster" {

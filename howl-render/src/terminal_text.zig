@@ -227,6 +227,14 @@ pub const FontMap = if (features.native_text) struct {
         self.* = undefined;
     }
 
+    /// Swaps complete map values without allocation; `replacement` owns the
+    /// retired map and later uses ordinary `deinit`. The caller must first
+    /// quiesce every synchronous shaping and raster borrow from both maps;
+    /// neither map may be borrowed during this swap.
+    pub fn replaceWith(self: *@This(), replacement: *@This()) void {
+        std.mem.swap(@This(), self, replacement);
+    }
+
     /// Returns ordinary cell metrics for one exact configured font key.
     pub fn cellMetrics(self: *@This(), key: FontKey) ?CellMetrics {
         const set = self.get(key) orelse return null;

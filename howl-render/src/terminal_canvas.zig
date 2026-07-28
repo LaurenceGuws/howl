@@ -446,6 +446,32 @@ pub const Content = struct {
         self.* = undefined;
     }
 
+    /// Retires committed glyph and decoration resources without allocation.
+    /// Projection, geometry, cursor, selections, images, producer revision,
+    /// and identity high-water marks remain unchanged. The next update builds
+    /// fresh raster resources; repeated calls are deterministic and silent.
+    pub fn invalidateFonts(self: *Content) void {
+        var removals = self.pending_removal_count;
+        for (self.masks[0..self.mask_count]) |entry| {
+            std.debug.assert(removals < self.pending_removals.len);
+            self.pending_removals[removals] = .{ .resource = entry.resource };
+            removals += 1;
+        }
+        for (self.glyphs[0..self.glyph_count]) |entry| {
+            const resource = entry.resource orelse continue;
+            std.debug.assert(removals < self.pending_removals.len);
+            self.pending_removals[removals] = .{ .resource = resource };
+            removals += 1;
+        }
+        self.pending_removal_count = removals;
+        self.glyph_count = 0;
+        self.glyph_candidate_count = 0;
+        self.mask_count = 0;
+        self.mask_candidate_count = 0;
+        self.mask_pixel_count = 0;
+        self.mask_candidate_pixel_count = 0;
+    }
+
     /// Replaces incompatible or explicitly recovered terminal and image state.
     ///
     /// Recovery may retain an unchanged image generation when it carries no
@@ -708,8 +734,8 @@ pub const Content = struct {
         try build.decorations();
         try build.cursor();
         try build.imagesFor(true);
-        const glyph_changed = try self.appendRetiredGlyphs();
         const mask_changed = try self.appendRetiredMasks();
+        const glyph_changed = try self.appendRetiredGlyphs();
         if (build.input_used > work.canvas_inputs.len) return error.CommandLimit;
         for (build.buffers.inputs[0..build.input_used], 0..) |draw, index|
             work.canvas_inputs[index] = drawInput(draw);
@@ -1748,12 +1774,17 @@ const Build = struct {
 };
 
 fn validateLimits(limits: Content.Limits) Content.InitError!void {
+    const glyph_mask_count = std.math.add(usize, limits.glyphs, limits.masks) catch
+        return error.InvalidLimits;
+    const required_removals = std.math.add(usize, glyph_mask_count, limits.images) catch
+        return error.InvalidLimits;
     if (limits.cells == 0 or limits.rows == 0 or limits.images == 0 or
         limits.placements == 0 or limits.image_bytes == 0 or
         limits.glyphs == 0 or limits.masks == 0 or limits.commands == 0 or
         limits.resources_per_update == 0 or limits.upload_bytes == 0 or
         limits.raster_bytes == 0 or
         limits.decoration_bytes == 0 or
+        limits.resources_per_update < required_removals or
         limits.rows > std.math.maxInt(u16) or
         limits.placements > std.math.maxInt(u16) or
         limits.commands > std.math.maxInt(u16))

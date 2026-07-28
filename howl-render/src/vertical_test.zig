@@ -5,6 +5,7 @@ const render = @import("howl_render");
 const fonts = @import("test_fonts");
 
 const terminal = render.terminal;
+const terminal_images = render.terminal_images;
 const chrome = render.chrome;
 const canvas = render.canvas;
 
@@ -18,7 +19,7 @@ fn terminalLimits() terminal.Content.Limits {
         .glyphs = 16,
         .masks = 8,
         .commands = 32,
-        .resources_per_update = 16,
+        .resources_per_update = 26,
         .upload_bytes = 4096,
         .raster_bytes = 4096,
         .decoration_bytes = 512,
@@ -43,6 +44,15 @@ fn fontConfig() render.terminal_text.FontConfig {
     return .{
         .key = .{ .slot = 0, .style = .normal },
         .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+    };
+}
+
+fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
+    return .{
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
     };
 }
 
@@ -412,4 +422,244 @@ test "capable root composes terminal and chrome producer updates" {
     try std.testing.expectEqualSlices(canvas.Command, full_commands, recovered_full.commands);
     try std.testing.expectEqualSlices(u8, full_pixels, recovered_full.pixels);
     try std.testing.expectEqual(@as(usize, 0), recovered_full.removals.len);
+}
+
+test "shared FontMap owners invalidate independently without identity reuse" {
+    const old_configs = fontConfigs(16);
+    const new_configs = fontConfigs(24);
+    var map = try render.terminal_text.FontMap.init(std.testing.allocator, &old_configs);
+    defer map.deinit();
+    var replacement = try render.terminal_text.FontMap.init(std.testing.allocator, &new_configs);
+    defer replacement.deinit();
+    var first = try terminal.Content.init(std.testing.allocator, terminalLimits(), &map);
+    defer first.deinit();
+    var second = try terminal.Content.init(std.testing.allocator, terminalLimits(), &map);
+    defer second.deinit();
+    var first_work = try terminal.Content.Work.init(std.testing.allocator, first.limits);
+    defer first_work.deinit();
+    var second_work = try terminal.Content.Work.init(std.testing.allocator, second.limits);
+    defer second_work.deinit();
+    const cells = [_]terminal.Cell{.{
+        .codepoint = 'A',
+        .combining_len = 0,
+        .combining = @splat(0),
+        .foreground = .{ .r = 240, .g = 240, .b = 240 },
+        .background = .{ .r = 12, .g = 14, .b = 18 },
+        .underline_color = .{ .r = 240, .g = 240, .b = 240 },
+        .font = 0,
+        .baseline = .normal,
+        .bold = false,
+        .dim = false,
+        .italic = false,
+        .blink = false,
+        .blink_fast = false,
+        .invisible = false,
+        .underline = true,
+        .strikethrough = false,
+        .underline_style = .curly,
+        .selected = false,
+        .link_id = 0,
+    }};
+    const baseline = terminal.ProjectionBaseline{
+        .rows = 1,
+        .cols = 1,
+        .cells = &cells,
+        .geometry = &.{.single_width},
+        .cursor = .{ .row = 0, .col = 0, .visible = false, .shape = .none, .blink = false, .color = .{ .r = 0, .g = 0, .b = 0 }, .text_color = .{ .r = 0, .g = 0, .b = 0 } },
+    };
+    const image_pixels = [_]u8{ 1, 2, 3, 255 };
+    const image_upload = [_]terminal_images.ImageUpload{.{
+        .identity = .{ .id = 7, .generation = 1 },
+        .width = 1,
+        .height = 1,
+        .pixel_offset = 0,
+        .pixel_count = 4,
+    }};
+    const image_placement = [_]terminal_images.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 1,
+        .row = 0,
+        .col = 0,
+        .pixel_width = 1,
+        .pixel_height = 1,
+        .z = -1,
+    }};
+    const image_update = terminal_images.Update{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &image_pixels,
+        .uploads = &image_upload,
+        .removals = &.{},
+        .placements = &image_placement,
+    };
+    try first.recover(baseline, image_update);
+    try second.recover(baseline, image_update);
+    const geometry = terminal.Content.Geometry{
+        .x = 0,
+        .y = 0,
+        .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },
+        .metrics = .{ .width_px = 8, .height_px = 16, .baseline_px = 12 },
+        .underline_y = 14,
+        .underline_height = 1,
+        .strike_y = 8,
+        .strike_height = 1,
+    };
+    first.invalidateFonts();
+    second.invalidateFonts();
+    const first_update = try first.takeUpdate(&first_work, geometry);
+    const second_update = try second.takeUpdate(&second_work, geometry);
+    try std.testing.expect(first_update.uploads.len > 0 and second_update.uploads.len > 0);
+    try std.testing.expectEqual(@as(usize, 0), first_update.removals.len);
+    try std.testing.expectEqual(@as(usize, 0), second_update.removals.len);
+    var first_old: [16]canvas.LocalResourceRef = undefined;
+    var second_old: [16]canvas.LocalResourceRef = undefined;
+    var first_old_alpha: [16]canvas.ResourceUpload = undefined;
+    var second_old_alpha: [16]canvas.ResourceUpload = undefined;
+    var first_old_count: usize = 0;
+    var second_old_count: usize = 0;
+    var first_image: ?canvas.LocalResourceRef = null;
+    var second_image: ?canvas.LocalResourceRef = null;
+    for (first_update.uploads) |upload| {
+        if (upload.format == .rgba8) first_image = upload.resource else {
+            first_old[first_old_count] = upload.resource;
+            first_old_alpha[first_old_count] = upload;
+            first_old_count += 1;
+        }
+    }
+    for (second_update.uploads) |upload| {
+        if (upload.format == .rgba8) second_image = upload.resource else {
+            second_old[second_old_count] = upload.resource;
+            second_old_alpha[second_old_count] = upload;
+            second_old_count += 1;
+        }
+    }
+    try std.testing.expect(first_image != null and second_image != null);
+    const first_revision = first_update.revision;
+    map.replaceWith(&replacement);
+    const new_metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    const new_decoration = map.decorationMetrics(.{ .slot = 0, .style = .normal }).?;
+    try std.testing.expect(new_metrics.height_px > 16);
+    first.invalidateFonts();
+    first.invalidateFonts();
+    second.invalidateFonts();
+    second.invalidateFonts();
+    try std.testing.expectEqual(first_revision, first_update.revision);
+    const new_geometry = terminal.Content.Geometry{
+        .x = 0,
+        .y = 0,
+        .clip = .{ .x = 0, .y = 0, .width = 48, .height = 32 },
+        .metrics = new_metrics,
+        .underline_y = new_decoration.underline_y,
+        .underline_height = new_decoration.underline_height,
+        .strike_y = new_decoration.strike_y,
+        .strike_height = new_decoration.strike_height,
+    };
+    const first_rebuilt = try first.takeUpdate(&first_work, new_geometry);
+    const second_rebuilt = try second.takeUpdate(&second_work, new_geometry);
+    try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(first_rebuilt.revision)));
+    try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(second_rebuilt.revision)));
+    try std.testing.expect(first_rebuilt.removals.len > 0 and second_rebuilt.removals.len > 0);
+    try std.testing.expectEqual(first_old_count, first_rebuilt.removals.len);
+    try std.testing.expectEqual(second_old_count, second_rebuilt.removals.len);
+    for (first_old[0..first_old_count]) |old| {
+        var count: usize = 0;
+        for (first_rebuilt.removals) |removal| {
+            if (std.meta.eql(old, removal.resource)) count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 1), count);
+    }
+    for (second_old[0..second_old_count]) |old| {
+        var count: usize = 0;
+        for (second_rebuilt.removals) |removal| {
+            if (std.meta.eql(old, removal.resource)) count += 1;
+        }
+        try std.testing.expectEqual(@as(usize, 1), count);
+    }
+    for (first_rebuilt.removals) |removal| try std.testing.expect(!std.meta.eql(removal.resource, first_image.?));
+    for (second_rebuilt.removals) |removal| try std.testing.expect(!std.meta.eql(removal.resource, second_image.?));
+    try std.testing.expect(first_rebuilt.uploads.len > 0 and second_rebuilt.uploads.len > 0);
+    var first_old_max: u64 = 0;
+    for (first_old[0..first_old_count]) |old| first_old_max = @max(first_old_max, @as(u64, @backingInt(old.resource)));
+    var second_old_max: u64 = 0;
+    for (second_old[0..second_old_count]) |old| second_old_max = @max(second_old_max, @as(u64, @backingInt(old.resource)));
+    var first_mask_old: usize = 0;
+    var second_mask_old: usize = 0;
+    var first_old_glyph: ?canvas.ResourceUpload = null;
+    var second_old_glyph: ?canvas.ResourceUpload = null;
+    var first_old_mask: ?canvas.ResourceUpload = null;
+    var second_old_mask: ?canvas.ResourceUpload = null;
+    for (first_old_alpha[0..first_old_count]) |upload| {
+        if (upload.pixels.height <= 4) {
+            first_mask_old += 1;
+            first_old_mask = upload;
+        } else first_old_glyph = upload;
+    }
+    for (second_old_alpha[0..second_old_count]) |upload| {
+        if (upload.pixels.height <= 4) {
+            second_mask_old += 1;
+            second_old_mask = upload;
+        } else second_old_glyph = upload;
+    }
+    try std.testing.expectEqual(@as(usize, 2), first_old_count);
+    try std.testing.expectEqual(@as(usize, 2), second_old_count);
+    try std.testing.expectEqual(@as(usize, 1), first_mask_old);
+    try std.testing.expectEqual(@as(usize, 1), second_mask_old);
+    try std.testing.expect(first_old_glyph != null and first_old_mask != null);
+    try std.testing.expect(second_old_glyph != null and second_old_mask != null);
+    var first_mask_new: usize = 0;
+    var second_mask_new: usize = 0;
+    var first_new_glyph: ?canvas.ResourceUpload = null;
+    var second_new_glyph: ?canvas.ResourceUpload = null;
+    var first_new_mask: ?canvas.ResourceUpload = null;
+    var second_new_mask: ?canvas.ResourceUpload = null;
+    for (first_rebuilt.uploads) |upload| {
+        try std.testing.expect(upload.format == .alpha8);
+        try std.testing.expect(@as(u64, @backingInt(upload.resource.resource)) > first_old_max);
+        if (upload.pixels.height <= 4) {
+            first_mask_new += 1;
+            first_new_mask = upload;
+        } else first_new_glyph = upload;
+    }
+    for (second_rebuilt.uploads) |upload| {
+        try std.testing.expect(upload.format == .alpha8);
+        try std.testing.expect(@as(u64, @backingInt(upload.resource.resource)) > second_old_max);
+        if (upload.pixels.height <= 4) {
+            second_mask_new += 1;
+            second_new_mask = upload;
+        } else second_new_glyph = upload;
+    }
+    try std.testing.expectEqual(@as(usize, 2), first_rebuilt.uploads.len);
+    try std.testing.expectEqual(@as(usize, 2), second_rebuilt.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), first_mask_new);
+    try std.testing.expectEqual(@as(usize, 1), second_mask_new);
+    try std.testing.expect(first_new_glyph != null and first_new_mask != null);
+    try std.testing.expect(second_new_glyph != null and second_new_mask != null);
+    try std.testing.expect(
+        first_old_glyph.?.pixels.width != first_new_glyph.?.pixels.width or
+            first_old_glyph.?.pixels.height != first_new_glyph.?.pixels.height,
+    );
+    try std.testing.expect(
+        first_old_mask.?.pixels.width != first_new_mask.?.pixels.width or
+            first_old_mask.?.pixels.height != first_new_mask.?.pixels.height,
+    );
+    try std.testing.expect(
+        second_old_glyph.?.pixels.width != second_new_glyph.?.pixels.width or
+            second_old_glyph.?.pixels.height != second_new_glyph.?.pixels.height,
+    );
+    try std.testing.expect(
+        second_old_mask.?.pixels.width != second_new_mask.?.pixels.width or
+            second_old_mask.?.pixels.height != second_new_mask.?.pixels.height,
+    );
+    try std.testing.expect(updateCommandHasResource(first_rebuilt, first_image.?));
+    try std.testing.expect(updateCommandHasResource(second_rebuilt, second_image.?));
+    const second_revision = first_rebuilt.revision;
+    first.invalidateFonts();
+    const repeated = try first.takeUpdate(&first_work, new_geometry);
+    try std.testing.expect(repeated.removals.len > 0);
+    try std.testing.expect(@as(u64, @backingInt(repeated.removals[0].resource.resource)) != @as(u64, @backingInt(first_old[0].resource)));
+    try std.testing.expectEqual(@as(u64, @backingInt(second_revision)) + 1, @as(u64, @backingInt(repeated.revision)));
+    const second_unchanged = try second.takeUpdate(&second_work, new_geometry);
+    try std.testing.expectEqual(second_rebuilt.revision, second_unchanged.revision);
+    try std.testing.expectEqual(@as(usize, 0), second_unchanged.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), second_unchanged.removals.len);
 }
