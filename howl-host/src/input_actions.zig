@@ -30,6 +30,9 @@ pub const Action = enum {
     focus_right,
     focus_up,
     focus_down,
+    font_increase,
+    font_decrease,
+    font_reset,
 };
 
 /// Exact key-capture admission failure.
@@ -96,6 +99,7 @@ pub const State = struct {
 pub fn candidate(current: *const chrome_state.Topology, action: Action) chrome_state.Error!?chrome_state.Topology {
     var next = current.*;
     switch (action) {
+        .font_increase, .font_decrease, .font_reset => return null,
         .new_tab => {
             const created = try next.createTab("tab");
             if (@backingInt(created) == 0) return error.InvalidId;
@@ -205,6 +209,9 @@ fn binding(symbol: wayland.input.Keysym, modifiers: wayland.input.SemanticModifi
         .right => .next_tab,
         .comma, .less => .reorder_left,
         .period, .greater => .reorder_right,
+        @fromBackingInt(@intCast(0x2b)), @fromBackingInt(@intCast(0x3d)) => .font_increase,
+        @fromBackingInt(@intCast(0x2d)), @fromBackingInt(@intCast(0x5f)) => .font_decrease,
+        @fromBackingInt(@intCast(0x30)) => .font_reset,
         else => null,
     };
     if (modifiers.control and modifiers.alt and !modifiers.shift) return switch (symbol) {
@@ -267,6 +274,11 @@ test "exact bindings ignore locks and reject every extra non-lock modifier" {
         .{ .symbol = .right, .modifiers = shift_alt, .action = .focus_right },
         .{ .symbol = .up, .modifiers = shift_alt, .action = .focus_up },
         .{ .symbol = .down, .modifiers = shift_alt, .action = .focus_down },
+        .{ .symbol = @fromBackingInt(@intCast(0x2b)), .modifiers = control_shift, .action = .font_increase },
+        .{ .symbol = @fromBackingInt(@intCast(0x2d)), .modifiers = control_shift, .action = .font_decrease },
+        .{ .symbol = @fromBackingInt(@intCast(0x3d)), .modifiers = control_shift, .action = .font_increase },
+        .{ .symbol = @fromBackingInt(@intCast(0x5f)), .modifiers = control_shift, .action = .font_decrease },
+        .{ .symbol = @fromBackingInt(@intCast(0x30)), .modifiers = control_shift, .action = .font_reset },
     };
     for (cases, 0..) |case, index| {
         var state = State{};

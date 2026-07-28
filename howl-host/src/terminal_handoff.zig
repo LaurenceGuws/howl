@@ -34,6 +34,40 @@ pub const VisibleSetRequest = struct {
     count: u8,
 };
 
+/// Copies one latest global terminal-font request for runtime coalescing.
+pub const FontRequest = struct {
+    /// Identifies this request in strict publication order.
+    revision: u64,
+    /// Selects the bounded terminal content pixel height.
+    pixel_height: u16,
+};
+
+/// Identifies one never-reused lifecycle admission candidate.
+pub const LifecycleRevision = enum(u64) {
+    _,
+};
+
+/// Copies one runtime-derived terminal grid for an exact pane.
+pub const DerivedGrid = struct {
+    /// Identifies the pane whose pixel extent produced this grid.
+    pane: PaneId,
+    /// Records the checked terminal row count.
+    rows: u16,
+    /// Records the checked terminal column count.
+    columns: u16,
+};
+
+/// Classifies an exact runtime admission rejection without mutation.
+pub const AdmissionRejection = enum {
+    invalid_pane,
+    unknown_pane,
+    duplicate_pane,
+    invalid_extent,
+    font_capacity,
+    terminal_capacity,
+    stopping,
+};
+
 /// Reports whether an exact visible-set candidate may commit composition.
 pub const VisibleSetStatus = enum {
     pending,
@@ -335,10 +369,10 @@ fn requiredBytes(
 
 /// Copies one terminal-owner lifecycle mutation without visual vocabulary.
 pub const Lifecycle = union(enum) {
-    /// Constructs one logical terminal after exact slot and source admission.
-    create: struct { pane: PaneId, cols: u16, rows: u16 },
-    /// Applies one coherent PTY/VT geometry transaction.
-    resize: struct { pane: PaneId, cols: u16, rows: u16 },
+    /// Constructs one logical terminal from exact Renderer-owned pane pixels.
+    create: struct { pane: PaneId, pixels: canvas.Size },
+    /// Applies one coherent pane-pixel and PTY/VT geometry transaction.
+    resize: struct { pane: PaneId, pixels: canvas.Size },
     /// Retires one logical terminal in reverse ownership order.
     close: PaneId,
 };
@@ -367,6 +401,44 @@ pub const Registration = struct {
     source: canvas.SourceId,
 };
 
+/// Owns one complete copied lifecycle request during a runtime validation turn.
+///
+/// No field borrows Boundary or Renderer storage. The value is bounded by the
+/// existing lifecycle candidate limits and may remain valid after cancellation.
+pub const RuntimeAdmissionCopy = struct {
+    /// Identifies the exact candidate that supplied the copied bytes.
+    revision: LifecycleRevision,
+    /// Copies every candidate lifecycle operation in caller order.
+    operations: [lifecycle_batch_limit]Lifecycle = undefined,
+    /// Bounds the initialized operation prefix.
+    operation_count: u8,
+    /// Copies every candidate terminal input in caller order.
+    inputs: [2]TerminalInput = undefined,
+    /// Bounds the initialized input prefix.
+    input_count: u8,
+    /// Copies the sole optional registration identity.
+    registration: ?Registration,
+};
+
+/// Copies the exact result for one lifecycle admission revision.
+pub const LifecycleAdmissionResult = union(enum) {
+    /// Retains every checked grid in lifecycle-operation order.
+    admitted: struct {
+        grids: [lifecycle_batch_limit]DerivedGrid = undefined,
+        count: u8,
+    },
+    /// Reports one finite rejection without producer mutation.
+    rejected: AdmissionRejection,
+};
+
+/// Couples one committed lifecycle operation to its admitted grid sidecar.
+pub const AdmittedLifecycle = struct {
+    /// Retains the original pixel-authority lifecycle fact.
+    operation: Lifecycle,
+    /// Exists only for create and resize operations.
+    grid: ?DerivedGrid,
+};
+
 const EntryState = enum {
     registered,
     live,
@@ -380,6 +452,7 @@ const Entry = struct {
     source: canvas.SourceId,
     descriptor_index: u8,
     ready: ?pool_storage.Token = null,
+    draining: bool = false,
     accepted_revision: canvas.ProducerRevision = @fromBackingInt(0),
     retry_wake_issued: bool = false,
     pool_active: bool = false,
@@ -391,6 +464,14 @@ const VisiblePhase = enum {
     requested,
     prepared,
     committing,
+};
+
+const LifecycleAdmissionPhase = enum {
+    none,
+    requested,
+    validating,
+    admitted,
+    rejected,
 };
 
 /// Associates one requested source with its actual extracted producer revision.
@@ -457,6 +538,18 @@ pub const Boundary = struct {
     input_count: u16 = 0,
     reserved_input_count: u16 = 0,
     lifecycle_candidate_active: bool = false,
+    lifecycle_revision_high_water: u64 = 0,
+    lifecycle_admission_phase: LifecycleAdmissionPhase = .none,
+    lifecycle_admission_revision: LifecycleRevision = @fromBackingInt(0),
+    lifecycle_admission_operations: [lifecycle_batch_limit]Lifecycle = undefined,
+    lifecycle_admission_operation_count: u8 = 0,
+    lifecycle_admission_inputs: [2]TerminalInput = undefined,
+    lifecycle_admission_input_count: u8 = 0,
+    lifecycle_admission_registration: ?Registration = null,
+    lifecycle_admission_result: LifecycleAdmissionResult = undefined,
+    operation_grids: [operation_limit]?DerivedGrid = @splat(null),
+    operation_font_stable: [operation_limit]bool = @splat(false),
+    font_stable_operations: u8 = 0,
     reserved_entry_index: ?u8 = null,
     terminal_fd: i32,
     renderer_fd: i32,
@@ -468,6 +561,8 @@ pub const Boundary = struct {
     visible_members: [visible_member_limit]VisibleMember = undefined,
     visible_member_count: u8 = 0,
     visible_initialized: bool = false,
+    font_request: ?FontRequest = null,
+    font_request_high_water: u64 = 0,
 
     /// Creates directional nonblocking eventfds without allocating pane storage.
     pub fn init(
@@ -519,19 +614,16 @@ pub const Boundary = struct {
         self: *Boundary,
         pane: PaneId,
         source: canvas.SourceId,
-        cols: u16,
-        rows: u16,
+        pixels: canvas.Size,
     ) (error{
         InvalidPane,
         DuplicatePane,
         OwnerLimit,
         OperationLimit,
     } || InitError)!void {
-        if (@backingInt(pane) == 0 or @backingInt(source) == 0 or cols == 0 or rows == 0)
+        if (@backingInt(pane) == 0 or @backingInt(source) == 0 or
+            pixels.width == 0 or pixels.height == 0)
             return error.InvalidPane;
-        const cells = std.math.mul(usize, cols, rows) catch
-            return error.InvalidPane;
-        if (cells > self.limits.cells) return error.InvalidPane;
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping) return error.OperationLimit;
@@ -539,7 +631,7 @@ pub const Boundary = struct {
         const index = self.freeUnreservedIndex() orelse return error.OwnerLimit;
         if (self.operation_count + self.reserved_operation_count == self.operations.len)
             return error.OperationLimit;
-        self.pushReservedLocked(.{ .create = .{ .pane = pane, .cols = cols, .rows = rows } });
+        self.pushReservedLocked(.{ .create = .{ .pane = pane, .pixels = pixels } });
         self.entries[index] = .{
             .pane = pane,
             .source = source,
@@ -549,33 +641,75 @@ pub const Boundary = struct {
         signal(self.terminal_fd);
     }
 
-    /// Owns one completely admitted lifecycle candidate until commit or discard.
+    /// Handles one Boundary-owned lifecycle candidate until commit or discard.
     ///
     /// Preparation allocates the sole possible new slot and reserves the fixed
-    /// lifecycle/input capacity without exposing any operation to the terminal
-    /// thread. `commit` is allocation-free but reports a concurrent monotonic
-    /// shutdown as `Stopping`. Deferred `deinit` safely discards an uncommitted
-    /// candidate and releases every reservation.
+    /// lifecycle/input capacity and fills the sole fixed Boundary candidate
+    /// bank without exposing any operation to the terminal thread.
+    /// `commitAdmitted` is allocation-free but reports concurrent monotonic
+    /// shutdown. Deferred `deinit` safely discards an uncommitted candidate and
+    /// releases every reservation.
     pub const PreparedLifecycle = struct {
         boundary: *Boundary,
-        operations: [lifecycle_batch_limit]Lifecycle = undefined,
         operation_count: usize,
-        inputs: [2]TerminalInput = undefined,
         input_count: usize,
-        registration: ?Registration,
+        revision: LifecycleRevision,
+        published: bool = false,
         committed: bool = false,
 
-        /// Publishes every prepared fact allocation-free, or reports shutdown.
-        pub fn commit(self: *PreparedLifecycle) error{Stopping}!void {
+        /// Publishes one immutable admission request and wakes the runtime.
+        pub fn publishAdmission(
+            self: *PreparedLifecycle,
+        ) error{ Stopping, StaleRevision }!LifecycleRevision {
+            if (self.committed or self.published) return error.StaleRevision;
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            defer boundary.mutex.unlock(boundary.io);
+            if (boundary.stopping) return error.Stopping;
+            if (!boundary.lifecycle_candidate_active or
+                boundary.lifecycle_admission_phase != .none)
+                return error.StaleRevision;
+            boundary.lifecycle_admission_revision = self.revision;
+            boundary.lifecycle_admission_phase = .requested;
+            self.published = true;
+            signal(boundary.terminal_fd);
+            return self.revision;
+        }
+
+        /// Copies the result for this exact candidate, if Runtime completed it.
+        pub fn admissionResult(
+            self: *PreparedLifecycle,
+        ) ?LifecycleAdmissionResult {
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            defer boundary.mutex.unlock(boundary.io);
+            if (!self.published or
+                boundary.lifecycle_admission_revision != self.revision)
+                return null;
+            return switch (boundary.lifecycle_admission_phase) {
+                .admitted, .rejected => boundary.lifecycle_admission_result,
+                else => null,
+            };
+        }
+
+        /// Publishes every admitted fact allocation-free, or reports shutdown.
+        pub fn commitAdmitted(
+            self: *PreparedLifecycle,
+        ) error{ Stopping, NotAdmitted, StaleRevision }!void {
             if (self.committed) @panic("terminal lifecycle candidate already completed");
             const boundary = self.boundary;
             boundary.mutex.lockUncancelable(boundary.io);
             defer boundary.mutex.unlock(boundary.io);
-            std.debug.assert(boundary.lifecycle_candidate_active);
             if (boundary.stopping) return error.Stopping;
+            if (!boundary.lifecycle_candidate_active or
+                boundary.lifecycle_admission_revision != self.revision)
+                return error.StaleRevision;
+            if (boundary.lifecycle_admission_phase != .admitted)
+                return error.NotAdmitted;
+            const admitted = boundary.lifecycle_admission_result.admitted;
             std.debug.assert(boundary.reserved_operation_count >= self.operation_count);
             std.debug.assert(boundary.reserved_input_count >= self.input_count);
-            if (self.registration) |registration| {
+            if (boundary.lifecycle_admission_registration) |registration| {
                 const index = boundary.reserved_entry_index orelse
                     @panic("prepared terminal owner reservation disappeared");
                 std.debug.assert(boundary.entries[index] == null);
@@ -588,7 +722,21 @@ pub const Boundary = struct {
             }
             boundary.reserved_operation_count -= @intCast(self.operation_count);
             boundary.reserved_input_count -= @intCast(self.input_count);
-            for (self.operations[0..self.operation_count]) |operation| {
+            var grid_index: usize = 0;
+            for (boundary.lifecycle_admission_operations[0..self.operation_count]) |operation| {
+                const grid: ?DerivedGrid = switch (operation) {
+                    .create, .resize => blk: {
+                        std.debug.assert(grid_index < admitted.count);
+                        const value = admitted.grids[grid_index];
+                        grid_index += 1;
+                        break :blk value;
+                    },
+                    .close => null,
+                };
+                const tail = (@as(usize, boundary.operation_head) +
+                    boundary.operation_count) % boundary.operations.len;
+                boundary.operation_grids[tail] = grid;
+                boundary.operation_font_stable[tail] = true;
                 boundary.pushReservedLocked(operation);
                 if (operation == .close) {
                     const index = boundary.find(operation.close) orelse
@@ -596,7 +744,9 @@ pub const Boundary = struct {
                     boundary.entries[index].?.state = .closing;
                 }
             }
-            for (self.inputs[0..self.input_count]) |input| {
+            std.debug.assert(grid_index == admitted.count);
+            boundary.font_stable_operations += @intCast(self.operation_count);
+            for (boundary.lifecycle_admission_inputs[0..self.input_count]) |input| {
                 const tail = (@as(usize, boundary.input_head) + boundary.input_count) %
                     boundary.inputs.len;
                 boundary.inputs[tail] = input;
@@ -604,6 +754,7 @@ pub const Boundary = struct {
             }
             boundary.reserved_entry_index = null;
             boundary.lifecycle_candidate_active = false;
+            boundary.clearLifecycleAdmissionLocked();
             self.committed = true;
             signal(boundary.terminal_fd);
         }
@@ -614,12 +765,15 @@ pub const Boundary = struct {
             const boundary = self.boundary;
             boundary.mutex.lockUncancelable(boundary.io);
             std.debug.assert(boundary.lifecycle_candidate_active);
+            if (boundary.lifecycle_admission_revision == self.revision)
+                boundary.clearLifecycleAdmissionLocked();
             boundary.reserved_operation_count -= @intCast(self.operation_count);
             boundary.reserved_input_count -= @intCast(self.input_count);
             boundary.reserved_entry_index = null;
             boundary.lifecycle_candidate_active = false;
             boundary.mutex.unlock(boundary.io);
             self.committed = true;
+            signal(boundary.terminal_fd);
         }
     };
 
@@ -637,6 +791,7 @@ pub const Boundary = struct {
         OperationLimit,
         CandidatePending,
         Stopping,
+        RevisionOverflow,
     } || InitError)!PreparedLifecycle {
         if (operations.len > lifecycle_batch_limit or inputs.len > 2)
             return error.OperationLimit;
@@ -659,18 +814,13 @@ pub const Boundary = struct {
         for (operations) |operation| switch (operation) {
             .create => |value| {
                 if (registration == null or registration.?.pane != value.pane or
-                    value.cols == 0 or value.rows == 0)
+                    value.pixels.width == 0 or value.pixels.height == 0)
                     return error.InvalidPane;
-                const cells = std.math.mul(usize, value.cols, value.rows) catch
-                    return error.InvalidPane;
-                if (cells > self.limits.cells) return error.InvalidPane;
             },
             .resize => |value| {
-                if (value.cols == 0 or value.rows == 0 or self.find(value.pane) == null)
-                    return error.UnknownPane;
-                const cells = std.math.mul(usize, value.cols, value.rows) catch
+                if (value.pixels.width == 0 or value.pixels.height == 0)
                     return error.InvalidPane;
-                if (cells > self.limits.cells) return error.InvalidPane;
+                if (self.find(value.pane) == null) return error.UnknownPane;
             },
             .close => |pane| if (self.find(pane) == null) return error.UnknownPane,
         };
@@ -682,14 +832,28 @@ pub const Boundary = struct {
             const registered_here = registration != null and registration.?.pane == pane;
             if (!registered_here and self.find(pane) == null) return error.UnknownPane;
         }
-        var prepared = PreparedLifecycle{
+        const revision = std.math.add(
+            u64,
+            self.lifecycle_revision_high_water,
+            1,
+        ) catch return error.RevisionOverflow;
+        const prepared = PreparedLifecycle{
             .boundary = self,
             .operation_count = operations.len,
             .input_count = inputs.len,
-            .registration = registration,
+            .revision = @fromBackingInt(revision),
         };
-        @memcpy(prepared.operations[0..operations.len], operations);
-        @memcpy(prepared.inputs[0..inputs.len], inputs);
+        @memcpy(
+            self.lifecycle_admission_operations[0..operations.len],
+            operations,
+        );
+        @memcpy(
+            self.lifecycle_admission_inputs[0..inputs.len],
+            inputs,
+        );
+        self.lifecycle_admission_operation_count = @intCast(operations.len);
+        self.lifecycle_admission_input_count = @intCast(inputs.len);
+        self.lifecycle_admission_registration = registration;
         self.reserved_operation_count += @intCast(operations.len);
         self.reserved_input_count += @intCast(inputs.len);
         self.reserved_entry_index = if (registration != null)
@@ -697,24 +861,61 @@ pub const Boundary = struct {
         else
             null;
         self.lifecycle_candidate_active = true;
+        self.lifecycle_revision_high_water = revision;
         return prepared;
+    }
+
+    /// Preflights replacement capacity after releasing the active candidate.
+    ///
+    /// Renderer is the sole lifecycle-candidate producer. The terminal thread
+    /// may only consume queued facts, so after this check fresh preparation can
+    /// lose admission solely to monotonic shutdown.
+    pub fn preflightLifecycleReplacement(
+        self: *Boundary,
+        operation_count: usize,
+        input_count: usize,
+        needs_registration: bool,
+    ) error{ Stopping, OwnerLimit, OperationLimit }!void {
+        if (operation_count > lifecycle_batch_limit or input_count > 2)
+            return error.OperationLimit;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        if (!self.lifecycle_candidate_active) {
+            if (operation_count >
+                self.operations.len - self.operation_count -
+                    self.reserved_operation_count or
+                input_count >
+                    self.inputs.len - self.input_count -
+                        self.reserved_input_count)
+                return error.OperationLimit;
+            if (needs_registration and self.freeUnreservedIndex() == null)
+                return error.OwnerLimit;
+            return;
+        }
+        std.debug.assert(
+            self.reserved_operation_count <= self.operations.len,
+        );
+        std.debug.assert(self.reserved_input_count <= self.inputs.len);
+        if (operation_count > self.operations.len - self.operation_count or
+            input_count > self.inputs.len - self.input_count)
+            return error.OperationLimit;
+        if (needs_registration and self.reserved_entry_index == null and
+            self.freeUnreservedIndex() == null)
+            return error.OwnerLimit;
     }
 
     /// Queues one exact nonzero pane geometry in caller order.
     pub fn resize(
         self: *Boundary,
         pane: PaneId,
-        cols: u16,
-        rows: u16,
+        pixels: canvas.Size,
     ) error{ InvalidPane, UnknownPane, OperationLimit }!void {
-        if (cols == 0 or rows == 0) return error.InvalidPane;
-        const cells = std.math.mul(usize, cols, rows) catch
-            return error.InvalidPane;
-        if (cells > self.limits.cells) return error.InvalidPane;
+        if (pixels.width == 0 or pixels.height == 0) return error.InvalidPane;
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.find(pane) == null) return error.UnknownPane;
-        try self.pushLocked(.{ .resize = .{ .pane = pane, .cols = cols, .rows = rows } });
+        try self.pushLocked(.{ .resize = .{ .pane = pane, .pixels = pixels } });
         signal(self.terminal_fd);
     }
 
@@ -767,6 +968,7 @@ pub const Boundary = struct {
         self.input_head = 0;
         self.input_count = 0;
         signal(self.terminal_fd);
+        signal(self.renderer_fd);
     }
 
     /// Copies the monotonic out-of-band shutdown fact.
@@ -798,15 +1000,111 @@ pub const Boundary = struct {
 
     /// Removes one oldest typed lifecycle operation.
     pub fn takeLifecycle(self: *Boundary) ?Lifecycle {
+        const admitted = self.takeAdmittedLifecycle() orelse return null;
+        return admitted.operation;
+    }
+
+    /// Removes one lifecycle operation with its runtime-admitted grid.
+    pub fn takeAdmittedLifecycle(self: *Boundary) ?AdmittedLifecycle {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.operation_count == 0) return null;
-        const result = self.operations[self.operation_head];
+        const result = AdmittedLifecycle{
+            .operation = self.operations[self.operation_head],
+            .grid = self.operation_grids[self.operation_head],
+        };
+        self.operation_grids[self.operation_head] = null;
+        const held_font = self.operation_font_stable[self.operation_head];
+        self.operation_font_stable[self.operation_head] = false;
         self.operation_head = @intCast(
             (@as(usize, self.operation_head) + 1) % self.operations.len,
         );
         self.operation_count -= 1;
+        if (held_font)
+            self.font_stable_operations -= 1;
         return result;
+    }
+
+    /// Copies one complete request before Runtime validates outside the mutex.
+    pub fn takeLifecycleAdmission(self: *Boundary) ?RuntimeAdmissionCopy {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.lifecycle_admission_phase != .requested) return null;
+        var result = RuntimeAdmissionCopy{
+            .revision = self.lifecycle_admission_revision,
+            .operation_count = self.lifecycle_admission_operation_count,
+            .input_count = self.lifecycle_admission_input_count,
+            .registration = self.lifecycle_admission_registration,
+        };
+        @memcpy(
+            result.operations[0..result.operation_count],
+            self.lifecycle_admission_operations[0..result.operation_count],
+        );
+        @memcpy(
+            result.inputs[0..result.input_count],
+            self.lifecycle_admission_inputs[0..result.input_count],
+        );
+        self.lifecycle_admission_phase = .validating;
+        return result;
+    }
+
+    /// Publishes the exact result for a still-current validating revision.
+    pub fn completeLifecycleAdmission(
+        self: *Boundary,
+        revision: LifecycleRevision,
+        result: LifecycleAdmissionResult,
+    ) error{ StaleRevision, CandidatePhase, Stopping }!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        if (self.lifecycle_admission_revision != revision)
+            return error.StaleRevision;
+        if (self.lifecycle_admission_phase != .validating)
+            return error.CandidatePhase;
+        switch (result) {
+            .admitted => |admitted| {
+                var expected: usize = 0;
+                for (self.lifecycle_admission_operations[0..self.lifecycle_admission_operation_count]) |operation| switch (operation) {
+                    .create, .resize => expected += 1,
+                    .close => {},
+                };
+                if (admitted.count != expected) return error.CandidatePhase;
+                var grid_index: usize = 0;
+                for (self.lifecycle_admission_operations[0..self.lifecycle_admission_operation_count]) |operation| switch (operation) {
+                    .create => |value| {
+                        if (admitted.grids[grid_index].pane != value.pane or
+                            admitted.grids[grid_index].rows == 0 or
+                            admitted.grids[grid_index].columns == 0)
+                            return error.CandidatePhase;
+                        grid_index += 1;
+                    },
+                    .resize => |value| {
+                        if (admitted.grids[grid_index].pane != value.pane or
+                            admitted.grids[grid_index].rows == 0 or
+                            admitted.grids[grid_index].columns == 0)
+                            return error.CandidatePhase;
+                        grid_index += 1;
+                    },
+                    .close => {},
+                };
+                self.lifecycle_admission_phase = .admitted;
+            },
+            .rejected => {
+                self.lifecycle_admission_phase = .rejected;
+            },
+        }
+        self.lifecycle_admission_result = result;
+        signal(self.renderer_fd);
+    }
+
+    /// Reports whether lifecycle admission requires the accepted FontMap.
+    pub fn lifecycleFontStable(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return switch (self.lifecycle_admission_phase) {
+            .requested, .validating, .admitted => true,
+            .none, .rejected => self.font_stable_operations != 0,
+        };
     }
 
     /// Removes one oldest terminal input occurrence in O(1).
@@ -826,7 +1124,12 @@ pub const Boundary = struct {
     pub fn rearmTerminalWork(self: *Boundary) void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        if (self.operation_count != 0 or self.input_count != 0)
+        const font_ready = self.font_request != null and
+            self.lifecycle_admission_phase != .requested and
+            self.lifecycle_admission_phase != .validating and
+            self.lifecycle_admission_phase != .admitted and
+            self.font_stable_operations == 0;
+        if (self.operation_count != 0 or self.input_count != 0 or font_ready)
             signal(self.terminal_fd);
     }
 
@@ -1202,6 +1505,9 @@ pub const Boundary = struct {
                 error.Busy, error.Stale => continue,
                 else => return failure,
             };
+            self.mutex.lockUncancelable(self.io);
+            if (self.find(token.pane_id)) |index| self.entries[index].?.draining = true;
+            self.mutex.unlock(self.io);
             var claim = DrainClaim{ .pool = &self.pool, .token = token };
             defer claim.deinit();
             const update = claim.update();
@@ -1210,6 +1516,7 @@ pub const Boundary = struct {
                 self.mutex.lockUncancelable(self.io);
                 if (self.find(token.pane_id)) |index| {
                     const entry = &self.entries[index].?;
+                    entry.draining = false;
                     if (entry.ready != null and
                         entry.ready.?.reservation_id == token.reservation_id and
                         !entry.retry_wake_issued)
@@ -1226,6 +1533,7 @@ pub const Boundary = struct {
             self.mutex.lockUncancelable(self.io);
             if (self.find(token.pane_id)) |index| {
                 const entry = &self.entries[index].?;
+                entry.draining = false;
                 if (entry.ready != null and
                     entry.ready.?.reservation_id == token.reservation_id)
                 {
@@ -1255,6 +1563,7 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return error.UnknownPane;
         const entry = &self.entries[index].?;
         if (entry.state != .closing) return error.UnknownPane;
+        if (entry.draining) return false;
         if (!entry.pool_retiring) {
             try self.pool.beginRetire(
                 entry.descriptor_index,
@@ -1272,6 +1581,7 @@ pub const Boundary = struct {
             else => return failure,
         };
         entry.ready = null;
+        entry.draining = false;
         entry.retry_wake_issued = false;
         return true;
     }
@@ -1332,6 +1642,40 @@ pub const Boundary = struct {
         signal(self.terminal_fd);
     }
 
+    /// Replaces the latest bounded terminal-font request without consuming
+    /// lifecycle-ring capacity; the runtime observes it on its next wake.
+    pub fn requestFontSize(self: *Boundary, pixel_height: u16) error{ InvalidFontSize, Stopping, RevisionOverflow }!void {
+        if (pixel_height < 8 or pixel_height > 72) return error.InvalidFontSize;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        const revision = std.math.add(u64, self.font_request_high_water, 1) catch
+            return error.RevisionOverflow;
+        self.font_request_high_water = revision;
+        self.font_request = .{ .revision = revision, .pixel_height = pixel_height };
+        signal(self.terminal_fd);
+    }
+
+    /// Takes the newest request exactly once for terminal-thread preparation.
+    pub fn takeFontRequest(self: *Boundary) ?FontRequest {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const request = self.font_request;
+        self.font_request = null;
+        return request;
+    }
+
+    /// Reports whether no producer-owned ready block still contains old-font
+    /// bytes. Renderer drainage remains the normal owner of draining blocks.
+    pub fn fontQuiescent(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (self.entries) |entry| {
+            if (entry) |value| if (value.ready != null or value.draining) return false;
+        }
+        return true;
+    }
+
     /// Records terminal-thread retirement and wakes Renderer.
     pub fn markStopped(self: *Boundary, failed: bool) void {
         self.mutex.lockUncancelable(self.io);
@@ -1352,6 +1696,14 @@ pub const Boundary = struct {
         if (self.operation_count + self.reserved_operation_count == self.operations.len)
             return error.OperationLimit;
         self.pushReservedLocked(operation);
+    }
+
+    fn clearLifecycleAdmissionLocked(self: *Boundary) void {
+        self.lifecycle_admission_phase = .none;
+        self.lifecycle_admission_revision = @fromBackingInt(0);
+        self.lifecycle_admission_operation_count = 0;
+        self.lifecycle_admission_input_count = 0;
+        self.lifecycle_admission_registration = null;
     }
 
     fn pushReservedLocked(self: *Boundary, operation: Lifecycle) void {
@@ -1438,23 +1790,33 @@ test "terminal boundary admits typed lifecycle and directional wakes" {
     defer boundary.deinit();
     const pane: PaneId = @fromBackingInt(@intCast(1));
     const source: canvas.SourceId = @fromBackingInt(@intCast(1));
-    try boundary.register(pane, source, 16, 16);
+    try boundary.register(pane, source, .{ .width = 16, .height = 16 });
     try boundary.drainTerminalWake();
     try std.testing.expectEqual(
-        Lifecycle{ .create = .{ .pane = pane, .cols = 16, .rows = 16 } },
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 16, .height = 16 } } },
         boundary.takeLifecycle().?,
     );
     try std.testing.expectError(
         error.DuplicatePane,
-        boundary.register(pane, source, 16, 16),
+        boundary.register(pane, source, .{ .width = 16, .height = 16 }),
+    );
+    const invalid_pane: PaneId = @fromBackingInt(2);
+    const invalid_source: canvas.SourceId = @fromBackingInt(2);
+    try std.testing.expectError(
+        error.InvalidPane,
+        boundary.register(invalid_pane, invalid_source, .{ .width = 0, .height = 16 }),
     );
     try boundary.markLive(pane);
     try boundary.drainRendererWake();
-    try boundary.resize(pane, 16, 12);
+    try boundary.resize(pane, .{ .width = 16, .height = 12 });
+    try std.testing.expectError(
+        error.InvalidPane,
+        boundary.resize(pane, .{ .width = 16, .height = 0 }),
+    );
     try boundary.close(pane);
     try boundary.drainTerminalWake();
     try std.testing.expectEqual(
-        Lifecycle{ .resize = .{ .pane = pane, .cols = 16, .rows = 12 } },
+        Lifecycle{ .resize = .{ .pane = pane, .pixels = .{ .width = 16, .height = 12 } } },
         boundary.takeLifecycle().?,
     );
     try std.testing.expectEqual(Lifecycle{ .close = pane }, boundary.takeLifecycle().?);
@@ -1472,8 +1834,7 @@ test "prepared lifecycle discard is byte-silent and commit publishes once" {
     const source: canvas.SourceId = @fromBackingInt(@intCast(41));
     const operations = [_]Lifecycle{.{ .create = .{
         .pane = pane,
-        .cols = 16,
-        .rows = 16,
+        .pixels = .{ .width = 16, .height = 16 },
     } }};
     {
         var candidate = try boundary.prepareLifecycle(
@@ -1499,7 +1860,7 @@ test "prepared lifecycle discard is byte-silent and commit publishes once" {
             .source = source,
         }),
     );
-    try candidate.commit();
+    try admitTestCandidate(&candidate);
     try std.testing.expectEqual(operations[0], boundary.takeLifecycle().?);
     try std.testing.expect(boundary.takeLifecycle() == null);
     try std.testing.expectEqual(source, boundary.sourceFor(pane).?);
@@ -1517,8 +1878,7 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
     var operations: [lifecycle_batch_limit]Lifecycle = undefined;
     for (&operations) |*operation| operation.* = .{ .create = .{
         .pane = pane,
-        .cols = 1,
-        .rows = 1,
+        .pixels = .{ .width = 1, .height = 1 },
     } };
     const inputs = [_]TerminalInput{
         .{ .focus = .{ .pane = pane, .event = .{ .focus = .in } } },
@@ -1548,7 +1908,7 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
         @as(usize, @intCast(try std.posix.poll((&wake)[0..1], 0))),
     );
     try boundary.drainTerminalWake();
-    try std.testing.expectError(error.Stopping, candidate.commit());
+    try std.testing.expectError(error.Stopping, candidate.commitAdmitted());
     try std.testing.expect(boundary.sourceFor(pane) == null);
     try std.testing.expect(boundary.takeLifecycle() == null);
     try std.testing.expect(boundary.takeInput() == null);
@@ -1565,8 +1925,117 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
     );
     try std.testing.expectError(
         error.OperationLimit,
-        boundary.register(pane, source, 1, 1),
+        boundary.register(pane, source, .{ .width = 1, .height = 1 }),
     );
+}
+
+test "lifecycle admission cancellation rejects stale validation and never reuses revision" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(41);
+    const source: canvas.SourceId = @fromBackingInt(51);
+    const operations = [_]Lifecycle{.{ .create = .{
+        .pane = pane,
+        .pixels = .{ .width = 17, .height = 19 },
+    } }};
+    var first = try boundary.prepareLifecycle(
+        &operations,
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
+    const first_revision = try first.publishAdmission();
+    const copied = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(first_revision, copied.revision);
+    first.deinit();
+    try std.testing.expect(!boundary.lifecycle_candidate_active);
+    try std.testing.expectEqual(@as(u8, 0), boundary.reserved_operation_count);
+    try std.testing.expectError(
+        error.StaleRevision,
+        boundary.completeLifecycleAdmission(
+            copied.revision,
+            .{ .admitted = .{ .count = 1, .grids = blk: {
+                var grids: [lifecycle_batch_limit]DerivedGrid = undefined;
+                grids[0] = .{ .pane = pane, .rows = 1, .columns = 1 };
+                break :blk grids;
+            } } },
+        ),
+    );
+
+    var second = try boundary.prepareLifecycle(
+        &operations,
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
+    defer second.deinit();
+    const second_revision = try second.publishAdmission();
+    try std.testing.expect(
+        @backingInt(second_revision) > @backingInt(first_revision),
+    );
+    try std.testing.expectError(
+        error.StaleRevision,
+        boundary.completeLifecycleAdmission(
+            copied.revision,
+            .{ .rejected = .terminal_capacity },
+        ),
+    );
+    try std.testing.expect(boundary.takeLifecycle() == null);
+}
+
+test "lifecycle admission holds fonts while ordinary input remains bounded" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(61);
+    const source: canvas.SourceId = @fromBackingInt(71);
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expect(boundary.takeLifecycle().? == .create);
+    try boundary.markLive(pane);
+    const operations = [_]Lifecycle{.{ .resize = .{
+        .pane = pane,
+        .pixels = .{ .width = 9, .height = 8 },
+    } }};
+    var candidate = try boundary.prepareLifecycle(&operations, &.{}, null);
+    defer candidate.deinit();
+    try std.testing.expectEqual(
+        candidate.revision,
+        try candidate.publishAdmission(),
+    );
+    try std.testing.expect(boundary.lifecycleFontStable());
+    try boundary.requestFontSize(17);
+    try boundary.requestFontSize(18);
+    const key = wayland.input.Key{
+        .keycode = 30,
+        .time = 1,
+        .state = .pressed,
+        .serial = 2,
+        .modifiers = .{
+            .serial = 3,
+            .depressed = 0,
+            .latched = 0,
+            .locked = 0,
+            .group = 0,
+        },
+        .semantic_modifiers = .{},
+        .keysym = @fromBackingInt('a'),
+        .text_len = 1,
+        .text = .{'a'} ++ @as(
+            [wayland.input.key_text_limit - 1]u8,
+            @splat(0),
+        ),
+    };
+    try boundary.publishKey(pane, key);
+    try std.testing.expectEqual(pane, boundary.takeInput().?.key.pane);
+    candidate.deinit();
+    try std.testing.expect(!boundary.lifecycleFontStable());
+    const font = boundary.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u16, 18), font.pixel_height);
 }
 
 test "closing transfer waits for Renderer draining ownership" {
@@ -1578,7 +2047,7 @@ test "closing transfer waits for Renderer draining ownership" {
     defer boundary.deinit();
     const pane: PaneId = @fromBackingInt(@intCast(32));
     const source: canvas.SourceId = @fromBackingInt(@intCast(42));
-    try boundary.register(pane, source, 1, 1);
+    try boundary.register(pane, source, .{ .width = 1, .height = 1 });
     try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
     const member = try boundary.activateTransfer(pane);
     const reserved = try boundary.reserveUpdate(member);
@@ -1610,7 +2079,7 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     defer boundary.deinit();
     const pane: PaneId = @fromBackingInt(@intCast(33));
     const source: canvas.SourceId = @fromBackingInt(@intCast(1));
-    try boundary.register(pane, source, 1, 1);
+    try boundary.register(pane, source, .{ .width = 1, .height = 1 });
     try std.testing.expect(
         std.meta.activeTag(boundary.takeLifecycle().?) == .create,
     );
@@ -1704,6 +2173,20 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     });
     defer accepted.deinit();
     try std.testing.expectEqual(source, try accepted.registerSource());
+    const resize_operations = [_]Lifecycle{.{ .resize = .{
+        .pane = pane,
+        .pixels = .{ .width = 2, .height = 1 },
+    } }};
+    var lifecycle = try boundary.prepareLifecycle(
+        &resize_operations,
+        &.{},
+        null,
+    );
+    defer lifecycle.deinit();
+    try std.testing.expectEqual(
+        lifecycle.revision,
+        try lifecycle.publishAdmission(),
+    );
     const accepted_result = try boundary.drainReady(&accepted);
     try std.testing.expectEqual(@as(usize, 1), accepted_result.accepted);
     try std.testing.expect(accepted_result.rejected == null);
@@ -1728,7 +2211,7 @@ test "latest visible set waits for exact Composer accepted revisions" {
     defer boundary.deinit();
     const pane: PaneId = @fromBackingInt(50);
     const source: canvas.SourceId = @fromBackingInt(1);
-    try boundary.register(pane, source, 1, 1);
+    try boundary.register(pane, source, .{ .width = 1, .height = 1 });
     const created = boundary.takeLifecycle().?;
     try std.testing.expect(std.meta.activeTag(created) == .create);
     const pooled = try boundary.activateTransfer(pane);
@@ -1822,7 +2305,7 @@ test "visible group with fifteen free blocks does not partially reserve sixteen"
     for (0..17) |index| {
         const pane: PaneId = @fromBackingInt(@intCast(index + 1));
         const source: canvas.SourceId = @fromBackingInt(@intCast(index + 1));
-        try boundary.register(pane, source, 1, 1);
+        try boundary.register(pane, source, .{ .width = 1, .height = 1 });
         const created = boundary.takeLifecycle().?;
         try std.testing.expect(std.meta.activeTag(created) == .create);
         pooled[index] = try boundary.activateTransfer(pane);
@@ -1855,7 +2338,7 @@ test "completed token blocks same entry until clear and cannot corrupt reuse" {
     defer boundary.deinit();
     const first_pane: PaneId = @fromBackingInt(@intCast(34));
     const first_source: canvas.SourceId = @fromBackingInt(@intCast(1));
-    try boundary.register(first_pane, first_source, 1, 1);
+    try boundary.register(first_pane, first_source, .{ .width = 1, .height = 1 });
     try std.testing.expect(
         std.meta.activeTag(boundary.takeLifecycle().?) == .create,
     );
@@ -1888,7 +2371,7 @@ test "completed token blocks same entry until clear and cannot corrupt reuse" {
 
     const other_pane: PaneId = @fromBackingInt(@intCast(35));
     const other_source: canvas.SourceId = @fromBackingInt(@intCast(2));
-    try boundary.register(other_pane, other_source, 1, 1);
+    try boundary.register(other_pane, other_source, .{ .width = 1, .height = 1 });
     try std.testing.expect(
         std.meta.activeTag(boundary.takeLifecycle().?) == .create,
     );
@@ -1949,7 +2432,7 @@ test "retirement releases reserved and ready boundaries without stranded state" 
     defer boundary.deinit();
     const reserved_pane: PaneId = @fromBackingInt(@intCast(36));
     const reserved_source: canvas.SourceId = @fromBackingInt(@intCast(1));
-    try boundary.register(reserved_pane, reserved_source, 1, 1);
+    try boundary.register(reserved_pane, reserved_source, .{ .width = 1, .height = 1 });
     try std.testing.expect(
         std.meta.activeTag(boundary.takeLifecycle().?) == .create,
     );
@@ -1968,7 +2451,7 @@ test "retirement releases reserved and ready boundaries without stranded state" 
 
     const ready_pane: PaneId = @fromBackingInt(@intCast(37));
     const ready_source: canvas.SourceId = @fromBackingInt(@intCast(2));
-    try boundary.register(ready_pane, ready_source, 1, 1);
+    try boundary.register(ready_pane, ready_source, .{ .width = 1, .height = 1 });
     try std.testing.expect(
         std.meta.activeTag(boundary.takeLifecycle().?) == .create,
     );
@@ -2000,10 +2483,10 @@ test "bounded terminal turn re-arms retained input work" {
     defer boundary.deinit();
     const pane: PaneId = @fromBackingInt(@intCast(1));
     const source: canvas.SourceId = @fromBackingInt(@intCast(1));
-    try boundary.register(pane, source, 16, 16);
+    try boundary.register(pane, source, .{ .width = 16, .height = 16 });
     try boundary.drainTerminalWake();
     try std.testing.expectEqual(
-        Lifecycle{ .create = .{ .pane = pane, .cols = 16, .rows = 16 } },
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 16, .height = 16 } } },
         boundary.takeLifecycle().?,
     );
     try boundary.markLive(pane);
@@ -2034,6 +2517,130 @@ test "bounded terminal turn re-arms retained input work" {
     try boundary.drainTerminalWake();
     try std.testing.expect(boundary.takeInput() != null);
     try std.testing.expect(boundary.takeInput() == null);
+}
+
+test "final admitted lifecycle operation wakes the newest font request" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(16, 16, 64),
+    );
+    defer boundary.deinit();
+    var resize_operations: [9]Lifecycle = undefined;
+    for (0..resize_operations.len) |index| {
+        const pane: PaneId = @fromBackingInt(@intCast(index + 1));
+        const source: canvas.SourceId = @fromBackingInt(@intCast(index + 1));
+        try boundary.register(pane, source, .{ .width = 16, .height = 16 });
+        resize_operations[index] = .{ .resize = .{
+            .pane = pane,
+            .pixels = .{ .width = 17, .height = 16 },
+        } };
+    }
+    try boundary.drainTerminalWake();
+    for (0..resize_operations.len) |_| {
+        const create = boundary.takeLifecycle().?.create;
+        try boundary.markLive(create.pane);
+    }
+    try boundary.drainRendererWake();
+
+    var candidate = try boundary.prepareLifecycle(
+        &resize_operations,
+        &.{},
+        null,
+    );
+    defer candidate.deinit();
+    try admitTestCandidate(&candidate);
+    try boundary.requestFontSize(17);
+    try boundary.requestFontSize(18);
+    try boundary.requestFontSize(19);
+    try boundary.drainTerminalWake();
+
+    for (0..8) |_| {
+        try std.testing.expect(boundary.takeAdmittedLifecycle() != null);
+    }
+    try std.testing.expect(boundary.lifecycleFontStable());
+    boundary.rearmTerminalWork();
+    try expectTerminalWake(&boundary);
+    try boundary.drainTerminalWake();
+
+    try std.testing.expect(boundary.takeAdmittedLifecycle() != null);
+    try std.testing.expect(!boundary.lifecycleFontStable());
+    boundary.rearmTerminalWork();
+    try expectTerminalWake(&boundary);
+    try boundary.drainTerminalWake();
+    const newest = boundary.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u16, 19), newest.pixel_height);
+    try std.testing.expect(boundary.takeFontRequest() == null);
+}
+
+test "rejected and cancelled admission release queued font work" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(2, 2, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(1);
+    const source: canvas.SourceId = @fromBackingInt(1);
+    try boundary.register(pane, source, .{ .width = 16, .height = 16 });
+    try boundary.drainTerminalWake();
+    try std.testing.expect(boundary.takeLifecycle().? == .create);
+    try boundary.markLive(pane);
+    try boundary.drainRendererWake();
+    const operations = [_]Lifecycle{.{ .resize = .{
+        .pane = pane,
+        .pixels = .{ .width = 17, .height = 16 },
+    } }};
+
+    var rejected = try boundary.prepareLifecycle(&operations, &.{}, null);
+    defer rejected.deinit();
+    const rejected_revision = try rejected.publishAdmission();
+    try std.testing.expect(boundary.takeLifecycleAdmission() != null);
+    try boundary.requestFontSize(20);
+    try boundary.completeLifecycleAdmission(
+        rejected_revision,
+        .{ .rejected = .terminal_capacity },
+    );
+    try boundary.drainTerminalWake();
+    boundary.rearmTerminalWork();
+    try expectTerminalWake(&boundary);
+    try boundary.drainTerminalWake();
+    try std.testing.expectEqual(
+        @as(u16, 20),
+        boundary.takeFontRequest().?.pixel_height,
+    );
+    rejected.deinit();
+
+    var cancelled = try boundary.prepareLifecycle(&operations, &.{}, null);
+    const cancelled_revision = try cancelled.publishAdmission();
+    try std.testing.expectEqual(
+        cancelled_revision,
+        boundary.takeLifecycleAdmission().?.revision,
+    );
+    try boundary.requestFontSize(21);
+    try boundary.drainTerminalWake();
+    cancelled.deinit();
+    boundary.rearmTerminalWork();
+    try expectTerminalWake(&boundary);
+    try boundary.drainTerminalWake();
+    try std.testing.expectEqual(
+        @as(u16, 21),
+        boundary.takeFontRequest().?.pixel_height,
+    );
+
+    var admitted = try boundary.prepareLifecycle(&operations, &.{}, null);
+    defer admitted.deinit();
+    try admitTestCandidate(&admitted);
+    try boundary.requestFontSize(22);
+    try boundary.drainTerminalWake();
+    try std.testing.expect(boundary.takeAdmittedLifecycle() != null);
+    boundary.rearmTerminalWork();
+    try expectTerminalWake(&boundary);
+    try boundary.drainTerminalWake();
+    try std.testing.expectEqual(
+        @as(u16, 22),
+        boundary.takeFontRequest().?.pixel_height,
+    );
 }
 
 test "copied pending update is immutable saturated and reusable" {
@@ -2362,4 +2969,44 @@ fn testLimits(
         .raster_bytes = 1,
         .decoration_bytes = 1,
     };
+}
+
+fn admitTestCandidate(candidate: *Boundary.PreparedLifecycle) !void {
+    const revision = try candidate.publishAdmission();
+    const request = candidate.boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(revision, request.revision);
+    var result = LifecycleAdmissionResult{ .admitted = .{ .count = 0 } };
+    for (request.operations[0..request.operation_count]) |operation| switch (operation) {
+        .create => |value| {
+            result.admitted.grids[result.admitted.count] = .{
+                .pane = value.pane,
+                .rows = 1,
+                .columns = 1,
+            };
+            result.admitted.count += 1;
+        },
+        .resize => |value| {
+            result.admitted.grids[result.admitted.count] = .{
+                .pane = value.pane,
+                .rows = 1,
+                .columns = 1,
+            };
+            result.admitted.count += 1;
+        },
+        .close => {},
+    };
+    try candidate.boundary.completeLifecycleAdmission(revision, result);
+    try candidate.commitAdmitted();
+}
+
+fn expectTerminalWake(boundary: *Boundary) !void {
+    var descriptor = std.posix.pollfd{
+        .fd = boundary.terminalFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try std.posix.poll((&descriptor)[0..1], 0),
+    );
 }

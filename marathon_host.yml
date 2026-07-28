@@ -6,9 +6,12 @@ marathon:
   active_scratch: scratch_host.yml
   objective: >-
     Build small reusable Wayland and Vulkan Zig packages, mature backend-neutral
-    Render text and multiplexing chrome, and prove a first-party Vulkan host whose
-    real-terminal integration uses one bounded terminal runtime to own many PTY,
-    VT, and terminal-projection lifetimes without coupling them to Wayland or Vulkan.
+    Render text and multiplexing chrome, and prove a first-party Vulkan host for
+    all-day Neovim use whose real-terminal integration uses one bounded terminal
+    runtime to own many PTY, VT, and terminal-projection lifetimes without
+    coupling them to Wayland or Vulkan. Kitty-grade text correctness and the
+    existing Window/Renderer/terminal-runtime ownership model are product
+    requirements; a full-size pane remains inside that multiplexing path.
 
 baseline:
   version: 0.1.3-dev
@@ -55,6 +58,12 @@ authorities:
   foot:
     path: /home/home/personal/projects/dev_references/terminals/foot
     role: direct terminal, Wayland, input, and rendering implementation lessons
+  kitty:
+    path: /home/home/personal/projects/dev_references/terminals/kitty
+    role: >-
+      behavioral authority for terminal font metrics, fallback, symbol and
+      multicell rendering, generated glyphs, decorations, clipping, cursor,
+      selection, and resize quality
   tigerbeetle:
     path: /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
     role: Zig module maturity, exact bounds, transactions, failure, and cleanup
@@ -67,7 +76,9 @@ authorities:
     path: /home/home/personal/projects/dev_references/terminals/alacritty
     role: >-
       compact PTY event-loop and fair-lock mechanics; its shared-terminal mutex is
-      evidence for starvation prevention, not authority to share mutable VT in Howl
+      evidence for starvation prevention, not authority to share mutable VT in
+      Howl; eventual per-pane performance comparison does not authorize a
+      single-terminal shortcut or benchmark-specific architecture
   rule: >-
     References establish facts and sharpen design. Howl derives its own smallest
     ownership and API shape; no reference donates architecture wholesale.
@@ -418,7 +429,44 @@ checkpoints:
       - preserved tab/pane topology, mappings, visible-set ownership, and Window/Renderer/terminal-thread boundaries
       - u32 indices and 32768-command geometry are approved prerequisites for real TUI playback
       - the 106042528-byte fixed pool is measured temporary debt, not final memory policy
-      - sixteen simultaneous maximum panes, font resizing, and performance parity remain deferred
+      - sixteen simultaneous maximum panes and performance parity remain deferred; font resizing is active in terminal_font_resize
+  - id: terminal_font_resize
+    status: in_progress
+    outcome: >-
+      Add global 8..72 terminal-content font replacement with reset 16,
+      transactional PTY/VT resize, pooled-update quiescence, and a single
+      visible publication barrier while chrome remains fixed-size.
+    commit_boundary: Review Host font-reconfiguration transaction
+    proof:
+      - latest request bounds, monotonic revisions, and coalescing
+      - prepared replacement map and VT candidates before PTY mutation
+      - derived cell/decorations metrics and identity-preserving Content invalidation
+      - recoverable publication pressure and exact post-kernel fail-stop
+    current_slice:
+      - Render map replacement and cache invalidation are committed
+      - terminal-native odd-size cluster positioning is corrected and operator-passed
+      - Host request and runtime transaction remain implemented uncommitted
+      - Renderer-owned pane pixels now cross lifecycle as canvas.Size and remain independently retained by each runtime owner
+      - runtime alone derives PTY/VT grids from current FontMap metrics; Content clip is no longer pane authority
+      - one fixed Renderer PendingTopology and one Runtime-owned admission copy now protect initial creation and every later topology candidate
+      - lifecycle admission uses monotonic revisions, existing PreparedLifecycle reservations, directional eventfds, and the Boundary mutex
+      - rejection, cancellation, supersession, stale results, and shutdown expose no lifecycle, topology, or completion mutation
+      - the Host-private font publication epoch follows as a separate slice
+      - no pool, Composer, Vulkan, atlas, or admission widening is included
+  - id: terminal_text_parity
+    status: planned
+    outcome: >-
+      Follow Kitty's proven terminal-font behavior for fallback, Nerd Font
+      symbols, ordinary and wide cells, combining and ligature clusters, DEC
+      and OSC 66 sizing, generated glyphs, decorations, clipping, cursor, and
+      selection while preserving Howl's bounded ownership.
+    commit_boundary: Harden terminal text behavior
+    proof:
+      - each behavior maps to pinned Kitty source and applicable Foot or native-library evidence
+      - deliberate divergences record one explicit architectural or product reason
+      - native, generated, fallback, multicell, cursor, selection, and resize paths have deterministic proofs
+      - operator text-correctness matrix passes through the real multiplexing path
+      - no benchmark-only API, alternate renderer, or single-terminal fast path
   - id: terminal_pool_freeze
     status: planned
     outcome: >-
@@ -433,7 +481,7 @@ checkpoints:
     status: planned
     outcome: >-
       Measure and later optimize the finite supported visible workload after the
-      stable full-size single-tab checkpoint is committed.
+      multiplexing and terminal-text foundations are stable.
     commit_boundary: Record bounded surface admission contract
     proof:
       - complete command, resource, pixel, and surface-image equations

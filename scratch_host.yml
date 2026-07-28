@@ -841,11 +841,44 @@ howl_vk_surface:
       - the temporary synthetic visual producer was deleted after the gate; production retains only the consumer boundary and does not manufacture terminal facts
 
 next:
-  - reviewer commits the accepted full-size single-tab and visible-set checkpoint
-  - implement font resizing after that commit
-  - benchmark rain and asciinema playback after a stable commit boundary
+  - review the uncommitted pane-pixel and lifecycle-admission implementation inside terminal_font_resize
+  - complete the Host-private font publication epoch as the next isolated slice
+  - perform Kitty-led terminal text parity work without benchmark-only paths
   - reviewer commits each accepted checkpoint before the next checkpoint begins
   - preserve surface widening for surface_admission_design and later checkpoints
+
+terminal_font_resize_lifecycle_admission:
+  status: implemented_uncommitted_review
+  fixed_storage:
+    pending_topology_bytes: 20488
+    runtime_admission_copy_bytes: 3352
+    allocation_delta: zero
+  ownership:
+    renderer: candidate topology, exact pane pixels, PreparedLifecycle handle, lifecycle revision, source reservation, and final commit
+    runtime: bounded copied request, current FontMap metrics, checked grid derivation, and exact result
+    boundary: sole candidate bank, derived-grid result, font-stability hold, mutex, and existing directional eventfds
+  transaction:
+    - candidate publication exposes no lifecycle, topology, or GPU completion
+    - Runtime validates without PTY, VT, Content, topology, or GPU mutation
+    - Renderer prepares rendering only after exact admitted revision
+    - lifecycle and retained topology commit before infallible completion exposure
+    - rejection, cancellation, supersession, stale completion, and shutdown release reservations and preserve accepted topology
+  progress:
+    - accepted-topology rendering and terminal pool drainage continue while admission is pending
+    - terminal application input continues to the accepted focused pane
+    - topology actions fold prospectively; a second uncommitted creation preserves the first pending split
+    - compositor resize coalesces independently
+    - newest font request coalesces while admission keeps the accepted FontMap stable
+  evidence:
+    - initial create, resize, same-grid pixel resize, tiny clamp, zero extent, and over-admission
+    - runtime-validation cancellation, stale result, monotonic revision and SourceId non-reuse
+    - ordered focus, resize, close, and reorder folds
+    - pending pool drainage, ordinary input, no pre-admission lifecycle, and shutdown cleanup
+    - Renderer tests are now included by the Host test build
+    - Host and workspace check/test pass in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall; Host Debug runs 75 of 75 tests
+    - audit, protocol, duplicate-key YAML, pinned formatting, and diff checks pass
+    - initial admission observes both shared stop and terminal result wakes, so compositor closure cannot strand Renderer before Main joins owners
+    - queued font work is consumed after the final admitted lifecycle operation; one-operation, nine-operation, rejection, and cancellation paths need no unrelated wake
 
 terminal_pool_storage:
   status: accepted

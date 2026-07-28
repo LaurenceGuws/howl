@@ -167,6 +167,29 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
+    const renderer_test_module = b.createModule(.{
+        .root_source_file = b.path("src/renderer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    renderer_test_module.addImport("terminal_handoff", terminal_handoff);
+    renderer_test_module.addImport("chrome_state", chrome_state);
+    renderer_test_module.addImport("input_actions", input_actions);
+    renderer_test_module.addImport("howl_render", render.module("howl_render"));
+    renderer_test_module.addImport("howl_vk", vk.module("howl_vk"));
+    renderer_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
+    renderer_test_module.addImport("renderer_c", renderer_translate.createModule());
+    renderer_test_module.addImport("host_c", host_c);
+    renderer_test_module.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
+    renderer_test_module.linkSystemLibrary("vulkan", .{});
+    renderer_test_module.linkSystemLibrary("drm", .{});
+    const renderer_tests = b.addTest(.{
+        .root_module = renderer_test_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(renderer_tests).step);
     const chrome_tests = b.addTest(.{ .root_module = chrome_state, .use_llvm = false, .use_lld = false });
     const run_chrome_tests = b.addRunArtifact(chrome_tests);
     test_step.dependOn(&run_chrome_tests.step);

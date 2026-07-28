@@ -201,7 +201,7 @@ fn contentLimits() terminal.Content.Limits {
         .glyphs = 32,
         .masks = 16,
         .commands = 64,
-        .resources_per_update = 32,
+        .resources_per_update = 56,
         .upload_bytes = 8192,
         .raster_bytes = 8192,
         .decoration_bytes = 1024,
