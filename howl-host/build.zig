@@ -173,6 +173,20 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
+    const window_test_module = b.createModule(.{
+        .root_source_file = b.path("src/window.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    window_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
+    window_test_module.addImport("host_c", host_c);
+    const window_tests = b.addTest(.{
+        .root_module = window_test_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(window_tests).step);
     const renderer_test_module = b.createModule(.{
         .root_source_file = b.path("src/renderer.zig"),
         .target = target,

@@ -7,6 +7,119 @@ const posix = @import("host_c");
 const shared = @import("shared.zig");
 
 const format_limit: usize = 64;
+const output_limit: usize = 16;
+
+const ScaleError = error{
+    InvalidScale,
+    ArithmeticOverflow,
+    RevisionExhausted,
+    UnknownOutput,
+};
+
+const Rational = struct {
+    numerator: u32,
+    denominator: u32,
+
+    const one = Rational{ .numerator = 1, .denominator = 1 };
+
+    fn init(numerator: u32, denominator: u32) ScaleError!Rational {
+        if (numerator == 0 or denominator == 0) return error.InvalidScale;
+        const divisor = gcd(numerator, denominator);
+        const value = Rational{ .numerator = numerator / divisor, .denominator = denominator / divisor };
+        if (@as(u64, value.numerator) >= @as(u64, 24) * value.denominator) return error.InvalidScale;
+        return value;
+    }
+
+    fn eql(self: Rational, other: Rational) bool {
+        return self.numerator == other.numerator and self.denominator == other.denominator;
+    }
+
+    fn dpi(self: Rational) ScaleError!Rational {
+        const numerator = @as(u128, self.numerator) * 96;
+        const denominator = @as(u128, self.denominator);
+        const divisor = gcdWide(numerator, denominator);
+        const reduced_numerator = numerator / divisor;
+        const reduced_denominator = denominator / divisor;
+        if (reduced_numerator > std.math.maxInt(u32) or reduced_denominator > std.math.maxInt(u32)) return error.ArithmeticOverflow;
+        return Rational{ .numerator = @intCast(reduced_numerator), .denominator = @intCast(reduced_denominator) };
+    }
+};
+
+fn gcd(left: u32, right: u32) u32 {
+    var a = left;
+    var b = right;
+    while (b != 0) {
+        const remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    return a;
+}
+
+fn gcdWide(left: u128, right: u128) u128 {
+    var a = left;
+    var b = right;
+    while (b != 0) {
+        const remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    return a;
+}
+
+const ScaleReadiness = enum(u8) { provisional, awaiting_compositor, accepted };
+
+/// Window-owned scale facts. `effective`, DPI, and `revision` become accepted
+/// only after compositor readiness; bootstrap values never cross into Runtime.
+const ScaleFacts = struct {
+    deduced: Rational = .one,
+    preferred_integer: ?Rational = null,
+    effective: Rational = .one,
+    dpi_x: Rational = .{ .numerator = 96, .denominator = 1 },
+    dpi_y: Rational = .{ .numerator = 96, .denominator = 1 },
+    accepted_effective: Rational = .one,
+    accepted_dpi_x: Rational = .{ .numerator = 96, .denominator = 1 },
+    accepted_dpi_y: Rational = .{ .numerator = 96, .denominator = 1 },
+    accepted_valid: bool = false,
+    expect_preferred: bool = false,
+    bootstrap_ready: bool = false,
+    configure_ready: bool = false,
+    readiness: ScaleReadiness = .provisional,
+    revision: u64 = 0,
+
+    fn recompute(self: *ScaleFacts, highest_entered: ?Rational) ScaleError!void {
+        var next = self.*;
+        if (highest_entered) |value| next.deduced = value;
+        const selected = next.preferred_integer orelse highest_entered;
+        const ready = next.bootstrap_ready and selected != null and (!next.expect_preferred or (next.configure_ready and next.preferred_integer != null));
+        if (selected) |value| {
+            next.effective = value;
+            next.dpi_x = try next.effective.dpi();
+            next.dpi_y = next.dpi_x;
+        }
+        next.readiness = if (ready) .accepted else if (selected == null and !self.accepted_valid) .provisional else .awaiting_compositor;
+        const accepted_change = ready and (!self.accepted_valid or !self.accepted_effective.eql(next.effective) or !self.accepted_dpi_x.eql(next.dpi_x) or !self.accepted_dpi_y.eql(next.dpi_y));
+        if (accepted_change) {
+            if (self.revision == std.math.maxInt(u64)) return error.RevisionExhausted;
+            next.revision = self.revision + 1;
+            next.accepted_effective = next.effective;
+            next.accepted_dpi_x = next.dpi_x;
+            next.accepted_dpi_y = next.dpi_y;
+            next.accepted_valid = true;
+        }
+        self.* = next;
+    }
+};
+
+const OutputFact = struct {
+    object: ?*c.wl_output = null,
+    global_name: u32 = 0,
+    scale: u32 = 1,
+    entered: bool = false,
+};
+
+// No output registry fact is accepted as surface membership. Until enter or a
+// preferred compositor scale arrives, the scale remains provisional.
 
 const Ring = struct {
     generation: u64 = 0,
@@ -48,6 +161,9 @@ const State = struct {
     dmabuf_name: u32 = 0,
     syncobj_name: u32 = 0,
     seat_name: u32 = 0,
+    outputs: [output_limit]OutputFact = .{ OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{} },
+    output_count: u8 = 0,
+    scale: ScaleFacts = .{},
     configured: bool = false,
     configured_width: u32 = 0,
     configured_height: u32 = 0,
@@ -80,6 +196,7 @@ const State = struct {
         if (self.keyboard) |value| c.wl_keyboard_destroy(value);
         if (self.pointer) |value| c.wl_pointer_destroy(value);
         if (self.seat) |value| c.wl_seat_destroy(value);
+        for (self.outputs[0..self.output_count]) |output| if (output.object) |value| c.wl_output_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
         const retired = if (self.ring.generation == 0) null else shared.RetiredRing{
@@ -130,6 +247,8 @@ fn runFallible(boundary: *shared.Boundary) !void {
     if (c.wl_registry_add_listener(registry, &registry_listener, &state) != 0) return error.Listener;
     if (c.wl_display_roundtrip(display) < 0) return error.Dispatch;
     if (state.compositor == null or state.xdg == null or state.dmabuf == null or state.syncobj == null or state.seat == null) return error.RequiredGlobal;
+    state.scale.bootstrap_ready = true;
+    try recomputeScale(&state);
     if (c.wl_seat_add_listener(state.seat.?, &seat_listener, &state) != 0) return error.Listener;
     if (c.wl_display_roundtrip(display) < 0) return error.Dispatch;
     if (c.xdg_wm_base_add_listener(state.xdg.?, &xdg_listener, &state) != 0) return error.Listener;
@@ -142,6 +261,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     try boundary.publishFeedback(selected);
 
     state.surface = c.wl_compositor_create_surface(state.compositor.?) orelse return error.Surface;
+    if (c.wl_surface_add_listener(state.surface.?, &surface_listener, &state) != 0) return error.Listener;
     state.xdg_surface = c.xdg_wm_base_get_xdg_surface(state.xdg.?, state.surface.?) orelse return error.Surface;
     if (c.xdg_surface_add_listener(state.xdg_surface.?, &xdg_surface_listener, &state) != 0) return error.Listener;
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
@@ -259,8 +379,12 @@ fn selectFeedback(state: *const State) ?shared.Feedback {
 fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     const value = std.mem.span(interface);
-    if (std.mem.eql(u8, value, "wl_compositor")) state.compositor = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_compositor_interface, @min(version, 6)));
-    if (std.mem.eql(u8, value, "wl_compositor")) state.compositor_name = name;
+    if (std.mem.eql(u8, value, "wl_compositor")) {
+        const bound_version = @min(version, 6);
+        state.compositor = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_compositor_interface, bound_version));
+        state.compositor_name = name;
+        state.scale.expect_preferred = bound_version >= 6;
+    }
     if (std.mem.eql(u8, value, "xdg_wm_base")) {
         state.xdg = @ptrCast(c.wl_registry_bind(registry, name, &c.xdg_wm_base_interface, @min(version, 7)));
         state.xdg_name = name;
@@ -277,12 +401,175 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
         state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 10)));
         state.seat_name = name;
     }
+    if (std.mem.eql(u8, value, "wl_output")) {
+        if (state.output_count == output_limit) return state.boundary.requestStop(.window);
+        const index = state.output_count;
+        const bound = c.wl_registry_bind(registry, name, &c.wl_output_interface, @min(version, 4)) orelse return state.boundary.requestStop(.window);
+        state.outputs[index] = .{
+            .object = @ptrCast(bound),
+            .global_name = name,
+        };
+        state.output_count += 1;
+        if (c.wl_output_add_listener(state.outputs[index].object.?, &output_listener, state) != 0) state.boundary.requestStop(.window);
+    }
 }
 fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name or name == state.seat_name) state.boundary.requestStop(.window);
+    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name or name == state.seat_name) {
+        state.boundary.requestStop(.window);
+        return;
+    }
+    removeOutput(state, name) catch scaleFailure(state);
 }
 const registry_listener = c.wl_registry_listener{ .global = globalAdd, .global_remove = globalRemove };
+
+fn removeOutput(state: *State, name: u32) ScaleError!void {
+    var index: ?usize = null;
+    for (state.outputs[0..state.output_count], 0..) |output, candidate| {
+        if (output.global_name == name) {
+            index = candidate;
+            break;
+        }
+    }
+    const removed_index = index orelse return;
+    const old_scale = state.scale;
+    const old_count = state.output_count;
+    const last_index = old_count - 1;
+    const removed = state.outputs[removed_index];
+    const moved = state.outputs[last_index];
+    if (removed_index != last_index) state.outputs[removed_index] = state.outputs[last_index];
+    state.output_count -= 1;
+    recomputeScale(state) catch |failure| {
+        state.output_count = old_count;
+        state.outputs[removed_index] = removed;
+        if (removed_index != last_index) state.outputs[last_index] = moved;
+        state.scale = old_scale;
+        return failure;
+    };
+    if (removed.object) |output| c.wl_output_destroy(output);
+}
+
+fn highestEntered(state: *const State) ScaleError!?Rational {
+    var highest: ?Rational = null;
+    for (state.outputs[0..state.output_count]) |output| {
+        if (!output.entered) continue;
+        const scale = try Rational.init(output.scale, 1);
+        if (highest == null or @as(u64, scale.numerator) * highest.?.denominator > @as(u64, highest.?.numerator) * scale.denominator) highest = scale;
+    }
+    return highest;
+}
+
+fn recomputeScale(state: *State) ScaleError!void {
+    var next = state.scale;
+    try next.recompute(try highestEntered(state));
+    state.scale = next;
+}
+
+fn outputIndex(state: *const State, output: ?*c.wl_output) ScaleError!usize {
+    for (state.outputs[0..state.output_count], 0..) |fact, index| if (fact.object == output) return index;
+    return error.UnknownOutput;
+}
+
+fn outputScale(state: *State, output: ?*c.wl_output, factor: i32) ScaleError!void {
+    if (factor <= 0) return error.InvalidScale;
+    const index = try outputIndex(state, output);
+    const old_output = state.outputs[index];
+    const old_scale = state.scale;
+    state.outputs[index].scale = @intCast(factor);
+    recomputeScale(state) catch |failure| {
+        state.outputs[index] = old_output;
+        state.scale = old_scale;
+        return failure;
+    };
+}
+
+fn outputEnter(state: *State, output: ?*c.wl_output) ScaleError!void {
+    const index = try outputIndex(state, output);
+    if (state.outputs[index].entered) return;
+    const old_scale = state.scale;
+    state.outputs[index].entered = true;
+    recomputeScale(state) catch |failure| {
+        state.outputs[index].entered = false;
+        state.scale = old_scale;
+        return failure;
+    };
+}
+
+fn outputLeave(state: *State, output: ?*c.wl_output) ScaleError!void {
+    const index = try outputIndex(state, output);
+    if (!state.outputs[index].entered) return error.UnknownOutput;
+    const old_scale = state.scale;
+    state.outputs[index].entered = false;
+    recomputeScale(state) catch |failure| {
+        state.outputs[index].entered = true;
+        state.scale = old_scale;
+        return failure;
+    };
+}
+
+fn preferredInteger(state: *State, factor: i32) ScaleError!void {
+    if (factor <= 0) return error.InvalidScale;
+    const value = try Rational.init(@intCast(factor), 1);
+    var next = state.scale;
+    next.preferred_integer = value;
+    try next.recompute(try highestEntered(state));
+    state.scale = next;
+}
+
+fn configureScale(state: *State) ScaleError!void {
+    var next = state.scale;
+    next.configure_ready = true;
+    try next.recompute(try highestEntered(state));
+    state.scale = next;
+}
+
+fn scaleFailure(state: *State) void {
+    state.boundary.requestStop(.window);
+}
+
+fn surfaceEnter(data: ?*anyopaque, _: ?*c.wl_surface, output: ?*c.wl_output) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    outputEnter(state, output) catch scaleFailure(state);
+}
+
+fn surfaceLeave(data: ?*anyopaque, _: ?*c.wl_surface, output: ?*c.wl_output) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    outputLeave(state, output) catch scaleFailure(state);
+}
+
+fn surfacePreferredScale(data: ?*anyopaque, _: ?*c.wl_surface, factor: i32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    preferredInteger(state, factor) catch scaleFailure(state);
+}
+
+fn surfacePreferredTransform(_: ?*anyopaque, _: ?*c.wl_surface, _: u32) callconv(.c) void {}
+
+const surface_listener = c.wl_surface_listener{
+    .enter = surfaceEnter,
+    .leave = surfaceLeave,
+    .preferred_buffer_scale = surfacePreferredScale,
+    .preferred_buffer_transform = surfacePreferredTransform,
+};
+
+fn outputGeometry(_: ?*anyopaque, _: ?*c.wl_output, _: i32, _: i32, _: i32, _: i32, _: i32, _: [*c]const u8, _: [*c]const u8, _: i32) callconv(.c) void {}
+fn outputMode(_: ?*anyopaque, _: ?*c.wl_output, _: u32, _: i32, _: i32, _: i32) callconv(.c) void {}
+fn outputDone(_: ?*anyopaque, _: ?*c.wl_output) callconv(.c) void {}
+fn outputScaleEvent(data: ?*anyopaque, output: ?*c.wl_output, factor: i32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    outputScale(state, output, factor) catch scaleFailure(state);
+}
+fn outputName(_: ?*anyopaque, _: ?*c.wl_output, _: [*c]const u8) callconv(.c) void {}
+fn outputDescription(_: ?*anyopaque, _: ?*c.wl_output, _: [*c]const u8) callconv(.c) void {}
+
+const output_listener = c.wl_output_listener{
+    .geometry = outputGeometry,
+    .mode = outputMode,
+    .done = outputDone,
+    .scale = outputScaleEvent,
+    .name = outputName,
+    .description = outputDescription,
+};
+
 fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (wm != state.xdg) state.boundary.requestStop(.window);
@@ -292,6 +579,7 @@ const xdg_listener = c.xdg_wm_base_listener{ .ping = ping };
 fn surfaceConfigure(data: ?*anyopaque, _: ?*c.xdg_surface, serial: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     state.configured = true;
+    configureScale(state) catch scaleFailure(state);
     if (state.xdg_surface) |surface| c.xdg_surface_ack_configure(surface, serial);
 }
 const xdg_surface_listener = c.xdg_surface_listener{ .configure = surfaceConfigure };
@@ -616,6 +904,162 @@ test "pointer frame consumes only retained axis occurrence position" {
     try std.testing.expectEqual(expected, takeAxisFramePoint(&retained).?);
     try std.testing.expect(retained == null);
     try std.testing.expect(takeAxisFramePoint(&retained) == null);
+}
+
+test "Wayland surface listener handles preferred transform events" {
+    try std.testing.expect(surface_listener.preferred_buffer_transform != null);
+}
+
+test "Wayland scale precedence and accepted revisions are transactional" {
+    var facts = ScaleFacts{ .bootstrap_ready = true };
+    try facts.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.provisional, facts.readiness);
+    try std.testing.expectEqual(@as(u64, 0), facts.revision);
+
+    try facts.recompute(try Rational.init(2, 1));
+    try std.testing.expectEqual(try Rational.init(2, 1), facts.effective);
+    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+
+    facts.expect_preferred = true;
+    facts.configure_ready = false;
+    try facts.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
+    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+
+    facts.preferred_integer = try Rational.init(3, 1);
+    try facts.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
+    facts.configure_ready = true;
+    try facts.recompute(null);
+    try std.testing.expectEqual(try Rational.init(3, 1), facts.effective);
+    try std.testing.expectEqual(Rational{ .numerator = 288, .denominator = 1 }, facts.dpi_x);
+    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+
+    const before_deduced = facts;
+    try facts.recompute(try Rational.init(4, 1));
+    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&before_deduced), std.mem.asBytes(&facts)));
+}
+
+test "Wayland configure without preferred scale continues awaiting until later callback" {
+    var state: State = undefined;
+    state.output_count = 0;
+    state.scale = .{ .bootstrap_ready = true, .expect_preferred = true };
+
+    try configureScale(&state);
+    try std.testing.expectEqual(ScaleReadiness.provisional, state.scale.readiness);
+    try std.testing.expectEqual(@as(u64, 0), state.scale.revision);
+
+    try preferredInteger(&state, 2);
+    try std.testing.expectEqual(ScaleReadiness.accepted, state.scale.readiness);
+    try std.testing.expectEqual(@as(u64, 1), state.scale.revision);
+    try std.testing.expectEqual(try Rational.init(2, 1), state.scale.effective);
+}
+
+test "Wayland output membership selects highest deduced scale and retains last snapshot" {
+    var state: State = undefined;
+    state.output_count = 2;
+    const first: *c.wl_output = @ptrFromInt(1);
+    const second: *c.wl_output = @ptrFromInt(2);
+    state.outputs[0] = .{ .object = first, .scale = 2 };
+    state.outputs[1] = .{ .object = second, .scale = 3 };
+    state.scale = .{ .bootstrap_ready = true };
+    try std.testing.expectEqual(@as(u64, 0), state.scale.revision);
+    try outputEnter(&state, first);
+    try outputEnter(&state, second);
+    try std.testing.expectEqual(try Rational.init(3, 1), state.scale.effective);
+    try outputLeave(&state, second);
+    try std.testing.expectEqual(try Rational.init(2, 1), state.scale.effective);
+    try outputLeave(&state, first);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, state.scale.readiness);
+    try std.testing.expectEqual(@as(u64, 3), state.scale.revision);
+    try std.testing.expectError(error.UnknownOutput, outputLeave(&state, first));
+}
+
+test "Wayland provisional and invalid scale changes preserve bytes" {
+    var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true };
+    const before = facts;
+    try std.testing.expectError(error.InvalidScale, Rational.init(0, 120));
+    try std.testing.expectError(error.InvalidScale, Rational.init(2880, 120));
+    try std.testing.expectError(error.InvalidScale, Rational.init(1, 0));
+    try std.testing.expectEqual(before, facts);
+    try facts.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.provisional, facts.readiness);
+    try std.testing.expectEqual(@as(u64, 0), facts.revision);
+
+    facts.bootstrap_ready = true;
+    facts.configure_ready = true;
+    facts.preferred_integer = try Rational.init(1, 1);
+    try facts.recompute(null);
+    facts.revision = std.math.maxInt(u64);
+    facts.accepted_valid = true;
+    facts.accepted_effective = facts.effective;
+    const exhausted = facts;
+    var state: State = undefined;
+    state.output_count = 0;
+    state.scale = exhausted;
+    try std.testing.expectError(error.RevisionExhausted, preferredInteger(&state, 2));
+    try std.testing.expectEqual(exhausted, state.scale);
+}
+
+test "Wayland invalid callback facts preserve output membership and scale bytes" {
+    var state: State = undefined;
+    const output: *c.wl_output = @ptrFromInt(3);
+    state.output_count = 1;
+    state.outputs[0] = .{ .object = output, .scale = 2, .entered = true };
+    state.scale = .{ .bootstrap_ready = true };
+    try recomputeScale(&state);
+    const before_output = state.outputs[0];
+    const before_scale = state.scale;
+    try std.testing.expectError(error.InvalidScale, outputScale(&state, output, 24));
+    try std.testing.expectEqual(before_output, state.outputs[0]);
+    try std.testing.expectEqual(before_scale, state.scale);
+    try std.testing.expectError(error.UnknownOutput, outputEnter(&state, @ptrFromInt(4)));
+    try std.testing.expectEqual(before_output, state.outputs[0]);
+    try std.testing.expectEqual(before_scale, state.scale);
+}
+
+test "Wayland output removal is harmless, recomputes membership, and reuses slots" {
+    var state: State = undefined;
+    state.output_count = 3;
+    state.outputs[0] = .{ .global_name = 50, .scale = 2, .entered = true };
+    state.outputs[1] = .{ .global_name = 60, .scale = 3, .entered = true };
+    state.outputs[2] = .{ .global_name = 70, .scale = 5, .entered = false };
+    state.scale = .{ .bootstrap_ready = true };
+    try recomputeScale(&state);
+    try std.testing.expectEqual(try Rational.init(3, 1), state.scale.effective);
+
+    try removeOutput(&state, 999);
+    try std.testing.expectEqual(@as(u8, 3), state.output_count);
+    try removeOutput(&state, 70);
+    try std.testing.expectEqual(@as(u8, 2), state.output_count);
+    try removeOutput(&state, 60);
+    try std.testing.expectEqual(@as(u8, 1), state.output_count);
+    try std.testing.expectEqual(@as(u32, 50), state.outputs[0].global_name);
+    try std.testing.expectEqual(try Rational.init(2, 1), state.scale.effective);
+
+    const accepted_effective = state.scale.accepted_effective;
+    const accepted_dpi = state.scale.accepted_dpi_x;
+    try removeOutput(&state, 50);
+    try std.testing.expectEqual(@as(u8, 0), state.output_count);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, state.scale.readiness);
+    try std.testing.expectEqual(accepted_effective, state.scale.accepted_effective);
+    try std.testing.expectEqual(accepted_dpi, state.scale.accepted_dpi_x);
+
+    state.outputs[0] = .{ .global_name = 70, .scale = 1 };
+    state.output_count = 1;
+    try std.testing.expectEqual(@as(u32, 70), state.outputs[0].global_name);
+}
+
+test "Wayland widened DPI reduction succeeds before storage bounds" {
+    const reducible = Rational{ .numerator = 4_000_000_001, .denominator = 288_000_000 };
+    try std.testing.expectEqual(
+        Rational{ .numerator = 4_000_000_001, .denominator = 3_000_000 },
+        try reducible.dpi(),
+    );
+
+    const unrepresentable = Rational{ .numerator = std.math.maxInt(u32), .denominator = 1 };
+    try std.testing.expectError(error.ArithmeticOverflow, unrepresentable.dpi());
 }
 
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {

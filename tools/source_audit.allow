@@ -10,6 +10,12 @@ howl-host/src/window.zig|anyopaque|fn keyboardLeave(data: ?*anyopaque, keyboard:
 howl-host/src/window.zig|anyopaque|fn keyboardModifiers(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn keyboardRepeat(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn outputDescription(_: ?*anyopaque, _: ?*c.wl_output, _: [*c]const u8) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn outputDone(_: ?*anyopaque, _: ?*c.wl_output) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn outputGeometry(_: ?*anyopaque, _: ?*c.wl_output, _: i32, _: i32, _: i32, _: i32, _: i32, _: [*c]const u8, _: [*c]const u8, _: i32) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn outputMode(_: ?*anyopaque, _: ?*c.wl_output, _: u32, _: i32, _: i32, _: i32) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn outputName(_: ?*anyopaque, _: ?*c.wl_output, _: [*c]const u8) callconv(.c) void {}
+howl-host/src/window.zig|anyopaque|fn outputScaleEvent(data: ?*anyopaque, output: ?*c.wl_output, factor: i32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, axis: u32, value: c.wl_fixed_t) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, serial: u32, time: u32, button: u32, value: u32) callconv(.c) void {
@@ -25,6 +31,10 @@ howl-host/src/window.zig|anyopaque|fn pointerValue120(data: ?*anyopaque, pointer
 howl-host/src/window.zig|anyopaque|fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn seatName(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, _: ?*c.xdg_surface, serial: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn surfaceEnter(data: ?*anyopaque, _: ?*c.wl_surface, output: ?*c.wl_output) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn surfaceLeave(data: ?*anyopaque, _: ?*c.wl_surface, output: ?*c.wl_output) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn surfacePreferredScale(data: ?*anyopaque, _: ?*c.wl_surface, factor: i32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn surfacePreferredTransform(_: ?*anyopaque, _: ?*c.wl_surface, _: u32) callconv(.c) void {}
 howl-host/src/window.zig|anyopaque|fn topBounds(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn topCaps(data: ?*anyopaque, _: ?*c.xdg_toplevel, capabilities: ?*c.wl_array) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn topClose(data: ?*anyopaque, _: ?*c.xdg_toplevel) callconv(.c) void {
