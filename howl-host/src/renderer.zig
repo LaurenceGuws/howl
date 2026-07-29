@@ -27,6 +27,7 @@ const chrome_appearance = chrome_state.Appearance{
 };
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
+const configured_terminal_base_points: f64 = 16.0;
 
 const RetiredTerminalSource = struct {
     pane: render_api.chrome.PaneId,
@@ -125,7 +126,9 @@ const CanvasWork = struct {
     terminals: *terminal_handoff.Boundary,
     terminal_rejection_reported: bool = false,
     terminal_font_size: u16 = 16,
+    terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
+    font_request_high_water: u64 = 0,
     next_visible_revision: u64 = 1,
     visible_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined,
     visible_count: u8 = 0,
@@ -271,11 +274,16 @@ fn runFallible(
         .builder = &surface_builder,
         .residency = &surface_residency,
         .terminals = terminals,
+        .terminal_font_policy = try terminal_handoff.FontPolicy.init(
+            configured_terminal_base_points,
+        ),
     };
     try retainTerminalScale(
         canvas_work.terminals,
         canvas_work.terminal_font_size,
+        canvas_work.terminal_font_policy,
         &canvas_work.terminal_scale,
+        &canvas_work.font_request_high_water,
         initial_surface,
     );
     var initial_pending = try prepareInitialTerminalTopology(
@@ -473,7 +481,9 @@ fn runFallible(
             try retainTerminalScale(
                 canvas_work.terminals,
                 canvas_work.terminal_font_size,
+                canvas_work.terminal_font_policy,
                 &canvas_work.terminal_scale,
+                &canvas_work.font_request_high_water,
                 surface,
             );
             const pending_generation = if (pending_topology) |pending|
@@ -754,12 +764,22 @@ fn renderExtent(surface: shared.SurfaceConfig) render_api.canvas.Size {
 fn retainTerminalScale(
     terminals: *terminal_handoff.Boundary,
     terminal_font_size: u16,
+    policy: terminal_handoff.FontPolicy,
     retained: *?terminal_handoff.ScaleSnapshot,
+    request_high_water: *u64,
     surface: shared.SurfaceConfig,
 ) !void {
     const snapshot = try terminalScaleSnapshot(surface);
     if (std.meta.eql(retained.*, snapshot)) return;
-    try terminals.requestFontSize(terminal_font_size, snapshot);
+    const revision = std.math.add(u64, request_high_water.*, 1) catch
+        return error.FontRevisionExhausted;
+    try terminals.requestFont(.{
+        .revision = revision,
+        .pixel_height = terminal_font_size,
+        .scale = snapshot,
+        .policy = policy,
+    });
+    request_high_water.* = revision;
     retained.* = snapshot;
 }
 
@@ -781,6 +801,218 @@ fn terminalScaleSnapshot(
             .denominator = dpi_y.denominator,
         },
     };
+}
+
+fn policyOffsetIndex(
+    policy: *const terminal_handoff.FontPolicy,
+    pane: render_api.chrome.PaneId,
+) ?usize {
+    for (policy.offsets[0..policy.count], 0..) |offset, index| {
+        const retained = @backingInt(offset.pane);
+        const requested = @backingInt(pane);
+        if (retained == requested) return index;
+        if (retained > requested) return null;
+    }
+    return null;
+}
+
+fn policyOffset(
+    policy: *const terminal_handoff.FontPolicy,
+    pane: render_api.chrome.PaneId,
+) f64 {
+    const index = policyOffsetIndex(policy, pane) orelse return 0.0;
+    return policy.offsets[index].offset_points;
+}
+
+fn setPolicyOffset(
+    policy: *terminal_handoff.FontPolicy,
+    pane: render_api.chrome.PaneId,
+    value: f64,
+) error{ InvalidFontPolicy, FontPolicyCapacity }!void {
+    if (@backingInt(pane) == 0 or
+        !std.math.isFinite(value) or std.math.isNan(value))
+        return error.InvalidFontPolicy;
+    var next = policy.*;
+    if (policyOffsetIndex(policy, pane)) |index| {
+        if (value == 0.0) {
+            var cursor = index;
+            while (cursor + 1 < next.count) : (cursor += 1)
+                next.offsets[cursor] = next.offsets[cursor + 1];
+            next.count -= 1;
+        } else {
+            next.offsets[index].offset_points = value;
+        }
+    } else if (value != 0.0) {
+        if (next.count == next.offsets.len) return error.FontPolicyCapacity;
+        var index: usize = 0;
+        while (index < next.count and
+            @backingInt(next.offsets[index].pane) < @backingInt(pane)) : (index += 1)
+        {}
+        var cursor: usize = next.count;
+        while (cursor > index) : (cursor -= 1)
+            next.offsets[cursor] = next.offsets[cursor - 1];
+        next.offsets[index] = .{ .pane = pane, .offset_points = value };
+        next.count += 1;
+    }
+    policy.* = next;
+}
+
+fn pruneFontPolicy(
+    policy: *terminal_handoff.FontPolicy,
+    topology: *const chrome_state.Topology,
+) void {
+    var next = policy.*;
+    var retained: u8 = 0;
+    for (policy.offsets[0..policy.count]) |offset| {
+        if (!topologyContains(topology, offset.pane)) continue;
+        next.offsets[retained] = offset;
+        retained += 1;
+    }
+    next.count = retained;
+    policy.* = next;
+}
+
+fn adjustPolicyOffset(
+    policy: *terminal_handoff.FontPolicy,
+    pane: render_api.chrome.PaneId,
+    delta: f64,
+    scale: terminal_handoff.ScaleSnapshot,
+) error{ InvalidFontPolicy, FontPolicyCapacity }!void {
+    if (!std.math.isFinite(delta) or std.math.isNan(delta) or delta == 0.0)
+        return error.InvalidFontPolicy;
+    const floor = try pointFloor(scale);
+    const ceiling = configured_terminal_base_points * 10.0;
+    const offset = policyOffset(policy, pane);
+    const raw = policy.base_point_size + offset;
+    if (!std.math.isFinite(floor) or !std.math.isFinite(ceiling) or
+        !std.math.isFinite(raw) or floor <= 0.0 or ceiling < floor)
+        return error.InvalidFontPolicy;
+    if ((delta < 0.0 and raw <= floor) or
+        (delta > 0.0 and raw >= ceiling))
+        return;
+    const candidate = raw + delta;
+    if (!std.math.isFinite(candidate)) return error.InvalidFontPolicy;
+    if (delta < 0.0 and candidate <= floor)
+        return setPolicyOffset(policy, pane, floor - policy.base_point_size);
+    if (delta > 0.0 and candidate >= ceiling)
+        return setPolicyOffset(
+            policy,
+            pane,
+            ceiling - policy.base_point_size,
+        );
+    try setPolicyOffset(policy, pane, offset + delta);
+}
+
+fn pointFloor(
+    scale: terminal_handoff.ScaleSnapshot,
+) error{InvalidFontPolicy}!f64 {
+    const dpi_x = @as(f64, @floatFromInt(scale.dpi_x.numerator)) /
+        @as(f64, @floatFromInt(scale.dpi_x.denominator));
+    const dpi_y = @as(f64, @floatFromInt(scale.dpi_y.numerator)) /
+        @as(f64, @floatFromInt(scale.dpi_y.denominator));
+    const floor = @max(72.0 / dpi_x, 72.0 / dpi_y);
+    if (!std.math.isFinite(floor) or floor <= 0.0)
+        return error.InvalidFontPolicy;
+    return floor;
+}
+
+fn publishFontPolicy(
+    terminals: *terminal_handoff.Boundary,
+    terminal_font_size: u16,
+    policy: *terminal_handoff.FontPolicy,
+    scale: ?terminal_handoff.ScaleSnapshot,
+    request_high_water: *u64,
+    candidate: terminal_handoff.FontPolicy,
+) !void {
+    if (std.meta.eql(candidate, policy.*)) return;
+    const revision = std.math.add(u64, request_high_water.*, 1) catch
+        return error.FontRevisionExhausted;
+    try terminals.requestFont(.{
+        .revision = revision,
+        .pixel_height = terminal_font_size,
+        .scale = scale,
+        .policy = candidate,
+    });
+    request_high_water.* = revision;
+    policy.* = candidate;
+}
+
+fn requestPaneFontAction(
+    terminals: *terminal_handoff.Boundary,
+    terminal_font_size: u16,
+    policy: *terminal_handoff.FontPolicy,
+    scale: ?terminal_handoff.ScaleSnapshot,
+    request_high_water: *u64,
+    topology: *const chrome_state.Topology,
+    action: input_actions.Action,
+) !void {
+    var candidate = policy.*;
+    pruneFontPolicy(&candidate, topology);
+    const pane = topology.focusedPaneId();
+    switch (action) {
+        .font_increase => try adjustPolicyOffset(
+            &candidate,
+            pane,
+            1.0,
+            scale orelse return error.FactualScaleUnavailable,
+        ),
+        .font_decrease => try adjustPolicyOffset(
+            &candidate,
+            pane,
+            -1.0,
+            scale orelse return error.FactualScaleUnavailable,
+        ),
+        .font_reset => try setPolicyOffset(&candidate, pane, 0.0),
+        else => return error.InvalidFontAction,
+    }
+    try publishFontPolicy(
+        terminals,
+        terminal_font_size,
+        policy,
+        scale,
+        request_high_water,
+        candidate,
+    );
+}
+
+fn requestBaseFontAction(
+    terminals: *terminal_handoff.Boundary,
+    terminal_font_size: u16,
+    policy: *terminal_handoff.FontPolicy,
+    scale: ?terminal_handoff.ScaleSnapshot,
+    request_high_water: *u64,
+    topology: *const chrome_state.Topology,
+    action: input_actions.Action,
+) !void {
+    var candidate = policy.*;
+    pruneFontPolicy(&candidate, topology);
+    const ceiling = configured_terminal_base_points * 10.0;
+    const requested = switch (action) {
+        .font_base_increase => increase: {
+            if (scale == null) return error.FactualScaleUnavailable;
+            break :increase candidate.base_point_size + 1.0;
+        },
+        .font_base_decrease => decrease: {
+            if (scale == null) return error.FactualScaleUnavailable;
+            break :decrease candidate.base_point_size - 1.0;
+        },
+        .font_base_reset => configured_terminal_base_points,
+        else => return error.InvalidFontAction,
+    };
+    if (!std.math.isFinite(requested)) return error.InvalidFontPolicy;
+    const floor = if (scale) |factual|
+        try pointFloor(factual)
+    else
+        0.0;
+    candidate.base_point_size = std.math.clamp(requested, floor, ceiling);
+    try publishFontPolicy(
+        terminals,
+        terminal_font_size,
+        policy,
+        scale,
+        request_high_water,
+        candidate,
+    );
 }
 
 test "integer and fractional surfaces retain the logical Canvas extent" {
@@ -816,7 +1048,11 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         @sizeOf(terminal_handoff.ScaleSnapshot),
     );
     try std.testing.expectEqual(
-        @as(usize, 48),
+        @as(usize, 1_040),
+        @sizeOf(terminal_handoff.FontPolicy),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1_088),
         @sizeOf(terminal_handoff.FontRequest),
     );
     var terminals = try terminal_handoff.Boundary.init(
@@ -838,7 +1074,9 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         },
     );
     defer terminals.deinit();
+    const policy = try terminal_handoff.FontPolicy.init(16.0);
     var retained: ?terminal_handoff.ScaleSnapshot = null;
+    var request_high_water: u64 = 0;
     const provisional = shared.SurfaceConfig{
         .generation = 1,
         .logical_width = 100,
@@ -849,7 +1087,14 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         .buffer_scale = 1,
         .use_viewport = false,
     };
-    try retainTerminalScale(&terminals, 16, &retained, provisional);
+    try retainTerminalScale(
+        &terminals,
+        16,
+        policy,
+        &retained,
+        &request_high_water,
+        provisional,
+    );
     try std.testing.expect(retained == null);
     try std.testing.expect(terminals.takeFontRequest() == null);
     var accepted = provisional;
@@ -860,7 +1105,14 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     accepted.use_viewport = true;
     accepted.dpi_x = .{ .numerator = 768, .denominator = 5 };
     accepted.dpi_y = .{ .numerator = 768, .denominator = 5 };
-    try retainTerminalScale(&terminals, 16, &retained, accepted);
+    try retainTerminalScale(
+        &terminals,
+        16,
+        policy,
+        &retained,
+        &request_high_water,
+        accepted,
+    );
     const request = terminals.takeFontRequest().?;
     const snapshot = request.scale.?;
     try std.testing.expectEqual(@as(u16, 16), request.pixel_height);
@@ -872,23 +1124,294 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         },
         snapshot.dpi_x,
     );
-    try retainTerminalScale(&terminals, 16, &retained, accepted);
+    try retainTerminalScale(
+        &terminals,
+        16,
+        policy,
+        &retained,
+        &request_high_water,
+        accepted,
+    );
     try std.testing.expect(terminals.takeFontRequest() == null);
     var awaiting = accepted;
     awaiting.generation = 3;
     awaiting.dpi_x = null;
     awaiting.dpi_y = null;
-    try retainTerminalScale(&terminals, 16, &retained, awaiting);
+    try retainTerminalScale(
+        &terminals,
+        16,
+        policy,
+        &retained,
+        &request_high_water,
+        awaiting,
+    );
     const cleared = terminals.takeFontRequest().?;
     try std.testing.expect(cleared.scale == null);
     try std.testing.expect(retained == null);
     accepted.scale_revision = 0;
     try std.testing.expectError(
         error.InvalidFrame,
-        retainTerminalScale(&terminals, 16, &retained, accepted),
+        retainTerminalScale(
+            &terminals,
+            16,
+            policy,
+            &retained,
+            &request_high_water,
+            accepted,
+        ),
     );
     try std.testing.expect(retained == null);
     try std.testing.expect(terminals.takeFontRequest() == null);
+}
+
+test "Renderer pane point mutations clamp independently and reset omits zero" {
+    var policy = try terminal_handoff.FontPolicy.init(10.0);
+    const first: render_api.chrome.PaneId = @fromBackingInt(1);
+    const second: render_api.chrome.PaneId = @fromBackingInt(2);
+    const scale = terminal_handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 72, .denominator = 1 },
+        .dpi_y = .{ .numerator = 72, .denominator = 1 },
+    };
+    try setPolicyOffset(&policy, first, -9.0);
+    try setPolicyOffset(&policy, second, 2.0);
+    const retained_second = policyOffset(&policy, second);
+    try adjustPolicyOffset(&policy, first, -1.0, scale);
+    try std.testing.expectEqual(@as(f64, -9.0), policyOffset(&policy, first));
+    try adjustPolicyOffset(&policy, first, 1.0, scale);
+    try std.testing.expectEqual(@as(f64, -8.0), policyOffset(&policy, first));
+    try std.testing.expectEqual(retained_second, policyOffset(&policy, second));
+    try setPolicyOffset(&policy, first, 0.0);
+    try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&policy, first));
+    try std.testing.expectEqual(@as(u8, 1), policy.count);
+    try std.testing.expectEqual(second, policy.offsets[0].pane);
+}
+
+test "focused pane actions coalesce retained point state through real Boundary" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 4,
+            .upload_bytes = 16,
+            .cells = 4,
+            .rows = 4,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 16,
+            .glyphs = 4,
+            .masks = 4,
+            .resources_per_update = 4,
+            .raster_bytes = 16,
+            .decoration_bytes = 16,
+        },
+    );
+    defer terminals.deinit();
+    var topology = try chrome_state.Topology.init(
+        .{ .width = 100, .height = 80 },
+        chrome_state.default_tab_bar_height,
+    );
+    const pane = topology.focusedPaneId();
+    var policy = try terminal_handoff.FontPolicy.init(10.0);
+    const scale = terminal_handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 72, .denominator = 1 },
+        .dpi_y = .{ .numerator = 72, .denominator = 1 },
+    };
+    var high_water: u64 = 0;
+    try requestPaneFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_increase,
+    );
+    try requestPaneFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_increase,
+    );
+    const newest = terminals.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u64, 2), newest.revision);
+    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&newest.policy, pane));
+    try requestPaneFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_reset,
+    );
+    const reset = terminals.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u8, 0), reset.policy.count);
+    try std.testing.expectEqual(@as(u64, 3), reset.revision);
+}
+
+test "policy pruning retains hidden panes and removes a full stale table" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 4,
+            .upload_bytes = 16,
+            .cells = 4,
+            .rows = 4,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 16,
+            .glyphs = 4,
+            .masks = 4,
+            .resources_per_update = 4,
+            .raster_bytes = 16,
+            .decoration_bytes = 16,
+        },
+    );
+    defer terminals.deinit();
+    var topology = try chrome_state.Topology.init(
+        .{ .width = 640, .height = 480 },
+        chrome_state.default_tab_bar_height,
+    );
+    const first_tab = topology.tabId(0).?;
+    const first = topology.focusedPaneId();
+    const closed = try topology.split(first, .horizontal);
+    try topology.closePane(closed);
+    const hidden_tab = try topology.createTab("hidden");
+    try std.testing.expect(@backingInt(hidden_tab) != 0);
+    const hidden = topology.focusedPaneId();
+    try topology.switchTab(first_tab);
+    try std.testing.expectEqual(first, topology.focusedPaneId());
+
+    var policy = try terminal_handoff.FontPolicy.init(16.0);
+    policy.count = 64;
+    policy.offsets[0] = .{ .pane = closed, .offset_points = 1.0 };
+    policy.offsets[1] = .{ .pane = hidden, .offset_points = 2.0 };
+    for (policy.offsets[2..], 0..) |*offset, index| {
+        offset.* = .{
+            .pane = @fromBackingInt(@intCast(100 + index)),
+            .offset_points = 3.0,
+        };
+    }
+    const scale = terminal_handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var high_water: u64 = 0;
+    try requestPaneFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_increase,
+    );
+    const request = terminals.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u64, 1), request.revision);
+    try std.testing.expectEqual(@as(u8, 2), request.policy.count);
+    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, first));
+    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&request.policy, hidden));
+    try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&request.policy, closed));
+    try std.testing.expectEqual(request.policy, policy);
+}
+
+test "window base actions preserve every pane offset through real Boundary" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 4,
+            .upload_bytes = 16,
+            .cells = 4,
+            .rows = 4,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 16,
+            .glyphs = 4,
+            .masks = 4,
+            .resources_per_update = 4,
+            .raster_bytes = 16,
+            .decoration_bytes = 16,
+        },
+    );
+    defer terminals.deinit();
+    var topology = try chrome_state.Topology.init(
+        .{ .width = 320, .height = 240 },
+        chrome_state.default_tab_bar_height,
+    );
+    const first = topology.focusedPaneId();
+    const second = try topology.split(first, .horizontal);
+    var policy = try terminal_handoff.FontPolicy.init(
+        configured_terminal_base_points,
+    );
+    try setPolicyOffset(&policy, first, -2.0);
+    try setPolicyOffset(&policy, second, 3.0);
+    const retained_offsets = policy.offsets;
+    const scale = terminal_handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var high_water: u64 = 0;
+    try requestBaseFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_base_increase,
+    );
+    try std.testing.expectEqual(@as(f64, 17.0), policy.base_point_size);
+    try std.testing.expectEqual(retained_offsets, policy.offsets);
+    try requestBaseFontAction(
+        &terminals,
+        16,
+        &policy,
+        null,
+        &high_water,
+        &topology,
+        .font_base_reset,
+    );
+    const reset_without_dpi = terminals.takeFontRequest().?;
+    try std.testing.expect(reset_without_dpi.scale == null);
+    try std.testing.expectEqual(
+        configured_terminal_base_points,
+        reset_without_dpi.policy.base_point_size,
+    );
+    try std.testing.expectEqual(retained_offsets, reset_without_dpi.policy.offsets);
+    try requestBaseFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_base_decrease,
+    );
+    try requestBaseFontAction(
+        &terminals,
+        16,
+        &policy,
+        scale,
+        &high_water,
+        &topology,
+        .font_base_increase,
+    );
+    const newest = terminals.takeFontRequest().?;
+    try std.testing.expectEqual(
+        configured_terminal_base_points,
+        newest.policy.base_point_size,
+    );
+    try std.testing.expectEqual(retained_offsets, newest.policy.offsets);
+    try std.testing.expectEqual(@as(u64, 4), newest.revision);
 }
 
 fn buildCanvasPlan(
@@ -1552,19 +2075,39 @@ fn drainInput(
         const candidate: ?chrome_state.Topology = switch (event) {
             .key => |key| switch (actions.key(key) catch continue) {
                 .action => |action| switch (action) {
-                    .font_increase, .font_decrease, .font_reset => blk: {
-                        const requested = switch (action) {
-                            .font_increase => if (canvas_work.terminal_font_size < 72) canvas_work.terminal_font_size + 1 else canvas_work.terminal_font_size,
-                            .font_decrease => if (canvas_work.terminal_font_size > 8) canvas_work.terminal_font_size - 1 else canvas_work.terminal_font_size,
-                            .font_reset => 16,
-                            else => unreachable,
-                        };
-                        if (requested != canvas_work.terminal_font_size) {
-                            canvas_work.terminals.requestFontSize(
-                                requested,
+                    .font_increase,
+                    .font_decrease,
+                    .font_reset,
+                    .font_base_increase,
+                    .font_base_decrease,
+                    .font_base_reset,
+                    => blk: {
+                        switch (action) {
+                            .font_increase,
+                            .font_decrease,
+                            .font_reset,
+                            => requestPaneFontAction(
+                                canvas_work.terminals,
+                                canvas_work.terminal_font_size,
+                                &canvas_work.terminal_font_policy,
                                 canvas_work.terminal_scale,
-                            ) catch continue;
-                            canvas_work.terminal_font_size = requested;
+                                &canvas_work.font_request_high_water,
+                                topology,
+                                action,
+                            ) catch continue,
+                            .font_base_increase,
+                            .font_base_decrease,
+                            .font_base_reset,
+                            => requestBaseFontAction(
+                                canvas_work.terminals,
+                                canvas_work.terminal_font_size,
+                                &canvas_work.terminal_font_policy,
+                                canvas_work.terminal_scale,
+                                &canvas_work.font_request_high_water,
+                                topology,
+                                action,
+                            ) catch continue,
+                            else => unreachable,
                         }
                         break :blk null;
                     },
@@ -2577,6 +3120,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .builder = &builder,
         .residency = &residency,
         .terminals = &terminals,
+        .terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0),
     };
     const accepted_topology = try chrome_state.Topology.init(
         .{ .width = 320, .height = 240 },

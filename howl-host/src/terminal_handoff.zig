@@ -34,7 +34,8 @@ pub const VisibleSetRequest = struct {
     count: u8,
 };
 
-/// Copies one latest global terminal-font request for runtime coalescing.
+/// Copies one latest terminal base, pane-local point policy, and factual scale
+/// snapshot for bounded Runtime coalescing.
 pub const FontRequest = struct {
     /// Identifies this request in strict publication order.
     revision: u64,
@@ -43,6 +44,37 @@ pub const FontRequest = struct {
     /// Copies the newest factual Window DPI accepted by Renderer. Absence
     /// preserves legacy pixel-size behavior without fabricating DPI.
     scale: ?ScaleSnapshot,
+    /// Copies the complete Renderer-owned terminal point-size policy.
+    policy: FontPolicy,
+};
+
+/// Copies one nonzero pane identity and its nonzero signed point-size offset.
+pub const PaneFontOffset = struct {
+    /// Identifies the globally non-reused pane.
+    pane: PaneId,
+    /// Retains the pane-local signed point delta.
+    offset_points: f64,
+};
+
+/// Copies one bounded terminal base plus sorted nonzero pane offsets.
+pub const FontPolicy = struct {
+    /// Retains the configured terminal base in points.
+    base_point_size: f64,
+    /// Bounds the initialized sorted offset prefix.
+    count: u8,
+    /// Stores unique PaneId records; absent panes have zero offset.
+    offsets: [owner_limit]PaneFontOffset,
+
+    /// Constructs one deterministic empty-offset policy.
+    pub fn init(base_point_size: f64) error{InvalidFontPolicy}!FontPolicy {
+        if (!validPoint(base_point_size) or base_point_size <= 0.0)
+            return error.InvalidFontPolicy;
+        return .{
+            .base_point_size = base_point_size,
+            .count = 0,
+            .offsets = std.mem.zeroes([owner_limit]PaneFontOffset),
+        };
+    }
 };
 
 /// Copies one exact accepted Window scale/DPI fact through the existing
@@ -1913,28 +1945,26 @@ pub const Boundary = struct {
 
     /// Replaces the latest bounded terminal-font request without consuming
     /// lifecycle-ring capacity; the runtime observes it on its next wake.
-    pub fn requestFontSize(
+    pub fn requestFont(
         self: *Boundary,
-        pixel_height: u16,
-        scale: ?ScaleSnapshot,
-    ) error{ InvalidFontSize, InvalidScale, Stopping, RevisionOverflow }!void {
-        if (pixel_height < 8 or pixel_height > 72) return error.InvalidFontSize;
-        if (scale) |value| {
+        request: FontRequest,
+    ) error{ InvalidFontSize, InvalidScale, InvalidFontPolicy, StaleRevision, Stopping }!void {
+        if (request.pixel_height < 8 or request.pixel_height > 72)
+            return error.InvalidFontSize;
+        if (request.scale) |value| {
             if (value.revision == 0 or
                 !validRational(value.dpi_x) or !validRational(value.dpi_y))
                 return error.InvalidScale;
         }
+        if (!validFontPolicy(request.policy)) return error.InvalidFontPolicy;
+        if (request.revision == 0) return error.StaleRevision;
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping) return error.Stopping;
-        const revision = std.math.add(u64, self.font_request_high_water, 1) catch
-            return error.RevisionOverflow;
-        self.font_request_high_water = revision;
-        self.font_request = .{
-            .revision = revision,
-            .pixel_height = pixel_height,
-            .scale = scale,
-        };
+        if (request.revision <= self.font_request_high_water)
+            return error.StaleRevision;
+        self.font_request_high_water = request.revision;
+        self.font_request = request;
         signal(self.terminal_fd);
     }
 
@@ -2051,6 +2081,25 @@ fn validRational(value: ExactRational) bool {
         b = remainder;
     }
     return a == 1;
+}
+
+fn validPoint(value: f64) bool {
+    return std.math.isFinite(value) and !std.math.isNan(value);
+}
+
+fn validFontPolicy(policy: FontPolicy) bool {
+    if (!validPoint(policy.base_point_size) or
+        policy.base_point_size <= 0.0 or policy.count > owner_limit)
+        return false;
+    var previous: u64 = 0;
+    for (policy.offsets[0..policy.count]) |offset| {
+        const pane = @backingInt(offset.pane);
+        if (pane == 0 or pane <= previous or
+            !validPoint(offset.offset_points) or offset.offset_points == 0.0)
+            return false;
+        previous = pane;
+    }
+    return true;
 }
 
 fn signal(descriptor: i32) void {
@@ -2343,28 +2392,57 @@ test "font request copies normalized factual DPI and coalesces newest state" {
         .dpi_x = .{ .numerator = 768, .denominator = 5 },
         .dpi_y = .{ .numerator = 768, .denominator = 5 },
     };
-    try boundary.requestFontSize(16, first);
-    try boundary.requestFontSize(16, newest);
+    const first_pane: PaneId = @fromBackingInt(11);
+    const second_pane: PaneId = @fromBackingInt(12);
+    var first_request = try testFontRequest(1, 16, first);
+    first_request.policy.count = 1;
+    first_request.policy.offsets[0] = .{
+        .pane = first_pane,
+        .offset_points = -1.0,
+    };
+    var newest_request = first_request;
+    newest_request.revision = 2;
+    newest_request.scale = newest;
+    newest_request.policy.count = 2;
+    newest_request.policy.offsets[1] = .{
+        .pane = second_pane,
+        .offset_points = 2.0,
+    };
+    try boundary.requestFont(first_request);
+    try boundary.requestFont(newest_request);
     const request = boundary.takeFontRequest().?;
     try std.testing.expectEqual(@as(u64, 2), request.revision);
     try std.testing.expectEqual(newest, request.scale.?);
+    try std.testing.expectEqual(newest_request.policy, request.policy);
     try std.testing.expect(boundary.takeFontRequest() == null);
     try std.testing.expectError(
         error.InvalidScale,
-        boundary.requestFontSize(16, .{
+        boundary.requestFont(try testFontRequest(3, 16, .{
             .revision = 0,
             .dpi_x = first.dpi_x,
             .dpi_y = first.dpi_y,
-        }),
+        })),
     );
     try std.testing.expectError(
         error.InvalidScale,
-        boundary.requestFontSize(16, .{
+        boundary.requestFont(try testFontRequest(3, 16, .{
             .revision = 6,
             .dpi_x = .{ .numerator = 192, .denominator = 2 },
             .dpi_y = first.dpi_y,
-        }),
+        })),
     );
+    var invalid_policy = newest_request;
+    invalid_policy.revision = 3;
+    invalid_policy.policy.offsets[1] = invalid_policy.policy.offsets[0];
+    try std.testing.expectError(
+        error.InvalidFontPolicy,
+        boundary.requestFont(invalid_policy),
+    );
+    try std.testing.expectError(
+        error.StaleRevision,
+        boundary.requestFont(newest_request),
+    );
+    try std.testing.expect(boundary.takeFontRequest() == null);
 }
 
 test "lifecycle admission holds fonts while ordinary input remains bounded" {
@@ -2390,8 +2468,8 @@ test "lifecycle admission holds fonts while ordinary input remains bounded" {
         try candidate.publishAdmission(),
     );
     try std.testing.expect(boundary.lifecycleFontStable());
-    try boundary.requestFontSize(17, null);
-    try boundary.requestFontSize(18, null);
+    try boundary.requestFont(try testFontRequest(1, 17, null));
+    try boundary.requestFont(try testFontRequest(2, 18, null));
     const key = wayland.input.Key{
         .keycode = 30,
         .time = 1,
@@ -3051,9 +3129,9 @@ test "final admitted lifecycle operation wakes the newest font request" {
     );
     defer candidate.deinit();
     try admitTestCandidate(&candidate);
-    try boundary.requestFontSize(17, null);
-    try boundary.requestFontSize(18, null);
-    try boundary.requestFontSize(19, null);
+    try boundary.requestFont(try testFontRequest(1, 17, null));
+    try boundary.requestFont(try testFontRequest(2, 18, null));
+    try boundary.requestFont(try testFontRequest(3, 19, null));
     try boundary.drainTerminalWake();
 
     for (0..8) |_| {
@@ -3097,7 +3175,7 @@ test "rejected and cancelled admission release queued font work" {
     defer rejected.deinit();
     const rejected_revision = try rejected.publishAdmission();
     try std.testing.expect(boundary.takeLifecycleAdmission() != null);
-    try boundary.requestFontSize(20, null);
+    try boundary.requestFont(try testFontRequest(1, 20, null));
     try boundary.completeLifecycleAdmission(
         rejected_revision,
         .{ .rejected = .terminal_capacity },
@@ -3118,7 +3196,7 @@ test "rejected and cancelled admission release queued font work" {
         cancelled_revision,
         boundary.takeLifecycleAdmission().?.revision,
     );
-    try boundary.requestFontSize(21, null);
+    try boundary.requestFont(try testFontRequest(2, 21, null));
     try boundary.drainTerminalWake();
     cancelled.deinit();
     boundary.rearmTerminalWork();
@@ -3132,7 +3210,7 @@ test "rejected and cancelled admission release queued font work" {
     var admitted = try boundary.prepareLifecycle(&operations, &.{}, null);
     defer admitted.deinit();
     try admitTestCandidate(&admitted);
-    try boundary.requestFontSize(22, null);
+    try boundary.requestFont(try testFontRequest(3, 22, null));
     try boundary.drainTerminalWake();
     try std.testing.expect(boundary.takeAdmittedLifecycle() != null);
     boundary.rearmTerminalWork();
@@ -3475,6 +3553,19 @@ fn testLimits(
         .upload_bytes = upload_bytes,
         .raster_bytes = 1,
         .decoration_bytes = 1,
+    };
+}
+
+fn testFontRequest(
+    revision: u64,
+    pixel_height: u16,
+    scale: ?ScaleSnapshot,
+) error{InvalidFontPolicy}!FontRequest {
+    return .{
+        .revision = revision,
+        .pixel_height = pixel_height,
+        .scale = scale,
+        .policy = try FontPolicy.init(16.0),
     };
 }
 

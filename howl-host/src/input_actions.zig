@@ -33,6 +33,9 @@ pub const Action = enum {
     font_increase,
     font_decrease,
     font_reset,
+    font_base_increase,
+    font_base_decrease,
+    font_base_reset,
 };
 
 /// Exact key-capture admission failure.
@@ -99,7 +102,13 @@ pub const State = struct {
 pub fn candidate(current: *const chrome_state.Topology, action: Action) chrome_state.Error!?chrome_state.Topology {
     var next = current.*;
     switch (action) {
-        .font_increase, .font_decrease, .font_reset => return null,
+        .font_increase,
+        .font_decrease,
+        .font_reset,
+        .font_base_increase,
+        .font_base_decrease,
+        .font_base_reset,
+        => return null,
         .new_tab => {
             const created = try next.createTab("tab");
             if (@backingInt(created) == 0) return error.InvalidId;
@@ -209,9 +218,9 @@ fn binding(symbol: wayland.input.Keysym, modifiers: wayland.input.SemanticModifi
         .right => .next_tab,
         .comma, .less => .reorder_left,
         .period, .greater => .reorder_right,
-        @fromBackingInt(@intCast(0x2b)), @fromBackingInt(@intCast(0x3d)) => .font_increase,
-        @fromBackingInt(@intCast(0x2d)), @fromBackingInt(@intCast(0x5f)) => .font_decrease,
-        @fromBackingInt(@intCast(0x30)) => .font_reset,
+        @fromBackingInt(@intCast(0x2b)), @fromBackingInt(@intCast(0x3d)) => .font_base_increase,
+        @fromBackingInt(@intCast(0x2d)), @fromBackingInt(@intCast(0x5f)) => .font_base_decrease,
+        @fromBackingInt(@intCast(0x29)), @fromBackingInt(@intCast(0x30)) => .font_base_reset,
         else => null,
     };
     if (modifiers.control and modifiers.alt and !modifiers.shift) return switch (symbol) {
@@ -226,6 +235,12 @@ fn binding(symbol: wayland.input.Keysym, modifiers: wayland.input.SemanticModifi
         .right => .focus_right,
         .up => .focus_up,
         .down => .focus_down,
+        else => null,
+    };
+    if (modifiers.control and !modifiers.shift and !modifiers.alt) return switch (symbol) {
+        @fromBackingInt(@intCast(0x3d)) => .font_increase,
+        @fromBackingInt(@intCast(0x2d)) => .font_decrease,
+        @fromBackingInt(@intCast(0x30)) => .font_reset,
         else => null,
     };
     return null;
@@ -247,6 +262,7 @@ fn key(keycode: u32, symbol: wayland.input.Keysym, modifiers: wayland.input.Sema
 
 test "exact bindings ignore locks and reject every extra non-lock modifier" {
     const Case = struct { symbol: wayland.input.Keysym, modifiers: wayland.input.SemanticModifiers, action: Action };
+    const control = wayland.input.SemanticModifiers{ .control = true };
     const control_shift = wayland.input.SemanticModifiers{ .control = true, .shift = true };
     const control_alt = wayland.input.SemanticModifiers{ .control = true, .alt = true };
     const shift_alt = wayland.input.SemanticModifiers{ .shift = true, .alt = true };
@@ -274,11 +290,15 @@ test "exact bindings ignore locks and reject every extra non-lock modifier" {
         .{ .symbol = .right, .modifiers = shift_alt, .action = .focus_right },
         .{ .symbol = .up, .modifiers = shift_alt, .action = .focus_up },
         .{ .symbol = .down, .modifiers = shift_alt, .action = .focus_down },
-        .{ .symbol = @fromBackingInt(@intCast(0x2b)), .modifiers = control_shift, .action = .font_increase },
-        .{ .symbol = @fromBackingInt(@intCast(0x2d)), .modifiers = control_shift, .action = .font_decrease },
-        .{ .symbol = @fromBackingInt(@intCast(0x3d)), .modifiers = control_shift, .action = .font_increase },
-        .{ .symbol = @fromBackingInt(@intCast(0x5f)), .modifiers = control_shift, .action = .font_decrease },
-        .{ .symbol = @fromBackingInt(@intCast(0x30)), .modifiers = control_shift, .action = .font_reset },
+        .{ .symbol = @fromBackingInt(@intCast(0x3d)), .modifiers = control, .action = .font_increase },
+        .{ .symbol = @fromBackingInt(@intCast(0x2d)), .modifiers = control, .action = .font_decrease },
+        .{ .symbol = @fromBackingInt(@intCast(0x30)), .modifiers = control, .action = .font_reset },
+        .{ .symbol = @fromBackingInt(@intCast(0x2b)), .modifiers = control_shift, .action = .font_base_increase },
+        .{ .symbol = @fromBackingInt(@intCast(0x3d)), .modifiers = control_shift, .action = .font_base_increase },
+        .{ .symbol = @fromBackingInt(@intCast(0x2d)), .modifiers = control_shift, .action = .font_base_decrease },
+        .{ .symbol = @fromBackingInt(@intCast(0x5f)), .modifiers = control_shift, .action = .font_base_decrease },
+        .{ .symbol = @fromBackingInt(@intCast(0x29)), .modifiers = control_shift, .action = .font_base_reset },
+        .{ .symbol = @fromBackingInt(@intCast(0x30)), .modifiers = control_shift, .action = .font_base_reset },
     };
     for (cases, 0..) |case, index| {
         var state = State{};
@@ -295,7 +315,23 @@ test "exact bindings ignore locks and reject every extra non-lock modifier" {
                 @field(augmented, @tagName(extra)) = true;
                 state.clear();
                 const augmented_decision = try state.key(key(@intCast(index), case.symbol, augmented, .pressed));
-                try std.testing.expect(augmented_decision == .unmatched);
+                if (case.modifiers.control and
+                    !case.modifiers.shift and !case.modifiers.alt and
+                    extra == .shift)
+                {
+                    const base_action: Action = switch (case.action) {
+                        .font_increase => .font_base_increase,
+                        .font_decrease => .font_base_decrease,
+                        .font_reset => .font_base_reset,
+                        else => unreachable,
+                    };
+                    try std.testing.expectEqual(
+                        base_action,
+                        augmented_decision.action,
+                    );
+                } else {
+                    try std.testing.expect(augmented_decision == .unmatched);
+                }
             }
         }
     }

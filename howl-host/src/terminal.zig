@@ -88,6 +88,7 @@ const LogicalInitError = error{InvalidPane} ||
     handoff.InitError;
 /// Reports runtime table or runtime-owned native-font construction failure.
 const RuntimeInitError = error{ OutOfMemory, InvalidLimits } ||
+    error{InvalidFontPolicy} ||
     render.terminal_text.FontMapInitError;
 /// Reports one bounded PTY/VT service-turn failure.
 const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
@@ -292,6 +293,13 @@ const VisualState = struct {
 };
 
 /// Exclusively owns one logical terminal's PTY, VT, and child-write queue.
+const LogicalFontState = struct {
+    request_revision: u64,
+    base_point_size: f64,
+    offset_points: f64,
+    scale: ?handoff.ScaleSnapshot,
+};
+
 const Logical = struct {
     allocator: std.mem.Allocator,
     pane: render.chrome.PaneId,
@@ -303,6 +311,7 @@ const Logical = struct {
     transfer: Transfer,
     pane_pixels: render.canvas.Size,
     geometry: terminal_render.Content.Geometry,
+    font_state: LogicalFontState,
     writes: WriteQueue = .{},
     /// The oldest caller-neutral consequence observed by this owner. Query and
     /// reply-required consequences remain retained by VT under the explicit
@@ -323,6 +332,7 @@ const Logical = struct {
         command: ?[]const u8,
         pane_pixels: render.canvas.Size,
         fonts: *render.terminal_text.FontMap,
+        font_state: LogicalFontState,
         transfer: Transfer,
     ) LogicalInitError!Logical {
         if (@backingInt(pane) == 0) return error.InvalidPane;
@@ -363,6 +373,7 @@ const Logical = struct {
             .transfer = transfer,
             .pane_pixels = pane_pixels,
             .geometry = try paneGeometry(pane_pixels, fonts),
+            .font_state = font_state,
         };
     }
 
@@ -799,7 +810,11 @@ fn runFallible(
             }
             if (runtime.pending_font) |request| {
                 const completed = if (boundary.lifecycleFontStable()) false else blk: {
-                    if (runtime.acceptScaleOnly(request)) break :blk true;
+                    try runtime.preflightFontRequest(request);
+                    if (request.pixel_height == runtime.accepted_font_size) {
+                        runtime.commitFontRequest(request);
+                        break :blk true;
+                    }
                     const resized = runtime.resizeFonts(
                         boundary,
                         request.pixel_height,
@@ -809,7 +824,7 @@ fn runFallible(
                     };
                     if (resized) {
                         runtime.accepted_font_size = request.pixel_height;
-                        runtime.accepted_scale = request.scale;
+                        runtime.commitFontRequest(request);
                     }
                     break :blk resized;
                 };
@@ -847,6 +862,8 @@ const Runtime = struct {
     pending_font: ?handoff.FontRequest = null,
     accepted_scale: ?handoff.ScaleSnapshot = null,
     accepted_font_size: u16 = 16,
+    accepted_font_policy: handoff.FontPolicy,
+    accepted_font_request_revision: u64 = 0,
 
     /// Allocates the fixed 64-owner table without constructing children.
     fn init(
@@ -881,12 +898,14 @@ const Runtime = struct {
         );
         errdefer fonts.deinit();
         const work = try render.terminal.Content.Work.init(allocator, contentLimits());
+        const font_policy = try handoff.FontPolicy.init(16.0);
         return .{
             .allocator = allocator,
             .font_path = font_path,
             .fonts = fonts,
             .owners = owners,
             .work = work,
+            .accepted_font_policy = font_policy,
         };
     }
 
@@ -922,6 +941,7 @@ const Runtime = struct {
             command,
             pane_pixels,
             self.fonts,
+            self.logicalFontState(pane),
             transfer,
         );
         errdefer owner.deinit();
@@ -1324,10 +1344,42 @@ const Runtime = struct {
         return null;
     }
 
-    fn acceptScaleOnly(self: *Runtime, request: handoff.FontRequest) bool {
-        if (request.pixel_height != self.accepted_font_size) return false;
+    fn preflightFontRequest(
+        self: *const Runtime,
+        request: handoff.FontRequest,
+    ) error{ InvalidFontPolicy, StaleFontRequest }!void {
+        if (request.revision <= self.accepted_font_request_revision)
+            return error.StaleFontRequest;
+        if (!validFontPolicy(request.policy)) return error.InvalidFontPolicy;
+    }
+
+    fn commitFontRequest(self: *Runtime, request: handoff.FontRequest) void {
+        std.debug.assert(request.revision > self.accepted_font_request_revision);
+        std.debug.assert(validFontPolicy(request.policy));
+        for (self.owners) |*maybe_owner| {
+            const owner = if (maybe_owner.*) |*value| value else continue;
+            owner.font_state = .{
+                .request_revision = request.revision,
+                .base_point_size = request.policy.base_point_size,
+                .offset_points = fontOffsetFor(request.policy, owner.pane),
+                .scale = request.scale,
+            };
+        }
+        self.accepted_font_request_revision = request.revision;
+        self.accepted_font_policy = request.policy;
         self.accepted_scale = request.scale;
-        return true;
+    }
+
+    fn logicalFontState(
+        self: *const Runtime,
+        pane: render.chrome.PaneId,
+    ) LogicalFontState {
+        return .{
+            .request_revision = self.accepted_font_request_revision,
+            .base_point_size = self.accepted_font_policy.base_point_size,
+            .offset_points = fontOffsetFor(self.accepted_font_policy, pane),
+            .scale = self.accepted_scale,
+        };
     }
 
     /// Replaces one global terminal map after every owner has a prepared VT
@@ -1400,6 +1452,37 @@ const Runtime = struct {
         return true;
     }
 };
+
+fn validFontPolicy(policy: handoff.FontPolicy) bool {
+    if (!std.math.isFinite(policy.base_point_size) or
+        std.math.isNan(policy.base_point_size) or
+        policy.base_point_size <= 0.0 or policy.count > owner_limit)
+        return false;
+    var previous: u64 = 0;
+    for (policy.offsets[0..policy.count]) |offset| {
+        const pane = @backingInt(offset.pane);
+        if (pane == 0 or pane <= previous or
+            !std.math.isFinite(offset.offset_points) or
+            std.math.isNan(offset.offset_points) or
+            offset.offset_points == 0.0)
+            return false;
+        previous = pane;
+    }
+    return true;
+}
+
+fn fontOffsetFor(
+    policy: handoff.FontPolicy,
+    pane: render.chrome.PaneId,
+) f64 {
+    for (policy.offsets[0..policy.count]) |offset| {
+        const retained = @backingInt(offset.pane);
+        const requested = @backingInt(pane);
+        if (retained == requested) return offset.offset_points;
+        if (retained > requested) break;
+    }
+    return 0.0;
+}
 
 /// Copies pending VT replies before any subsequent terminal mutation.
 fn collectReplies(
@@ -2402,6 +2485,12 @@ test "reaped child final output remains drainable without a busy HUP loop" {
         "printf final",
         try testPixels(&fonts, 8, 2),
         &fonts,
+        .{
+            .request_revision = 0,
+            .base_point_size = 16.0,
+            .offset_points = 0.0,
+            .scale = null,
+        },
         .{ .dedicated = &slot },
     );
     defer owner.deinit();
@@ -2708,9 +2797,28 @@ test "global font request bounds coalesce and runtime replacement preserves owne
         .height = owner.pane_pixels.height + 1,
     };
     try owner.resize(newest_pixels);
-    try std.testing.expectError(error.InvalidFontSize, boundary.requestFontSize(7, null));
-    try boundary.requestFontSize(24, null);
-    try boundary.requestFontSize(32, null);
+    const policy = try handoff.FontPolicy.init(16.0);
+    try std.testing.expectError(
+        error.InvalidFontSize,
+        boundary.requestFont(.{
+            .revision = 1,
+            .pixel_height = 7,
+            .scale = null,
+            .policy = policy,
+        }),
+    );
+    try boundary.requestFont(.{
+        .revision = 1,
+        .pixel_height = 24,
+        .scale = null,
+        .policy = policy,
+    });
+    try boundary.requestFont(.{
+        .revision = 2,
+        .pixel_height = 32,
+        .scale = null,
+        .policy = policy,
+    });
     const request = boundary.takeFontRequest().?;
     try std.testing.expectEqual(@as(u16, 32), request.pixel_height);
     try std.testing.expectEqual(@as(u64, 2), request.revision);
@@ -2757,8 +2865,10 @@ test "factual DPI-only request reaches Runtime without font reconstruction" {
             .dpi_x = .{ .numerator = 768, .denominator = 5 },
             .dpi_y = .{ .numerator = 768, .denominator = 5 },
         },
+        .policy = try handoff.FontPolicy.init(16.0),
     };
-    try std.testing.expect(runtime.acceptScaleOnly(request));
+    try runtime.preflightFontRequest(request);
+    runtime.commitFontRequest(request);
     try std.testing.expectEqual(request.scale.?, runtime.accepted_scale.?);
     try std.testing.expectEqual(
         before,
@@ -2770,8 +2880,120 @@ test "factual DPI-only request reaches Runtime without font reconstruction" {
     var awaiting = request;
     awaiting.revision += 1;
     awaiting.scale = null;
-    try std.testing.expect(runtime.acceptScaleOnly(awaiting));
+    try runtime.preflightFontRequest(awaiting);
+    runtime.commitFontRequest(awaiting);
     try std.testing.expect(runtime.accepted_scale == null);
+}
+
+test "pane point policy reaches each Logical atomically and new panes start at zero" {
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(LogicalFontState));
+    var first_slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    var second_slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    var new_slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer {
+        retireTestSlot(&first_slot);
+        retireTestSlot(&second_slot);
+        retireTestSlot(&new_slot);
+        first_slot.deinit();
+        second_slot.deinit();
+        new_slot.deinit();
+    }
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const first: render.chrome.PaneId = @fromBackingInt(101);
+    const second: render.chrome.PaneId = @fromBackingInt(102);
+    const fresh: render.chrome.PaneId = @fromBackingInt(103);
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try runtime.add(
+        first,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &first_slot },
+    );
+    try runtime.add(
+        second,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &second_slot },
+    );
+
+    var policy = try handoff.FontPolicy.init(16.0);
+    policy.count = 2;
+    policy.offsets[0] = .{ .pane = first, .offset_points = -2.0 };
+    policy.offsets[1] = .{ .pane = second, .offset_points = 3.0 };
+    const scale = handoff.ScaleSnapshot{
+        .revision = 7,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const accepted = handoff.FontRequest{
+        .revision = 1,
+        .pixel_height = 16,
+        .scale = scale,
+        .policy = policy,
+    };
+    try runtime.preflightFontRequest(accepted);
+    runtime.commitFontRequest(accepted);
+    const first_state = runtime.owners[runtime.find(first).?].?.font_state;
+    const second_state = runtime.owners[runtime.find(second).?].?.font_state;
+    try std.testing.expectEqual(@as(f64, -2.0), first_state.offset_points);
+    try std.testing.expectEqual(@as(f64, 3.0), second_state.offset_points);
+    try std.testing.expectEqual(scale, first_state.scale.?);
+    try std.testing.expectEqual(scale, second_state.scale.?);
+
+    var invalid = accepted;
+    invalid.revision = 2;
+    invalid.policy.offsets[0] = invalid.policy.offsets[1];
+    const retained_policy = runtime.accepted_font_policy;
+    try std.testing.expectError(
+        error.InvalidFontPolicy,
+        runtime.preflightFontRequest(invalid),
+    );
+    try std.testing.expectEqual(retained_policy, runtime.accepted_font_policy);
+    try std.testing.expectEqual(
+        first_state,
+        runtime.owners[runtime.find(first).?].?.font_state,
+    );
+    try std.testing.expectEqual(
+        second_state,
+        runtime.owners[runtime.find(second).?].?.font_state,
+    );
+
+    var mutated = accepted;
+    mutated.revision = 2;
+    mutated.policy.offsets[0].offset_points = -1.0;
+    try runtime.preflightFontRequest(mutated);
+    runtime.commitFontRequest(mutated);
+    try std.testing.expectEqual(
+        @as(f64, -1.0),
+        runtime.owners[runtime.find(first).?].?.font_state.offset_points,
+    );
+    try std.testing.expectEqual(
+        @as(f64, 3.0),
+        runtime.owners[runtime.find(second).?].?.font_state.offset_points,
+    );
+
+    try runtime.add(
+        fresh,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &new_slot },
+    );
+    const fresh_state = runtime.owners[runtime.find(fresh).?].?.font_state;
+    try std.testing.expectEqual(@as(f64, 0.0), fresh_state.offset_points);
+    try std.testing.expectEqual(@as(u64, 2), fresh_state.request_revision);
 }
 
 test "pane pixels remain authoritative across equal grids and rejected resize" {
