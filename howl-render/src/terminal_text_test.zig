@@ -1411,11 +1411,11 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     const configs = [_]terminal_text.FontConfig{
         .{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+            .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
         },
         .{
             .key = .{ .slot = 3, .style = .bold_italic },
-            .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+            .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
         },
     };
     var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
@@ -1505,16 +1505,16 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
 test "native FontMap replacement swaps all styles and leaves retired owner" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     const old_configs = [_]terminal_text.FontConfig{
-        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
-        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
-        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
-        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 16 } },
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } } },
     };
     const new_configs = [_]terminal_text.FontConfig{
-        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
-        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
-        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
-        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = 24 } },
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 24 } } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 24 } } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 24 } } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 24 } } },
     };
     var map = try terminal_text.FontMap.init(std.testing.allocator, &old_configs);
     defer map.deinit();
@@ -1533,7 +1533,7 @@ test "failed replacement construction preserves the accepted FontMap" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     const config = terminal_text.FontConfig{
         .key = .{ .slot = 0, .style = .normal },
-        .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     };
     var map = try terminal_text.FontMap.init(std.testing.allocator, &.{config});
     defer map.deinit();
@@ -1557,7 +1557,7 @@ test "terminal cell span bounds oversized native raster" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     const configs = [_]terminal_text.FontConfig{.{
         .key = .{ .slot = 0, .style = .normal },
-        .native = .{ .primary = fonts.symbol_font, .pixel_height = 18 },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
     }};
     var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
     defer map.deinit();
@@ -1614,7 +1614,7 @@ test "font map validates complete tuple set before native ownership" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     const normal = terminal_text.FontConfig{
         .key = .{ .slot = 0, .style = .normal },
-        .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     };
     try std.testing.expectError(
         error.MissingDefaultConfiguration,
@@ -1830,7 +1830,7 @@ fn initMap() !Map {
     if (comptime selected.native_text) {
         const configs = [_]terminal_text.FontConfig{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+            .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
         }};
         return terminal_text.FontMap.init(std.testing.allocator, &configs);
     }
@@ -1892,7 +1892,7 @@ fn rasterize(
 fn constructMap(allocator: std.mem.Allocator) !void {
     const configs = [_]terminal_text.FontConfig{.{
         .key = .{ .slot = 0, .style = .normal },
-        .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     }};
     var map = try terminal_text.FontMap.init(allocator, &configs);
     map.deinit();

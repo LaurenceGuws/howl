@@ -296,7 +296,7 @@ test "real PendingSlot publication copies coherent terminal updates" {
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .pixel_height = 16 },
+            .native = .{ .primary = facts.font_path, .size = .{ .pixels = 16 } },
         }},
     );
     defer fonts.deinit();
@@ -329,7 +329,7 @@ test "two real terminals cross copied slots into distinct Composer sources" {
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .pixel_height = 16 },
+            .native = .{ .primary = facts.font_path, .size = .{ .pixels = 16 } },
         }},
     );
     defer fonts.deinit();

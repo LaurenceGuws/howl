@@ -880,19 +880,19 @@ const Runtime = struct {
             &.{
                 .{
                     .key = .{ .slot = 0, .style = .normal },
-                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .bold },
-                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .italic },
-                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .bold_italic },
-                    .native = .{ .primary = font_path, .pixel_height = 16 },
+                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
                 },
             },
         );
@@ -1389,10 +1389,10 @@ const Runtime = struct {
         if (pixel_height < 8 or pixel_height > 72) return error.InvalidFontSize;
         if (!boundary.fontQuiescent()) return error.Busy;
         const configs = [_]render.terminal_text.FontConfig{
-            .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = self.font_path, .pixel_height = pixel_height } },
-            .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = self.font_path, .pixel_height = pixel_height } },
-            .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = self.font_path, .pixel_height = pixel_height } },
-            .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = self.font_path, .pixel_height = pixel_height } },
+            .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = self.font_path, .size = .{ .pixels = pixel_height } } },
+            .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = self.font_path, .size = .{ .pixels = pixel_height } } },
+            .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = self.font_path, .size = .{ .pixels = pixel_height } } },
+            .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = self.font_path, .size = .{ .pixels = pixel_height } } },
         };
         var replacement = try render.terminal_text.FontMap.init(self.allocator, &configs);
         defer replacement.deinit();
@@ -2473,7 +2473,7 @@ test "reaped child final output remains drainable without a busy HUP loop" {
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .pixel_height = 16 },
+            .native = .{ .primary = facts.font_path, .size = .{ .pixels = 16 } },
         }},
     );
     defer fonts.deinit();

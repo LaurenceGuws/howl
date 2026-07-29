@@ -47,19 +47,22 @@ const BatchError = GroupError || ResourceError || error{ BatchLimit, InvalidBatc
 /// Identifies one immutable resolved native group configuration.
 const GroupKey = struct {
     configuration_generation: u64,
-    point_size_26_6: u32,
-    logical_dpi_x_26_6: u32,
-    logical_dpi_y_26_6: u32,
+    point_size: f64,
+    logical_dpi_x: render.terminal_text.Dpi,
+    logical_dpi_y: render.terminal_text.Dpi,
 
     fn validate(self: GroupKey) GroupError!void {
         if (self.configuration_generation == 0)
             return error.InvalidConfiguration;
-        if (self.point_size_26_6 == 0 or
-            self.logical_dpi_x_26_6 == 0 or
-            self.logical_dpi_y_26_6 == 0)
+        if (!std.math.isFinite(self.point_size) or
+            std.math.isNan(self.point_size) or self.point_size <= 0.0)
             return error.InvalidMetrics;
-        if (self.point_size_26_6 > std.math.maxInt(i32))
-            return error.InvalidMetrics;
+        const native_size = render.terminal_text.PointSize{
+            .points = self.point_size,
+            .dpi_x = self.logical_dpi_x,
+            .dpi_y = self.logical_dpi_y,
+        };
+        native_size.validate() catch return error.InvalidMetrics;
     }
 };
 
@@ -73,9 +76,9 @@ const GroupRef = struct {
 const SharedFontResourceKey = union(enum) {
     native: struct {
         configuration_generation: u64,
-        point_size_26_6: i32,
-        logical_dpi_x_26_6: u32,
-        logical_dpi_y_26_6: u32,
+        point_size: f64,
+        logical_dpi_x: render.terminal_text.Dpi,
+        logical_dpi_y: render.terminal_text.Dpi,
         style_slot: u2,
         face_index: u16,
         glyph_index: u32,
@@ -84,9 +87,9 @@ const SharedFontResourceKey = union(enum) {
     },
     generated: struct {
         configuration_generation: u64,
-        point_size_26_6: i32,
-        logical_dpi_x_26_6: u32,
-        logical_dpi_y_26_6: u32,
+        point_size: f64,
+        logical_dpi_x: render.terminal_text.Dpi,
+        logical_dpi_y: render.terminal_text.Dpi,
         codepoint: u21,
         cell_span: u8,
         cell_width_px: u16,
@@ -95,9 +98,9 @@ const SharedFontResourceKey = union(enum) {
     },
     decoration_mask: struct {
         configuration_generation: u64,
-        point_size_26_6: i32,
-        logical_dpi_x_26_6: u32,
-        logical_dpi_y_26_6: u32,
+        point_size: f64,
+        logical_dpi_x: render.terminal_text.Dpi,
+        logical_dpi_y: render.terminal_text.Dpi,
         style: u8,
         cell_span: u8,
         cell_width_px: u16,
@@ -110,15 +113,13 @@ const SharedFontResourceKey = union(enum) {
         switch (self) {
             .native => |value| {
                 if (value.configuration_generation == 0 or
-                    value.point_size_26_6 <= 0 or
-                    value.logical_dpi_x_26_6 == 0 or value.logical_dpi_y_26_6 == 0 or
+                    !validResourceSize(value.point_size, value.logical_dpi_x, value.logical_dpi_y) or
                     value.cell_span == 0)
                     return error.InvalidResource;
             },
             .generated => |value| {
                 if (value.configuration_generation == 0 or
-                    value.point_size_26_6 <= 0 or
-                    value.logical_dpi_x_26_6 == 0 or value.logical_dpi_y_26_6 == 0 or
+                    !validResourceSize(value.point_size, value.logical_dpi_x, value.logical_dpi_y) or
                     value.cell_span == 0 or
                     value.cell_width_px == 0 or
                     value.cell_height_px == 0)
@@ -126,8 +127,7 @@ const SharedFontResourceKey = union(enum) {
             },
             .decoration_mask => |value| {
                 if (value.configuration_generation == 0 or
-                    value.point_size_26_6 <= 0 or
-                    value.logical_dpi_x_26_6 == 0 or value.logical_dpi_y_26_6 == 0 or
+                    !validResourceSize(value.point_size, value.logical_dpi_x, value.logical_dpi_y) or
                     value.cell_span == 0 or
                     value.cell_width_px == 0 or
                     value.cell_height_px == 0 or
@@ -137,6 +137,23 @@ const SharedFontResourceKey = union(enum) {
         }
     }
 };
+
+fn validResourceSize(
+    point_size: f64,
+    dpi_x: render.terminal_text.Dpi,
+    dpi_y: render.terminal_text.Dpi,
+) bool {
+    if (!std.math.isFinite(point_size) or std.math.isNan(point_size) or
+        point_size <= 0.0)
+        return false;
+    const native_size = render.terminal_text.PointSize{
+        .points = point_size,
+        .dpi_x = dpi_x,
+        .dpi_y = dpi_y,
+    };
+    native_size.validate() catch return false;
+    return true;
+}
 
 /// Retains identity-independent raster facts used for exact redeclaration.
 const ResourceFacts = struct {
@@ -323,6 +340,7 @@ const Owner = struct {
         configs: []const render.terminal_text.FontConfig,
     ) GroupError!GroupRef {
         try key.validate();
+        if (!configsMatchGroup(key, configs)) return error.InvalidConfiguration;
         for (self.groups, 0..) |*entry, index| {
             if (entry.state == .candidate and std.meta.eql(entry.key, key)) {
                 if (entry.staged_users == std.math.maxInt(u8) or self.staged_claim_count == staged_group_limit)
@@ -657,6 +675,23 @@ const Owner = struct {
     }
 };
 
+fn configsMatchGroup(
+    key: GroupKey,
+    configs: []const render.terminal_text.FontConfig,
+) bool {
+    if (configs.len == 0) return false;
+    for (configs) |config| switch (config.native.size) {
+        .pixels => return false,
+        .points => |value| {
+            if (value.points != key.point_size or
+                !std.meta.eql(value.dpi_x, key.logical_dpi_x) or
+                !std.meta.eql(value.dpi_y, key.logical_dpi_y))
+                return false;
+        },
+    };
+    return true;
+}
+
 fn refsEqual(
     expected: []const render.canvas.ResourceRef,
     actual: []const render.canvas.ResourceRef,
@@ -679,23 +714,24 @@ fn resourceMatchesGroup(resource_key: SharedFontResourceKey, group_key: GroupKey
         .decoration_mask => |value| value.configuration_generation,
     };
     const point_size = switch (resource_key) {
-        .native => |value| value.point_size_26_6,
-        .generated => |value| value.point_size_26_6,
-        .decoration_mask => |value| value.point_size_26_6,
+        .native => |value| value.point_size,
+        .generated => |value| value.point_size,
+        .decoration_mask => |value| value.point_size,
     };
     const dpi_x = switch (resource_key) {
-        .native => |value| value.logical_dpi_x_26_6,
-        .generated => |value| value.logical_dpi_x_26_6,
-        .decoration_mask => |value| value.logical_dpi_x_26_6,
+        .native => |value| value.logical_dpi_x,
+        .generated => |value| value.logical_dpi_x,
+        .decoration_mask => |value| value.logical_dpi_x,
     };
     const dpi_y = switch (resource_key) {
-        .native => |value| value.logical_dpi_y_26_6,
-        .generated => |value| value.logical_dpi_y_26_6,
-        .decoration_mask => |value| value.logical_dpi_y_26_6,
+        .native => |value| value.logical_dpi_y,
+        .generated => |value| value.logical_dpi_y,
+        .decoration_mask => |value| value.logical_dpi_y,
     };
     return generation == group_key.configuration_generation and
-        point_size == @as(i32, @intCast(group_key.point_size_26_6)) and
-        dpi_x == group_key.logical_dpi_x_26_6 and dpi_y == group_key.logical_dpi_y_26_6;
+        point_size == group_key.point_size and
+        std.meta.eql(dpi_x, group_key.logical_dpi_x) and
+        std.meta.eql(dpi_y, group_key.logical_dpi_y);
 }
 
 const test_facts = if (@import("builtin").is_test)
@@ -705,23 +741,40 @@ const test_facts = if (@import("builtin").is_test)
 else
     struct {};
 
-fn testConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
+fn testConfigs(point_size: u16) [4]render.terminal_text.FontConfig {
+    return testConfigsAt(
+        point_size,
+        .{ .numerator = 96, .denominator = 1 },
+        .{ .numerator = 96, .denominator = 1 },
+    );
+}
+
+fn testConfigsAt(
+    point_size: u16,
+    dpi_x: render.terminal_text.Dpi,
+    dpi_y: render.terminal_text.Dpi,
+) [4]render.terminal_text.FontConfig {
+    const size = render.terminal_text.Size{ .points = .{
+        .points = @floatFromInt(point_size),
+        .dpi_x = dpi_x,
+        .dpi_y = dpi_y,
+    } };
     return .{
         .{ .key = .{ .slot = 0, .style = .normal }, .native = .{
             .primary = test_facts.font_path,
-            .pixel_height = pixel_height,
+            .size = size,
         } },
         .{ .key = .{ .slot = 0, .style = .bold }, .native = .{
             .primary = test_facts.font_path,
-            .pixel_height = pixel_height,
+            .size = size,
         } },
         .{ .key = .{ .slot = 0, .style = .italic }, .native = .{
             .primary = test_facts.font_path,
-            .pixel_height = pixel_height,
+            .size = size,
         } },
         .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{
             .primary = test_facts.font_path,
-            .pixel_height = pixel_height,
+            .size = size,
         } },
     };
 }
@@ -729,18 +782,18 @@ fn testConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
 fn testGroupKey(point_size: u32) GroupKey {
     return .{
         .configuration_generation = 1,
-        .point_size_26_6 = point_size * 64,
-        .logical_dpi_x_26_6 = 96 * 64,
-        .logical_dpi_y_26_6 = 96 * 64,
+        .point_size = @floatFromInt(point_size),
+        .logical_dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .logical_dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
 }
 
 fn testResourceKey(glyph: u32) SharedFontResourceKey {
     return .{ .native = .{
         .configuration_generation = 1,
-        .point_size_26_6 = 16 * 64,
-        .logical_dpi_x_26_6 = 96 * 64,
-        .logical_dpi_y_26_6 = 96 * 64,
+        .point_size = 16.0,
+        .logical_dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .logical_dpi_y = .{ .numerator = 96, .denominator = 1 },
         .style_slot = 0,
         .face_index = 0,
         .glyph_index = glyph,
@@ -780,6 +833,46 @@ test "equal panes share one native group and one logical resource" {
     const second = try owner.intern(testResourceKey(7), try testFacts(&pixels));
     try std.testing.expectEqual(first, second);
     try std.testing.expectEqual(@as(u16, 2), owner.resources[0].pane_references);
+}
+
+test "canonical point and factual DPI keys share exactly without collapse" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = testConfigs(16);
+    const key = testGroupKey(16);
+    const first = try owner.acquireGroup(key, &configs);
+    const equal = try owner.acquireGroup(key, &configs);
+    try std.testing.expectEqual(first, equal);
+    var distinct = key;
+    distinct.logical_dpi_x = .{ .numerator = 768, .denominator = 5 };
+    const distinct_configs = testConfigsAt(
+        16,
+        distinct.logical_dpi_x,
+        distinct.logical_dpi_y,
+    );
+    const other = try owner.acquireGroup(distinct, &distinct_configs);
+    try std.testing.expect(!std.meta.eql(first, other));
+    try std.testing.expectEqual(@as(u8, 2), owner.active_group_count);
+}
+
+test "group admission matches complete Render native representability" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = testConfigs(16);
+    var subunit_dpi = testGroupKey(16);
+    subunit_dpi.logical_dpi_y = .{ .numerator = 1, .denominator = 2 };
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        owner.acquireGroup(subunit_dpi, &configs),
+    );
+    var excessive_pixels = testGroupKey(16);
+    excessive_pixels.point_size = 100_000.0;
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        owner.acquireGroup(excessive_pixels, &configs),
+    );
+    try std.testing.expectEqual(@as(u64, 0), owner.group_generation_high_water);
+    try std.testing.expectEqual(@as(u8, 0), owner.active_group_count);
 }
 
 test "pane group mutation cannot invalidate another pane" {
@@ -938,16 +1031,18 @@ test "batch and retirement admission reject every invalid ownership form" {
     try std.testing.expectError(error.DuplicateResource, owner.reserveBatch(batchIdentity(1, 1, 1), group, &.{ first, first }, &.{first}));
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(2, 1, 1), group, &.{first}, &.{}));
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(3, 1, 1), group, &.{}, &.{second}));
-    const other_active = try owner.acquireGroup(testGroupKey(17), &configs);
+    const configs_17 = testConfigs(17);
+    const other_active = try owner.acquireGroup(testGroupKey(17), &configs_17);
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(7, 1, 1), other_active, &.{first}, &.{first}));
-    const staged = try owner.stageGroup(testGroupKey(99), &configs);
+    const configs_99 = testConfigs(99);
+    const staged = try owner.stageGroup(testGroupKey(99), &configs_99);
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(4, 1, 1), staged, &.{}, &.{}));
     try owner.discardGroup(staged);
     var borrow = try owner.borrow(group);
     try owner.releaseGroup(group);
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(5, 1, 1), group, &.{}, &.{}));
     borrow.deinit();
-    const active_group = try owner.acquireGroup(testGroupKey(17), &configs);
+    const active_group = try owner.acquireGroup(testGroupKey(17), &configs_17);
     try owner.releaseResource(second);
     try std.testing.expectError(error.InvalidBatch, owner.reserveBatch(batchIdentity(6, 1, 1), active_group, &.{second}, &.{second}));
     try owner.completeResourceRetirement(second);
@@ -959,11 +1054,11 @@ test "fixed owner memory and declaration bounds are exact" {
     try std.testing.expectEqual(@as(usize, 2048), resource_limit);
     try std.testing.expectEqual(@as(usize, 16), batch_limit);
     try std.testing.expectEqual(@as(usize, 648), mutation_limit);
-    try std.testing.expectEqual(@as(usize, 40), @sizeOf(SharedFontResourceKey));
-    try std.testing.expectEqual(@as(usize, 4656), @sizeOf(NativeGroup));
-    try std.testing.expectEqual(@as(usize, 88), @sizeOf(SharedResource));
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(SharedFontResourceKey));
+    try std.testing.expectEqual(@as(usize, 6200), @sizeOf(NativeGroup));
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(SharedResource));
     try std.testing.expectEqual(@as(usize, 20784), @sizeOf(Batch));
-    try std.testing.expectEqual(@as(usize, 1406720), @sizeOf(NativeGroup) * group_limit +
+    try std.testing.expectEqual(@as(usize, 1735936), @sizeOf(NativeGroup) * group_limit +
         @sizeOf(SharedResource) * resource_limit +
         @sizeOf(Batch) * batch_limit);
     try std.testing.expectEqual(
@@ -1019,24 +1114,35 @@ test "capacity cohorts, total pane bound, padded rows and batch bound are explic
 test "active staged and retiring cohorts coexist at their exact bounds" {
     var owner = try Owner.init(std.testing.allocator);
     defer owner.deinit();
-    const configs = testConfigs(16);
     var active: [active_group_limit]GroupRef = undefined;
     var borrows: [active_group_limit]Borrow = undefined;
-    for (&active, 0..) |*slot, index| slot.* = try owner.acquireGroup(testGroupKey(@intCast(16 + index)), &configs);
+    for (&active, 0..) |*slot, index| {
+        const point_size: u16 = @intCast(16 + index);
+        const configs = testConfigs(point_size);
+        slot.* = try owner.acquireGroup(testGroupKey(point_size), &configs);
+    }
     for (&active, 0..) |*slot, index| borrows[index] = try owner.borrow(slot.*);
     for (active) |slot| try owner.releaseGroup(slot);
     try std.testing.expectEqual(@as(u8, active_group_limit), owner.retiring_group_count);
     var replacement_active: [active_group_limit]GroupRef = undefined;
-    for (&replacement_active, 0..) |*slot, index|
-        slot.* = try owner.acquireGroup(testGroupKey(@intCast(300 + index)), &configs);
+    for (&replacement_active, 0..) |*slot, index| {
+        const point_size: u16 = @intCast(300 + index);
+        const configs = testConfigs(point_size);
+        slot.* = try owner.acquireGroup(testGroupKey(point_size), &configs);
+    }
     try std.testing.expectEqual(@as(u8, active_group_limit), owner.active_group_count);
-    const equal_a = try owner.stageGroup(testGroupKey(500), &configs);
-    const equal_b = try owner.stageGroup(testGroupKey(500), &configs);
+    const configs_500 = testConfigs(500);
+    const equal_a = try owner.stageGroup(testGroupKey(500), &configs_500);
+    const equal_b = try owner.stageGroup(testGroupKey(500), &configs_500);
     try std.testing.expectEqual(equal_a, equal_b);
     try owner.discardGroup(equal_a);
     try owner.discardGroup(equal_b);
     var staged: [staged_group_limit]GroupRef = undefined;
-    for (&staged, 0..) |*slot, index| slot.* = try owner.stageGroup(testGroupKey(@intCast(100 + index)), &configs);
+    for (&staged, 0..) |*slot, index| {
+        const point_size: u16 = @intCast(100 + index);
+        const configs = testConfigs(point_size);
+        slot.* = try owner.stageGroup(testGroupKey(point_size), &configs);
+    }
     try std.testing.expectEqual(@as(u8, staged_group_limit), owner.staged_group_count);
     try std.testing.expectEqual(@as(u8, retiring_group_limit), owner.retiring_group_count);
     for (staged) |slot| try owner.discardGroup(slot);

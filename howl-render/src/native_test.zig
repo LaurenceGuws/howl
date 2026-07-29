@@ -32,7 +32,7 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .fallbacks = &fallbacks,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
 
@@ -81,16 +81,16 @@ test "font configuration validates every path before allocation or native access
         .{
             .primary = fonts.primary_font,
             .fallbacks = &overflow,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
         std.testing.failing_allocator,
-        .{ .primary = fonts.primary_font, .pixel_height = 0 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 0 } },
     ));
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
         std.testing.failing_allocator,
-        .{ .primary = "", .pixel_height = 16 },
+        .{ .primary = "", .size = .{ .pixels = 16 } },
     ));
     const empty_fallback = [_][]const u8{""};
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
@@ -98,7 +98,7 @@ test "font configuration validates every path before allocation or native access
         .{
             .primary = fonts.primary_font,
             .fallbacks = &empty_fallback,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
 
@@ -106,7 +106,7 @@ test "font configuration validates every path before allocation or native access
     @memset(&too_long, 'x');
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
         std.testing.failing_allocator,
-        .{ .primary = &too_long, .pixel_height = 16 },
+        .{ .primary = &too_long, .size = .{ .pixels = 16 } },
     ));
     const long_fallback = [_][]const u8{&too_long};
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
@@ -114,14 +114,14 @@ test "font configuration validates every path before allocation or native access
         .{
             .primary = fonts.primary_font,
             .fallbacks = &long_fallback,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
     var boundary: [text.max_font_path_bytes]u8 = undefined;
     @memset(&boundary, 'x');
     try std.testing.expectError(error.FontOpen, text.FontSet.init(
         std.testing.allocator,
-        .{ .primary = &boundary, .pixel_height = 16 },
+        .{ .primary = &boundary, .size = .{ .pixels = 16 } },
     ));
     const boundary_fallback = [_][]const u8{&boundary};
     try std.testing.expectError(error.FontOpen, text.FontSet.init(
@@ -129,7 +129,7 @@ test "font configuration validates every path before allocation or native access
         .{
             .primary = fonts.primary_font,
             .fallbacks = &boundary_fallback,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
 
@@ -141,7 +141,7 @@ test "font configuration validates every path before allocation or native access
     );
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
         std.testing.failing_allocator,
-        .{ .primary = ambiguous, .pixel_height = 16 },
+        .{ .primary = ambiguous, .size = .{ .pixels = 16 } },
     ));
     const ambiguous_fallback = [_][]const u8{ambiguous};
     try std.testing.expectError(error.InvalidConfig, text.FontSet.init(
@@ -149,7 +149,7 @@ test "font configuration validates every path before allocation or native access
         .{
             .primary = fonts.primary_font,
             .fallbacks = &ambiguous_fallback,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
 }
@@ -161,12 +161,12 @@ test "failed fallback loading cleans the transaction before successful reuse" {
         .{
             .primary = fonts.primary_font,
             .fallbacks = &invalid,
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     ));
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     set.deinit();
 }
@@ -174,7 +174,7 @@ test "failed fallback loading cleans the transaction before successful reuse" {
 test "shape rejects malformed and over-bound input before HarfBuzz" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer set.deinit();
     const codepoints = [_]u32{'A'};
@@ -197,7 +197,7 @@ test "font set reports missing glyph and remains reusable" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .fallbacks = &fallbacks,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer set.deinit();
     const missing = [_]u32{0x10ffff};
@@ -231,7 +231,7 @@ test "font set reports missing glyph and remains reusable" {
 test "font set raster owns a bounded alpha mask" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const cp = [_]u32{'A'};
@@ -284,7 +284,7 @@ test "font set raster owns a bounded alpha mask" {
 test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
     var scalable = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer scalable.deinit();
     try std.testing.expectEqual(@as(u16, 25), scalable.metrics.line_height);
@@ -331,7 +331,7 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
 
     var bitmap = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.mono_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer bitmap.deinit();
     try std.testing.expectEqual(@as(u16, 8), bitmap.metrics.advance_width);
@@ -366,7 +366,7 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
 test "monospace glyph origins follow one ordinary ASCII advance" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     try std.testing.expectEqual(@as(u16, 9), set.metrics.advance_width);
@@ -401,14 +401,14 @@ test "monospace glyph origins follow one ordinary ASCII advance" {
 test "metric extraction is stable across owner reuse" {
     var first = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     const expected = first.metrics;
     first.deinit();
 
     var reused = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer reused.deinit();
     try std.testing.expectEqualDeep(expected, reused.metrics);
@@ -417,7 +417,7 @@ test "metric extraction is stable across owner reuse" {
 test "empty FreeType glyph produces an owned empty raster" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const codepoint = [_]u32{' '};
@@ -471,7 +471,7 @@ fn initFontSet(allocator: std.mem.Allocator) !void {
     var set = try text.FontSet.init(allocator, .{
         .primary = fonts.primary_font,
         .fallbacks = &fallbacks,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     set.deinit();
 }
@@ -484,7 +484,7 @@ test "caller glyph capacity is exact and leaves short storage unchanged" {
     );
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer set.deinit();
     var shaper = try text.ShapeBuffer.init(text.max_glyphs);
@@ -522,7 +522,7 @@ test "caller glyph capacity is exact and leaves short storage unchanged" {
 test "raster allocation failures preserve reusable native faces" {
     var set = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer set.deinit();
 
@@ -548,7 +548,7 @@ test "raster allocation failures preserve reusable native faces" {
 
     var symbols = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer symbols.deinit();
     var icon = try shapeOwned(&symbols, std.testing.allocator, .{

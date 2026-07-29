@@ -21,14 +21,14 @@ fn limits() render.chrome.Content.Limits {
 fn content() !render.chrome.Content {
     return render.chrome.Content.init(std.testing.allocator, limits(), .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
 }
 
 test "editor-like frame shapes text and projects selection without terminal facts" {
     var font = try render.text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer font.deinit();
     var scratch = try render.text.ShapeBuffer.init(16);
@@ -159,7 +159,7 @@ test "retained chrome state and cache failures preserve accepted output" {
     tiny_limits.primitives = 1;
     var tiny = try render.chrome.Content.init(std.testing.allocator, tiny_limits, .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     defer tiny.deinit();
     var primitives: [16]render.chrome.Primitive = undefined;
@@ -178,7 +178,7 @@ test "retained chrome state and cache failures preserve accepted output" {
     var retained = try render.chrome.Content.init(
         std.testing.allocator,
         glyph_limits,
-        .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     );
     defer retained.deinit();
     const accepted = try projectEditorFrame(
@@ -261,7 +261,7 @@ test "retained chrome style geometry and bounded failures are transactional" {
     var command_limited = try render.chrome.Content.init(
         std.testing.allocator,
         command_limits,
-        .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     );
     defer command_limited.deinit();
     try command_limited.apply(.{
@@ -287,7 +287,7 @@ test "retained chrome style geometry and bounded failures are transactional" {
     var upload_limited = try render.chrome.Content.init(
         std.testing.allocator,
         upload_limits,
-        .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     );
     defer upload_limited.deinit();
     try upload_limited.apply(.{
@@ -302,7 +302,7 @@ test "retained chrome style geometry and bounded failures are transactional" {
     var text_limited = try render.chrome.Content.init(
         std.testing.allocator,
         text_limits,
-        .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     );
     defer text_limited.deinit();
     const two_bytes = "AB";
@@ -466,7 +466,7 @@ test "maximum surface right and bottom borders emit exact coordinates" {
 fn constructContent(allocator: std.mem.Allocator) !void {
     var retained = try render.chrome.Content.init(allocator, limits(), .{
         .primary = fonts.primary_font,
-        .pixel_height = 16,
+        .size = .{ .pixels = 16 },
     });
     retained.deinit();
 }

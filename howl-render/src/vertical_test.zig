@@ -43,16 +43,16 @@ fn chromeLimits() chrome.Content.Limits {
 fn fontConfig() render.terminal_text.FontConfig {
     return .{
         .key = .{ .slot = 0, .style = .normal },
-        .native = .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     };
 }
 
 fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
     return .{
-        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
-        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
-        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
-        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .pixel_height = pixel_height } },
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
     };
 }
 
@@ -174,7 +174,7 @@ test "capable root composes terminal and chrome producer updates" {
     var chrome_content = try chrome.Content.init(
         std.testing.allocator,
         chromeLimits(),
-        .{ .primary = fonts.primary_font, .pixel_height = 16 },
+        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     );
     defer chrome_content.deinit();
     const label = "chrome";

@@ -178,6 +178,13 @@ pub const FontConfig = if (features.native_text) struct {
     native: native.Config,
 } else void;
 
+/// Exact normalized factual DPI consumed by terminal native construction.
+pub const Dpi = if (features.native_text) native.Dpi else void;
+/// Canonical validated terminal point-size and factual DPI identity.
+pub const PointSize = if (features.native_text) native.PointSize else void;
+/// Selects pixel or canonical point/DPI native construction.
+pub const Size = if (features.native_text) native.Size else void;
+
 /// Reports bounded map validation or exact native construction failure.
 pub const FontMapInitError = if (features.native_text)
     native.InitError || error{

@@ -223,7 +223,7 @@ fn runFallible(
         .resources_per_update = 512,
         .upload_bytes = 8 * 1024 * 1024,
         .raster_bytes = 512 * 1024,
-    }, .{ .primary = font_path, .pixel_height = 16 });
+    }, .{ .primary = font_path, .size = .{ .pixels = 16 } });
     defer chrome_content.deinit();
     const frame_uploads = try allocator.alloc(
         render_api.canvas.ResourceUploadFact,
@@ -2883,7 +2883,7 @@ test "borrowed Chrome retry preserves one consumptive sparse update" {
         },
         .{
             .primary = "../howl-render/testdata/primary.ttf",
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     );
     defer content.deinit();
@@ -3041,7 +3041,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         },
         .{
             .primary = "../howl-render/testdata/primary.ttf",
-            .pixel_height = 16,
+            .size = .{ .pixels = 16 },
         },
     );
     defer content.deinit();

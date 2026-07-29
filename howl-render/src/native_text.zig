@@ -65,15 +65,52 @@ pub const RasterError = error{
     InvalidPlacement,
 };
 
+/// Owns one normalized positive rational factual DPI value.
+pub const Dpi = struct {
+    numerator: u32,
+    denominator: u32,
+
+    /// Validates nonzero reduced storage before native conversion.
+    pub fn validate(self: Dpi) error{InvalidConfig}!void {
+        if (self.numerator == 0 or self.denominator == 0 or
+            std.math.gcd(self.numerator, self.denominator) != 1)
+            return error.InvalidConfig;
+    }
+};
+
+/// Preserves one canonical point-size and factual DPI construction identity.
+pub const PointSize = struct {
+    points: f64,
+    dpi_x: Dpi,
+    dpi_y: Dpi,
+
+    /// Validates every canonical and derived FreeType/metric input.
+    pub fn validate(self: PointSize) error{InvalidConfig}!void {
+        const height_26_6 = try pointHeight26Dot6(self);
+        const dpi_x = try dpiArgument(self.dpi_x);
+        const dpi_y = try dpiArgument(self.dpi_y);
+        const nominal_height = try pointNominalPixelHeight(height_26_6, dpi_y);
+        std.debug.assert(height_26_6 > 0);
+        std.debug.assert(dpi_x > 0);
+        std.debug.assert(nominal_height > 0);
+    }
+};
+
+/// Separates independent pixel-configured users from terminal point/DPI users.
+pub const Size = union(enum) {
+    pixels: u16,
+    points: PointSize,
+};
+
 /// Borrows one bounded NUL-free primary path, up to 24 bounded NUL-free
-/// fallback paths, and a nonzero pixel height during construction.
+/// fallback paths, and one exact native size during construction.
 pub const Config = struct {
     /// Borrows the required primary font path for construction only.
     primary: []const u8,
     /// Borrows ordered fallback font paths for construction only.
     fallbacks: []const []const u8 = &.{},
-    /// Sets the nonzero native font pixel height.
-    pixel_height: u16,
+    /// Selects an independent pixel size or a canonical terminal point/DPI size.
+    size: Size,
 };
 
 /// Describes validated nonzero font-derived text geometry. Decoration lines
@@ -199,8 +236,8 @@ pub const FontSet = struct {
     faces: []Face,
     /// Retains validated font metrics for the configured size.
     metrics: Metrics,
-    /// Retains the configured nonzero native pixel height.
-    pixel_height: u16,
+    /// Retains the exact accepted construction identity for restoration.
+    size: Size,
     /// Prevents native reuse after an unrecoverable size-restoration failure.
     usable: bool,
 
@@ -234,18 +271,19 @@ pub const FontSet = struct {
             if (c.FT_New_Face(library, path.ptr, 0, &ft) != 0) return error.FontOpen;
             errdefer doneFace(ft);
             if (c.FT_Select_Charmap(ft, c.FT_ENCODING_UNICODE) != 0) return error.UnicodeCharmap;
-            if (c.FT_Set_Pixel_Sizes(ft, 0, config.pixel_height) != 0) return error.FontSize;
+            try setConfiguredSize(ft, config.size);
             const hb = try createHbFont(ft);
             faces[loaded] = .{ .path = path, .ft = ft, .hb = hb };
         }
 
-        const metrics = try metricsFromFace(faces[0].ft, config.pixel_height);
+        const nominal_height_px = try nominalPixelHeight(config.size);
+        const metrics = try metricsFromFace(faces[0].ft, nominal_height_px);
         return .{
             .allocator = allocator,
             .library = library,
             .faces = faces,
             .metrics = metrics,
-            .pixel_height = config.pixel_height,
+            .size = config.size,
             .usable = true,
         };
     }
@@ -364,17 +402,9 @@ pub const FontSet = struct {
         if (raster.width <= maximum_width_px) return raster;
 
         if (face.*.face_flags & c.FT_FACE_FLAG_SCALABLE != 0) {
-            const scaled_height_u32 = @max(
-                @as(u32, 1),
-                @as(u32, self.pixel_height) * maximum_width_px / raster.width,
-            );
-            const scaled_height = std.math.cast(u16, scaled_height_u32) orelse
-                return error.FontSize;
-            if (c.FT_Set_Pixel_Sizes(face, 0, scaled_height) != 0)
-                return error.FontSize;
+            try setFittedSize(face, self.size, maximum_width_px, raster.width);
             const fit_result = rasterizeFace(allocator, face, glyph_id);
-            const restore_error =
-                c.FT_Set_Pixel_Sizes(face, 0, self.pixel_height);
+            const restore_error = restoreConfiguredSize(face, self.size);
             const fitted = try self.finishTemporaryRaster(
                 fit_result,
                 restore_error,
@@ -475,9 +505,134 @@ fn cropRaster(raster: *Raster, source_x: u16, width: u16) RasterError!void {
     raster.width = width;
 }
 
-fn validateConfig(config: Config) error{InvalidConfig}!void {
-    if (config.pixel_height == 0 or config.fallbacks.len > max_fallbacks)
+fn pointHeight26Dot6(value: PointSize) error{InvalidConfig}!c.FT_F26Dot6 {
+    if (!std.math.isFinite(value.points) or std.math.isNan(value.points) or
+        value.points <= 0.0)
         return error.InvalidConfig;
+    try value.dpi_x.validate();
+    try value.dpi_y.validate();
+    const scaled = @ceil(value.points * 64.0);
+    if (!std.math.isFinite(scaled) or scaled <= 0.0 or
+        scaled > @as(f64, @floatFromInt(std.math.maxInt(c.FT_F26Dot6))))
+        return error.InvalidConfig;
+    return @intFromFloat(scaled);
+}
+
+fn dpiArgument(value: Dpi) error{InvalidConfig}!c.FT_UInt {
+    try value.validate();
+    const result = value.numerator / value.denominator;
+    if (result == 0) return error.InvalidConfig;
+    return result;
+}
+
+fn nominalPixelHeight(size: Size) error{InvalidConfig}!u16 {
+    return switch (size) {
+        .pixels => |height| if (height == 0)
+            error.InvalidConfig
+        else
+            height,
+        .points => |value| blk: {
+            const height_26_6 = try pointHeight26Dot6(value);
+            const dpi_y = try dpiArgument(value.dpi_y);
+            break :blk try pointNominalPixelHeight(height_26_6, dpi_y);
+        },
+    };
+}
+
+fn pointNominalPixelHeight(
+    height_26_6: c.FT_F26Dot6,
+    dpi_y: c.FT_UInt,
+) error{InvalidConfig}!u16 {
+    if (height_26_6 <= 0 or dpi_y == 0) return error.InvalidConfig;
+    const product = std.math.mul(
+        u64,
+        @intCast(height_26_6),
+        dpi_y,
+    ) catch return error.InvalidConfig;
+    const denominator: u64 = 64 * 72;
+    const adjusted = std.math.add(
+        u64,
+        product,
+        denominator - 1,
+    ) catch return error.InvalidConfig;
+    const pixels = adjusted / denominator;
+    if (pixels == 0 or pixels > std.math.maxInt(u16))
+        return error.InvalidConfig;
+    return @intCast(pixels);
+}
+
+fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!void {
+    const result = switch (size) {
+        .pixels => |height| c.FT_Set_Pixel_Sizes(face, 0, height),
+        .points => |value| c.FT_Set_Char_Size(
+            face,
+            0,
+            try pointHeight26Dot6(value),
+            try dpiArgument(value.dpi_x),
+            try dpiArgument(value.dpi_y),
+        ),
+    };
+    if (result != 0) return error.FontSize;
+}
+
+fn restoreConfiguredSize(face: c.FT_Face, size: Size) c.FT_Error {
+    return switch (size) {
+        .pixels => |height| c.FT_Set_Pixel_Sizes(face, 0, height),
+        .points => |value| c.FT_Set_Char_Size(
+            face,
+            0,
+            pointHeight26Dot6(value) catch return 1,
+            dpiArgument(value.dpi_x) catch return 1,
+            dpiArgument(value.dpi_y) catch return 1,
+        ),
+    };
+}
+
+fn setFittedSize(
+    face: c.FT_Face,
+    size: Size,
+    maximum_width_px: u16,
+    raster_width: u16,
+) RasterError!void {
+    const result = switch (size) {
+        .pixels => |height| blk: {
+            const scaled = @max(
+                @as(u32, 1),
+                @as(u32, height) * maximum_width_px / raster_width,
+            );
+            const fitted = std.math.cast(u16, scaled) orelse
+                return error.FontSize;
+            break :blk c.FT_Set_Pixel_Sizes(face, 0, fitted);
+        },
+        .points => |value| blk: {
+            const accepted = pointHeight26Dot6(value) catch
+                return error.FontSize;
+            const product = std.math.mul(
+                i64,
+                accepted,
+                maximum_width_px,
+            ) catch return error.FontSize;
+            const scaled = @max(
+                @as(i64, 1),
+                @divTrunc(product, raster_width),
+            );
+            break :blk c.FT_Set_Char_Size(
+                face,
+                0,
+                scaled,
+                dpiArgument(value.dpi_x) catch return error.FontSize,
+                dpiArgument(value.dpi_y) catch return error.FontSize,
+            );
+        },
+    };
+    if (result != 0) return error.FontSize;
+}
+
+fn validateConfig(config: Config) error{InvalidConfig}!void {
+    if (config.fallbacks.len > max_fallbacks)
+        return error.InvalidConfig;
+    const nominal_height = try nominalPixelHeight(config.size);
+    std.debug.assert(nominal_height > 0);
     try validatePath(config.primary);
     for (config.fallbacks) |path| try validatePath(path);
 }
@@ -1058,13 +1213,110 @@ test "native metric extraction is stable without allocator input" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const first = try metricsFromFace(set.faces[0].ft, 18);
     const second = try metricsFromFace(set.faces[0].ft, 18);
     try std.testing.expectEqualDeep(set.metrics, first);
     try std.testing.expectEqualDeep(first, second);
+}
+
+test "point and factual DPI conversion is exact and separately derived" {
+    const value = PointSize{
+        .points = 10.1,
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 192, .denominator = 1 },
+    };
+    try std.testing.expectEqual(@as(c.FT_F26Dot6, 647), try pointHeight26Dot6(value));
+    try std.testing.expectEqual(@as(c.FT_UInt, 153), try dpiArgument(value.dpi_x));
+    try std.testing.expectEqual(@as(c.FT_UInt, 192), try dpiArgument(value.dpi_y));
+    try std.testing.expectEqual(@as(u16, 27), try nominalPixelHeight(.{ .points = value }));
+    try std.testing.expectEqual(@as(u16, 34), try nominalPixelHeight(.{ .points = .{
+        .points = 16.0,
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 768, .denominator = 5 },
+    } }));
+    try std.testing.expectError(
+        error.InvalidConfig,
+        dpiArgument(.{ .numerator = 192, .denominator = 2 }),
+    );
+    try std.testing.expectError(
+        error.InvalidConfig,
+        pointHeight26Dot6(.{
+            .points = std.math.inf(f64),
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        }),
+    );
+}
+
+test "factual DPI changes terminal metrics and raster while fitting restores exact size" {
+    const fonts = @import("test_fonts");
+    const low = PointSize{
+        .points = 12.0,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const high = PointSize{
+        .points = 12.0,
+        .dpi_x = .{ .numerator = 192, .denominator = 1 },
+        .dpi_y = .{ .numerator = 192, .denominator = 1 },
+    };
+    var low_set = try FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .size = .{ .points = low },
+    });
+    defer low_set.deinit();
+    var high_set = try FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .size = .{ .points = high },
+    });
+    defer high_set.deinit();
+    try std.testing.expect(high_set.metrics.line_height > low_set.metrics.line_height);
+    const low_glyph_id = c.FT_Get_Char_Index(low_set.faces[0].ft, 0xf303);
+    const high_glyph_id = c.FT_Get_Char_Index(high_set.faces[0].ft, 0xf303);
+    var low_raster = try low_set.rasterize(
+        std.testing.allocator,
+        0,
+        low_glyph_id,
+        low_set.metrics.advance_width,
+    );
+    defer low_raster.deinit();
+    var high_raster = try high_set.rasterize(
+        std.testing.allocator,
+        0,
+        high_glyph_id,
+        high_set.metrics.advance_width,
+    );
+    defer high_raster.deinit();
+    try std.testing.expect(
+        low_raster.width != high_raster.width or
+            low_raster.height != high_raster.height or
+            !std.mem.eql(u8, low_raster.pixels, high_raster.pixels),
+    );
+    const before = @field(high_set.faces[0].ft.*.size.?.*, "metrics");
+    const fitted_width = @max(@as(u16, 1), high_set.metrics.advance_width / 2);
+    var raw = try rasterizeFace(
+        std.testing.allocator,
+        high_set.faces[0].ft,
+        high_glyph_id,
+    );
+    defer raw.deinit();
+    try std.testing.expect(raw.width > fitted_width);
+    var raster = try high_set.rasterize(
+        std.testing.allocator,
+        0,
+        high_glyph_id,
+        fitted_width,
+    );
+    defer raster.deinit();
+    const after = @field(high_set.faces[0].ft.*.size.?.*, "metrics");
+    try std.testing.expectEqual(before.x_ppem, after.x_ppem);
+    try std.testing.expectEqual(before.y_ppem, after.y_ppem);
+    try std.testing.expectEqual(before.x_scale, after.x_scale);
+    try std.testing.expectEqual(before.y_scale, after.y_scale);
+    try std.testing.expect(raster.pixels.len != 0);
 }
 
 test "normal FreeType owner produces only retained monochrome and gray modes" {
@@ -1076,7 +1328,7 @@ test "normal FreeType owner produces only retained monochrome and gray modes" {
     inline for (cases) |case| {
         var set = try FontSet.init(std.testing.allocator, .{
             .primary = case[0],
-            .pixel_height = if (case[1] == c.FT_PIXEL_MODE_MONO) 16 else 18,
+            .size = .{ .pixels = if (case[1] == c.FT_PIXEL_MODE_MONO) 16 else 18 },
         });
         defer set.deinit();
         const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 'A');
@@ -1096,7 +1348,7 @@ test "Nerd icon native bitmap exposes bounded source coverage" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf303);
@@ -1116,7 +1368,7 @@ test "native raster honors an arbitrary pixel bound" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf303);
@@ -1133,7 +1385,7 @@ test "failed size restoration invalidates native use and preserves cleanup" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
-        .pixel_height = 18,
+        .size = .{ .pixels = 18 },
     });
     defer set.deinit();
     const pixels = try std.testing.allocator.alloc(u8, 1);
