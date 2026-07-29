@@ -92,6 +92,8 @@ pub const BoundaryInitError = error{
 
 /// Reports immutable pool-drain transition failure.
 pub const DrainError = pool_storage.TransitionError;
+/// Reports exact pool transition or Composer candidate rejection.
+pub const CandidateDrainError = DrainError || canvas.Composer.Error;
 
 /// Reports one bounded Renderer drainage pass without consuming rejection.
 pub const DrainResult = struct {
@@ -99,6 +101,12 @@ pub const DrainResult = struct {
     accepted: usize,
     /// Preserves the first exact Composer rejection after restoring ready.
     rejected: ?canvas.Composer.Error,
+};
+
+/// Reports one synchronous atomic Composer candidate transfer.
+pub const CandidateDrainResult = struct {
+    /// Counts exact pooled updates accepted and released.
+    accepted: usize,
 };
 
 /// Reports stale lifecycle identity or pooled retirement contention.
@@ -482,6 +490,18 @@ pub const VisibleRequirement = struct {
     revision: canvas.ProducerRevision,
 };
 
+fn entrySatisfiesRequirement(
+    entry: Entry,
+    requirement: VisibleRequirement,
+) bool {
+    if (@backingInt(entry.accepted_revision) >=
+        @backingInt(requirement.revision))
+        return true;
+    const ready = entry.ready orelse return false;
+    return ready.source_id == requirement.member.source and
+        ready.producer_revision == requirement.revision;
+}
+
 const VisibleRequestState = struct {
     request: VisibleSetRequest,
     requirements: [visible_member_limit]VisibleRequirement = undefined,
@@ -558,6 +578,7 @@ pub const Boundary = struct {
     failed: bool = false,
     visible_high_water: u64 = 0,
     visible_request: ?VisibleRequestState = null,
+    prepared_visible_request: ?VisibleSetRequest = null,
     visible_members: [visible_member_limit]VisibleMember = undefined,
     visible_member_count: u8 = 0,
     visible_initialized: bool = false,
@@ -776,6 +797,100 @@ pub const Boundary = struct {
             signal(boundary.terminal_fd);
         }
     };
+
+    /// Owns one invisible bootstrap visible-set request until Host commits.
+    pub const PreparedVisibleSet = struct {
+        boundary: *Boundary,
+        revision: u64,
+        committed: bool = false,
+
+        /// Replaces the prior request and wakes Runtime without further failure.
+        pub fn commit(self: *PreparedVisibleSet) void {
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            const request = boundary.prepared_visible_request.?;
+            std.debug.assert(request.revision == self.revision);
+            if (boundary.visible_request) |prior| {
+                boundary.pool.cancelGroup(prior.request.revision) catch |failure|
+                    switch (failure) {
+                        error.Stale => {},
+                    };
+            }
+            boundary.visible_request = .{ .request = request };
+            boundary.prepared_visible_request = null;
+            boundary.mutex.unlock(boundary.io);
+            self.committed = true;
+            signal(boundary.terminal_fd);
+        }
+
+        /// Cancels only this invisible request while retaining its issued revision.
+        pub fn deinit(self: *PreparedVisibleSet) void {
+            if (self.committed) return;
+            const boundary = self.boundary;
+            boundary.mutex.lockUncancelable(boundary.io);
+            if (boundary.prepared_visible_request) |request| {
+                if (request.revision == self.revision)
+                    boundary.prepared_visible_request = null;
+            }
+            boundary.mutex.unlock(boundary.io);
+            self.committed = true;
+        }
+    };
+
+    /// Validates and retains one invisible bootstrap request before Host commit.
+    pub fn prepareVisibleSet(
+        self: *Boundary,
+        revision: u64,
+        members: []const VisibleMember,
+    ) (error{
+        InvalidCandidateRevision,
+        InvalidPane,
+        DuplicatePane,
+        CandidatePending,
+        Stopping,
+    })!PreparedVisibleSet {
+        if (revision == 0 or members.len > visible_member_limit)
+            return error.InvalidCandidateRevision;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        if (self.prepared_visible_request != null)
+            return error.CandidatePending;
+        if (revision <= self.visible_high_water)
+            return error.InvalidCandidateRevision;
+        for (members, 0..) |member, member_index| {
+            if (@backingInt(member.pane) == 0 or
+                @backingInt(member.source) == 0)
+                return error.InvalidPane;
+            if (self.find(member.pane)) |index| {
+                const entry = self.entries[index].?;
+                if (entry.source != member.source or
+                    (entry.state != .registered and entry.state != .live))
+                    return error.InvalidPane;
+            } else {
+                const registration =
+                    self.lifecycle_admission_registration orelse
+                    return error.InvalidPane;
+                if (!self.lifecycle_candidate_active or
+                    registration.pane != member.pane or
+                    registration.source != member.source)
+                    return error.InvalidPane;
+            }
+            for (members[0..member_index]) |prior|
+                if (prior.pane == member.pane or
+                    prior.source == member.source)
+                    return error.DuplicatePane;
+        }
+        var request = VisibleSetRequest{
+            .revision = revision,
+            .members = undefined,
+            .count = @intCast(members.len),
+        };
+        @memcpy(request.members[0..members.len], members);
+        self.prepared_visible_request = request;
+        self.visible_high_water = revision;
+        return .{ .boundary = self, .revision = revision };
+    }
 
     /// Validates and reserves one lifecycle candidate without queue/topology mutation.
     pub fn prepareLifecycle(
@@ -1353,8 +1468,7 @@ pub const Boundary = struct {
             if (entry.source != requirement.member.source or
                 (entry.state != .registered and entry.state != .live))
                 return .stale;
-            if (@backingInt(entry.accepted_revision) <
-                @backingInt(requirement.revision))
+            if (!entrySatisfiesRequirement(entry, requirement))
                 return .pending;
         }
         return .ready;
@@ -1375,8 +1489,7 @@ pub const Boundary = struct {
             const entry = self.entries[index].?;
             if (entry.source != requirement.member.source or
                 (entry.state != .registered and entry.state != .live) or
-                @backingInt(entry.accepted_revision) <
-                    @backingInt(requirement.revision))
+                !entrySatisfiesRequirement(entry, requirement))
                 return error.Stale;
         }
         state.phase = .committing;
@@ -1547,6 +1660,140 @@ pub const Boundary = struct {
         }
         if (drained != 0) self.publishDrained();
         return .{ .accepted = drained, .rejected = rejected };
+    }
+
+    /// Atomically applies every claimed pooled update, optional Chrome update,
+    /// and one complete composition.
+    ///
+    /// Every ready block is claimed before Composer preflight. Failure restores
+    /// each exact block to ready; success releases each block and advances its
+    /// accepted revision. No claim survives this synchronous call.
+    pub fn applyCandidate(
+        self: *Boundary,
+        composer: *canvas.Composer,
+        chrome: ?canvas.Composer.SourceChange,
+        composition: canvas.Composer.Composition,
+        visible_revision: ?u64,
+    ) CandidateDrainError!CandidateDrainResult {
+        var tokens: [visible_member_limit]pool_storage.Token = undefined;
+        var token_count: usize = 0;
+        self.mutex.lockUncancelable(self.io);
+        for (&self.entries) |*maybe_entry| {
+            const entry = if (maybe_entry.*) |*value| value else continue;
+            if (entry.state == .retired or entry.state == .removing or
+                entry.ready == null)
+                continue;
+            if (token_count == tokens.len) {
+                self.mutex.unlock(self.io);
+                return error.ResourceLimit;
+            }
+            tokens[token_count] = entry.ready.?;
+            token_count += 1;
+        }
+        self.mutex.unlock(self.io);
+
+        var claimed: usize = 0;
+        errdefer self.restoreCandidateClaims(tokens[0..claimed]);
+        for (tokens[0..token_count]) |token| {
+            try self.pool.beginDrain(token);
+            claimed += 1;
+            self.mutex.lockUncancelable(self.io);
+            if (self.find(token.pane_id)) |index|
+                self.entries[index].?.draining = true;
+            self.mutex.unlock(self.io);
+        }
+
+        var changes: [visible_member_limit + 1]canvas.Composer.SourceChange =
+            undefined;
+        var change_count: usize = 0;
+        for (tokens[0..claimed]) |token| {
+            changes[change_count] = .{
+                .source = token.source_id,
+                .update = try self.pool.drainingUpdate(token),
+            };
+            change_count += 1;
+        }
+        if (chrome) |change| {
+            changes[change_count] = change;
+            change_count += 1;
+        }
+        self.mutex.lockUncancelable(self.io);
+        if (visible_revision) |revision| {
+            const state = self.visible_request orelse {
+                self.mutex.unlock(self.io);
+                return error.Stale;
+            };
+            if (state.request.revision != revision or
+                state.phase != .committing)
+            {
+                self.mutex.unlock(self.io);
+                return error.Stale;
+            }
+        }
+        composer.applyCandidate(.{
+            .changes = changes[0..change_count],
+            .composition = composition,
+        }) catch |failure| {
+            self.mutex.unlock(self.io);
+            self.restoreCandidateClaims(tokens[0..claimed]);
+            claimed = 0;
+            return failure;
+        };
+
+        for (tokens[0..claimed]) |token| {
+            self.pool.completeDrain(token) catch
+                @panic("accepted atomic candidate drain became invalid");
+            if (self.find(token.pane_id)) |index| {
+                const entry = &self.entries[index].?;
+                entry.draining = false;
+                if (entry.ready != null and
+                    entry.ready.?.reservation_id == token.reservation_id)
+                {
+                    entry.ready = null;
+                    entry.retry_wake_issued = false;
+                    entry.accepted_revision = token.producer_revision;
+                }
+            }
+        }
+        if (visible_revision) |revision| {
+            const state = self.visible_request.?;
+            std.debug.assert(state.request.revision == revision and
+                state.phase == .committing);
+            @memcpy(
+                self.visible_members[0..state.request.count],
+                state.request.members[0..state.request.count],
+            );
+            self.visible_member_count = state.request.count;
+            self.visible_initialized = true;
+            self.visible_request = null;
+        }
+        self.mutex.unlock(self.io);
+        claimed = 0;
+        if (token_count != 0) self.publishDrained();
+        return .{ .accepted = token_count };
+    }
+
+    fn restoreCandidateClaims(
+        self: *Boundary,
+        tokens: []const pool_storage.Token,
+    ) void {
+        for (tokens) |token| {
+            self.pool.retryDrain(token) catch
+                @panic("atomic candidate drain claim could not be restored");
+            self.mutex.lockUncancelable(self.io);
+            if (self.find(token.pane_id)) |index| {
+                const entry = &self.entries[index].?;
+                entry.draining = false;
+                if (entry.ready != null and
+                    entry.ready.?.reservation_id == token.reservation_id and
+                    !entry.retry_wake_issued)
+                {
+                    entry.retry_wake_issued = true;
+                    signal(self.renderer_fd);
+                }
+            }
+            self.mutex.unlock(self.io);
+        }
     }
 
     /// Attempts terminal-side pooled descriptor retirement for one closing pane.
@@ -1890,6 +2137,11 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
         .{ .pane = pane, .source = source },
     );
     defer candidate.deinit();
+    var visible = try boundary.prepareVisibleSet(
+        1,
+        &.{.{ .pane = pane, .source = source }},
+    );
+    defer visible.deinit();
     try std.testing.expectEqual(
         @as(u8, lifecycle_batch_limit),
         boundary.reserved_operation_count,
@@ -1912,6 +2164,9 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
     try std.testing.expect(boundary.sourceFor(pane) == null);
     try std.testing.expect(boundary.takeLifecycle() == null);
     try std.testing.expect(boundary.takeInput() == null);
+    try std.testing.expect(boundary.visibleSetRequest() == null);
+    visible.deinit();
+    try std.testing.expect(boundary.prepared_visible_request == null);
     candidate.deinit();
     try std.testing.expectEqual(@as(u8, 0), boundary.reserved_operation_count);
     try std.testing.expectEqual(@as(u16, 0), boundary.reserved_input_count);
@@ -1927,6 +2182,45 @@ test "shutdown respects lifecycle reservation and cancels candidate without pani
         error.OperationLimit,
         boundary.register(pane, source, .{ .width = 1, .height = 1 }),
     );
+}
+
+test "prepared bootstrap visibility commits infallibly after lifecycle commit" {
+    try std.testing.expectEqual(
+        @as(usize, 24),
+        @sizeOf(Boundary.PreparedVisibleSet),
+    );
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(34);
+    const source: canvas.SourceId = @fromBackingInt(44);
+    const operations = [_]Lifecycle{.{ .create = .{
+        .pane = pane,
+        .pixels = .{ .width = 1, .height = 1 },
+    } }};
+    var candidate = try boundary.prepareLifecycle(
+        &operations,
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
+    defer candidate.deinit();
+    var visible = try boundary.prepareVisibleSet(
+        1,
+        &.{.{ .pane = pane, .source = source }},
+    );
+    defer visible.deinit();
+    try admitTestCandidate(&candidate);
+    try std.testing.expectEqual(@as(u8, 1), boundary.operation_count);
+    try std.testing.expectEqual(source, boundary.sourceFor(pane).?);
+    boundary.shutdown();
+    visible.commit();
+    const request = boundary.visibleSetRequest() orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u64, 1), request.revision);
+    try std.testing.expectEqual(@as(u8, 1), request.count);
 }
 
 test "lifecycle admission cancellation rejects stale validation and never reuses revision" {
@@ -2202,7 +2496,7 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     try boundary.finishRetired(pane);
 }
 
-test "latest visible set waits for exact Composer accepted revisions" {
+test "latest visible set admits exact ready or Composer accepted revisions" {
     var boundary = try Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -2242,7 +2536,7 @@ test "latest visible set waits for exact Composer accepted revisions" {
         .member = member,
         .revision = @fromBackingInt(7),
     }}, true);
-    try std.testing.expectEqual(VisibleSetStatus.pending, boundary.visibleSetStatus(1));
+    try std.testing.expectEqual(VisibleSetStatus.ready, boundary.visibleSetStatus(1));
 
     var narrow = try canvas.Composer.init(std.testing.allocator, .{
         .sources = 1,
@@ -2262,7 +2556,7 @@ test "latest visible set waits for exact Composer accepted revisions" {
         @as(?canvas.Composer.Error, error.CommandLimit),
         rejected.rejected,
     );
-    try std.testing.expectEqual(VisibleSetStatus.pending, boundary.visibleSetStatus(1));
+    try std.testing.expectEqual(VisibleSetStatus.ready, boundary.visibleSetStatus(1));
 
     var composer = try canvas.Composer.init(std.testing.allocator, .{
         .sources = 1,
@@ -2291,6 +2585,125 @@ test "latest visible set waits for exact Composer accepted revisions" {
     try std.testing.expectEqual(@as(u64, 3), boundary.visibleSetRequest().?.revision);
     try boundary.close(pane);
     try std.testing.expectEqual(VisibleSetStatus.stale, boundary.visibleSetStatus(3));
+}
+
+test "atomic Composer candidate restores or releases every exact pool claim" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const panes = [_]PaneId{ @fromBackingInt(61), @fromBackingInt(62) };
+    const sources = [_]canvas.SourceId{ @fromBackingInt(1), @fromBackingInt(2) };
+    var members: [2]pool_storage.Member = undefined;
+    const command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    for (panes, sources, 0..) |pane, source_id, index| {
+        try boundary.register(pane, source_id, .{ .width = 1, .height = 1 });
+        const lifecycle = boundary.takeLifecycle().?;
+        try std.testing.expect(std.meta.activeTag(lifecycle) == .create);
+        members[index] = try boundary.activateTransfer(pane);
+        const token = try boundary.reserveUpdate(members[index]);
+        try boundary.publishUpdate(token, .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{command},
+        });
+    }
+    const placements = [_]canvas.Composer.Placement{
+        .{
+            .source = sources[0],
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        },
+        .{
+            .source = sources[1],
+            .origin = .{ .x = 1, .y = 0 },
+            .clip = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+        },
+    };
+    var narrow = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 2,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 2,
+        .composition_sources = 2,
+        .candidate_resources = 2,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 2,
+    });
+    defer narrow.deinit();
+    for (sources) |source_id|
+        try std.testing.expectEqual(source_id, try narrow.registerSource());
+    try std.testing.expectError(error.CommandLimit, boundary.applyCandidate(
+        &narrow,
+        null,
+        .{
+            .surface = .{ .width = 2, .height = 1 },
+            .sources = &placements,
+        },
+        null,
+    ));
+    for (panes) |pane| {
+        const entry = boundary.entries[boundary.find(pane).?].?;
+        try std.testing.expect(entry.ready != null);
+        try std.testing.expect(!entry.draining);
+        try std.testing.expectEqual(
+            @as(canvas.ProducerRevision, @fromBackingInt(0)),
+            entry.accepted_revision,
+        );
+    }
+
+    var accepted = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 2,
+        .composition_sources = 2,
+        .candidate_resources = 2,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 2,
+    });
+    defer accepted.deinit();
+    for (sources) |source_id|
+        try std.testing.expectEqual(source_id, try accepted.registerSource());
+    const visible_members = [_]VisibleMember{
+        .{ .pane = panes[0], .source = sources[0] },
+        .{ .pane = panes[1], .source = sources[1] },
+    };
+    try boundary.publishVisibleSet(1, &visible_members);
+    try boundary.completeVisibleSet(1, &.{
+        .{ .member = visible_members[0], .revision = @fromBackingInt(1) },
+        .{ .member = visible_members[1], .revision = @fromBackingInt(1) },
+    }, false);
+    try std.testing.expectEqual(
+        VisibleSetStatus.ready,
+        boundary.visibleSetStatus(1),
+    );
+    try boundary.claimVisibleSet(1);
+    const result = try boundary.applyCandidate(&accepted, null, .{
+        .surface = .{ .width = 2, .height = 1 },
+        .sources = &placements,
+    }, 1);
+    try std.testing.expectEqual(@as(usize, 2), result.accepted);
+    try std.testing.expectEqual(
+        VisibleSetStatus.stale,
+        boundary.visibleSetStatus(1),
+    );
+    for (panes) |pane| {
+        const entry = boundary.entries[boundary.find(pane).?].?;
+        try std.testing.expect(entry.ready == null);
+        try std.testing.expect(!entry.draining);
+        try std.testing.expectEqual(
+            @as(canvas.ProducerRevision, @fromBackingInt(1)),
+            entry.accepted_revision,
+        );
+    }
 }
 
 test "visible group with fifteen free blocks does not partially reserve sixteen" {

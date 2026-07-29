@@ -349,6 +349,9 @@ pub const ProducerUpdate = struct {
 /// Successful initialization performs all allocation; every later operation is
 /// allocation-free and transactional.
 pub const Composer = struct {
+    const candidate_source_limit: usize = 17;
+    const candidate_placement_limit: usize = 65;
+
     /// Fixes every retained, candidate, composition, and frame bound.
     pub const Limits = struct {
         /// Maximum identities issued by this Composer.
@@ -423,6 +426,22 @@ pub const Composer = struct {
         sources: []const Placement,
     };
 
+    /// Borrows one complete replacement for one exact live source.
+    pub const SourceChange = struct {
+        /// Selects the retained source to replace.
+        source: SourceId,
+        /// Supplies its strictly newer complete producer state.
+        update: ProducerUpdate,
+    };
+
+    /// Borrows one coherent bounded source-and-composition transaction.
+    pub const Candidate = struct {
+        /// Supplies at most seventeen distinct complete source replacements.
+        changes: []const SourceChange,
+        /// Supplies the complete prospective visible composition.
+        composition: Composition,
+    };
+
     /// Supplies caller-owned bounded storage for one frame derivation.
     ///
     /// Every initialized prefix is unchanged on failure.
@@ -473,6 +492,19 @@ pub const Composer = struct {
         pixel_count: usize,
     };
 
+    const SourcePlan = struct {
+        source_index: usize,
+        change_index: usize,
+        revision: u64,
+        final_resource_start: usize,
+        resource_count: usize,
+        final_command_start: usize,
+        command_count: usize,
+        final_pixel_start: usize,
+        pixel_count: usize,
+        local_high_water: u64,
+    };
+
     allocator: std.mem.Allocator,
     limits: Limits,
     sources: []Source,
@@ -493,6 +525,12 @@ pub const Composer = struct {
     candidate_pixels: []u8,
     candidate_pixel_count: usize = 0,
     candidate_high_water: u64 = 0,
+    source_plans: [candidate_source_limit]SourcePlan = undefined,
+    source_plan_count: usize = 0,
+    resource_plan: []u64,
+    resource_plan_count: usize = 0,
+    candidate_composition: [candidate_placement_limit]Placement = undefined,
+    candidate_composition_count: usize = 0,
     next_source_id: u64 = 1,
     frame_revision: u64 = 1,
 
@@ -522,6 +560,9 @@ pub const Composer = struct {
         errdefer allocator.free(candidate_commands);
         const candidate_pixels = allocator.alloc(u8, limits.candidate_pixel_bytes) catch
             return error.OutOfMemory;
+        errdefer allocator.free(candidate_pixels);
+        const resource_plan = allocator.alloc(u64, limits.retained_resources) catch
+            return error.OutOfMemory;
         return .{
             .allocator = allocator,
             .limits = limits,
@@ -533,11 +574,13 @@ pub const Composer = struct {
             .candidate_resources = candidate_resources,
             .candidate_commands = candidate_commands,
             .candidate_pixels = candidate_pixels,
+            .resource_plan = resource_plan,
         };
     }
 
     /// Releases every initializer-owned allocation in reverse order.
     pub fn deinit(self: *Composer) void {
+        self.allocator.free(self.resource_plan);
         self.allocator.free(self.candidate_pixels);
         self.allocator.free(self.candidate_commands);
         self.allocator.free(self.candidate_resources);
@@ -629,6 +672,139 @@ pub const Composer = struct {
 
         self.commitCandidate(index, revision);
         if (visible_changed) self.frame_revision += 1;
+    }
+
+    /// Atomically replaces bounded complete sources and one composition.
+    ///
+    /// All caller slices are borrowed only for this synchronous call. Complete
+    /// validation and capacity planning occur before retained state changes.
+    /// Commit then uses only initialized fixed scratch, performs no allocation,
+    /// and cannot fail.
+    pub fn applyCandidate(
+        self: *Composer,
+        candidate: Candidate,
+    ) Composer.Error!void {
+        if (candidate.changes.len > candidate_source_limit)
+            return error.SourceLimit;
+        if (candidate.composition.sources.len > self.composition.len or
+            candidate.composition.sources.len > candidate_placement_limit)
+            return error.CompositionLimit;
+        try self.validateCandidateAliases(candidate);
+        if (candidate.composition.surface.width == 0 or
+            candidate.composition.surface.height == 0)
+            return error.InvalidGeometry;
+
+        self.source_plan_count = 0;
+        self.candidate_composition_count = 0;
+        var prospective_resources = self.resource_count;
+        var prospective_commands = self.command_count;
+        var prospective_pixels = self.pixel_count;
+        for (candidate.changes, 0..) |change, change_index| {
+            const source_index = try self.sourceIndex(change.source);
+            for (candidate.changes[0..change_index]) |prior|
+                if (prior.source == change.source) return error.DuplicateSource;
+            const old = self.sources[source_index];
+            const revision = @backingInt(change.update.revision);
+            if (revision == 0 or revision <= old.revision)
+                return error.InvalidRevision;
+            try self.buildCandidate(old, change.update);
+            prospective_resources = try replaceCount(
+                prospective_resources,
+                old.resource_count,
+                self.candidate_resource_count,
+            );
+            prospective_commands = try replaceCount(
+                prospective_commands,
+                old.command_count,
+                self.candidate_command_count,
+            );
+            prospective_pixels = try replaceCount(
+                prospective_pixels,
+                old.pixel_count,
+                self.candidate_pixel_count,
+            );
+            self.source_plans[self.source_plan_count] = .{
+                .source_index = source_index,
+                .change_index = change_index,
+                .revision = revision,
+                .final_resource_start = 0,
+                .resource_count = self.candidate_resource_count,
+                .final_command_start = 0,
+                .command_count = self.candidate_command_count,
+                .final_pixel_start = 0,
+                .pixel_count = self.candidate_pixel_count,
+                .local_high_water = self.candidate_high_water,
+            };
+            self.source_plan_count += 1;
+        }
+        if (prospective_resources > self.resources.len)
+            return error.ResourceLimit;
+        if (prospective_commands > self.commands.len)
+            return error.CommandLimit;
+        if (prospective_pixels > self.pixels.len)
+            return error.PixelLimit;
+
+        for (candidate.composition.sources, 0..) |placement, placement_index| {
+            const source_index = try self.sourceIndex(placement.source);
+            try validateComposerRect(placement.clip);
+            for (candidate.composition.sources[0..placement_index]) |prior|
+                if (prior.source == placement.source)
+                    return error.DuplicateSource;
+            const commands = if (self.planForSource(source_index)) |plan| blk: {
+                self.stageValidatedCandidate(
+                    self.sources[source_index],
+                    candidate.changes[plan.change_index].update,
+                );
+                break :blk self.candidate_commands[0..plan.command_count];
+            } else self.commands[self.sources[source_index].command_start .. self.sources[source_index].command_start +
+                self.sources[source_index].command_count];
+            for (commands) |command|
+                try validatePlacedCommand(
+                    candidate.composition.surface,
+                    placement,
+                    command,
+                );
+            self.candidate_composition[placement_index] = placement;
+        }
+        self.candidate_composition_count = candidate.composition.sources.len;
+
+        var frame_changed = !std.meta.eql(
+            self.surface,
+            candidate.composition.surface,
+        ) or !placementsEqual(
+            self.composition[0..self.composition_count],
+            candidate.composition.sources,
+        );
+        if (!frame_changed) {
+            for (self.source_plans[0..self.source_plan_count]) |plan| {
+                const placement_index = self.placementIndex(
+                    self.sources[plan.source_index].id,
+                ) orelse continue;
+                self.stageValidatedCandidate(
+                    self.sources[plan.source_index],
+                    candidate.changes[plan.change_index].update,
+                );
+                if (!try self.visibleContributionEqual(
+                    self.sources[plan.source_index],
+                    self.composition[placement_index],
+                )) {
+                    frame_changed = true;
+                    break;
+                }
+            }
+        }
+        if (frame_changed and self.frame_revision == std.math.maxInt(u64))
+            return error.RevisionExhausted;
+
+        self.planFinalRanges(candidate);
+        self.commitAggregateCandidate(candidate);
+        @memcpy(
+            self.composition[0..self.candidate_composition_count],
+            self.candidate_composition[0..self.candidate_composition_count],
+        );
+        self.composition_count = self.candidate_composition_count;
+        self.surface = candidate.composition.surface;
+        if (frame_changed) self.frame_revision += 1;
     }
 
     /// Replaces the complete ordered visible composition transactionally.
@@ -730,11 +906,224 @@ pub const Composer = struct {
         return index;
     }
 
+    fn planForSource(self: *const Composer, source_index: usize) ?SourcePlan {
+        for (self.source_plans[0..self.source_plan_count]) |plan|
+            if (plan.source_index == source_index) return plan;
+        return null;
+    }
+
     fn placementIndex(self: *const Composer, source: SourceId) ?usize {
         for (self.composition[0..self.composition_count], 0..) |placement, index| {
             if (placement.source == source) return index;
         }
         return null;
+    }
+
+    fn planFinalRanges(self: *Composer, candidate: Candidate) void {
+        var resource_start: usize = 0;
+        var command_start: usize = 0;
+        var pixel_start: usize = 0;
+        self.resource_plan_count = 0;
+        for (self.sources[0..self.source_count], 0..) |source, source_index| {
+            if (!source.live) continue;
+            if (self.planIndexForSource(source_index)) |plan_index| {
+                const plan = &self.source_plans[plan_index];
+                plan.final_resource_start = resource_start;
+                plan.final_command_start = command_start;
+                plan.final_pixel_start = pixel_start;
+                const update = candidate.changes[plan.change_index].update;
+                const old_resources = self.resources[source.resource_start .. source.resource_start + source.resource_count];
+                for (old_resources, source.resource_start..) |resource, old_index| {
+                    if (findRemoval(
+                        update.removals,
+                        resource.local.resource,
+                    ) != null) continue;
+                    if (findUploadIndex(
+                        update.uploads,
+                        resource.local.resource,
+                    )) |upload_index| {
+                        self.resource_plan[self.resource_plan_count] =
+                            encodeUploadPlan(
+                                plan.change_index,
+                                upload_index,
+                            );
+                    } else {
+                        self.resource_plan[self.resource_plan_count] =
+                            encodeRetainedPlan(old_index);
+                    }
+                    self.resource_plan_count += 1;
+                }
+                for (update.uploads, 0..) |upload, upload_index| {
+                    if (findResource(
+                        old_resources,
+                        upload.resource.resource,
+                    ) != null) continue;
+                    self.resource_plan[self.resource_plan_count] =
+                        encodeUploadPlan(plan.change_index, upload_index);
+                    self.resource_plan_count += 1;
+                }
+                resource_start += plan.resource_count;
+                command_start += plan.command_count;
+                pixel_start += plan.pixel_count;
+            } else {
+                for (source.resource_start..source.resource_start +
+                    source.resource_count) |old_index|
+                {
+                    self.resource_plan[self.resource_plan_count] =
+                        encodeRetainedPlan(old_index);
+                    self.resource_plan_count += 1;
+                }
+                resource_start += source.resource_count;
+                command_start += source.command_count;
+                pixel_start += source.pixel_count;
+            }
+        }
+    }
+
+    fn planIndexForSource(
+        self: *const Composer,
+        source_index: usize,
+    ) ?usize {
+        for (self.source_plans[0..self.source_plan_count], 0..) |plan, index|
+            if (plan.source_index == source_index) return index;
+        return null;
+    }
+
+    /// Commits the already validated complete layout without transient slack.
+    ///
+    /// Phase one compacts retained resources, pixels, and unchanged commands
+    /// left. Phase two expands them right in reverse order and inserts immutable
+    /// uploads and changed command lists. No transient capacity is required.
+    fn commitAggregateCandidate(
+        self: *Composer,
+        candidate: Candidate,
+    ) void {
+        var final_command_count: usize = 0;
+        var final_pixel_count: usize = 0;
+        for (self.sources[0..self.source_count], 0..) |source, index| {
+            if (!source.live) continue;
+            if (self.planIndexForSource(index)) |plan_index| {
+                final_command_count +=
+                    self.source_plans[plan_index].command_count;
+                final_pixel_count += self.source_plans[plan_index].pixel_count;
+            } else {
+                final_command_count += source.command_count;
+                final_pixel_count += source.pixel_count;
+            }
+        }
+        var compact_resource_count: usize = 0;
+        var compact_pixel_count: usize = 0;
+        for (self.resource_plan[0..self.resource_plan_count]) |*encoded| {
+            if (planIsUpload(encoded.*)) continue;
+            const resource = self.resources[decodeRetainedPlan(encoded.*)];
+            std.mem.copyForwards(
+                u8,
+                self.pixels[compact_pixel_count .. compact_pixel_count + resource.pixel_count],
+                self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count],
+            );
+            var moved = resource;
+            moved.pixel_start = compact_pixel_count;
+            self.resources[compact_resource_count] = moved;
+            encoded.* = encodeRetainedPlan(compact_resource_count);
+            compact_resource_count += 1;
+            compact_pixel_count += resource.pixel_count;
+        }
+
+        var resource_index = self.resource_plan_count;
+        var final_pixel_end = final_pixel_count;
+        while (resource_index > 0) {
+            resource_index -= 1;
+            const encoded = self.resource_plan[resource_index];
+            if (planIsUpload(encoded)) {
+                const decoded = decodeUploadPlan(encoded);
+                const upload =
+                    candidate.changes[decoded.change].update.uploads[
+                        decoded.upload
+                    ];
+                final_pixel_end -= upload.pixels.bytes.len;
+                @memcpy(
+                    self.pixels[final_pixel_end .. final_pixel_end + upload.pixels.bytes.len],
+                    upload.pixels.bytes,
+                );
+                self.resources[resource_index] =
+                    resourceFromUpload(upload, final_pixel_end);
+            } else {
+                const resource = self.resources[decodeRetainedPlan(encoded)];
+                final_pixel_end -= resource.pixel_count;
+                std.mem.copyBackwards(
+                    u8,
+                    self.pixels[final_pixel_end .. final_pixel_end + resource.pixel_count],
+                    self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count],
+                );
+                var moved = resource;
+                moved.pixel_start = final_pixel_end;
+                self.resources[resource_index] = moved;
+            }
+        }
+
+        var final_resource_start: usize = 0;
+        var final_source_pixel_start: usize = 0;
+        for (self.sources[0..self.source_count], 0..) |*source, index| {
+            if (!source.live) continue;
+            source.resource_start = final_resource_start;
+            source.pixel_start = final_source_pixel_start;
+            if (self.planIndexForSource(index)) |plan_index| {
+                source.resource_count =
+                    self.source_plans[plan_index].resource_count;
+                source.pixel_count = self.source_plans[plan_index].pixel_count;
+            }
+            final_resource_start += source.resource_count;
+            final_source_pixel_start += source.pixel_count;
+        }
+
+        var compact_command_count: usize = 0;
+        for (self.sources[0..self.source_count], 0..) |*source, source_index| {
+            if (!source.live) continue;
+            if (self.planIndexForSource(source_index) != null) continue;
+            std.mem.copyForwards(
+                Input,
+                self.commands[compact_command_count .. compact_command_count + source.command_count],
+                self.commands[source.command_start .. source.command_start + source.command_count],
+            );
+            source.command_start = compact_command_count;
+            compact_command_count += source.command_count;
+        }
+
+        var source_index = self.source_count;
+        var final_command_end = final_command_count;
+        while (source_index > 0) {
+            source_index -= 1;
+            const source = &self.sources[source_index];
+            if (!source.live) continue;
+            if (self.planIndexForSource(source_index)) |plan_index| {
+                const plan = self.source_plans[plan_index];
+                const update = candidate.changes[plan.change_index].update;
+                @memcpy(
+                    self.commands[plan.final_command_start .. plan.final_command_start + update.commands.len],
+                    update.commands,
+                );
+                source.revision = plan.revision;
+                source.local_high_water = plan.local_high_water;
+                source.resource_start = plan.final_resource_start;
+                source.resource_count = plan.resource_count;
+                source.command_start = plan.final_command_start;
+                source.command_count = plan.command_count;
+                source.pixel_start = plan.final_pixel_start;
+                source.pixel_count = plan.pixel_count;
+                final_command_end = plan.final_command_start;
+            } else {
+                final_command_end -= source.command_count;
+                std.mem.copyBackwards(
+                    Input,
+                    self.commands[final_command_end .. final_command_end + source.command_count],
+                    self.commands[source.command_start .. source.command_start + source.command_count],
+                );
+                source.command_start = final_command_end;
+            }
+        }
+        self.resource_count = self.resource_plan_count;
+        self.command_count = final_command_count;
+        self.pixel_count = final_pixel_count;
     }
 
     fn buildCandidate(
@@ -812,6 +1201,72 @@ pub const Composer = struct {
             self.candidate_command_count += 1;
         }
         self.candidate_high_water = high_water;
+    }
+
+    fn stageValidatedCandidate(
+        self: *Composer,
+        old: Source,
+        update: ProducerUpdate,
+    ) void {
+        self.candidate_resource_count = 0;
+        self.candidate_command_count = 0;
+        self.candidate_pixel_count = 0;
+        var high_water = old.local_high_water;
+        const old_resources =
+            self.resources[old.resource_start .. old.resource_start + old.resource_count];
+        for (old_resources) |resource| {
+            if (findRemoval(update.removals, resource.local.resource) != null)
+                continue;
+            if (findUpload(update.uploads, resource.local.resource)) |upload| {
+                self.appendValidatedUpload(upload);
+            } else {
+                self.appendValidatedRetained(resource);
+            }
+        }
+        for (update.uploads) |upload| {
+            if (findResource(old_resources, upload.resource.resource) != null)
+                continue;
+            high_water = @max(high_water, @backingInt(upload.resource.resource));
+            self.appendValidatedUpload(upload);
+        }
+        @memcpy(
+            self.candidate_commands[0..update.commands.len],
+            update.commands,
+        );
+        self.candidate_command_count = update.commands.len;
+        self.candidate_high_water = high_water;
+    }
+
+    fn appendValidatedRetained(self: *Composer, resource: Resource) void {
+        const source = self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count];
+        const start = self.candidate_pixel_count;
+        @memcpy(self.candidate_pixels[start..][0..source.len], source);
+        var copied = resource;
+        copied.pixel_start = start;
+        self.candidate_resources[self.candidate_resource_count] = copied;
+        self.candidate_resource_count += 1;
+        self.candidate_pixel_count += source.len;
+    }
+
+    fn appendValidatedUpload(self: *Composer, upload: ResourceUpload) void {
+        const start = self.candidate_pixel_count;
+        @memcpy(
+            self.candidate_pixels[start..][0..upload.pixels.bytes.len],
+            upload.pixels.bytes,
+        );
+        self.candidate_resources[self.candidate_resource_count] = .{
+            .local = upload.resource,
+            .format = upload.format,
+            .size = .{
+                .width = upload.pixels.width,
+                .height = upload.pixels.height,
+            },
+            .stride = upload.pixels.stride,
+            .pixel_start = start,
+            .pixel_count = upload.pixels.bytes.len,
+        };
+        self.candidate_resource_count += 1;
+        self.candidate_pixel_count += upload.pixels.bytes.len;
     }
 
     fn appendCandidateRetained(
@@ -1027,11 +1482,33 @@ pub const Composer = struct {
         }
     }
 
+    fn validateCandidateAliases(
+        self: *const Composer,
+        candidate: Candidate,
+    ) Composer.Error!void {
+        const changes = try byteRange(SourceChange, candidate.changes);
+        const placements = try byteRange(Placement, candidate.composition.sources);
+        try self.rejectInternalFrameAliases(&.{ changes, placements });
+        for (candidate.changes) |change| {
+            const update_ranges = [_]ByteRange{
+                try byteRange(ResourceUpload, change.update.uploads),
+                try byteRange(ResourceRemoval, change.update.removals),
+                try byteRange(Input, change.update.commands),
+            };
+            try self.rejectInternalFrameAliases(&update_ranges);
+            for (change.update.uploads) |upload| {
+                const pixels = try byteRange(u8, upload.pixels.bytes);
+                try self.rejectInternalFrameAliases(&.{pixels});
+            }
+        }
+    }
+
     fn rejectInternalFrameAliases(
         self: *const Composer,
         outputs: []const ByteRange,
     ) Composer.Error!void {
         const retained = [_]ByteRange{
+            .{ .start = @intFromPtr(self), .len = @sizeOf(Composer) },
             try byteRange(Source, self.sources),
             try byteRange(Resource, self.resources),
             try byteRange(Input, self.commands),
@@ -1040,6 +1517,7 @@ pub const Composer = struct {
             try byteRange(Resource, self.candidate_resources),
             try byteRange(Input, self.candidate_commands),
             try byteRange(u8, self.candidate_pixels),
+            try byteRange(u64, self.resource_plan),
         };
         for (outputs) |output| {
             for (retained) |owned| {
@@ -1282,6 +1760,16 @@ fn validateAllocationSize(count: usize, item_size: usize) Composer.Error!void {
         return error.ArithmeticOverflow;
 }
 
+fn replaceCount(
+    total: usize,
+    old_count: usize,
+    new_count: usize,
+) Composer.Error!usize {
+    if (old_count > total) return error.ArithmeticOverflow;
+    return std.math.add(usize, total - old_count, new_count) catch
+        return error.ArithmeticOverflow;
+}
+
 fn validateComposerRect(rect: Rect) Composer.Error!void {
     const value = edges(rect) catch |err| return mapCanvasGeometry(err);
     if (value.right <= value.left or value.bottom <= value.top)
@@ -1339,6 +1827,59 @@ fn findResource(
         if (resource.local.resource == id) return resource;
     }
     return null;
+}
+
+const upload_plan_bit: u64 = @as(u64, 1) << 63;
+
+fn encodeRetainedPlan(index: usize) u64 {
+    return @intCast(index);
+}
+
+fn decodeRetainedPlan(value: u64) usize {
+    return @intCast(value);
+}
+
+fn encodeUploadPlan(change: usize, upload: usize) u64 {
+    return upload_plan_bit |
+        (@as(u64, @intCast(change)) << 32) |
+        @as(u64, @intCast(upload));
+}
+
+fn planIsUpload(value: u64) bool {
+    return value & upload_plan_bit != 0;
+}
+
+fn decodeUploadPlan(value: u64) struct { change: usize, upload: usize } {
+    return .{
+        .change = @intCast((value >> 32) & 0x7fff_ffff),
+        .upload = @intCast(value & 0xffff_ffff),
+    };
+}
+
+fn findUploadIndex(
+    uploads: []const ResourceUpload,
+    id: ResourceId,
+) ?usize {
+    for (uploads, 0..) |upload, index|
+        if (upload.resource.resource == id) return index;
+    return null;
+}
+
+fn resourceFromUpload(
+    upload: ResourceUpload,
+    pixel_start: usize,
+) Composer.Resource {
+    return .{
+        .local = upload.resource,
+        .format = upload.format,
+        .size = .{
+            .width = upload.pixels.width,
+            .height = upload.pixels.height,
+        },
+        .stride = upload.pixels.stride,
+        .pixel_start = pixel_start,
+        .pixel_count = upload.pixels.bytes.len,
+    };
 }
 
 fn replaceSlice(
@@ -2217,6 +2758,144 @@ test "composer rejects shared producer facts without retained mutation" {
     try std.testing.expectEqual(@as(u64, 1), composer.sources[0].local_high_water);
     try std.testing.expectEqual(@as(u8, 0x7c), composer.pixels[0]);
     try std.testing.expectEqual(before.frame_revision + 1, composer.frame_revision);
+}
+
+test "composer atomic candidate plan has exact fixed storage" {
+    try std.testing.expectEqual(@as(usize, 80), @sizeOf(Composer.SourcePlan));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(Composer.Placement));
+    try std.testing.expectEqual(
+        @as(usize, 3456),
+        @sizeOf([Composer.candidate_source_limit]Composer.SourcePlan) +
+            @sizeOf(usize) +
+            @sizeOf([Composer.candidate_placement_limit]Composer.Placement) +
+            @sizeOf(usize),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 19_840),
+        3456 + 2048 * @sizeOf(u64),
+    );
+}
+
+test "composer candidate rejects resource plan alias before scratch mutation" {
+    var composer = try Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 16,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source = try composer.registerSource();
+    const valid = Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    try composer.apply(source, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{valid},
+    });
+    const before = composer.commands[0];
+    const aliased: []const Input = @ptrCast(@alignCast(
+        std.mem.sliceAsBytes(composer.resource_plan)[0..@sizeOf(Input)],
+    ));
+    try std.testing.expectError(error.AliasedStorage, composer.applyCandidate(.{
+        .changes = &.{.{ .source = source, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = aliased,
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{},
+        },
+    }));
+    try std.testing.expectEqualDeep(before, composer.commands[0]);
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{valid},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{},
+        },
+    });
+}
+
+test "composer atomic candidate frame revision pressure is exact" {
+    var composer = try Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source = try composer.registerSource();
+    const first = Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    try composer.apply(source, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{first},
+    });
+    const placements = [_]Composer.Placement{.{
+        .source = source,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    }};
+    try composer.setComposition(.{
+        .surface = .{ .width = 1, .height = 1 },
+        .sources = &placements,
+    });
+    composer.frame_revision = std.math.maxInt(u64);
+    var changed = first;
+    changed.solid.color.r = 9;
+    try std.testing.expectError(error.RevisionExhausted, composer.applyCandidate(.{
+        .changes = &.{.{ .source = source, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{changed},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    }));
+    try std.testing.expectEqual(@as(u64, 1), composer.sources[0].revision);
+    try std.testing.expectEqual(std.math.maxInt(u64), composer.frame_revision);
+
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{first},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    try std.testing.expectEqual(@as(u64, 2), composer.sources[0].revision);
+    try std.testing.expectEqual(std.math.maxInt(u64), composer.frame_revision);
 }
 
 test "visible contribution exhaustion rejects only required frame increments" {

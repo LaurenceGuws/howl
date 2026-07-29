@@ -33,6 +33,79 @@ const RetiredTerminalSource = struct {
     source: render_api.canvas.SourceId,
 };
 
+const ChromeRetry = struct {
+    update: render_api.canvas.ProducerUpdate,
+    surface: render_api.canvas.Size,
+    terminal_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement,
+    terminal_count: u8,
+    visible_revision: ?u64,
+    topology_revision: ?terminal_handoff.LifecycleRevision,
+};
+
+const CanvasPlanResult = union(enum) {
+    blocked,
+    retry,
+    accepted: vk_surface.Plan,
+};
+
+const RedrawResult = enum {
+    blocked,
+    retry,
+    published,
+};
+
+const RedrawSchedule = enum {
+    wait,
+    retry,
+    published,
+};
+
+fn scheduleRedraw(
+    result: RedrawResult,
+    local_retry_turn: bool,
+) error{InvalidFrame}!RedrawSchedule {
+    return switch (result) {
+        .blocked => .wait,
+        .retry => if (local_retry_turn)
+            error.InvalidFrame
+        else
+            .retry,
+        .published => .published,
+    };
+}
+
+const BootstrapSource = struct {
+    pane: render_api.chrome.PaneId,
+    source: render_api.canvas.SourceId,
+};
+
+const PreparedBootstrapPublication = struct {
+    boundary: terminal_handoff.Boundary.PreparedVisibleSet,
+    placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement,
+    count: u8,
+    committed: bool = false,
+
+    fn commit(
+        self: *PreparedBootstrapPublication,
+        work: *CanvasWork,
+    ) void {
+        self.boundary.commit();
+        @memcpy(
+            work.pending_placements[0..self.count],
+            self.placements[0..self.count],
+        );
+        work.pending_count = self.count;
+        work.pending_visible_revision = self.boundary.revision;
+        self.committed = true;
+    }
+
+    fn deinit(self: *PreparedBootstrapPublication) void {
+        if (self.committed) return;
+        self.boundary.deinit();
+        self.committed = true;
+    }
+};
+
 const CanvasWork = struct {
     composer: *render_api.canvas.Composer,
     content: *render_api.chrome.Content,
@@ -60,6 +133,11 @@ const CanvasWork = struct {
     pending_count: u8 = 0,
     retired_sources: [64]RetiredTerminalSource = undefined,
     retired_source_count: u8 = 0,
+    /// Borrows Chrome Content output until one exact candidate is accepted.
+    ///
+    /// While populated, buildCanvasPlan does not mutate or extract Content and
+    /// defers later topology projection to the caller's next loop turn.
+    chrome_retry: ?ChromeRetry = null,
 };
 
 const Slot = struct {
@@ -333,7 +411,15 @@ fn runFallible(
     var next_acquire_point: u64 = 4;
     for (&rings[0], 0..) |*slot, index| {
         queue_active = true;
-        const composer_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+        const composer_plan = try waitCanvasPlan(
+            boundary,
+            &canvas_work,
+            &chrome,
+            null,
+            chrome_appearance,
+            &chrome_primitives,
+            &chrome_text,
+        );
         errdefer surface_residency.discard();
         try render(&graphics, device, queue, family, command, slot, colors[index], composer_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
@@ -350,7 +436,15 @@ fn runFallible(
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
     const release_wait = try importReleaseSemaphore(device, &dispatch, &release_sync_fd);
     defer vk.vkDestroySemaphore(device, release_wait, null);
-    const reuse_plan = try buildCanvasPlan(&canvas_work, &chrome, chrome_appearance, &chrome_primitives, &chrome_text);
+    const reuse_plan = try waitCanvasPlan(
+        boundary,
+        &canvas_work,
+        &chrome,
+        null,
+        chrome_appearance,
+        &chrome_primitives,
+        &chrome_text,
+    );
     errdefer surface_residency.discard();
     try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
@@ -362,6 +456,7 @@ fn runFallible(
     var active_generation = initial_surface.generation;
     var actions = input_actions.State{};
     var terminal_redraw_pending = false;
+    var local_redraw_retry_pending = false;
     var pending_topology: ?PendingTopology = null;
     defer if (pending_topology) |*pending| pending.deinit();
     while (!boundary.shouldStop()) {
@@ -395,9 +490,13 @@ fn runFallible(
             chrome_appearance,
             &pending_topology,
         );
-        terminal_redraw_pending =
-            (try waitRenderWakeBlocking(boundary, terminals)) or
-            terminal_redraw_pending;
+        const local_redraw_retry_turn = local_redraw_retry_pending;
+        local_redraw_retry_pending = false;
+        if (!local_redraw_retry_turn) {
+            terminal_redraw_pending =
+                (try waitRenderWakeBlocking(boundary, terminals)) or
+                terminal_redraw_pending;
+        }
         const terminal_status = terminals.status();
         if (terminal_status.stopped)
             return if (terminal_status.failed)
@@ -415,6 +514,45 @@ fn runFallible(
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
                     try checkGpuBudget(surface.width, surface.height);
+                    var local_retry_used = false;
+                    const admission_result = retry: while (true) {
+                        const result = try buildCanvasPlan(
+                            &canvas_work,
+                            &admitted.candidate,
+                            admitted.revision,
+                            admitted.bootstrap(),
+                            chrome_appearance,
+                            &chrome_primitives,
+                            &chrome_text,
+                        );
+                        switch (result) {
+                            .retry => {
+                                if (local_retry_used)
+                                    return error.InvalidFrame;
+                                local_retry_used = true;
+                            },
+                            else => break :retry result,
+                        }
+                    };
+                    switch (admission_result) {
+                        .blocked => {
+                            terminal_redraw_pending = true;
+                            continue;
+                        },
+                        .retry => return error.InvalidFrame,
+                        .accepted => surface_residency.discard(),
+                    }
+                    var bootstrap_publication: ?PreparedBootstrapPublication =
+                        if (admitted.new_source != null)
+                            try prepareBootstrapPublication(
+                                &canvas_work,
+                                &admitted.candidate,
+                                admitted.bootstrap(),
+                            )
+                        else
+                            null;
+                    defer if (bootstrap_publication) |*publication|
+                        publication.deinit();
                     const replacement = 1 - active_ring;
                     for (&rings[replacement]) |*slot| slot.* = .{};
                     var replacement_offers: [shared.slot_count]shared.SlotOffer = undefined;
@@ -467,7 +605,9 @@ fn runFallible(
                     var completion_batch: [shared.slot_count]shared.Completion = undefined;
                     var candidate_acquire = next_acquire_point;
                     for (&rings[replacement], 0..) |*slot, index| {
-                        const resized_plan = try buildCanvasPlan(&canvas_work, &admitted.candidate, chrome_appearance, &chrome_primitives, &chrome_text);
+                        const resized_plan = try buildAcceptedCanvasPlan(
+                            &canvas_work,
+                        );
                         errdefer surface_residency.discard();
                         try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
                         completion_batch[index] = .{
@@ -484,6 +624,8 @@ fn runFallible(
                     defer prepared_completions.deinit();
                     try admitted.commit();
                     chrome = admitted.candidate;
+                    if (bootstrap_publication) |*publication|
+                        publication.commit(&canvas_work);
                     prepared_completions.commit();
                     for (&rings[replacement]) |*slot| slot.release_point = 1;
                     next_acquire_point = candidate_acquire;
@@ -498,7 +640,7 @@ fn runFallible(
                     for (&rings[old_ring]) |*slot|
                         slot.deinit(device, drm_fd, &gpu_bytes);
                 } else if (admitted.phase == .admitted) {
-                    try redrawChrome(
+                    const redraw_result = try redrawChrome(
                         boundary,
                         &chrome,
                         &canvas_work,
@@ -518,12 +660,23 @@ fn runFallible(
                         &next_acquire_point,
                         admitted,
                     );
-                    pending_topology = null;
+                    switch (try scheduleRedraw(
+                        redraw_result,
+                        local_redraw_retry_turn,
+                    )) {
+                        .wait => terminal_redraw_pending = true,
+                        .retry => {
+                            local_redraw_retry_pending = true;
+                            terminal_redraw_pending = true;
+                            continue;
+                        },
+                        .published => pending_topology = null,
+                    }
                 }
             }
         }
-        if (terminal_redraw_pending) {
-            redrawChrome(
+        if (terminal_redraw_pending and pending_topology == null) {
+            const redraw_result = redrawChrome(
                 boundary,
                 &chrome,
                 &canvas_work,
@@ -546,7 +699,18 @@ fn runFallible(
                 error.NoReleasedSlot => continue,
                 else => return failure,
             };
-            terminal_redraw_pending = false;
+            switch (try scheduleRedraw(
+                redraw_result,
+                local_redraw_retry_turn,
+            )) {
+                .wait => terminal_redraw_pending = true,
+                .retry => {
+                    local_redraw_retry_pending = true;
+                    terminal_redraw_pending = true;
+                    continue;
+                },
+                .published => terminal_redraw_pending = false,
+            }
         }
     }
     try waitReleasePoints(boundary, active_generation, &rings[active_ring], drm_fd);
@@ -568,10 +732,12 @@ fn checkGpuBudget(width: u32, height: u32) !void {
 fn buildCanvasPlan(
     work: *CanvasWork,
     topology: *const chrome_state.Topology,
+    topology_revision: ?terminal_handoff.LifecycleRevision,
+    bootstrap: ?BootstrapSource,
     appearance: chrome_state.Appearance,
     primitives: []render_api.chrome.Primitive,
     text: []u8,
-) !vk_surface.Plan {
+) !CanvasPlanResult {
     while (work.terminals.takeRetired()) |retired| {
         if (work.retired_source_count == work.retired_sources.len)
             return error.InvalidTopology;
@@ -581,62 +747,91 @@ fn buildCanvasPlan(
         };
         work.retired_source_count += 1;
     }
-    const output = try topology.project(appearance, &.{}, primitives, text);
-    try work.content.apply(output);
-    const update = try work.content.takeUpdate();
-    const producer_revision = @backingInt(update.revision);
-    if (producer_revision < work.producer_revision) return error.InvalidRevision;
-    if (producer_revision > work.producer_revision) {
-        try work.composer.apply(work.source, update);
-        work.producer_revision = producer_revision;
-    }
-    const drainage = try work.terminals.drainReady(work.composer);
-    if (drainage.accepted > chrome_state.max_live_panes)
-        return error.InvalidFrame;
-    if (drainage.rejected) |failure| {
-        if (!work.terminal_rejection_reported) {
-            std.debug.print(
-                "Terminal Canvas update retained after Composer rejection: {s}\n",
-                .{@errorName(failure)},
-            );
-            work.terminal_rejection_reported = true;
-        }
-    }
     var desired: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined;
     var desired_members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember = undefined;
     var desired_count: usize = 0;
     var desired_complete = true;
-    const active_tab = topology.activeTabIndex();
-    for (0..topology.paneCount(active_tab)) |pane_index| {
-        const pane = topology.paneId(active_tab, pane_index) orelse
-            return error.InvalidTopology;
-        const source = work.terminals.sourceFor(pane) orelse {
-            desired_complete = false;
-            continue;
-        };
-        if (desired_count == desired.len) return error.InvalidTopology;
-        const rect = topology.paneRect(pane) orelse return error.InvalidTopology;
-        desired[desired_count] = .{
-            .source = source,
-            .origin = .{ .x = rect.x, .y = rect.y },
-            .clip = rect,
-        };
-        desired_members[desired_count] = .{ .pane = pane, .source = source };
-        desired_count += 1;
-    }
-    if (desired_complete)
-        try updateVisibleComposition(
-            work,
+    var surface: render_api.canvas.Size = undefined;
+    var producer_revision = work.producer_revision;
+    var chrome_change: ?render_api.canvas.Composer.SourceChange = null;
+    const retrying_chrome = work.chrome_retry != null;
+    const retry_topology_revision = if (work.chrome_retry) |retry|
+        retry.topology_revision
+    else
+        null;
+    const retry_superseded = retrying_chrome and
+        retry_topology_revision != topology_revision;
+    if (work.chrome_retry) |retry| {
+        surface = retry.surface;
+        producer_revision = @backingInt(retry.update.revision);
+        chrome_change = .{ .source = work.source, .update = retry.update };
+        desired_count = retry.terminal_count;
+        @memcpy(
             desired[0..desired_count],
-            desired_members[0..desired_count],
+            retry.terminal_placements[0..desired_count],
         );
+    } else {
+        const output = try topology.project(appearance, &.{}, primitives, text);
+        try work.content.apply(output);
+        const update = try work.content.takeUpdate();
+        producer_revision = @backingInt(update.revision);
+        if (producer_revision < work.producer_revision)
+            return error.InvalidRevision;
+        chrome_change = if (producer_revision > work.producer_revision) .{
+            .source = work.source,
+            .update = update,
+        } else null;
+        surface = output.surface;
+        const active_tab = topology.activeTabIndex();
+        for (0..topology.paneCount(active_tab)) |pane_index| {
+            const pane = topology.paneId(active_tab, pane_index) orelse
+                return error.InvalidTopology;
+            const source = work.terminals.sourceFor(pane) orelse
+                if (bootstrap) |value|
+                    if (value.pane == pane) value.source else {
+                        desired_complete = false;
+                        continue;
+                    }
+                else {
+                    desired_complete = false;
+                    continue;
+                };
+            if (desired_count == desired.len) return error.InvalidTopology;
+            const rect = topology.paneRect(pane) orelse
+                return error.InvalidTopology;
+            desired[desired_count] = .{
+                .source = source,
+                .origin = .{ .x = rect.x, .y = rect.y },
+                .clip = rect,
+            };
+            if (bootstrap == null or source != bootstrap.?.source) {
+                desired_members[desired_count] = .{
+                    .pane = pane,
+                    .source = source,
+                };
+            }
+            desired_count += 1;
+        }
+        if (desired_complete and bootstrap == null)
+            try updateVisibleComposition(
+                work,
+                desired[0..desired_count],
+                desired_members[0..desired_count],
+            );
+    }
     var claimed_visible_revision: ?u64 = null;
-    if (work.pending_visible_revision) |revision| {
+    const required_visible_revision = if (retry_superseded)
+        null
+    else if (work.chrome_retry) |retry|
+        retry.visible_revision
+    else
+        work.pending_visible_revision;
+    if (required_visible_revision) |revision| {
         if (desired_complete and
-            placementsEqual(
+            (retrying_chrome or placementsEqual(
                 desired[0..desired_count],
                 work.pending_placements[0..work.pending_count],
-            ) and
+            )) and
             work.terminals.visibleSetStatus(revision) == .ready)
         {
             try work.terminals.claimVisibleSet(revision);
@@ -647,32 +842,111 @@ fn buildCanvasPlan(
         work.terminals.releaseVisibleSetClaim(revision) catch
             @panic("visible-set composition claim could not be restored");
     var placements: [terminal_handoff.visible_member_limit + 1]render_api.canvas.Composer.Placement = undefined;
-    const terminal_placements = if (claimed_visible_revision != null)
+    const terminal_placements = if (retry_superseded)
+        desired[0..0]
+    else if (retrying_chrome)
+        desired[0..desired_count]
+    else if (bootstrap != null)
+        desired[0..desired_count]
+    else if (claimed_visible_revision != null)
         work.pending_placements[0..work.pending_count]
     else
         work.visible_placements[0..work.visible_count];
+    const terminal_snapshot_exact = desired_complete and placementsEqual(
+        terminal_placements,
+        desired[0..desired_count],
+    );
     var placement_count: usize = terminal_placements.len;
     @memcpy(placements[0..placement_count], terminal_placements);
     placements[placement_count] = .{
         .source = work.source,
         .origin = .{ .x = 0, .y = 0 },
-        .clip = .{ .x = 0, .y = 0, .width = output.surface.width, .height = output.surface.height },
+        .clip = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
     };
     placement_count += 1;
-    try work.composer.setComposition(.{
-        .surface = output.surface,
-        .sources = placements[0..placement_count],
-    });
-    if (claimed_visible_revision) |revision| {
-        try work.terminals.commitVisibleSet(revision);
+    if (!retrying_chrome and chrome_change != null) {
+        var retry = ChromeRetry{
+            .update = chrome_change.?.update,
+            .surface = surface,
+            .terminal_placements = undefined,
+            .terminal_count = @intCast(terminal_placements.len),
+            .visible_revision = claimed_visible_revision,
+            .topology_revision = topology_revision,
+        };
         @memcpy(
-            work.visible_placements[0..work.pending_count],
-            work.pending_placements[0..work.pending_count],
+            retry.terminal_placements[0..terminal_placements.len],
+            terminal_placements,
         );
-        work.visible_count = work.pending_count;
-        work.pending_visible_revision = null;
-        work.pending_count = 0;
-        claimed_visible_revision = null;
+        work.chrome_retry = retry;
+    }
+    const candidate_result: ?terminal_handoff.CandidateDrainResult =
+        if (retrying_chrome and required_visible_revision != null and
+        claimed_visible_revision == null)
+            null
+        else
+            work.terminals.applyCandidate(
+                work.composer,
+                chrome_change,
+                .{
+                    .surface = surface,
+                    .sources = placements[0..placement_count],
+                },
+                claimed_visible_revision,
+            ) catch |failure| switch (failure) {
+                error.ResourceLimit,
+                error.CommandLimit,
+                error.PixelLimit,
+                error.CompositionLimit,
+                => blk: {
+                    if (claimed_visible_revision) |revision| {
+                        try work.terminals.releaseVisibleSetClaim(revision);
+                        claimed_visible_revision = null;
+                    }
+                    if (!work.terminal_rejection_reported) {
+                        std.debug.print(
+                            "Canvas candidate retained after Composer rejection: {s}\n",
+                            .{@errorName(failure)},
+                        );
+                        work.terminal_rejection_reported = true;
+                    }
+                    break :blk null;
+                },
+                else => return failure,
+            };
+    if (candidate_result) |result| {
+        if (result.accepted > chrome_state.max_live_panes)
+            return error.InvalidFrame;
+        if (chrome_change != null) {
+            work.producer_revision = producer_revision;
+            work.chrome_retry = null;
+        }
+        work.terminal_rejection_reported = false;
+        if (claimed_visible_revision != null) {
+            @memcpy(
+                work.visible_placements[0..work.pending_count],
+                work.pending_placements[0..work.pending_count],
+            );
+            work.visible_count = work.pending_count;
+            work.pending_visible_revision = null;
+            work.pending_count = 0;
+            claimed_visible_revision = null;
+        } else if (bootstrap != null and !retry_superseded) {
+            @memcpy(
+                work.visible_placements[0..desired_count],
+                desired[0..desired_count],
+            );
+            work.visible_count = @intCast(desired_count);
+        }
+    } else {
+        return .blocked;
+    }
+    if (!terminal_snapshot_exact or
+        (retrying_chrome and retry_topology_revision != topology_revision))
+    {
+        return if (retrying_chrome and retry_superseded)
+            .retry
+        else
+            .blocked;
     }
     var retired_index: usize = 0;
     while (retired_index < work.retired_source_count) {
@@ -690,7 +964,13 @@ fn buildCanvasPlan(
         work.retired_sources[retired_index] =
             work.retired_sources[work.retired_source_count];
     }
-    const surface_resident = try work.residency.enumerate(work.surface_residencies);
+    return .{ .accepted = try buildAcceptedCanvasPlan(work) };
+}
+
+fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
+    const surface_resident = try work.residency.enumerate(
+        work.surface_residencies,
+    );
     for (surface_resident, 0..) |value, index| {
         work.canvas_residencies[index] = .{
             .resource = try canvasResource(value.resource),
@@ -721,6 +1001,42 @@ fn buildCanvasPlan(
     try work.residency.stage(generic);
     errdefer work.residency.discard();
     return try work.builder.build(work.residency, generic);
+}
+
+fn waitCanvasPlan(
+    boundary: *shared.Boundary,
+    work: *CanvasWork,
+    topology: *const chrome_state.Topology,
+    topology_revision: ?terminal_handoff.LifecycleRevision,
+    appearance: chrome_state.Appearance,
+    primitives: []render_api.chrome.Primitive,
+    text: []u8,
+) !vk_surface.Plan {
+    while (true) {
+        switch (try buildCanvasPlan(
+            work,
+            topology,
+            topology_revision,
+            null,
+            appearance,
+            primitives,
+            text,
+        )) {
+            .accepted => |plan| return plan,
+            .retry => continue,
+            .blocked => {},
+        }
+        switch (try waitRenderWakeBlocking(boundary, work.terminals)) {
+            true, false => {},
+        }
+        if (boundary.shouldStop()) return error.Stopping;
+        const status = work.terminals.status();
+        if (status.stopped)
+            return if (status.failed)
+                error.TerminalRuntime
+            else
+                error.TerminalStopped;
+    }
 }
 
 fn updateVisibleComposition(
@@ -755,6 +1071,49 @@ fn updateVisibleComposition(
     @memcpy(work.pending_placements[0..desired.len], desired);
     work.pending_count = @intCast(desired.len);
     work.pending_visible_revision = revision;
+}
+
+fn prepareBootstrapPublication(
+    work: *CanvasWork,
+    topology: *const chrome_state.Topology,
+    bootstrap: ?BootstrapSource,
+) !PreparedBootstrapPublication {
+    var members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember =
+        undefined;
+    var placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement =
+        undefined;
+    var count: usize = 0;
+    const active_tab = topology.activeTabIndex();
+    for (0..topology.paneCount(active_tab)) |pane_index| {
+        const pane = topology.paneId(active_tab, pane_index) orelse
+            return error.InvalidTopology;
+        const source = work.terminals.sourceFor(pane) orelse
+            if (bootstrap) |value|
+                if (value.pane == pane) value.source else return error.InvalidTopology
+            else
+                return error.InvalidTopology;
+        const rect = topology.paneRect(pane) orelse
+            return error.InvalidTopology;
+        if (count == members.len) return error.InvalidTopology;
+        members[count] = .{ .pane = pane, .source = source };
+        placements[count] = .{
+            .source = source,
+            .origin = .{ .x = rect.x, .y = rect.y },
+            .clip = rect,
+        };
+        count += 1;
+    }
+    const revision = work.next_visible_revision;
+    work.next_visible_revision = std.math.add(u64, revision, 1) catch
+        return error.RevisionOverflow;
+    return .{
+        .boundary = try work.terminals.prepareVisibleSet(
+            revision,
+            members[0..count],
+        ),
+        .placements = placements,
+        .count = @intCast(count),
+    };
 }
 
 fn placementsEqual(
@@ -1112,6 +1471,7 @@ const PendingTopology = struct {
     lifecycle: terminal_handoff.Boundary.PreparedLifecycle,
     revision: terminal_handoff.LifecycleRevision,
     phase: PendingTopologyPhase = .awaiting_admission,
+    new_pane: ?render_api.chrome.PaneId,
     new_source: ?render_api.canvas.SourceId,
     surface: ?shared.SurfaceConfig = null,
     committed: bool = false,
@@ -1128,6 +1488,13 @@ const PendingTopology = struct {
     fn commit(self: *PendingTopology) !void {
         try self.lifecycle.commitAdmitted();
         self.committed = true;
+    }
+
+    fn bootstrap(self: *const PendingTopology) ?BootstrapSource {
+        return if (self.new_pane) |pane| .{
+            .pane = pane,
+            .source = self.new_source.?,
+        } else null;
     }
 
     fn deinit(self: *PendingTopology) void {
@@ -1234,6 +1601,7 @@ fn prepareTerminalTopology(
         .composer = work.composer,
         .lifecycle = lifecycle,
         .revision = revision,
+        .new_pane = registration_pane,
         .new_source = source,
         .surface = surface,
     };
@@ -1264,6 +1632,7 @@ fn prepareInitialTerminalTopology(
         .composer = work.composer,
         .lifecycle = lifecycle,
         .revision = revision,
+        .new_pane = pane,
         .new_source = source,
     };
 }
@@ -1518,7 +1887,7 @@ test "second pending pane creation preserves the first admitted candidate" {
     );
     defer boundary.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 4,
+        .sources = 2,
         .retained_resources = 1,
         .retained_commands = 1,
         .retained_pixel_bytes = 1,
@@ -1713,7 +2082,11 @@ test "pending focus resize close and reorder folds issue fresh identities" {
 }
 
 test "PendingTopology has one fixed allocation-free value" {
-    try std.testing.expectEqual(@as(usize, 20_488), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 20_504), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(
+        @as(usize, 544),
+        @sizeOf(PreparedBootstrapPublication),
+    );
 }
 
 test "shared stop cancels pending initial admission and retires its source" {
@@ -1741,7 +2114,7 @@ test "shared stop cancels pending initial admission and retires its source" {
     var composer = try render_api.canvas.Composer.init(
         std.testing.allocator,
         .{
-            .sources = 2,
+            .sources = 4,
             .retained_resources = 1,
             .retained_commands = 1,
             .retained_pixel_bytes = 1,
@@ -1783,6 +2156,534 @@ test "one complete terminal and Chrome resource set fits every runtime bank" {
         terminal_retained_resource_limit + chrome_retained_resource_limit <=
             frame_resource_limit,
     );
+}
+
+test "borrowed Chrome retry preserves one consumptive sparse update" {
+    try std.testing.expectEqual(@as(usize, 608), @sizeOf(ChromeRetry));
+    var content = try render_api.chrome.Content.init(
+        std.testing.allocator,
+        .{
+            .primitives = 4,
+            .text_bytes = 16,
+            .label_scalars = 16,
+            .shaped_glyphs = 16,
+            .glyphs = 16,
+            .commands = 16,
+            .resources_per_update = 16,
+            .upload_bytes = 4096,
+            .raster_bytes = 4096,
+        },
+        .{
+            .primary = "../howl-render/testdata/primary.ttf",
+            .pixel_height = 16,
+        },
+    );
+    defer content.deinit();
+    const label = "R";
+    const primitives = [_]render_api.chrome.Primitive{.{ .label = .{
+        .rect = .{ .x = 0, .y = 0, .width = 16, .height = 16 },
+        .text = label,
+        .color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+    } }};
+    try content.apply(.{
+        .surface = .{ .width = 32, .height = 16 },
+        .primitives = &primitives,
+        .text = label,
+    });
+    const update = try content.takeUpdate();
+    try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
+    const upload_pixels = update.uploads[0].pixels.bytes;
+    var expected_pixels: [4096]u8 = undefined;
+    @memcpy(expected_pixels[0..upload_pixels.len], upload_pixels);
+    const expected_resource = update.uploads[0].resource;
+    const expected_revision = update.revision;
+
+    const retry = ChromeRetry{
+        .update = update,
+        .surface = .{ .width = 32, .height = 16 },
+        .terminal_placements = undefined,
+        .terminal_count = 0,
+        .visible_revision = null,
+        .topology_revision = null,
+    };
+    var composer = try render_api.canvas.Composer.init(
+        std.testing.allocator,
+        .{
+            .sources = 2,
+            .retained_resources = 1,
+            .retained_commands = 32,
+            .retained_pixel_bytes = 8192,
+            .composition_sources = 2,
+            .candidate_resources = 16,
+            .candidate_commands = 16,
+            .candidate_pixel_bytes = 4096,
+        },
+    );
+    defer composer.deinit();
+    const blocker = try composer.registerSource();
+    const chrome_source = try composer.registerSource();
+    const blocker_ref = render_api.canvas.ResourceRef{
+        .resource = try render_api.canvas.ResourceId.local(1),
+        .generation = @fromBackingInt(@intCast(1)),
+    };
+    const blocker_pixel = [_]u8{0x44};
+    try composer.apply(blocker, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{.{
+            .resource = blocker_ref,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = &blocker_pixel,
+                .width = 1,
+                .height = 1,
+                .stride = 1,
+            },
+        }},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    const chrome_placement = [_]render_api.canvas.Composer.Placement{.{
+        .source = chrome_source,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 32, .height = 16 },
+    }};
+    try std.testing.expectError(
+        error.ResourceLimit,
+        composer.applyCandidate(.{
+            .changes = &.{.{
+                .source = chrome_source,
+                .update = retry.update,
+            }},
+            .composition = .{
+                .surface = retry.surface,
+                .sources = &chrome_placement,
+            },
+        }),
+    );
+    try std.testing.expectEqual(expected_revision, retry.update.revision);
+    try std.testing.expectEqual(expected_resource, retry.update.uploads[0].resource);
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_pixels[0..upload_pixels.len],
+        retry.update.uploads[0].pixels.bytes,
+    );
+    try composer.removeSource(blocker);
+    try composer.applyCandidate(.{
+        .changes = &.{.{
+            .source = chrome_source,
+            .update = retry.update,
+        }},
+        .composition = .{
+            .surface = retry.surface,
+            .sources = &chrome_placement,
+        },
+    });
+    var uploads: [16]render_api.canvas.ResourceUploadFact = undefined;
+    var removals: [16]render_api.canvas.FrameResourceRef = undefined;
+    var commands: [32]render_api.canvas.Command = undefined;
+    var pixels: [8192]u8 = undefined;
+    const frame = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(expected_revision, update.revision);
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    try std.testing.expectEqual(expected_resource.resource, frame.uploads[0].resource.resource);
+    try std.testing.expectEqualSlices(
+        u8,
+        expected_pixels[0..upload_pixels.len],
+        frame.pixels[frame.uploads[0].pixel_offset .. frame.uploads[0].pixel_offset + frame.uploads[0].pixel_count],
+    );
+}
+
+test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32,
+            .upload_bytes = 4096,
+            .cells = 32,
+            .rows = 8,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 4096,
+            .glyphs = 16,
+            .masks = 8,
+            .resources_per_update = 16,
+            .raster_bytes = 4096,
+            .decoration_bytes = 4096,
+        },
+    );
+    defer terminals.deinit();
+    var content = try render_api.chrome.Content.init(
+        std.testing.allocator,
+        .{
+            .primitives = 32,
+            .text_bytes = 128,
+            .label_scalars = 64,
+            .shaped_glyphs = 64,
+            .glyphs = 32,
+            .commands = 128,
+            .resources_per_update = 32,
+            .upload_bytes = 32 * 1024,
+            .raster_bytes = 4096,
+        },
+        .{
+            .primary = "../howl-render/testdata/primary.ttf",
+            .pixel_height = 16,
+        },
+    );
+    defer content.deinit();
+    var composer = try render_api.canvas.Composer.init(
+        std.testing.allocator,
+        .{
+            .sources = 5,
+            .retained_resources = 32,
+            .retained_commands = 256,
+            .retained_pixel_bytes = 64 * 1024,
+            .composition_sources = 3,
+            .candidate_resources = 32,
+            .candidate_commands = 128,
+            .candidate_pixel_bytes = 32 * 1024,
+        },
+    );
+    defer composer.deinit();
+    const blocker = try composer.registerSource();
+    const chrome_source = try composer.registerSource();
+    const terminal_source = try composer.registerSource();
+    var blocker_refs: [32]render_api.canvas.ResourceRef = undefined;
+    var blocker_uploads: [32]render_api.canvas.ResourceUpload = undefined;
+    var blocker_pixels: [32]u8 = undefined;
+    for (&blocker_uploads, 0..) |*upload, index| {
+        blocker_pixels[index] = @intCast(index);
+        blocker_refs[index] = .{
+            .resource = try render_api.canvas.ResourceId.local(index + 1),
+            .generation = @fromBackingInt(1),
+        };
+        upload.* = .{
+            .resource = blocker_refs[index],
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = blocker_pixels[index..][0..1],
+                .width = 1,
+                .height = 1,
+                .stride = 1,
+            },
+        };
+    }
+    try composer.apply(blocker, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &blocker_uploads,
+        .removals = &.{},
+        .commands = &.{},
+    });
+    var frame_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var frame_removals: [32]render_api.canvas.FrameResourceRef = undefined;
+    var frame_commands: [256]render_api.canvas.Command = undefined;
+    var frame_pixels: [64 * 1024]u8 = undefined;
+    var surface_uploads: [32]vk_surface.Upload = undefined;
+    var surface_removals: [32]vk_surface.Removal = undefined;
+    var surface_commands: [256]vk_surface.FrameCommand = undefined;
+    var surface_residencies: [32]vk_surface.Residency = undefined;
+    var canvas_residencies: [32]render_api.canvas.Residency = undefined;
+    var builder = try vk_surface.FrameBuilder.init(std.testing.allocator);
+    defer builder.deinit();
+    var residency = try vk_surface.ResidencyStore.init(
+        std.testing.allocator,
+        .{ .resources = 32, .pixel_bytes = 64 * 1024 },
+    );
+    defer residency.deinit();
+    var work = CanvasWork{
+        .composer = &composer,
+        .content = &content,
+        .source = chrome_source,
+        .frame_uploads = &frame_uploads,
+        .frame_removals = &frame_removals,
+        .frame_commands = &frame_commands,
+        .frame_pixels = &frame_pixels,
+        .surface_uploads = &surface_uploads,
+        .surface_removals = &surface_removals,
+        .surface_commands = &surface_commands,
+        .surface_residencies = &surface_residencies,
+        .canvas_residencies = &canvas_residencies,
+        .builder = &builder,
+        .residency = &residency,
+        .terminals = &terminals,
+    };
+    const accepted_topology = try chrome_state.Topology.init(
+        .{ .width = 320, .height = 240 },
+        chrome_state.default_tab_bar_height,
+    );
+    const pane = accepted_topology.focusedPaneId();
+    try terminals.register(
+        pane,
+        terminal_source,
+        .{ .width = 320, .height = 216 },
+    );
+    const lifecycle = terminals.takeLifecycle() orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqual(pane, lifecycle.create.pane);
+    const member = try terminals.activateTransfer(pane);
+    const terminal_command = render_api.canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    const token = try terminals.reserveUpdate(member);
+    try terminals.publishUpdate(token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{terminal_command},
+    });
+    var topology_a = accepted_topology;
+    const cancelled_pane = try topology_a.split(pane, .horizontal);
+    var cancelled_pending = try prepareTerminalTopology(
+        &work,
+        &accepted_topology,
+        &topology_a,
+        null,
+    );
+    try admitPendingForTest(&cancelled_pending);
+    const cancelled_source = cancelled_pending.new_source orelse
+        return error.TestUnexpectedResult;
+    const revision_a = cancelled_pending.revision;
+    var primitives: [256]render_api.chrome.Primitive = undefined;
+    var text: [
+        (chrome_state.max_tabs + chrome_state.max_panes_per_tab) *
+            chrome_state.max_label_bytes
+    ]u8 = undefined;
+    switch (try buildCanvasPlan(
+        &work,
+        &topology_a,
+        revision_a,
+        .{ .pane = cancelled_pane, .source = cancelled_source },
+        chrome_appearance,
+        &primitives,
+        &text,
+    )) {
+        .blocked => {},
+        .retry => return error.TestUnexpectedResult,
+        .accepted => return error.TestUnexpectedResult,
+    }
+    try std.testing.expectEqual(
+        revision_a,
+        work.chrome_retry.?.topology_revision.?,
+    );
+    try std.testing.expect(terminals.visibleSetRequest() == null);
+
+    try composer.removeSource(blocker);
+    cancelled_pending.deinit();
+    try std.testing.expect(terminals.sourceFor(cancelled_pane) == null);
+    var topology_b = accepted_topology;
+    const replacement_pane = try topology_b.split(pane, .horizontal);
+    try std.testing.expectEqual(cancelled_pane, replacement_pane);
+    try topology_b.resizeSurface(.{ .width = 321, .height = 241 });
+    try topology_b.renameTab(topology_b.activeTabId(), "newer");
+    var replacement_pending = try prepareTerminalTopology(
+        &work,
+        &accepted_topology,
+        &topology_b,
+        null,
+    );
+    defer replacement_pending.deinit();
+    try admitPendingForTest(&replacement_pending);
+    const replacement_source = replacement_pending.new_source orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expect(
+        @backingInt(replacement_source) > @backingInt(cancelled_source),
+    );
+    const revision_b = replacement_pending.revision;
+    var retained_topology = accepted_topology;
+    const superseded_result = try buildCanvasPlan(
+        &work,
+        &topology_b,
+        revision_b,
+        .{ .pane = replacement_pane, .source = replacement_source },
+        chrome_appearance,
+        &primitives,
+        &text,
+    );
+    switch (superseded_result) {
+        .blocked => return error.TestUnexpectedResult,
+        .retry => {},
+        .accepted => return error.TestUnexpectedResult,
+    }
+    var local_retry_pending = false;
+    var local_retry_count: u8 = 0;
+    switch (try scheduleRedraw(.retry, false)) {
+        .retry => {
+            local_retry_pending = true;
+            local_retry_count += 1;
+        },
+        .wait, .published => return error.TestUnexpectedResult,
+    }
+    try std.testing.expectError(
+        error.InvalidFrame,
+        scheduleRedraw(.retry, true),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        retained_topology.paneCount(0),
+    );
+    try std.testing.expect(work.chrome_retry == null);
+    try std.testing.expectEqual(@as(u8, 0), work.visible_count);
+    const local_retry_turn = local_retry_pending;
+    local_retry_pending = false;
+    const exact = try buildCanvasPlan(
+        &work,
+        &topology_b,
+        revision_b,
+        .{ .pane = replacement_pane, .source = replacement_source },
+        chrome_appearance,
+        &primitives,
+        &text,
+    );
+    const next_visible_revision = work.next_visible_revision;
+    work.next_visible_revision = std.math.maxInt(u64);
+    try std.testing.expectError(
+        error.RevisionOverflow,
+        prepareBootstrapPublication(
+            &work,
+            &topology_b,
+            replacement_pending.bootstrap(),
+        ),
+    );
+    try std.testing.expectEqual(
+        PendingTopologyPhase.admitted,
+        replacement_pending.phase,
+    );
+    try std.testing.expect(terminals.takeLifecycle() == null);
+    try std.testing.expect(terminals.visibleSetRequest() == null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        retained_topology.paneCount(0),
+    );
+    work.next_visible_revision = next_visible_revision;
+    var replacement_publication = try prepareBootstrapPublication(
+        &work,
+        &topology_b,
+        replacement_pending.bootstrap(),
+    );
+    defer replacement_publication.deinit();
+    switch (exact) {
+        .blocked => return error.TestUnexpectedResult,
+        .retry => return error.TestUnexpectedResult,
+        .accepted => {
+            residency.discard();
+            try std.testing.expectEqual(
+                RedrawSchedule.published,
+                try scheduleRedraw(.published, local_retry_turn),
+            );
+        },
+    }
+    try std.testing.expectEqual(@as(u8, 1), local_retry_count);
+    try std.testing.expect(!local_retry_pending);
+    try replacement_pending.commit();
+    retained_topology = topology_b;
+    replacement_publication.commit(&work);
+    try std.testing.expectEqual(@as(u8, 2), work.visible_count);
+    try std.testing.expectEqualStrings(
+        "newer",
+        (try retained_topology.project(
+            chrome_appearance,
+            &.{},
+            &primitives,
+            &text,
+        )).text[0.."newer".len],
+    );
+    var observed_replacement_create = false;
+    while (terminals.takeLifecycle()) |replacement_lifecycle| {
+        switch (replacement_lifecycle) {
+            .create => |create| {
+                try std.testing.expectEqual(replacement_pane, create.pane);
+                observed_replacement_create = true;
+            },
+            .resize, .close => {},
+        }
+    }
+    try std.testing.expect(observed_replacement_create);
+    const replacement_member = try terminals.activateTransfer(
+        replacement_pane,
+    );
+    const replacement_request = terminals.visibleSetRequest() orelse
+        return error.TestUnexpectedResult;
+    const replacement_group = try terminals.reserveVisibleGroup(
+        replacement_request.revision,
+        &.{replacement_member},
+    );
+    try terminals.publishUpdate(replacement_group.tokens[0], .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{terminal_command},
+    });
+    try terminals.completeVisibleSet(
+        replacement_request.revision,
+        &.{
+            .{
+                .member = .{ .pane = pane, .source = terminal_source },
+                .revision = @fromBackingInt(1),
+            },
+            .{
+                .member = .{
+                    .pane = replacement_pane,
+                    .source = replacement_source,
+                },
+                .revision = @fromBackingInt(1),
+            },
+        },
+        true,
+    );
+    switch (try buildCanvasPlan(
+        &work,
+        &retained_topology,
+        revision_b,
+        null,
+        chrome_appearance,
+        &primitives,
+        &text,
+    )) {
+        .blocked => return error.TestUnexpectedResult,
+        .retry => return error.TestUnexpectedResult,
+        .accepted => residency.discard(),
+    }
+    const replacement_reuse = try terminals.reserveUpdate(
+        replacement_member,
+    );
+    try terminals.cancelUpdate(replacement_reuse);
+
+    const later = try terminals.reserveUpdate(member);
+    try terminals.publishUpdate(later, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{terminal_command},
+    });
+    for (0..shared.slot_count) |_| {
+        const replacement_plan = try buildAcceptedCanvasPlan(&work);
+        try std.testing.expect(replacement_plan.commands.len != 0);
+        residency.discard();
+    }
+    try std.testing.expectError(error.Busy, terminals.reserveUpdate(member));
+    switch (try buildCanvasPlan(
+        &work,
+        &retained_topology,
+        revision_b,
+        null,
+        chrome_appearance,
+        &primitives,
+        &text,
+    )) {
+        .blocked => return error.TestUnexpectedResult,
+        .retry => return error.TestUnexpectedResult,
+        .accepted => residency.discard(),
+    }
+    const reused = try terminals.reserveUpdate(member);
+    try terminals.cancelUpdate(reused);
 }
 
 test "compact resource adaptation preserves local and shared namespaces mechanically" {
@@ -1904,13 +2805,40 @@ fn redrawChrome(
     acquire_handle: u32,
     next_acquire_point: *u64,
     pending: ?*PendingTopology,
-) !void {
+) !RedrawResult {
     const candidate = if (pending) |value| value.candidate else topology.*;
+    const topology_revision = if (pending) |value| value.revision else null;
+    try validateTerminalTopology(&candidate);
+    const plan_result = try buildCanvasPlan(
+        canvas_work,
+        &candidate,
+        topology_revision,
+        if (pending) |value| value.bootstrap() else null,
+        appearance,
+        primitives,
+        text,
+    );
+    const composer_plan = switch (plan_result) {
+        .blocked => return .blocked,
+        .retry => return .retry,
+        .accepted => |plan| plan,
+    };
+    var bootstrap_publication: ?PreparedBootstrapPublication =
+        if (pending) |value|
+            if (value.new_source != null)
+                try prepareBootstrapPublication(
+                    canvas_work,
+                    &candidate,
+                    value.bootstrap(),
+                )
+            else
+                null
+        else
+            null;
+    defer if (bootstrap_publication) |*publication| publication.deinit();
     const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
     if (!boundary.canPublishCompletion(generation))
         return error.CompletionUnavailable;
-    try validateTerminalTopology(&candidate);
-    const composer_plan = try buildCanvasPlan(canvas_work, &candidate, appearance, primitives, text);
     errdefer canvas_work.residency.discard();
     const slot = &slots[slot_index];
     const acquire_point = next_acquire_point.*;
@@ -1951,11 +2879,14 @@ fn redrawChrome(
     if (pending) |value| {
         try value.commit();
         topology.* = candidate;
+        if (bootstrap_publication) |*publication|
+            publication.commit(canvas_work);
     }
     prepared_completion.commit();
     slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
     std.debug.print("Render interactive chrome generation={d} revision={d} slot={d} release={d}\n", .{ generation, acquire_point, slot_index, release_point });
+    return .published;
 }
 
 fn validateTerminalTopology(candidate: *const chrome_state.Topology) !void {
