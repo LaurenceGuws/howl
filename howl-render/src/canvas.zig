@@ -223,9 +223,10 @@ pub const Pixels = struct {
     stride: usize,
 };
 
-/// Supplies one producer-local resource upload without transferring bytes.
+/// Declares one local or source-independent shared resource without
+/// transferring byte ownership.
 pub const ResourceUpload = struct {
-    /// Identifies the accepted local resource generation.
+    /// Identifies the exact local or shared resource generation.
     resource: ResourceRef,
     /// Selects the stored pixel representation.
     format: ResourceFormat,
@@ -268,9 +269,9 @@ pub const ResourceUploadFact = struct {
     stride: usize,
 };
 
-/// Selects one retained producer-local resource region.
+/// Selects one retained local or source-independent shared resource region.
 pub const ResourceView = struct {
-    /// Identifies the exact local resource generation.
+    /// Identifies the exact local or shared resource generation.
     resource: ResourceRef,
     /// Declares the stored pixel representation.
     format: ResourceFormat,
@@ -292,7 +293,7 @@ pub const FrameResourceView = struct {
     source: ?SourceRect = null,
 };
 
-/// Supplies one ordered producer-local backend-neutral drawing fact.
+/// Supplies one ordered source command using local or shared resources.
 pub const Input = union(enum) {
     /// Fills one rectangle after intersection with its clip and the surface.
     solid: struct {
@@ -327,11 +328,11 @@ pub const Input = union(enum) {
 
 /// Borrows one complete producer state transition for one source.
 ///
-/// `commands` is the complete ordered local command list after this update;
-/// uploads and removals are sparse resource mutations. Every slice is borrowed
-/// only through the accepting call. Canvas validates syntax only: logical
-/// ordering, duplicate/conflict policy, retention, and revision monotonicity
-/// belong to Composer.
+/// `commands` is the complete ordered source command list after this update.
+/// Uploads may declare local or shared resources; removals remain source-local.
+/// Every slice is borrowed only through the accepting call. Canvas validates
+/// syntax only: logical ordering, duplicate/conflict policy, retention, and
+/// revision monotonicity belong to Composer.
 pub const ProducerUpdate = struct {
     /// Supplies the nonzero producer-owned update revision.
     revision: ProducerRevision,
@@ -351,24 +352,32 @@ pub const ProducerUpdate = struct {
 pub const Composer = struct {
     const candidate_source_limit: usize = 17;
     const candidate_placement_limit: usize = 65;
+    const shared_resource_limit: usize = 2048;
+    const shared_pixel_limit: usize = 8 * 1024 * 1024;
+    const shared_free_region_limit: usize = shared_resource_limit + 1;
+    const retained_shared_plan: u64 = std.math.maxInt(u64);
 
     /// Fixes every retained, candidate, composition, and frame bound.
     pub const Limits = struct {
         /// Maximum identities issued by this Composer.
         sources: u16,
-        /// Maximum resources retained across live sources.
+        /// Maximum total local plus shared logical resources.
         retained_resources: u32,
         /// Maximum commands retained across live sources.
         retained_commands: u32,
-        /// Maximum copied resource bytes retained across live sources.
+        /// Maximum copied local-resource bytes retained across live sources.
+        ///
+        /// Shared recovery pixels use the independent fixed 8 MiB bank.
         retained_pixel_bytes: usize,
         /// Maximum visible sources in one composition.
         composition_sources: u16,
-        /// Maximum resources in one candidate source.
+        /// Maximum local resources in one candidate source.
         candidate_resources: u32,
         /// Maximum commands in one candidate source.
         candidate_commands: u32,
-        /// Maximum copied bytes in one candidate source.
+        /// Maximum copied local-resource bytes in one candidate source.
+        ///
+        /// Shared declarations preflight against the independent recovery bank.
         candidate_pixel_bytes: usize,
     };
 
@@ -492,6 +501,20 @@ pub const Composer = struct {
         pixel_count: usize,
     };
 
+    const SharedResource = struct {
+        resource: ResourceRef,
+        format: ResourceFormat,
+        size: Size,
+        stride: usize,
+        pixel_start: usize,
+        pixel_count: usize,
+    };
+
+    const FreeRegion = struct {
+        start: usize,
+        count: usize,
+    };
+
     const SourcePlan = struct {
         source_index: usize,
         change_index: usize,
@@ -529,6 +552,19 @@ pub const Composer = struct {
     source_plan_count: usize = 0,
     resource_plan: []u64,
     resource_plan_count: usize = 0,
+    shared_resources: []SharedResource,
+    shared_resource_count: usize = 0,
+    candidate_shared_resources: []SharedResource,
+    candidate_shared_resource_count: usize = 0,
+    shared_pixels: []u8,
+    shared_free_regions: []FreeRegion,
+    shared_free_region_count: usize = 1,
+    candidate_shared_free_regions: []FreeRegion,
+    candidate_shared_free_region_count: usize = 0,
+    shared_upload_plan: []u64,
+    candidate_shared_reference_sources: []u128,
+    candidate_shared_high_water: u64 = 0,
+    shared_high_water: u64 = 0,
     candidate_composition: [candidate_placement_limit]Placement = undefined,
     candidate_composition_count: usize = 0,
     next_source_id: u64 = 1,
@@ -563,6 +599,40 @@ pub const Composer = struct {
         errdefer allocator.free(candidate_pixels);
         const resource_plan = allocator.alloc(u64, limits.retained_resources) catch
             return error.OutOfMemory;
+        errdefer allocator.free(resource_plan);
+        const shared_resources = allocator.alloc(
+            SharedResource,
+            shared_resource_limit,
+        ) catch return error.OutOfMemory;
+        errdefer allocator.free(shared_resources);
+        const candidate_shared_resources = allocator.alloc(
+            SharedResource,
+            shared_resource_limit,
+        ) catch return error.OutOfMemory;
+        errdefer allocator.free(candidate_shared_resources);
+        const shared_pixels = allocator.alloc(u8, shared_pixel_limit) catch
+            return error.OutOfMemory;
+        errdefer allocator.free(shared_pixels);
+        const shared_free_regions = allocator.alloc(
+            FreeRegion,
+            shared_free_region_limit,
+        ) catch return error.OutOfMemory;
+        errdefer allocator.free(shared_free_regions);
+        const candidate_shared_free_regions = allocator.alloc(
+            FreeRegion,
+            shared_free_region_limit,
+        ) catch return error.OutOfMemory;
+        errdefer allocator.free(candidate_shared_free_regions);
+        const shared_upload_plan = allocator.alloc(
+            u64,
+            shared_resource_limit,
+        ) catch return error.OutOfMemory;
+        errdefer allocator.free(shared_upload_plan);
+        const candidate_shared_reference_sources = allocator.alloc(
+            u128,
+            shared_resource_limit,
+        ) catch return error.OutOfMemory;
+        shared_free_regions[0] = .{ .start = 0, .count = shared_pixel_limit };
         return .{
             .allocator = allocator,
             .limits = limits,
@@ -575,11 +645,25 @@ pub const Composer = struct {
             .candidate_commands = candidate_commands,
             .candidate_pixels = candidate_pixels,
             .resource_plan = resource_plan,
+            .shared_resources = shared_resources,
+            .candidate_shared_resources = candidate_shared_resources,
+            .shared_pixels = shared_pixels,
+            .shared_free_regions = shared_free_regions,
+            .candidate_shared_free_regions = candidate_shared_free_regions,
+            .shared_upload_plan = shared_upload_plan,
+            .candidate_shared_reference_sources = candidate_shared_reference_sources,
         };
     }
 
     /// Releases every initializer-owned allocation in reverse order.
     pub fn deinit(self: *Composer) void {
+        self.allocator.free(self.candidate_shared_reference_sources);
+        self.allocator.free(self.shared_upload_plan);
+        self.allocator.free(self.candidate_shared_free_regions);
+        self.allocator.free(self.shared_free_regions);
+        self.allocator.free(self.shared_pixels);
+        self.allocator.free(self.candidate_shared_resources);
+        self.allocator.free(self.shared_resources);
         self.allocator.free(self.resource_plan);
         self.allocator.free(self.candidate_pixels);
         self.allocator.free(self.candidate_commands);
@@ -611,7 +695,8 @@ pub const Composer = struct {
         return id;
     }
 
-    /// Retires one live source and all its local identities.
+    /// Retires one live source, its local identities, and its derived shared
+    /// references.
     ///
     /// Visible removal advances the frame once; hidden removal does not.
     pub fn removeSource(self: *Composer, source: SourceId) Composer.Error!void {
@@ -619,9 +704,28 @@ pub const Composer = struct {
         const visible_index = self.placementIndex(source);
         if (visible_index != null and self.frame_revision == std.math.maxInt(u64))
             return error.RevisionExhausted;
+        self.source_plan_count = 0;
+        try self.planSharedCandidateExcluding(
+            .{
+                .changes = &.{},
+                .composition = .{
+                    .surface = self.surface,
+                    .sources = self.composition[0..self.composition_count],
+                },
+            },
+            self.resource_count - self.sources[index].resource_count,
+            index,
+        );
 
         self.removeRetainedRanges(index, 0, 0, 0);
         self.sources[index].live = false;
+        self.commitSharedCandidate(.{
+            .changes = &.{},
+            .composition = .{
+                .surface = self.surface,
+                .sources = self.composition[0..self.composition_count],
+            },
+        });
         if (visible_index) |placement_index| {
             std.mem.copyForwards(
                 Placement,
@@ -633,12 +737,16 @@ pub const Composer = struct {
         }
     }
 
-    /// Copies one strictly newer complete producer state transactionally.
+    /// Copies one strictly newer complete local-only producer state
+    /// transactionally.
+    ///
+    /// Shared declarations and references require `applyCandidate`.
     pub fn apply(
         self: *Composer,
         source: SourceId,
         update: ProducerUpdate,
     ) Composer.Error!void {
+        if (updateContainsShared(update)) return error.InvalidIdentity;
         const index = try self.sourceIndex(source);
         const old = self.sources[index];
         const revision = @backingInt(update.revision);
@@ -648,7 +756,13 @@ pub const Composer = struct {
 
         const retained_resources = self.resource_count - old.resource_count +
             self.candidate_resource_count;
-        if (retained_resources > self.resources.len) return error.ResourceLimit;
+        const total_resources = std.math.add(
+            usize,
+            retained_resources,
+            self.shared_resource_count,
+        ) catch return error.ArithmeticOverflow;
+        if (total_resources > self.resources.len)
+            return error.ResourceLimit;
         const retained_commands = self.command_count - old.command_count +
             self.candidate_command_count;
         if (retained_commands > self.commands.len) return error.CommandLimit;
@@ -674,12 +788,15 @@ pub const Composer = struct {
         if (visible_changed) self.frame_revision += 1;
     }
 
-    /// Atomically replaces bounded complete sources and one composition.
+    /// Atomically replaces bounded complete sources, shared logical resources,
+    /// and one composition.
     ///
     /// All caller slices are borrowed only for this synchronous call. Complete
     /// validation and capacity planning occur before retained state changes.
-    /// Commit then uses only initialized fixed scratch, performs no allocation,
-    /// and cannot fail.
+    /// Shared declarations retain at most 2,048 identities and 8 MiB of
+    /// variable-extent recovery pixels within the total resource admission.
+    /// Complete source commands derive shared references. Commit then uses only
+    /// initialized fixed scratch, performs no allocation, and cannot fail.
     pub fn applyCandidate(
         self: *Composer,
         candidate: Candidate,
@@ -743,6 +860,7 @@ pub const Composer = struct {
             return error.CommandLimit;
         if (prospective_pixels > self.pixels.len)
             return error.PixelLimit;
+        try self.planSharedCandidate(candidate, prospective_resources);
 
         for (candidate.composition.sources, 0..) |placement, placement_index| {
             const source_index = try self.sourceIndex(placement.source);
@@ -798,6 +916,7 @@ pub const Composer = struct {
 
         self.planFinalRanges(candidate);
         self.commitAggregateCandidate(candidate);
+        self.commitSharedCandidate(candidate);
         @memcpy(
             self.composition[0..self.candidate_composition_count],
             self.candidate_composition[0..self.candidate_composition_count],
@@ -954,6 +1073,7 @@ pub const Composer = struct {
                     self.resource_plan_count += 1;
                 }
                 for (update.uploads, 0..) |upload, upload_index| {
+                    if (upload.resource.resource.isShared()) continue;
                     if (findResource(
                         old_resources,
                         upload.resource.resource,
@@ -987,6 +1107,322 @@ pub const Composer = struct {
         for (self.source_plans[0..self.source_plan_count], 0..) |plan, index|
             if (plan.source_index == source_index) return index;
         return null;
+    }
+
+    fn planSharedCandidate(
+        self: *Composer,
+        candidate: Candidate,
+        prospective_local_resources: usize,
+    ) Composer.Error!void {
+        return self.planSharedCandidateExcluding(
+            candidate,
+            prospective_local_resources,
+            null,
+        );
+    }
+
+    fn planSharedCandidateExcluding(
+        self: *Composer,
+        candidate: Candidate,
+        prospective_local_resources: usize,
+        excluded_source: ?usize,
+    ) Composer.Error!void {
+        self.candidate_shared_resource_count = 0;
+        self.candidate_shared_high_water = self.shared_high_water;
+        for (self.sources[0..self.source_count], 0..) |source, source_index| {
+            if (!source.live) continue;
+            if (excluded_source == source_index) continue;
+            const commands = if (self.planForSource(source_index)) |plan|
+                candidate.changes[plan.change_index].update.commands
+            else
+                self.commands[source.command_start .. source.command_start +
+                    source.command_count];
+            for (commands) |command| switch (command) {
+                .solid => {},
+                .alpha_mask => |value| {
+                    if (!value.resource.resource.resource.isShared()) continue;
+                    try self.addSharedReference(
+                        candidate,
+                        value.resource,
+                        .alpha8,
+                        source_index,
+                    );
+                },
+                .rgba => |value| {
+                    if (!value.resource.resource.resource.isShared()) continue;
+                    try self.addSharedReference(
+                        candidate,
+                        value.resource,
+                        .rgba8,
+                        source_index,
+                    );
+                },
+            };
+        }
+        const total_resources = std.math.add(
+            usize,
+            prospective_local_resources,
+            self.candidate_shared_resource_count,
+        ) catch return error.ArithmeticOverflow;
+        if (total_resources > self.resources.len)
+            return error.ResourceLimit;
+
+        @memcpy(
+            self.candidate_shared_free_regions[0..self.shared_free_region_count],
+            self.shared_free_regions[0..self.shared_free_region_count],
+        );
+        self.candidate_shared_free_region_count =
+            self.shared_free_region_count;
+        for (self.shared_resources[0..self.shared_resource_count]) |resource| {
+            if (findSharedResource(
+                self.candidate_shared_resources[0..self.candidate_shared_resource_count],
+                resource.resource.resource,
+            ) != null) continue;
+            try self.releaseCandidateSharedRange(
+                resource.pixel_start,
+                resource.pixel_count,
+            );
+        }
+        for (
+            self.candidate_shared_resources[0..self.candidate_shared_resource_count],
+            0..,
+        ) |*resource, index| {
+            if (self.shared_upload_plan[index] == retained_shared_plan)
+                continue;
+            resource.pixel_start =
+                try self.allocateCandidateSharedRange(resource.pixel_count);
+        }
+    }
+
+    fn addSharedReference(
+        self: *Composer,
+        candidate: Candidate,
+        view: ResourceView,
+        expected_format: ResourceFormat,
+        source_index: usize,
+    ) Composer.Error!void {
+        if (view.format != expected_format) return error.FormatMismatch;
+        validateExtent(view.size, view.source) catch |err|
+            return mapFactError(err);
+        if (findSharedResourceIndex(
+            self.candidate_shared_resources[0..self.candidate_shared_resource_count],
+            view.resource.resource,
+        )) |index| {
+            const resource =
+                &self.candidate_shared_resources[index];
+            try validateSharedView(resource.*, view);
+            const source_bit = @as(u128, 1) << @intCast(source_index);
+            if (self.candidate_shared_reference_sources[index] & source_bit != 0)
+                return;
+            self.candidate_shared_reference_sources[index] |= source_bit;
+            return;
+        }
+        if (self.candidate_shared_resource_count >=
+            self.candidate_shared_resources.len)
+            return error.ResourceLimit;
+
+        if (findSharedResource(
+            self.shared_resources[0..self.shared_resource_count],
+            view.resource.resource,
+        )) |retained| {
+            try validateSharedView(retained, view);
+            if (try findSharedDeclaration(candidate, view.resource.resource)) |declaration| {
+                try validateSharedDeclaration(retained, declaration.upload);
+                if (!std.mem.eql(
+                    u8,
+                    self.shared_pixels[retained.pixel_start .. retained.pixel_start +
+                        retained.pixel_count],
+                    declaration.upload.pixels.bytes,
+                )) return error.ConflictingResourceOperation;
+                try validateRepeatedSharedDeclarations(
+                    candidate,
+                    declaration.upload,
+                );
+            }
+            const copied = retained;
+            const index = self.candidate_shared_resource_count;
+            self.candidate_shared_resources[index] = copied;
+            self.shared_upload_plan[index] = retained_shared_plan;
+            self.candidate_shared_reference_sources[index] =
+                @as(u128, 1) << @intCast(source_index);
+            self.candidate_shared_resource_count += 1;
+            return;
+        }
+
+        const declaration =
+            (try findSharedDeclaration(
+                candidate,
+                view.resource.resource,
+            )) orelse return error.MissingResource;
+        try validateRepeatedSharedDeclarations(candidate, declaration.upload);
+        if (declaration.upload.resource.generation !=
+            view.resource.generation)
+            return error.InvalidGeneration;
+        if (declaration.upload.format != view.format)
+            return error.FormatMismatch;
+        const declaration_size = Size{
+            .width = declaration.upload.pixels.width,
+            .height = declaration.upload.pixels.height,
+        };
+        if (!std.meta.eql(declaration_size, view.size))
+            return error.ExtentMismatch;
+        const identity = view.resource.resource.identity() catch
+            return error.InvalidIdentity;
+        if (identity <= self.shared_high_water)
+            return error.InvalidIdentity;
+        self.candidate_shared_high_water =
+            @max(self.candidate_shared_high_water, identity);
+        const index = self.candidate_shared_resource_count;
+        self.candidate_shared_resources[index] = .{
+            .resource = declaration.upload.resource,
+            .format = declaration.upload.format,
+            .size = declaration_size,
+            .stride = declaration.upload.pixels.stride,
+            .pixel_start = 0,
+            .pixel_count = declaration.upload.pixels.bytes.len,
+        };
+        self.shared_upload_plan[index] = encodeSharedUploadPlan(
+            declaration.change,
+            declaration.upload_index,
+        );
+        self.candidate_shared_reference_sources[index] =
+            @as(u128, 1) << @intCast(source_index);
+        self.candidate_shared_resource_count += 1;
+    }
+
+    fn allocateCandidateSharedRange(
+        self: *Composer,
+        count: usize,
+    ) Composer.Error!usize {
+        for (
+            self.candidate_shared_free_regions[0..self.candidate_shared_free_region_count],
+            0..,
+        ) |*region, index| {
+            if (region.count < count) continue;
+            const start = region.start;
+            region.start = std.math.add(usize, region.start, count) catch
+                return error.ArithmeticOverflow;
+            region.count -= count;
+            if (region.count == 0) {
+                std.mem.copyForwards(
+                    FreeRegion,
+                    self.candidate_shared_free_regions[index .. self.candidate_shared_free_region_count - 1],
+                    self.candidate_shared_free_regions[index + 1 .. self.candidate_shared_free_region_count],
+                );
+                self.candidate_shared_free_region_count -= 1;
+            }
+            return start;
+        }
+        return error.PixelLimit;
+    }
+
+    fn releaseCandidateSharedRange(
+        self: *Composer,
+        start: usize,
+        count: usize,
+    ) Composer.Error!void {
+        const end = std.math.add(usize, start, count) catch
+            return error.ArithmeticOverflow;
+        if (count == 0 or end > self.shared_pixels.len)
+            return error.ArithmeticOverflow;
+        var index: usize = 0;
+        while (index < self.candidate_shared_free_region_count and
+            self.candidate_shared_free_regions[index].start < start)
+            index += 1;
+        const merge_previous = if (index > 0)
+            (std.math.add(
+                usize,
+                self.candidate_shared_free_regions[index - 1].start,
+                self.candidate_shared_free_regions[index - 1].count,
+            ) catch return error.ArithmeticOverflow) == start
+        else
+            false;
+        const merge_next = index < self.candidate_shared_free_region_count and
+            end == self.candidate_shared_free_regions[index].start;
+        if (merge_previous and merge_next) {
+            self.candidate_shared_free_regions[index - 1].count =
+                std.math.add(
+                    usize,
+                    self.candidate_shared_free_regions[index - 1].count,
+                    std.math.add(
+                        usize,
+                        count,
+                        self.candidate_shared_free_regions[index].count,
+                    ) catch return error.ArithmeticOverflow,
+                ) catch return error.ArithmeticOverflow;
+            std.mem.copyForwards(
+                FreeRegion,
+                self.candidate_shared_free_regions[index .. self.candidate_shared_free_region_count - 1],
+                self.candidate_shared_free_regions[index + 1 .. self.candidate_shared_free_region_count],
+            );
+            self.candidate_shared_free_region_count -= 1;
+            return;
+        }
+        if (merge_previous) {
+            self.candidate_shared_free_regions[index - 1].count =
+                std.math.add(
+                    usize,
+                    self.candidate_shared_free_regions[index - 1].count,
+                    count,
+                ) catch return error.ArithmeticOverflow;
+            return;
+        }
+        if (merge_next) {
+            self.candidate_shared_free_regions[index].start = start;
+            self.candidate_shared_free_regions[index].count =
+                std.math.add(
+                    usize,
+                    self.candidate_shared_free_regions[index].count,
+                    count,
+                ) catch return error.ArithmeticOverflow;
+            return;
+        }
+        if (self.candidate_shared_free_region_count >=
+            self.candidate_shared_free_regions.len)
+            return error.PixelLimit;
+        std.mem.copyBackwards(
+            FreeRegion,
+            self.candidate_shared_free_regions[index + 1 .. self.candidate_shared_free_region_count + 1],
+            self.candidate_shared_free_regions[index..self.candidate_shared_free_region_count],
+        );
+        self.candidate_shared_free_regions[index] =
+            .{ .start = start, .count = count };
+        self.candidate_shared_free_region_count += 1;
+    }
+
+    fn commitSharedCandidate(
+        self: *Composer,
+        candidate: Candidate,
+    ) void {
+        for (
+            self.candidate_shared_resources[0..self.candidate_shared_resource_count],
+            0..,
+        ) |resource, index| {
+            const encoded = self.shared_upload_plan[index];
+            if (encoded == retained_shared_plan) continue;
+            const declaration = decodeSharedUploadPlan(encoded);
+            const upload =
+                candidate.changes[declaration.change].update.uploads[
+                    declaration.upload
+                ];
+            @memcpy(
+                self.shared_pixels[resource.pixel_start .. resource.pixel_start +
+                    resource.pixel_count],
+                upload.pixels.bytes,
+            );
+        }
+        @memcpy(
+            self.shared_resources[0..self.candidate_shared_resource_count],
+            self.candidate_shared_resources[0..self.candidate_shared_resource_count],
+        );
+        self.shared_resource_count = self.candidate_shared_resource_count;
+        @memcpy(
+            self.shared_free_regions[0..self.candidate_shared_free_region_count],
+            self.candidate_shared_free_regions[0..self.candidate_shared_free_region_count],
+        );
+        self.shared_free_region_count =
+            self.candidate_shared_free_region_count;
+        self.shared_high_water = self.candidate_shared_high_water;
     }
 
     /// Commits the already validated complete layout without transient slack.
@@ -1141,7 +1577,8 @@ pub const Composer = struct {
             self.candidate_pixel_count = 0;
             self.candidate_high_water = old.local_high_water;
         }
-        validateProducerUpdate(update) catch |err| return mapFactError(err);
+        validateCandidateProducerUpdate(update) catch |err|
+            return mapFactError(err);
         if (update.commands.len > self.candidate_commands.len)
             return error.CommandLimit;
 
@@ -1156,6 +1593,8 @@ pub const Composer = struct {
             }
         }
         for (update.removals, 0..) |removal, index| {
+            if (removal.resource.resource.isShared())
+                return error.InvalidIdentity;
             for (update.removals[0..index]) |prior| {
                 if (prior.resource.resource == removal.resource.resource)
                     return error.DuplicateResource;
@@ -1186,9 +1625,11 @@ pub const Composer = struct {
                 return error.MissingResource;
         }
         for (update.uploads) |upload| {
+            if (upload.resource.resource.isShared()) continue;
             if (findResource(old_resources, upload.resource.resource) != null)
                 continue;
-            const local = @backingInt(upload.resource.resource);
+            const local = upload.resource.resource.identity() catch
+                return error.InvalidIdentity;
             if (local == 0) return error.InvalidIdentity;
             if (local <= old.local_high_water) return error.InvalidIdentity;
             high_water = @max(high_water, local);
@@ -1211,7 +1652,6 @@ pub const Composer = struct {
         self.candidate_resource_count = 0;
         self.candidate_command_count = 0;
         self.candidate_pixel_count = 0;
-        var high_water = old.local_high_water;
         const old_resources =
             self.resources[old.resource_start .. old.resource_start + old.resource_count];
         for (old_resources) |resource| {
@@ -1224,9 +1664,9 @@ pub const Composer = struct {
             }
         }
         for (update.uploads) |upload| {
+            if (upload.resource.resource.isShared()) continue;
             if (findResource(old_resources, upload.resource.resource) != null)
                 continue;
-            high_water = @max(high_water, @backingInt(upload.resource.resource));
             self.appendValidatedUpload(upload);
         }
         @memcpy(
@@ -1234,7 +1674,7 @@ pub const Composer = struct {
             update.commands,
         );
         self.candidate_command_count = update.commands.len;
-        self.candidate_high_water = high_water;
+        self.candidate_high_water = old.local_high_water;
     }
 
     fn appendValidatedRetained(self: *Composer, resource: Resource) void {
@@ -1356,6 +1796,11 @@ pub const Composer = struct {
         try validateComposerRect(destination);
         try validateComposerRect(clip);
         if (view.format != format) return error.FormatMismatch;
+        if (view.resource.resource.isShared()) {
+            validateExtent(view.size, view.source) catch |err|
+                return mapFactError(err);
+            return;
+        }
         const resource = findResource(
             self.candidate_resources[0..self.candidate_resource_count],
             view.resource.resource,
@@ -1451,11 +1896,11 @@ pub const Composer = struct {
         for (residency, 0..) |value, index| {
             validateResidency(value) catch return error.InvalidResidency;
             const source_value = @backingInt(value.resource.source);
-            if (source_value == 0 or source_value >= self.next_source_id)
+            if (!value.resource.resource.isShared() and
+                (source_value == 0 or source_value >= self.next_source_id))
                 return error.InvalidResidency;
             for (residency[0..index]) |prior| {
-                if (prior.resource.source == value.resource.source and
-                    prior.resource.resource == value.resource.resource)
+                if (std.meta.eql(prior.resource, value.resource))
                     return error.InvalidResidency;
             }
         }
@@ -1518,6 +1963,13 @@ pub const Composer = struct {
             try byteRange(Input, self.candidate_commands),
             try byteRange(u8, self.candidate_pixels),
             try byteRange(u64, self.resource_plan),
+            try byteRange(SharedResource, self.shared_resources),
+            try byteRange(SharedResource, self.candidate_shared_resources),
+            try byteRange(u8, self.shared_pixels),
+            try byteRange(FreeRegion, self.shared_free_regions),
+            try byteRange(FreeRegion, self.candidate_shared_free_regions),
+            try byteRange(u64, self.shared_upload_plan),
+            try byteRange(u128, self.candidate_shared_reference_sources),
         };
         for (outputs) |output| {
             for (retained) |owned| {
@@ -1557,6 +2009,20 @@ pub const Composer = struct {
                     ) catch return error.ArithmeticOverflow;
                 }
             }
+        }
+        for (self.shared_resources[0..self.shared_resource_count]) |resource| {
+            if (!try self.sharedResourceVisible(resource.resource)) continue;
+            if (sharedResidencyMatches(residency, resource)) continue;
+            uploads_needed.* = std.math.add(
+                usize,
+                uploads_needed.*,
+                1,
+            ) catch return error.ArithmeticOverflow;
+            pixels_needed.* = std.math.add(
+                usize,
+                pixels_needed.*,
+                resource.pixel_count,
+            ) catch return error.ArithmeticOverflow;
         }
         for (residency) |value| {
             if (!try self.residencyRequired(value))
@@ -1601,6 +2067,30 @@ pub const Composer = struct {
                 upload_count.* += 1;
                 pixel_count.* += resource.pixel_count;
             }
+        }
+        for (self.shared_resources[0..self.shared_resource_count]) |resource| {
+            if (!try self.sharedResourceVisible(resource.resource) or
+                sharedResidencyMatches(residency, resource))
+                continue;
+            const destination = buffers.pixels[pixel_count.* .. pixel_count.* + resource.pixel_count];
+            @memcpy(
+                destination,
+                self.shared_pixels[resource.pixel_start .. resource.pixel_start +
+                    resource.pixel_count],
+            );
+            buffers.uploads[upload_count.*] = .{
+                .resource = qualifyResource(
+                    @fromBackingInt(@intCast(0)),
+                    resource.resource,
+                ),
+                .format = resource.format,
+                .size = resource.size,
+                .pixel_offset = pixel_count.*,
+                .pixel_count = resource.pixel_count,
+                .stride = resource.stride,
+            };
+            upload_count.* += 1;
+            pixel_count.* += resource.pixel_count;
         }
         for (residency) |value| {
             if (try self.residencyRequired(value)) continue;
@@ -1706,6 +2196,17 @@ pub const Composer = struct {
         self: *const Composer,
         residency: Residency,
     ) Composer.Error!bool {
+        if (residency.resource.resource.isShared()) {
+            const resource = findSharedResource(
+                self.shared_resources[0..self.shared_resource_count],
+                residency.resource.resource,
+            ) orelse return false;
+            if (!std.meta.eql(resource.resource, ResourceRef{
+                .resource = residency.resource.resource,
+                .generation = residency.resource.generation,
+            })) return false;
+            return try self.sharedResourceVisible(resource.resource);
+        }
         const placement_index = self.placementIndex(residency.resource.source) orelse
             return false;
         const source = self.sources[
@@ -1721,6 +2222,30 @@ pub const Composer = struct {
             resource.local,
         );
     }
+
+    fn sharedResourceVisible(
+        self: *const Composer,
+        shared: ResourceRef,
+    ) Composer.Error!bool {
+        for (self.composition[0..self.composition_count]) |placement| {
+            const source = self.sources[
+                @intCast(@backingInt(placement.source) - 1)
+            ];
+            for (self.commands[source.command_start .. source.command_start +
+                source.command_count]) |command|
+            {
+                const referenced = switch (command) {
+                    .solid => false,
+                    .alpha_mask => |value| std.meta.eql(value.resource.resource, shared),
+                    .rgba => |value| std.meta.eql(value.resource.resource, shared),
+                };
+                if (referenced and
+                    try self.frameCommand(placement, command) != null)
+                    return true;
+            }
+        }
+        return false;
+    }
 };
 
 const ByteRange = struct {
@@ -1734,6 +2259,10 @@ fn validateComposerLimits(limits: Composer.Limits) Composer.Error!void {
         limits.composition_sources == 0 or limits.candidate_resources == 0 or
         limits.candidate_commands == 0 or limits.candidate_pixel_bytes == 0)
         return error.InvalidGeometry;
+    if (limits.retained_resources > Composer.shared_resource_limit)
+        return error.ResourceLimit;
+    if (limits.sources > Composer.candidate_placement_limit)
+        return error.SourceLimit;
     if (limits.composition_sources > limits.sources)
         return error.CompositionLimit;
     try validateAllocationSize(limits.sources, @sizeOf(Composer.Source));
@@ -1829,6 +2358,120 @@ fn findResource(
     return null;
 }
 
+const SharedDeclaration = struct {
+    upload: ResourceUpload,
+    change: usize,
+    upload_index: usize,
+};
+
+fn findSharedResource(
+    resources: []const Composer.SharedResource,
+    id: ResourceId,
+) ?Composer.SharedResource {
+    const index = findSharedResourceIndex(resources, id) orelse return null;
+    return resources[index];
+}
+
+fn findSharedResourceIndex(
+    resources: []const Composer.SharedResource,
+    id: ResourceId,
+) ?usize {
+    for (resources, 0..) |resource, index|
+        if (resource.resource.resource == id) return index;
+    return null;
+}
+
+fn findSharedDeclaration(
+    candidate: Composer.Candidate,
+    id: ResourceId,
+) Composer.Error!?SharedDeclaration {
+    var result: ?SharedDeclaration = null;
+    for (candidate.changes, 0..) |change, change_index| {
+        for (change.update.uploads, 0..) |upload, upload_index| {
+            if (upload.resource.resource != id) continue;
+            if (!upload.resource.resource.isShared())
+                return error.InvalidIdentity;
+            if (result) |prior|
+                try sharedUploadsEqual(prior.upload, upload)
+            else
+                result = .{
+                    .upload = upload,
+                    .change = change_index,
+                    .upload_index = upload_index,
+                };
+        }
+    }
+    return result;
+}
+
+fn validateRepeatedSharedDeclarations(
+    candidate: Composer.Candidate,
+    expected: ResourceUpload,
+) Composer.Error!void {
+    for (candidate.changes) |change| {
+        for (change.update.uploads) |upload| {
+            if (upload.resource.resource != expected.resource.resource)
+                continue;
+            try sharedUploadsEqual(expected, upload);
+        }
+    }
+}
+
+fn sharedUploadsEqual(
+    left: ResourceUpload,
+    right: ResourceUpload,
+) Composer.Error!void {
+    if (!std.meta.eql(left.resource, right.resource))
+        return error.InvalidGeneration;
+    if (left.format != right.format) return error.FormatMismatch;
+    if (left.pixels.width != right.pixels.width or
+        left.pixels.height != right.pixels.height or
+        left.pixels.stride != right.pixels.stride)
+        return error.ExtentMismatch;
+    if (!std.mem.eql(u8, left.pixels.bytes, right.pixels.bytes))
+        return error.ConflictingResourceOperation;
+}
+
+fn validateSharedDeclaration(
+    retained: Composer.SharedResource,
+    declaration: ResourceUpload,
+) Composer.Error!void {
+    if (!std.meta.eql(retained.resource, declaration.resource))
+        return error.InvalidGeneration;
+    if (retained.format != declaration.format) return error.FormatMismatch;
+    if (retained.size.width != declaration.pixels.width or
+        retained.size.height != declaration.pixels.height or
+        retained.stride != declaration.pixels.stride or
+        retained.pixel_count != declaration.pixels.bytes.len)
+        return error.ExtentMismatch;
+}
+
+fn validateSharedView(
+    resource: Composer.SharedResource,
+    view: ResourceView,
+) Composer.Error!void {
+    if (!std.meta.eql(resource.resource, view.resource))
+        return error.InvalidGeneration;
+    if (resource.format != view.format) return error.FormatMismatch;
+    if (!std.meta.eql(resource.size, view.size))
+        return error.ExtentMismatch;
+}
+
+fn updateContainsShared(update: ProducerUpdate) bool {
+    for (update.uploads) |upload|
+        if (upload.resource.resource.isShared()) return true;
+    for (update.removals) |removal|
+        if (removal.resource.resource.isShared()) return true;
+    for (update.commands) |command| switch (command) {
+        .solid => {},
+        .alpha_mask => |value| if (value.resource.resource.resource.isShared())
+            return true,
+        .rgba => |value| if (value.resource.resource.resource.isShared())
+            return true,
+    };
+    return false;
+}
+
 const upload_plan_bit: u64 = @as(u64, 1) << 63;
 
 fn encodeRetainedPlan(index: usize) u64 {
@@ -1852,6 +2495,21 @@ fn planIsUpload(value: u64) bool {
 fn decodeUploadPlan(value: u64) struct { change: usize, upload: usize } {
     return .{
         .change = @intCast((value >> 32) & 0x7fff_ffff),
+        .upload = @intCast(value & 0xffff_ffff),
+    };
+}
+
+fn encodeSharedUploadPlan(change: usize, upload: usize) u64 {
+    return (@as(u64, @intCast(change)) << 32) |
+        @as(u64, @intCast(upload));
+}
+
+fn decodeSharedUploadPlan(value: u64) struct {
+    change: usize,
+    upload: usize,
+} {
+    return .{
+        .change = @intCast(value >> 32),
         .upload = @intCast(value & 0xffff_ffff),
     };
 }
@@ -2096,7 +2754,10 @@ fn qualifyResource(
     local: ResourceRef,
 ) FrameResourceRef {
     return .{
-        .source = source,
+        .source = if (local.resource.isShared())
+            @fromBackingInt(@intCast(0))
+        else
+            source,
         .resource = local.resource,
         .generation = local.generation,
     };
@@ -2122,6 +2783,20 @@ fn residencyMatches(
             return value.resource.generation == resource.local.generation and
                 value.format == resource.format and
                 std.meta.eql(value.size, resource.size);
+    }
+    return false;
+}
+
+fn sharedResidencyMatches(
+    residency: []const Residency,
+    resource: Composer.SharedResource,
+) bool {
+    for (residency) |value| {
+        if (!value.resource.resource.isShared()) continue;
+        if (value.resource.resource != resource.resource.resource) continue;
+        return value.resource.generation == resource.resource.generation and
+            value.format == resource.format and
+            std.meta.eql(value.size, resource.size);
     }
     return false;
 }
@@ -2358,6 +3033,46 @@ fn validateProducerUpdate(update: ProducerUpdate) ResourceFactError!void {
             validateExtent(value.resource.size, value.resource.source) catch |err| return err;
         },
     };
+}
+
+fn validateCandidateProducerUpdate(
+    update: ProducerUpdate,
+) ResourceFactError!void {
+    if (@backingInt(update.revision) == 0) return error.InvalidRevision;
+    for (update.uploads) |upload| {
+        try validateResourceRef(upload.resource);
+        try validatePixels(upload.pixels, upload.format);
+    }
+    for (update.removals) |removal|
+        try validateResourceRef(removal.resource);
+    for (update.commands) |command| switch (command) {
+        .solid => {},
+        .alpha_mask => |value| {
+            try validateResourceRef(value.resource.resource);
+            if (value.resource.format != .alpha8)
+                return error.FormatMismatch;
+            try validateExtent(value.resource.size, value.resource.source);
+        },
+        .rgba => |value| {
+            try validateResourceRef(value.resource.resource);
+            if (value.resource.format != .rgba8)
+                return error.FormatMismatch;
+            try validateExtent(value.resource.size, value.resource.source);
+        },
+    };
+}
+
+fn validateResourceRef(
+    resource: ResourceRef,
+) error{ InvalidIdentity, InvalidGeneration }!void {
+    const identity = try resource.resource.identity();
+    if (@backingInt(resource.generation) == 0)
+        return error.InvalidGeneration;
+    if (!resource.resource.isShared())
+        try validation.localIdentity(
+            identity,
+            @backingInt(resource.generation),
+        );
 }
 
 fn clipped(rect: Rect, clip: Rect, surface: Size) Error!?Rect {

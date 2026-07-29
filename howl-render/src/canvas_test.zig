@@ -12,6 +12,40 @@ fn local(id: u64, generation: u64) !canvas.ResourceRef {
     };
 }
 
+fn shared(id: u64, generation: u64) !canvas.ResourceRef {
+    return .{
+        .resource = try canvas.ResourceId.shared(id),
+        .generation = @fromBackingInt(@intCast(generation)),
+    };
+}
+
+fn sharedAlphaCommand(
+    resource: canvas.ResourceRef,
+    width: u16,
+    height: u16,
+) canvas.Input {
+    return .{ .alpha_mask = .{
+        .destination = .{
+            .x = 0,
+            .y = 0,
+            .width = width,
+            .height = height,
+        },
+        .clip = .{
+            .x = 0,
+            .y = 0,
+            .width = width,
+            .height = height,
+        },
+        .resource = .{
+            .resource = resource,
+            .format = .alpha8,
+            .size = .{ .width = width, .height = height },
+        },
+        .color = white,
+    } };
+}
+
 test "editor-like facts preserve clipped deterministic order and qualify resources" {
     const inputs = [_]canvas.Input{
         .{ .solid = .{
@@ -912,6 +946,18 @@ test "composer atomic candidate commits seventeen sources once" {
     var new_commands: [34]canvas.Input = undefined;
     var changes: [17]canvas.Composer.SourceChange = undefined;
     var placements: [17]canvas.Composer.Placement = undefined;
+    const shared_ref = try shared(1, 1);
+    const shared_byte = [_]u8{0x6d};
+    const shared_upload = canvas.ResourceUpload{
+        .resource = shared_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &shared_byte,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
     var old_offset: usize = 0;
     var new_offset: usize = 0;
     for (&sources, 0..) |*source_id, index| {
@@ -938,11 +984,17 @@ test "composer atomic candidate commits seventeen sources once" {
                 .b = 2,
                 .a = 255,
             });
+        if (index == 0)
+            new_commands[new_offset] =
+                sharedAlphaCommand(shared_ref, 1, 1);
         changes[index] = .{
             .source = source_id.*,
             .update = .{
                 .revision = @fromBackingInt(2),
-                .uploads = &.{},
+                .uploads = if (index == 0)
+                    &.{shared_upload}
+                else
+                    &.{},
                 .removals = &.{},
                 .commands = new_commands[new_offset..][0..new_count],
             },
@@ -983,8 +1035,16 @@ test "composer atomic candidate commits seventeen sources once" {
         @backingInt(after.revision),
     );
     try std.testing.expectEqual(new_offset, after.commands.len);
-    for (after.commands) |command|
-        try std.testing.expectEqual(@as(u8, 2), command.solid.color.b);
+    var shared_commands: usize = 0;
+    for (after.commands) |command| switch (command) {
+        .solid => |solid| try std.testing.expectEqual(@as(u8, 2), solid.color.b),
+        .alpha_mask => |alpha| {
+            shared_commands += 1;
+            try std.testing.expect(alpha.resource.resource.resource.isShared());
+        },
+        .rgba => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(usize, 1), shared_commands);
 
     const revision = after.revision;
     try composer.applyCandidate(.{
@@ -1745,4 +1805,799 @@ test "composer atomic candidate pressure rolls back and later succeeds" {
     var storage: FrameStorage = .{};
     const frame = try composer.frame(&.{}, storage.buffers());
     try std.testing.expectEqual(@as(usize, 1), frame.commands.len);
+}
+
+test "atomic candidate shares one logical resource across local sources" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 2,
+        .retained_commands = 8,
+        .retained_pixel_bytes = 8,
+        .composition_sources = 2,
+        .candidate_resources = 4,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 4,
+    });
+    defer composer.deinit();
+    const first = try composer.registerSource();
+    const second = try composer.registerSource();
+    const shared_ref = try shared(1, 1);
+    const local_ref = try local(1, 1);
+    const shared_bytes = [_]u8{ 0x11, 0x22 };
+    const local_bytes = [_]u8{0x33};
+    const shared_upload = canvas.ResourceUpload{
+        .resource = shared_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &shared_bytes,
+            .width = 2,
+            .height = 1,
+            .stride = 2,
+        },
+    };
+    const local_upload = canvas.ResourceUpload{
+        .resource = local_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &local_bytes,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
+    const shared_command = canvas.Input{ .alpha_mask = .{
+        .destination = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
+        .resource = .{
+            .resource = shared_ref,
+            .format = .alpha8,
+            .size = .{ .width = 2, .height = 1 },
+        },
+        .color = white,
+    } };
+    const local_command = canvas.Input{ .alpha_mask = .{
+        .destination = .{ .x = 2, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 2, .y = 0, .width = 1, .height = 1 },
+        .resource = .{
+            .resource = local_ref,
+            .format = .alpha8,
+            .size = .{ .width = 1, .height = 1 },
+        },
+        .color = red,
+    } };
+    const placements = [_]canvas.Composer.Placement{
+        .{
+            .source = first,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 3, .height = 1 },
+        },
+        .{
+            .source = second,
+            .origin = .{ .x = 0, .y = 1 },
+            .clip = .{ .x = 0, .y = 1, .width = 3, .height = 1 },
+        },
+    };
+    try composer.applyCandidate(.{
+        .changes = &.{
+            .{ .source = first, .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = &.{ shared_upload, local_upload },
+                .removals = &.{},
+                .commands = &.{ shared_command, local_command },
+            } },
+            .{ .source = second, .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = &.{shared_upload},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } },
+        },
+        .composition = .{
+            .surface = .{ .width = 3, .height = 2 },
+            .sources = &placements,
+        },
+    });
+    var uploads: [4]canvas.ResourceUploadFact = undefined;
+    var removals: [4]canvas.FrameResourceRef = undefined;
+    var commands: [4]canvas.Command = undefined;
+    var pixels: [8]u8 = undefined;
+    const first_frame = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 2), first_frame.uploads.len);
+    var shared_uploads: usize = 0;
+    var local_uploads: usize = 0;
+    for (first_frame.uploads) |upload| {
+        if (upload.resource.resource.isShared()) {
+            shared_uploads += 1;
+            try std.testing.expectEqual(
+                @as(u64, 0),
+                @backingInt(upload.resource.source),
+            );
+            try std.testing.expectEqualSlices(
+                u8,
+                &shared_bytes,
+                first_frame.pixels[upload.pixel_offset .. upload.pixel_offset +
+                    upload.pixel_count],
+            );
+        } else {
+            local_uploads += 1;
+            try std.testing.expectEqual(first, upload.resource.source);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), shared_uploads);
+    try std.testing.expectEqual(@as(usize, 1), local_uploads);
+
+    const local_two = try local(2, 1);
+    var local_two_upload = local_upload;
+    local_two_upload.resource = local_two;
+    const local_two_command = sharedAlphaCommand(local_two, 1, 1);
+    try std.testing.expectError(
+        error.ResourceLimit,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = first, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{local_two_upload},
+                .removals = &.{},
+                .commands = &.{
+                    shared_command,
+                    local_command,
+                    local_two_command,
+                },
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = first, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{canvas.ResourceRemoval{ .resource = local_ref }},
+            .commands = &.{},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 3, .height = 2 },
+            .sources = &placements,
+        },
+    });
+    const shared_residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.shared(shared_ref),
+        .format = .alpha8,
+        .size = .{ .width = 2, .height = 1 },
+    };
+    const retained = try composer.frame(&.{shared_residency}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 0), retained.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), retained.removals.len);
+
+    var conflicting = shared_upload;
+    conflicting.pixels.bytes = &.{ 0x11, 0x44 };
+    try std.testing.expectError(
+        error.ConflictingResourceOperation,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{conflicting},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    var conflicting_format = shared_upload;
+    conflicting_format.format = .rgba8;
+    conflicting_format.pixels.bytes =
+        &.{ 0x11, 0x22, 0, 0, 0, 0, 0, 0 };
+    conflicting_format.pixels.stride = 8;
+    try std.testing.expectError(
+        error.FormatMismatch,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{conflicting_format},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    var conflicting_extent = shared_upload;
+    conflicting_extent.pixels.bytes = &.{0x11};
+    conflicting_extent.pixels.width = 1;
+    conflicting_extent.pixels.stride = 1;
+    try std.testing.expectError(
+        error.ExtentMismatch,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{conflicting_extent},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    var conflicting_stride = shared_upload;
+    conflicting_stride.pixels.stride = 3;
+    try std.testing.expectError(
+        error.ExtentMismatch,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{conflicting_stride},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    var conflicting_generation = shared_upload;
+    conflicting_generation.resource.generation = @fromBackingInt(2);
+    try std.testing.expectError(
+        error.InvalidGeneration,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{conflicting_generation},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+    const unchanged = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), unchanged.uploads.len);
+    try std.testing.expectEqualSlices(
+        u8,
+        &shared_bytes,
+        unchanged.pixels[0..shared_bytes.len],
+    );
+
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = second, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 3, .height = 2 },
+            .sources = &placements,
+        },
+    });
+    const retired = try composer.frame(&.{shared_residency}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), retired.removals.len);
+    try std.testing.expectEqual(
+        shared_residency.resource,
+        retired.removals[0],
+    );
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = second, .update = .{
+                .revision = @fromBackingInt(3),
+                .uploads = &.{shared_upload},
+                .removals = &.{},
+                .commands = &.{shared_command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 3, .height = 2 },
+                .sources = &placements,
+            },
+        }),
+    );
+}
+
+test "shared entry limit rejects the next identity without mutation" {
+    const limit: usize = 2048;
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = limit,
+        .retained_commands = limit + 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = limit + 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source_id = try composer.registerSource();
+    const bytes = try std.testing.allocator.alloc(u8, limit);
+    defer std.testing.allocator.free(bytes);
+    @memset(bytes, 0x5a);
+    const uploads = try std.testing.allocator.alloc(
+        canvas.ResourceUpload,
+        limit,
+    );
+    defer std.testing.allocator.free(uploads);
+    const commands = try std.testing.allocator.alloc(canvas.Input, limit + 1);
+    defer std.testing.allocator.free(commands);
+    for (uploads, 0..) |*upload, index| {
+        const resource = try shared(index + 1, 1);
+        upload.* = .{
+            .resource = resource,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = bytes[index..][0..1],
+                .width = 1,
+                .height = 1,
+                .stride = 1,
+            },
+        };
+        commands[index] = sharedAlphaCommand(resource, 1, 1);
+    }
+    const placements = [_]canvas.Composer.Placement{.{
+        .source = source_id,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    }};
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = uploads,
+            .removals = &.{},
+            .commands = commands[0..limit],
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    const extra_ref = try shared(limit + 1, 1);
+    const extra_byte = [_]u8{0x7c};
+    const extra_upload = canvas.ResourceUpload{
+        .resource = extra_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &extra_byte,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
+    commands[limit] = sharedAlphaCommand(extra_ref, 1, 1);
+    try std.testing.expectError(
+        error.ResourceLimit,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = source_id, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{extra_upload},
+                .removals = &.{},
+                .commands = commands,
+            } }},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &placements,
+            },
+        }),
+    );
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = commands[0..limit],
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+}
+
+test "shared variable ranges reject fragmentation and coalesce completely" {
+    const bank_size: usize = 8 * 1024 * 1024;
+    const part_size: usize = 2 * 1024 * 1024;
+    const large_size: usize = 3 * 1024 * 1024;
+    const bytes = try std.testing.allocator.alloc(u8, bank_size);
+    defer std.testing.allocator.free(bytes);
+    for (bytes, 0..) |*byte, index| byte.* = @truncate(index);
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 8,
+        .retained_commands = 8,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 8,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source_id = try composer.registerSource();
+    var uploads: [4]canvas.ResourceUpload = undefined;
+    var commands: [5]canvas.Input = undefined;
+    for (&uploads, 0..) |*upload, index| {
+        const resource = try shared(index + 1, 1);
+        upload.* = .{
+            .resource = resource,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = bytes[index * part_size ..][0..part_size],
+                .width = 32768,
+                .height = 64,
+                .stride = 32768,
+            },
+        };
+        commands[index] = sharedAlphaCommand(resource, 32768, 64);
+    }
+    const placements = [_]canvas.Composer.Placement{.{
+        .source = source_id,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    }};
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = &uploads,
+            .removals = &.{},
+            .commands = commands[0..4],
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    const fragmented_ref = try shared(5, 1);
+    const fragmented_upload = canvas.ResourceUpload{
+        .resource = fragmented_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = bytes[0..large_size],
+            .width = 32768,
+            .height = 96,
+            .stride = 32768,
+        },
+    };
+    commands[4] = sharedAlphaCommand(fragmented_ref, 32768, 96);
+    const fragmented_commands = [_]canvas.Input{
+        commands[0],
+        commands[2],
+        commands[4],
+    };
+    try std.testing.expectError(
+        error.PixelLimit,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = source_id, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{fragmented_upload},
+                .removals = &.{},
+                .commands = &fragmented_commands,
+            } }},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &placements,
+            },
+        }),
+    );
+    const coalesced_ref = try shared(6, 1);
+    var coalesced_upload = fragmented_upload;
+    coalesced_upload.resource = coalesced_ref;
+    const coalesced_command = sharedAlphaCommand(coalesced_ref, 32768, 96);
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{coalesced_upload},
+            .removals = &.{},
+            .commands = &.{ commands[0], coalesced_command },
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(3),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    const full_ref = try shared(7, 1);
+    const full_upload = canvas.ResourceUpload{
+        .resource = full_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = bytes,
+            .width = 32768,
+            .height = 256,
+            .stride = 32768,
+        },
+    };
+    const full_command = sharedAlphaCommand(full_ref, 32768, 256);
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(4),
+            .uploads = &.{full_upload},
+            .removals = &.{},
+            .commands = &.{full_command},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+}
+
+test "shared recovery pixel limit preserves the complete accepted bytes" {
+    const bank_size: usize = 8 * 1024 * 1024;
+    const bytes = try std.testing.allocator.alloc(u8, bank_size);
+    defer std.testing.allocator.free(bytes);
+    for (bytes, 0..) |*byte, index| byte.* = @truncate(index * 17);
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 2,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source_id = try composer.registerSource();
+    const full_ref = try shared(1, 1);
+    const full_upload = canvas.ResourceUpload{
+        .resource = full_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = bytes,
+            .width = 32768,
+            .height = 256,
+            .stride = 32768,
+        },
+    };
+    const full_command = sharedAlphaCommand(full_ref, 32768, 256);
+    const placements = [_]canvas.Composer.Placement{.{
+        .source = source_id,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    }};
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = source_id, .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{full_upload},
+            .removals = &.{},
+            .commands = &.{full_command},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    const extra_ref = try shared(2, 1);
+    const extra_byte = [_]u8{0xcc};
+    const extra_upload = canvas.ResourceUpload{
+        .resource = extra_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &extra_byte,
+            .width = 1,
+            .height = 1,
+            .stride = 1,
+        },
+    };
+    const extra_command = sharedAlphaCommand(extra_ref, 1, 1);
+    try std.testing.expectError(
+        error.PixelLimit,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = source_id, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{extra_upload},
+                .removals = &.{},
+                .commands = &.{ full_command, extra_command },
+            } }},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &placements,
+            },
+        }),
+    );
+    var uploads: [1]canvas.ResourceUploadFact = undefined;
+    var removals: [1]canvas.FrameResourceRef = undefined;
+    var commands: [1]canvas.Command = undefined;
+    const recovered = try std.testing.allocator.alloc(u8, bank_size);
+    defer std.testing.allocator.free(recovered);
+    const frame = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = recovered,
+    });
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    try std.testing.expectEqualSlices(u8, bytes, frame.pixels);
+}
+
+test "removeSource releases only its exact shared ownership" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 3,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 2,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const first = try composer.registerSource();
+    const second = try composer.registerSource();
+    const shared_one = try shared(1, 1);
+    const shared_bytes = [_]u8{ 0x41, 0x42 };
+    const upload = canvas.ResourceUpload{
+        .resource = shared_one,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &shared_bytes,
+            .width = 2,
+            .height = 1,
+            .stride = 2,
+        },
+    };
+    const command = sharedAlphaCommand(shared_one, 2, 1);
+    const placements = [_]canvas.Composer.Placement{
+        .{
+            .source = first,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
+        },
+        .{
+            .source = second,
+            .origin = .{ .x = 0, .y = 1 },
+            .clip = .{ .x = 0, .y = 1, .width = 2, .height = 1 },
+        },
+    };
+    try composer.applyCandidate(.{
+        .changes = &.{
+            .{ .source = first, .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = &.{upload},
+                .removals = &.{},
+                .commands = &.{command},
+            } },
+            .{ .source = second, .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = &.{upload},
+                .removals = &.{},
+                .commands = &.{command},
+            } },
+        },
+        .composition = .{
+            .surface = .{ .width = 2, .height = 2 },
+            .sources = &placements,
+        },
+    });
+    var uploads: [2]canvas.ResourceUploadFact = undefined;
+    var removals: [2]canvas.FrameResourceRef = undefined;
+    var commands: [2]canvas.Command = undefined;
+    var pixels: [4]u8 = undefined;
+    const initial = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), initial.uploads.len);
+    try std.testing.expectEqualSlices(u8, &shared_bytes, initial.pixels);
+    const residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.shared(shared_one),
+        .format = .alpha8,
+        .size = .{ .width = 2, .height = 1 },
+    };
+
+    try composer.removeSource(first);
+    const one_owner = try composer.frame(&.{residency}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 0), one_owner.removals.len);
+    try std.testing.expectError(error.RetiredSource, composer.removeSource(first));
+    const after_failed_remove = try composer.frame(&.{residency}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 0), after_failed_remove.removals.len);
+
+    try composer.removeSource(second);
+    const retired = try composer.frame(&.{residency}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), retired.removals.len);
+    try std.testing.expectEqual(residency.resource, retired.removals[0]);
+
+    const replacement = try composer.registerSource();
+    const replacement_placement = [_]canvas.Composer.Placement{.{
+        .source = replacement,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 1 },
+    }};
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        composer.applyCandidate(.{
+            .changes = &.{.{ .source = replacement, .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = &.{upload},
+                .removals = &.{},
+                .commands = &.{command},
+            } }},
+            .composition = .{
+                .surface = .{ .width = 2, .height = 1 },
+                .sources = &replacement_placement,
+            },
+        }),
+    );
+    const shared_two = try shared(2, 1);
+    var replacement_upload = upload;
+    replacement_upload.resource = shared_two;
+    const replacement_command = sharedAlphaCommand(shared_two, 2, 1);
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = replacement, .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{replacement_upload},
+            .removals = &.{},
+            .commands = &.{replacement_command},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 2, .height = 1 },
+            .sources = &replacement_placement,
+        },
+    });
+    const reused = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), reused.uploads.len);
+    try std.testing.expectEqualSlices(u8, &shared_bytes, reused.pixels);
+    try std.testing.expect(
+        reused.uploads[0].resource.resource !=
+            residency.resource.resource,
+    );
 }
