@@ -14,6 +14,9 @@ const ScaleError = error{
     ArithmeticOverflow,
     RevisionExhausted,
     UnknownOutput,
+    Stopping,
+    InvalidConfigure,
+    GenerationOverflow,
 };
 
 const Rational = struct {
@@ -74,6 +77,8 @@ const ScaleReadiness = enum(u8) { provisional, awaiting_compositor, accepted };
 const ScaleFacts = struct {
     deduced: Rational = .one,
     preferred_integer: ?Rational = null,
+    preferred_fractional_120: ?u32 = null,
+    fractional_capable: bool = false,
     effective: Rational = .one,
     dpi_x: Rational = .{ .numerator = 96, .denominator = 1 },
     dpi_y: Rational = .{ .numerator = 96, .denominator = 1 },
@@ -90,8 +95,13 @@ const ScaleFacts = struct {
     fn recompute(self: *ScaleFacts, highest_entered: ?Rational) ScaleError!void {
         var next = self.*;
         if (highest_entered) |value| next.deduced = value;
-        const selected = next.preferred_integer orelse highest_entered;
-        const ready = next.bootstrap_ready and selected != null and (!next.expect_preferred or (next.configure_ready and next.preferred_integer != null));
+        const selected = if (next.fractional_capable and next.preferred_fractional_120 != null)
+            try Rational.init(next.preferred_fractional_120.?, 120)
+        else
+            next.preferred_integer orelse highest_entered;
+        const ready = next.bootstrap_ready and selected != null and
+            (!next.expect_preferred or (next.configure_ready and
+                (next.preferred_integer != null or next.preferred_fractional_120 != null)));
         if (selected) |value| {
             next.effective = value;
             next.dpi_x = try next.effective.dpi();
@@ -109,6 +119,12 @@ const ScaleFacts = struct {
         }
         self.* = next;
     }
+
+    fn effectiveScale120(self: *const ScaleFacts) ScaleError!u32 {
+        if (self.fractional_capable and self.preferred_fractional_120 != null) return self.preferred_fractional_120.?;
+        if (self.effective.denominator != 1) return error.InvalidScale;
+        return std.math.mul(u32, self.effective.numerator, 120) catch error.ArithmeticOverflow;
+    }
 };
 
 const OutputFact = struct {
@@ -125,6 +141,10 @@ const Ring = struct {
     generation: u64 = 0,
     width: u32 = 0,
     height: u32 = 0,
+    logical_width: u32 = 0,
+    logical_height: u32 = 0,
+    buffer_scale: u32 = 1,
+    use_viewport: bool = false,
     buffers: [shared.slot_count]?*c.wl_buffer = .{ null, null, null },
     acquire_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
     release_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
@@ -149,6 +169,11 @@ const State = struct {
     xdg: ?*c.xdg_wm_base = null,
     dmabuf: ?*c.zwp_linux_dmabuf_v1 = null,
     syncobj: ?*c.wp_linux_drm_syncobj_manager_v1 = null,
+    fractional_manager: ?*c.wp_fractional_scale_manager_v1 = null,
+    viewporter: ?*c.wp_viewporter = null,
+    fractional_scale: ?*c.wp_fractional_scale_v1 = null,
+    viewport: ?*c.wp_viewport = null,
+    fractional_retire_pending: bool = false,
     seat: ?*c.wl_seat = null,
     keyboard: ?*c.wl_keyboard = null,
     pointer: ?*c.wl_pointer = null,
@@ -160,6 +185,8 @@ const State = struct {
     xdg_name: u32 = 0,
     dmabuf_name: u32 = 0,
     syncobj_name: u32 = 0,
+    fractional_manager_name: u32 = 0,
+    viewporter_name: u32 = 0,
     seat_name: u32 = 0,
     outputs: [output_limit]OutputFact = .{ OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{} },
     output_count: u8 = 0,
@@ -181,6 +208,7 @@ const State = struct {
     frame_callback: ?*c.wl_callback = null,
     presented_generation: u64 = 0,
     presented: u64 = 0,
+    input_ready: bool = false,
     xkb_context: ?wayland.xkb.Context = null,
     xkb_keymap: ?wayland.xkb.Keymap = null,
     xkb_state: ?wayland.xkb.State = null,
@@ -214,7 +242,11 @@ const State = struct {
         }
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
+        if (self.viewport) |value| c.wp_viewport_destroy(value);
+        if (self.fractional_scale) |value| c.wp_fractional_scale_v1_destroy(value);
         if (self.surface) |value| c.wl_surface_destroy(value);
+        if (self.viewporter) |value| c.wp_viewporter_destroy(value);
+        if (self.fractional_manager) |value| c.wp_fractional_scale_manager_v1_destroy(value);
         if (self.syncobj) |value| c.wp_linux_drm_syncobj_manager_v1_destroy(value);
         if (self.dmabuf) |value| c.zwp_linux_dmabuf_v1_destroy(value);
         if (self.xdg) |value| c.xdg_wm_base_destroy(value);
@@ -262,6 +294,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
 
     state.surface = c.wl_compositor_create_surface(state.compositor.?) orelse return error.Surface;
     if (c.wl_surface_add_listener(state.surface.?, &surface_listener, &state) != 0) return error.Listener;
+    try prepareFractionalSurface(&state);
     state.xdg_surface = c.xdg_wm_base_get_xdg_surface(state.xdg.?, state.surface.?) orelse return error.Surface;
     if (c.xdg_surface_add_listener(state.xdg_surface.?, &xdg_surface_listener, &state) != 0) return error.Listener;
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
@@ -270,7 +303,9 @@ fn runFallible(boundary: *shared.Boundary) !void {
     c.xdg_toplevel_set_min_size(state.toplevel.?, shared.surface_min, shared.surface_min);
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
-    try boundary.publishConfigure(if (state.configured_width == 0) 640 else state.configured_width, if (state.configured_height == 0) 480 else state.configured_height);
+    if (state.configured_width == 0) state.configured_width = 640;
+    if (state.configured_height == 0) state.configured_height = 480;
+    try publishCurrentConfigure(&state);
     state.sync_surface = c.wp_linux_drm_syncobj_manager_v1_get_surface(state.syncobj.?, state.surface.?) orelse return error.ExplicitSync;
 
     const display_fd = c.wl_display_get_fd(display);
@@ -282,9 +317,9 @@ fn runFallible(boundary: *shared.Boundary) !void {
             state.boundary.markWindowRingRetired(fact);
             state.retiring = null;
         };
-        if (state.frame_callback == null) if (boundary.takeOffers()) |offers| {
-            try constructRing(&state, offers);
-            boundary.markWindowRingReady(offers[0].generation);
+        if (state.frame_callback == null) if (boundary.takeOffers()) |offer| {
+            try constructRing(&state, offer);
+            boundary.markWindowRingReady(offer.config.generation);
         };
         if (state.frame_callback == null) {
             if (boundary.takeCompletion()) |completion| {
@@ -310,14 +345,27 @@ fn runFallible(boundary: *shared.Boundary) !void {
     }
 }
 
-fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOffer) !void {
-    var offers = initial_offers;
+fn constructRing(state: *State, offered: shared.OfferedRing) !void {
+    const config = offered.config;
+    var offers = offered.slots;
     defer for (&offers) |*offer| {
         if (offer.dma_fd >= 0) closeDescriptor(offer.dma_fd);
         if (offer.acquire_timeline_fd >= 0) closeDescriptor(offer.acquire_timeline_fd);
         if (offer.release_timeline_fd >= 0) closeDescriptor(offer.release_timeline_fd);
     };
-    var next = Ring{ .generation = offers[0].generation, .width = offers[0].width, .height = offers[0].height };
+    if (config.generation != offers[0].generation or
+        config.physical_width != offers[0].width or
+        config.physical_height != offers[0].height)
+        return error.StaleOffer;
+    var next = Ring{
+        .generation = offers[0].generation,
+        .width = offers[0].width,
+        .height = offers[0].height,
+        .logical_width = config.logical_width,
+        .logical_height = config.logical_height,
+        .buffer_scale = config.buffer_scale,
+        .use_viewport = config.use_viewport,
+    };
     errdefer next.deinit();
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
@@ -349,19 +397,48 @@ fn present(state: *State, completion: shared.Completion) !void {
     if (completion.slot >= shared.slot_count or completion.revision <= state.presented) return error.InvalidCompletion;
     if (state.frame_callback != null) return error.PresentationPaced;
     if (completion.generation != state.ring.generation) return error.InvalidCompletion;
+    const viewport = if (state.ring.use_viewport or state.fractional_retire_pending)
+        state.viewport orelse return error.PresentationPaced
+    else
+        null;
+    const retiring_fractional = if (!state.ring.use_viewport and state.fractional_retire_pending)
+        state.fractional_scale orelse return error.PresentationPaced
+    else
+        null;
     const slot: usize = completion.slot;
     c.wp_linux_drm_syncobj_surface_v1_set_acquire_point(state.sync_surface.?, state.ring.acquire_timelines[slot].?, 0, @intCast(completion.acquire_point));
     c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, state.ring.release_timelines[slot].?, 0, @intCast(completion.release_point));
     state.frame_callback = c.wl_surface_frame(state.surface.?) orelse return error.Frame;
     if (c.wl_callback_add_listener(state.frame_callback.?, &frame_listener, state) != 0) return error.Listener;
+    const retire_fractional = !state.ring.use_viewport and state.fractional_retire_pending;
+    if (state.ring.use_viewport) {
+        c.wl_surface_set_buffer_scale(state.surface.?, 1);
+        c.wp_viewport_set_destination(viewport.?, @intCast(state.ring.logical_width), @intCast(state.ring.logical_height));
+    } else {
+        // Removing the viewport request immediately before this commit makes
+        // the integer ring and the surface attachment mode one transaction.
+        if (retire_fractional) {
+            c.wp_viewport_destroy(viewport.?);
+            state.viewport = null;
+        }
+        c.wl_surface_set_buffer_scale(state.surface.?, @intCast(state.ring.buffer_scale));
+    }
     c.wl_surface_attach(state.surface.?, state.ring.buffers[slot].?, 0, 0);
     c.wl_surface_damage_buffer(state.surface.?, 0, 0, @intCast(state.ring.width), @intCast(state.ring.height));
     c.wl_surface_commit(state.surface.?);
+    if (retire_fractional) {
+        c.wp_fractional_scale_v1_destroy(retiring_fractional.?);
+        state.fractional_scale = null;
+        state.fractional_retire_pending = false;
+    }
     state.presented_generation = completion.generation;
     state.presented = completion.revision;
+    state.input_ready = true;
     state.ring.presented_mask |= @as(u8, 1) << @intCast(completion.slot);
     state.ring.release_points[slot] = completion.release_point;
     try state.boundary.recordPresentation(completion.generation, completion.slot, completion.release_point);
+    if (retire_fractional and state.fractional_manager != null and state.viewporter != null)
+        try prepareFractionalSurface(state);
     std.debug.print("Window commit generation={d} revision={d} slot={d} acquire={d} release={d}\n", .{ completion.generation, completion.revision, completion.slot, completion.acquire_point, completion.release_point });
 }
 
@@ -397,6 +474,20 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
         state.syncobj = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_linux_drm_syncobj_manager_v1_interface, 1));
         state.syncobj_name = name;
     }
+    if (std.mem.eql(u8, value, "wp_fractional_scale_manager_v1")) {
+        if (state.fractional_manager != null) return;
+        state.fractional_manager = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_fractional_scale_manager_v1_interface, @min(version, 1)));
+        state.fractional_manager_name = name;
+        if (state.surface != null and state.viewporter != null and state.fractional_scale == null)
+            prepareFractionalSurface(state) catch state.boundary.requestStop(.window);
+    }
+    if (std.mem.eql(u8, value, "wp_viewporter")) {
+        if (state.viewporter != null) return;
+        state.viewporter = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_viewporter_interface, @min(version, 1)));
+        state.viewporter_name = name;
+        if (state.surface != null and state.fractional_manager != null and state.fractional_scale == null)
+            prepareFractionalSurface(state) catch state.boundary.requestStop(.window);
+    }
     if (std.mem.eql(u8, value, "wl_seat")) {
         state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 10)));
         state.seat_name = name;
@@ -415,6 +506,20 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
 }
 fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
+    if (name == state.fractional_manager_name) {
+        dropFractionalCapability(state);
+        if (state.fractional_manager) |value| c.wp_fractional_scale_manager_v1_destroy(value);
+        state.fractional_manager = null;
+        state.fractional_manager_name = 0;
+        return;
+    }
+    if (name == state.viewporter_name) {
+        dropFractionalCapability(state);
+        if (state.viewporter) |value| c.wp_viewporter_destroy(value);
+        state.viewporter = null;
+        state.viewporter_name = 0;
+        return;
+    }
     if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name or name == state.seat_name) {
         state.boundary.requestStop(.window);
         return;
@@ -462,7 +567,44 @@ fn highestEntered(state: *const State) ScaleError!?Rational {
 fn recomputeScale(state: *State) ScaleError!void {
     var next = state.scale;
     try next.recompute(try highestEntered(state));
+    if (state.configured_width != 0 and
+        (!next.accepted_valid or next.revision != state.scale.revision or
+            !next.accepted_effective.eql(state.scale.accepted_effective)))
+    {
+        try publishConfigureForScale(state, next);
+    }
     state.scale = next;
+}
+
+fn physicalExtent(logical: u32, scale_120: u32) ScaleError!u32 {
+    if (logical == 0 or scale_120 == 0) return error.InvalidScale;
+    const product = std.math.mul(u128, @as(u128, logical), @as(u128, scale_120)) catch return error.ArithmeticOverflow;
+    const rounded = std.math.add(u128, product, 60) catch return error.ArithmeticOverflow;
+    const value = rounded / 120;
+    if (value == 0 or value > shared.surface_dimension_limit) return error.ArithmeticOverflow;
+    return @intCast(value);
+}
+
+fn publishConfigureForScale(state: *State, facts: ScaleFacts) ScaleError!void {
+    const scale_120 = try facts.effectiveScale120();
+    const physical_width = try physicalExtent(state.configured_width, scale_120);
+    const physical_height = try physicalExtent(state.configured_height, scale_120);
+    const use_viewport = facts.fractional_capable and facts.preferred_fractional_120 != null;
+    const integer_scale = if (use_viewport) 1 else if (scale_120 % 120 == 0) scale_120 / 120 else return error.InvalidScale;
+    try state.boundary.publishConfigure(
+        state.configured_width,
+        state.configured_height,
+        physical_width,
+        physical_height,
+        facts.revision,
+        integer_scale,
+        use_viewport,
+    );
+}
+
+fn publishCurrentConfigure(state: *State) ScaleError!void {
+    if (state.configured_width == 0 or state.configured_height == 0) return;
+    try publishConfigureForScale(state, state.scale);
 }
 
 fn outputIndex(state: *const State, output: ?*c.wl_output) ScaleError!usize {
@@ -513,6 +655,7 @@ fn preferredInteger(state: *State, factor: i32) ScaleError!void {
     var next = state.scale;
     next.preferred_integer = value;
     try next.recompute(try highestEntered(state));
+    if (state.configured_width != 0 and next.revision != state.scale.revision) try publishConfigureForScale(state, next);
     state.scale = next;
 }
 
@@ -520,11 +663,70 @@ fn configureScale(state: *State) ScaleError!void {
     var next = state.scale;
     next.configure_ready = true;
     try next.recompute(try highestEntered(state));
+    if (state.configured_width != 0 and next.revision != state.scale.revision) try publishConfigureForScale(state, next);
     state.scale = next;
 }
 
 fn scaleFailure(state: *State) void {
     state.boundary.requestStop(.window);
+}
+
+const FractionalDrop = enum {
+    absent,
+    destroy_now,
+    retire_after_integer_commit,
+};
+
+fn classifyFractionalDrop(
+    has_pair: bool,
+    ring_uses_viewport: bool,
+    offered_ring_uses_viewport: bool,
+    retirement_pending: bool,
+) FractionalDrop {
+    if (!has_pair) return .absent;
+    if (ring_uses_viewport or offered_ring_uses_viewport or retirement_pending)
+        return .retire_after_integer_commit;
+    return .destroy_now;
+}
+
+fn dropFractionalCapability(state: *State) void {
+    state.scale.fractional_capable = false;
+    state.scale.preferred_fractional_120 = null;
+    recomputeScale(state) catch scaleFailure(state);
+    switch (classifyFractionalDrop(
+        state.fractional_scale != null,
+        state.ring.use_viewport,
+        state.boundary.pendingOffersUseViewport(),
+        state.fractional_retire_pending,
+    )) {
+        .absent => return,
+        .retire_after_integer_commit => {
+            state.fractional_retire_pending = true;
+            return;
+        },
+        .destroy_now => {},
+    }
+    if (state.viewport) |value| c.wp_viewport_destroy(value);
+    c.wp_fractional_scale_v1_destroy(state.fractional_scale.?);
+    state.viewport = null;
+    state.fractional_scale = null;
+}
+
+fn prepareFractionalSurface(state: *State) !void {
+    if (state.fractional_manager == null or state.viewporter == null or state.fractional_scale != null) return;
+    const fractional = c.wp_fractional_scale_manager_v1_get_fractional_scale(state.fractional_manager.?, state.surface.?) orelse return;
+    errdefer c.wp_fractional_scale_v1_destroy(fractional);
+    const viewport = c.wp_viewporter_get_viewport(state.viewporter.?, state.surface.?) orelse return;
+    errdefer c.wp_viewport_destroy(viewport);
+    if (c.wp_fractional_scale_v1_add_listener(fractional, &fractional_listener, state) != 0) return error.Listener;
+    const old_scale = state.scale;
+    state.scale.fractional_capable = true;
+    recomputeScale(state) catch |failure| {
+        state.scale = old_scale;
+        return failure;
+    };
+    state.fractional_scale = fractional;
+    state.viewport = viewport;
 }
 
 fn surfaceEnter(data: ?*anyopaque, _: ?*c.wl_surface, output: ?*c.wl_output) callconv(.c) void {
@@ -543,6 +745,20 @@ fn surfacePreferredScale(data: ?*anyopaque, _: ?*c.wl_surface, factor: i32) call
 }
 
 fn surfacePreferredTransform(_: ?*anyopaque, _: ?*c.wl_surface, _: u32) callconv(.c) void {}
+
+fn fractionalPreferredScale(data: ?*anyopaque, object: ?*c.wp_fractional_scale_v1, scale_120: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (object != state.fractional_scale or !state.scale.fractional_capable) return;
+    if (scale_120 == 0) return scaleFailure(state);
+    const old = state.scale;
+    state.scale.preferred_fractional_120 = scale_120;
+    recomputeScale(state) catch {
+        state.scale = old;
+        scaleFailure(state);
+    };
+}
+
+const fractional_listener = c.wp_fractional_scale_v1_listener{ .preferred_scale = fractionalPreferredScale };
 
 const surface_listener = c.wl_surface_listener{
     .enter = surfaceEnter,
@@ -594,7 +810,7 @@ fn topConfigure(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32,
     if (width > 0 and height > 0) {
         state.configured_width = @intCast(width);
         state.configured_height = @intCast(height);
-        state.boundary.publishConfigure(@intCast(width), @intCast(height)) catch state.boundary.requestStop(.window);
+        publishCurrentConfigure(state) catch state.boundary.requestStop(.window);
     }
 }
 fn topClose(data: ?*anyopaque, _: ?*c.xdg_toplevel) callconv(.c) void {
@@ -623,6 +839,14 @@ const frame_listener = c.wl_callback_listener{ .done = frameDone };
 
 fn fixedPoint(value: c.wl_fixed_t) f64 {
     return @as(f64, @floatFromInt(value)) / 256.0;
+}
+
+fn logicalPoint(state: *const State, x: c.wl_fixed_t, y: c.wl_fixed_t) ?wayland.input.Point {
+    if (!state.input_ready) return null;
+    return .{
+        .x = fixedPoint(x),
+        .y = fixedPoint(y),
+    };
 }
 
 fn inputFailure(state: *State) void {
@@ -746,7 +970,7 @@ fn pointerEnter(data: ?*anyopaque, pointer: ?*c.wl_pointer, serial: u32, surface
     const state: *State = @ptrCast(@alignCast(data.?));
     if (pointer != state.pointer or surface != state.surface) return state.boundary.requestStop(.window);
     state.pointer_motion = null;
-    const point = wayland.input.Point{ .x = fixedPoint(x), .y = fixedPoint(y) };
+    const point = logicalPoint(state, x, y) orelse return;
     state.pointer_motion = .{
         .time = 0,
         .point = point,
@@ -767,7 +991,7 @@ fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, time: u32, x: c.wl_
     if (pointer != state.pointer) return state.boundary.requestStop(.window);
     state.pointer_motion = .{
         .time = time,
-        .point = .{ .x = fixedPoint(x), .y = fixedPoint(y) },
+        .point = logicalPoint(state, x, y) orelse return,
         .semantic_modifiers = state.keyboard_semantic_modifiers,
     };
     state.boundary.publishMotion(state.pointer_motion.?) catch inputFailure(state);
@@ -906,8 +1130,98 @@ test "pointer frame consumes only retained axis occurrence position" {
     try std.testing.expect(takeAxisFramePoint(&retained) == null);
 }
 
+test "Wayland pointer coordinates remain in the active logical surface space" {
+    var state = State{ .boundary = undefined };
+    try std.testing.expect(logicalPoint(&state, 10 * 256, 10 * 256) == null);
+
+    state.input_ready = true;
+    try std.testing.expectEqual(wayland.input.Point{ .x = 100, .y = 80 }, logicalPoint(&state, 100 * 256, 80 * 256).?);
+
+    // Constructing a replacement ring does not change the compositor-logical
+    // coordinate space used by accepted topology before its first commit.
+    state.ring = .{
+        .generation = 2,
+        .width = 150,
+        .height = 120,
+        .logical_width = 100,
+        .logical_height = 80,
+    };
+    try std.testing.expectEqual(wayland.input.Point{ .x = 50, .y = 40 }, logicalPoint(&state, 50 * 256, 40 * 256).?);
+}
+
 test "Wayland surface listener handles preferred transform events" {
     try std.testing.expect(surface_listener.preferred_buffer_transform != null);
+}
+
+test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
+    try std.testing.expect(fractional_listener.preferred_scale != null);
+    try std.testing.expectEqual(@as(u32, 100), try physicalExtent(100, 120));
+    try std.testing.expectEqual(@as(u32, 125), try physicalExtent(100, 150));
+    try std.testing.expectEqual(@as(u32, 667), try physicalExtent(640, 125));
+    try std.testing.expectError(error.InvalidScale, physicalExtent(0, 120));
+    try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(shared.surface_dimension_limit, 240));
+
+    var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true, .configure_ready = true, .fractional_capable = true };
+    facts.preferred_integer = try Rational.init(2, 1);
+    facts.preferred_fractional_120 = 180;
+    try facts.recompute(null);
+    try std.testing.expectEqual(try Rational.init(3, 2), facts.effective);
+    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+    facts.preferred_fractional_120 = null;
+    try facts.recompute(null);
+    try std.testing.expectEqual(try Rational.init(2, 1), facts.effective);
+    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+
+    facts.preferred_integer = null;
+    facts.configure_ready = true;
+    try facts.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
+    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+
+    var state: State = .{ .boundary = undefined, .fractional_scale = @ptrFromInt(1), .scale = .{ .fractional_capable = true } };
+    state.scale.preferred_fractional_120 = 180;
+    const before = state.scale;
+    fractionalPreferredScale(&state, @ptrFromInt(2), 240);
+    try std.testing.expectEqual(before, state.scale);
+}
+
+test "fractional capability removal retains a pair required by active or offered rings" {
+    try std.testing.expectEqual(FractionalDrop.absent, classifyFractionalDrop(false, false, false, false));
+    try std.testing.expectEqual(FractionalDrop.destroy_now, classifyFractionalDrop(true, false, false, false));
+    try std.testing.expectEqual(FractionalDrop.retire_after_integer_commit, classifyFractionalDrop(true, true, false, false));
+    try std.testing.expectEqual(FractionalDrop.retire_after_integer_commit, classifyFractionalDrop(true, false, true, false));
+    try std.testing.expectEqual(FractionalDrop.retire_after_integer_commit, classifyFractionalDrop(true, false, false, true));
+}
+
+test "Window publishes integer and fractional logical/physical ring facts" {
+    var boundary = try shared.Boundary.init(std.testing.io);
+    defer boundary.deinit();
+    var state = State{
+        .boundary = &boundary,
+        .configured_width = 100,
+        .configured_height = 80,
+        .scale = .{
+            .effective = try Rational.init(2, 1),
+            .accepted_effective = try Rational.init(2, 1),
+            .accepted_valid = true,
+            .revision = 1,
+        },
+    };
+    try publishCurrentConfigure(&state);
+    const integer = boundary.takeConfigure().?;
+    try std.testing.expectEqual(@as(u32, 200), integer.physical_width);
+    try std.testing.expectEqual(@as(u32, 2), integer.buffer_scale);
+    try std.testing.expect(!integer.use_viewport);
+
+    state.scale.fractional_capable = true;
+    state.scale.preferred_fractional_120 = 180;
+    state.scale.effective = try Rational.init(3, 2);
+    state.scale.revision = 2;
+    try publishCurrentConfigure(&state);
+    const fractional = boundary.takeConfigure().?;
+    try std.testing.expectEqual(@as(u32, 150), fractional.physical_width);
+    try std.testing.expectEqual(@as(u32, 1), fractional.buffer_scale);
+    try std.testing.expect(fractional.use_viewport);
 }
 
 test "Wayland scale precedence and accepted revisions are transactional" {
@@ -942,7 +1256,7 @@ test "Wayland scale precedence and accepted revisions are transactional" {
 }
 
 test "Wayland configure without preferred scale continues awaiting until later callback" {
-    var state: State = undefined;
+    var state: State = .{ .boundary = undefined };
     state.output_count = 0;
     state.scale = .{ .bootstrap_ready = true, .expect_preferred = true };
 
@@ -957,7 +1271,7 @@ test "Wayland configure without preferred scale continues awaiting until later c
 }
 
 test "Wayland output membership selects highest deduced scale and retains last snapshot" {
-    var state: State = undefined;
+    var state: State = .{ .boundary = undefined };
     state.output_count = 2;
     const first: *c.wl_output = @ptrFromInt(1);
     const second: *c.wl_output = @ptrFromInt(2);
@@ -995,7 +1309,7 @@ test "Wayland provisional and invalid scale changes preserve bytes" {
     facts.accepted_valid = true;
     facts.accepted_effective = facts.effective;
     const exhausted = facts;
-    var state: State = undefined;
+    var state: State = .{ .boundary = undefined };
     state.output_count = 0;
     state.scale = exhausted;
     try std.testing.expectError(error.RevisionExhausted, preferredInteger(&state, 2));
@@ -1003,7 +1317,7 @@ test "Wayland provisional and invalid scale changes preserve bytes" {
 }
 
 test "Wayland invalid callback facts preserve output membership and scale bytes" {
-    var state: State = undefined;
+    var state: State = .{ .boundary = undefined };
     const output: *c.wl_output = @ptrFromInt(3);
     state.output_count = 1;
     state.outputs[0] = .{ .object = output, .scale = 2, .entered = true };
@@ -1020,7 +1334,7 @@ test "Wayland invalid callback facts preserve output membership and scale bytes"
 }
 
 test "Wayland output removal is harmless, recomputes membership, and reuses slots" {
-    var state: State = undefined;
+    var state: State = .{ .boundary = undefined };
     state.output_count = 3;
     state.outputs[0] = .{ .global_name = 50, .scale = 2, .entered = true };
     state.outputs[1] = .{ .global_name = 60, .scale = 3, .entered = true };

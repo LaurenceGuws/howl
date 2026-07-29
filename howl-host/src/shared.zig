@@ -31,14 +31,25 @@ pub const Feedback = struct {
     modifier: u64,
 };
 
-/// Identifies one nonzero compositor-configured pixel surface generation.
+/// Identifies one nonzero compositor-configured surface generation with
+/// independent logical coordinates and physical attachment dimensions.
 pub const SurfaceConfig = struct {
     /// Monotonic identity; newer facts supersede older facts.
     generation: u64,
-    /// Configured pixel width.
-    width: u32,
-    /// Configured pixel height.
-    height: u32,
+    /// Window-logical width used by Canvas topology and Wayland destination.
+    logical_width: u32,
+    /// Window-logical height used by Canvas topology and Wayland destination.
+    logical_height: u32,
+    /// Checked physical width allocated by Render/Vulkan.
+    physical_width: u32,
+    /// Checked physical height allocated by Render/Vulkan.
+    physical_height: u32,
+    /// Accepted Window scale revision; zero is the provisional bootstrap fact.
+    scale_revision: u64,
+    /// Buffer scale fact applied by Window for this generation.
+    buffer_scale: u32,
+    /// Whether Window applies a viewport destination for this generation.
+    use_viewport: bool,
 };
 
 /// Transfers one slot's duplicated descriptors and immutable plane layout from
@@ -61,6 +72,17 @@ pub const SlotOffer = struct {
     plane_count: u8,
     /// Fixed storage containing the initialized plane prefix.
     planes: [plane_limit]Plane,
+};
+
+/// Transfers one exact configure fact with all three image-slot offers.
+///
+/// Boundary retains this pair atomically until Window takes it; a newer
+/// configure or offer cannot rewrite the config belonging to borrowed slots.
+pub const OfferedRing = struct {
+    /// Exact logical, physical, scale, and attachment facts for `slots`.
+    config: SurfaceConfig,
+    /// Complete fixed ring whose descriptors transfer to Window.
+    slots: [slot_count]SlotOffer,
 };
 
 /// Copies one completed Render revision for compositor presentation.
@@ -106,8 +128,14 @@ pub const Boundary = struct {
     feedback: ?Feedback = null,
     configure: ?SurfaceConfig = null,
     latest_generation: u64 = 0,
-    latest_width: u32 = 0,
-    latest_height: u32 = 0,
+    latest_logical_width: u32 = 0,
+    latest_logical_height: u32 = 0,
+    latest_physical_width: u32 = 0,
+    latest_physical_height: u32 = 0,
+    latest_scale_revision: u64 = 0,
+    latest_buffer_scale: u32 = 1,
+    latest_use_viewport: bool = false,
+    offered_config: ?SurfaceConfig = null,
     offers: [slot_count]?SlotOffer = .{ null, null, null },
     offer_count: u8 = 0,
     window_ring_ready: bool = false,
@@ -299,17 +327,24 @@ pub const Boundary = struct {
         return self.feedback;
     }
 
-    /// Publishes the newest nonzero bounded configure fact. Repeated identical
-    /// dimensions retain their generation; newer dimensions supersede pending
-    /// facts without allowing an older generation to cross the boundary.
-    pub fn publishConfigure(self: *Boundary, width: u32, height: u32) error{ Stopping, InvalidConfigure, GenerationOverflow }!void {
-        if (width == 0 or height == 0 or width > surface_dimension_limit or height > surface_dimension_limit) return error.InvalidConfigure;
+    /// Publishes the newest bounded Window logical/physical configure fact.
+    /// Repeated identical facts retain their generation; newer dimensions,
+    /// attachment mode, or accepted scale revision supersede pending facts.
+    pub fn publishConfigure(self: *Boundary, logical_width: u32, logical_height: u32, physical_width: u32, physical_height: u32, scale_revision: u64, buffer_scale: u32, use_viewport: bool) error{ Stopping, InvalidConfigure, GenerationOverflow }!void {
+        if (logical_width == 0 or logical_height == 0 or physical_width == 0 or physical_height == 0 or
+            logical_width > surface_dimension_limit or logical_height > surface_dimension_limit or
+            physical_width > surface_dimension_limit or physical_height > surface_dimension_limit or
+            buffer_scale == 0 or (use_viewport and buffer_scale != 1)) return error.InvalidConfigure;
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
             return error.Stopping;
         }
-        if (self.latest_width == width and self.latest_height == height) {
+        if (self.latest_logical_width == logical_width and self.latest_logical_height == logical_height and
+            self.latest_physical_width == physical_width and self.latest_physical_height == physical_height and
+            self.latest_scale_revision == scale_revision and
+            self.latest_buffer_scale == buffer_scale and self.latest_use_viewport == use_viewport)
+        {
             self.mutex.unlock(self.io);
             return;
         }
@@ -318,9 +353,23 @@ pub const Boundary = struct {
             return error.GenerationOverflow;
         }
         self.latest_generation += 1;
-        self.latest_width = width;
-        self.latest_height = height;
-        self.configure = .{ .generation = self.latest_generation, .width = width, .height = height };
+        self.latest_logical_width = logical_width;
+        self.latest_logical_height = logical_height;
+        self.latest_physical_width = physical_width;
+        self.latest_physical_height = physical_height;
+        self.latest_scale_revision = scale_revision;
+        self.latest_buffer_scale = buffer_scale;
+        self.latest_use_viewport = use_viewport;
+        self.configure = .{
+            .generation = self.latest_generation,
+            .logical_width = logical_width,
+            .logical_height = logical_height,
+            .physical_width = physical_width,
+            .physical_height = physical_height,
+            .scale_revision = scale_revision,
+            .buffer_scale = buffer_scale,
+            .use_viewport = use_viewport,
+        };
         self.mutex.unlock(self.io);
         signal(self.render_fd);
     }
@@ -371,28 +420,51 @@ pub const Boundary = struct {
             self.mutex.unlock(self.io);
             return error.OffersPending;
         }
-        if (generation != self.latest_generation or width == 0 or height == 0) {
+        if (generation != self.latest_generation or width != self.latest_physical_width or height != self.latest_physical_height) {
             self.mutex.unlock(self.io);
             return error.InvalidOffer;
         }
+        self.offered_config = .{
+            .generation = self.latest_generation,
+            .logical_width = self.latest_logical_width,
+            .logical_height = self.latest_logical_height,
+            .physical_width = self.latest_physical_width,
+            .physical_height = self.latest_physical_height,
+            .scale_revision = self.latest_scale_revision,
+            .buffer_scale = self.latest_buffer_scale,
+            .use_viewport = self.latest_use_viewport,
+        };
         for (offers, 0..) |offer, index| self.offers[index] = offer;
         self.offer_count = slot_count;
         self.mutex.unlock(self.io);
         signal(self.window_fd);
     }
 
-    /// Transfers one complete retained ring from Boundary to Window.
-    pub fn takeOffers(self: *Boundary) ?[slot_count]SlotOffer {
+    /// Transfers one complete retained ring and its exact configure fact from
+    /// Boundary to Window under one lock acquisition.
+    pub fn takeOffers(self: *Boundary) ?OfferedRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.offer_count != slot_count) return null;
-        var result: [slot_count]SlotOffer = undefined;
+        const config = self.offered_config orelse
+            @panic("complete ring offers have no configure owner");
+        var slots: [slot_count]SlotOffer = undefined;
         for (&self.offers, 0..) |*offer, index| {
-            result[index] = offer.*.?;
+            slots[index] = offer.*.?;
             offer.* = null;
         }
         self.offer_count = 0;
-        return result;
+        self.offered_config = null;
+        return .{ .config = config, .slots = slots };
+    }
+
+    /// Reports whether the exact transferred-but-not-yet-taken ring still
+    /// requires the Window-owned viewport/fractional-scale pair.
+    pub fn pendingOffersUseViewport(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.offer_count != slot_count) return false;
+        return if (self.offered_config) |config| config.use_viewport else false;
     }
 
     /// Publishes completed Window wrapper construction and wakes Render.

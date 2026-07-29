@@ -1,5 +1,6 @@
 howl-host/src/window.zig|anyopaque|fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn fractionalPreferredScale(data: ?*anyopaque, object: ?*c.wp_fractional_scale_v1, scale_120: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface: [*c]const u8, version: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {

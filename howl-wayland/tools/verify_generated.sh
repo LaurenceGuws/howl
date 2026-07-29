@@ -25,4 +25,6 @@ check() {
 check xdg-shell xdg-shell
 check linux-dmabuf linux-dmabuf-v1
 check linux-drm-syncobj linux-drm-syncobj-v1
+check fractional-scale fractional-scale-v1
+check viewporter viewporter
 echo "Wayland generated artifacts match $scanner"

@@ -8,6 +8,8 @@ pub fn build(b: *std.Build) void {
     translate.addIncludePath(b.path("protocol/xdg-shell"));
     translate.addIncludePath(b.path("protocol/linux-dmabuf"));
     translate.addIncludePath(b.path("protocol/linux-drm-syncobj"));
+    translate.addIncludePath(b.path("protocol/fractional-scale"));
+    translate.addIncludePath(b.path("protocol/viewporter"));
     const xkb_translate = b.addTranslateC(.{ .root_source_file = b.path("src/xkb-native.h"), .target = target, .optimize = optimize });
     const module = b.addModule("howl_wayland", .{
         .root_source_file = b.path("src/root.zig"),
@@ -22,12 +24,16 @@ pub fn build(b: *std.Build) void {
             "xdg-shell/xdg-shell-protocol.c",
             "linux-dmabuf/linux-dmabuf-v1-protocol.c",
             "linux-drm-syncobj/linux-drm-syncobj-v1-protocol.c",
+            "fractional-scale/fractional-scale-v1-protocol.c",
+            "viewporter/viewporter-protocol.c",
         },
         .flags = &.{},
     });
     module.addIncludePath(b.path("protocol/xdg-shell"));
     module.addIncludePath(b.path("protocol/linux-dmabuf"));
     module.addIncludePath(b.path("protocol/linux-drm-syncobj"));
+    module.addIncludePath(b.path("protocol/fractional-scale"));
+    module.addIncludePath(b.path("protocol/viewporter"));
     module.linkSystemLibrary("wayland-client", .{});
     module.linkSystemLibrary("xkbcommon", .{});
     module.addImport("xkb_c", xkb_translate.createModule());

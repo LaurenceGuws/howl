@@ -75,6 +75,6 @@ accepted:
   howl-wayland/src/xkb-native.h: private xkbcommon Translate-C ABI input
   howl-wayland/src/proofs.zig: package closure, input, and xkb lifetime proofs
   howl-wayland/tools/verify_generated.sh: byte-for-byte wayland-scanner reproducibility proof
-  howl-wayland/protocol: reproducibly generated xdg-shell, DMA-BUF, and DRM-syncobj client ABI
+  howl-wayland/protocol: reproducibly generated xdg-shell, DMA-BUF, DRM-syncobj, fractional-scale, and viewporter client ABI
   howl-wayland/LICENSES: protocol and system-library provenance
   howl-host/LICENSES: exact Vulkan and runtime-library provenance and license facts

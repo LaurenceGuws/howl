@@ -143,6 +143,8 @@ const CanvasWork = struct {
 const Slot = struct {
     width: u32 = 0,
     height: u32 = 0,
+    coordinate_width: u32 = 0,
+    coordinate_height: u32 = 0,
     image: vk.VkImage = null,
     memory: vk.VkDeviceMemory = null,
     release_handle: u32 = 0,
@@ -193,8 +195,8 @@ fn runFallible(
 ) !void {
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
-    try checkGpuBudget(initial_surface.width, initial_surface.height);
-    var chrome = try chrome_state.Topology.init(.{ .width = @intCast(initial_surface.width), .height = @intCast(initial_surface.height) }, chrome_state.default_tab_bar_height);
+    try checkGpuBudget(initial_surface.physical_width, initial_surface.physical_height);
+    var chrome = try chrome_state.Topology.init(renderExtent(initial_surface), chrome_state.default_tab_bar_height);
     var composer = try render_api.canvas.Composer.init(allocator, .{
         .sources = chrome_state.max_live_panes + 1,
         .retained_resources = frame_resource_limit,
@@ -470,7 +472,7 @@ fn runFallible(
                 pending.candidate
             else
                 chrome;
-            candidate_chrome.resizeSurface(.{ .width = @intCast(surface.width), .height = @intCast(surface.height) }) catch |failure| switch (failure) {
+            candidate_chrome.resizeSurface(renderExtent(surface)) catch |failure| switch (failure) {
                 error.InvalidGeometry => continue,
                 else => return failure,
             };
@@ -513,7 +515,7 @@ fn runFallible(
             if (pending_topology) |*admitted| {
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
-                    try checkGpuBudget(surface.width, surface.height);
+                    try checkGpuBudget(surface.physical_width, surface.physical_height);
                     var local_retry_used = false;
                     const admission_result = retry: while (true) {
                         const result = try buildCanvasPlan(
@@ -727,6 +729,38 @@ fn checkGpuBudget(width: u32, height: u32) !void {
     // exact VkMemoryRequirements.size alongside the shared atlas/staging.
     const bytes = std.math.mul(u64, pixels, 4 * shared.slot_count * 2) catch return error.GpuMemoryLimit;
     if (bytes > gpu_memory_limit) return error.GpuMemoryLimit;
+}
+
+fn renderExtent(surface: shared.SurfaceConfig) render_api.canvas.Size {
+    return .{
+        .width = @intCast(surface.logical_width),
+        .height = @intCast(surface.logical_height),
+    };
+}
+
+test "integer and fractional surfaces retain the logical Canvas extent" {
+    const integer = shared.SurfaceConfig{
+        .generation = 1,
+        .logical_width = 100,
+        .logical_height = 80,
+        .physical_width = 200,
+        .physical_height = 160,
+        .scale_revision = 1,
+        .buffer_scale = 2,
+        .use_viewport = false,
+    };
+    const fractional = shared.SurfaceConfig{
+        .generation = 2,
+        .logical_width = 100,
+        .logical_height = 80,
+        .physical_width = 150,
+        .physical_height = 120,
+        .scale_revision = 2,
+        .buffer_scale = 1,
+        .use_viewport = true,
+    };
+    try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(integer));
+    try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(fractional));
 }
 
 fn buildCanvasPlan(
@@ -2082,7 +2116,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
 }
 
 test "PendingTopology has one fixed allocation-free value" {
-    try std.testing.expectEqual(@as(usize, 20_504), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 20_528), @sizeOf(PendingTopology));
     try std.testing.expectEqual(
         @as(usize, 544),
         @sizeOf(PreparedBootstrapPublication),
@@ -3044,8 +3078,10 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
 }
 
 fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: shared.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
-    slot.width = surface.width;
-    slot.height = surface.height;
+    slot.width = surface.physical_width;
+    slot.height = surface.physical_height;
+    slot.coordinate_width = surface.logical_width;
+    slot.coordinate_height = surface.logical_height;
     var selected_modifier = modifier;
     var modifier_list = std.mem.zeroes(vk.VkImageDrmFormatModifierListCreateInfoEXT);
     modifier_list.sType = vk.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
@@ -3060,7 +3096,7 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
     info.pNext = @ptrCast(&external);
     info.imageType = vk.VK_IMAGE_TYPE_2D;
     info.format = vk.VK_FORMAT_R8G8B8A8_UNORM;
-    info.extent = .{ .width = surface.width, .height = surface.height, .depth = 1 };
+    info.extent = .{ .width = surface.physical_width, .height = surface.physical_height, .depth = 1 };
     info.mipLevels = 1;
     info.arrayLayers = 1;
     info.samples = vk.VK_SAMPLE_COUNT_1_BIT;
@@ -3095,7 +3131,7 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
     allocation.memoryTypeIndex = memory_type orelse return error.Memory;
     if (vk.vkAllocateMemory(device, &allocation, null, &slot.memory) != vk.VK_SUCCESS) return error.Memory;
     if (vk.vkBindImageMemory(device, slot.image, slot.memory, 0) != vk.VK_SUCCESS) return error.Memory;
-    slot.attachment = try graphics.createAttachment(device, slot.image, surface.width, surface.height);
+    slot.attachment = try graphics.createAttachment(device, slot.image, surface.physical_width, surface.physical_height);
     slot.owned_bytes = owned_bytes;
     gpu_bytes.* += owned_bytes;
     var actual = std.mem.zeroes(vk.VkImageDrmFormatModifierPropertiesEXT);
@@ -3117,12 +3153,18 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
     if (dispatch.get_memory_fd(device, &fd_info, &offered_fds.dma) != vk.VK_SUCCESS or offered_fds.dma < 0) return error.DmaBuf;
     if (c.drmSyncobjCreate(drm_fd, 0, &slot.release_handle) != 0) return error.Syncobj;
     if (c.drmSyncobjHandleToFD(drm_fd, slot.release_handle, &offered_fds.timeline) != 0) return error.Syncobj;
-    offer.* = .{ .generation = surface.generation, .width = surface.width, .height = surface.height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
+    offer.* = .{ .generation = surface.generation, .width = surface.physical_width, .height = surface.physical_height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
 }
 
 fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: *vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
     errdefer residency_commit.discard();
-    try graphics.stage(surface_plan, alpha_pixels, rgba_pixels, slot.width, slot.height);
+    try graphics.stage(
+        surface_plan,
+        alpha_pixels,
+        rgba_pixels,
+        slot.coordinate_width,
+        slot.coordinate_height,
+    );
     if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
     begin.sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -3141,7 +3183,16 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
         .subresourceRange = range,
     };
     vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, null, 0, null, 1, &barrier);
-    const recording = try graphics.record(command, slot.attachment, slot.width, slot.height, surface_plan, color);
+    const recording = try graphics.record(
+        command,
+        slot.attachment,
+        slot.width,
+        slot.height,
+        slot.coordinate_width,
+        slot.coordinate_height,
+        surface_plan,
+        color,
+    );
     barrier.srcAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     barrier.dstAccessMask = 0;
     barrier.oldLayout = vk.VK_IMAGE_LAYOUT_GENERAL;
