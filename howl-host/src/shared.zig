@@ -31,6 +31,13 @@ pub const Feedback = struct {
     modifier: u64,
 };
 
+/// Copies one normalized positive rational fact without interpreting its
+/// domain. Equality is exact after the issuing owner canonicalizes it.
+pub const ExactRational = struct {
+    numerator: u32,
+    denominator: u32,
+};
+
 /// Identifies one nonzero compositor-configured surface generation with
 /// independent logical coordinates and physical attachment dimensions.
 pub const SurfaceConfig = struct {
@@ -46,6 +53,10 @@ pub const SurfaceConfig = struct {
     physical_height: u32,
     /// Accepted Window scale revision; zero is the provisional bootstrap fact.
     scale_revision: u64,
+    /// Factual accepted logical DPI, absent while Window is provisional or
+    /// awaiting a new compositor fact.
+    dpi_x: ?ExactRational = null,
+    dpi_y: ?ExactRational = null,
     /// Buffer scale fact applied by Window for this generation.
     buffer_scale: u32,
     /// Whether Window applies a viewport destination for this generation.
@@ -133,6 +144,8 @@ pub const Boundary = struct {
     latest_physical_width: u32 = 0,
     latest_physical_height: u32 = 0,
     latest_scale_revision: u64 = 0,
+    latest_dpi_x: ?ExactRational = null,
+    latest_dpi_y: ?ExactRational = null,
     latest_buffer_scale: u32 = 1,
     latest_use_viewport: bool = false,
     offered_config: ?SurfaceConfig = null,
@@ -330,11 +343,26 @@ pub const Boundary = struct {
     /// Publishes the newest bounded Window logical/physical configure fact.
     /// Repeated identical facts retain their generation; newer dimensions,
     /// attachment mode, or accepted scale revision supersede pending facts.
-    pub fn publishConfigure(self: *Boundary, logical_width: u32, logical_height: u32, physical_width: u32, physical_height: u32, scale_revision: u64, buffer_scale: u32, use_viewport: bool) error{ Stopping, InvalidConfigure, GenerationOverflow }!void {
+    pub fn publishConfigure(
+        self: *Boundary,
+        logical_width: u32,
+        logical_height: u32,
+        physical_width: u32,
+        physical_height: u32,
+        scale_revision: u64,
+        dpi_x: ?ExactRational,
+        dpi_y: ?ExactRational,
+        buffer_scale: u32,
+        use_viewport: bool,
+    ) error{ Stopping, InvalidConfigure, GenerationOverflow }!void {
         if (logical_width == 0 or logical_height == 0 or physical_width == 0 or physical_height == 0 or
             logical_width > surface_dimension_limit or logical_height > surface_dimension_limit or
             physical_width > surface_dimension_limit or physical_height > surface_dimension_limit or
-            buffer_scale == 0 or (use_viewport and buffer_scale != 1)) return error.InvalidConfigure;
+            buffer_scale == 0 or (use_viewport and buffer_scale != 1) or
+            ((dpi_x == null) != (dpi_y == null)) or
+            (dpi_x != null and (scale_revision == 0 or
+                !validRational(dpi_x.?) or !validRational(dpi_y.?))))
+            return error.InvalidConfigure;
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -343,6 +371,8 @@ pub const Boundary = struct {
         if (self.latest_logical_width == logical_width and self.latest_logical_height == logical_height and
             self.latest_physical_width == physical_width and self.latest_physical_height == physical_height and
             self.latest_scale_revision == scale_revision and
+            std.meta.eql(self.latest_dpi_x, dpi_x) and
+            std.meta.eql(self.latest_dpi_y, dpi_y) and
             self.latest_buffer_scale == buffer_scale and self.latest_use_viewport == use_viewport)
         {
             self.mutex.unlock(self.io);
@@ -358,6 +388,8 @@ pub const Boundary = struct {
         self.latest_physical_width = physical_width;
         self.latest_physical_height = physical_height;
         self.latest_scale_revision = scale_revision;
+        self.latest_dpi_x = dpi_x;
+        self.latest_dpi_y = dpi_y;
         self.latest_buffer_scale = buffer_scale;
         self.latest_use_viewport = use_viewport;
         self.configure = .{
@@ -367,6 +399,8 @@ pub const Boundary = struct {
             .physical_width = physical_width,
             .physical_height = physical_height,
             .scale_revision = scale_revision,
+            .dpi_x = dpi_x,
+            .dpi_y = dpi_y,
             .buffer_scale = buffer_scale,
             .use_viewport = use_viewport,
         };
@@ -431,6 +465,8 @@ pub const Boundary = struct {
             .physical_width = self.latest_physical_width,
             .physical_height = self.latest_physical_height,
             .scale_revision = self.latest_scale_revision,
+            .dpi_x = self.latest_dpi_x,
+            .dpi_y = self.latest_dpi_y,
             .buffer_scale = self.latest_buffer_scale,
             .use_viewport = self.latest_use_viewport,
         };
@@ -738,6 +774,18 @@ pub const Boundary = struct {
 
 fn closeDescriptor(descriptor: i32) void {
     if (c.close(descriptor) != 0) @panic("shared descriptor cleanup failed");
+}
+
+fn validRational(value: ExactRational) bool {
+    if (value.numerator == 0 or value.denominator == 0) return false;
+    var a = value.numerator;
+    var b = value.denominator;
+    while (b != 0) {
+        const remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    return a == 1;
 }
 
 fn signal(descriptor: i32) void {

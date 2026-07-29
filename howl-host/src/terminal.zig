@@ -798,13 +798,21 @@ fn runFallible(
                 }
             }
             if (runtime.pending_font) |request| {
-                const completed = if (boundary.lifecycleFontStable())
-                    false
-                else
-                    runtime.resizeFonts(boundary, request.pixel_height) catch |failure| switch (failure) {
+                const completed = if (boundary.lifecycleFontStable()) false else blk: {
+                    if (runtime.acceptScaleOnly(request)) break :blk true;
+                    const resized = runtime.resizeFonts(
+                        boundary,
+                        request.pixel_height,
+                    ) catch |failure| switch (failure) {
                         error.Busy => false,
                         else => return failure,
                     };
+                    if (resized) {
+                        runtime.accepted_font_size = request.pixel_height;
+                        runtime.accepted_scale = request.scale;
+                    }
+                    break :blk resized;
+                };
                 if (completed) runtime.pending_font = null;
             }
             var input_count: u8 = 0;
@@ -837,6 +845,8 @@ const Runtime = struct {
     /// A dequeued close retained until its slot leaves writing/draining.
     pending_close: ?render.chrome.PaneId = null,
     pending_font: ?handoff.FontRequest = null,
+    accepted_scale: ?handoff.ScaleSnapshot = null,
+    accepted_font_size: u16 = 16,
 
     /// Allocates the fixed 64-owner table without constructing children.
     fn init(
@@ -1312,6 +1322,12 @@ const Runtime = struct {
     fn freeIndex(self: *const Runtime) ?usize {
         for (self.owners, 0..) |owner, index| if (owner == null) return index;
         return null;
+    }
+
+    fn acceptScaleOnly(self: *Runtime, request: handoff.FontRequest) bool {
+        if (request.pixel_height != self.accepted_font_size) return false;
+        self.accepted_scale = request.scale;
+        return true;
     }
 
     /// Replaces one global terminal map after every owner has a prepared VT
@@ -2692,9 +2708,9 @@ test "global font request bounds coalesce and runtime replacement preserves owne
         .height = owner.pane_pixels.height + 1,
     };
     try owner.resize(newest_pixels);
-    try std.testing.expectError(error.InvalidFontSize, boundary.requestFontSize(7));
-    try boundary.requestFontSize(24);
-    try boundary.requestFontSize(32);
+    try std.testing.expectError(error.InvalidFontSize, boundary.requestFontSize(7, null));
+    try boundary.requestFontSize(24, null);
+    try boundary.requestFontSize(32, null);
     const request = boundary.takeFontRequest().?;
     try std.testing.expectEqual(@as(u16, 32), request.pixel_height);
     try std.testing.expectEqual(@as(u64, 2), request.revision);
@@ -2724,6 +2740,38 @@ test "global font request bounds coalesce and runtime replacement preserves owne
     try std.testing.expectEqual(even_grid.rows, owner.machine.semanticView(0).rows);
     try std.testing.expectEqual(even_grid.cols, owner.machine.semanticView(0).cols);
     try std.testing.expectEqual(newest_pixels, owner.pane_pixels);
+}
+
+test "factual DPI-only request reaches Runtime without font reconstruction" {
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const before = runtime.fonts.cellMetrics(.{
+        .slot = 0,
+        .style = .normal,
+    }).?;
+    const request = handoff.FontRequest{
+        .revision = 1,
+        .pixel_height = runtime.accepted_font_size,
+        .scale = .{
+            .revision = 9,
+            .dpi_x = .{ .numerator = 768, .denominator = 5 },
+            .dpi_y = .{ .numerator = 768, .denominator = 5 },
+        },
+    };
+    try std.testing.expect(runtime.acceptScaleOnly(request));
+    try std.testing.expectEqual(request.scale.?, runtime.accepted_scale.?);
+    try std.testing.expectEqual(
+        before,
+        runtime.fonts.cellMetrics(.{
+            .slot = 0,
+            .style = .normal,
+        }).?,
+    );
+    var awaiting = request;
+    awaiting.revision += 1;
+    awaiting.scale = null;
+    try std.testing.expect(runtime.acceptScaleOnly(awaiting));
+    try std.testing.expect(runtime.accepted_scale == null);
 }
 
 test "pane pixels remain authoritative across equal grids and rejected resize" {

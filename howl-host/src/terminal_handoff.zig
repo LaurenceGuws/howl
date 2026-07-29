@@ -40,6 +40,28 @@ pub const FontRequest = struct {
     revision: u64,
     /// Selects the bounded terminal content pixel height.
     pixel_height: u16,
+    /// Copies the newest factual Window DPI accepted by Renderer. Absence
+    /// preserves legacy pixel-size behavior without fabricating DPI.
+    scale: ?ScaleSnapshot,
+};
+
+/// Copies one exact accepted Window scale/DPI fact through the existing
+/// Renderer-to-Runtime request slot.
+pub const ScaleSnapshot = struct {
+    /// Identifies the exact accepted Window scale fact.
+    revision: u64,
+    /// Copies normalized factual horizontal logical DPI.
+    dpi_x: ExactRational,
+    /// Copies normalized factual vertical logical DPI.
+    dpi_y: ExactRational,
+};
+
+/// Copies one normalized positive rational without changing its domain.
+pub const ExactRational = struct {
+    /// Stores the nonzero reduced numerator.
+    numerator: u32,
+    /// Stores the nonzero reduced denominator.
+    denominator: u32,
 };
 
 /// Identifies one never-reused lifecycle admission candidate.
@@ -1891,15 +1913,28 @@ pub const Boundary = struct {
 
     /// Replaces the latest bounded terminal-font request without consuming
     /// lifecycle-ring capacity; the runtime observes it on its next wake.
-    pub fn requestFontSize(self: *Boundary, pixel_height: u16) error{ InvalidFontSize, Stopping, RevisionOverflow }!void {
+    pub fn requestFontSize(
+        self: *Boundary,
+        pixel_height: u16,
+        scale: ?ScaleSnapshot,
+    ) error{ InvalidFontSize, InvalidScale, Stopping, RevisionOverflow }!void {
         if (pixel_height < 8 or pixel_height > 72) return error.InvalidFontSize;
+        if (scale) |value| {
+            if (value.revision == 0 or
+                !validRational(value.dpi_x) or !validRational(value.dpi_y))
+                return error.InvalidScale;
+        }
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping) return error.Stopping;
         const revision = std.math.add(u64, self.font_request_high_water, 1) catch
             return error.RevisionOverflow;
         self.font_request_high_water = revision;
-        self.font_request = .{ .revision = revision, .pixel_height = pixel_height };
+        self.font_request = .{
+            .revision = revision,
+            .pixel_height = pixel_height,
+            .scale = scale,
+        };
         signal(self.terminal_fd);
     }
 
@@ -2004,6 +2039,18 @@ pub const Boundary = struct {
 
 fn closeDescriptor(descriptor: i32) void {
     if (c.close(descriptor) != 0) @panic("terminal boundary descriptor cleanup failed");
+}
+
+fn validRational(value: ExactRational) bool {
+    if (value.numerator == 0 or value.denominator == 0) return false;
+    var a = value.numerator;
+    var b = value.denominator;
+    while (b != 0) {
+        const remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    return a == 1;
 }
 
 fn signal(descriptor: i32) void {
@@ -2279,6 +2326,47 @@ test "lifecycle admission cancellation rejects stale validation and never reuses
     try std.testing.expect(boundary.takeLifecycle() == null);
 }
 
+test "font request copies normalized factual DPI and coalesces newest state" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    const first = ScaleSnapshot{
+        .revision = 4,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const newest = ScaleSnapshot{
+        .revision = 5,
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 768, .denominator = 5 },
+    };
+    try boundary.requestFontSize(16, first);
+    try boundary.requestFontSize(16, newest);
+    const request = boundary.takeFontRequest().?;
+    try std.testing.expectEqual(@as(u64, 2), request.revision);
+    try std.testing.expectEqual(newest, request.scale.?);
+    try std.testing.expect(boundary.takeFontRequest() == null);
+    try std.testing.expectError(
+        error.InvalidScale,
+        boundary.requestFontSize(16, .{
+            .revision = 0,
+            .dpi_x = first.dpi_x,
+            .dpi_y = first.dpi_y,
+        }),
+    );
+    try std.testing.expectError(
+        error.InvalidScale,
+        boundary.requestFontSize(16, .{
+            .revision = 6,
+            .dpi_x = .{ .numerator = 192, .denominator = 2 },
+            .dpi_y = first.dpi_y,
+        }),
+    );
+}
+
 test "lifecycle admission holds fonts while ordinary input remains bounded" {
     var boundary = try Boundary.init(
         std.testing.io,
@@ -2302,8 +2390,8 @@ test "lifecycle admission holds fonts while ordinary input remains bounded" {
         try candidate.publishAdmission(),
     );
     try std.testing.expect(boundary.lifecycleFontStable());
-    try boundary.requestFontSize(17);
-    try boundary.requestFontSize(18);
+    try boundary.requestFontSize(17, null);
+    try boundary.requestFontSize(18, null);
     const key = wayland.input.Key{
         .keycode = 30,
         .time = 1,
@@ -2963,9 +3051,9 @@ test "final admitted lifecycle operation wakes the newest font request" {
     );
     defer candidate.deinit();
     try admitTestCandidate(&candidate);
-    try boundary.requestFontSize(17);
-    try boundary.requestFontSize(18);
-    try boundary.requestFontSize(19);
+    try boundary.requestFontSize(17, null);
+    try boundary.requestFontSize(18, null);
+    try boundary.requestFontSize(19, null);
     try boundary.drainTerminalWake();
 
     for (0..8) |_| {
@@ -3009,7 +3097,7 @@ test "rejected and cancelled admission release queued font work" {
     defer rejected.deinit();
     const rejected_revision = try rejected.publishAdmission();
     try std.testing.expect(boundary.takeLifecycleAdmission() != null);
-    try boundary.requestFontSize(20);
+    try boundary.requestFontSize(20, null);
     try boundary.completeLifecycleAdmission(
         rejected_revision,
         .{ .rejected = .terminal_capacity },
@@ -3030,7 +3118,7 @@ test "rejected and cancelled admission release queued font work" {
         cancelled_revision,
         boundary.takeLifecycleAdmission().?.revision,
     );
-    try boundary.requestFontSize(21);
+    try boundary.requestFontSize(21, null);
     try boundary.drainTerminalWake();
     cancelled.deinit();
     boundary.rearmTerminalWork();
@@ -3044,7 +3132,7 @@ test "rejected and cancelled admission release queued font work" {
     var admitted = try boundary.prepareLifecycle(&operations, &.{}, null);
     defer admitted.deinit();
     try admitTestCandidate(&admitted);
-    try boundary.requestFontSize(22);
+    try boundary.requestFontSize(22, null);
     try boundary.drainTerminalWake();
     try std.testing.expect(boundary.takeAdmittedLifecycle() != null);
     boundary.rearmTerminalWork();

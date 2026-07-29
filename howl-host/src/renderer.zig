@@ -125,6 +125,7 @@ const CanvasWork = struct {
     terminals: *terminal_handoff.Boundary,
     terminal_rejection_reported: bool = false,
     terminal_font_size: u16 = 16,
+    terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     next_visible_revision: u64 = 1,
     visible_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined,
     visible_count: u8 = 0,
@@ -271,6 +272,12 @@ fn runFallible(
         .residency = &surface_residency,
         .terminals = terminals,
     };
+    try retainTerminalScale(
+        canvas_work.terminals,
+        canvas_work.terminal_font_size,
+        &canvas_work.terminal_scale,
+        initial_surface,
+    );
     var initial_pending = try prepareInitialTerminalTopology(
         &canvas_work,
         &chrome,
@@ -463,6 +470,12 @@ fn runFallible(
     defer if (pending_topology) |*pending| pending.deinit();
     while (!boundary.shouldStop()) {
         if (boundary.takeConfigure()) |surface| {
+            try retainTerminalScale(
+                canvas_work.terminals,
+                canvas_work.terminal_font_size,
+                &canvas_work.terminal_scale,
+                surface,
+            );
             const pending_generation = if (pending_topology) |pending|
                 if (pending.surface) |value| value.generation else active_generation
             else
@@ -738,6 +751,38 @@ fn renderExtent(surface: shared.SurfaceConfig) render_api.canvas.Size {
     };
 }
 
+fn retainTerminalScale(
+    terminals: *terminal_handoff.Boundary,
+    terminal_font_size: u16,
+    retained: *?terminal_handoff.ScaleSnapshot,
+    surface: shared.SurfaceConfig,
+) !void {
+    const snapshot = try terminalScaleSnapshot(surface);
+    if (std.meta.eql(retained.*, snapshot)) return;
+    try terminals.requestFontSize(terminal_font_size, snapshot);
+    retained.* = snapshot;
+}
+
+fn terminalScaleSnapshot(
+    surface: shared.SurfaceConfig,
+) !?terminal_handoff.ScaleSnapshot {
+    if (surface.dpi_x == null and surface.dpi_y == null) return null;
+    const dpi_x = surface.dpi_x orelse return error.InvalidFrame;
+    const dpi_y = surface.dpi_y orelse return error.InvalidFrame;
+    if (surface.scale_revision == 0) return error.InvalidFrame;
+    return .{
+        .revision = surface.scale_revision,
+        .dpi_x = .{
+            .numerator = dpi_x.numerator,
+            .denominator = dpi_x.denominator,
+        },
+        .dpi_y = .{
+            .numerator = dpi_y.numerator,
+            .denominator = dpi_y.denominator,
+        },
+    };
+}
+
 test "integer and fractional surfaces retain the logical Canvas extent" {
     const integer = shared.SurfaceConfig{
         .generation = 1,
@@ -761,6 +806,89 @@ test "integer and fractional surfaces retain the logical Canvas extent" {
     };
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(integer));
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(fractional));
+}
+
+test "Renderer copies only factual accepted DPI through terminal Boundary" {
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(shared.ExactRational));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(shared.SurfaceConfig));
+    try std.testing.expectEqual(
+        @as(usize, 24),
+        @sizeOf(terminal_handoff.ScaleSnapshot),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 48),
+        @sizeOf(terminal_handoff.FontRequest),
+    );
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 4,
+            .upload_bytes = 16,
+            .cells = 4,
+            .rows = 4,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 16,
+            .glyphs = 4,
+            .masks = 4,
+            .resources_per_update = 4,
+            .raster_bytes = 16,
+            .decoration_bytes = 16,
+        },
+    );
+    defer terminals.deinit();
+    var retained: ?terminal_handoff.ScaleSnapshot = null;
+    const provisional = shared.SurfaceConfig{
+        .generation = 1,
+        .logical_width = 100,
+        .logical_height = 80,
+        .physical_width = 100,
+        .physical_height = 80,
+        .scale_revision = 0,
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+    try retainTerminalScale(&terminals, 16, &retained, provisional);
+    try std.testing.expect(retained == null);
+    try std.testing.expect(terminals.takeFontRequest() == null);
+    var accepted = provisional;
+    accepted.generation = 2;
+    accepted.scale_revision = 7;
+    accepted.physical_width = 160;
+    accepted.physical_height = 128;
+    accepted.use_viewport = true;
+    accepted.dpi_x = .{ .numerator = 768, .denominator = 5 };
+    accepted.dpi_y = .{ .numerator = 768, .denominator = 5 };
+    try retainTerminalScale(&terminals, 16, &retained, accepted);
+    const request = terminals.takeFontRequest().?;
+    const snapshot = request.scale.?;
+    try std.testing.expectEqual(@as(u16, 16), request.pixel_height);
+    try std.testing.expectEqual(@as(u64, 7), snapshot.revision);
+    try std.testing.expectEqual(
+        terminal_handoff.ExactRational{
+            .numerator = 768,
+            .denominator = 5,
+        },
+        snapshot.dpi_x,
+    );
+    try retainTerminalScale(&terminals, 16, &retained, accepted);
+    try std.testing.expect(terminals.takeFontRequest() == null);
+    var awaiting = accepted;
+    awaiting.generation = 3;
+    awaiting.dpi_x = null;
+    awaiting.dpi_y = null;
+    try retainTerminalScale(&terminals, 16, &retained, awaiting);
+    const cleared = terminals.takeFontRequest().?;
+    try std.testing.expect(cleared.scale == null);
+    try std.testing.expect(retained == null);
+    accepted.scale_revision = 0;
+    try std.testing.expectError(
+        error.InvalidFrame,
+        retainTerminalScale(&terminals, 16, &retained, accepted),
+    );
+    try std.testing.expect(retained == null);
+    try std.testing.expect(terminals.takeFontRequest() == null);
 }
 
 fn buildCanvasPlan(
@@ -1432,7 +1560,10 @@ fn drainInput(
                             else => unreachable,
                         };
                         if (requested != canvas_work.terminal_font_size) {
-                            canvas_work.terminals.requestFontSize(requested) catch continue;
+                            canvas_work.terminals.requestFontSize(
+                                requested,
+                                canvas_work.terminal_scale,
+                            ) catch continue;
                             canvas_work.terminal_font_size = requested;
                         }
                         break :blk null;
@@ -2116,7 +2247,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
 }
 
 test "PendingTopology has one fixed allocation-free value" {
-    try std.testing.expectEqual(@as(usize, 20_528), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 20_552), @sizeOf(PendingTopology));
     try std.testing.expectEqual(
         @as(usize, 544),
         @sizeOf(PreparedBootstrapPublication),

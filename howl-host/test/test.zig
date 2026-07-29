@@ -14,7 +14,7 @@ test "feedback and ring offers transfer complete copied ownership" {
     defer value.deinit();
     try value.publishFeedback(.{ .device = 0x1234, .fourcc = 0x34324241, .modifier = 7 });
     try std.testing.expectEqual(@as(u64, 0x1234), value.readFeedback().?.device);
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     const offers = try realOffers();
     try value.publishOffers(offers);
     const taken = value.takeOffers().?;
@@ -30,7 +30,7 @@ test "feedback and ring offers transfer complete copied ownership" {
 test "malformed offers preserve Boundary and caller descriptor ownership" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     var offers = try realOffers();
     offers[1].plane_count = shared.plane_limit + 1;
     try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
@@ -58,7 +58,7 @@ test "malformed offers preserve Boundary and caller descriptor ownership" {
 test "pending offers remain exact and reject a second ownership transfer" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     const first = try realOffers();
     const second = try realOffers();
     try value.publishOffers(first);
@@ -97,7 +97,7 @@ test "Boundary cleanup closes every retained offered descriptor" {
         offer.acquire_timeline_fd = try eventDescriptor();
         offer.release_timeline_fd = try eventDescriptor();
     }
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     try value.publishOffers(offers);
     value.deinit();
     for (offers) |offer| {
@@ -110,7 +110,7 @@ test "Boundary cleanup closes every retained offered descriptor" {
 test "completion queue is bounded ordered and never acknowledges Render" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
@@ -131,7 +131,7 @@ test "completion queue is bounded ordered and never acknowledges Render" {
 test "invalid and stale revisions preserve queued completion" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
@@ -144,7 +144,7 @@ test "invalid and stale revisions preserve queued completion" {
 test "completion batch validates fully before publishing any member" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
@@ -199,7 +199,7 @@ test "directional wakes follow fact ownership" {
     try value.publishFeedback(.{ .device = 1, .fourcc = 2, .modifier = 3 });
     try expectReadable(value.renderFd());
     try value.drainRenderWake();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
@@ -234,14 +234,14 @@ test "Window input facts cross the shared boundary without policy" {
 test "configure facts coalesce and stale generations cannot cross the boundary" {
     var value = try boundary();
     defer value.deinit();
-    try std.testing.expectError(error.InvalidConfigure, value.publishConfigure(0, 480, 640, 480, 0, 1, false));
-    try value.publishConfigure(640, 480, 640, 480, 0, 1, false);
+    try std.testing.expectError(error.InvalidConfigure, value.publishConfigure(0, 480, 640, 480, 0, null, null, 1, false));
+    try value.publishConfigure(640, 480, 640, 480, 0, null, null, 1, false);
     const first = value.takeConfigure().?;
     try std.testing.expectEqual(@as(u64, 1), first.generation);
-    try value.publishConfigure(640, 480, 640, 480, 0, 1, false);
+    try value.publishConfigure(640, 480, 640, 480, 0, null, null, 1, false);
     try std.testing.expect(value.takeConfigure() == null);
-    try value.publishConfigure(700, 500, 700, 500, 0, 1, false);
-    try value.publishConfigure(800, 600, 800, 600, 0, 1, false);
+    try value.publishConfigure(700, 500, 700, 500, 0, null, null, 1, false);
+    try value.publishConfigure(800, 600, 800, 600, 0, null, null, 1, false);
     const second = value.takeConfigure().?;
     try std.testing.expectEqual(@as(u64, 3), second.generation);
     var stale_offers = try realOffers();
@@ -256,15 +256,15 @@ test "configure facts coalesce and stale generations cannot cross the boundary" 
 test "logical and physical configure facts remain paired transactionally" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(640, 480, 960, 720, 4, 1, true);
+    try value.publishConfigure(640, 480, 960, 720, 4, null, null, 1, true);
     const first = value.takeConfigure().?;
     try std.testing.expectEqual(@as(u32, 640), first.logical_width);
     try std.testing.expectEqual(@as(u32, 960), first.physical_width);
     try std.testing.expectEqual(@as(u64, 4), first.scale_revision);
     try std.testing.expect(first.use_viewport);
-    try std.testing.expectError(error.InvalidConfigure, value.publishConfigure(640, 480, 9000, 720, 5, 1, true));
+    try std.testing.expectError(error.InvalidConfigure, value.publishConfigure(640, 480, 9000, 720, 5, null, null, 1, true));
     try std.testing.expectEqual(@as(u64, 1), value.latest_generation);
-    try value.publishConfigure(640, 480, 1280, 960, 5, 2, false);
+    try value.publishConfigure(640, 480, 1280, 960, 5, null, null, 2, false);
     const second = value.takeConfigure().?;
     try std.testing.expectEqual(@as(u64, 2), second.generation);
     try std.testing.expectEqual(@as(u32, 1280), second.physical_width);
@@ -272,10 +272,59 @@ test "logical and physical configure facts remain paired transactionally" {
     try std.testing.expect(!second.use_viewport);
 }
 
+test "SurfaceConfig transports factual DPI without fabricating provisional facts" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishConfigure(
+        100,
+        80,
+        100,
+        80,
+        0,
+        null,
+        null,
+        1,
+        false,
+    );
+    const provisional = value.takeConfigure().?;
+    try std.testing.expect(provisional.dpi_x == null);
+    try std.testing.expect(provisional.dpi_y == null);
+
+    const dpi = shared.ExactRational{
+        .numerator = 768,
+        .denominator = 5,
+    };
+    try value.publishConfigure(100, 80, 160, 128, 3, dpi, dpi, 1, true);
+    const accepted = value.takeConfigure().?;
+    try std.testing.expectEqual(@as(u64, 3), accepted.scale_revision);
+    try std.testing.expectEqual(dpi, accepted.dpi_x.?);
+    try std.testing.expectEqual(dpi, accepted.dpi_y.?);
+
+    try std.testing.expectError(
+        error.InvalidConfigure,
+        value.publishConfigure(100, 80, 160, 128, 0, dpi, dpi, 1, true),
+    );
+    try std.testing.expectError(
+        error.InvalidConfigure,
+        value.publishConfigure(
+            100,
+            80,
+            160,
+            128,
+            4,
+            .{ .numerator = 192, .denominator = 2 },
+            dpi,
+            1,
+            true,
+        ),
+    );
+    try std.testing.expect(value.takeConfigure() == null);
+}
+
 test "taken ring retains its exact configure while a newer ring is offered" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 1, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 1, null, null, 1, false);
     const generation = value.takeConfigure().?.generation;
     var offers = try realOffers();
     offers[0].generation = generation;
@@ -286,7 +335,7 @@ test "taken ring retains its exact configure while a newer ring is offered" {
     try std.testing.expectEqual(generation, taken.config.generation);
     try std.testing.expectEqual(@as(u32, 64), taken.config.physical_width);
 
-    try value.publishConfigure(64, 64, 96, 96, 2, 1, true);
+    try value.publishConfigure(64, 64, 96, 96, 2, null, null, 1, true);
     const newer = value.takeConfigure().?;
     var newer_offers = try realOffers();
     for (&newer_offers) |*offer| {
@@ -307,7 +356,7 @@ test "taken ring retains its exact configure while a newer ring is offered" {
 test "1.6x Boundary offer transaction retains logical Canvas and physical ring facts" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(1000, 600, 1600, 960, 1, 1, true);
+    try value.publishConfigure(1000, 600, 1600, 960, 1, null, null, 1, true);
     const config = value.takeConfigure().?;
     try std.testing.expectEqual(@as(u32, 1000), config.logical_width);
     try std.testing.expectEqual(@as(u32, 1600), config.physical_width);
@@ -349,7 +398,7 @@ test "1.6x Boundary offer transaction retains logical Canvas and physical ring f
 test "fractional offers retain viewport ownership across a newer integer configure" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(100, 80, 160, 128, 1, 1, true);
+    try value.publishConfigure(100, 80, 160, 128, 1, null, null, 1, true);
     const fractional_generation = value.takeConfigure().?.generation;
     var offers = try realOffers();
     for (&offers) |*offer| {
@@ -362,7 +411,7 @@ test "fractional offers retain viewport ownership across a newer integer configu
 
     // Capability removal may publish the integer successor before Window has
     // taken the already-transferred fractional ring.
-    try value.publishConfigure(100, 80, 200, 160, 2, 2, false);
+    try value.publishConfigure(100, 80, 200, 160, 2, null, null, 2, false);
     try std.testing.expect(value.pendingOffersUseViewport());
     const taken = value.takeOffers().?;
     try std.testing.expect(taken.config.use_viewport);
@@ -377,7 +426,7 @@ test "fractional offers retain viewport ownership across a newer integer configu
 test "replacement readiness cancels queued stale completions" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, 1, false);
+    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     value.markWindowRingReady(1);
     try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
     value.markWindowRingReady(2);

@@ -568,12 +568,18 @@ fn recomputeScale(state: *State) ScaleError!void {
     var next = state.scale;
     try next.recompute(try highestEntered(state));
     if (state.configured_width != 0 and
-        (!next.accepted_valid or next.revision != state.scale.revision or
-            !next.accepted_effective.eql(state.scale.accepted_effective)))
+        scaleTransportChanged(state.scale, next))
     {
         try publishConfigureForScale(state, next);
     }
     state.scale = next;
+}
+
+fn scaleTransportChanged(current: ScaleFacts, next: ScaleFacts) bool {
+    return (current.readiness == .accepted) !=
+        (next.readiness == .accepted) or
+        next.revision != current.revision or
+        !next.accepted_effective.eql(current.accepted_effective);
 }
 
 fn physicalExtent(logical: u32, scale_120: u32) ScaleError!u32 {
@@ -597,6 +603,14 @@ fn publishConfigureForScale(state: *State, facts: ScaleFacts) ScaleError!void {
         physical_width,
         physical_height,
         facts.revision,
+        if (facts.readiness == .accepted) .{
+            .numerator = facts.accepted_dpi_x.numerator,
+            .denominator = facts.accepted_dpi_x.denominator,
+        } else null,
+        if (facts.readiness == .accepted) .{
+            .numerator = facts.accepted_dpi_y.numerator,
+            .denominator = facts.accepted_dpi_y.denominator,
+        } else null,
         integer_scale,
         use_viewport,
     );
@@ -655,7 +669,8 @@ fn preferredInteger(state: *State, factor: i32) ScaleError!void {
     var next = state.scale;
     next.preferred_integer = value;
     try next.recompute(try highestEntered(state));
-    if (state.configured_width != 0 and next.revision != state.scale.revision) try publishConfigureForScale(state, next);
+    if (state.configured_width != 0 and scaleTransportChanged(state.scale, next))
+        try publishConfigureForScale(state, next);
     state.scale = next;
 }
 
@@ -663,7 +678,8 @@ fn configureScale(state: *State) ScaleError!void {
     var next = state.scale;
     next.configure_ready = true;
     try next.recompute(try highestEntered(state));
-    if (state.configured_width != 0 and next.revision != state.scale.revision) try publishConfigureForScale(state, next);
+    if (state.configured_width != 0 and scaleTransportChanged(state.scale, next))
+        try publishConfigureForScale(state, next);
     state.scale = next;
 }
 
@@ -1363,6 +1379,47 @@ test "Wayland output removal is harmless, recomputes membership, and reuses slot
     state.outputs[0] = .{ .global_name = 70, .scale = 1 };
     state.output_count = 1;
     try std.testing.expectEqual(@as(u32, 70), state.outputs[0].global_name);
+}
+
+test "final output removal publishes absent DPI while retaining accepted scale" {
+    var boundary = try shared.Boundary.init(std.testing.io);
+    defer boundary.deinit();
+    var state = State{
+        .boundary = &boundary,
+        .configured_width = 100,
+        .configured_height = 80,
+        .output_count = 1,
+        .scale = .{ .bootstrap_ready = true },
+    };
+    state.outputs[0] = .{
+        .global_name = 50,
+        .scale = 2,
+        .entered = true,
+    };
+    try recomputeScale(&state);
+    const accepted = boundary.takeConfigure().?;
+    try std.testing.expectEqual(ScaleReadiness.accepted, state.scale.readiness);
+    try std.testing.expect(accepted.dpi_x != null);
+    try std.testing.expect(accepted.dpi_y != null);
+    const accepted_effective = state.scale.accepted_effective;
+    const accepted_dpi_x = state.scale.accepted_dpi_x;
+    const accepted_revision = state.scale.revision;
+
+    try removeOutput(&state, 50);
+    const awaiting = boundary.takeConfigure().?;
+    try std.testing.expectEqual(
+        ScaleReadiness.awaiting_compositor,
+        state.scale.readiness,
+    );
+    try std.testing.expectEqual(accepted_revision, state.scale.revision);
+    try std.testing.expectEqual(
+        accepted_effective,
+        state.scale.accepted_effective,
+    );
+    try std.testing.expectEqual(accepted_dpi_x, state.scale.accepted_dpi_x);
+    try std.testing.expectEqual(accepted_revision, awaiting.scale_revision);
+    try std.testing.expect(awaiting.dpi_x == null);
+    try std.testing.expect(awaiting.dpi_y == null);
 }
 
 test "Wayland widened DPI reduction succeeds before storage bounds" {
