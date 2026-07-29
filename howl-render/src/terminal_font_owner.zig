@@ -6,7 +6,10 @@
 //! font resources only; terminal images remain source-local and are rejected.
 
 const std = @import("std");
-const render = @import("howl_render");
+const render = struct {
+    const canvas = @import("canvas");
+    const terminal_text = @import("terminal_text_capability");
+};
 
 /// Maximum live pane references admitted by the terminal runtime owner.
 const pane_limit: usize = 64;
@@ -25,7 +28,8 @@ const batch_limit: usize = 16;
 /// Maximum resource mutations represented by one declaration batch.
 const mutation_limit: usize = 648;
 
-const GroupError = render.terminal_text.FontMapInitError || error{
+/// Reports exact native-group construction, admission, identity and retirement failures.
+pub const GroupError = render.terminal_text.FontMapInitError || error{
     GroupLimit,
     IdentityExhausted,
     InvalidConfiguration,
@@ -33,7 +37,8 @@ const GroupError = render.terminal_text.FontMapInitError || error{
     InvalidGroup,
     RetirementPending,
 };
-const ResourceError = error{
+/// Reports exact shared font-resource validation, admission and retirement failures.
+pub const ResourceError = error{
     ResourceLimit,
     IdentityExhausted,
     InvalidResource,
@@ -42,10 +47,11 @@ const ResourceError = error{
     RetirementPending,
     ArithmeticOverflow,
 };
-const BatchError = GroupError || ResourceError || error{ BatchLimit, InvalidBatch, DuplicateResource };
+/// Reports exact declaration-batch validation and bounded ownership failures.
+pub const BatchError = GroupError || ResourceError || error{ BatchLimit, InvalidBatch, DuplicateResource };
 
 /// Identifies one immutable resolved native group configuration.
-const GroupKey = struct {
+pub const GroupKey = struct {
     configuration_generation: u64,
     point_size: f64,
     logical_dpi_x: render.terminal_text.Dpi,
@@ -67,23 +73,55 @@ const GroupKey = struct {
 };
 
 /// Names one exact stable native-group slot generation.
-const GroupRef = struct {
+pub const GroupRef = struct {
     slot: u8,
     generation: u64,
 };
 
-/// Names every currently implemented shared terminal-font raster family.
-const SharedFontResourceKey = union(enum) {
+/// Owns one completely preflighted pane-group replacement until commit/cancel.
+pub const PreparedGroupTransition = struct {
+    owner: *Owner,
+    old: [pane_limit]GroupRef = undefined,
+    staged: [pane_limit]GroupRef = undefined,
+    count: u8,
+    active: bool = true,
+
+    /// Atomically exchanges every old pane claim for its staged replacement.
+    pub fn commit(self: *PreparedGroupTransition) void {
+        if (!self.active) return;
+        self.owner.commitGroupTransition(
+            self.old[0..self.count],
+            self.staged[0..self.count],
+        );
+        self.active = false;
+    }
+
+    /// Cancels every staged claim without changing accepted pane ownership.
+    pub fn deinit(self: *PreparedGroupTransition) void {
+        if (!self.active) return;
+        var index: usize = self.count;
+        while (index != 0) {
+            index -= 1;
+            self.owner.discardGroup(self.staged[index]) catch
+                @panic("preflighted terminal font transition lost staged ownership");
+        }
+        self.active = false;
+    }
+};
+
+/// Identifies one exact raster-affecting terminal font resource.
+pub const SharedFontResourceKey = union(enum) {
     native: struct {
         configuration_generation: u64,
         point_size: f64,
         logical_dpi_x: render.terminal_text.Dpi,
         logical_dpi_y: render.terminal_text.Dpi,
+        font_slot: u4,
         style_slot: u2,
         face_index: u16,
         glyph_index: u32,
         load_flags: u32,
-        cell_span: u8,
+        cell_span: u16,
     },
     generated: struct {
         configuration_generation: u64,
@@ -91,7 +129,7 @@ const SharedFontResourceKey = union(enum) {
         logical_dpi_x: render.terminal_text.Dpi,
         logical_dpi_y: render.terminal_text.Dpi,
         codepoint: u21,
-        cell_span: u8,
+        cell_span: u16,
         cell_width_px: u16,
         cell_height_px: u16,
         stroke_variant: u8,
@@ -102,7 +140,7 @@ const SharedFontResourceKey = union(enum) {
         logical_dpi_x: render.terminal_text.Dpi,
         logical_dpi_y: render.terminal_text.Dpi,
         style: u8,
-        cell_span: u8,
+        cell_span: u16,
         cell_width_px: u16,
         cell_height_px: u16,
         thickness_px: u16,
@@ -155,15 +193,15 @@ fn validResourceSize(
     return true;
 }
 
-/// Retains identity-independent raster facts used for exact redeclaration.
-const ResourceFacts = struct {
+/// Retains identity-independent raster structure for exact declaration checks.
+pub const ResourceFacts = struct {
     format: render.canvas.ResourceFormat,
     size: render.canvas.Size,
     stride: usize,
     byte_count: usize,
 
     /// Derives exact structural format, extent, stride and length facts from one borrowed raster.
-    fn fromBytes(
+    pub fn fromBytes(
         format: render.canvas.ResourceFormat,
         size: render.canvas.Size,
         stride: usize,
@@ -193,13 +231,15 @@ const ResourceFacts = struct {
 };
 
 /// Identifies one exact pool declaration/reference batch.
-const BatchIdentity = struct {
+pub const BatchIdentity = struct {
+    /// Identifies the exact immutable pool reservation.
     reservation_id: u64,
+    /// Identifies the pane-local Composer source carrying the references.
     source: render.canvas.SourceId,
+    /// Identifies the complete producer update carried by the reservation.
     producer_revision: render.canvas.ProducerRevision,
 };
 
-/// Reports bounded ownership and exact validation failures.
 /// Reports fixed-owner allocation failure during initialization.
 const InitError = error{OutOfMemory};
 
@@ -211,7 +251,6 @@ const NativeGroup = struct {
     generation: u64 = 0,
     pane_users: u8 = 0,
     staged_users: u8 = 0,
-    retry_users: u8 = 0,
     borrows: u16 = 0,
     map: ?render.terminal_text.FontMap = null,
 };
@@ -232,7 +271,6 @@ const BatchState = enum(u8) { free, reserved, ready_or_draining };
 const Batch = struct {
     state: BatchState = .free,
     identity: BatchIdentity = undefined,
-    group: GroupRef = undefined,
     declarations: [mutation_limit]render.canvas.ResourceRef = undefined,
     references: [mutation_limit]render.canvas.ResourceRef = undefined,
     declaration_count: u16 = 0,
@@ -254,8 +292,153 @@ const Borrow = struct {
     }
 };
 
+/// Returns one canonical shared identity and whether Composer still requires
+/// its exact declaration bytes.
+pub const InternedResource = struct {
+    resource: render.canvas.ResourceRef,
+    declaration_required: bool,
+};
+
+/// Borrows one exact active native group while Content constructs a complete
+/// terminal update. The Runtime owns the backing Owner and this session.
+pub const Producer = struct {
+    borrow: Borrow,
+    session: u64,
+
+    /// Ends the exact synchronous native-group borrow.
+    pub fn deinit(self: *Producer) void {
+        self.cancelUpdate();
+        self.borrow.deinit();
+    }
+
+    /// Commits every resource acquisition performed by one complete update.
+    pub fn commitUpdate(self: *Producer) void {
+        self.borrow.owner.commitProducerSession(self.session);
+    }
+
+    /// Rolls back every resource acquisition from an incomplete update.
+    pub fn cancelUpdate(self: *Producer) void {
+        self.borrow.owner.cancelProducerSession(self.session);
+    }
+
+    /// Interns one native or generated glyph using exact group and raster facts.
+    pub fn internGlyph(
+        self: *Producer,
+        key: render.terminal_text.GlyphKey,
+        format: render.canvas.ResourceFormat,
+        size: render.canvas.Size,
+        stride: usize,
+        bytes: []const u8,
+    ) ResourceError!InternedResource {
+        const group_entry = self.borrow.owner.lookupGroup(self.borrow.group) catch
+            return error.InvalidResource;
+        if (group_entry.state != .active) return error.InvalidResource;
+        const resource_key: SharedFontResourceKey =
+            if (comptime @hasField(render.terminal_text.GlyphKey, "generated"))
+                switch (key) {
+                    .native => |value| nativeResourceKey(group_entry.key, value),
+                    .generated => |value| .{ .generated = .{
+                        .configuration_generation = group_entry.key.configuration_generation,
+                        .point_size = group_entry.key.point_size,
+                        .logical_dpi_x = group_entry.key.logical_dpi_x,
+                        .logical_dpi_y = group_entry.key.logical_dpi_y,
+                        .codepoint = value.codepoint,
+                        .cell_span = 1,
+                        .cell_width_px = value.width_px,
+                        .cell_height_px = value.height_px,
+                        .stroke_variant = 0,
+                    } },
+                }
+            else switch (key) {
+                .native => |value| nativeResourceKey(group_entry.key, value),
+            };
+        return self.borrow.owner.internProducerResult(
+            self.session,
+            resource_key,
+            try ResourceFacts.fromBytes(format, size, stride, bytes),
+        );
+    }
+
+    /// Interns one generated decoration mask using its exact style and geometry.
+    pub fn internDecoration(
+        self: *Producer,
+        style: u8,
+        width: u16,
+        height: u16,
+        thickness: u16,
+        position: i16,
+        bytes: []const u8,
+    ) ResourceError!InternedResource {
+        const group_entry = self.borrow.owner.lookupGroup(self.borrow.group) catch
+            return error.InvalidResource;
+        if (group_entry.state != .active) return error.InvalidResource;
+        return self.borrow.owner.internProducerResult(self.session, .{ .decoration_mask = .{
+            .configuration_generation = group_entry.key.configuration_generation,
+            .point_size = group_entry.key.point_size,
+            .logical_dpi_x = group_entry.key.logical_dpi_x,
+            .logical_dpi_y = group_entry.key.logical_dpi_y,
+            .style = style,
+            .cell_span = 1,
+            .cell_width_px = width,
+            .cell_height_px = height,
+            .thickness_px = thickness,
+            .position_px = position,
+        } }, try ResourceFacts.fromBytes(
+            .alpha8,
+            .{ .width = width, .height = height },
+            width,
+            bytes,
+        ));
+    }
+
+    /// Reports whether the exact shared identity still needs declaration bytes.
+    pub fn declarationRequired(
+        self: *Producer,
+        reference: render.canvas.ResourceRef,
+    ) ResourceError!bool {
+        const entry = try self.borrow.owner.lookupResource(reference);
+        return entry.state != .accepted;
+    }
+
+    /// Releases one producer-side pane resource reference.
+    pub fn release(
+        self: *Producer,
+        reference: render.canvas.ResourceRef,
+    ) ResourceError!void {
+        try self.borrow.owner.releaseResource(reference);
+    }
+
+    /// Releases one prevalidated pane reference during an infallible Content commit.
+    pub fn releaseCommitted(
+        self: *Producer,
+        reference: render.canvas.ResourceRef,
+    ) void {
+        self.borrow.owner.releaseResource(reference) catch
+            @panic("committed terminal font resource lost owner identity");
+        self.borrow.owner.completeRetiredResources();
+    }
+};
+
+fn nativeResourceKey(
+    group: GroupKey,
+    glyph: render.terminal_text.NativeGlyphKey,
+) SharedFontResourceKey {
+    return .{ .native = .{
+        .configuration_generation = group.configuration_generation,
+        .point_size = group.point_size,
+        .logical_dpi_x = group.logical_dpi_x,
+        .logical_dpi_y = group.logical_dpi_y,
+        .font_slot = glyph.font.slot,
+        .style_slot = @backingInt(glyph.font.style),
+        .face_index = glyph.face_index,
+        .glyph_index = glyph.glyph_id,
+        .load_flags = 0,
+        .cell_span = glyph.cell_span,
+    } };
+}
+
 /// Owns every bounded cross-pane font group, shared identity, and retry batch.
-const Owner = struct {
+pub const Owner = struct {
     allocator: std.mem.Allocator,
     groups: []NativeGroup,
     resources: []SharedResource,
@@ -267,9 +450,13 @@ const Owner = struct {
     staged_group_count: u8 = 0,
     staged_claim_count: u8 = 0,
     retiring_group_count: u8 = 0,
+    producer_session_high_water: u64 = 0,
+    producer_session: u64 = 0,
+    producer_acquisitions: [mutation_limit]render.canvas.ResourceRef = undefined,
+    producer_acquisition_count: u16 = 0,
 
     /// Allocates all fixed owner storage without constructing native groups.
-    fn init(allocator: std.mem.Allocator) InitError!Owner {
+    pub fn init(allocator: std.mem.Allocator) InitError!Owner {
         const groups = try allocator.alloc(NativeGroup, group_limit);
         errdefer allocator.free(groups);
         const resources = try allocator.alloc(SharedResource, resource_limit);
@@ -287,7 +474,9 @@ const Owner = struct {
     }
 
     /// Releases batches, resources, and native groups in reverse owner order.
-    fn deinit(self: *Owner) void {
+    pub fn deinit(self: *Owner) void {
+        if (self.producer_session != 0)
+            @panic("terminal font owner deinit with active producer session");
         for (self.groups) |entry| if (entry.borrows != 0)
             @panic("native font owner deinit with live borrow");
         var batch_index = self.batches.len;
@@ -311,7 +500,7 @@ const Owner = struct {
     }
 
     /// Acquires an equal group or transactionally constructs one candidate.
-    fn acquireGroup(
+    pub fn acquireGroup(
         self: *Owner,
         key: GroupKey,
         configs: []const render.terminal_text.FontConfig,
@@ -334,13 +523,26 @@ const Owner = struct {
     }
 
     /// Constructs one candidate group without exposing it to pane ownership.
-    fn stageGroup(
+    pub fn stageGroup(
         self: *Owner,
         key: GroupKey,
         configs: []const render.terminal_text.FontConfig,
     ) GroupError!GroupRef {
         try key.validate();
         if (!configsMatchGroup(key, configs)) return error.InvalidConfiguration;
+        for (self.groups, 0..) |*entry, index| {
+            if (entry.state == .active and std.meta.eql(entry.key, key)) {
+                if (entry.staged_users == std.math.maxInt(u8) or
+                    self.staged_claim_count == staged_group_limit)
+                    return error.GroupLimit;
+                entry.staged_users += 1;
+                self.staged_claim_count += 1;
+                return .{
+                    .slot = @intCast(index),
+                    .generation = entry.generation,
+                };
+            }
+        }
         for (self.groups, 0..) |*entry, index| {
             if (entry.state == .candidate and std.meta.eql(entry.key, key)) {
                 if (entry.staged_users == std.math.maxInt(u8) or self.staged_claim_count == staged_group_limit)
@@ -375,12 +577,14 @@ const Owner = struct {
     }
 
     /// Cancels one staged claim and releases its native map when the last claim ends.
-    fn discardGroup(self: *Owner, reference: GroupRef) GroupError!void {
+    pub fn discardGroup(self: *Owner, reference: GroupRef) GroupError!void {
         const entry = try self.lookupGroup(reference);
-        if (entry.state != .candidate or entry.staged_users == 0)
+        if ((entry.state != .candidate and entry.state != .active) or
+            entry.staged_users == 0)
             return error.InvalidGroup;
         entry.staged_users -= 1;
         self.staged_claim_count -= 1;
+        if (entry.state == .active) return;
         if (entry.staged_users != 0) return;
         if (self.staged_group_count == 0) @panic("staged group count underflow");
         self.staged_group_count -= 1;
@@ -403,7 +607,7 @@ const Owner = struct {
     }
 
     /// Releases one pane reference; zero-user groups retire eagerly.
-    fn releaseGroup(self: *Owner, reference: GroupRef) GroupError!void {
+    pub fn releaseGroup(self: *Owner, reference: GroupRef) GroupError!void {
         const entry = try self.lookupGroup(reference);
         if (entry.pane_users == 0) return error.InvalidGroup;
         if (entry.pane_users == 1 and entry.borrows != 0 and self.retiring_group_count == retiring_group_limit)
@@ -411,6 +615,217 @@ const Owner = struct {
         entry.pane_users -= 1;
         self.pane_users_total -= 1;
         self.maybeRetireGroup(entry);
+    }
+
+    /// Returns the stable map owned by one active pane reference.
+    pub fn mapFor(
+        self: *Owner,
+        reference: GroupRef,
+    ) GroupError!*render.terminal_text.FontMap {
+        const entry = try self.lookupGroup(reference);
+        if (entry.state != .active or entry.pane_users == 0)
+            return error.InvalidGroup;
+        return &entry.map.?;
+    }
+
+    /// Copies the immutable identity key for one active pane group.
+    pub fn keyFor(self: *Owner, reference: GroupRef) GroupError!GroupKey {
+        const entry = try self.lookupGroup(reference);
+        if (entry.state != .active or entry.pane_users == 0)
+            return error.InvalidGroup;
+        return entry.key;
+    }
+
+    /// Returns the stable map owned by one exact staged pane claim.
+    pub fn stagedMapFor(
+        self: *Owner,
+        reference: GroupRef,
+    ) GroupError!*render.terminal_text.FontMap {
+        const entry = try self.lookupGroup(reference);
+        if ((entry.state != .candidate and entry.state != .active) or
+            entry.staged_users == 0)
+            return error.InvalidGroup;
+        return &entry.map.?;
+    }
+
+    /// Preflights one complete fixed pane-group exchange without mutation.
+    pub fn prepareGroupTransition(
+        self: *Owner,
+        old: []const GroupRef,
+        staged: []const GroupRef,
+    ) GroupError!PreparedGroupTransition {
+        if (old.len != staged.len or old.len > pane_limit)
+            return error.GroupLimit;
+        var old_counts: [group_limit]u8 = @splat(0);
+        var staged_counts: [group_limit]u8 = @splat(0);
+        for (old) |reference| {
+            const entry = try self.lookupGroup(reference);
+            if (entry.state != .active or entry.pane_users == 0)
+                return error.InvalidGroup;
+            old_counts[reference.slot] = std.math.add(
+                u8,
+                old_counts[reference.slot],
+                1,
+            ) catch return error.GroupLimit;
+        }
+        for (staged) |reference| {
+            const entry = try self.lookupGroup(reference);
+            if ((entry.state != .active and entry.state != .candidate) or
+                entry.staged_users == 0)
+                return error.InvalidGroup;
+            staged_counts[reference.slot] = std.math.add(
+                u8,
+                staged_counts[reference.slot],
+                1,
+            ) catch return error.GroupLimit;
+        }
+        var added_retiring: usize = 0;
+        for (self.groups, 0..) |entry, index| {
+            if (old_counts[index] > entry.pane_users or
+                staged_counts[index] > entry.staged_users)
+                return error.InvalidGroup;
+            if (entry.state == .candidate and
+                staged_counts[index] != entry.staged_users)
+                return error.InvalidGroup;
+            if (entry.state != .active) continue;
+            const retained = entry.pane_users - old_counts[index];
+            const final = std.math.add(
+                u8,
+                retained,
+                staged_counts[index],
+            ) catch return error.GroupLimit;
+            if (final == 0 and entry.borrows != 0)
+                added_retiring += 1;
+        }
+        if (added_retiring > retiring_group_limit - self.retiring_group_count)
+            return error.RetirementPending;
+        var result = PreparedGroupTransition{
+            .owner = self,
+            .count = @intCast(old.len),
+        };
+        @memcpy(result.old[0..old.len], old);
+        @memcpy(result.staged[0..staged.len], staged);
+        return result;
+    }
+
+    /// Borrows the resource-production authority for one active pane group.
+    pub fn producer(
+        self: *Owner,
+        reference: GroupRef,
+    ) GroupError!Producer {
+        if (self.producer_session_high_water == std.math.maxInt(u64))
+            return error.IdentityExhausted;
+        const borrow_value = try self.borrow(reference);
+        self.producer_session_high_water += 1;
+        return .{
+            .borrow = borrow_value,
+            .session = self.producer_session_high_water,
+        };
+    }
+
+    /// Reserves exact declaration and complete-reference ownership for one
+    /// canonical Content update before immutable pool publication.
+    pub fn prepareBatch(
+        self: *Owner,
+        identity: BatchIdentity,
+        group: GroupRef,
+        update: render.canvas.ProducerUpdate,
+    ) BatchError!void {
+        var declarations: [mutation_limit]render.canvas.ResourceRef = undefined;
+        var references: [mutation_limit]render.canvas.ResourceRef = undefined;
+        var declaration_count: usize = 0;
+        var reference_count: usize = 0;
+        for (update.uploads) |upload| {
+            if (!upload.resource.resource.isShared()) continue;
+            if (declaration_count == declarations.len) return error.BatchLimit;
+            declarations[declaration_count] = upload.resource;
+            declaration_count += 1;
+        }
+        for (update.commands) |command| {
+            const reference = switch (command) {
+                .solid => continue,
+                .alpha_mask => |value| value.resource.resource,
+                .rgba => |value| value.resource.resource,
+            };
+            if (!reference.resource.isShared() or
+                containsRef(references[0..reference_count], reference))
+                continue;
+            if (reference_count == references.len) return error.BatchLimit;
+            references[reference_count] = reference;
+            reference_count += 1;
+        }
+        const slot = try self.reserveBatch(
+            identity,
+            group,
+            declarations[0..declaration_count],
+            references[0..reference_count],
+        );
+        std.debug.assert(slot < self.batches.len);
+    }
+
+    /// Transfers exact retry ownership to immutable ready/draining pool bytes.
+    pub fn markBatchReady(
+        self: *Owner,
+        identity: BatchIdentity,
+    ) BatchError!void {
+        try self.markReady(identity);
+    }
+
+    /// Cancels one exact pre-ready declaration batch after publication fails.
+    pub fn cancelBatchBeforeReady(
+        self: *Owner,
+        identity: BatchIdentity,
+    ) BatchError!void {
+        try self.cancelBeforeReady(identity);
+        self.completeRetiredResources();
+    }
+
+    /// Reconciles the exact accepted source revision without inferring
+    /// declaration acceptance from an unrelated monotonic revision.
+    pub fn observeAccepted(
+        self: *Owner,
+        source: render.canvas.SourceId,
+        revision: render.canvas.ProducerRevision,
+    ) BatchError!void {
+        var exact: ?*Batch = null;
+        for (self.batches) |*batch| {
+            if (batch.state == .ready_or_draining and
+                batch.identity.source == source and
+                batch.identity.producer_revision == revision)
+            {
+                exact = batch;
+                break;
+            }
+        }
+        const accepted = exact orelse {
+            for (self.batches) |batch|
+                if (batch.state != .free and batch.identity.source == source and
+                    @backingInt(batch.identity.producer_revision) <=
+                        @backingInt(revision))
+                    return error.InvalidBatch;
+            return;
+        };
+        for (accepted.declarations[0..accepted.declaration_count]) |reference|
+            (try self.lookupResource(reference)).state = .accepted;
+        for (self.batches) |*batch| {
+            if (batch.state == .free or batch.identity.source != source or
+                @backingInt(batch.identity.producer_revision) >
+                    @backingInt(revision))
+                continue;
+            self.clearBatch(batch);
+        }
+        self.completeRetiredResources();
+    }
+
+    /// Cancels every exact batch owned by one retiring pane source.
+    pub fn cancelSourceBatches(
+        self: *Owner,
+        source: render.canvas.SourceId,
+    ) void {
+        for (self.batches) |*batch|
+            if (batch.state != .free and batch.identity.source == source)
+                self.clearBatch(batch);
+        self.completeRetiredResources();
     }
 
     /// Begins one synchronous shaping/raster borrow.
@@ -460,6 +875,49 @@ const Owner = struct {
         };
         self.shared_identity_high_water = next;
         return self.resources[free_index].resource;
+    }
+
+    fn internProducerResult(
+        self: *Owner,
+        session: u64,
+        key: SharedFontResourceKey,
+        facts: ResourceFacts,
+    ) ResourceError!InternedResource {
+        if (self.producer_session != 0 and self.producer_session != session)
+            return error.RetirementPending;
+        if (self.producer_acquisition_count == mutation_limit)
+            return error.ResourceLimit;
+        const reference = try self.intern(key, facts);
+        if (self.producer_session == 0) self.producer_session = session;
+        self.producer_acquisitions[self.producer_acquisition_count] = reference;
+        self.producer_acquisition_count += 1;
+        const entry = try self.lookupResource(reference);
+        return .{
+            .resource = reference,
+            .declaration_required = entry.state != .accepted,
+        };
+    }
+
+    fn commitProducerSession(self: *Owner, session: u64) void {
+        if (self.producer_session == 0) return;
+        if (self.producer_session != session)
+            @panic("terminal font producer committed another session");
+        self.producer_session = 0;
+        self.producer_acquisition_count = 0;
+    }
+
+    fn cancelProducerSession(self: *Owner, session: u64) void {
+        if (self.producer_session == 0) return;
+        if (self.producer_session != session) return;
+        var index: usize = self.producer_acquisition_count;
+        while (index != 0) {
+            index -= 1;
+            self.releaseResource(self.producer_acquisitions[index]) catch
+                @panic("terminal font producer rollback lost an acquisition");
+        }
+        self.producer_session = 0;
+        self.producer_acquisition_count = 0;
+        self.completeRetiredResources();
     }
 
     /// Releases one producer-side pane reference only.
@@ -528,7 +986,6 @@ const Owner = struct {
         }
         const entry = try self.lookupGroup(group_ref);
         if (entry.state != .active) return error.InvalidBatch;
-        if (entry.retry_users == std.math.maxInt(u8)) return error.BatchLimit;
         for (declarations) |reference|
             if (!resourceMatchesGroup((try self.lookupResource(reference)).key, entry.key))
                 return error.InvalidBatch;
@@ -540,7 +997,6 @@ const Owner = struct {
         batch_entry.* = .{
             .state = .reserved,
             .identity = identity,
-            .group = group_ref,
             .declaration_count = @intCast(declarations.len),
             .reference_count = @intCast(references.len),
         };
@@ -548,7 +1004,6 @@ const Owner = struct {
         @memcpy(batch_entry.references[0..references.len], references);
         for (declarations) |reference|
             (try self.lookupResource(reference)).declaration_pins += 1;
-        entry.retry_users += 1;
         return free_index;
     }
 
@@ -638,17 +1093,52 @@ const Owner = struct {
             resource_entry.declaration_pins -= 1;
             maybeRetireResource(resource_entry);
         }
-        const group_entry = self.lookupGroup(entry.group) catch
-            @panic("batch lost its exact native group");
-        if (group_entry.retry_users == 0)
-            @panic("batch native retry pin released twice");
-        group_entry.retry_users -= 1;
-        self.maybeRetireGroup(group_entry);
         entry.* = .{};
     }
 
+    fn completeRetiredResources(self: *Owner) void {
+        for (self.resources) |*entry| {
+            if (entry.state == .retiring and entry.pane_references == 0 and
+                entry.declaration_pins == 0)
+                entry.* = .{};
+        }
+    }
+
+    fn commitGroupTransition(
+        self: *Owner,
+        old: []const GroupRef,
+        staged: []const GroupRef,
+    ) void {
+        var old_counts: [group_limit]u8 = @splat(0);
+        var staged_counts: [group_limit]u8 = @splat(0);
+        for (old) |reference| old_counts[reference.slot] += 1;
+        for (staged) |reference| staged_counts[reference.slot] += 1;
+
+        for (self.groups, 0..) |*entry, index| {
+            if (entry.state != .active) continue;
+            entry.pane_users -= old_counts[index];
+            entry.pane_users += staged_counts[index];
+            entry.staged_users -= staged_counts[index];
+            self.staged_claim_count -= staged_counts[index];
+        }
+        for (self.groups) |*entry|
+            if (entry.state == .active and entry.pane_users == 0)
+                self.maybeRetireGroup(entry);
+        for (self.groups, 0..) |*entry, index| {
+            if (entry.state != .candidate) continue;
+            const claims = staged_counts[index];
+            if (claims == 0) continue;
+            entry.state = .active;
+            entry.pane_users = claims;
+            entry.staged_users = 0;
+            self.staged_claim_count -= claims;
+            self.staged_group_count -= 1;
+            self.active_group_count += 1;
+        }
+    }
+
     fn maybeRetireGroup(self: *Owner, entry: *NativeGroup) void {
-        if (entry.pane_users != 0 or entry.retry_users != 0) return;
+        if (entry.pane_users != 0) return;
         if (entry.borrows != 0) {
             entry.state = .retiring;
             if (self.active_group_count == 0) @panic("active group count underflow");
@@ -736,7 +1226,7 @@ fn resourceMatchesGroup(resource_key: SharedFontResourceKey, group_key: GroupKey
 
 const test_facts = if (@import("builtin").is_test)
     struct {
-        const font_path = "../howl-render/testdata/primary.ttf";
+        const font_path = "testdata/primary.ttf";
     }
 else
     struct {};
@@ -789,11 +1279,16 @@ fn testGroupKey(point_size: u32) GroupKey {
 }
 
 fn testResourceKey(glyph: u32) SharedFontResourceKey {
+    return testResourceKeyAt(glyph, 16);
+}
+
+fn testResourceKeyAt(glyph: u32, point_size: u32) SharedFontResourceKey {
     return .{ .native = .{
         .configuration_generation = 1,
-        .point_size = 16.0,
+        .point_size = @floatFromInt(point_size),
         .logical_dpi_x = .{ .numerator = 96, .denominator = 1 },
         .logical_dpi_y = .{ .numerator = 96, .denominator = 1 },
+        .font_slot = 0,
         .style_slot = 0,
         .face_index = 0,
         .glyph_index = glyph,
@@ -998,6 +1493,40 @@ test "exact batches repeat reject and reconcile without false acceptance" {
     try std.testing.expectEqual(ResourceState.accepted, owner.resources[0].state);
 }
 
+test "sixteen independently accepted sources release batches for a seventeenth" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = testConfigs(16);
+    const group = try owner.acquireGroup(testGroupKey(16), &configs);
+    var identities: [batch_limit]BatchIdentity = undefined;
+    for (&identities, 0..) |*identity, index| {
+        identity.* = batchIdentity(
+            @intCast(index + 1),
+            @intCast(index + 1),
+            1,
+        );
+        const slot = try owner.reserveBatch(identity.*, group, &.{}, &.{});
+        try std.testing.expect(slot < batch_limit);
+        try owner.markReady(identity.*);
+    }
+    try std.testing.expectError(
+        error.BatchLimit,
+        owner.reserveBatch(batchIdentity(17, 17, 1), group, &.{}, &.{}),
+    );
+    for (identities) |identity|
+        try owner.observeAccepted(identity.source, identity.producer_revision);
+    for (owner.batches) |batch|
+        try std.testing.expectEqual(BatchState.free, batch.state);
+    const seventeenth = batchIdentity(17, 17, 1);
+    const slot = try owner.reserveBatch(seventeenth, group, &.{}, &.{});
+    try std.testing.expect(slot < batch_limit);
+    try owner.markReady(seventeenth);
+    try owner.observeAccepted(
+        seventeenth.source,
+        seventeenth.producer_revision,
+    );
+}
+
 test "pre-ready cancellation requires recovery while ready rejection retains batch" {
     var owner = try Owner.init(std.testing.allocator);
     defer owner.deinit();
@@ -1049,6 +1578,7 @@ test "batch and retirement admission reject every invalid ownership form" {
 }
 
 test "fixed owner memory and declaration bounds are exact" {
+    try std.testing.expectEqual(@as(usize, 10472), @sizeOf(Owner));
     try std.testing.expectEqual(@as(usize, 192), group_limit);
     try std.testing.expectEqual(@as(usize, 64), active_group_limit);
     try std.testing.expectEqual(@as(usize, 2048), resource_limit);
@@ -1057,10 +1587,17 @@ test "fixed owner memory and declaration bounds are exact" {
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(SharedFontResourceKey));
     try std.testing.expectEqual(@as(usize, 6200), @sizeOf(NativeGroup));
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(SharedResource));
-    try std.testing.expectEqual(@as(usize, 20784), @sizeOf(Batch));
-    try std.testing.expectEqual(@as(usize, 1735936), @sizeOf(NativeGroup) * group_limit +
+    try std.testing.expectEqual(@as(usize, 20768), @sizeOf(Batch));
+    try std.testing.expectEqual(@as(usize, 1735680), @sizeOf(NativeGroup) * group_limit +
         @sizeOf(SharedResource) * resource_limit +
         @sizeOf(Batch) * batch_limit);
+    try std.testing.expectEqual(
+        @as(usize, 1746152),
+        @sizeOf(Owner) +
+            @sizeOf(NativeGroup) * group_limit +
+            @sizeOf(SharedResource) * resource_limit +
+            @sizeOf(Batch) * batch_limit,
+    );
     try std.testing.expectEqual(
         @sizeOf(NativeGroup) * group_limit +
             @sizeOf(SharedResource) * resource_limit +
@@ -1082,7 +1619,23 @@ test "capacity cohorts, total pane bound, padded rows and batch bound are explic
     while (index < pane_limit) : (index += 1)
         pane_refs[index] = try owner.acquireGroup(testGroupKey(16), &configs);
     try std.testing.expectError(error.GroupLimit, owner.acquireGroup(testGroupKey(16), &configs));
-    for (pane_refs) |reference| try owner.releaseGroup(reference);
+    const replacement_configs = testConfigs(17);
+    var replacements: [pane_limit]GroupRef = undefined;
+    for (&replacements) |*reference|
+        reference.* = try owner.stageGroup(
+            testGroupKey(17),
+            &replacement_configs,
+        );
+    var transition = try owner.prepareGroupTransition(
+        &pane_refs,
+        &replacements,
+    );
+    transition.commit();
+    try std.testing.expectEqual(@as(u8, pane_limit), owner.pane_users_total);
+    try std.testing.expectEqual(@as(u8, 0), owner.staged_claim_count);
+    try std.testing.expectEqual(@as(u8, 1), owner.active_group_count);
+    try std.testing.expectError(error.InvalidGroup, owner.mapFor(pane_refs[0]));
+    for (replacements) |reference| try owner.releaseGroup(reference);
 
     const padded = [_]u8{ 1, 2, 3, 4, 0, 5, 6, 7, 8 };
     const padded_facts = try ResourceFacts.fromBytes(.rgba8, .{ .width = 1, .height = 2 }, 5, &padded);
@@ -1148,6 +1701,73 @@ test "active staged and retiring cohorts coexist at their exact bounds" {
     for (staged) |slot| try owner.discardGroup(slot);
     for (&borrows) |*borrow| borrow.deinit();
     try std.testing.expectEqual(@as(u8, 0), owner.retiring_group_count);
+}
+
+test "sixty-four distinct groups replace while old declaration batches remain pending" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    var old: [active_group_limit]GroupRef = undefined;
+    var staged: [staged_group_limit]GroupRef = undefined;
+    var borrows: [active_group_limit]Borrow = undefined;
+    const bytes = [_]u8{1};
+    for (&old, 0..) |*reference, index| {
+        const point_size: u16 = @intCast(16 + index);
+        const configs = testConfigs(point_size);
+        reference.* = try owner.acquireGroup(
+            testGroupKey(point_size),
+            &configs,
+        );
+        borrows[index] = try owner.borrow(reference.*);
+        if (index < batch_limit) {
+            const resource = try owner.intern(
+                testResourceKeyAt(@intCast(index + 1), point_size),
+                try testFacts(&bytes),
+            );
+            const identity = batchIdentity(
+                @intCast(index + 1),
+                @intCast(index + 1),
+                1,
+            );
+            const slot = try owner.reserveBatch(
+                identity,
+                reference.*,
+                &.{resource},
+                &.{resource},
+            );
+            try std.testing.expect(slot < batch_limit);
+            try owner.markReady(identity);
+        }
+    }
+    for (&staged, 0..) |*reference, index| {
+        const point_size: u16 = @intCast(100 + index);
+        const configs = testConfigs(point_size);
+        reference.* = try owner.stageGroup(
+            testGroupKey(point_size),
+            &configs,
+        );
+    }
+    try std.testing.expectEqual(@as(u8, 64), owner.active_group_count);
+    try std.testing.expectEqual(@as(u8, 64), owner.staged_group_count);
+    try std.testing.expectEqual(@as(u8, 0), owner.retiring_group_count);
+    var transition = try owner.prepareGroupTransition(&old, &staged);
+    transition.commit();
+    try std.testing.expectEqual(@as(u8, 64), owner.active_group_count);
+    try std.testing.expectEqual(@as(u8, 0), owner.staged_group_count);
+    try std.testing.expectEqual(@as(u8, 64), owner.retiring_group_count);
+    for (owner.batches[0..batch_limit]) |batch|
+        try std.testing.expectEqual(
+            BatchState.ready_or_draining,
+            batch.state,
+        );
+    for (&borrows) |*borrow| borrow.deinit();
+    try std.testing.expectEqual(@as(u8, 64), owner.active_group_count);
+    try std.testing.expectEqual(@as(u8, 0), owner.retiring_group_count);
+    for (0..batch_limit) |index|
+        try owner.observeAccepted(
+            @fromBackingInt(@intCast(index + 1)),
+            @fromBackingInt(1),
+        );
+    for (staged) |reference| try owner.releaseGroup(reference);
 }
 
 test "owner allocation failure rolls back every fixed allocation" {

@@ -55,7 +55,7 @@ accepted:
   howl-host/src/terminal_handoff.zig: bounded lifecycle and input facts plus shared-pool release/acquire terminal Content transfer into canonical Canvas facts and exact Composer drainage
   howl-host/src/terminal.zig: one caller-driven poll owner for bounded logical PTY, VT, terminal projection, child-write, and cleanup lifetimes
   howl-host/src/terminal_pool.zig: fixed contiguous immutable-update pool storage, ordinary canonical Canvas publication, terminal-owned descriptors and group admission, atomic Renderer drainage, stale-token rejection, and reverse cleanup
-  howl-host/src/terminal_font_owner.zig: terminal-runtime-owned bounded native font-group interning, shared font identity issuance, declaration batches, and exact retirement/retry ownership
+  howl-render/src/terminal_font_owner.zig: Render-defined bounded native font-group and shared font-resource producer behavior instantiated and exclusively owned by the Host terminal runtime
   howl-host/test/terminal_contract_test.zig: deterministic two-VT projection, synchronized copied handoff, producer rollback, occupied retirement, Composer qualification, visibility, and recovery proof
   howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
   howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner

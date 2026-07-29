@@ -130,6 +130,7 @@ pub fn build(b: *std.Build) void {
         test_module.addImport("generated_glyphs", generated);
     }
     var terminal_proofs: ?*std.Build.Module = null;
+    var font_owner_proofs: ?*std.Build.Module = null;
     var terminal_module: ?*std.Build.Module = null;
     var image_module: ?*std.Build.Module = null;
     if (terminal_enabled) {
@@ -192,6 +193,35 @@ pub fn build(b: *std.Build) void {
         );
         test_module.addImport("terminal_text_capability", tested_text);
 
+        var production_font_owner: ?*std.Build.Module = null;
+        var tested_font_owner: ?*std.Build.Module = null;
+        if (native_enabled) {
+            production_font_owner = b.createModule(.{
+                .root_source_file = b.path("src/terminal_font_owner.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            production_font_owner.?.addImport("canvas", canvas);
+            production_font_owner.?.addImport(
+                "terminal_text_capability",
+                production_text,
+            );
+            module.addImport("terminal_font_owner", production_font_owner.?);
+
+            tested_font_owner = b.createModule(.{
+                .root_source_file = b.path("src/terminal_font_owner.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            tested_font_owner.?.addImport("canvas", canvas);
+            tested_font_owner.?.addImport(
+                "terminal_text_capability",
+                tested_text,
+            );
+            test_module.addImport("terminal_font_owner", tested_font_owner.?);
+            font_owner_proofs = tested_font_owner;
+        }
+
         const production_terminal = b.createModule(.{
             .root_source_file = b.path("src/terminal_canvas.zig"),
             .target = target,
@@ -203,6 +233,11 @@ pub fn build(b: *std.Build) void {
         production_terminal.addImport("canvas", canvas);
         production_terminal.addImport("canvas_validation", canvas_validation);
         production_terminal.addImport("terminal_canvas_features", terminal_features_module);
+        if (native_enabled)
+            production_terminal.addImport(
+                "terminal_font_owner",
+                production_font_owner.?,
+            );
         module.addImport("terminal_projection", production_terminal);
 
         const tested_terminal = b.createModule(.{
@@ -216,6 +251,11 @@ pub fn build(b: *std.Build) void {
         tested_terminal.addImport("canvas", canvas);
         tested_terminal.addImport("canvas_validation", canvas_validation);
         tested_terminal.addImport("terminal_canvas_features", terminal_features_module);
+        if (native_enabled)
+            tested_terminal.addImport(
+                "terminal_font_owner",
+                tested_font_owner.?,
+            );
         test_module.addImport("terminal_projection", tested_terminal);
     }
     if (terminal_enabled and !(native_enabled or generated_enabled)) {
@@ -260,6 +300,17 @@ pub fn build(b: *std.Build) void {
         check.dependOn(&proof_tests.step);
         const run_proofs = b.addRunArtifact(proof_tests);
         run_proofs.addPassthruArgs();
+        test_step.dependOn(&run_proofs.step);
+    }
+    if (font_owner_proofs) |proofs| {
+        const proof_tests = b.addTest(.{
+            .name = "howl-render-font-owner-proofs",
+            .root_module = proofs,
+            .use_llvm = false,
+            .use_lld = false,
+        });
+        check.dependOn(&proof_tests.step);
+        const run_proofs = b.addRunArtifact(proof_tests);
         test_step.dependOn(&run_proofs.step);
     }
     b.default_step = check;

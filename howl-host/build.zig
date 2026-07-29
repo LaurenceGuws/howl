@@ -89,12 +89,6 @@ pub fn build(b: *std.Build) void {
     });
     terminal_pool.addImport("howl_render", render.module("howl_render"));
     terminal_handoff.addImport("terminal_pool", terminal_pool);
-    const terminal_font_owner = b.createModule(.{
-        .root_source_file = b.path("src/terminal_font_owner.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    terminal_font_owner.addImport("howl_render", render.module("howl_render"));
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -230,12 +224,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_terminal_pool_tests.step);
     b.step("test-pool", "Run fixed terminal pool storage proofs")
         .dependOn(&run_terminal_pool_tests.step);
-    const terminal_font_owner_tests = b.addTest(.{
-        .root_module = terminal_font_owner,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    test_step.dependOn(&b.addRunArtifact(terminal_font_owner_tests).step);
     const terminal_runtime_tests = b.addTest(.{
         .root_module = terminal_runtime,
         .use_llvm = false,

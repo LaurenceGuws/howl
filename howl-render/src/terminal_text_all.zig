@@ -30,6 +30,12 @@ pub const PreparedRun = impl.PreparedRun;
 pub const Raster = impl.Raster;
 /// Configures one exact native font tuple.
 pub const FontConfig = impl.FontConfig;
+/// Retains one normalized factual DPI axis.
+pub const Dpi = impl.Dpi;
+/// Canonical validated terminal point-size and factual DPI identity.
+pub const PointSize = impl.PointSize;
+/// Selects pixel or canonical point/DPI native construction.
+pub const Size = impl.Size;
 /// Reports exact native map validation and construction failure.
 pub const FontMapInitError = impl.FontMapInitError;
 /// Owns the bounded terminal font tuple map.

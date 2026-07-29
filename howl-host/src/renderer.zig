@@ -125,7 +125,6 @@ const CanvasWork = struct {
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
     terminal_rejection_reported: bool = false,
-    terminal_font_size: u16 = 16,
     terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     font_request_high_water: u64 = 0,
@@ -280,19 +279,11 @@ fn runFallible(
     };
     try retainTerminalScale(
         canvas_work.terminals,
-        canvas_work.terminal_font_size,
         canvas_work.terminal_font_policy,
         &canvas_work.terminal_scale,
         &canvas_work.font_request_high_water,
         initial_surface,
     );
-    var initial_pending = try prepareInitialTerminalTopology(
-        &canvas_work,
-        &chrome,
-    );
-    defer initial_pending.deinit();
-    try waitInitialAdmission(boundary, terminals, &initial_pending);
-    try initial_pending.commit();
     var chrome_primitives: [256]render_api.chrome.Primitive = undefined;
     var chrome_text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
@@ -400,6 +391,10 @@ fn runFallible(
     try boundary.publishOffers(offers);
     for (&offered_fds) |*fds| fds.* = .{};
     try waitWindowRing(boundary, initial_surface.generation);
+    try composer.setComposition(.{
+        .surface = renderExtent(initial_surface),
+        .sources = &.{},
+    });
 
     var pool_info = std.mem.zeroes(vk.VkCommandPoolCreateInfo);
     pool_info.sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -428,15 +423,7 @@ fn runFallible(
     var next_acquire_point: u64 = 4;
     for (&rings[0], 0..) |*slot, index| {
         queue_active = true;
-        const composer_plan = try waitCanvasPlan(
-            boundary,
-            &canvas_work,
-            &chrome,
-            null,
-            chrome_appearance,
-            &chrome_primitives,
-            &chrome_text,
-        );
+        const composer_plan = try buildAcceptedCanvasPlan(&canvas_work);
         errdefer surface_residency.discard();
         try render(&graphics, device, queue, family, command, slot, colors[index], composer_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
@@ -453,15 +440,7 @@ fn runFallible(
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
     const release_wait = try importReleaseSemaphore(device, &dispatch, &release_sync_fd);
     defer vk.vkDestroySemaphore(device, release_wait, null);
-    const reuse_plan = try waitCanvasPlan(
-        boundary,
-        &canvas_work,
-        &chrome,
-        null,
-        chrome_appearance,
-        &chrome_primitives,
-        &chrome_text,
-    );
+    const reuse_plan = try buildAcceptedCanvasPlan(&canvas_work);
     errdefer surface_residency.discard();
     try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
@@ -474,18 +453,45 @@ fn runFallible(
     var actions = input_actions.State{};
     var terminal_redraw_pending = false;
     var local_redraw_retry_pending = false;
-    var pending_topology: ?PendingTopology = null;
+    var terminal_topology_committed = false;
+    var pending_topology: ?PendingTopology =
+        if (canvas_work.terminal_scale != null)
+            try prepareInitialTerminalTopology(
+                &canvas_work,
+                &chrome,
+                initial_surface,
+            )
+        else
+            null;
     defer if (pending_topology) |*pending| pending.deinit();
     while (!boundary.shouldStop()) {
         if (boundary.takeConfigure()) |surface| {
             try retainTerminalScale(
                 canvas_work.terminals,
-                canvas_work.terminal_font_size,
                 canvas_work.terminal_font_policy,
                 &canvas_work.terminal_scale,
                 &canvas_work.font_request_high_water,
                 surface,
             );
+            if (!terminal_topology_committed) {
+                var candidate_chrome = chrome;
+                candidate_chrome.resizeSurface(renderExtent(surface)) catch |failure| switch (failure) {
+                    error.InvalidGeometry => continue,
+                    else => return failure,
+                };
+                if (pending_topology) |*pending| {
+                    pending.deinit();
+                    pending_topology = null;
+                }
+                chrome = candidate_chrome;
+                if (canvas_work.terminal_scale != null)
+                    pending_topology = try prepareInitialTerminalTopology(
+                        &canvas_work,
+                        &chrome,
+                        surface,
+                    );
+                continue;
+            }
             const pending_generation = if (pending_topology) |pending|
                 if (pending.surface) |value| value.generation else active_generation
             else
@@ -507,14 +513,15 @@ fn runFallible(
                 surface,
             ) catch continue;
         }
-        try drainInput(
-            boundary,
-            &actions,
-            &canvas_work,
-            &chrome,
-            chrome_appearance,
-            &pending_topology,
-        );
+        if (terminal_topology_committed)
+            try drainInput(
+                boundary,
+                &actions,
+                &canvas_work,
+                &chrome,
+                chrome_appearance,
+                &pending_topology,
+            );
         const local_redraw_retry_turn = local_redraw_retry_pending;
         local_redraw_retry_pending = false;
         if (!local_redraw_retry_turn) {
@@ -649,6 +656,7 @@ fn runFallible(
                     defer prepared_completions.deinit();
                     try admitted.commit();
                     chrome = admitted.candidate;
+                    terminal_topology_committed = true;
                     if (bootstrap_publication) |*publication|
                         publication.commit(&canvas_work);
                     prepared_completions.commit();
@@ -763,7 +771,6 @@ fn renderExtent(surface: shared.SurfaceConfig) render_api.canvas.Size {
 
 fn retainTerminalScale(
     terminals: *terminal_handoff.Boundary,
-    terminal_font_size: u16,
     policy: terminal_handoff.FontPolicy,
     retained: *?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
@@ -775,7 +782,6 @@ fn retainTerminalScale(
         return error.FontRevisionExhausted;
     try terminals.requestFont(.{
         .revision = revision,
-        .pixel_height = terminal_font_size,
         .scale = snapshot,
         .policy = policy,
     });
@@ -918,7 +924,6 @@ fn pointFloor(
 
 fn publishFontPolicy(
     terminals: *terminal_handoff.Boundary,
-    terminal_font_size: u16,
     policy: *terminal_handoff.FontPolicy,
     scale: ?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
@@ -929,7 +934,6 @@ fn publishFontPolicy(
         return error.FontRevisionExhausted;
     try terminals.requestFont(.{
         .revision = revision,
-        .pixel_height = terminal_font_size,
         .scale = scale,
         .policy = candidate,
     });
@@ -939,7 +943,6 @@ fn publishFontPolicy(
 
 fn requestPaneFontAction(
     terminals: *terminal_handoff.Boundary,
-    terminal_font_size: u16,
     policy: *terminal_handoff.FontPolicy,
     scale: ?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
@@ -967,7 +970,6 @@ fn requestPaneFontAction(
     }
     try publishFontPolicy(
         terminals,
-        terminal_font_size,
         policy,
         scale,
         request_high_water,
@@ -977,7 +979,6 @@ fn requestPaneFontAction(
 
 fn requestBaseFontAction(
     terminals: *terminal_handoff.Boundary,
-    terminal_font_size: u16,
     policy: *terminal_handoff.FontPolicy,
     scale: ?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
@@ -1007,7 +1008,6 @@ fn requestBaseFontAction(
     candidate.base_point_size = std.math.clamp(requested, floor, ceiling);
     try publishFontPolicy(
         terminals,
-        terminal_font_size,
         policy,
         scale,
         request_high_water,
@@ -1052,7 +1052,7 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         @sizeOf(terminal_handoff.FontPolicy),
     );
     try std.testing.expectEqual(
-        @as(usize, 1_088),
+        @as(usize, 1_080),
         @sizeOf(terminal_handoff.FontRequest),
     );
     var terminals = try terminal_handoff.Boundary.init(
@@ -1089,7 +1089,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     };
     try retainTerminalScale(
         &terminals,
-        16,
         policy,
         &retained,
         &request_high_water,
@@ -1107,7 +1106,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     accepted.dpi_y = .{ .numerator = 768, .denominator = 5 };
     try retainTerminalScale(
         &terminals,
-        16,
         policy,
         &retained,
         &request_high_water,
@@ -1115,7 +1113,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     );
     const request = terminals.takeFontRequest().?;
     const snapshot = request.scale.?;
-    try std.testing.expectEqual(@as(u16, 16), request.pixel_height);
     try std.testing.expectEqual(@as(u64, 7), snapshot.revision);
     try std.testing.expectEqual(
         terminal_handoff.ExactRational{
@@ -1126,7 +1123,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     );
     try retainTerminalScale(
         &terminals,
-        16,
         policy,
         &retained,
         &request_high_water,
@@ -1139,7 +1135,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     awaiting.dpi_y = null;
     try retainTerminalScale(
         &terminals,
-        16,
         policy,
         &retained,
         &request_high_water,
@@ -1153,7 +1148,6 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
         error.InvalidFrame,
         retainTerminalScale(
             &terminals,
-            16,
             policy,
             &retained,
             &request_high_water,
@@ -1221,7 +1215,6 @@ test "focused pane actions coalesce retained point state through real Boundary" 
     var high_water: u64 = 0;
     try requestPaneFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1230,7 +1223,6 @@ test "focused pane actions coalesce retained point state through real Boundary" 
     );
     try requestPaneFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1242,7 +1234,6 @@ test "focused pane actions coalesce retained point state through real Boundary" 
     try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&newest.policy, pane));
     try requestPaneFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1306,7 +1297,6 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     var high_water: u64 = 0;
     try requestPaneFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1362,7 +1352,6 @@ test "window base actions preserve every pane offset through real Boundary" {
     var high_water: u64 = 0;
     try requestBaseFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1373,7 +1362,6 @@ test "window base actions preserve every pane offset through real Boundary" {
     try std.testing.expectEqual(retained_offsets, policy.offsets);
     try requestBaseFontAction(
         &terminals,
-        16,
         &policy,
         null,
         &high_water,
@@ -1389,7 +1377,6 @@ test "window base actions preserve every pane offset through real Boundary" {
     try std.testing.expectEqual(retained_offsets, reset_without_dpi.policy.offsets);
     try requestBaseFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -1398,7 +1385,6 @@ test "window base actions preserve every pane offset through real Boundary" {
     );
     try requestBaseFontAction(
         &terminals,
-        16,
         &policy,
         scale,
         &high_water,
@@ -2024,41 +2010,6 @@ fn waitRenderWakeBlocking(
     }
 }
 
-fn waitInitialAdmission(
-    boundary: *shared.Boundary,
-    terminals: *terminal_handoff.Boundary,
-    pending: *PendingTopology,
-) !void {
-    var descriptors = [_]c.pollfd{
-        .{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 },
-        .{
-            .fd = terminals.rendererFd(),
-            .events = c.POLLIN,
-            .revents = 0,
-        },
-    };
-    while (pending.phase == .awaiting_admission) {
-        if (boundary.shouldStop()) return error.Stopping;
-        const status = terminals.status();
-        if (status.stopped)
-            return if (status.failed) error.TerminalRuntime else error.TerminalStopped;
-        const result = c.poll(&descriptors, descriptors.len, -1);
-        if (result < 0) {
-            if (std.c.errno(result) == .INTR) continue;
-            return error.Wake;
-        }
-        if (result == 0) continue;
-        if (descriptors[0].revents & c.POLLIN != 0) {
-            try boundary.drainRenderWake();
-            if (boundary.shouldStop()) return error.Stopping;
-        }
-        if (descriptors[1].revents & c.POLLIN != 0) {
-            try terminals.drainRendererWake();
-            if (pending.observeAdmission()) |_| return error.TerminalCapacity;
-        }
-    }
-}
-
 fn drainInput(
     boundary: *shared.Boundary,
     actions: *input_actions.State,
@@ -2088,7 +2039,6 @@ fn drainInput(
                             .font_reset,
                             => requestPaneFontAction(
                                 canvas_work.terminals,
-                                canvas_work.terminal_font_size,
                                 &canvas_work.terminal_font_policy,
                                 canvas_work.terminal_scale,
                                 &canvas_work.font_request_high_water,
@@ -2100,7 +2050,6 @@ fn drainInput(
                             .font_base_reset,
                             => requestBaseFontAction(
                                 canvas_work.terminals,
-                                canvas_work.terminal_font_size,
                                 &canvas_work.terminal_font_policy,
                                 canvas_work.terminal_scale,
                                 &canvas_work.font_request_high_water,
@@ -2318,6 +2267,7 @@ fn prepareTerminalTopology(
 fn prepareInitialTerminalTopology(
     work: *CanvasWork,
     candidate: *const chrome_state.Topology,
+    surface: shared.SurfaceConfig,
 ) !PendingTopology {
     const pane = candidate.focusedPaneId();
     const rect = candidate.paneRect(pane) orelse return error.InvalidTopology;
@@ -2342,6 +2292,7 @@ fn prepareInitialTerminalTopology(
         .revision = revision,
         .new_pane = pane,
         .new_source = source,
+        .surface = surface,
     };
 }
 
@@ -2797,9 +2748,7 @@ test "PendingTopology has one fixed allocation-free value" {
     );
 }
 
-test "shared stop cancels pending initial admission and retires its source" {
-    var shared_boundary = try shared.Boundary.init(std.testing.io);
-    defer shared_boundary.deinit();
+test "provisional startup frame exposes no terminal lifecycle or topology" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -2833,6 +2782,24 @@ test "shared stop cancels pending initial admission and retires its source" {
         },
     );
     defer composer.deinit();
+    try composer.setComposition(.{
+        .surface = .{ .width = 320, .height = 240 },
+        .sources = &.{},
+    });
+    var uploads: [1]render_api.canvas.ResourceUploadFact = undefined;
+    var removals: [1]render_api.canvas.FrameResourceRef = undefined;
+    var commands: [1]render_api.canvas.Command = undefined;
+    var pixels: [1]u8 = undefined;
+    const provisional = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 0), provisional.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), provisional.commands.len);
+    try std.testing.expect(terminals.takeLifecycle() == null);
+
     const topology = try chrome_state.Topology.init(
         .{ .width = 320, .height = 240 },
         chrome_state.default_tab_bar_height,
@@ -2840,19 +2807,28 @@ test "shared stop cancels pending initial admission and retires its source" {
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
-    var pending = try prepareInitialTerminalTopology(&work, &topology);
+    var pending = try prepareInitialTerminalTopology(
+        &work,
+        &topology,
+        .{
+            .generation = 2,
+            .logical_width = 320,
+            .logical_height = 240,
+            .physical_width = 320,
+            .physical_height = 240,
+            .scale_revision = 1,
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            .buffer_scale = 1,
+            .use_viewport = false,
+        },
+    );
     const source = pending.new_source.?;
     const request = terminals.takeLifecycleAdmission().?;
     try std.testing.expectEqual(pending.revision, request.revision);
-
-    shared_boundary.requestStop(null);
-    try std.testing.expectError(
-        error.Stopping,
-        waitInitialAdmission(&shared_boundary, &terminals, &pending),
-    );
+    try std.testing.expect(terminals.sourceFor(topology.focusedPaneId()) == null);
     pending.deinit();
     try std.testing.expect(terminals.takeLifecycle() == null);
-    try std.testing.expect(terminals.sourceFor(topology.focusedPaneId()) == null);
     try std.testing.expectError(error.RetiredSource, composer.removeSource(source));
 }
 

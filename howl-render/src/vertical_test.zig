@@ -3,6 +3,7 @@
 const std = @import("std");
 const render = @import("howl_render");
 const fonts = @import("test_fonts");
+const selected = @import("selected_capabilities");
 
 const terminal = render.terminal;
 const terminal_images = render.terminal_images;
@@ -53,6 +54,20 @@ fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
         .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
         .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
         .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
+    };
+}
+
+fn pointFontConfigs(points: f64) [4]render.terminal_text.FontConfig {
+    const size = render.terminal_text.Size{ .points = .{
+        .points = points,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    } };
+    return .{
+        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .size = size } },
+        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = size } },
+        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = fonts.primary_font, .size = size } },
+        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = fonts.primary_font, .size = size } },
     };
 }
 
@@ -158,7 +173,7 @@ test "capable root composes terminal and chrome producer updates" {
         .removals = &.{},
         .placements = &.{},
     });
-    const terminal_update = try terminal_content.takeUpdate(&terminal_work, .{
+    const terminal_update = try terminal_content.takeLocalUpdate(&terminal_work, .{
         .x = 0,
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },
@@ -427,6 +442,228 @@ test "capable root composes terminal and chrome producer updates" {
     try std.testing.expectEqual(@as(usize, 0), recovered_full.removals.len);
 }
 
+test "terminal Content emits shared glyph and decoration resources through its producer" {
+    var owner = try render.terminal_font_owner.Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = pointFontConfigs(12.0);
+    const group = try owner.acquireGroup(.{
+        .configuration_generation = 1,
+        .point_size = 12.0,
+        .logical_dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .logical_dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, &configs);
+    const map = try owner.mapFor(group);
+    var content = try terminal.Content.init(std.testing.allocator, terminalLimits(), map);
+    var producer = try owner.producer(group);
+    defer {
+        content.releaseFontResources(.{ .shared = &producer });
+        content.deinit();
+        producer.deinit();
+        owner.releaseGroup(group) catch
+            @panic("shared terminal test lost its native group");
+    }
+    var work = try terminal.Content.Work.init(std.testing.allocator, content.limits);
+    defer work.deinit();
+    const base = terminal.Cell{
+        .codepoint = 'A',
+        .combining_len = 0,
+        .combining = @splat(0),
+        .foreground = .{ .r = 240, .g = 240, .b = 240 },
+        .background = .{ .r = 12, .g = 14, .b = 18 },
+        .underline_color = .{ .r = 240, .g = 240, .b = 240 },
+        .font = 0,
+        .baseline = .normal,
+        .bold = false,
+        .dim = false,
+        .italic = false,
+        .blink = false,
+        .blink_fast = false,
+        .invisible = false,
+        .underline = false,
+        .strikethrough = false,
+        .underline_style = .none,
+        .selected = false,
+        .link_id = 0,
+    };
+    var cells = [_]terminal.Cell{ base, base, base };
+    cells[1].codepoint = 0x2500;
+    cells[2].underline = true;
+    cells[2].underline_style = .curly;
+    try content.recover(.{
+        .rows = 1,
+        .cols = cells.len,
+        .cursor = .{
+            .row = 0,
+            .col = 0,
+            .visible = false,
+            .shape = .none,
+            .blink = false,
+            .color = .{ .r = 0, .g = 0, .b = 0 },
+            .text_color = .{ .r = 0, .g = 0, .b = 0 },
+        },
+        .cells = &cells,
+        .geometry = &.{.single_width},
+    }, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    const metrics = map.cellMetrics(.{
+        .slot = 0,
+        .style = .normal,
+    }) orelse return error.TestUnexpectedResult;
+    const update = try content.takeUpdate(&work, .{
+        .x = 0,
+        .y = 0,
+        .clip = .{
+            .x = 0,
+            .y = 0,
+            .width = metrics.width_px * @as(u16, @intCast(cells.len)),
+            .height = metrics.height_px,
+        },
+        .metrics = metrics,
+        .underline_y = metrics.height_px - 2,
+        .underline_height = 1,
+        .strike_y = metrics.height_px / 2,
+        .strike_height = 1,
+    }, .{ .shared = &producer });
+    try std.testing.expect(update.uploads.len >=
+        @as(usize, if (selected.generated_glyphs) 3 else 2));
+    for (update.uploads) |upload|
+        try std.testing.expect(upload.resource.resource.isShared());
+    var shared_commands: usize = 0;
+    for (update.commands) |command| switch (command) {
+        .solid => {},
+        .alpha_mask => |value| {
+            try std.testing.expect(value.resource.resource.resource.isShared());
+            shared_commands += 1;
+        },
+        .rgba => |value| {
+            try std.testing.expect(value.resource.resource.resource.isShared());
+            shared_commands += 1;
+        },
+    };
+    try std.testing.expect(shared_commands >= 3);
+}
+
+test "late Content failure rolls back shared acquisitions and reraster succeeds" {
+    var owner = try render.terminal_font_owner.Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = pointFontConfigs(12.0);
+    const group = try owner.acquireGroup(.{
+        .configuration_generation = 1,
+        .point_size = 12.0,
+        .logical_dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .logical_dpi_y = .{ .numerator = 96, .denominator = 1 },
+    }, &configs);
+    const map = try owner.mapFor(group);
+    var limits = terminalLimits();
+    limits.commands = 1;
+    var content = try terminal.Content.init(std.testing.allocator, limits, map);
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(std.testing.allocator, limits);
+    defer work.deinit();
+    const cells = [_]terminal.Cell{.{
+        .codepoint = 'A',
+        .combining_len = 0,
+        .combining = @splat(0),
+        .foreground = .{ .r = 240, .g = 240, .b = 240 },
+        .background = .{ .r = 12, .g = 14, .b = 18 },
+        .underline_color = .{ .r = 240, .g = 240, .b = 240 },
+        .font = 0,
+        .baseline = .normal,
+        .bold = false,
+        .dim = false,
+        .italic = false,
+        .blink = false,
+        .blink_fast = false,
+        .invisible = false,
+        .underline = false,
+        .strikethrough = false,
+        .underline_style = .none,
+        .selected = false,
+        .link_id = 0,
+    }};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = .{
+            .row = 0,
+            .col = 0,
+            .visible = false,
+            .shape = .none,
+            .blink = false,
+            .color = .{ .r = 0, .g = 0, .b = 0 },
+            .text_color = .{ .r = 0, .g = 0, .b = 0 },
+        },
+        .cells = &cells,
+        .geometry = &.{.single_width},
+    }, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    const metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
+        return error.TestUnexpectedResult;
+    const geometry = terminal.Content.Geometry{
+        .x = 0,
+        .y = 0,
+        .clip = .{ .x = 0, .y = 0, .width = metrics.width_px, .height = metrics.height_px },
+        .metrics = metrics,
+        .underline_y = metrics.height_px - 2,
+        .underline_height = 1,
+        .strike_y = metrics.height_px / 2,
+        .strike_height = 1,
+    };
+    var failed = try owner.producer(group);
+    try std.testing.expectError(
+        error.CommandLimit,
+        content.takeUpdate(&work, geometry, .{ .shared = &failed }),
+    );
+    failed.deinit();
+    content.deinit();
+    work.deinit();
+    limits.commands = 4;
+    content = try terminal.Content.init(std.testing.allocator, limits, map);
+    work = try terminal.Content.Work.init(std.testing.allocator, limits);
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = .{
+            .row = 0,
+            .col = 0,
+            .visible = false,
+            .shape = .none,
+            .blink = false,
+            .color = .{ .r = 0, .g = 0, .b = 0 },
+            .text_color = .{ .r = 0, .g = 0, .b = 0 },
+        },
+        .cells = &cells,
+        .geometry = &.{.single_width},
+    }, .{
+        .generation = 1,
+        .content_generation = 1,
+        .pixels = &.{},
+        .uploads = &.{},
+        .removals = &.{},
+        .placements = &.{},
+    });
+    var retry = try owner.producer(group);
+    const update = try content.takeUpdate(&work, geometry, .{ .shared = &retry });
+    try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
+    try std.testing.expect(update.uploads[0].resource.resource.isShared());
+    try std.testing.expect(try update.uploads[0].resource.resource.identity() > 1);
+    content.releaseFontResources(.{ .shared = &retry });
+    retry.deinit();
+    try owner.releaseGroup(group);
+}
+
 test "shared FontMap owners invalidate independently without identity reuse" {
     const old_configs = fontConfigs(16);
     const new_configs = fontConfigs(24);
@@ -509,8 +746,8 @@ test "shared FontMap owners invalidate independently without identity reuse" {
     };
     first.invalidateFonts();
     second.invalidateFonts();
-    const first_update = try first.takeUpdate(&first_work, geometry);
-    const second_update = try second.takeUpdate(&second_work, geometry);
+    const first_update = try first.takeLocalUpdate(&first_work, geometry);
+    const second_update = try second.takeLocalUpdate(&second_work, geometry);
     try std.testing.expect(first_update.uploads.len > 0 and second_update.uploads.len > 0);
     try std.testing.expectEqual(@as(usize, 0), first_update.removals.len);
     try std.testing.expectEqual(@as(usize, 0), second_update.removals.len);
@@ -557,8 +794,8 @@ test "shared FontMap owners invalidate independently without identity reuse" {
         .strike_y = new_decoration.strike_y,
         .strike_height = new_decoration.strike_height,
     };
-    const first_rebuilt = try first.takeUpdate(&first_work, new_geometry);
-    const second_rebuilt = try second.takeUpdate(&second_work, new_geometry);
+    const first_rebuilt = try first.takeLocalUpdate(&first_work, new_geometry);
+    const second_rebuilt = try second.takeLocalUpdate(&second_work, new_geometry);
     try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(first_rebuilt.revision)));
     try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(second_rebuilt.revision)));
     try std.testing.expect(first_rebuilt.removals.len > 0 and second_rebuilt.removals.len > 0);
@@ -657,11 +894,11 @@ test "shared FontMap owners invalidate independently without identity reuse" {
     try std.testing.expect(updateCommandHasResource(second_rebuilt, second_image.?));
     const second_revision = first_rebuilt.revision;
     first.invalidateFonts();
-    const repeated = try first.takeUpdate(&first_work, new_geometry);
+    const repeated = try first.takeLocalUpdate(&first_work, new_geometry);
     try std.testing.expect(repeated.removals.len > 0);
     try std.testing.expect(@as(u64, @backingInt(repeated.removals[0].resource.resource)) != @as(u64, @backingInt(first_old[0].resource)));
     try std.testing.expectEqual(@as(u64, @backingInt(second_revision)) + 1, @as(u64, @backingInt(repeated.revision)));
-    const second_unchanged = try second.takeUpdate(&second_work, new_geometry);
+    const second_unchanged = try second.takeLocalUpdate(&second_work, new_geometry);
     try std.testing.expectEqual(second_rebuilt.revision, second_unchanged.revision);
     try std.testing.expectEqual(@as(usize, 0), second_unchanged.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), second_unchanged.removals.len);

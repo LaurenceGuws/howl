@@ -7,6 +7,10 @@ const text = @import("terminal_text_capability");
 const canvas = @import("canvas");
 const canvas_validation = @import("canvas_validation");
 const features = @import("terminal_canvas_features");
+const font_owner = if (features.native_text)
+    @import("terminal_font_owner")
+else
+    struct {};
 const NativeShapeBuffer = if (features.native_text)
     @typeInfo(@FieldType(text.NativeScratch, "shaper")).pointer.child
 else
@@ -137,6 +141,9 @@ const GlyphEntry = struct {
 
 const MaskEntry = struct {
     hash: u64,
+    style: UnderlineStyle,
+    thickness: u16,
+    position: i16,
     resource: canvas.ResourceRef,
     width: u16,
     height: u16,
@@ -144,10 +151,18 @@ const MaskEntry = struct {
     pixel_count: usize,
 };
 
-/// Retains one complete terminal pane and emits bounded local Canvas updates.
+/// Retains one complete terminal pane and emits bounded canonical Canvas updates.
 pub const Content = struct {
     /// Supplies one terminal pane's pixel geometry for retained update production.
     pub const Geometry = PaneGeometry;
+    /// Supplies the exact terminal-font resource producer for one update.
+    pub const FontProducer = if (features.native_text)
+        union(enum) {
+            local,
+            shared: *font_owner.Producer,
+        }
+    else
+        void;
     /// Fixes all retained and candidate capacity at initialization.
     pub const Limits = struct {
         /// Bounds retained row-major cells.
@@ -216,7 +231,8 @@ pub const Content = struct {
         UploadByteLimit,
         IdentityExhausted,
         OutOfMemory,
-    } || text.PrepareError || text.RasterError;
+    } || text.PrepareError || text.RasterError ||
+        if (features.native_text) font_owner.ResourceError else error{};
 
     /// Owns one terminal thread's reusable shaping, raster, and transfer storage.
     ///
@@ -453,17 +469,84 @@ pub const Content = struct {
     pub fn invalidateFonts(self: *Content) void {
         var removals = self.pending_removal_count;
         for (self.masks[0..self.mask_count]) |entry| {
+            if (entry.resource.resource.isShared())
+                @panic("shared font invalidation requires its producer");
             std.debug.assert(removals < self.pending_removals.len);
             self.pending_removals[removals] = .{ .resource = entry.resource };
             removals += 1;
         }
         for (self.glyphs[0..self.glyph_count]) |entry| {
             const resource = entry.resource orelse continue;
+            if (resource.resource.isShared())
+                @panic("shared font invalidation requires its producer");
             std.debug.assert(removals < self.pending_removals.len);
             self.pending_removals[removals] = .{ .resource = resource };
             removals += 1;
         }
         self.pending_removal_count = removals;
+        self.glyph_count = 0;
+        self.glyph_candidate_count = 0;
+        self.mask_count = 0;
+        self.mask_candidate_count = 0;
+        self.mask_pixel_count = 0;
+        self.mask_candidate_pixel_count = 0;
+    }
+
+    /// Rebinds this pane to one already accepted native map and retires every
+    /// transferred font resource. The caller must quiesce synchronous shaping
+    /// and raster work before changing the borrowed map.
+    pub fn rebindFonts(
+        self: *Content,
+        fonts: *text.FontMap,
+        producer: FontProducer,
+    ) void {
+        for (self.masks[0..self.mask_count]) |entry| {
+            if (entry.resource.resource.isShared())
+                releaseCommittedShared(producer, entry.resource);
+        }
+        for (self.glyphs[0..self.glyph_count]) |entry| {
+            const resource = entry.resource orelse continue;
+            if (resource.resource.isShared())
+                releaseCommittedShared(producer, resource);
+        }
+        self.fonts = fonts;
+        var removals = self.pending_removal_count;
+        for (self.masks[0..self.mask_count]) |entry| {
+            if (entry.resource.resource.isShared()) continue;
+            std.debug.assert(removals < self.pending_removals.len);
+            self.pending_removals[removals] = .{ .resource = entry.resource };
+            removals += 1;
+        }
+        for (self.glyphs[0..self.glyph_count]) |entry| {
+            const resource = entry.resource orelse continue;
+            if (resource.resource.isShared()) continue;
+            std.debug.assert(removals < self.pending_removals.len);
+            self.pending_removals[removals] = .{ .resource = resource };
+            removals += 1;
+        }
+        self.pending_removal_count = removals;
+        self.glyph_count = 0;
+        self.glyph_candidate_count = 0;
+        self.mask_count = 0;
+        self.mask_candidate_count = 0;
+        self.mask_pixel_count = 0;
+        self.mask_candidate_pixel_count = 0;
+    }
+
+    /// Releases every pane reference to shared font resources before Content
+    /// or its native group owner is retired.
+    pub fn releaseFontResources(
+        self: *Content,
+        producer: FontProducer,
+    ) void {
+        for (self.masks[0..self.mask_count]) |entry|
+            if (entry.resource.resource.isShared())
+                releaseCommittedShared(producer, entry.resource);
+        for (self.glyphs[0..self.glyph_count]) |entry| {
+            const resource = entry.resource orelse continue;
+            if (resource.resource.isShared())
+                releaseCommittedShared(producer, resource);
+        }
         self.glyph_count = 0;
         self.glyph_candidate_count = 0;
         self.mask_count = 0;
@@ -653,7 +736,8 @@ pub const Content = struct {
         self.image_content_revision = update.content_generation;
     }
 
-    /// Transfers one complete command list and its pending sparse resources.
+    /// Transfers one complete command list and its pending sparse resources
+    /// through the exact local or shared font producer.
     ///
     /// The caller must first secure its destination capacity, then copy or
     /// synchronously apply the returned slices before any further Content
@@ -665,7 +749,12 @@ pub const Content = struct {
         self: *Content,
         work: *Work,
         geometry: Geometry,
+        producer: FontProducer,
     ) TakeError!canvas.ProducerUpdate {
+        errdefer if (comptime features.native_text) switch (producer) {
+            .local => {},
+            .shared => |shared| shared.cancelUpdate(),
+        };
         if (!self.initialized) return error.InvalidProjection;
         if (!work.accepts(self.limits)) return error.WorkTooSmall;
         var fixed = std.heap.FixedBufferAllocator.init(work.raster_arena);
@@ -712,6 +801,7 @@ pub const Content = struct {
                 .geometry = geometry,
             },
             .fonts = self.fonts,
+            .producer = producer,
             .buffers = .{
                 .inputs = work.draws,
                 .cursor_glyphs = work.cursor_indices,
@@ -745,6 +835,8 @@ pub const Content = struct {
             work.canvas_inputs[index] = drawInput(draw);
         if (geometry_changed or glyph_changed or mask_changed)
             try self.advanceRevision();
+        self.releaseRetiredSharedGlyphs(producer);
+        self.releaseRetiredSharedMasks(producer);
         std.mem.swap([]GlyphEntry, &self.glyphs, &self.glyph_candidates);
         self.glyph_count = self.glyph_candidate_count;
         self.glyph_candidate_count = 0;
@@ -766,7 +858,23 @@ pub const Content = struct {
             .commands = work.canvas_inputs[0..build.input_used],
         };
         self.pending_removal_count = 0;
+        if (comptime features.native_text) switch (producer) {
+            .local => {},
+            .shared => |shared| shared.commitUpdate(),
+        };
         return result;
+    }
+
+    /// Produces one explicitly source-local update for non-sharing capability
+    /// graphs and retained local-only proofs.
+    pub fn takeLocalUpdate(
+        self: *Content,
+        work: *Work,
+        geometry: Geometry,
+    ) TakeError!canvas.ProducerUpdate {
+        if (comptime features.native_text)
+            return self.takeUpdate(work, geometry, .local);
+        return self.takeUpdate(work, geometry, {});
     }
 
     fn appendRetiredGlyphs(self: *Content) TakeError!bool {
@@ -781,6 +889,7 @@ pub const Content = struct {
             if (retained) continue;
             changed = true;
             const resource = entry.resource orelse continue;
+            if (resource.resource.isShared()) continue;
             if (self.pending_removal_count >= self.pending_removals.len)
                 return error.ResourceMutationLimit;
             self.pending_removals[self.pending_removal_count] = .{
@@ -802,6 +911,7 @@ pub const Content = struct {
             }
             if (retained) continue;
             changed = true;
+            if (entry.resource.resource.isShared()) continue;
             if (self.pending_removal_count >= self.pending_removals.len)
                 return error.ResourceMutationLimit;
             self.pending_removals[self.pending_removal_count] = .{
@@ -810,6 +920,39 @@ pub const Content = struct {
             self.pending_removal_count += 1;
         }
         return changed;
+    }
+
+    fn releaseRetiredSharedGlyphs(
+        self: *Content,
+        producer: FontProducer,
+    ) void {
+        for (self.glyphs[0..self.glyph_count]) |entry| {
+            const resource = entry.resource orelse continue;
+            if (!resource.resource.isShared()) continue;
+            var retained = false;
+            for (self.glyph_candidates[0..self.glyph_candidate_count]) |candidate|
+                if (std.meta.eql(entry.key, candidate.key)) {
+                    retained = true;
+                    break;
+                };
+            if (!retained) releaseCommittedShared(producer, resource);
+        }
+    }
+
+    fn releaseRetiredSharedMasks(
+        self: *Content,
+        producer: FontProducer,
+    ) void {
+        for (self.masks[0..self.mask_count]) |entry| {
+            if (!entry.resource.resource.isShared()) continue;
+            var retained = false;
+            for (self.mask_candidates[0..self.mask_candidate_count]) |candidate|
+                if (std.meta.eql(entry.resource, candidate.resource)) {
+                    retained = true;
+                    break;
+                };
+            if (!retained) releaseCommittedShared(producer, entry.resource);
+        }
     }
 
     fn replaceProjection(self: *Content, full: ProjectionBaseline) void {
@@ -1058,6 +1201,7 @@ pub const Content = struct {
         work: *Work,
         allocator: std.mem.Allocator,
         fonts: if (features.native_text) *text.FontMap else void,
+        producer: FontProducer,
         key: text.GlyphKey,
         upload_count: *usize,
         upload_bytes: *usize,
@@ -1070,23 +1214,44 @@ pub const Content = struct {
             if (!std.meta.eql(entry.key, key)) continue;
             self.glyph_candidates[self.glyph_candidate_count] = entry;
             self.glyph_candidate_count += 1;
-            return &self.glyph_candidates[self.glyph_candidate_count - 1];
+            const retained = &self.glyph_candidates[self.glyph_candidate_count - 1];
+            if (retained.resource) |resource|
+                try redeclareGlyphIfRequired(
+                    work,
+                    allocator,
+                    fonts,
+                    producer,
+                    key,
+                    retained,
+                    resource,
+                    upload_count,
+                    upload_bytes,
+                );
+            return retained;
         }
         var raster = if (comptime features.native_text)
             try text.rasterizeGlyph(allocator, fonts, key)
         else
             try text.rasterizeGlyph(allocator, key);
         defer raster.deinit();
-        const resource = if (raster.width != 0 and raster.height != 0)
-            try issueResource(&self.next_resource_id, 1)
+        const produced = if (raster.width != 0 and raster.height != 0)
+            try produceGlyphResource(
+                &self.next_resource_id,
+                producer,
+                key,
+                raster.width,
+                raster.height,
+                raster.pixels,
+            )
         else
             null;
-        if (resource) |value|
+        const resource = if (produced) |value| value.resource else null;
+        if (produced) |value| if (value.declaration_required)
             try appendUpload(
                 work,
                 upload_count,
                 upload_bytes,
-                value,
+                value.resource,
                 .alpha8,
                 raster.width,
                 raster.height,
@@ -1107,6 +1272,10 @@ pub const Content = struct {
     fn mask(
         self: *Content,
         work: *Work,
+        producer: FontProducer,
+        style: UnderlineStyle,
+        thickness: u16,
+        position: i16,
         pixels: []const u8,
         width: u16,
         height: u16,
@@ -1115,7 +1284,9 @@ pub const Content = struct {
     ) TakeError!*const MaskEntry {
         const hash = std.hash.Wyhash.hash(0, pixels);
         for (self.mask_candidates[0..self.mask_candidate_count]) |*entry|
-            if (entry.hash == hash and entry.width == width and entry.height == height and
+            if (entry.hash == hash and entry.style == style and
+                entry.thickness == thickness and entry.position == position and
+                entry.width == width and entry.height == height and
                 std.mem.eql(
                     u8,
                     self.mask_candidate_pixels[entry.pixel_offset..][0..entry.pixel_count],
@@ -1129,7 +1300,9 @@ pub const Content = struct {
                 self.mask_candidate_pixels.len - self.mask_candidate_pixel_count)
             return error.MaskLimit;
         for (self.masks[0..self.mask_count]) |entry| {
-            if (entry.hash != hash or entry.width != width or entry.height != height or
+            if (entry.hash != hash or entry.style != style or
+                entry.thickness != thickness or entry.position != position or
+                entry.width != width or entry.height != height or
                 !std.mem.eql(
                     u8,
                     self.mask_pixels[entry.pixel_offset..][0..entry.pixel_count],
@@ -1138,6 +1311,9 @@ pub const Content = struct {
                 continue;
             const candidate = MaskEntry{
                 .hash = entry.hash,
+                .style = entry.style,
+                .thickness = entry.thickness,
+                .position = entry.position,
                 .resource = entry.resource,
                 .width = entry.width,
                 .height = entry.height,
@@ -1151,21 +1327,43 @@ pub const Content = struct {
             self.mask_candidates[self.mask_candidate_count] = candidate;
             self.mask_candidate_pixel_count += entry.pixel_count;
             self.mask_candidate_count += 1;
+            try redeclareMaskIfRequired(
+                work,
+                producer,
+                &self.mask_candidates[self.mask_candidate_count - 1],
+                pixels,
+                upload_count,
+                upload_bytes,
+            );
             return &self.mask_candidates[self.mask_candidate_count - 1];
         }
-        const resource = try issueResource(&self.next_resource_id, 1);
-        try appendUpload(
-            work,
-            upload_count,
-            upload_bytes,
-            resource,
-            .alpha8,
+        const produced = try produceDecorationResource(
+            &self.next_resource_id,
+            producer,
+            style,
             width,
             height,
+            thickness,
+            position,
             pixels,
         );
+        const resource = produced.resource;
+        if (produced.declaration_required)
+            try appendUpload(
+                work,
+                upload_count,
+                upload_bytes,
+                resource,
+                .alpha8,
+                width,
+                height,
+                pixels,
+            );
         self.mask_candidates[self.mask_candidate_count] = .{
             .hash = hash,
+            .style = style,
+            .thickness = thickness,
+            .position = position,
             .resource = resource,
             .width = width,
             .height = height,
@@ -1197,6 +1395,7 @@ const Build = struct {
     allocator: std.mem.Allocator,
     input: RenderInput,
     fonts: if (features.native_text) *text.FontMap else void,
+    producer: Content.FontProducer,
     buffers: WorkBuffers,
     content: *Content,
     work: *Content.Work,
@@ -1381,6 +1580,7 @@ const Build = struct {
             self.work,
             self.allocator,
             self.fonts,
+            self.producer,
             value.key,
             self.upload_count,
             self.upload_bytes,
@@ -1618,6 +1818,10 @@ const Build = struct {
         self.decoration_used += count;
         const mask = try self.content.mask(
             self.work,
+            self.producer,
+            cell_value.underline_style,
+            line.height,
+            @intCast(self.input.geometry.underline_y),
             pixels,
             line.width,
             pattern_height,
@@ -1815,6 +2019,171 @@ fn issueResource(
         .resource = canvas.ResourceId.local(id) catch return error.IdentityExhausted,
         .generation = @fromBackingInt(@intCast(generation)),
     };
+}
+
+const ProducedResource = struct {
+    resource: canvas.ResourceRef,
+    declaration_required: bool,
+};
+
+fn produceGlyphResource(
+    next: *u64,
+    producer: Content.FontProducer,
+    key: text.GlyphKey,
+    width: u16,
+    height: u16,
+    pixels: []const u8,
+) Content.TakeError!ProducedResource {
+    if (comptime !features.native_text) return .{
+        .resource = try issueResource(next, 1),
+        .declaration_required = true,
+    };
+    return switch (producer) {
+        .local => .{
+            .resource = try issueResource(next, 1),
+            .declaration_required = true,
+        },
+        .shared => |shared| blk: {
+            const interned = try shared.internGlyph(
+                key,
+                .alpha8,
+                .{ .width = width, .height = height },
+                width,
+                pixels,
+            );
+            break :blk .{
+                .resource = interned.resource,
+                .declaration_required = interned.declaration_required,
+            };
+        },
+    };
+}
+
+fn produceDecorationResource(
+    next: *u64,
+    producer: Content.FontProducer,
+    style: UnderlineStyle,
+    width: u16,
+    height: u16,
+    thickness: u16,
+    position: i16,
+    pixels: []const u8,
+) Content.TakeError!ProducedResource {
+    if (comptime !features.native_text) return .{
+        .resource = try issueResource(next, 1),
+        .declaration_required = true,
+    };
+    return switch (producer) {
+        .local => .{
+            .resource = try issueResource(next, 1),
+            .declaration_required = true,
+        },
+        .shared => |shared| blk: {
+            const interned = try shared.internDecoration(
+                @backingInt(style),
+                width,
+                height,
+                thickness,
+                position,
+                pixels,
+            );
+            break :blk .{
+                .resource = interned.resource,
+                .declaration_required = interned.declaration_required,
+            };
+        },
+    };
+}
+
+fn sharedDeclarationRequired(
+    producer: Content.FontProducer,
+    resource: canvas.ResourceRef,
+) Content.TakeError!bool {
+    if (!resource.resource.isShared()) return false;
+    if (comptime !features.native_text) return error.InvalidUpdate;
+    return switch (producer) {
+        .local => error.InvalidUpdate,
+        .shared => |shared| try shared.declarationRequired(resource),
+    };
+}
+
+fn releaseCommittedShared(
+    producer: Content.FontProducer,
+    resource: canvas.ResourceRef,
+) void {
+    if (comptime !features.native_text)
+        @panic("non-native Content retained a shared font resource");
+    switch (producer) {
+        .local => @panic("local Content retained a shared font resource"),
+        .shared => |shared| shared.releaseCommitted(resource),
+    }
+}
+
+fn alreadyUploaded(
+    work: *Content.Work,
+    count: usize,
+    resource: canvas.ResourceRef,
+) bool {
+    for (work.uploads[0..count]) |upload|
+        if (std.meta.eql(upload.resource, resource)) return true;
+    return false;
+}
+
+fn redeclareGlyphIfRequired(
+    work: *Content.Work,
+    allocator: std.mem.Allocator,
+    fonts: if (features.native_text) *text.FontMap else void,
+    producer: Content.FontProducer,
+    key: text.GlyphKey,
+    retained: *const GlyphEntry,
+    resource: canvas.ResourceRef,
+    upload_count: *usize,
+    upload_bytes: *usize,
+) Content.TakeError!void {
+    if (!try sharedDeclarationRequired(producer, resource) or
+        alreadyUploaded(work, upload_count.*, resource))
+        return;
+    var raster = if (comptime features.native_text)
+        try text.rasterizeGlyph(allocator, fonts, key)
+    else
+        try text.rasterizeGlyph(allocator, key);
+    defer raster.deinit();
+    if (raster.width != retained.width or raster.height != retained.height or
+        raster.left != retained.left or raster.top != retained.top)
+        return error.InvalidUpdate;
+    try Content.appendUpload(
+        work,
+        upload_count,
+        upload_bytes,
+        resource,
+        .alpha8,
+        raster.width,
+        raster.height,
+        raster.pixels,
+    );
+}
+
+fn redeclareMaskIfRequired(
+    work: *Content.Work,
+    producer: Content.FontProducer,
+    retained: *const MaskEntry,
+    pixels: []const u8,
+    upload_count: *usize,
+    upload_bytes: *usize,
+) Content.TakeError!void {
+    if (!try sharedDeclarationRequired(producer, retained.resource) or
+        alreadyUploaded(work, upload_count.*, retained.resource))
+        return;
+    try Content.appendUpload(
+        work,
+        upload_count,
+        upload_bytes,
+        retained.resource,
+        .alpha8,
+        retained.width,
+        retained.height,
+        pixels,
+    );
 }
 
 fn drawInput(draw: Draw) canvas.Input {
