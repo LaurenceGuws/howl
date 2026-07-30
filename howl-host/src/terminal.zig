@@ -158,9 +158,11 @@ const Turn = struct {
 
 const VisualState = struct {
     baseline_cells: [projection_cell_limit]terminal_render.Cell = undefined,
+    baseline_scalars: vt.ScalarStorage,
     baseline_geometry: [projection_row_limit]terminal_render.LineGeometry = undefined,
     baseline_cursor: terminal_render.Cursor = undefined,
     work_cells: [projection_cell_limit]terminal_render.Cell = undefined,
+    work_scalars: vt.ScalarStorage,
     work_rows: [projection_row_limit]terminal_render.RowPatch = undefined,
     image_pixels: [image_byte_limit]u8 = undefined,
     image_uploads: [image_limit]terminal_images.ImageUpload = undefined,
@@ -173,6 +175,40 @@ const VisualState = struct {
     cols: u16,
     initialized: bool = false,
 
+    fn init(
+        allocator: std.mem.Allocator,
+        rows: u16,
+        cols: u16,
+    ) error{OutOfMemory}!VisualState {
+        var baseline_scalars = vt.ScalarStorage.init(
+            allocator,
+            projection_cell_limit,
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => unreachable,
+        };
+        errdefer baseline_scalars.deinit();
+        const work_scalars = vt.ScalarStorage.init(
+            allocator,
+            projection_cell_limit,
+        ) catch |failure| switch (failure) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => unreachable,
+        };
+        return .{
+            .baseline_scalars = baseline_scalars,
+            .work_scalars = work_scalars,
+            .rows = rows,
+            .cols = cols,
+        };
+    }
+
+    fn deinit(self: *VisualState) void {
+        self.work_scalars.deinit();
+        self.baseline_scalars.deinit();
+        self.* = undefined;
+    }
+
     fn baseline(self: *const VisualState) terminal_render.ProjectionBaseline {
         const cells = @as(usize, self.rows) * self.cols;
         return .{
@@ -180,8 +216,16 @@ const VisualState = struct {
             .cols = self.cols,
             .cursor = self.baseline_cursor,
             .cells = self.baseline_cells[0..cells],
+            .scalars = &self.baseline_scalars,
             .geometry = self.baseline_geometry[0..self.rows],
         };
+    }
+
+    fn scalarBaseline(self: *const VisualState) terminal_render.ScalarBaseline {
+        return .retained(
+            &self.baseline_scalars,
+            @as(usize, self.rows) * self.cols,
+        );
     }
 
     fn project(
@@ -200,7 +244,11 @@ const VisualState = struct {
                 .{ .incremental = self.baseline() }
             else
                 .full,
-            .{ .cells = &self.work_cells, .rows = &self.work_rows },
+            .{
+                .cells = &self.work_cells,
+                .scalars = &self.work_scalars,
+                .rows = &self.work_rows,
+            },
             null,
             selectionStyle(),
         );
@@ -239,6 +287,7 @@ const VisualState = struct {
             self.baseline_geometry[patch.row] = patch.geometry;
         }
         self.baseline_cursor = update.cursor;
+        std.mem.swap(vt.ScalarStorage, &self.baseline_scalars, &self.work_scalars);
     }
 
     fn projectImages(
@@ -367,7 +416,8 @@ const Logical = struct {
         errdefer content.deinit();
         const visual = try allocator.create(VisualState);
         errdefer allocator.destroy(visual);
-        visual.* = .{ .rows = grid.rows, .cols = grid.cols };
+        visual.* = try VisualState.init(allocator, grid.rows, grid.cols);
+        errdefer visual.deinit();
         try visual.project(&machine, &content);
         return .{
             .allocator = allocator,
@@ -387,6 +437,7 @@ const Logical = struct {
 
     /// Stops the child and releases VT then PTY ownership in reverse order.
     fn deinit(self: *Logical) void {
+        self.visual.deinit();
         self.allocator.destroy(self.visual);
         self.content.deinit();
         self.machine.deinit();
@@ -592,6 +643,7 @@ const Logical = struct {
         defer if (producer) |*value| value.deinit();
         const update = self.content.takeUpdate(
             work,
+            self.visual.scalarBaseline(),
             self.geometry,
             if (producer) |*value| .{ .shared = value } else .local,
         ) catch |failure| {
@@ -674,6 +726,7 @@ const Logical = struct {
         };
         const update = self.content.takeUpdate(
             work,
+            self.visual.scalarBaseline(),
             self.geometry,
             .local,
         ) catch |failure| switch (failure) {
@@ -2271,7 +2324,11 @@ test "realistic configured sparse terminal fits the production Composer candidat
         contentLimits(),
     );
     defer work.deinit();
-    const update = try owner.content.takeLocalUpdate(&work, owner.geometry);
+    const update = try owner.content.takeLocalUpdate(
+        &work,
+        owner.visual.scalarBaseline(),
+        owner.geometry,
+    );
     try std.testing.expect(update.commands.len <= admitted_commands);
     try std.testing.expect(update.uploads.len <= admitted_resources);
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
@@ -2316,7 +2373,11 @@ test "alternate-screen exit publishes complete retained resource turnover" {
     try owner.visual.project(&owner.machine, &owner.content);
     try composer.apply(
         source,
-        try owner.content.takeLocalUpdate(&runtime.work, owner.geometry),
+        try owner.content.takeLocalUpdate(
+            &runtime.work,
+            owner.visual.scalarBaseline(),
+            owner.geometry,
+        ),
     );
 
     try std.testing.expect((try owner.machine.feed("\x1b[?1049h")).state_changed);
@@ -2338,13 +2399,21 @@ test "alternate-screen exit publishes complete retained resource turnover" {
     }
     try std.testing.expect(alternate_changed);
     try owner.visual.project(&owner.machine, &owner.content);
-    const alternate = try owner.content.takeLocalUpdate(&runtime.work, owner.geometry);
+    const alternate = try owner.content.takeLocalUpdate(
+        &runtime.work,
+        owner.visual.scalarBaseline(),
+        owner.geometry,
+    );
     try std.testing.expect(alternate.uploads.len > 128);
     try composer.apply(source, alternate);
 
     try std.testing.expect((try owner.machine.feed("\x1b[?1049l")).state_changed);
     try owner.visual.project(&owner.machine, &owner.content);
-    const primary = try owner.content.takeLocalUpdate(&runtime.work, owner.geometry);
+    const primary = try owner.content.takeLocalUpdate(
+        &runtime.work,
+        owner.visual.scalarBaseline(),
+        owner.geometry,
+    );
     try std.testing.expect(primary.removals.len > 128);
     try std.testing.expect(primary.removals.len <= admitted_resources);
     try composer.apply(source, primary);

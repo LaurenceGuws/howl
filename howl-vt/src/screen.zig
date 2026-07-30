@@ -1,6 +1,25 @@
 //! Owns screen-bank cells, cursor, margins, history, reflow, and SGR state.
 
 const std = @import("std");
+const scalar_storage = @import("scalar_storage.zig");
+
+fn acceptedTail(
+    storage: *const scalar_storage.Storage,
+    cell: usize,
+    combining_len: u8,
+) []const u32 {
+    return storage.tail(cell, combining_len) catch
+        @panic("accepted scalar range/count mismatch");
+}
+
+fn clearAcceptedTail(
+    storage: *scalar_storage.Storage,
+    cell: usize,
+    combining_len: u8,
+) void {
+    storage.clear(cell, combining_len) catch
+        @panic("accepted scalar range/count mismatch");
+}
 
 const logical_output_line_bytes_max: usize = 1024 * 1024;
 
@@ -62,7 +81,7 @@ fn validateSizedText(parsed: ParsedTextSize) bool {
             cluster_count += 1;
             cluster_len = 0;
         }
-        if (cluster_len == 4) return false;
+        if (cluster_len == scalar_storage.maximum_scalars) return false;
         cluster_len += 1;
     }
     if (cluster_len != 0) cluster_count += 1;
@@ -187,8 +206,13 @@ pub const Screen = struct {
     scroll_top: u16,
     scroll_bottom: u16,
     cells: ?[]Cell,
+    scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
     history: ?[]Cell,
+    history_scalars: ?scalar_storage.Storage,
+    history_plan: ?[]scalar_storage.Range,
+    history_plan_outgoing: ?[]u8,
+    history_plan_incoming: ?[]u8,
     history_flags: ?[]u8,
     history_capacity: u16,
     history_count: u32,
@@ -242,8 +266,13 @@ pub const Screen = struct {
             .scroll_top = 0,
             .scroll_bottom = rows -| 1,
             .cells = cells,
+            .scalars = null,
             .row_flags = row_flags,
             .history = history,
+            .history_scalars = null,
+            .history_plan = null,
+            .history_plan_outgoing = null,
+            .history_plan_incoming = null,
             .history_flags = history_flags,
             .history_capacity = history_capacity,
             .history_count = 0,
@@ -301,7 +330,7 @@ pub const Screen = struct {
         errdefer if (row_flags) |buf| allocator.free(buf);
         const tab_stops = try allocTabStops(allocator, cols);
         errdefer if (tab_stops) |buf| allocator.free(buf);
-        return initBase(
+        var result = initBase(
             allocator,
             rows,
             cols,
@@ -313,6 +342,12 @@ pub const Screen = struct {
             0,
             tab_stops,
         );
+        result.scalars = scalar_storage.Storage.init(allocator, cell_count) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => return error.InvalidDimensions,
+        };
+        errdefer if (result.scalars) |*storage| storage.deinit();
+        return result;
     }
 
     fn initWithCellsAndDefaultCursorStyle(
@@ -344,18 +379,35 @@ pub const Screen = struct {
         var screen = try initOwnedVisibleGrid(allocator, rows, cols, cursor_style_default);
         errdefer screen.deinit(allocator);
 
-        const history: ?[]Cell = if (screen.cells != null and history_capacity > 0) blk: {
-            const buf = try allocator.alloc(Cell, 0);
-            break :blk buf;
-        } else null;
-        errdefer if (history) |buf| allocator.free(buf);
-        const history_flags: ?[]u8 = if (screen.cells != null and history_capacity > 0) blk: {
-            const buf = try allocator.alloc(u8, 0);
-            break :blk buf;
-        } else null;
-
-        screen.history = history;
-        screen.history_flags = history_flags;
+        if (screen.cells != null and history_capacity > 0) {
+            // Transfer each zero-length projected-history owner directly into
+            // Screen so the single deinit errdefer owns every later failure.
+            screen.history = try allocator.alloc(Cell, 0);
+            screen.history_flags = try allocator.alloc(u8, 0);
+        }
+        if (history_capacity != 0) {
+            const history_cells = std.math.mul(
+                usize,
+                history_capacity,
+                cols,
+            ) catch return error.InvalidDimensions;
+            screen.history_scalars = scalar_storage.Storage.init(
+                allocator,
+                history_cells,
+            ) catch |err| switch (err) {
+                error.OutOfMemory => return error.OutOfMemory,
+                error.InvalidCapacity => return error.InvalidDimensions,
+            };
+            screen.history_plan = try allocator.alloc(
+                scalar_storage.Range,
+                cols,
+            );
+            @memset(screen.history_plan.?, .none);
+            screen.history_plan_outgoing = try allocator.alloc(u8, cols);
+            @memset(screen.history_plan_outgoing.?, 0);
+            screen.history_plan_incoming = try allocator.alloc(u8, cols);
+            @memset(screen.history_plan_incoming.?, 0);
+        }
         screen.history_capacity = if (screen.cells != null) history_capacity else 0;
         return screen;
     }
@@ -364,12 +416,22 @@ pub const Screen = struct {
     pub fn deinit(self: *Screen, allocator: std.mem.Allocator) void {
         if (self.cells) |c| allocator.free(c);
         self.cells = null;
+        if (self.scalars) |*storage| storage.deinit();
+        self.scalars = null;
         if (self.row_flags) |buf| allocator.free(buf);
         self.row_flags = null;
         if (self.tab_stops) |buf| allocator.free(buf);
         self.tab_stops = null;
         if (self.history) |h| allocator.free(h);
         self.history = null;
+        if (self.history_scalars) |*storage| storage.deinit();
+        self.history_scalars = null;
+        if (self.history_plan) |plan| allocator.free(plan);
+        self.history_plan = null;
+        if (self.history_plan_outgoing) |counts| allocator.free(counts);
+        self.history_plan_outgoing = null;
+        if (self.history_plan_incoming) |counts| allocator.free(counts);
+        self.history_plan_incoming = null;
         if (self.history_flags) |buf| allocator.free(buf);
         self.history_flags = null;
         for (self.history_lines.items) |*line| line.deinit(allocator);
@@ -385,7 +447,7 @@ pub const Screen = struct {
     /// Allocation failure leaves this screen unchanged. Successful replacement
     /// preserves logical content and configured cursor defaults, resets margins
     /// and physical-row geometry to the full new grid, and releases old storage.
-    pub fn resize(self: *Screen, allocator: std.mem.Allocator, rows: u16, cols: u16) std.mem.Allocator.Error!void {
+    pub fn resize(self: *Screen, allocator: std.mem.Allocator, rows: u16, cols: u16) ReflowError!void {
         var replacement = try self.prepareResize(allocator, rows, cols);
         std.mem.swap(Screen, self, &replacement);
         replacement.deinit(allocator);
@@ -400,7 +462,7 @@ pub const Screen = struct {
         allocator: std.mem.Allocator,
         rows: u16,
         cols: u16,
-    ) std.mem.Allocator.Error!Screen {
+    ) ReflowError!Screen {
         var lines = try self.collectLogicalSnapshot(allocator);
         defer lines.deinit(allocator);
         for (lines.logical_lines.items) |*line| {
@@ -417,23 +479,71 @@ pub const Screen = struct {
         var buffers = try allocResizeBuffers(allocator, rows, cols, self.tab_stops);
         errdefer buffers.deinit(allocator);
 
-        copyVisibleRows(&buffers, reflow, projection, cols);
+        try copyVisibleRows(&buffers, reflow, projection, cols);
         var replacement = self.replacementBase(allocator);
         replacement.installResizeState(rows, cols, buffers.take());
         errdefer replacement.deinit(allocator);
+        try replacement.allocateHistoryPlan(allocator);
         try replacement.cloneOutputAuthority(allocator, self);
         try replacement.rebuildResizeAuthority(allocator, lines, reflow, projection, cols);
         replacement.restoreResizeCursor(rows, cols, reflow, projection);
         return replacement;
     }
 
+    fn allocateHistoryPlan(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+    ) std.mem.Allocator.Error!void {
+        if (self.history_capacity == 0) return;
+        std.debug.assert(self.history_plan == null);
+        std.debug.assert(self.history_plan_outgoing == null);
+        std.debug.assert(self.history_plan_incoming == null);
+        std.debug.assert(self.history_scalars == null);
+
+        const history_cells = std.math.mul(
+            usize,
+            self.history_capacity,
+            self.cols,
+        ) catch return error.OutOfMemory;
+        self.history_scalars = scalar_storage.Storage.init(
+            allocator,
+            history_cells,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => return error.OutOfMemory,
+        };
+        errdefer {
+            self.history_scalars.?.deinit();
+            self.history_scalars = null;
+        }
+        self.history_plan = try allocator.alloc(scalar_storage.Range, self.cols);
+        errdefer {
+            allocator.free(self.history_plan.?);
+            self.history_plan = null;
+        }
+        @memset(self.history_plan.?, .none);
+        self.history_plan_outgoing = try allocator.alloc(u8, self.cols);
+        errdefer {
+            allocator.free(self.history_plan_outgoing.?);
+            self.history_plan_outgoing = null;
+        }
+        @memset(self.history_plan_outgoing.?, 0);
+        self.history_plan_incoming = try allocator.alloc(u8, self.cols);
+        @memset(self.history_plan_incoming.?, 0);
+    }
+
     fn replacementBase(self: *const Screen, allocator: std.mem.Allocator) Screen {
         var replacement = self.*;
         replacement.allocator = allocator;
         replacement.cells = null;
+        replacement.scalars = null;
         replacement.row_flags = null;
         replacement.tab_stops = null;
         replacement.history = null;
+        replacement.history_scalars = null;
+        replacement.history_plan = null;
+        replacement.history_plan_outgoing = null;
+        replacement.history_plan_incoming = null;
         replacement.history_flags = null;
         replacement.history_count = 0;
         replacement.history_write_idx = 0;
@@ -451,9 +561,14 @@ pub const Screen = struct {
         self.rows = rows;
         self.cols = cols;
         self.cells = buffers.cells;
+        self.scalars = buffers.scalars;
         self.row_flags = buffers.row_flags;
         self.tab_stops = buffers.tab_stops;
         self.history = null;
+        self.history_scalars = null;
+        self.history_plan = null;
+        self.history_plan_outgoing = null;
+        self.history_plan_incoming = null;
         self.history_flags = null;
         self.history_count = 0;
         self.history_write_idx = 0;
@@ -469,6 +584,7 @@ pub const Screen = struct {
         std.debug.assert(self.rows == rows);
         std.debug.assert(self.cols == cols);
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
+        std.debug.assert((self.scalars != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.row_flags != null) == (rows > 0));
         std.debug.assert((self.tab_stops != null) == (cols > 0));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
@@ -491,7 +607,7 @@ pub const Screen = struct {
         self: *Screen,
         allocator: std.mem.Allocator,
         source: *const Screen,
-    ) std.mem.Allocator.Error!void {
+    ) ReflowError!void {
         try self.output_lines.ensureTotalCapacity(allocator, source.output_lines.items.len);
         while (self.output_lines.items.len < source.output_lines.items.len) {
             self.output_lines.appendAssumeCapacity(null);
@@ -519,7 +635,7 @@ pub const Screen = struct {
         reflow: ReflowState,
         projection: ResizeProjection,
         cols: u16,
-    ) std.mem.Allocator.Error!void {
+    ) ReflowError!void {
         std.debug.assert(reflow.line_row_starts.items.len == lines.logical_lines.items.len);
         std.debug.assert(reflow.line_row_counts.items.len == lines.logical_lines.items.len);
         std.debug.assert(projection.total_rows == screenCount32(reflow.rewrapped.items.len));
@@ -551,7 +667,7 @@ pub const Screen = struct {
         allocator: std.mem.Allocator,
         reflow: ReflowState,
         projection: ResizeProjection,
-    ) std.mem.Allocator.Error!void {
+    ) ReflowError!void {
         self.history_count = 0;
         self.history_write_idx = 0;
         if (self.history_capacity == 0 or self.cols == 0) return;
@@ -570,11 +686,23 @@ pub const Screen = struct {
             const row_end = row.start + self.cols;
             std.debug.assert(row.len <= self.cols);
             std.debug.assert(row_end <= screenCount32(reflow.flat_rows.items.len));
-            try self.appendProjectedRow(
+            try self.ensureProjectedCapacity(
                 allocator,
+                @min(self.history_count + 1, @as(u32, self.history_capacity)),
+            );
+            const projected_slot = self.preflightProjectedRow(
                 reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
+                &reflow.scalars.?,
+                row.start,
+            ) orelse return error.ScalarCapacity;
+            self.commitProjectedRow(
+                projected_slot,
+                reflow.flat_rows.items[@intCast(row.start)..@intCast(row.start + row.len)],
+                &reflow.scalars.?,
+                row.start,
                 row.wrapped,
                 row.geometry,
+                if (self.history_count == self.history_capacity) 1 else 0,
             );
         }
     }
@@ -608,7 +736,13 @@ pub const Screen = struct {
 
         var line_idx: u32 = kept_complete_start;
         while (line_idx < first_visible_line) : (line_idx += 1) {
-            var line = try cloneAuthorityLine(allocator, logical_lines[@intCast(line_idx)].cells.items);
+            const source_line = logical_lines[@intCast(line_idx)];
+            var line = try cloneAuthorityLine(
+                allocator,
+                source_line.cells.items,
+                if (source_line.scalars) |*storage| storage else null,
+                0,
+            );
             self.history_lines.append(allocator, line) catch |err| {
                 line.deinit(allocator);
                 return err;
@@ -630,7 +764,12 @@ pub const Screen = struct {
             }
             prefix_len = @min(prefix_len, screenCount32(line.cells.items.len));
             std.debug.assert(prefix_len <= screenCount32(line.cells.items.len));
-            self.open_history_line = try cloneAuthorityLine(allocator, line.cells.items[0..@intCast(prefix_len)]);
+            self.open_history_line = try cloneAuthorityLine(
+                allocator,
+                line.cells.items[0..@intCast(prefix_len)],
+                if (line.scalars) |*storage| storage else null,
+                0,
+            );
         }
 
         if (self.history_lines.items.len > self.history_capacity) {
@@ -688,6 +827,11 @@ pub const Screen = struct {
         var next_line = cloneAuthorityLine(
             allocator,
             if (self.open_history_line) |line| line.cells.items else &.{},
+            if (self.open_history_line) |*line|
+                if (line.scalars) |*storage| storage else null
+            else
+                null,
+            0,
         ) catch {
             self.recordHistoryLoss();
             return;
@@ -698,10 +842,51 @@ pub const Screen = struct {
             self.recordHistoryLoss();
             return;
         };
+        const prefix_len = next_line.cells.items.len;
+        var next_scalars: ?scalar_storage.Storage = if (prefix_len + len > 0)
+            scalar_storage.Storage.init(
+                allocator,
+                prefix_len + len,
+            ) catch {
+                self.recordHistoryLoss();
+                return;
+            }
+        else
+            null;
+        if (next_line.scalars) |*source| {
+            copyScalarCells(
+                source,
+                next_line.cells.items,
+                0,
+                &next_scalars.?,
+                0,
+                prefix_len,
+            ) catch {
+                next_scalars.?.deinit();
+                self.recordHistoryLoss();
+                return;
+            };
+        }
+        if (len > 0) {
+            copyScalarCells(
+                &self.scalars.?,
+                self.cells.?[self.rowStart(row)..][0..self.cols],
+                self.rowStart(row),
+                &next_scalars.?,
+                prefix_len,
+                len,
+            ) catch {
+                next_scalars.?.deinit();
+                self.recordHistoryLoss();
+                return;
+            };
+        }
         var col: u16 = 0;
         while (col < len) : (col += 1) {
             next_line.cells.appendAssumeCapacity(self.cellInfoAt(row, col));
         }
+        if (next_line.scalars) |*old| old.deinit();
+        next_line.scalars = next_scalars;
 
         const replacing_oldest = !wrapped and self.history_lines.items.len == self.history_capacity;
         const projected_drop = if (replacing_oldest)
@@ -721,11 +906,43 @@ pub const Screen = struct {
             };
         }
 
-        const replacement_slot = if (replacing_oldest) self.dropOldestHistoryLine(allocator) else null;
-        self.appendProjectedRowAssumeCapacity(
+        const incoming_storage = if (next_line.scalars) |*storage|
+            storage
+        else
+            &self.scalars.?;
+        const incoming_start = if (next_line.scalars != null)
+            next_line.cells.items.len - len
+        else
+            0;
+        const projected_slot = self.preflightProjectedRow(
             next_line.cells.items[next_line.cells.items.len - len ..],
+            incoming_storage,
+            incoming_start,
+        ) orelse {
+            self.recordHistoryLoss();
+            return;
+        };
+
+        // From here every operation is infallible. In particular, do not drop
+        // accepted logical/projected history until the incoming scalar plan is
+        // complete.
+        const replacement_slot = if (replacing_oldest)
+            self.dropOldestHistoryLine(allocator)
+        else
+            null;
+        self.commitProjectedRow(
+            projected_slot,
+            next_line.cells.items[next_line.cells.items.len - len ..],
+            incoming_storage,
+            incoming_start,
             wrapped,
             self.lineGeometry(row),
+            if (replacing_oldest)
+                projected_drop
+            else if (self.history_count == self.history_capacity)
+                1
+            else
+                0,
         );
 
         if (self.open_history_line) |*line| line.deinit(allocator);
@@ -864,13 +1081,23 @@ pub const Screen = struct {
         var current_line = try cloneLogicalLine(
             allocator,
             if (self.open_history_line) |line| line.cells.items else &.{},
+            if (self.open_history_line) |*line|
+                if (line.scalars) |*storage| storage else null
+            else
+                null,
+            0,
         );
         defer current_line.deinit(allocator);
 
         var history_line_idx: u32 = 0;
         while (history_line_idx < self.historyLineCount()) : (history_line_idx += 1) {
             const line = self.historyLineAt(history_line_idx);
-            var copied = try cloneLogicalLine(allocator, line.cells.items);
+            var copied = try cloneLogicalLine(
+                allocator,
+                line.cells.items,
+                if (line.scalars) |*storage| storage else null,
+                0,
+            );
             result.logical_lines.append(allocator, copied) catch |err| {
                 copied.deinit(allocator);
                 return err;
@@ -920,10 +1147,13 @@ pub const Screen = struct {
             current_line.cursor_offset = @as(u32, @intCast(current_line.cells.items.len)) + self.cursorOffsetInRow();
         }
 
-        var col: u16 = 0;
-        while (col < content_len) : (col += 1) {
-            try current_line.cells.append(allocator, self.cellInfoAt(row, col));
-        }
+        try appendLogicalCells(
+            allocator,
+            current_line,
+            self.visibleRowCells(row)[0..content_len],
+            &self.scalars.?,
+            self.rowStart(row),
+        );
 
         if (!wrapped) {
             if (current_line.cursor_offset) |offset| {
@@ -960,33 +1190,6 @@ pub const Screen = struct {
         return self.cursor.col;
     }
 
-    fn appendProjectionRows(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-        cells: []const Cell,
-        continues_to_visible: bool,
-    ) std.mem.Allocator.Error!void {
-        const cols: u32 = self.cols;
-        if (cols == 0) return;
-        const cell_count: u32 = @intCast(cells.len);
-        const row_count = @max(@as(u32, 1), std.math.divCeil(u32, cell_count, self.cols) catch unreachable);
-        std.debug.assert(row_count > 0);
-
-        var row_idx: u32 = 0;
-        while (row_idx < row_count) : (row_idx += 1) {
-            const start = row_idx * cols;
-            const end = @min(cell_count, start + cols);
-            std.debug.assert(start <= end);
-            std.debug.assert(end <= cell_count);
-            try self.appendProjectedRow(
-                allocator,
-                cells[@intCast(start)..@intCast(end)],
-                row_idx + 1 < row_count or continues_to_visible,
-                .single_width,
-            );
-        }
-    }
-
     fn visibleRowContentLen(self: *const Screen, row: u16) u16 {
         const line_cols = self.lineColumnCount(row);
         var col = line_cols;
@@ -1002,52 +1205,123 @@ pub const Screen = struct {
     fn dropOldestHistoryLine(self: *Screen, allocator: std.mem.Allocator) u32 {
         std.debug.assert(self.historyLineCount() == self.history_capacity);
         const slot = self.history_lines_start;
-        self.dropOldestProjectedRows(
-            self.projectedRowCountForCells(self.history_lines.items[@intCast(slot)].cells.items),
-        );
         self.history_lines.items[@intCast(slot)].deinit(allocator);
         self.history_lines.items[@intCast(slot)] = .{};
         self.history_lines_start = (self.history_lines_start + 1) % self.historyLineCount();
         return slot;
     }
 
-    fn appendProjectedRow(
+    fn preflightProjectedRow(
         self: *Screen,
-        allocator: std.mem.Allocator,
-        cells: []const Cell,
-        wrapped: bool,
-        geometry: LineGeometry,
-    ) std.mem.Allocator.Error!void {
-        if (self.cols == 0) return;
-        const capacity_target = @min(self.history_count + 1, @as(u32, self.history_capacity));
-        try self.ensureProjectedCapacity(allocator, capacity_target);
-        self.appendProjectedRowAssumeCapacity(cells, wrapped, geometry);
+        incoming: []const Cell,
+        incoming_scalars: *const scalar_storage.Storage,
+        incoming_start: usize,
+    ) ?u32 {
+        const flags = self.history_flags orelse return null;
+        const history = self.history orelse return null;
+        const scalars = if (self.history_scalars) |*storage|
+            storage
+        else
+            return null;
+        const plans = self.history_plan orelse return null;
+        const outgoing_counts = self.history_plan_outgoing orelse return null;
+        const incoming_counts = self.history_plan_incoming orelse return null;
+        if (incoming.len > self.cols or plans.len != self.cols or
+            outgoing_counts.len != self.cols or
+            incoming_counts.len != self.cols)
+            return null;
+        const slot = self.projectedAppendSlot();
+        const base = slot * @as(u32, self.cols);
+        if (base + self.cols > history.len or slot >= flags.len) return null;
+        @memset(plans, .none);
+        var col: usize = 0;
+        while (col < self.cols) : (col += 1) {
+            outgoing_counts[col] = history[base + col].combining_len;
+            incoming_counts[col] = if (col < incoming.len)
+                incoming[col].combining_len
+            else
+                0;
+            if (!scalars.validRange(base + col, outgoing_counts[col]))
+                @panic("accepted projected-history scalar mismatch");
+            if (col >= incoming.len) continue;
+            if (!incoming_scalars.validRange(
+                incoming_start + col,
+                incoming_counts[col],
+            )) @panic("accepted history-line scalar mismatch");
+        }
+        col = 0;
+        while (col < self.cols) : (col += 1) {
+            const count = @as(usize, incoming_counts[col]) -|
+                (scalar_storage.inline_scalars - 1);
+            if (count == 0) continue;
+            plans[col] = scalars.planFirstFit(
+                count,
+                base,
+                outgoing_counts,
+                plans[0..col],
+                incoming_counts[0..col],
+            ) catch return null;
+        }
+        return slot;
     }
 
-    fn appendProjectedRowAssumeCapacity(
+    fn commitProjectedRow(
         self: *Screen,
-        cells: []const Cell,
+        slot: u32,
+        incoming: []const Cell,
+        incoming_scalars: *const scalar_storage.Storage,
+        incoming_start: usize,
         wrapped: bool,
         geometry: LineGeometry,
+        rows_to_drop: u32,
     ) void {
-        const flags = self.history_flags orelse return;
-        const history = self.history orelse return;
-        std.debug.assert(self.projectedCapacity() >= @min(self.history_count + 1, @as(u32, self.history_capacity)));
-        if (self.history_count == self.history_capacity) {
-            self.dropOldestProjectedRows(1);
+        const flags = self.history_flags orelse
+            @panic("projected-history flags disappeared after preflight");
+        const history = self.history orelse
+            @panic("projected-history cells disappeared after preflight");
+        const scalars = if (self.history_scalars) |*storage|
+            storage
+        else
+            @panic("projected-history scalars disappeared after preflight");
+        const plans = self.history_plan orelse
+            @panic("projected-history plan disappeared after preflight");
+        const outgoing_counts = self.history_plan_outgoing orelse
+            @panic("projected-history counts disappeared after preflight");
+        const incoming_counts = self.history_plan_incoming orelse
+            @panic("projected-history counts disappeared after preflight");
+        const base = slot * @as(u32, self.cols);
+        var col: usize = 0;
+        while (col < self.cols) : (col += 1)
+            clearAcceptedTail(scalars, base + col, outgoing_counts[col]);
+        col = 0;
+        while (col < incoming.len) : (col += 1) {
+            const count = @as(usize, incoming_counts[col]) -|
+                (scalar_storage.inline_scalars - 1);
+            if (count == 0) continue;
+            const values = acceptedTail(
+                incoming_scalars,
+                incoming_start + col,
+                incoming_counts[col],
+            );
+            var prepared = scalars.prepare(values) catch
+                @panic("projected-history preflight diverged");
+            prepared.commitPlanned(plans[col], base + col, 0) catch
+                @panic("projected-history first-fit plan diverged");
         }
-        const slot = self.projectedAppendSlot();
-        const cols: u32 = self.cols;
-        const base = slot * cols;
-        const cell_count: u32 = @intCast(cells.len);
-
-        std.debug.assert(cell_count <= cols);
-        std.debug.assert(slot < flags.len);
-        std.debug.assert(base + cols <= history.len);
-
-        @memset(history[@intCast(base)..@intCast(base + cols)], blank_cell);
-        @memcpy(history[@intCast(base)..@intCast(base + cell_count)], cells);
-        flags[@intCast(slot)] = rowFlags(wrapped, geometry);
+        @memset(history[base..][0..self.cols], blank_cell);
+        @memcpy(history[base..][0..incoming.len], incoming);
+        flags[slot] = rowFlags(wrapped, geometry);
+        if (rows_to_drop != 0) {
+            const drop = @min(rows_to_drop, self.history_count);
+            var logical_row: u32 = 0;
+            while (logical_row < drop) : (logical_row += 1) {
+                const outgoing_slot = self.historySlotForLogicalRow(logical_row) orelse
+                    @panic("accepted projected-history row missing");
+                if (outgoing_slot != slot) self.clearProjectedSlot(outgoing_slot);
+            }
+            self.advanceOldestProjectedRows(drop);
+            if (self.history_count == 0) self.history_write_idx = slot;
+        }
         self.history_count += 1;
     }
 
@@ -1061,7 +1335,14 @@ pub const Screen = struct {
         const current_rows = self.projectedCapacity();
         if (current_rows >= min_rows) return;
 
-        const new_rows = @max(min_rows, @max(current_rows * 2, @as(u32, 8)));
+        // Projected history owns one fixed scalar cohort sized for the complete
+        // configured history. Allocate its paired cell/flag cohort to that same
+        // bound on first use so no later growth can expose cells before their
+        // range ownership is relocated.
+        std.debug.assert(current_rows == 0);
+        std.debug.assert(self.history_count == 0);
+        const new_rows = self.history_capacity;
+        std.debug.assert(new_rows >= min_rows);
         const cols: u32 = self.cols;
         const new_history = try allocator.alloc(Cell, @intCast(new_rows * cols));
         errdefer allocator.free(new_history);
@@ -1070,25 +1351,6 @@ pub const Screen = struct {
         const new_flags = try allocator.alloc(u8, @intCast(new_rows));
         errdefer allocator.free(new_flags);
         @memset(new_flags, 0);
-
-        const old_count = self.history_count;
-        std.debug.assert(old_count <= current_rows);
-        var logical_row: u32 = 0;
-        while (logical_row < old_count) : (logical_row += 1) {
-            const old_slot = self.historySlotForLogicalRow(logical_row) orelse break;
-            const source_start = old_slot * cols;
-            const dest_start = logical_row * cols;
-            std.debug.assert(old_slot < current_rows);
-            std.debug.assert(source_start + cols <= if (self.history) |history| history.len else 0);
-            std.debug.assert(dest_start + cols <= new_history.len);
-            if (self.history) |history| {
-                @memcpy(
-                    new_history[@intCast(dest_start)..@intCast(dest_start + cols)],
-                    history[@intCast(source_start)..@intCast(source_start + cols)],
-                );
-            }
-            if (self.history_flags) |flags| new_flags[@intCast(logical_row)] = flags[@intCast(old_slot)];
-        }
 
         if (self.history) |history| allocator.free(history);
         if (self.history_flags) |flags| allocator.free(flags);
@@ -1100,6 +1362,18 @@ pub const Screen = struct {
     fn dropOldestProjectedRows(self: *Screen, row_count: u32) void {
         if (row_count == 0 or self.history_count == 0) return;
 
+        const drop = @min(row_count, self.history_count);
+        var logical_row: u32 = 0;
+        while (logical_row < drop) : (logical_row += 1) {
+            const slot = self.historySlotForLogicalRow(logical_row) orelse
+                @panic("accepted projected-history row missing");
+            self.clearProjectedSlot(slot);
+        }
+        self.advanceOldestProjectedRows(drop);
+    }
+
+    fn advanceOldestProjectedRows(self: *Screen, row_count: u32) void {
+        if (row_count == 0 or self.history_count == 0) return;
         const drop = @min(row_count, self.history_count);
         const capacity = self.projectedCapacity();
         std.debug.assert(drop <= self.history_count);
@@ -1114,6 +1388,27 @@ pub const Screen = struct {
         self.history_write_idx = (self.history_write_idx + drop) % capacity;
         self.history_count -= drop;
         self.history_row_base += drop;
+    }
+
+    fn clearProjectedSlot(self: *Screen, slot: u32) void {
+        const history = self.history orelse
+            @panic("accepted projected-history cells missing");
+        const scalars = if (self.history_scalars) |*storage|
+            storage
+        else
+            @panic("accepted projected-history scalars missing");
+        const base = slot * @as(u32, self.cols);
+        if (base + self.cols > history.len)
+            @panic("accepted projected-history slot invalid");
+        var col: u32 = 0;
+        while (col < self.cols) : (col += 1)
+            clearAcceptedTail(
+                scalars,
+                base + col,
+                history[base + col].combining_len,
+            );
+        @memset(history[base..][0..self.cols], blank_cell);
+        if (self.history_flags) |flags| flags[slot] = 0;
     }
 
     /// Reset visible grid state to defaults.
@@ -1134,6 +1429,7 @@ pub const Screen = struct {
         self.last_graphic = null;
         self.current_attrs = initial_cell_attrs;
         if (self.cells) |c| @memset(c, blank_cell);
+        if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |buf| @memset(buf, 0);
         if (self.tab_stops) |stops| setDefaultTabStops(stops);
     }
@@ -1188,6 +1484,35 @@ pub const Screen = struct {
         return c[@intCast(start + @as(u32, col))];
     }
 
+    /// Copies one complete visible lead-cell scalar sequence.
+    ///
+    /// Continuation coordinates resolve to their exact lead cell. The returned
+    /// slice borrows caller storage and remains valid independently of Screen
+    /// mutation.
+    pub fn cellScalarsAt(
+        self: *const Screen,
+        row: u16,
+        col: u16,
+        output: *[scalar_storage.maximum_scalars]u32,
+    ) []const u32 {
+        if (row >= self.rows or col >= self.cols) return &.{};
+        const observed = self.cellInfoAt(row, col);
+        const lead_row = row -| observed.y;
+        const lead_col = col -| observed.x;
+        const lead = self.cellInfoAt(lead_row, lead_col);
+        if (lead.codepoint == 0) return &.{};
+        output[0] = lead.codepoint;
+        const direct: usize = @min(
+            @as(usize, lead.combining_len),
+            lead.combining.len,
+        );
+        @memcpy(output[1..][0..direct], lead.combining[0..direct]);
+        const index = self.rowStart(lead_row) + lead_col;
+        const tail = acceptedTail(&self.scalars.?, index, lead.combining_len);
+        @memcpy(output[1 + direct ..][0..tail.len], tail);
+        return output[0 .. 1 + direct + tail.len];
+    }
+
     /// Return whether `col` is a configured stop, using default eight-column stops without storage.
     pub fn tabStopAt(self: *const Screen, col: u16) bool {
         if (self.tab_stops) |stops| {
@@ -1208,6 +1533,31 @@ pub const Screen = struct {
         if (bounded_idx >= self.history_count or col >= self.cols) return blank_cell;
         const slot = self.historySlotForRecency(history_idx) orelse return blank_cell;
         return h[@intCast(slot * @as(u32, self.cols) + @as(u32, col))];
+    }
+
+    /// Copies one complete retained-history lead scalar sequence.
+    pub fn historyCellScalarsAt(
+        self: *const Screen,
+        history_idx: u32,
+        col: u16,
+        output: *[scalar_storage.maximum_scalars]u32,
+    ) []const u32 {
+        const slot = self.historySlotForRecency(history_idx) orelse return &.{};
+        if (col >= self.cols) return &.{};
+        const observed = self.historyCellAt(history_idx, col);
+        const lead_col = col -| observed.x;
+        const lead = self.historyCellAt(history_idx, lead_col);
+        if (lead.codepoint == 0) return &.{};
+        output[0] = lead.codepoint;
+        const direct: usize = @min(
+            @as(usize, lead.combining_len),
+            lead.combining.len,
+        );
+        @memcpy(output[1..][0..direct], lead.combining[0..direct]);
+        const index = slot * @as(u32, self.cols) + lead_col;
+        const tail = acceptedTail(&self.history_scalars.?, index, lead.combining_len);
+        @memcpy(output[1 + direct ..][0..tail.len], tail);
+        return output[0 .. 1 + direct + tail.len];
     }
 
     /// Borrows one visible row from this screen bank.
@@ -1569,6 +1919,7 @@ pub const Screen = struct {
     /// Clears the visible grid without discarding retained history.
     pub fn clearVisibleCells(self: *Screen) void {
         if (self.cells) |cells| @memset(cells, blank_cell);
+        if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |flags| @memset(flags, 0);
     }
 
@@ -1607,10 +1958,10 @@ pub const Screen = struct {
     pub fn clearScrollback(self: *Screen) bool {
         const allocator = self.allocator orelse return false;
         const changed = self.history_count != 0 or self.history_lines.items.len != 0 or self.open_history_line != null;
-        self.history_row_base += self.history_count;
+        self.dropOldestProjectedRows(self.history_count);
         self.clearHistoryAuthority(allocator);
-        self.history_count = 0;
-        self.history_write_idx = 0;
+        std.debug.assert(self.history_count == 0);
+        std.debug.assert(self.history_write_idx == 0);
         return changed;
     }
 
@@ -1743,6 +2094,7 @@ pub const Screen = struct {
             while (col <= bounds.right) : (col += 1) {
                 const cell = &cells[start + col];
                 if (std.meta.eql(cell.*, fill)) continue;
+                clearAcceptedTail(&self.scalars.?, start + col, cell.combining_len);
                 cell.* = fill;
                 changed = true;
             }
@@ -1898,12 +2250,23 @@ pub const Screen = struct {
             if (!std.meta.eql(row[@intCast(col)], replacement)) cells_changed = true;
         }
         if (move_len > 0) {
+            const base = self.rowStart(self.cursor.row);
+            self.moveScalarCells(
+                base + dst_col,
+                base + src_col,
+                move_len,
+                true,
+            );
             std.mem.copyBackwards(
                 Cell,
                 row[@intCast(dst_col)..@intCast(dst_col + move_len)],
                 row[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(self.cursor.row) + src_col,
+            screenColCount(amount),
+        );
         @memset(row[@intCast(src_col)..@intCast(src_col + screenColCount(amount))], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
         return cells_changed or changed;
@@ -1947,12 +2310,18 @@ pub const Screen = struct {
             if (!std.meta.eql(row[@intCast(col)], replacement)) cells_changed = true;
         }
         if (move_len > 0) {
+            const base = self.rowStart(self.cursor.row);
+            self.moveScalarCells(base + dst_col, base + src_col, move_len, false);
             std.mem.copyForwards(
                 Cell,
                 row[@intCast(dst_col)..@intCast(dst_col + move_len)],
                 row[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(self.cursor.row) + tail_start,
+            screenColCount(amount),
+        );
         @memset(row[@intCast(tail_start)..@intCast(tail_end)], erase);
         cells_changed = self.clearRowContinuation(self.cursor.row) or cells_changed;
         return cells_changed or changed;
@@ -1986,12 +2355,23 @@ pub const Screen = struct {
         std.debug.assert(cursor_col + amount_cols <= cells.len);
 
         if (move_len > 0) {
+            const base = self.rowStart(row);
+            self.moveScalarCells(
+                base + dst_col,
+                base + cursor_col,
+                move_len,
+                true,
+            );
             std.mem.copyBackwards(
                 Cell,
                 cells[@intCast(dst_col)..@intCast(dst_col + move_len)],
                 cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(row) + cursor_col,
+            amount_cols,
+        );
         @memset(cells[@intCast(cursor_col)..@intCast(cursor_col + amount_cols)], erase);
         changed = self.clearRowContinuation(row) or changed;
         return changed;
@@ -2025,12 +2405,23 @@ pub const Screen = struct {
         std.debug.assert(src_col + move_len <= cells.len);
 
         if (move_len > 0) {
+            const base = self.rowStart(row);
+            self.moveScalarCells(
+                base + cursor_col,
+                base + src_col,
+                move_len,
+                false,
+            );
             std.mem.copyForwards(
                 Cell,
                 cells[@intCast(cursor_col)..@intCast(cursor_col + move_len)],
                 cells[@intCast(src_col)..@intCast(src_col + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(row) + tail_start,
+            amount_cols,
+        );
         @memset(
             cells[@intCast(tail_start)..@intCast(end)],
             erase,
@@ -2068,12 +2459,23 @@ pub const Screen = struct {
 
         if (move_len > 0) {
             const source_start = left_idx + screenColCount(amount);
+            const base = self.rowStart(row);
+            self.moveScalarCells(
+                base + left_idx,
+                base + source_start,
+                move_len,
+                false,
+            );
             std.mem.copyForwards(
                 Cell,
                 cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
                 cells[@intCast(source_start)..@intCast(source_start + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(row) + left_idx + move_len,
+            screenColCount(amount),
+        );
         @memset(cells[@intCast(left_idx + move_len)..@intCast(end)], erase);
         changed = self.clearRowContinuation(row) or changed;
         return changed;
@@ -2106,12 +2508,23 @@ pub const Screen = struct {
 
         if (move_len > 0) {
             const destination_start = left_idx + amount_cols;
+            const base = self.rowStart(row);
+            self.moveScalarCells(
+                base + destination_start,
+                base + left_idx,
+                move_len,
+                true,
+            );
             std.mem.copyBackwards(
                 Cell,
                 cells[@intCast(destination_start)..@intCast(destination_start + move_len)],
                 cells[@intCast(left_idx)..@intCast(left_idx + move_len)],
             );
         }
+        self.clearScalarCells(
+            self.rowStart(row) + left_idx,
+            amount_cols,
+        );
         @memset(cells[@intCast(left_idx)..@intCast(left_idx + amount_cols)], erase);
         changed = self.clearRowContinuation(row) or changed;
         return changed;
@@ -2125,6 +2538,60 @@ pub const Screen = struct {
         return cells[@intCast(start)..@intCast(start + screenColCount(self.cols))];
     }
 
+    fn clearScalarCells(self: *Screen, start: u32, count: u32) void {
+        const storage = if (self.scalars) |*value| value else return;
+        const cells = self.cells orelse return;
+        var index = start;
+        while (index < start + count) : (index += 1)
+            clearAcceptedTail(storage, index, cells[index].combining_len);
+    }
+
+    fn moveScalarCells(
+        self: *Screen,
+        destination: u32,
+        source: u32,
+        count: u32,
+        backwards: bool,
+    ) void {
+        const storage = if (self.scalars) |*value| value else return;
+        const cells = self.cells orelse return;
+        var preflight: u32 = 0;
+        while (preflight < count) : (preflight += 1) {
+            const source_count = storage.validate(
+                source + preflight,
+                cells[source + preflight].combining_len,
+            ) catch @panic("accepted source scalar mismatch");
+            const destination_count = storage.validate(
+                destination + preflight,
+                cells[destination + preflight].combining_len,
+            ) catch @panic("accepted destination scalar mismatch");
+            if (source_count > scalar_storage.maximum_tail_scalars or
+                destination_count > scalar_storage.maximum_tail_scalars)
+                unreachable;
+        }
+        if (backwards) {
+            var remaining = count;
+            while (remaining != 0) {
+                remaining -= 1;
+                storage.move(
+                    source + remaining,
+                    cells[source + remaining].combining_len,
+                    destination + remaining,
+                    cells[destination + remaining].combining_len,
+                ) catch unreachable;
+            }
+        } else {
+            var index: u32 = 0;
+            while (index < count) : (index += 1)
+                storage.move(
+                    source + index,
+                    cells[source + index].combining_len,
+                    destination + index,
+                    cells[destination + index].combining_len,
+                ) catch unreachable;
+        }
+    }
+
     /// Write one byte per cell through the terminal's graphic write path.
     pub fn writeText(self: *Screen, text: []const u8) void {
         for (text) |byte| self.writeCell(@intCast(byte));
@@ -2132,15 +2599,100 @@ pub const Screen = struct {
 
     /// Repeat the complete bounded preceding glyph using the current rendition.
     ///
-    /// A zero count has the protocol default of one. The result is false only
-    /// when no preceding graphic exists; accepted repetition uses the ordinary
-    /// write path and therefore owns its wrapping, insertion, and dirty facts.
+    /// A zero count has the protocol default of one. The result is false when
+    /// no preceding graphic exists or when scalar pressure prevents the first
+    /// replay; true means at least one complete repetition committed. Accepted
+    /// repetition owns its ordinary wrapping, insertion, and dirty facts.
     pub fn repeatPreceding(self: *Screen, count: u16) bool {
         const graphic = self.last_graphic orelse return false;
         var remaining = @max(count, 1);
+        var committed = false;
         while (remaining > 0) : (remaining -= 1) {
-            self.writeCell(graphic.codepoint);
-            for (graphic.combining[0..graphic.combining_len]) |cp| self.writeCell(cp);
+            if (!self.writeRepeatedGraphic(graphic)) break;
+            committed = true;
+        }
+        return committed;
+    }
+
+    fn writeRepeatedGraphic(self: *Screen, graphic: LastGraphic) bool {
+        if (self.cols == 0 or self.rows == 0) return false;
+        const direct = @min(
+            @as(usize, graphic.combining_len),
+            scalar_storage.inline_scalars - 1,
+        );
+        var prepared: ?scalar_storage.Prepared = null;
+        if (graphic.combining_len > direct) {
+            var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+            for (
+                graphic.combining[direct..graphic.combining_len],
+                0..,
+            ) |scalar, index| tail[index] = scalar;
+            prepared = self.scalars.?.prepare(
+                tail[0 .. graphic.combining_len - direct],
+            ) catch return false;
+        }
+        defer if (prepared) |*range| range.deinit();
+
+        const right = self.rightBoundary();
+        if (self.wrap_pending) {
+            self.wrap_pending = false;
+            if (self.cursor.col == right) {
+                self.setRowWrapped(self.cursor.row, true);
+                self.lineFeed();
+                self.cursor.setColByClient(
+                    if (self.left_right_margin_mode) self.left_margin else 0,
+                );
+            }
+        }
+        if (self.cells) |cells| {
+            const target = cells[self.rowStart(self.cursor.row) + self.cursor.col];
+            if (target.y > 0 and target.width > 0 and target.x < target.width) {
+                const after = self.cursor.col -| target.x + target.width;
+                if (after <= right) {
+                    self.cursor.setColByClient(after);
+                } else {
+                    self.lineFeed();
+                    self.cursor.setColByClient(
+                        if (self.left_right_margin_mode) self.left_margin else 0,
+                    );
+                }
+            }
+        }
+        if (self.insert_mode) {
+            const inserted = self.insertChars(1);
+            std.debug.assert(inserted or !self.wrap_pending);
+        }
+
+        const cells = self.cells orelse unreachable;
+        const index = self.rowStart(self.cursor.row) + self.cursor.col;
+        const target = cells[index];
+        if (target.width != 1 or target.height != 1 or
+            target.x != 0 or target.y != 0)
+        {
+            std.debug.assert(self.clearClusterAt(
+                self.cursor.row,
+                self.cursor.col,
+                self.cursor.col !=
+                    self.clusterAnchorCol(self.cursor.row, self.cursor.col),
+            ));
+        }
+        clearAcceptedTail(&self.scalars.?, index, cells[index].combining_len);
+        var replay = Cell{
+            .codepoint = graphic.codepoint,
+            .combining_len = graphic.combining_len,
+            .attrs = self.current_attrs,
+        };
+        for (graphic.combining[0..direct], 0..) |scalar, scalar_index|
+            replay.combining[scalar_index] = scalar;
+        cells[index] = replay;
+        if (prepared) |*range| {
+            range.commit(index, 0) catch unreachable;
+        }
+        self.last_graphic = graphic;
+        if (self.cursor.col < right) {
+            self.cursor.setColByClient(self.cursor.col + 1);
+        } else if (self.auto_wrap) {
+            self.wrap_pending = true;
         }
         return true;
     }
@@ -2153,7 +2705,7 @@ pub const Screen = struct {
         var changed = false;
         var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
         if (parsed.width != 0) {
-            var scalars: [4]u21 = undefined;
+            var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
             var count: u8 = 0;
             while (iterator.nextCodepoint()) |cp| {
                 if (isIgnoredSizedTextCodepoint(cp)) continue;
@@ -2164,7 +2716,7 @@ pub const Screen = struct {
             return changed;
         }
 
-        var scalars: [4]u21 = undefined;
+        var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
         var count: u8 = 0;
         while (iterator.nextCodepoint()) |cp| {
             if (isIgnoredSizedTextCodepoint(cp)) continue;
@@ -2185,7 +2737,8 @@ pub const Screen = struct {
         scalars: []const u21,
         width_cells: u8,
     ) bool {
-        std.debug.assert(scalars.len > 0 and scalars.len <= 4);
+        std.debug.assert(scalars.len > 0 and
+            scalars.len <= scalar_storage.maximum_scalars);
         const physical_width = @as(u16, parsed.scale) * width_cells;
         const height: u16 = parsed.scale;
         const left = self.leftBoundary();
@@ -2193,6 +2746,14 @@ pub const Screen = struct {
         const available_width = right - left + 1;
         const available_height = self.scrollBottom() - self.scroll_top + 1;
         if (physical_width > available_width or height > available_height) return false;
+        var prepared_tail: ?scalar_storage.Prepared = null;
+        if (scalars.len > 1 + @as(usize, 3)) {
+            var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+            for (scalars[4..], 0..) |cp, index| tail[index] = cp;
+            prepared_tail = self.scalars.?.prepare(tail[0 .. scalars.len - 4]) catch
+                return false;
+        }
+        defer if (prepared_tail) |*prepared| prepared.deinit();
 
         var changed = self.cancelPendingWrap();
         if (self.cursor.col + physical_width - 1 > right) {
@@ -2216,6 +2777,26 @@ pub const Screen = struct {
         const cells = self.cells orelse return changed;
         const top = self.cursor.row;
         const start_col = self.cursor.col;
+        const lead_index = self.rowStart(top) + start_col;
+        const old_lead = cells[lead_index];
+        const candidate_tail = if (scalars.len > scalar_storage.inline_scalars)
+            scalars[scalar_storage.inline_scalars..]
+        else
+            &.{};
+        const old_tail = acceptedTail(
+            &self.scalars.?,
+            lead_index,
+            old_lead.combining_len,
+        );
+        var tail_changed = old_tail.len != candidate_tail.len;
+        if (!tail_changed) {
+            for (old_tail, candidate_tail) |old_scalar, candidate_scalar| {
+                if (old_scalar != candidate_scalar) {
+                    tail_changed = true;
+                    break;
+                }
+            }
+        }
         var row = top;
         while (row < top + height) : (row += 1) {
             var col = start_col;
@@ -2224,8 +2805,8 @@ pub const Screen = struct {
         }
 
         var cell = Cell{
-            .codepoint = scalars[0],
-            .combining_len = @intCast(scalars.len - 1),
+            .codepoint = 0,
+            .combining_len = 0,
             .width = @intCast(physical_width),
             .height = parsed.scale,
             .subscale_n = parsed.subscale_n,
@@ -2234,7 +2815,6 @@ pub const Screen = struct {
             .horizontal_align = parsed.horizontal_align,
             .attrs = self.current_attrs,
         };
-        for (scalars[1..], 0..) |cp, index| cell.combining[index] = cp;
         row = top;
         while (row < top + height) : (row += 1) {
             cell.y = @intCast(row - top);
@@ -2242,12 +2822,37 @@ pub const Screen = struct {
             while (col < start_col + physical_width) : (col += 1) {
                 cell.x = @intCast(col - start_col);
                 const index = self.rowStart(row) + col;
+                if (row == top and col == start_col) {
+                    cell.codepoint = scalars[0];
+                    cell.combining_len = @intCast(scalars.len - 1);
+                    const direct = @min(scalars.len - 1, cell.combining.len);
+                    for (scalars[1..][0..direct], 0..) |cp, scalar_index|
+                        cell.combining[scalar_index] = cp;
+                    if (prepared_tail) |*prepared| prepared.commit(
+                        index,
+                        cells[index].combining_len,
+                    ) catch unreachable else clearAcceptedTail(
+                        &self.scalars.?,
+                        index,
+                        cells[index].combining_len,
+                    );
+                } else {
+                    clearAcceptedTail(
+                        &self.scalars.?,
+                        index,
+                        cells[index].combining_len,
+                    );
+                    cell.codepoint = 0;
+                    cell.combining_len = 0;
+                    @memset(&cell.combining, 0);
+                }
                 if (!std.meta.eql(cells[@intCast(index)], cell)) {
                     cells[@intCast(index)] = cell;
                     changed = true;
                 }
             }
         }
+        changed = tail_changed or changed;
         self.last_graphic = null;
         if (start_col + physical_width <= right) {
             self.cursor.setColByClient(start_col + physical_width);
@@ -2300,6 +2905,11 @@ pub const Screen = struct {
                     self.cursor.col != self.clusterAnchorCol(self.cursor.row, self.cursor.col),
                 ));
             }
+            clearAcceptedTail(
+                &self.scalars.?,
+                start + @as(u32, self.cursor.col),
+                target.combining_len,
+            );
             cells[@intCast(start + @as(u32, self.cursor.col))] = .{
                 .codepoint = cp,
                 .attrs = self.current_attrs,
@@ -2324,18 +2934,29 @@ pub const Screen = struct {
         const idx = self.rowStart(anchor_row) + @as(u32, anchor_col);
         const lead_cell = &cells[@intCast(idx)];
         if (lead_cell.codepoint == 0) return false;
-        if (lead_cell.combining_len >= lead_cell.combining.len) return true;
+        if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars)
+            return true;
 
         const combining_index = lead_cell.combining_len;
-        var row = anchor_row;
-        while (row < @min(self.rows, anchor_row + lead_cell.height)) : (row += 1) {
-            var col = anchor_col;
-            while (col < @min(self.cols, anchor_col + lead_cell.width)) : (col += 1) {
-                const member = &cells[@intCast(self.rowStart(row) + col)];
-                member.combining[combining_index] = cp;
-                member.combining_len = combining_index + 1;
-            }
+        if (combining_index < lead_cell.combining.len) {
+            lead_cell.combining[combining_index] = cp;
+        } else {
+            var candidate: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+            const old = acceptedTail(
+                &self.scalars.?,
+                idx,
+                lead_cell.combining_len,
+            );
+            @memcpy(candidate[0..old.len], old);
+            candidate[old.len] = cp;
+            self.scalars.?.set(
+                idx,
+                lead_cell.combining_len,
+                candidate[0 .. old.len + 1],
+            ) catch
+                return true;
         }
+        lead_cell.combining_len = combining_index + 1;
         if (self.last_graphic) |*graphic| {
             if (graphic.combining_len < graphic.combining.len) {
                 graphic.combining[graphic.combining_len] = cp;
@@ -2598,6 +3219,7 @@ pub const Screen = struct {
         self.storeHistoryRow(0);
         self.row_origin = (self.row_origin + 1) % self.rows;
         const bottom_start = self.rowStart(self.rows - 1);
+        self.clearScalarCells(bottom_start, row_len);
         @memset(cells[@intCast(bottom_start)..@intCast(bottom_start + row_len)], blank_cell);
         self.setRowWrapped(self.rows - 1, false);
         self.resetLineGeometry(self.rows - 1);
@@ -2794,6 +3416,9 @@ pub const Screen = struct {
     fn consumeNewestHistoryRow(self: *Screen) void {
         std.debug.assert(self.history_count > 0);
         const allocator = self.allocator orelse unreachable;
+        const projected_slot = self.historySlotForRecency(0) orelse
+            @panic("accepted newest projected-history row missing");
+        self.clearProjectedSlot(projected_slot);
         self.history_count -= 1;
 
         if (self.open_history_line) |*line| {
@@ -2801,6 +3426,18 @@ pub const Screen = struct {
             std.debug.assert(row_count > 0);
             const remove = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
             std.debug.assert(remove > 0);
+            const first = line.cells.items.len - remove;
+            const storage = if (line.scalars) |*value|
+                value
+            else
+                @panic("accepted history scalar owner missing");
+            var index = first;
+            while (index < line.cells.items.len) : (index += 1)
+                clearAcceptedTail(
+                    storage,
+                    index,
+                    line.cells.items[index].combining_len,
+                );
             line.cells.shrinkRetainingCapacity(line.cells.items.len - remove);
             if (line.cells.items.len == 0) {
                 line.deinit(allocator);
@@ -2825,6 +3462,18 @@ pub const Screen = struct {
         if (row_count > 1) {
             const tail = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
             std.debug.assert(tail > 0 and tail <= self.cols);
+            const first = line.cells.items.len - tail;
+            const storage = if (line.scalars) |*value|
+                value
+            else
+                @panic("accepted history scalar owner missing");
+            var index = first;
+            while (index < line.cells.items.len) : (index += 1)
+                clearAcceptedTail(
+                    storage,
+                    index,
+                    line.cells.items[index].combining_len,
+                );
             line.cells.shrinkRetainingCapacity(line.cells.items.len - tail);
             self.open_history_line = line;
         } else {
@@ -2844,11 +3493,15 @@ pub const Screen = struct {
         while (remaining > 0) : (remaining -= 1) {
             const history_slot = self.historySlotForRecency(0);
             const history_flags = if (history_slot) |slot| self.history_flags.?[@intCast(slot)] else 0;
+            if (history_slot) |slot| {
+                if (!self.preflightHistoryRestore(slot)) break;
+            }
             changed = self.scrollDownRegion(self.scroll_top, self.scrollBottom(), 1) or changed;
             if (history_slot) |slot| {
                 const history = self.history.?;
                 const source = slot * @as(u32, self.cols);
                 const destination = self.rowStart(self.scroll_top);
+                self.commitHistoryRestore(slot, destination);
                 @memcpy(
                     self.cells.?[@intCast(destination)..@intCast(destination + self.cols)],
                     history[@intCast(source)..@intCast(source + self.cols)],
@@ -2859,6 +3512,77 @@ pub const Screen = struct {
             }
         }
         return changed;
+    }
+
+    fn preflightHistoryRestore(self: *Screen, slot: u32) bool {
+        const history = self.history orelse return false;
+        const history_scalars = if (self.history_scalars) |*storage|
+            storage
+        else
+            return false;
+        const visible = self.cells orelse return false;
+        const visible_scalars = if (self.scalars) |*storage|
+            storage
+        else
+            return false;
+        const plans = self.history_plan orelse return false;
+        const outgoing = self.history_plan_outgoing orelse return false;
+        const incoming = self.history_plan_incoming orelse return false;
+        if (plans.len != self.cols or outgoing.len != self.cols or
+            incoming.len != self.cols)
+            return false;
+        const source = slot * @as(u32, self.cols);
+        const released = self.rowStart(self.scrollBottom());
+        if (source + self.cols > history.len or
+            released + self.cols > visible.len)
+            return false;
+        @memset(plans, .none);
+        var col: usize = 0;
+        while (col < self.cols) : (col += 1) {
+            outgoing[col] = visible[released + col].combining_len;
+            incoming[col] = history[source + col].combining_len;
+            if (!visible_scalars.validRange(released + col, outgoing[col]) or
+                !history_scalars.validRange(source + col, incoming[col]))
+                @panic("accepted history restore scalar mismatch");
+            const count = @as(usize, incoming[col]) -|
+                (scalar_storage.inline_scalars - 1);
+            if (count == 0) continue;
+            plans[col] = visible_scalars.planFirstFit(
+                count,
+                released,
+                outgoing,
+                plans[0..col],
+                incoming[0..col],
+            ) catch return false;
+        }
+        return true;
+    }
+
+    fn commitHistoryRestore(self: *Screen, slot: u32, destination: u32) void {
+        const history_scalars = &self.history_scalars.?;
+        const visible = self.cells.?;
+        const visible_scalars = &self.scalars.?;
+        const plans = self.history_plan.?;
+        const incoming = self.history_plan_incoming.?;
+        const source = slot * @as(u32, self.cols);
+        var col: usize = 0;
+        while (col < self.cols) : (col += 1) {
+            const count = @as(usize, incoming[col]) -|
+                (scalar_storage.inline_scalars - 1);
+            if (count == 0) continue;
+            const values = acceptedTail(
+                history_scalars,
+                source + col,
+                incoming[col],
+            );
+            var prepared = visible_scalars.prepare(values) catch
+                @panic("history restore preflight diverged");
+            prepared.commitPlanned(
+                plans[col],
+                destination + col,
+                visible[destination + col].combining_len,
+            ) catch @panic("history restore first-fit plan diverged");
+        }
     }
 
     fn rowStart(self: *const Screen, logical_row: u16) u32 {
@@ -2926,13 +3650,29 @@ pub const Screen = struct {
             const start = self.rowStart(row);
             const line_cols = self.lineColumnCount(row);
             var row_changed = false;
-            for (cells[@intCast(start)..@intCast(start + line_cols)]) |*cell| {
+            for (
+                cells[@intCast(start)..@intCast(start + line_cols)],
+                0..,
+            ) |*cell, col| {
                 if (std.meta.eql(cell.*, fill)) continue;
+                clearAcceptedTail(
+                    &self.scalars.?,
+                    start + @as(u32, @intCast(col)),
+                    cell.combining_len,
+                );
                 cell.* = fill;
                 row_changed = true;
             }
-            for (cells[@intCast(start + line_cols)..@intCast(start + self.cols)]) |*cell| {
+            for (
+                cells[@intCast(start + line_cols)..@intCast(start + self.cols)],
+                line_cols..,
+            ) |*cell, col| {
                 if (std.meta.eql(cell.*, erased)) continue;
+                clearAcceptedTail(
+                    &self.scalars.?,
+                    start + @as(u32, @intCast(col)),
+                    cell.combining_len,
+                );
                 cell.* = erased;
                 row_changed = true;
             }
@@ -3035,6 +3775,10 @@ pub const Screen = struct {
         const cells = self.cells orelse return;
         const start = self.rowStart(row);
         const erase_cell = self.eraseCell();
+        self.clearScalarCells(
+            start + start_col,
+            end_col_exclusive - start_col,
+        );
         @memset(
             cells[@intCast(start + @as(u32, start_col))..@intCast(start + @as(u32, end_col_exclusive))],
             erase_cell,
@@ -3051,6 +3795,7 @@ pub const Screen = struct {
         while (col < end_col_exclusive) : (col += 1) {
             const cell = &cells[@intCast(start + @as(u32, col))];
             if (std.meta.eql(cell.*, erase)) continue;
+            clearAcceptedTail(&self.scalars.?, start + col, cell.combining_len);
             cell.* = erase;
             changed = true;
         }
@@ -3083,6 +3828,7 @@ pub const Screen = struct {
                 continue;
             }
             if (std.meta.eql(cell.*, erase_cell)) continue;
+            clearAcceptedTail(&self.scalars.?, start + col, cell.combining_len);
             cell.* = erase_cell;
             changed = true;
         }
@@ -3142,6 +3888,11 @@ pub const Screen = struct {
         if (observed.width == 0 or observed.height == 0 or observed.x >= observed.width or
             observed.y >= observed.height or col < observed.x or row < observed.y)
         {
+            clearAcceptedTail(
+                &self.scalars.?,
+                self.rowStart(row) + col,
+                observed.combining_len,
+            );
             cells[@intCast(self.rowStart(row) + col)] = self.eraseCell();
             return true;
         }
@@ -3165,6 +3916,11 @@ pub const Screen = struct {
                     candidate.x != x - left or candidate.y != y - top)
                     continue;
                 if (!std.meta.eql(candidate.*, replacement)) {
+                    clearAcceptedTail(
+                        &self.scalars.?,
+                        self.rowStart(y) + x,
+                        candidate.combining_len,
+                    );
                     candidate.* = replacement;
                     if (first == null) first = x;
                     last = x;
@@ -3210,6 +3966,12 @@ pub const Screen = struct {
             dst,
             src,
         );
+        self.moveScalarCells(
+            dst_start + start_col32,
+            src_start + start_col32,
+            end_col32 - start_col32,
+            false,
+        );
         if (start_col == 0 and end_col_exclusive == self.cols) {
             changed = self.rowFlagsValue(dst_row) != self.rowFlagsValue(src_row) or changed;
             self.copyRowFlags(dst_row, src_row);
@@ -3239,18 +4001,154 @@ fn screenColCount(value: u16) u32 {
     return value;
 }
 
-fn cloneLogicalLine(allocator: std.mem.Allocator, cells: []const ScreenCell) std.mem.Allocator.Error!LogicalLine {
+fn cloneLogicalLine(
+    allocator: std.mem.Allocator,
+    cells: []const ScreenCell,
+    scalars: ?*const scalar_storage.Storage,
+    scalar_start: usize,
+) std.mem.Allocator.Error!LogicalLine {
     var line = LogicalLine{};
     errdefer line.deinit(allocator);
     try line.cells.appendSlice(allocator, cells);
+    line.scalars = try cloneLineScalars(
+        allocator,
+        cells,
+        scalars,
+        scalar_start,
+    );
     return line;
 }
 
-fn cloneAuthorityLine(allocator: std.mem.Allocator, cells: []const ScreenCell) std.mem.Allocator.Error!HistoryLine {
+fn cloneAuthorityLine(
+    allocator: std.mem.Allocator,
+    cells: []const ScreenCell,
+    scalars: ?*const scalar_storage.Storage,
+    scalar_start: usize,
+) std.mem.Allocator.Error!HistoryLine {
     var line = HistoryLine{};
     errdefer line.deinit(allocator);
     try line.cells.appendSlice(allocator, cells);
+    line.scalars = try cloneLineScalars(
+        allocator,
+        cells,
+        scalars,
+        scalar_start,
+    );
     return line;
+}
+
+fn cloneLineScalars(
+    allocator: std.mem.Allocator,
+    cells: []const ScreenCell,
+    source: ?*const scalar_storage.Storage,
+    source_start: usize,
+) std.mem.Allocator.Error!?scalar_storage.Storage {
+    if (cells.len == 0) return null;
+    var result = scalar_storage.Storage.init(
+        allocator,
+        cells.len,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidCapacity => unreachable,
+    };
+    errdefer result.deinit();
+    for (cells, 0..) |cell, index| {
+        if (cell.combining_len <= scalar_storage.inline_scalars - 1)
+            continue;
+        const retained = source orelse
+            @panic("accepted scalar owner missing");
+        const tail = acceptedTail(
+            retained,
+            source_start + index,
+            cell.combining_len,
+        );
+        result.set(index, 0, tail) catch |err| switch (err) {
+            error.InvalidRange => @panic("accepted scalar range mismatch"),
+            error.ScalarCapacity => @panic("cloned scalar capacity mismatch"),
+        };
+    }
+    return result;
+}
+
+fn appendLogicalCells(
+    allocator: std.mem.Allocator,
+    line: *LogicalLine,
+    appended: []const ScreenCell,
+    appended_scalars: *const scalar_storage.Storage,
+    appended_start: usize,
+) std.mem.Allocator.Error!void {
+    if (appended.len == 0) return;
+    const old_len = line.cells.items.len;
+    const new_len = std.math.add(usize, old_len, appended.len) catch
+        return error.OutOfMemory;
+    var candidate = LogicalLine{
+        .cursor_offset = line.cursor_offset,
+    };
+    errdefer candidate.deinit(allocator);
+    try candidate.cells.ensureTotalCapacity(allocator, new_len);
+    candidate.cells.appendSliceAssumeCapacity(line.cells.items);
+    candidate.cells.appendSliceAssumeCapacity(appended);
+    candidate.scalars = scalar_storage.Storage.init(
+        allocator,
+        new_len,
+    ) catch |err| switch (err) {
+        error.OutOfMemory => return error.OutOfMemory,
+        error.InvalidCapacity => unreachable,
+    };
+    if (line.scalars) |*source| {
+        copyScalarCells(
+            source,
+            line.cells.items,
+            0,
+            &candidate.scalars.?,
+            0,
+            old_len,
+        ) catch @panic("logical scalar clone mismatch");
+    }
+    copyScalarCells(
+        appended_scalars,
+        appended,
+        appended_start,
+        &candidate.scalars.?,
+        old_len,
+        appended.len,
+    ) catch @panic("visible scalar clone mismatch");
+    line.deinit(allocator);
+    line.* = candidate;
+    candidate = .{};
+}
+
+fn copyScalarCells(
+    source: *const scalar_storage.Storage,
+    cells: []const ScreenCell,
+    source_start: usize,
+    destination: *scalar_storage.Storage,
+    destination_start: usize,
+    count: usize,
+) error{ InvalidRange, ScalarCapacity }!void {
+    if (count > cells.len) return error.InvalidRange;
+    var copied: usize = 0;
+    errdefer {
+        var rollback: usize = 0;
+        while (rollback < copied) : (rollback += 1) {
+            const cell = cells[rollback];
+            destination.clear(
+                destination_start + rollback,
+                cell.combining_len,
+            ) catch @panic("candidate scalar rollback mismatch");
+        }
+    }
+    while (copied < count) : (copied += 1) {
+        const cell = cells[copied];
+        try scalar_storage.Storage.copy(
+            source,
+            source_start + copied,
+            cell.combining_len,
+            destination,
+            destination_start + copied,
+            0,
+        );
+    }
 }
 
 fn appendCellTextBounded(
@@ -3546,11 +4444,16 @@ const ScreenCell = struct {
     attrs: ScreenCellAttrs,
 };
 
+fn sidecarCount(cell: ScreenCell) usize {
+    return @as(usize, cell.combining_len) -| (scalar_storage.inline_scalars - 1);
+}
+
 // Retains the complete bounded graphic cluster consumed by REP.
 const LastGraphic = struct {
     codepoint: u21,
     combining_len: u8 = 0,
-    combining: [3]u21 = .{ 0, 0, 0 },
+    combining: [scalar_storage.maximum_scalars - 1]u21 =
+        @splat(0),
 };
 
 fn isCellContinuation(cell: ScreenCell) bool {
@@ -3583,6 +4486,369 @@ const blank_cell = ScreenCell{
     .codepoint = 0,
     .attrs = initial_cell_attrs,
 };
+
+test "screen retains twenty four scalars and REP owns an independent copy" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell('a');
+    var scalar_value: u21 = 0x0300;
+    while (scalar_value < 0x0300 + 23) : (scalar_value += 1)
+        screen.writeCell(scalar_value);
+
+    var first_storage: [scalar_storage.maximum_scalars]u32 = undefined;
+    const first = screen.cellScalarsAt(0, 0, &first_storage);
+    try std.testing.expectEqual(@as(usize, 24), first.len);
+    try std.testing.expectEqual(@as(u32, 'a'), first[0]);
+    for (first[1..], 0x0300..) |value, expected|
+        try std.testing.expectEqual(@as(u32, @intCast(expected)), value);
+
+    const before = screen.cellInfoAt(0, 0);
+    const before_tail = screen.scalars.?.ranges[0];
+    screen.writeCell(0x0317);
+    try std.testing.expectEqualDeep(before, screen.cellInfoAt(0, 0));
+    try std.testing.expectEqual(before_tail, screen.scalars.?.ranges[0]);
+
+    try std.testing.expect(screen.repeatPreceding(1));
+    var repeated_storage: [scalar_storage.maximum_scalars]u32 = undefined;
+    const repeated = screen.cellScalarsAt(0, 1, &repeated_storage);
+    try std.testing.expectEqualSlices(u32, first, repeated);
+    try std.testing.expect(screen.scalars.?.ranges[0] != screen.scalars.?.ranges[1]);
+}
+
+test "REP reports no preceding graphic separately from scalar pressure" {
+    var empty = try Screen.initWithCells(std.testing.allocator, 1, 1);
+    defer empty.deinit(std.testing.allocator);
+    try std.testing.expect(!empty.repeatPreceding(1));
+    try std.testing.expect(empty.last_graphic == null);
+
+    const cols: u16 = 102;
+    var pressured = try Screen.initWithCells(
+        std.testing.allocator,
+        1,
+        cols,
+    );
+    defer pressured.deinit(std.testing.allocator);
+    pressured.writeCell('a');
+    var scalar_value: u21 = 0x0300;
+    while (scalar_value < 0x0300 + 23) : (scalar_value += 1)
+        pressured.writeCell(scalar_value);
+    try std.testing.expect(pressured.last_graphic != null);
+
+    var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&tail, 0..) |*scalar, index|
+        scalar.* = 0x0400 + @as(u32, @intCast(index));
+    var cell: usize = 1;
+    while (cell < cols) : (cell += 1) {
+        try pressured.scalars.?.set(cell, 0, &tail);
+        pressured.cells.?[cell] = .{
+            .codepoint = 'b',
+            .combining_len = scalar_storage.maximum_scalars - 1,
+            .combining = .{ 0x0400, 0x0401, 0x0402 },
+            .attrs = initial_cell_attrs,
+        };
+    }
+
+    const cells_before = try std.testing.allocator.dupe(
+        ScreenCell,
+        pressured.cells.?,
+    );
+    defer std.testing.allocator.free(cells_before);
+    const ranges_before = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        pressured.scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(ranges_before);
+    const pages_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(pressured.scalars.?.pages),
+    );
+    defer std.testing.allocator.free(pages_before);
+    const cursor_before = pressured.cursor;
+    const wrap_before = pressured.wrap_pending;
+    const graphic_before = pressured.last_graphic;
+    try std.testing.expect(!pressured.repeatPreceding(1));
+    try std.testing.expectEqualSlices(ScreenCell, cells_before, pressured.cells.?);
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        ranges_before,
+        pressured.scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        pages_before,
+        std.mem.sliceAsBytes(pressured.scalars.?.pages),
+    );
+    try std.testing.expectEqualDeep(cursor_before, pressured.cursor);
+    try std.testing.expectEqual(wrap_before, pressured.wrap_pending);
+    try std.testing.expectEqualDeep(graphic_before, pressured.last_graphic);
+}
+
+test "twenty four scalars cross projected history and reflow page boundaries" {
+    const old_cols: u16 = scalar_storage.page_cells + 1;
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        old_cols,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    const lead: usize = scalar_storage.page_cells - 1;
+    var cell_value = blank_cell;
+    cell_value.codepoint = 'a';
+    cell_value.combining_len = scalar_storage.maximum_scalars - 1;
+    cell_value.combining = .{ 0x0300, 0x0301, 0x0302 };
+    var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&tail, 0..) |*scalar, index| scalar.* = 0x0303 + @as(u32, @intCast(index));
+    try screen.scalars.?.set(lead, 0, &tail);
+    screen.cells.?[lead] = cell_value;
+
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    const projected_slot = screen.historySlotForRecency(0).?;
+    const projected_lead = projected_slot * @as(u32, old_cols) + lead;
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try screen.history_scalars.?.tail(
+            projected_lead,
+            cell_value.combining_len,
+        ),
+    );
+    const history_line = screen.historyLineAt(0);
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try history_line.scalars.?.tail(lead, cell_value.combining_len),
+    );
+
+    screen.clearRowRange(0, 0, old_cols);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try screen.scalars.?.tail(lead, cell_value.combining_len),
+    );
+    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+
+    try screen.resize(std.testing.allocator, 3, 2048);
+    var found: ?usize = null;
+    for (screen.cells.?, 0..) |cell, index| {
+        if (cell.codepoint == 'a') {
+            found = index;
+            break;
+        }
+    }
+    const resized_lead = found orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try screen.scalars.?.tail(
+            resized_lead,
+            screen.cells.?[resized_lead].combining_len,
+        ),
+    );
+}
+
+test "projected history scalar pressure preserves accepted ownership and later reuses it" {
+    const cols: u16 = 102;
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        cols,
+        2,
+    );
+    defer screen.deinit(std.testing.allocator);
+    var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&tail, 0..) |*scalar, index| scalar.* = 0x0400 + @as(u32, @intCast(index));
+
+    // Build the oldest logical line through two ordinary projected rows. Its
+    // first row is scalar-heavy and wrapped; its second row completes the line.
+    var col: usize = 0;
+    while (col < cols) : (col += 1) {
+        var value = blank_cell;
+        value.codepoint = 'a';
+        value.combining_len = scalar_storage.maximum_scalars - 1;
+        value.combining = .{ 0x0300, 0x0301, 0x0302 };
+        try screen.scalars.?.set(col, 0, &tail);
+        screen.cells.?[col] = value;
+    }
+    screen.setRowWrapped(0, true);
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expect(screen.open_history_line != null);
+    screen.clearRowRange(0, 0, cols);
+    const second_row = screen.rowStart(1);
+    var terminator = blank_cell;
+    terminator.codepoint = 'x';
+    screen.cells.?[second_row] = terminator;
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u32, 2), screen.history_count);
+    try std.testing.expect(screen.open_history_line == null);
+    try std.testing.expectEqual(@as(usize, 1), screen.history_lines.items.len);
+    try std.testing.expectEqual(
+        @as(u32, 2),
+        screen.projectedRowCountForCells(screen.historyLineAt(0).cells.items),
+    );
+
+    // The second ordinary logical line replaces the scalar-heavy first
+    // projected row. The resulting full projected ring retains a light oldest
+    // row and one scalar-heavy newest row.
+    screen.clearRowRange(1, 0, cols);
+    col = 0;
+    while (col < cols) : (col += 1) {
+        var value = blank_cell;
+        value.codepoint = 'b';
+        value.combining_len = scalar_storage.maximum_scalars - 2;
+        value.combining = .{ 0x0310, 0x0311, 0x0312 };
+        try screen.scalars.?.set(second_row + col, 0, tail[0..19]);
+        screen.cells.?[second_row + col] = value;
+    }
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+    try std.testing.expectEqual(
+        @as(usize, screen.history_capacity),
+        screen.history_lines.items.len,
+    );
+    try std.testing.expectEqual(
+        @as(u32, 2),
+        screen.projectedRowCountForCells(screen.historyLineAt(0).cells.items),
+    );
+    try std.testing.expectEqual(
+        @as(u32, screen.history_capacity),
+        screen.history_count,
+    );
+    try std.testing.expect(screen.open_history_line == null);
+
+    // The next line needs one complete tail. The oldest projected row releases
+    // none, while the retained newer row leaves only eight scalar slots.
+    screen.clearRowRange(1, 0, cols);
+    col = 0;
+    while (col < 6) : (col += 1) {
+        var value = blank_cell;
+        value.codepoint = 'c';
+        value.combining_len = scalar_storage.maximum_scalars - 1;
+        value.combining = .{ 0x0320, 0x0321, 0x0322 };
+        try screen.scalars.?.set(second_row + col, 0, &tail);
+        screen.cells.?[second_row + col] = value;
+    }
+
+    const before_ranges = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.history_scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(before_ranges);
+    const before_pages = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.history_scalars.?.pages),
+    );
+    defer std.testing.allocator.free(before_pages);
+    const before_cells = try std.testing.allocator.dupe(
+        ScreenCell,
+        screen.history.?,
+    );
+    defer std.testing.allocator.free(before_cells);
+    const before_flags = try std.testing.allocator.dupe(u8, screen.history_flags.?);
+    defer std.testing.allocator.free(before_flags);
+    const before_history_lines_start = screen.history_lines_start;
+    const before_history_count = screen.history_count;
+    const before_history_write_idx = screen.history_write_idx;
+    const before_history_row_base = screen.history_row_base;
+    const before_line_zero_cells = try std.testing.allocator.dupe(
+        ScreenCell,
+        screen.historyLineAt(0).cells.items,
+    );
+    defer std.testing.allocator.free(before_line_zero_cells);
+    const before_line_zero_ranges = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.historyLineAt(0).scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(before_line_zero_ranges);
+    const before_line_zero_pages = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.historyLineAt(0).scalars.?.pages),
+    );
+    defer std.testing.allocator.free(before_line_zero_pages);
+    const before_line_one_cells = try std.testing.allocator.dupe(
+        ScreenCell,
+        screen.historyLineAt(1).cells.items,
+    );
+    defer std.testing.allocator.free(before_line_one_cells);
+    const before_line_one_ranges = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.historyLineAt(1).scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(before_line_one_ranges);
+    const before_line_one_pages = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.historyLineAt(1).scalars.?.pages),
+    );
+    defer std.testing.allocator.free(before_line_one_pages);
+
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        before_ranges,
+        screen.history_scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        before_pages,
+        std.mem.sliceAsBytes(screen.history_scalars.?.pages),
+    );
+    try std.testing.expectEqualSlices(ScreenCell, before_cells, screen.history.?);
+    try std.testing.expectEqualSlices(u8, before_flags, screen.history_flags.?);
+    try std.testing.expectEqual(
+        before_history_lines_start,
+        screen.history_lines_start,
+    );
+    try std.testing.expectEqual(before_history_count, screen.history_count);
+    try std.testing.expectEqual(
+        before_history_write_idx,
+        screen.history_write_idx,
+    );
+    try std.testing.expectEqual(
+        before_history_row_base,
+        screen.history_row_base,
+    );
+    try std.testing.expect(screen.open_history_line == null);
+    try std.testing.expectEqualSlices(
+        ScreenCell,
+        before_line_zero_cells,
+        screen.historyLineAt(0).cells.items,
+    );
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        before_line_zero_ranges,
+        screen.historyLineAt(0).scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        before_line_zero_pages,
+        std.mem.sliceAsBytes(screen.historyLineAt(0).scalars.?.pages),
+    );
+    try std.testing.expectEqualSlices(
+        ScreenCell,
+        before_line_one_cells,
+        screen.historyLineAt(1).cells.items,
+    );
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        before_line_one_ranges,
+        screen.historyLineAt(1).scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        before_line_one_pages,
+        std.mem.sliceAsBytes(screen.historyLineAt(1).scalars.?.pages),
+    );
+
+    try std.testing.expect(screen.clearScrollback());
+    screen.storeHistoryRow(1);
+    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
+}
 
 // Stores one exact 24-bit terminal color.
 const ScreenRgb = struct {
@@ -3814,10 +5080,12 @@ fn rowCountForCells(cell_count: u32, cols: u16) u32 {
 // Owned logical terminal line used while reflowing retained content.
 const LogicalLine = struct {
     cells: std.ArrayListUnmanaged(ScreenCell) = .empty,
+    scalars: ?scalar_storage.Storage = null,
     cursor_offset: ?u32 = null,
 
     /// Release cloned cells and reset the line.
     fn deinit(self: *LogicalLine, allocator: std.mem.Allocator) void {
+        if (self.scalars) |*storage| storage.deinit();
         self.cells.deinit(allocator);
         self.* = .{};
     }
@@ -3841,9 +5109,11 @@ const LogicalSnapshot = struct {
 // Owns one logical history line’s cells until deinit.
 const HistoryLine = struct {
     cells: std.ArrayListUnmanaged(ScreenCell) = .empty,
+    scalars: ?scalar_storage.Storage = null,
 
     /// Releases a history line’s cell allocation.
     fn deinit(self: *HistoryLine, allocator: std.mem.Allocator) void {
+        if (self.scalars) |*storage| storage.deinit();
         self.cells.deinit(allocator);
         self.* = .{};
     }
@@ -3929,6 +5199,7 @@ pub const RectCopy = struct {
 /// Owned reflow rows, line projections, and projected cursor state.
 const ReflowState = struct {
     flat_rows: std.ArrayListUnmanaged(ScreenCell) = .empty,
+    scalars: ?scalar_storage.Storage = null,
     rewrapped: std.ArrayListUnmanaged(RewrappedRow) = .empty,
     line_row_starts: std.ArrayListUnmanaged(u32) = .empty,
     line_row_counts: std.ArrayListUnmanaged(u16) = .empty,
@@ -3939,12 +5210,15 @@ const ReflowState = struct {
     /// Release every reflow allocation and reset the value.
     fn deinit(self: *ReflowState, allocator: std.mem.Allocator) void {
         self.flat_rows.deinit(allocator);
+        if (self.scalars) |*storage| storage.deinit();
         self.rewrapped.deinit(allocator);
         self.line_row_starts.deinit(allocator);
         self.line_row_counts.deinit(allocator);
         self.* = .{};
     }
 };
+
+const ReflowError = std.mem.Allocator.Error || error{ScalarCapacity};
 
 // Derived projection range into complete reflow output.
 const ResizeProjection = struct {
@@ -3958,11 +5232,13 @@ const ResizeProjection = struct {
 /// Owned visible-grid buffers transferred together into a replacement Screen.
 const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
+    scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
     tab_stops: ?[]bool,
 
     const empty: ResizeBuffers = .{
         .cells = null,
+        .scalars = null,
         .row_flags = null,
         .tab_stops = null,
     };
@@ -3970,6 +5246,7 @@ const ResizeBuffers = struct {
     /// Release every owned buffer and reset the value.
     fn deinit(self: *ResizeBuffers, allocator: std.mem.Allocator) void {
         if (self.cells) |buf| allocator.free(buf);
+        if (self.scalars) |*storage| storage.deinit();
         if (self.row_flags) |buf| allocator.free(buf);
         if (self.tab_stops) |buf| allocator.free(buf);
         self.* = empty;
@@ -3990,9 +5267,27 @@ fn reflowLogicalLines(
     allocator: std.mem.Allocator,
     lines: LogicalSnapshot,
     cols: u16,
-) std.mem.Allocator.Error!ReflowState {
+) ReflowError!ReflowState {
     var result = ReflowState{};
     errdefer result.deinit(allocator);
+
+    var total_rows: usize = 0;
+    for (lines.logical_lines.items) |line| {
+        const rows = rowCountForCells(screenCount32(line.cells.items.len), cols);
+        total_rows = std.math.add(usize, total_rows, rows) catch
+            return error.OutOfMemory;
+    }
+    const total_cells = std.math.mul(usize, total_rows, cols) catch
+        return error.OutOfMemory;
+    if (total_cells > 0) {
+        result.scalars = scalar_storage.Storage.init(
+            allocator,
+            total_cells,
+        ) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => return error.OutOfMemory,
+        };
+    }
 
     var row_cursor_base: u32 = 0;
     for (lines.logical_lines.items, 0..) |line, line_idx| {
@@ -4003,7 +5298,7 @@ fn reflowLogicalLines(
         try result.line_row_starts.append(allocator, @intCast(result.rewrapped.items.len));
         try result.line_row_counts.append(allocator, row_count);
         updateCursor(&result, row_cursor_base, line_cursor_offset, cols, has_cursor);
-        try appendRewrappedRows(allocator, &result, line.cells.items, row_count, cols);
+        try appendRewrappedRows(allocator, &result, line, row_count, cols);
         row_cursor_base += row_count;
 
         std.debug.assert(result.line_row_starts.items.len == result.line_row_counts.items.len);
@@ -4020,15 +5315,15 @@ fn reflowLogicalLines(
 fn appendRewrappedRows(
     allocator: std.mem.Allocator,
     result: *ReflowState,
-    cells: []const ScreenCell,
+    line: LogicalLine,
     row_count: u16,
     cols: u16,
-) std.mem.Allocator.Error!void {
+) ReflowError!void {
     if (cols == 0) return;
     if (row_count == 0) unreachable;
 
     const flat_rows_before = screenCount32(result.flat_rows.items.len);
-    const cell_len = screenCount32(cells.len);
+    const cell_len = screenCount32(line.cells.items.len);
 
     var row_idx: u16 = 0;
     while (row_idx < row_count) : (row_idx += 1) {
@@ -4041,7 +5336,26 @@ fn appendRewrappedRows(
             .len = @intCast(end - start),
             .wrapped = row_idx + 1 < row_count,
         });
-        try appendRowCells(allocator, &result.flat_rows, cells, start, cols);
+        const destination_start = result.flat_rows.items.len;
+        try appendRowCells(allocator, &result.flat_rows, line.cells.items, start, cols);
+        const copied = end - start;
+        if (copied > 0) {
+            const source = if (line.scalars) |*storage|
+                storage
+            else
+                @panic("accepted logical scalar owner missing");
+            copyScalarCells(
+                source,
+                line.cells.items[@intCast(start)..@intCast(end)],
+                start,
+                &result.scalars.?,
+                destination_start,
+                copied,
+            ) catch |err| switch (err) {
+                error.ScalarCapacity => return error.ScalarCapacity,
+                error.InvalidRange => @panic("accepted logical scalar mismatch"),
+            };
+        }
     }
 
     std.debug.assert(
@@ -4148,6 +5462,14 @@ fn allocResizeBuffers(
         cells = buf;
     }
     errdefer if (cells) |buf| allocator.free(buf);
+    var scalars: ?scalar_storage.Storage = null;
+    if (cell_count > 0) {
+        scalars = scalar_storage.Storage.init(allocator, cell_count) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            error.InvalidCapacity => unreachable,
+        };
+    }
+    errdefer if (scalars) |*storage| storage.deinit();
 
     var row_flags: ?[]u8 = null;
     if (rows > 0) {
@@ -4170,13 +5492,19 @@ fn allocResizeBuffers(
 
     return .{
         .cells = cells,
+        .scalars = scalars,
         .row_flags = row_flags,
         .tab_stops = tab_stops,
     };
 }
 
 // Copy the selected visible rows into allocated replacement buffers.
-fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, projection: ResizeProjection, cols: u16) void {
+fn copyVisibleRows(
+    buffers: *ResizeBuffers,
+    reflow: ReflowState,
+    projection: ResizeProjection,
+    cols: u16,
+) error{ScalarCapacity}!void {
     const dst = buffers.cells orelse return;
     const dst_flags = buffers.row_flags orelse return;
 
@@ -4199,6 +5527,17 @@ fn copyVisibleRows(buffers: *ResizeBuffers, reflow: ReflowState, projection: Res
             dst[@intCast(dst_start)..@intCast(dst_start + screenResizeColCount(cols))],
             flatRowSlice(reflow.flat_rows.items, src, cols),
         );
+        copyScalarCells(
+            &reflow.scalars.?,
+            flatRowSlice(reflow.flat_rows.items, src, cols),
+            src.start,
+            &buffers.scalars.?,
+            dst_start,
+            cols,
+        ) catch |err| switch (err) {
+            error.ScalarCapacity => return error.ScalarCapacity,
+            error.InvalidRange => @panic("accepted reflow scalar mismatch"),
+        };
         dst_flags[@intCast(view_row)] = Screen.rowFlags(src.wrapped, src.geometry);
         src_row += 1;
     }
@@ -4410,6 +5749,31 @@ test "history allocation failures record loss and preserve paired state" {
         try std.testing.expectEqual(@as(u32, 1), screen.history_count);
         try std.testing.expectEqual(@as(usize, 1), screen.history_lines.items.len);
     }
+}
+
+test "history constructor releases every partially acquired scalar owner" {
+    const allocation_failure_limit = 32;
+    var fail_index: usize = 0;
+    while (fail_index < allocation_failure_limit) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(
+            std.testing.allocator,
+            .{ .fail_index = fail_index },
+        );
+        var screen = Screen.initWithCellsAndHistory(
+            failing.allocator(),
+            2,
+            4,
+            8,
+        ) catch |failure| {
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+            try std.testing.expect(failing.has_induced_failure);
+            continue;
+        };
+        screen.deinit(failing.allocator());
+        try std.testing.expect(!failing.has_induced_failure);
+        break;
+    }
+    try std.testing.expect(fail_index < allocation_failure_limit);
 }
 
 test "history clone allocation failure preserves the open wrapped line" {

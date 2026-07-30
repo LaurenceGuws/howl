@@ -7,6 +7,10 @@ const fonts = if (selected.native_text) @import("test_fonts") else struct {};
 const terminal = render.terminal;
 const terminal_text = render.terminal_text;
 const canvas = render.canvas;
+const empty_scalars = terminal.ScalarBaseline.empty(1);
+const empty_scalars_2 = terminal.ScalarBaseline.empty(2);
+const empty_scalars_3 = terminal.ScalarBaseline.empty(3);
+const empty_scalars_4 = terminal.ScalarBaseline.empty(4);
 
 const metrics = terminal_text.CellMetrics{
     .width_px = 8,
@@ -76,6 +80,45 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expect(@hasDecl(terminal, "Content"));
 }
 
+test "Content rejects mismatched scalar baseline before candidate mutation" {
+    var map = try initMap();
+    defer deinitMap(&map);
+    var content = try initContent(&map);
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(std.testing.allocator, content.limits);
+    defer work.deinit();
+    const cells = [_]terminal.Cell{cell(if (selected.native_text) 'A' else 0x2500)};
+    const rows = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &rows,
+    }, emptyImages());
+    const revision_before = content.producer_revision;
+
+    try std.testing.expectError(
+        error.InvalidProjection,
+        content.takeLocalUpdate(
+            &work,
+            terminal.ScalarBaseline.empty(2),
+            contentGeometry(8, 16),
+        ),
+    );
+    try std.testing.expectEqual(revision_before, content.producer_revision);
+    const accepted = try content.takeLocalUpdate(
+        &work,
+        empty_scalars,
+        contentGeometry(8, 16),
+    );
+    try std.testing.expectEqual(
+        revision_before + 1,
+        @backingInt(accepted.revision),
+    );
+    try std.testing.expect(accepted.commands.len != 0);
+}
+
 test "one larger Work alternates independent Content owners and rejects undersized work" {
     var map = try initMap();
     defer deinitMap(&map);
@@ -111,23 +154,23 @@ test "one larger Work alternates independent Content owners and rejects undersiz
         .geometry = &rows,
     }, emptyImages());
 
-    const first_update = try first.takeLocalUpdate(&shared, contentGeometry(8, 16));
+    const first_update = try first.takeLocalUpdate(&shared, empty_scalars, contentGeometry(8, 16));
     const first_revision = first_update.revision;
     var copied: [8]canvas.Input = undefined;
     try std.testing.expect(first_update.commands.len <= copied.len);
     @memcpy(copied[0..first_update.commands.len], first_update.commands);
     const copied_count = first_update.commands.len;
-    const second_update = try second.takeLocalUpdate(&shared, contentGeometry(8, 16));
+    const second_update = try second.takeLocalUpdate(&shared, empty_scalars, contentGeometry(8, 16));
     try std.testing.expect(second_update.commands.len != 0);
     try std.testing.expectEqualDeep(
         copied[0..copied_count],
-        (try first.takeLocalUpdate(&shared, contentGeometry(8, 16))).commands,
+        (try first.takeLocalUpdate(&shared, empty_scalars, contentGeometry(8, 16))).commands,
     );
     try std.testing.expectError(
         error.WorkTooSmall,
-        first.takeLocalUpdate(&tiny, contentGeometry(8, 16)),
+        first.takeLocalUpdate(&tiny, empty_scalars, contentGeometry(8, 16)),
     );
-    const reused = try first.takeLocalUpdate(&shared, contentGeometry(8, 16));
+    const reused = try first.takeLocalUpdate(&shared, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(first_revision, reused.revision);
     try std.testing.expectEqualDeep(copied[0..copied_count], reused.commands);
 }
@@ -153,7 +196,7 @@ test "retained terminal content emits one complete producer update" {
         .geometry = &row_geometry,
     };
     try content.recover(baseline, emptyImages());
-    const update = try content.takeLocalUpdate(&work, .{
+    const update = try content.takeLocalUpdate(&work, empty_scalars, .{
         .x = 0,
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
@@ -166,7 +209,7 @@ test "retained terminal content emits one complete producer update" {
     try std.testing.expect(@backingInt(update.revision) != 0);
     try std.testing.expect(update.commands.len >= 1);
     try std.testing.expect(update.commands[0] == .solid);
-    const resized = try content.takeLocalUpdate(&work, contentGeometry(7, 16));
+    const resized = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(7, 16));
     try std.testing.expectEqual(
         @backingInt(update.revision) + 1,
         @backingInt(resized.revision),
@@ -177,7 +220,7 @@ test "retained terminal content emits one complete producer update" {
     try std.testing.expect(resized.commands.len <= resized_commands.len);
     @memcpy(resized_commands[0..resized.commands.len], resized.commands);
     const resized_command_count = resized.commands.len;
-    const drained = try content.takeLocalUpdate(&work, contentGeometry(7, 16));
+    const drained = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(7, 16));
     try std.testing.expectEqual(resized_revision, @backingInt(drained.revision));
     try std.testing.expectEqual(@as(usize, 0), drained.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), drained.removals.len);
@@ -213,7 +256,7 @@ test "retained terminal content accepts the initial empty VT image identity" {
         .removals = &.{},
         .placements = &.{},
     });
-    const update = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const update = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expect(update.commands.len != 0);
 }
 
@@ -238,7 +281,7 @@ test "retained terminal content applies sparse rows and rejects malformed update
         .cells = &cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const before = try content.takeLocalUpdate(&work, contentGeometry(16, 32));
+    const before = try content.takeLocalUpdate(&work, empty_scalars_4, contentGeometry(16, 32));
     const before_revision = @backingInt(before.revision);
     try std.testing.expectEqual(@as(u8, 3), before.commands[2].solid.color.r);
 
@@ -261,7 +304,7 @@ test "retained terminal content applies sparse rows and rejects malformed update
         .row_patches = &patches,
         .cursor = hiddenCursor(),
     }, null);
-    const after = try content.takeLocalUpdate(&work, contentGeometry(16, 32));
+    const after = try content.takeLocalUpdate(&work, empty_scalars_4, contentGeometry(16, 32));
     try std.testing.expectEqual(before_revision + 1, @backingInt(after.revision));
     try std.testing.expectEqual(@as(u8, 1), after.commands[0].solid.color.r);
     try std.testing.expectEqual(@as(u8, 9), after.commands[1].solid.color.r);
@@ -302,7 +345,7 @@ test "retained terminal content applies sparse rows and rejects malformed update
         .row_patches = &overflowing,
         .cursor = hiddenCursor(),
     }, null));
-    const unchanged = try content.takeLocalUpdate(&work, contentGeometry(16, 32));
+    const unchanged = try content.takeLocalUpdate(&work, empty_scalars_4, contentGeometry(16, 32));
     try std.testing.expectEqual(@backingInt(after.revision), @backingInt(unchanged.revision));
     try std.testing.expectEqualDeep(after.commands, unchanged.commands);
 }
@@ -348,7 +391,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .removals = &.{},
         .placements = &first_placement,
     });
-    const first = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const first = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
     try std.testing.expectEqual(canvas.ResourceFormat.rgba8, first.uploads[0].format);
     try std.testing.expect(first.commands[0] == .solid);
@@ -373,7 +416,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .removals = &.{},
         .placements = &replacement_placement,
     });
-    const replacement = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const replacement = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), replacement.uploads.len);
     try std.testing.expectEqual(
         resource_id,
@@ -409,7 +452,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .removals = &.{},
         .placements = &unknown_placement,
     }));
-    const still_replacement = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const still_replacement = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(
         replacement_revision,
         @backingInt(still_replacement.revision),
@@ -426,7 +469,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .removals = &.{},
         .placements = &animated_placement,
     });
-    const animated = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const animated = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), animated.uploads.len);
     try std.testing.expect(animated.commands[animated.commands.len - 1] == .rgba);
 
@@ -438,7 +481,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .removals = &.{7},
         .placements = &.{},
     });
-    const removed = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const removed = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), removed.removals.len);
     try std.testing.expectEqual(resource_id, @backingInt(removed.removals[0].resource.resource));
     try std.testing.expectEqual(@as(usize, 0), removed.uploads.len);
@@ -461,7 +504,7 @@ test "terminal content commits projection and optional images once per transacti
         .cells = &original_cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const initial = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const initial = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
 
     var changed = cell(0);
     changed.background = .{ .r = 1, .g = 2, .b = 3 };
@@ -483,7 +526,7 @@ test "terminal content commits projection and optional images once per transacti
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const projection_only = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const projection_only = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(
         @backingInt(initial.revision) + 1,
         @backingInt(projection_only.revision),
@@ -505,7 +548,7 @@ test "terminal content commits projection and optional images once per transacti
         .removals = &.{},
         .placements = &.{},
     });
-    const image_only = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const image_only = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(
         @backingInt(projection_only.revision) + 1,
         @backingInt(image_only.revision),
@@ -527,7 +570,7 @@ test "terminal content commits projection and optional images once per transacti
         .removals = &.{41},
         .placements = &.{},
     });
-    const combined = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const combined = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(
         @backingInt(image_only.revision) + 1,
         @backingInt(combined.revision),
@@ -581,7 +624,7 @@ test "image deltas require initialization and remove only transferred generation
         .removals = &.{11},
         .placements = &.{},
     });
-    const never_transferred = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const never_transferred = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), never_transferred.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), never_transferred.removals.len);
 
@@ -600,7 +643,7 @@ test "image deltas require initialization and remove only transferred generation
         .removals = &.{},
         .placements = &.{},
     });
-    const transferred = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const transferred = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), transferred.uploads.len);
     const transferred_resource = transferred.uploads[0].resource;
 
@@ -628,7 +671,7 @@ test "image deltas require initialization and remove only transferred generation
         .removals = &.{11},
         .placements = &.{},
     });
-    const replacement_never_transferred = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const replacement_never_transferred = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), replacement_never_transferred.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), replacement_never_transferred.removals.len);
     try std.testing.expectEqualDeep(
@@ -664,7 +707,7 @@ test "retained terminal glyph resources rasterize once and survive sparse update
         .cells = &cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const first = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const first = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     var glyph_uploads: usize = 0;
     for (first.uploads) |upload| if (upload.format == .alpha8) {
         glyph_uploads += 1;
@@ -683,7 +726,7 @@ test "retained terminal glyph resources rasterize once and survive sparse update
     try std.testing.expect(recolored_glyph);
     const first_revision = @backingInt(first.revision);
 
-    const second = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const second = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(first_revision, @backingInt(second.revision));
     try std.testing.expectEqual(@as(usize, 0), second.uploads.len);
 
@@ -706,7 +749,7 @@ test "retained terminal glyph resources rasterize once and survive sparse update
         .row_patches = &patch,
         .cursor = block_cursor,
     }, null);
-    const sparse = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const sparse = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), sparse.uploads.len);
     try std.testing.expectEqual(@as(u8, 22), sparse.commands[0].solid.color.b);
 
@@ -719,7 +762,7 @@ test "retained terminal glyph resources rasterize once and survive sparse update
         .row_patches = &patch,
         .cursor = block_cursor,
     }, null);
-    const replaced = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const replaced = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), replaced.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), replaced.removals.len);
     try std.testing.expect(
@@ -754,7 +797,7 @@ test "zero-area native glyphs retain metrics without logical resources" {
         .cells = &.{cell(' ')},
         .geometry = &row_geometry,
     }, emptyImages());
-    const blank = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const blank = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), blank.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), blank.removals.len);
 
@@ -766,7 +809,7 @@ test "zero-area native glyphs retain metrics without logical resources" {
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const visible = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const visible = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), visible.uploads.len);
 
     try content.apply(.{
@@ -777,7 +820,7 @@ test "zero-area native glyphs retain metrics without logical resources" {
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const blank_again = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const blank_again = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), blank_again.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), blank_again.removals.len);
 
@@ -789,7 +832,7 @@ test "zero-area native glyphs retain metrics without logical resources" {
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const retired_blank = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const retired_blank = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 0), retired_blank.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), retired_blank.removals.len);
 }
@@ -820,7 +863,7 @@ test "retained terminal content preserves audited decoration placement and color
         .cells = &cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const update = try content.takeLocalUpdate(&work, contentGeometry(24, 16));
+    const update = try content.takeLocalUpdate(&work, empty_scalars_3, contentGeometry(24, 16));
     try std.testing.expectEqual(@as(usize, 6), update.commands.len);
     try std.testing.expectEqual(@as(i32, 12), update.commands[1].solid.rect.y);
     try std.testing.expectEqual(@as(i32, 14), update.commands[2].solid.rect.y);
@@ -844,7 +887,7 @@ test "retained terminal content preserves audited decoration placement and color
         update.uploads[1].pixels.bytes,
     );
 
-    const unchanged = try content.takeLocalUpdate(&work, contentGeometry(24, 16));
+    const unchanged = try content.takeLocalUpdate(&work, empty_scalars_3, contentGeometry(24, 16));
     try std.testing.expectEqual(@as(usize, 0), unchanged.uploads.len);
     try std.testing.expectEqual(@backingInt(update.revision), @backingInt(unchanged.revision));
 }
@@ -873,14 +916,14 @@ test "decoration masks retire transactionally across geometry churn" {
         .cells = &.{decorated},
         .geometry = &row_geometry,
     }, emptyImages());
-    const first = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const first = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), first.removals.len);
     const first_resource = first.uploads[0].resource;
 
     var seven = contentGeometry(7, 16);
     seven.metrics.width_px = 7;
-    const second = try content.takeLocalUpdate(&work, seven);
+    const second = try content.takeLocalUpdate(&work, empty_scalars, seven);
     try std.testing.expectEqual(@as(usize, 1), second.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), second.removals.len);
     try std.testing.expectEqualDeep(first_resource, second.removals[0].resource);
@@ -888,7 +931,7 @@ test "decoration masks retire transactionally across geometry churn" {
 
     var six = contentGeometry(6, 16);
     six.metrics.width_px = 6;
-    const third = try content.takeLocalUpdate(&work, six);
+    const third = try content.takeLocalUpdate(&work, empty_scalars, six);
     try std.testing.expectEqual(@as(usize, 1), third.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), third.removals.len);
     try std.testing.expectEqualDeep(second_resource, third.removals[0].resource);
@@ -912,7 +955,7 @@ test "decoration masks retire transactionally across geometry churn" {
     });
     try std.testing.expectError(
         error.MaskLimit,
-        content.takeLocalUpdate(&work, contentGeometry(12, 16)),
+        content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(12, 16)),
     );
     conflicting[1].underline_style = .dotted;
     const patch = [_]terminal.RowPatch{.{
@@ -932,7 +975,7 @@ test "decoration masks retire transactionally across geometry churn" {
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const recovered = try content.takeLocalUpdate(&work, contentGeometry(12, 16));
+    const recovered = try content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(12, 16));
     try std.testing.expectEqual(@as(usize, 1), recovered.uploads.len);
     try std.testing.expectEqual(@as(usize, 1), recovered.removals.len);
     try std.testing.expectEqualDeep(third_resource, recovered.removals[0].resource);
@@ -973,7 +1016,7 @@ test "retained terminal content preserves OSC 66 scaling alignment and clipping"
         .cells = &cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const update = try content.takeLocalUpdate(&work, .{
+    const update = try content.takeLocalUpdate(&work, empty_scalars, .{
         .x = 3,
         .y = 5,
         .clip = .{ .x = 3, .y = 5, .width = 32, .height = 16 },
@@ -1015,7 +1058,7 @@ test "retained terminal content preserves DEC double-width placement" {
         .cells = &cells,
         .geometry = &row_geometry,
     }, emptyImages());
-    const update = try content.takeLocalUpdate(&work, contentGeometry(16, 16));
+    const update = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(16, 16));
     try std.testing.expectEqualDeep(
         canvas.Rect{ .x = 0, .y = 0, .width = 16, .height = 16 },
         update.commands[0].solid.rect,
@@ -1062,7 +1105,7 @@ test "glyph cache capacity failure rolls back identity and remains reusable" {
     }, emptyImages());
     try std.testing.expectError(
         error.GlyphLimit,
-        content.takeLocalUpdate(&work, contentGeometry(16, 16)),
+        content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(16, 16)),
     );
 
     const replacement = cell(first_codepoint);
@@ -1083,7 +1126,7 @@ test "glyph cache capacity failure rolls back identity and remains reusable" {
         .row_patches = &patch,
         .cursor = hiddenCursor(),
     }, null);
-    const recovered = try content.takeLocalUpdate(&work, contentGeometry(16, 16));
+    const recovered = try content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(16, 16));
     try std.testing.expectEqual(@as(usize, 1), recovered.uploads.len);
     try std.testing.expectEqual(
         @as(u64, 1),
@@ -1131,7 +1174,7 @@ test "incompatible sparse geometry requires explicit full recovery" {
         .removals = &.{},
         .placements = &.{},
     });
-    const recovered = try content.takeLocalUpdate(&work, contentGeometry(16, 16));
+    const recovered = try content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(16, 16));
     try std.testing.expectEqual(@as(usize, 1), recovered.commands.len);
     try content.recover(.{
         .rows = 1,
@@ -1147,7 +1190,7 @@ test "incompatible sparse geometry requires explicit full recovery" {
         .removals = &.{},
         .placements = &.{},
     });
-    const repeated_recovery = try content.takeLocalUpdate(&work, contentGeometry(16, 16));
+    const repeated_recovery = try content.takeLocalUpdate(&work, empty_scalars_2, contentGeometry(16, 16));
     try std.testing.expectEqual(@as(usize, 1), repeated_recovery.commands.len);
 }
 
@@ -1196,7 +1239,7 @@ test "image capacity rejection preserves retained bytes and generation" {
         .removals = &.{},
         .placements = &placement,
     });
-    const accepted = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const accepted = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     const accepted_revision = @backingInt(accepted.revision);
     var accepted_commands: [4]canvas.Input = undefined;
     try std.testing.expect(accepted.commands.len <= accepted_commands.len);
@@ -1240,7 +1283,7 @@ test "image capacity rejection preserves retained bytes and generation" {
         .removals = &.{},
         .placements = &oversized_placement,
     }));
-    const unchanged = try content.takeLocalUpdate(&work, contentGeometry(8, 16));
+    const unchanged = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
     try std.testing.expectEqual(accepted_revision, @backingInt(unchanged.revision));
     try std.testing.expectEqual(@as(usize, 0), unchanged.uploads.len);
     try std.testing.expectEqualDeep(
@@ -1901,6 +1944,8 @@ fn constructMap(allocator: std.mem.Allocator) !void {
 fn input(cells: []const terminal.Cell, start: u16, end: u16) terminal_text.RowInput {
     return .{
         .cells = cells,
+        .scalars = terminal.ScalarBaseline.empty(cells.len),
+        .scalar_offset = 0,
         .affected_start = start,
         .affected_end = end,
         .geometry = .double_height_top,

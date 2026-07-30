@@ -266,10 +266,11 @@ pub const PendingSlot = struct {
         self: *PendingSlot,
         content: *terminal.Content,
         work: *terminal.Content.Work,
+        scalars: terminal.ScalarBaseline,
         geometry: terminal.Content.Geometry,
     ) PublishError!void {
         try self.reserve();
-        try self.publishReserved(content, work, geometry);
+        try self.publishReserved(content, work, scalars, geometry);
     }
 
     /// Atomically reserves producer ownership before any consumptive projection work.
@@ -292,6 +293,7 @@ pub const PendingSlot = struct {
         self: *PendingSlot,
         content: *terminal.Content,
         work: *terminal.Content.Work,
+        scalars: terminal.ScalarBaseline,
         geometry: terminal.Content.Geometry,
     ) PublishError!void {
         std.debug.assert(self.loadState(.acquire) == .writing);
@@ -300,7 +302,7 @@ pub const PendingSlot = struct {
             content.limits.commands != self.commands.len or
             content.limits.upload_bytes != self.pixels.len)
             return error.InvalidContentLimits;
-        const update = try content.takeLocalUpdate(work, geometry);
+        const update = try content.takeLocalUpdate(work, scalars, geometry);
         self.copyTaken(update);
         self.storeState(.ready, .release);
     }
@@ -3594,6 +3596,7 @@ test "allocation failure and retirement preserve ownership" {
     slot.storeState(.ready, .release);
     try std.testing.expect(try slot.retire());
     try std.testing.expectError(error.Retired, slot.publish(
+        undefined,
         undefined,
         undefined,
         undefined,

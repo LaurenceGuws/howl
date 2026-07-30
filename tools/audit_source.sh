@@ -5,12 +5,26 @@ cd "$(dirname "$0")/.."
 
 status=0
 
-root_public='pub const Terminal = terminal.Terminal;'
-if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne 1 ]] ||
-    ! grep -Fxq "$root_public" howl-vt/src/howl_vt.zig; then
+root_publics=(
+    'pub const Terminal = terminal.Terminal;'
+    'pub const ScalarStorage = scalar_storage.Storage;'
+    'pub const scalar = struct {'
+    '    pub const page_cells = scalar_storage.page_cells;'
+    '    pub const bank_bytes = scalar_storage.scalar_bank_bytes;'
+    '    pub const inline_scalars = scalar_storage.inline_scalars;'
+    '    pub const maximum_scalars = scalar_storage.maximum_scalars;'
+)
+if [[ $(grep -Ec '^[[:space:]]*pub (const|fn|var|threadlocal)[[:space:]]' howl-vt/src/howl_vt.zig) -ne ${#root_publics[@]} ]]; then
     printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
     status=1
 fi
+for root_public in "${root_publics[@]}"; do
+    if ! grep -Fxq "$root_public" howl-vt/src/howl_vt.zig; then
+        printf 'howl-vt/src/howl_vt.zig: curated embedding root changed\n'
+        status=1
+        break
+    fi
+done
 
 while IFS= read -r file; do
     if ! head -n 1 "$file" | grep -q '^//!'; then

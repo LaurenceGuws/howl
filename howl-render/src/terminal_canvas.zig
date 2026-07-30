@@ -22,6 +22,8 @@ else
 
 /// Preserves the terminal projection's bounded combining-scalar limit.
 pub const max_combining = projection.max_combining;
+/// Borrows one complete accepted overflow-scalar cohort synchronously.
+pub const ScalarBaseline = projection.ScalarBaseline;
 /// Preserves the terminal projection's RGB fact.
 pub const Rgb = projection.Rgb;
 /// Preserves terminal baseline placement.
@@ -748,6 +750,7 @@ pub const Content = struct {
     pub fn takeUpdate(
         self: *Content,
         work: *Work,
+        scalars: ScalarBaseline,
         geometry: Geometry,
         producer: FontProducer,
     ) TakeError!canvas.ProducerUpdate {
@@ -757,6 +760,7 @@ pub const Content = struct {
         };
         if (!self.initialized) return error.InvalidProjection;
         if (!work.accepts(self.limits)) return error.WorkTooSmall;
+        try self.validateScalarBaseline(scalars);
         var fixed = std.heap.FixedBufferAllocator.init(work.raster_arena);
         self.glyph_candidate_count = 0;
         self.mask_candidate_count = 0;
@@ -792,7 +796,7 @@ pub const Content = struct {
         var build = Build{
             .allocator = fixed.allocator(),
             .input = .{
-                .projection = self.baseline(),
+                .projection = self.baseline(scalars),
                 .images = .{
                     .entries = self.activeImages()[0..self.image_count],
                     .pixels = self.activeImagePixels()[0..self.image_pixel_count],
@@ -870,11 +874,12 @@ pub const Content = struct {
     pub fn takeLocalUpdate(
         self: *Content,
         work: *Work,
+        scalars: ScalarBaseline,
         geometry: Geometry,
     ) TakeError!canvas.ProducerUpdate {
         if (comptime features.native_text)
-            return self.takeUpdate(work, geometry, .local);
-        return self.takeUpdate(work, geometry, {});
+            return self.takeUpdate(work, scalars, geometry, .local);
+        return self.takeUpdate(work, scalars, geometry, {});
     }
 
     fn appendRetiredGlyphs(self: *Content) TakeError!bool {
@@ -1379,15 +1384,44 @@ pub const Content = struct {
         return &self.mask_candidates[self.mask_candidate_count - 1];
     }
 
-    fn baseline(self: *const Content) ProjectionBaseline {
+    fn baseline(
+        self: *const Content,
+        scalars: ScalarBaseline,
+    ) ProjectionBaseline {
         const count = @as(usize, self.rows) * self.cols;
         return .{
             .rows = self.rows,
             .cols = self.cols,
             .cursor = self.cursor,
             .cells = self.cells[0..count],
+            .scalars = scalars.storage,
             .geometry = self.geometry[0..self.rows],
         };
+    }
+
+    fn validateScalarBaseline(
+        self: *const Content,
+        scalars: ScalarBaseline,
+    ) error{InvalidProjection}!void {
+        const count = std.math.mul(usize, self.rows, self.cols) catch
+            return error.InvalidProjection;
+        if (scalars.cell_count != count) return error.InvalidProjection;
+        for (self.cells[0..count], 0..) |cell, index| {
+            const continuation = cell.sizing.x != 0 or cell.sizing.y != 0;
+            if (continuation and
+                (cell.codepoint != 0 or cell.combining_len != 0 or
+                    !scalars.validRange(index, 0)))
+                return error.InvalidProjection;
+            if (!scalars.validRange(index, cell.combining_len))
+                return error.InvalidProjection;
+            const tail = scalars.tail(
+                index,
+                cell.combining_len,
+            ) catch return error.InvalidProjection;
+            for (tail) |scalar|
+                if (scalar > std.math.maxInt(u21))
+                    return error.InvalidProjection;
+        }
     }
 };
 
@@ -1537,6 +1571,18 @@ const Build = struct {
             while (cell_index < cells.len) {
                 const row_input = text.RowInput{
                     .cells = cells,
+                    .scalars = if (self.input.projection.scalars) |scalars|
+                        ScalarBaseline.retained(
+                            scalars,
+                            @as(usize, self.input.projection.rows) *
+                                self.input.projection.cols,
+                        )
+                    else
+                        ScalarBaseline.empty(
+                            @as(usize, self.input.projection.rows) *
+                                self.input.projection.cols,
+                        ),
+                    .scalar_offset = row * self.input.projection.cols,
                     .affected_start = 0,
                     .affected_end = @intCast(cells.len - 1),
                     .geometry = self.input.projection.geometry[row],

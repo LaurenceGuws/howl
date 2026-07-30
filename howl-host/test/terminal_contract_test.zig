@@ -19,9 +19,11 @@ const Producer = struct {
     content: terminal.Content,
     work: *terminal.Content.Work,
     baseline_cells: [cell_count]terminal.Cell = undefined,
+    baseline_scalars: vt.ScalarStorage,
     baseline_geometry: [rows]terminal.LineGeometry = undefined,
     baseline_cursor: terminal.Cursor = undefined,
     work_cells: [cell_count]terminal.Cell = undefined,
+    work_scalars: vt.ScalarStorage,
     work_rows: [rows]terminal.RowPatch = undefined,
     image_pixels: [64]u8 = undefined,
     image_uploads: [8]terminal_images.ImageUpload = undefined,
@@ -45,10 +47,21 @@ const Producer = struct {
             fonts,
         );
         errdefer content.deinit();
-        return .{ .machine = machine, .content = content, .work = work };
+        var baseline_scalars = try vt.ScalarStorage.init(allocator, cell_count);
+        errdefer baseline_scalars.deinit();
+        const work_scalars = try vt.ScalarStorage.init(allocator, cell_count);
+        return .{
+            .machine = machine,
+            .content = content,
+            .work = work,
+            .baseline_scalars = baseline_scalars,
+            .work_scalars = work_scalars,
+        };
     }
 
     fn deinit(self: *Producer) void {
+        self.work_scalars.deinit();
+        self.baseline_scalars.deinit();
         self.content.deinit();
         self.machine.deinit();
         self.* = undefined;
@@ -64,7 +77,11 @@ const Producer = struct {
             self.machine.semanticView(0),
             self.machine.presentation(),
             .full,
-            .{ .cells = &self.work_cells, .rows = &self.work_rows },
+            .{
+                .cells = &self.work_cells,
+                .scalars = &self.work_scalars,
+                .rows = &self.work_rows,
+            },
             null,
             selectionStyle(),
         );
@@ -82,7 +99,11 @@ const Producer = struct {
             self.machine.semanticView(0),
             self.machine.presentation(),
             .{ .incremental = self.baseline() },
-            .{ .cells = &self.work_cells, .rows = &self.work_rows },
+            .{
+                .cells = &self.work_cells,
+                .scalars = &self.work_scalars,
+                .rows = &self.work_rows,
+            },
             null,
             selectionStyle(),
         );
@@ -104,7 +125,12 @@ const Producer = struct {
         slot: *terminal_handoff.PendingSlot,
         placement: terminal.Content.Geometry,
     ) !void {
-        try slot.publish(&self.content, self.work, placement);
+        try slot.publish(
+            &self.content,
+            self.work,
+            terminal.ScalarBaseline.retained(&self.baseline_scalars, cell_count),
+            placement,
+        );
     }
 
     fn baseline(self: *const Producer) terminal.ProjectionBaseline {
@@ -113,6 +139,7 @@ const Producer = struct {
             .cols = cols,
             .cursor = self.baseline_cursor,
             .cells = &self.baseline_cells,
+            .scalars = &self.baseline_scalars,
             .geometry = &self.baseline_geometry,
         };
     }
@@ -129,6 +156,7 @@ const Producer = struct {
             self.baseline_geometry[patch.row] = patch.geometry;
         }
         self.baseline_cursor = update.cursor;
+        std.mem.swap(vt.ScalarStorage, &self.baseline_scalars, &self.work_scalars);
     }
 
     fn projectImages(self: *Producer) !terminal_images.Update {

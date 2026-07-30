@@ -6,6 +6,7 @@ const fonts = @import("test_fonts");
 const selected = @import("selected_capabilities");
 
 const terminal = render.terminal;
+const empty_scalars = terminal.ScalarBaseline.empty(1);
 const terminal_images = render.terminal_images;
 const chrome = render.chrome;
 const canvas = render.canvas;
@@ -173,7 +174,7 @@ test "capable root composes terminal and chrome producer updates" {
         .removals = &.{},
         .placements = &.{},
     });
-    const terminal_update = try terminal_content.takeLocalUpdate(&terminal_work, .{
+    const terminal_update = try terminal_content.takeLocalUpdate(&terminal_work, empty_scalars, .{
         .x = 0,
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },
@@ -515,7 +516,7 @@ test "terminal Content emits shared glyph and decoration resources through its p
         .slot = 0,
         .style = .normal,
     }) orelse return error.TestUnexpectedResult;
-    const update = try content.takeUpdate(&work, .{
+    const update = try content.takeUpdate(&work, terminal.ScalarBaseline.empty(cells.len), .{
         .x = 0,
         .y = 0,
         .clip = .{
@@ -587,28 +588,31 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
         .selected = false,
         .link_id = 0,
     }};
-    try content.recover(.{
-        .rows = 1,
-        .cols = 1,
-        .cursor = .{
-            .row = 0,
-            .col = 0,
-            .visible = false,
-            .shape = .none,
-            .blink = false,
-            .color = .{ .r = 0, .g = 0, .b = 0 },
-            .text_color = .{ .r = 0, .g = 0, .b = 0 },
+    try content.recover(
+        .{
+            .rows = 1,
+            .cols = 1,
+            .cursor = .{
+                .row = 0,
+                .col = 0,
+                .visible = false,
+                .shape = .none,
+                .blink = false,
+                .color = .{ .r = 0, .g = 0, .b = 0 },
+                .text_color = .{ .r = 0, .g = 0, .b = 0 },
+            },
+            .cells = &cells,
+            .geometry = &.{.single_width},
         },
-        .cells = &cells,
-        .geometry = &.{.single_width},
-    }, .{
-        .generation = 1,
-        .content_generation = 1,
-        .pixels = &.{},
-        .uploads = &.{},
-        .removals = &.{},
-        .placements = &.{},
-    });
+        .{
+            .generation = 1,
+            .content_generation = 1,
+            .pixels = &.{},
+            .uploads = &.{},
+            .removals = &.{},
+            .placements = &.{},
+        },
+    );
     const metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
         return error.TestUnexpectedResult;
     const geometry = terminal.Content.Geometry{
@@ -624,7 +628,7 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
     var failed = try owner.producer(group);
     try std.testing.expectError(
         error.CommandLimit,
-        content.takeUpdate(&work, geometry, .{ .shared = &failed }),
+        content.takeUpdate(&work, empty_scalars, geometry, .{ .shared = &failed }),
     );
     failed.deinit();
     content.deinit();
@@ -655,7 +659,7 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
         .placements = &.{},
     });
     var retry = try owner.producer(group);
-    const update = try content.takeUpdate(&work, geometry, .{ .shared = &retry });
+    const update = try content.takeUpdate(&work, empty_scalars, geometry, .{ .shared = &retry });
     try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
     try std.testing.expect(update.uploads[0].resource.resource.isShared());
     try std.testing.expect(try update.uploads[0].resource.resource.identity() > 1);
@@ -746,8 +750,8 @@ test "shared FontMap owners invalidate independently without identity reuse" {
     };
     first.invalidateFonts();
     second.invalidateFonts();
-    const first_update = try first.takeLocalUpdate(&first_work, geometry);
-    const second_update = try second.takeLocalUpdate(&second_work, geometry);
+    const first_update = try first.takeLocalUpdate(&first_work, empty_scalars, geometry);
+    const second_update = try second.takeLocalUpdate(&second_work, empty_scalars, geometry);
     try std.testing.expect(first_update.uploads.len > 0 and second_update.uploads.len > 0);
     try std.testing.expectEqual(@as(usize, 0), first_update.removals.len);
     try std.testing.expectEqual(@as(usize, 0), second_update.removals.len);
@@ -794,8 +798,8 @@ test "shared FontMap owners invalidate independently without identity reuse" {
         .strike_y = new_decoration.strike_y,
         .strike_height = new_decoration.strike_height,
     };
-    const first_rebuilt = try first.takeLocalUpdate(&first_work, new_geometry);
-    const second_rebuilt = try second.takeLocalUpdate(&second_work, new_geometry);
+    const first_rebuilt = try first.takeLocalUpdate(&first_work, empty_scalars, new_geometry);
+    const second_rebuilt = try second.takeLocalUpdate(&second_work, empty_scalars, new_geometry);
     try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(first_rebuilt.revision)));
     try std.testing.expectEqual(@as(u64, @backingInt(first_revision)) + 1, @as(u64, @backingInt(second_rebuilt.revision)));
     try std.testing.expect(first_rebuilt.removals.len > 0 and second_rebuilt.removals.len > 0);
@@ -894,11 +898,11 @@ test "shared FontMap owners invalidate independently without identity reuse" {
     try std.testing.expect(updateCommandHasResource(second_rebuilt, second_image.?));
     const second_revision = first_rebuilt.revision;
     first.invalidateFonts();
-    const repeated = try first.takeLocalUpdate(&first_work, new_geometry);
+    const repeated = try first.takeLocalUpdate(&first_work, empty_scalars, new_geometry);
     try std.testing.expect(repeated.removals.len > 0);
     try std.testing.expect(@as(u64, @backingInt(repeated.removals[0].resource.resource)) != @as(u64, @backingInt(first_old[0].resource)));
     try std.testing.expectEqual(@as(u64, @backingInt(second_revision)) + 1, @as(u64, @backingInt(repeated.revision)));
-    const second_unchanged = try second.takeLocalUpdate(&second_work, new_geometry);
+    const second_unchanged = try second.takeLocalUpdate(&second_work, empty_scalars, new_geometry);
     try std.testing.expectEqual(second_rebuilt.revision, second_unchanged.revision);
     try std.testing.expectEqual(@as(usize, 0), second_unchanged.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), second_unchanged.removals.len);

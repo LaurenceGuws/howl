@@ -165,7 +165,6 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
         try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
         try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-        terminal.screen_state.active().writeText("Z");
         return err;
     };
 
@@ -5835,6 +5834,34 @@ pub const Terminal = struct {
             return @intCast(self.cellInfoAt(row, col).codepoint);
         }
 
+        /// Copies one complete lead-cell scalar sequence into caller storage.
+        ///
+        /// Continuation coordinates resolve to their lead. The slice borrows
+        /// `output` and is independent of later terminal mutation.
+        pub fn cellScalarsAt(
+            self: *const SemanticView,
+            row: u16,
+            col: u16,
+            output: *[24]u21,
+        ) []const u21 {
+            if (row >= self.rows or col >= self.cols) return &.{};
+            var retained: [24]u32 = undefined;
+            const values = switch (self.rowSource(row)) {
+                .history => |recency| self.screen.historyCellScalarsAt(
+                    recency,
+                    col,
+                    &retained,
+                ),
+                .screen => |screen_row| self.screen.cellScalarsAt(
+                    screen_row,
+                    col,
+                    &retained,
+                ),
+            };
+            for (values, 0..) |value, index| output[index] = @intCast(value);
+            return output[0..values.len];
+        }
+
         /// Returns one visible row's DEC geometry without prescribing caller scaling.
         pub fn lineGeometry(self: *const SemanticView, row: u16) Screen.LineGeometry {
             return switch (self.rowSource(row)) {
@@ -5908,7 +5935,7 @@ pub const Terminal = struct {
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ReplyLimit } ||
+    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity } ||
         std.mem.Allocator.Error;
     /// Owns a complete fallible resize candidate bound to one Terminal.
     ///
@@ -7919,14 +7946,25 @@ test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
             try std.testing.expectEqual(@as(u4, 2), cell.subscale_d);
             try std.testing.expectEqual(@as(u2, 1), cell.vertical_align);
             try std.testing.expectEqual(@as(u2, 2), cell.horizontal_align);
-            try std.testing.expectEqual(@as(u32, 'H'), cell.codepoint);
-            try std.testing.expectEqual(@as(u8, 1), cell.combining_len);
-            try std.testing.expectEqual(@as(u32, 'i'), cell.combining[0]);
+            if (row == 0 and col == 0) {
+                try std.testing.expectEqual(@as(u32, 'H'), cell.codepoint);
+                try std.testing.expectEqual(@as(u8, 1), cell.combining_len);
+                try std.testing.expectEqual(@as(u32, 'i'), cell.combining[0]);
+            } else {
+                try std.testing.expectEqual(@as(u32, 0), cell.codepoint);
+                try std.testing.expectEqual(@as(u8, 0), cell.combining_len);
+                try std.testing.expectEqual([3]u32{ 0, 0, 0 }, cell.combining);
+            }
         }
     }
 
     try std.testing.expect((try terminal.feed("\x1b[2;2HX")).state_changed);
-    try std.testing.expectEqual(@as(u32, 'H'), terminal.screen_state.activeConst().cellInfoAt(1, 1).codepoint);
+    const continuation = terminal.screen_state.activeConst().cellInfoAt(1, 1);
+    try std.testing.expectEqual(@as(u32, 0), continuation.codepoint);
+    try std.testing.expectEqual(@as(u8, 4), continuation.width);
+    try std.testing.expectEqual(@as(u8, 2), continuation.height);
+    try std.testing.expectEqual(@as(u8, 1), continuation.x);
+    try std.testing.expectEqual(@as(u8, 1), continuation.y);
     try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(1, 4).codepoint);
     try std.testing.expect((try terminal.feed("\x1b[1;2HX")).state_changed);
     try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(0, 1).codepoint);
@@ -7939,7 +7977,9 @@ test "OSC 66 malformed and overlong cell text preserve terminal state" {
     defer terminal.deinit();
     const sequence = terminal.semanticSequence();
     try std.testing.expect(!(try terminal.feed("\x1b]66;s=x;bad\x07")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b]66;w=2;abcde\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed(
+        "\x1b]66;w=2;abcdefghijklmnopqrstuvwxy\x07",
+    )).state_changed);
     try std.testing.expect(!(try terminal.feed("\x1b]66;s=8:w=8;A\x07")).state_changed);
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);

@@ -476,11 +476,67 @@ test "projection rejects output and baseline aliasing before comparison" {
         terminal.project(
             source.semanticView(0),
             source.presentation(),
-            .{ .incremental = baseline(&storage.cells, &geometry, full_update) },
+            .{ .incremental = baseline(storage.cells[0..2], &geometry, full_update) },
             storage.buffers(),
             null,
             selection,
         ),
     );
     try std.testing.expectEqualDeep(before, storage);
+}
+
+test "projection rejects shallow-copied scalar backing alias before mutation" {
+    var source = try vt.Terminal.init(std.testing.allocator, 1, 2);
+    defer source.deinit();
+
+    var retained = try vt.ScalarStorage.init(std.testing.allocator, 2);
+    defer retained.deinit();
+    var shallow_candidate = retained;
+    var accepted: Storage = .{};
+    const accepted_update = try full(&source, &accepted, null);
+    var cells: [2]terminal.Cell = undefined;
+    var rows: [1]terminal.RowPatch = undefined;
+    const retained_ranges = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(retained.ranges),
+    );
+    defer std.testing.allocator.free(retained_ranges);
+    const retained_pages = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(retained.pages),
+    );
+    defer std.testing.allocator.free(retained_pages);
+    var geometry = [_]terminal.LineGeometry{.single_width};
+    try std.testing.expectError(
+        error.AliasedStorage,
+        terminal.project(
+            source.semanticView(0),
+            source.presentation(),
+            .{ .incremental = .{
+                .rows = 1,
+                .cols = 2,
+                .cursor = accepted_update.cursor,
+                .cells = accepted.cells[0..2],
+                .scalars = &retained,
+                .geometry = &geometry,
+            } },
+            .{
+                .cells = &cells,
+                .scalars = &shallow_candidate,
+                .rows = &rows,
+            },
+            null,
+            selection,
+        ),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        retained_ranges,
+        std.mem.sliceAsBytes(retained.ranges),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        retained_pages,
+        std.mem.sliceAsBytes(retained.pages),
+    );
 }

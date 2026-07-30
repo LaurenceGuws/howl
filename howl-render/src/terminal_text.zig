@@ -47,6 +47,10 @@ pub const DecorationMetrics = struct {
 pub const RowInput = struct {
     /// Borrows the complete immutable row for the call.
     cells: []const terminal.Cell,
+    /// Borrows the accepted complete overflow-scalar cohort synchronously.
+    scalars: terminal.ScalarBaseline,
+    /// Locates this row's first cell in `scalars`.
+    scalar_offset: usize,
     /// Identifies the first affected cell.
     affected_start: u16,
     /// Identifies the last affected cell.
@@ -461,13 +465,9 @@ fn nativeRun(
         selected_face = null;
         selected_end = selected_bounds.first;
         while (selected_end < bounds.end) : (selected_end += 1) {
-            const cell = input.cells[selected_end];
-            const count = 1 + cell.combining_len;
-            var coverage: [1 + terminal.max_combining]u32 = undefined;
-            coverage[0] = cell.codepoint;
-            for (cell.combining[0..cell.combining_len], 1..) |combining, index|
-                coverage[index] = combining;
-            const face = try set.faceFor(coverage[0..count]);
+            var coverage: [terminal.maximum_scalars]u32 = undefined;
+            const sequence = try cellScalars(input, selected_end, &coverage);
+            const face = try set.faceFor(sequence);
             if (selected_end == selected_bounds.first) {
                 if (face == null) {
                     if (selected_bounds.first < start_cell) {
@@ -499,12 +499,10 @@ fn nativeRun(
     var used: usize = 0;
     var col = selected_bounds.first;
     while (col < selected_bounds.end) : (col += 1) {
-        const cell = input.cells[col];
-        codepoints[used] = cell.codepoint;
-        clusters[used] = col - selected_bounds.first;
-        used += 1;
-        for (cell.combining[0..cell.combining_len]) |combining| {
-            codepoints[used] = combining;
+        var retained: [terminal.maximum_scalars]u32 = undefined;
+        const sequence = try cellScalars(input, col, &retained);
+        for (sequence) |scalar| {
+            codepoints[used] = scalar;
             clusters[used] = col - selected_bounds.first;
             used += 1;
         }
@@ -550,6 +548,36 @@ fn nativeRun(
         },
         .glyphs = .{ .native = positioned },
     };
+}
+
+fn cellScalars(
+    input: RowInput,
+    cell_index: usize,
+    output: *[terminal.maximum_scalars]u32,
+) PrepareError![]const u32 {
+    if (cell_index >= input.cells.len) return error.InvalidPlacement;
+    const cell = input.cells[cell_index];
+    if (cell.codepoint == 0) return error.InvalidPlacement;
+    const total = std.math.add(usize, 1, cell.combining_len) catch
+        return error.InvalidPlacement;
+    if (total > terminal.maximum_scalars) return error.InvalidPlacement;
+    output[0] = cell.codepoint;
+    const direct = @min(@as(usize, cell.combining_len), terminal.max_combining);
+    for (cell.combining[0..direct], 0..) |scalar, index|
+        output[1 + index] = scalar;
+    const scalar_cell = std.math.add(usize, input.scalar_offset, cell_index) catch
+        return error.InvalidPlacement;
+    if (!input.scalars.validRange(scalar_cell, cell.combining_len))
+        return error.InvalidPlacement;
+    const tail = input.scalars.tail(
+        scalar_cell,
+        cell.combining_len,
+    ) catch return error.InvalidPlacement;
+    for (tail, 0..) |scalar, index| {
+        if (scalar > std.math.maxInt(u21)) return error.InvalidPlacement;
+        output[1 + direct + index] = scalar;
+    }
+    return output[0..total];
 }
 
 const cluster_seen: u32 = 1 << 31;

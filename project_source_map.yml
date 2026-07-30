@@ -9,6 +9,8 @@ accepted:
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and borrowed semantic views
+  howl-vt/src/howl_vt.zig: curated Terminal plus bounded scalar-storage embedding facts
+  howl-vt/src/scalar_storage.zig: fixed owner-local overflow-scalar banks, range ownership, first-fit admission, coalescing, and rollback
   howl-vt/src/graphics.zig: bounded terminal image plane, animation frames, placements, deletion, and lifetime
   howl-vt/src/sixel.zig: bounded Sixel measurement and RGBA decoding into the common terminal image plane
   howl-vt/test: external VT behavior proofs

@@ -75,14 +75,20 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
     for (0..3) |col| {
         const cell = terminal.semanticView(0).cellInfoAt(0, @intCast(col));
         try std.testing.expectEqual(@as(u21, 'A'), cell.codepoint);
-        try std.testing.expectEqual(@as(u8, 3), cell.combining_len);
+        try std.testing.expectEqual(@as(u8, 4), cell.combining_len);
         try std.testing.expectEqualSlices(u32, &.{ 0x301, 0x327, 0x308 }, cell.combining[0..3]);
+        var retained: [24]u21 = undefined;
+        try std.testing.expectEqualSlices(
+            u21,
+            &.{ 'A', 0x301, 0x327, 0x308, 0x304 },
+            terminal.semanticView(0).cellScalarsAt(0, @intCast(col), &retained),
+        );
     }
 
     try std.testing.expect((try terminal.feed("\x1b[32;4m\x1b[0b")).state_changed);
     const defaulted = terminal.semanticView(0).cellInfoAt(0, 3);
     try std.testing.expectEqual(@as(u21, 'A'), defaulted.codepoint);
-    try std.testing.expectEqual(@as(u8, 3), defaulted.combining_len);
+    try std.testing.expectEqual(@as(u8, 4), defaulted.combining_len);
     try std.testing.expectEqual(Terminal.Color.indexed(2), defaulted.attrs.fg);
     try std.testing.expect(defaulted.attrs.underline);
 
@@ -102,7 +108,7 @@ test "terminal: REP retains bounded glyph state and exact lifetime" {
     try std.testing.expect((try terminal.feed("\x1b[b")).state_changed);
     const repeated = terminal.semanticView(0).cellInfoAt(0, 3);
     try std.testing.expectEqual(@as(u21, 'A'), repeated.codepoint);
-    try std.testing.expectEqual(@as(u8, 3), repeated.combining_len);
+    try std.testing.expectEqual(@as(u8, 4), repeated.combining_len);
 
     try terminal.resize(3, 10);
     try std.testing.expect((try terminal.feed("\x1b[b")).state_changed);

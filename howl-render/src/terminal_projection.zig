@@ -5,8 +5,56 @@ const howl_vt = @import("howl_vt");
 
 const VtTerminal = howl_vt.Terminal;
 
-/// Bounds trailing Unicode scalars copied with one terminal cell.
-pub const max_combining: usize = 3;
+/// Owns one fixed bounded cohort of overflow scalars.
+pub const ScalarStorage = howl_vt.ScalarStorage;
+
+/// Borrows one exact bounded accepted overflow-scalar cohort synchronously.
+pub const ScalarBaseline = struct {
+    storage: ?*const ScalarStorage,
+    cell_count: usize,
+
+    /// Describes a complete cohort whose cells own no sidecar ranges.
+    pub fn empty(cell_count: usize) ScalarBaseline {
+        return .{ .storage = null, .cell_count = cell_count };
+    }
+
+    /// Borrows one retained cohort for exactly `cell_count` cells.
+    pub fn retained(
+        storage: *const ScalarStorage,
+        cell_count: usize,
+    ) ScalarBaseline {
+        return .{ .storage = storage, .cell_count = cell_count };
+    }
+
+    pub fn validRange(
+        self: ScalarBaseline,
+        cell: usize,
+        combining_len: u8,
+    ) bool {
+        if (cell >= self.cell_count) return false;
+        const storage = self.storage orelse
+            return combining_len <= max_combining;
+        return storage.validRange(cell, combining_len);
+    }
+
+    pub fn tail(
+        self: ScalarBaseline,
+        cell: usize,
+        combining_len: u8,
+    ) error{InvalidRange}![]const u32 {
+        const storage = self.storage orelse {
+            if (combining_len > max_combining or cell >= self.cell_count)
+                return error.InvalidRange;
+            return &.{};
+        };
+        return try storage.tail(cell, combining_len);
+    }
+};
+
+/// Bounds complete base-plus-trailing scalars retained by one lead cell.
+pub const maximum_scalars: usize = howl_vt.scalar.maximum_scalars;
+/// Bounds trailing scalars retained directly with one lead cell.
+pub const max_combining: usize = howl_vt.scalar.inline_scalars - 1;
 
 /// Copies one resolved RGB color without terminal palette identity.
 pub const Rgb = struct {
@@ -159,6 +207,8 @@ pub const ProjectionBaseline = struct {
     /// Incremental projection validates dimensions, cursor shape, and storage
     /// before comparing or writing anything.
     cells: []const Cell,
+    /// Borrows complete overflow scalars keyed by row-major baseline cell.
+    scalars: ?*const howl_vt.ScalarStorage = null,
     /// Borrows one previously accepted geometry fact per row.
     geometry: []const LineGeometry,
 };
@@ -175,6 +225,11 @@ pub const ProjectMode = union(enum) {
 pub const Buffers = struct {
     /// Receives packed initialized cells selected by row patches.
     cells: []Cell,
+    /// Owns reusable candidate overflow scratch keyed by source row-major cell.
+    /// A scalar-capacity failure may overwrite this private cohort; accepted
+    /// baseline ownership changes only after the complete projection and
+    /// downstream Content transaction succeed.
+    scalars: ?*howl_vt.ScalarStorage = null,
     /// Receives one ordered patch per affected row.
     rows: []RowPatch,
 };
@@ -207,18 +262,25 @@ pub const Update = struct {
     full: bool,
     /// Borrows initialized packed cells from the caller buffer.
     cells: []const Cell,
+    /// Borrows the complete candidate overflow cohort keyed by row-major cell.
+    scalars: ?*const howl_vt.ScalarStorage = null,
     /// Borrows initialized ordered row patches from the caller buffer.
     row_patches: []const RowPatch,
     /// Copies current canonical cursor overlay.
     cursor: Cursor,
 };
 
-/// Reports invalid caller state or capacity before any destination mutation.
+/// Reports invalid caller state or capacity without changing accepted state.
+///
+/// Validation and ordinary output-capacity errors precede destination
+/// mutation. `ScalarCapacity` may leave only `Buffers.scalars` overwritten as
+/// reusable private scratch.
 pub const Error = error{
     FullRequired,
     InvalidBaseline,
     InsufficientCells,
     InsufficientPatches,
+    ScalarCapacity,
     AliasedStorage,
 };
 
@@ -292,7 +354,11 @@ const WorkIterator = struct {
 ///
 /// This function allocates and owns nothing. The caller must exclude terminal
 /// mutation for the complete call, then apply accepted row-cell patches,
-/// geometries, and the returned cursor to its retained baseline.
+/// geometries, and the returned cursor to its retained baseline. A failed
+/// scalar admission may overwrite only `buffers.scalars`, which is reusable
+/// candidate scratch; it never mutates the borrowed baseline, VT semantics, or
+/// a producer revision. The caller must publish neither cells nor scalars until
+/// the complete projection and downstream Content transaction both succeed.
 pub fn project(
     source: VtTerminal.SemanticView,
     presentation: VtTerminal.Presentation,
@@ -314,21 +380,57 @@ pub fn project(
     };
     if (slicesOverlap(std.mem.sliceAsBytes(buffers.cells), std.mem.sliceAsBytes(buffers.rows)))
         return error.AliasedStorage;
+    if (buffers.scalars) |candidate_scalars| {
+        if (candidate_scalars.aliases(std.mem.sliceAsBytes(buffers.cells)) or
+            candidate_scalars.aliases(std.mem.sliceAsBytes(buffers.rows)))
+            return error.AliasedStorage;
+    }
     const cursor = projectCursor(source_ref, &presentation);
     const full = switch (mode) {
         .full => true,
         .incremental => |baseline| incremental: {
             const required = @as(usize, source.rows) * source.cols;
             if (baseline.rows != source.rows or baseline.cols != source.cols or
-                baseline.cells.len < required or baseline.geometry.len < source.rows)
+                baseline.cells.len != required or
+                baseline.geometry.len != source.rows)
                 return error.FullRequired;
             if (slicesOverlap(std.mem.sliceAsBytes(buffers.cells), std.mem.sliceAsBytes(baseline.cells)) or
                 slicesOverlap(std.mem.sliceAsBytes(buffers.rows), std.mem.sliceAsBytes(baseline.cells)) or
                 slicesOverlap(std.mem.sliceAsBytes(buffers.cells), std.mem.sliceAsBytes(baseline.geometry)) or
                 slicesOverlap(std.mem.sliceAsBytes(buffers.rows), std.mem.sliceAsBytes(baseline.geometry)))
                 return error.AliasedStorage;
+            if (baseline.scalars) |baseline_scalars| {
+                if (baseline_scalars.aliases(std.mem.sliceAsBytes(buffers.cells)) or
+                    baseline_scalars.aliases(std.mem.sliceAsBytes(buffers.rows)))
+                    return error.AliasedStorage;
+                if (buffers.scalars) |candidate_scalars| {
+                    if (candidate_scalars.overlapsStorage(baseline_scalars))
+                        return error.AliasedStorage;
+                }
+            }
             if (!validBaselineCursor(baseline.cursor, baseline.rows, baseline.cols))
                 return error.InvalidBaseline;
+            const scalar_baseline = if (baseline.scalars) |storage|
+                ScalarBaseline.retained(storage, required)
+            else
+                ScalarBaseline.empty(required);
+            for (baseline.cells, 0..) |cell, cell_index| {
+                const continuation = cell.sizing.x != 0 or cell.sizing.y != 0;
+                if (continuation and
+                    (cell.codepoint != 0 or cell.combining_len != 0))
+                    return error.InvalidBaseline;
+                if (!scalar_baseline.validRange(
+                    cell_index,
+                    cell.combining_len,
+                )) return error.InvalidBaseline;
+                const tail = scalar_baseline.tail(
+                    cell_index,
+                    cell.combining_len,
+                ) catch return error.InvalidBaseline;
+                for (tail) |scalar|
+                    if (scalar > std.math.maxInt(u21))
+                        return error.InvalidBaseline;
+            }
             break :incremental false;
         },
     };
@@ -349,6 +451,52 @@ pub fn project(
     }
     if (buffers.rows.len < patch_count) return error.InsufficientPatches;
     if (buffers.cells.len < cell_count) return error.InsufficientCells;
+    if (buffers.scalars) |storage| {
+        if (storage.cellCapacity() < maximum_cells)
+            return error.InsufficientCells;
+        storage.clearAll();
+        var scalar_row: u16 = 0;
+        while (scalar_row < source.rows) : (scalar_row += 1) {
+            const row_cells = source.rowCells(scalar_row);
+            var scalar_col: u16 = 0;
+            while (scalar_col < source.cols) : (scalar_col += 1) {
+                const source_cell = row_cells[scalar_col];
+                if (source_cell.x != 0 or source_cell.y != 0) continue;
+                var scalars: [maximum_scalars]u21 = undefined;
+                const sequence = source_ref.cellScalarsAt(
+                    scalar_row,
+                    scalar_col,
+                    &scalars,
+                );
+                if (sequence.len <= howl_vt.scalar.inline_scalars) continue;
+                var tail: [maximum_scalars - howl_vt.scalar.inline_scalars]u32 =
+                    undefined;
+                for (
+                    sequence[howl_vt.scalar.inline_scalars..],
+                    0..,
+                ) |value, index| tail[index] = value;
+                const destination = @as(usize, scalar_row) * source.cols +
+                    scalar_col;
+                storage.set(
+                    destination,
+                    0,
+                    tail[0 .. sequence.len - howl_vt.scalar.inline_scalars],
+                ) catch return error.ScalarCapacity;
+            }
+        }
+    } else {
+        var scalar_row: u16 = 0;
+        while (scalar_row < source.rows) : (scalar_row += 1) {
+            const row_cells = source.rowCells(scalar_row);
+            var scalar_col: u16 = 0;
+            while (scalar_col < source.cols) : (scalar_col += 1) {
+                const source_cell = row_cells[scalar_col];
+                if (source_cell.x != 0 or source_cell.y != 0) continue;
+                if (source_cell.combining_len > max_combining)
+                    return error.ScalarCapacity;
+            }
+        }
+    }
 
     var row_used: usize = 0;
     var cell_used: usize = 0;
@@ -389,6 +537,7 @@ pub fn project(
         .cols = source.cols,
         .full = full,
         .cells = buffers.cells[0..cell_used],
+        .scalars = buffers.scalars,
         .row_patches = buffers.rows[0..row_used],
         .cursor = cursor,
     };
@@ -407,7 +556,31 @@ fn changedCells(
     for (row_cells, 0..) |cell, col_index| {
         const col: u16 = @intCast(col_index);
         const current = projectCell(source, presentation, &cell, row, col, selection, selection_style);
-        if (!std.meta.eql(current, baseline.cells[@as(usize, row) * source.cols + col]))
+        const baseline_index = @as(usize, row) * source.cols + col;
+        var source_scalars: [maximum_scalars]u21 = undefined;
+        const sequence = source.cellScalarsAt(row, col, &source_scalars);
+        const source_tail = if (sequence.len > howl_vt.scalar.inline_scalars)
+            sequence[howl_vt.scalar.inline_scalars..]
+        else
+            &.{};
+        const baseline_tail = if (baseline.scalars) |storage|
+            storage.tail(
+                baseline_index,
+                baseline.cells[baseline_index].combining_len,
+            ) catch return null
+        else
+            &.{};
+        var scalar_changed = source_tail.len != baseline_tail.len;
+        if (!scalar_changed) {
+            for (source_tail, baseline_tail) |source_value, baseline_value| {
+                if (source_value != baseline_value) {
+                    scalar_changed = true;
+                    break;
+                }
+            }
+        }
+        if (scalar_changed or
+            !std.meta.eql(current, baseline.cells[baseline_index]))
             changed = if (changed) |span| .{ .start = span.start, .end = col } else .{ .start = col, .end = col };
     }
     return changed;
@@ -499,7 +672,7 @@ fn projectCell(
 ) Cell {
     std.debug.assert(cell.width > 0 and cell.height > 0);
     std.debug.assert(cell.x < cell.width and cell.y < cell.height);
-    std.debug.assert(cell.combining_len <= max_combining);
+    std.debug.assert(cell.combining_len < maximum_scalars);
     std.debug.assert(cell.codepoint <= std.math.maxInt(u21));
     const codepoint: u21 = @intCast(cell.codepoint);
     std.debug.assert(std.unicode.utf8ValidCodepoint(codepoint));
@@ -580,7 +753,8 @@ fn projectCell(
         .selected = selected,
         .link_id = cell.attrs.link_id,
     };
-    for (cell.combining[0..cell.combining_len], 0..) |trailing, index|
+    const direct = @min(@as(usize, cell.combining_len), cell.combining.len);
+    for (cell.combining[0..direct], 0..) |trailing, index|
         result.combining[index] = @intCast(trailing);
     return result;
 }

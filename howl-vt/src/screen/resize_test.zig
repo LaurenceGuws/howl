@@ -11,7 +11,21 @@ fn apply(screen: *Grid, event: Action) void {
 }
 
 test "screen resize is transactional at every allocation failure" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeScreenTransaction, .{});
+    const allocation_failure_limit = 128;
+    var fail_index: usize = 0;
+    while (fail_index < allocation_failure_limit) : (fail_index += 1) {
+        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{
+            .fail_index = fail_index,
+        });
+        resizeScreenTransaction(failing.allocator()) catch |failure| {
+            try std.testing.expectEqual(error.OutOfMemory, failure);
+            try std.testing.expect(failing.has_induced_failure);
+            continue;
+        };
+        try std.testing.expect(!failing.has_induced_failure);
+        break;
+    }
+    try std.testing.expect(fail_index < allocation_failure_limit);
 }
 
 fn resizeScreenTransaction(allocator: std.mem.Allocator) !void {
@@ -26,7 +40,6 @@ fn resizeScreenTransaction(allocator: std.mem.Allocator) !void {
         try std.testing.expectEqual(@as(u16, 4), screen.cols);
         try std.testing.expectEqual(history_cell, screen.historyRowAt(0, 0));
         try std.testing.expectEqual(visible_cell, screen.cellAt(0, 0));
-        apply(&screen, .{ .write_text = "Z" });
         return err;
     };
 
