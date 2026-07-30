@@ -11,6 +11,10 @@ accepted:
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and borrowed semantic views
   howl-vt/src/howl_vt.zig: curated Terminal plus bounded scalar-storage embedding facts
   howl-vt/src/scalar_storage.zig: fixed owner-local overflow-scalar banks, range ownership, first-fit admission, coalescing, and rollback
+  howl-vt/src/unicode_17.zig: generated Unicode 17 width, presentation, and grapheme-transition lookup
+  howl-vt/src/unicode_17*.bin: pinned generated Unicode 17 runtime and conformance facts
+  howl-vt/tools/generate_unicode_17*.py: reproducible Kitty Unicode 17 table and conformance encoders
+  howl-vt/src/unicode_17_digest.zig: package check/test digest gate for generated Unicode 17 facts
   howl-vt/src/graphics.zig: bounded terminal image plane, animation frames, placements, deletion, and lifetime
   howl-vt/src/sixel.zig: bounded Sixel measurement and RGBA decoding into the common terminal image plane
   howl-vt/test: external VT behavior proofs

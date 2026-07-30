@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const scalar_storage = @import("scalar_storage.zig");
+const unicode = @import("unicode_17.zig");
 
 fn acceptedTail(
     storage: *const scalar_storage.Storage,
@@ -467,10 +468,15 @@ pub const Screen = struct {
         defer lines.deinit(allocator);
         for (lines.logical_lines.items) |*line| {
             for (line.cells.items) |*cell| {
-                if (cell.width != 1 or cell.height != 1 or cell.x != 0 or cell.y != 0)
+                if (!isSemanticWideCell(cell.*) and
+                    (cell.width != 1 or cell.height != 1 or
+                        cell.x != 0 or cell.y != 0))
+                {
                     cell.* = blank_cell;
+                }
             }
         }
+        omitUnrepresentableSemanticWidths(&lines, cols);
 
         var reflow = try reflowLogicalLines(allocator, lines, cols);
         defer reflow.deinit(allocator);
@@ -1172,9 +1178,16 @@ pub const Screen = struct {
         var col: u16 = 0;
         const line_cols = self.lineColumnCount(row);
         while (col < line_cols) : (col += 1) {
-            if (self.cellInfoAt(row, col).codepoint != 0) {
+            const cell = self.cellInfoAt(row, col);
+            if (cell.codepoint != 0) {
                 has_content = true;
-                last_non_zero = col + 1;
+                last_non_zero = @min(
+                    line_cols,
+                    col + if (isSemanticWideLead(cell))
+                        @as(u16, cell.width)
+                    else
+                        1,
+                );
             }
         }
 
@@ -1195,7 +1208,14 @@ pub const Screen = struct {
         var col = line_cols;
         while (col > 0) {
             const idx = col - 1;
-            if (self.cellInfoAt(row, idx).codepoint != 0) return col;
+            const cell = self.cellInfoAt(row, idx);
+            if (cell.codepoint != 0) {
+                if (isSemanticWideLead(cell)) return @min(
+                    line_cols,
+                    col + @as(u16, cell.width) - 1,
+                );
+                return col;
+            }
             col -= 1;
         }
         if (self.rowWrapped(row) and line_cols > 0) return line_cols;
@@ -2597,6 +2617,11 @@ pub const Screen = struct {
         for (text) |byte| self.writeCell(@intCast(byte));
     }
 
+    /// Applies one Unicode scalar and reports exact accepted semantic mutation.
+    pub fn writeCodepoint(self: *Screen, codepoint: u21) bool {
+        return self.writeCellDisposition(codepoint);
+    }
+
     /// Repeat the complete bounded preceding glyph using the current rendition.
     ///
     /// A zero count has the protocol default of one. The result is false when
@@ -2658,27 +2683,48 @@ pub const Screen = struct {
                 }
             }
         }
+        if (graphic.width == 2 and self.cursor.col == right) {
+            if (self.auto_wrap) {
+                self.setRowWrapped(self.cursor.row, true);
+                self.lineFeed();
+                self.cursor.setColByClient(
+                    if (self.left_right_margin_mode) self.left_margin else 0,
+                );
+            } else if (self.cursor.col > self.leftBoundary()) {
+                self.cursor.setColByClient(self.cursor.col - 1);
+            }
+        }
         if (self.insert_mode) {
-            const inserted = self.insertChars(1);
+            const inserted = self.insertChars(graphic.width);
             std.debug.assert(inserted or !self.wrap_pending);
         }
 
         const cells = self.cells orelse unreachable;
         const index = self.rowStart(self.cursor.row) + self.cursor.col;
-        const target = cells[index];
-        if (target.width != 1 or target.height != 1 or
-            target.x != 0 or target.y != 0)
-        {
-            std.debug.assert(self.clearClusterAt(
-                self.cursor.row,
-                self.cursor.col,
-                self.cursor.col !=
-                    self.clusterAnchorCol(self.cursor.row, self.cursor.col),
-            ));
+        var offset: u8 = 0;
+        while (offset < graphic.width) : (offset += 1) {
+            const col = self.cursor.col + offset;
+            const target = cells[index + offset];
+            if (target.width != 1 or target.height != 1 or
+                target.x != 0 or target.y != 0)
+            {
+                std.debug.assert(self.clearClusterAt(
+                    self.cursor.row,
+                    col,
+                    col != self.clusterAnchorCol(self.cursor.row, col),
+                ));
+            } else if (target.combining_len != 0) {
+                clearAcceptedTail(
+                    &self.scalars.?,
+                    @intCast(index + offset),
+                    target.combining_len,
+                );
+            }
         }
-        clearAcceptedTail(&self.scalars.?, index, cells[index].combining_len);
         var replay = Cell{
             .codepoint = graphic.codepoint,
+            .width = graphic.width,
+            .semantic_width = graphic.width == 2,
             .combining_len = graphic.combining_len,
             .attrs = self.current_attrs,
         };
@@ -2688,11 +2734,24 @@ pub const Screen = struct {
         if (prepared) |*range| {
             range.commit(index, 0) catch unreachable;
         }
+        if (graphic.width == 2) {
+            cells[index + 1] = .{
+                .codepoint = 0,
+                .width = 2,
+                .x = 1,
+                .semantic_width = graphic.width == 2,
+                .attrs = self.current_attrs,
+            };
+        }
         self.last_graphic = graphic;
-        if (self.cursor.col < right) {
-            self.cursor.setColByClient(self.cursor.col + 1);
+        const after = self.cursor.col + graphic.width;
+        if (after <= right) {
+            self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
+            self.cursor.setColByClient(right);
             self.wrap_pending = true;
+        } else {
+            self.cursor.setColByClient(right);
         }
         return true;
     }
@@ -2865,12 +2924,22 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Write one codepoint with combining, insertion, wrapping, dirty, and cursor semantics.
+    /// Write one codepoint with Unicode occupancy, insertion, wrapping, dirty, and cursor semantics.
     fn writeCell(self: *Screen, cp: u21) void {
-        if (self.cols == 0 or self.rows == 0) return;
-        if (self.appendCombiningToLeadCell(cp)) return;
+        if (!self.writeCellDisposition(cp)) return;
+    }
+
+    fn writeCellDisposition(self: *Screen, cp: u21) bool {
+        if (self.cols == 0 or self.rows == 0) return false;
+        const properties = unicode.properties(cp);
+        if (properties.isInvalid()) return false;
+        if (self.appendGraphemeToLeadCell(cp, properties)) |changed|
+            return changed;
+        if (properties.width() == 0) return false;
 
         const right = self.rightBoundary();
+        const width: u8 = if (properties.width() == 2) 2 else 1;
+        if (width > right - self.leftBoundary() + 1) return false;
         if (self.wrap_pending) {
             self.wrap_pending = false;
             if (self.cursor.col == right) {
@@ -2891,51 +2960,104 @@ pub const Screen = struct {
                 }
             }
         }
+        if (width == 2 and self.cursor.col == right) {
+            if (self.auto_wrap) {
+                self.setRowWrapped(self.cursor.row, true);
+                self.lineFeed();
+                self.cursor.setColByClient(
+                    if (self.left_right_margin_mode) self.left_margin else 0,
+                );
+            } else if (self.cursor.col > self.leftBoundary()) {
+                self.cursor.setColByClient(self.cursor.col - 1);
+            }
+        }
         if (self.insert_mode) {
-            const inserted = self.insertChars(1);
+            const inserted = self.insertChars(width);
             std.debug.assert(inserted or !self.wrap_pending);
         }
         if (self.cells) |cells| {
             const start = self.rowStart(self.cursor.row);
-            const target = cells[@intCast(start + @as(u32, self.cursor.col))];
-            if (target.width != 1 or target.height != 1 or target.x != 0 or target.y != 0) {
-                std.debug.assert(self.clearClusterAt(
-                    self.cursor.row,
-                    self.cursor.col,
-                    self.cursor.col != self.clusterAnchorCol(self.cursor.row, self.cursor.col),
-                ));
+            var offset: u8 = 0;
+            while (offset < width) : (offset += 1) {
+                const col = self.cursor.col + offset;
+                const target = cells[@intCast(start + @as(u32, col))];
+                if (target.width != 1 or target.height != 1 or
+                    target.x != 0 or target.y != 0)
+                {
+                    std.debug.assert(self.clearClusterAt(
+                        self.cursor.row,
+                        col,
+                        col != self.clusterAnchorCol(self.cursor.row, col),
+                    ));
+                } else if (target.combining_len != 0) {
+                    clearAcceptedTail(
+                        &self.scalars.?,
+                        start + @as(u32, col),
+                        target.combining_len,
+                    );
+                }
             }
-            clearAcceptedTail(
-                &self.scalars.?,
-                start + @as(u32, self.cursor.col),
-                target.combining_len,
-            );
-            cells[@intCast(start + @as(u32, self.cursor.col))] = .{
+            const index = start + @as(u32, self.cursor.col);
+            cells[@intCast(index)] = .{
                 .codepoint = cp,
+                .width = width,
+                .semantic_width = width == 2,
                 .attrs = self.current_attrs,
             };
+            if (width == 2) {
+                cells[@intCast(index + 1)] = .{
+                    .codepoint = 0,
+                    .width = 2,
+                    .x = 1,
+                    .semantic_width = true,
+                    .attrs = self.current_attrs,
+                };
+            }
         }
-        self.last_graphic = .{ .codepoint = cp };
-        if (self.cursor.col < right) {
-            self.cursor.setColByClient(self.cursor.col + 1);
+        self.last_graphic = .{ .codepoint = cp, .width = width };
+        const after = self.cursor.col + width;
+        if (after <= right) {
+            self.cursor.setColByClient(after);
         } else if (self.auto_wrap) {
+            self.cursor.setColByClient(right);
             self.wrap_pending = true;
+        } else {
+            self.cursor.setColByClient(right);
         }
+        return true;
     }
 
-    fn appendCombiningToLeadCell(self: *Screen, cp: u21) bool {
-        if (!isTrailingCombiningCodepoint(cp)) return false;
-
-        const pos = self.previousLeadCellPos() orelse return false;
-        const cells = self.cells orelse return false;
+    fn appendGraphemeToLeadCell(
+        self: *Screen,
+        cp: u21,
+        properties: unicode.Properties,
+    ) ?bool {
+        const pos = self.previousLeadCellPos() orelse return null;
+        const cells = self.cells orelse return null;
         const observed = cells[@intCast(self.rowStart(pos.row) + pos.col)];
         const anchor_row = pos.row -| observed.y;
         const anchor_col = pos.col -| observed.x;
         const idx = self.rowStart(anchor_row) + @as(u32, anchor_col);
         const lead_cell = &cells[@intCast(idx)];
-        if (lead_cell.codepoint == 0) return false;
+        if (lead_cell.codepoint == 0) return null;
+
+        var state = unicode.GraphemeState{};
+        var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+        const accepted = self.cellScalarsAt(anchor_row, anchor_col, &scalars);
+        for (accepted) |scalar|
+            state = state.step(unicode.properties(@intCast(scalar)));
+        const next = state.step(properties);
+        if (!next.joinsCurrent()) return null;
         if (lead_cell.combining_len + 1 >= scalar_storage.maximum_scalars)
-            return true;
+            return false;
+        const changes_presentation = accepted.len != 0 and
+            unicode.properties(@intCast(accepted[accepted.len - 1]))
+                .isEmojiPresentationBase();
+        if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation and
+            self.rightBoundary() - self.leftBoundary() + 1 < 2)
+        {
+            return false;
+        }
 
         const combining_index = lead_cell.combining_len;
         if (combining_index < lead_cell.combining.len) {
@@ -2954,21 +3076,178 @@ pub const Screen = struct {
                 lead_cell.combining_len,
                 candidate[0 .. old.len + 1],
             ) catch
-                return true;
+                return false;
         }
         lead_cell.combining_len = combining_index + 1;
+        var final_width = lead_cell.width;
+        if (cp == 0xfe0f and lead_cell.width == 1 and changes_presentation) {
+            self.widenPresentation(anchor_row, anchor_col);
+            final_width = 2;
+        } else if (cp == 0xfe0e and lead_cell.width == 2 and changes_presentation) {
+            self.narrowPresentation(anchor_row, anchor_col);
+            final_width = 1;
+        }
         if (self.last_graphic) |*graphic| {
             if (graphic.combining_len < graphic.combining.len) {
                 graphic.combining[graphic.combining_len] = cp;
                 graphic.combining_len += 1;
+                graphic.width = final_width;
             }
         }
         return true;
     }
 
+    fn widenPresentation(self: *Screen, row: u16, col: u16) void {
+        const right = self.rightBoundary();
+        const cells = self.cells orelse return;
+        if (col == right) {
+            const lead_index = self.rowStart(row) + col;
+            const lead = cells[@intCast(lead_index)];
+            const destination_col: u16 = if (self.auto_wrap)
+                if (self.left_right_margin_mode) self.left_margin else 0
+            else
+                col - 1;
+            if (!self.auto_wrap) {
+                const destination = self.rowStart(row) + destination_col;
+                const destination_cleared =
+                    self.clearReplacementOwnershipAt(row, destination_col);
+                std.debug.assert(destination_cleared or
+                    cells[@intCast(destination)].combining_len == 0);
+                self.scalars.?.move(
+                    lead_index,
+                    lead.combining_len,
+                    destination,
+                    cells[@intCast(destination)].combining_len,
+                ) catch @panic("accepted presentation relocation scalar mismatch");
+                var moved = lead;
+                moved.width = 2;
+                moved.semantic_width = true;
+                cells[@intCast(destination)] = moved;
+                cells[@intCast(lead_index)] = .{
+                    .codepoint = 0,
+                    .width = 2,
+                    .x = 1,
+                    .semantic_width = true,
+                    .attrs = moved.attrs,
+                };
+                self.wrap_pending = false;
+                self.cursor.setColByClient(right);
+                return;
+            }
+
+            var cluster: [scalar_storage.maximum_scalars]u32 = undefined;
+            const accepted = self.cellScalarsAt(row, col, &cluster);
+            clearAcceptedTail(&self.scalars.?, lead_index, lead.combining_len);
+            cells[@intCast(lead_index)] = blank_cell;
+            self.setRowWrapped(row, true);
+            self.lineFeed();
+            self.cursor.setColByClient(destination_col);
+            const destination = self.rowStart(self.cursor.row) + destination_col;
+            const continuation = destination + 1;
+            const destination_cleared = self.clearReplacementOwnershipAt(
+                self.cursor.row,
+                destination_col,
+            );
+            std.debug.assert(destination_cleared or
+                cells[@intCast(destination)].combining_len == 0);
+            const continuation_cleared = self.clearReplacementOwnershipAt(
+                self.cursor.row,
+                destination_col + 1,
+            );
+            std.debug.assert(continuation_cleared or
+                cells[@intCast(continuation)].combining_len == 0);
+            var moved = lead;
+            moved.width = 2;
+            moved.semantic_width = true;
+            cells[@intCast(destination)] = moved;
+            if (accepted.len > scalar_storage.inline_scalars) {
+                self.scalars.?.set(
+                    destination,
+                    0,
+                    accepted[scalar_storage.inline_scalars..],
+                ) catch @panic("accepted presentation relocation lost capacity");
+            }
+            cells[@intCast(continuation)] = .{
+                .codepoint = 0,
+                .width = 2,
+                .x = 1,
+                .semantic_width = true,
+                .attrs = moved.attrs,
+            };
+            const after = destination_col + 2;
+            if (after <= right) {
+                self.cursor.setColByClient(after);
+            } else {
+                self.cursor.setColByClient(right);
+                self.wrap_pending = true;
+            }
+            return;
+        }
+        const next_col = col + 1;
+        const next_index = self.rowStart(row) + next_col;
+        const next = cells[@intCast(next_index)];
+        if (next.codepoint != 0 or next.width != 1 or next.height != 1 or
+            next.x != 0 or next.y != 0)
+        {
+            std.debug.assert(self.clearClusterAt(
+                row,
+                next_col,
+                next_col != self.clusterAnchorCol(row, next_col),
+            ));
+        }
+        const lead_index = self.rowStart(row) + col;
+        cells[@intCast(lead_index)].width = 2;
+        cells[@intCast(lead_index)].semantic_width = true;
+        cells[@intCast(next_index)] = .{
+            .codepoint = 0,
+            .width = 2,
+            .x = 1,
+            .semantic_width = true,
+            .attrs = cells[@intCast(lead_index)].attrs,
+        };
+        if (self.cursor.row == row and !self.wrap_pending and
+            self.cursor.col == next_col)
+        {
+            if (next_col < right) {
+                self.cursor.setColByClient(next_col + 1);
+            } else {
+                self.cursor.setColByClient(right);
+                if (self.auto_wrap) self.wrap_pending = true;
+            }
+        }
+    }
+
+    fn narrowPresentation(self: *Screen, row: u16, col: u16) void {
+        const cells = self.cells orelse return;
+        const lead_index = self.rowStart(row) + col;
+        cells[@intCast(lead_index)].width = 1;
+        cells[@intCast(lead_index)].semantic_width = false;
+        if (col + 1 < self.cols) {
+            const continuation_index = lead_index + 1;
+            cells[@intCast(continuation_index)] = blank_cell;
+        }
+        if (self.cursor.row == row) {
+            if (self.wrap_pending) {
+                self.wrap_pending = false;
+                self.cursor.setColByClient(col + 1);
+            } else if (self.cursor.col > col + 1) {
+                self.cursor.setColByClient(self.cursor.col - 1);
+            }
+        }
+    }
+
     fn previousLeadCellPos(self: *const Screen) ?struct { row: u16, col: u16 } {
         const right = self.rightBoundary();
         if (self.wrap_pending) return .{ .row = self.cursor.row, .col = right };
+        if (!self.auto_wrap and self.cursor.col == right) {
+            const cells = self.cells orelse return null;
+            const current = cells[@intCast(self.rowStart(self.cursor.row) + right)];
+            if (self.last_graphic) |graphic| {
+                if (current.codepoint == graphic.codepoint and
+                    current.width == graphic.width and current.x == 0)
+                    return .{ .row = self.cursor.row, .col = right };
+            }
+        }
 
         if (self.cursor.col == 0) return null;
         return .{ .row = self.cursor.row, .col = self.cursor.col - 1 };
@@ -3212,7 +3491,7 @@ pub const Screen = struct {
     fn scrollUp(self: *Screen) void {
         const cells = self.cells orelse return;
         if (self.rows == 0 or self.cols == 0) return;
-        if (self.clearClustersIntersecting(0, 1, 0, self.cols)) {
+        if (self.clearNonSemanticClustersIntersecting(0, 1, 0, self.cols)) {
             self.setRowWrapped(0, false);
         }
         const row_len = @as(u32, self.cols);
@@ -3344,8 +3623,18 @@ pub const Screen = struct {
         const region_len: u16 = bounded_bottom - top + 1;
         const amount = @min(count, region_len);
         if (amount == 0) return changed;
-        changed = self.clearClustersIntersecting(top, top + amount, 0, self.cols) or changed;
-        changed = self.clearClustersIntersecting(bounded_bottom, bounded_bottom + 1, 0, self.cols) or changed;
+        changed = self.clearNonSemanticClustersIntersecting(
+            top,
+            top + amount,
+            0,
+            self.cols,
+        ) or changed;
+        changed = self.clearNonSemanticClustersIntersecting(
+            bounded_bottom,
+            bounded_bottom + 1,
+            0,
+            self.cols,
+        ) or changed;
 
         if (top == 0 and bounded_bottom == self.rows - 1) {
             var remaining = amount;
@@ -3931,6 +4220,21 @@ pub const Screen = struct {
         return changed;
     }
 
+    // Unconditionally clears exact cell or cluster ownership before internal
+    // replacement; protocol erase protection does not govern owner cleanup.
+    fn clearReplacementOwnershipAt(self: *Screen, row: u16, col: u16) bool {
+        const cells = self.cells orelse return false;
+        if (row >= self.rows or col >= self.cols) return false;
+        const index = self.rowStart(row) + col;
+        const observed = cells[@intCast(index)];
+        if (observed.width != 1 or observed.height != 1 or
+            observed.x != 0 or observed.y != 0)
+            return self.clearClusterAt(row, col, false);
+        clearAcceptedTail(&self.scalars.?, index, observed.combining_len);
+        cells[@intCast(index)] = self.eraseCell();
+        return !std.meta.eql(observed, cells[@intCast(index)]);
+    }
+
     // Removes every multicell intersecting one bounded mutation rectangle.
     fn clearClustersIntersecting(
         self: *Screen,
@@ -3945,6 +4249,27 @@ pub const Screen = struct {
             var col = left;
             while (col < right_exclusive) : (col += 1)
                 changed = self.clearClusterAt(row, col, false) or changed;
+        }
+        return changed;
+    }
+
+    fn clearNonSemanticClustersIntersecting(
+        self: *Screen,
+        top: u16,
+        bottom_exclusive: u16,
+        left: u16,
+        right_exclusive: u16,
+    ) bool {
+        const cells = self.cells orelse return false;
+        var changed = false;
+        var row = top;
+        while (row < bottom_exclusive) : (row += 1) {
+            var col = left;
+            while (col < right_exclusive) : (col += 1) {
+                const cell = cells[@intCast(self.rowStart(row) + col)];
+                if (isSemanticWideCell(cell)) continue;
+                changed = self.clearClusterAt(row, col, false) or changed;
+            }
         }
         return changed;
     }
@@ -4441,6 +4766,7 @@ const ScreenCell = struct {
     subscale_d: u4 = 0,
     vertical_align: u2 = 0,
     horizontal_align: u2 = 0,
+    semantic_width: bool = false,
     attrs: ScreenCellAttrs,
 };
 
@@ -4451,6 +4777,7 @@ fn sidecarCount(cell: ScreenCell) usize {
 // Retains the complete bounded graphic cluster consumed by REP.
 const LastGraphic = struct {
     codepoint: u21,
+    width: u8 = 1,
     combining_len: u8 = 0,
     combining: [scalar_storage.maximum_scalars - 1]u21 =
         @splat(0),
@@ -4458,6 +4785,16 @@ const LastGraphic = struct {
 
 fn isCellContinuation(cell: ScreenCell) bool {
     return cell.x != 0 or cell.y != 0;
+}
+
+fn isSemanticWideLead(cell: ScreenCell) bool {
+    return cell.semantic_width and cell.width == 2 and
+        cell.height == 1 and cell.x == 0 and cell.y == 0;
+}
+
+fn isSemanticWideCell(cell: ScreenCell) bool {
+    return cell.semantic_width and cell.width == 2 and
+        cell.height == 1 and cell.x < 2 and cell.y == 0;
 }
 
 // Provides immutable default terminal cell attributes.
@@ -4513,6 +4850,510 @@ test "screen retains twenty four scalars and REP owns an independent copy" {
     const repeated = screen.cellScalarsAt(0, 1, &repeated_storage);
     try std.testing.expectEqualSlices(u32, first, repeated);
     try std.testing.expect(screen.scalars.?.ranges[0] != screen.scalars.?.ranges[1]);
+}
+
+test "Unicode 17 semantic width owns canonical lead and continuation cells" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.writeCell(0x754c);
+    try std.testing.expectEqual(@as(u32, 0x754c), screen.cells.?[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+    try std.testing.expectEqual(@as(u32, 0), screen.cells.?[1].codepoint);
+    try std.testing.expectEqual(@as(u8, 0), screen.cells.?[1].combining_len);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[1].width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[1].x);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+
+    screen.writeCell('a');
+    try std.testing.expectEqual(@as(u32, 'a'), screen.cells.?[2].codepoint);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[2].width);
+}
+
+test "Unicode 17 grapheme transitions admit zero width scalars exactly" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.writeCell('a');
+    screen.writeCell(0x0301);
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 'a', 0x0301 },
+        screen.cellScalarsAt(0, 0, &scalars),
+    );
+    const before = screen.cells.?[0];
+    screen.writeCell(0x200b);
+    try std.testing.expectEqualDeep(before, screen.cells.?[0]);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+}
+
+test "Unicode 17 variation selectors transactionally change emoji occupancy" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    screen.writeCell(0x263a);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[0].width);
+    screen.writeCell(0xfe0f);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+    try std.testing.expect(screen.cells.?[0].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[1].x);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+
+    screen.writeCell(0xfe0e);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+
+    screen.clearVisibleCells();
+    screen.cursor.setPositionByClient(0, 0);
+    screen.writeCell(0x1f610);
+    screen.writeCell(0xfe0e);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[0].width);
+    try std.testing.expectEqualDeep(blank_cell, screen.cells.?[1]);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.col);
+
+    screen.clearVisibleCells();
+    screen.cursor.setPositionByClient(0, 0);
+    screen.writeCell(0x25b6);
+    screen.writeCell(0xfe0f);
+    screen.writeCell(0xfe0e);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+}
+
+test "Unicode 17 presentation widening relocates the last-column cluster" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 3);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell('*');
+    screen.writeCell(0xfe0f);
+    screen.writeCell('*');
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[0].width);
+    try std.testing.expectEqualDeep(blank_cell, screen.cells.?[2]);
+    try std.testing.expectEqual(@as(u32, '*'), screen.cells.?[3].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[3].width);
+    try std.testing.expect(screen.cells.?[3].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[4].x);
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+}
+
+test "VS16 right-edge relocation without autowrap preserves exact ownership" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        2,
+    );
+    defer screen.deinit(std.testing.allocator);
+    screen.auto_wrap = false;
+
+    const destination: usize = 2;
+    var outgoing_tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&outgoing_tail, 0..) |*scalar, index|
+        scalar.* = 0x0400 + @as(u32, @intCast(index));
+    try screen.scalars.?.set(destination, 0, &outgoing_tail);
+    var outgoing = blank_cell;
+    outgoing.codepoint = 'x';
+    outgoing.combining = .{ 0x0300, 0x0301, 0x0302 };
+    outgoing.combining_len = scalar_storage.maximum_scalars - 1;
+    outgoing.attrs.protected = .iso;
+    screen.cells.?[destination] = outgoing;
+
+    screen.cursor.setPositionByClient(0, 3);
+    screen.writeCell(0x263a);
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u32, 0x263a), screen.cells.?[2].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[2].width);
+    try std.testing.expect(screen.cells.?[2].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[3].x);
+    try std.testing.expect(screen.cells.?[3].semantic_width);
+    var accepted: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 0x263a, 0xfe0f },
+        screen.cellScalarsAt(0, 2, &accepted),
+    );
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[3]);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expect(!screen.wrap_pending);
+    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expect(!screen.rowWrapped(0));
+}
+
+test "VS16 non-wrapping relocation clears protected OSC 66 ownership" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.auto_wrap = false;
+
+    var osc_lead = blank_cell;
+    osc_lead.codepoint = 'o';
+    osc_lead.height = 2;
+    osc_lead.attrs.protected = .iso;
+    screen.cells.?[2] = osc_lead;
+    var osc_continuation = blank_cell;
+    osc_continuation.height = 2;
+    osc_continuation.y = 1;
+    osc_continuation.attrs.protected = .iso;
+    screen.cells.?[6] = osc_continuation;
+
+    screen.cursor.setPositionByClient(0, 3);
+    screen.writeCell(0x263a);
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u32, 0x263a), screen.cells.?[2].codepoint);
+    try std.testing.expect(screen.cells.?[2].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[3].x);
+    try std.testing.expectEqualDeep(blank_cell, screen.cells.?[6]);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 3), screen.cursor.col);
+    try std.testing.expect(!screen.wrap_pending);
+}
+
+test "VS16 wrapping relocation clears destination scalar and OSC 66 ownership" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        2,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    const destination = screen.rowStart(1);
+    var outgoing_tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&outgoing_tail, 0..) |*value, index|
+        value.* = 0x0400 + @as(u32, @intCast(index));
+    try screen.scalars.?.set(destination, 0, &outgoing_tail);
+    var outgoing = blank_cell;
+    outgoing.codepoint = 'x';
+    outgoing.combining = .{ 0x0300, 0x0301, 0x0302 };
+    outgoing.combining_len = scalar_storage.maximum_scalars - 1;
+    outgoing.attrs.protected = .iso;
+    screen.cells.?[@intCast(destination)] = outgoing;
+    var osc_lead = blank_cell;
+    osc_lead.codepoint = 'o';
+    osc_lead.width = 2;
+    osc_lead.attrs.protected = .iso;
+    screen.cells.?[@intCast(destination + 1)] = osc_lead;
+    var osc_continuation = blank_cell;
+    osc_continuation.width = 2;
+    osc_continuation.x = 1;
+    osc_continuation.attrs.protected = .iso;
+    screen.cells.?[@intCast(destination + 2)] = osc_continuation;
+
+    screen.cursor.setPositionByClient(0, 3);
+    screen.writeCell(0x263a);
+    screen.writeCell(0xfe0f);
+
+    try std.testing.expectEqual(@as(u32, 0x263a), screen.cells.?[@intCast(destination)].codepoint);
+    try std.testing.expect(screen.cells.?[@intCast(destination)].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[@intCast(destination + 1)].x);
+    try std.testing.expectEqualDeep(blank_cell, screen.cells.?[@intCast(destination + 2)]);
+    var accepted: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 0x263a, 0xfe0f },
+        screen.cellScalarsAt(1, 0, &accepted),
+    );
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[3]);
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[destination + 1]);
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[destination + 2]);
+    try std.testing.expect(screen.rowWrapped(0));
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 2), screen.cursor.col);
+    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+}
+
+test "VS16 semantic width survives history restoration reflow and resize" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell(0x263a);
+    screen.writeCell(0xfe0f);
+    screen.cursor.setColByClient(0);
+    screen.lineFeed();
+    screen.lineFeed();
+
+    try std.testing.expectEqual(@as(u8, 2), screen.historyCellAt(0, 0).width);
+    try std.testing.expect(screen.historyCellAt(0, 0).semantic_width);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    var lead: usize = 0;
+    while (lead < screen.cells.?.len and screen.cells.?[lead].codepoint != 0x263a) : (lead += 1) {}
+    try std.testing.expect(lead < screen.cells.?.len);
+    try std.testing.expect(screen.cells.?[lead].semantic_width);
+    try screen.resize(std.testing.allocator, 3, 3);
+    lead = 0;
+    while (lead < screen.cells.?.len and screen.cells.?[lead].codepoint != 0x263a) : (lead += 1) {}
+    try std.testing.expect(lead + 1 < screen.cells.?.len);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[lead].width);
+    try std.testing.expect(screen.cells.?[lead].semantic_width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[lead + 1].x);
+    var accepted: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ 0x263a, 0xfe0f },
+        screen.cellScalarsAt(
+            @intCast(lead / screen.cols),
+            @intCast(lead % screen.cols),
+            &accepted,
+        ),
+    );
+}
+
+test "REP preserves Unicode semantic occupancy independently" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell(0x754c);
+    try std.testing.expect(screen.repeatPreceding(1));
+
+    try std.testing.expectEqual(@as(u32, 0x754c), screen.cells.?[2].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cells.?[2].width);
+    try std.testing.expectEqual(@as(u32, 0), screen.cells.?[3].codepoint);
+    try std.testing.expectEqual(@as(u8, 1), screen.cells.?[3].x);
+
+    screen.clearVisibleCells();
+    screen.cursor.setPositionByClient(0, 0);
+    screen.writeCell('a');
+    try std.testing.expect(screen.repeatPreceding(1));
+    try std.testing.expect(!screen.cells.?[1].semantic_width);
+}
+
+test "Unicode semantic occupancy and scalars survive history restoration" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell(0x754c);
+    screen.cursor.setColByClient(0);
+    screen.lineFeed();
+    screen.lineFeed();
+
+    try std.testing.expectEqual(@as(u32, 1), screen.historyCount());
+    try std.testing.expectEqual(@as(u8, 2), screen.historyCellAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.historyCellAt(0, 1).x);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0x754c), screen.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(0, 1).x);
+}
+
+test "Unicode semantic occupancy reflows without splitting a wide cluster" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeText("aa");
+    screen.writeCell(0x754c);
+    var scalar_value: u21 = 0x0300;
+    while (scalar_value < 0x0300 + 23) : (scalar_value += 1)
+        screen.writeCell(scalar_value);
+
+    try screen.resize(std.testing.allocator, 3, 3);
+    try std.testing.expectEqual(@as(u32, 'a'), screen.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u32, 'a'), screen.cellInfoAt(0, 1).codepoint);
+    try std.testing.expectEqualDeep(blank_cell, screen.cellInfoAt(0, 2));
+    try std.testing.expectEqual(@as(u32, 0x754c), screen.cellInfoAt(1, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 2), screen.cellInfoAt(1, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), screen.cellInfoAt(1, 1).x);
+    var scalars: [scalar_storage.maximum_scalars]u32 = undefined;
+    try std.testing.expectEqual(
+        @as(usize, scalar_storage.maximum_scalars),
+        screen.cellScalarsAt(1, 0, &scalars).len,
+    );
+}
+
+test "one-column resize transactionally omits unrepresentable semantic widths" {
+    var screen = try oneColumnOmissionFixture();
+    defer screen.deinit(std.testing.allocator);
+
+    const cells_before = try std.testing.allocator.dupe(ScreenCell, screen.cells.?);
+    defer std.testing.allocator.free(cells_before);
+    const ranges_before = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(ranges_before);
+    const pages_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.scalars.?.pages),
+    );
+    defer std.testing.allocator.free(pages_before);
+    const history_before = try std.testing.allocator.dupe(ScreenCell, screen.history.?);
+    defer std.testing.allocator.free(history_before);
+    const cursor_before = screen.cursor;
+    const history_count_before = screen.history_count;
+
+    var discarded = try screen.prepareResize(std.testing.allocator, 4, 1);
+    try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        ranges_before,
+        screen.scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        pages_before,
+        std.mem.sliceAsBytes(screen.scalars.?.pages),
+    );
+    try std.testing.expectEqualSlices(ScreenCell, history_before, screen.history.?);
+    try std.testing.expectEqualDeep(cursor_before, screen.cursor);
+    try std.testing.expectEqual(history_count_before, screen.history_count);
+    discarded.deinit(std.testing.allocator);
+
+    var replacement = try screen.prepareResize(std.testing.allocator, 4, 1);
+    std.mem.swap(Screen, &screen, &replacement);
+    replacement.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u16, 1), screen.cols);
+    try std.testing.expect(screen.cursor.col < screen.cols);
+    try std.testing.expect(!containsCodepoint(&screen, 0x754c));
+    try std.testing.expect(!containsCodepoint(&screen, 0x8a9e));
+    try std.testing.expect(containsCodepoint(&screen, 'A'));
+    try std.testing.expect(containsCodepoint(&screen, 'B'));
+    for (screen.cells.?, 0..) |cell, index| {
+        const retained = try screen.scalars.?.validate(index, cell.combining_len);
+        try std.testing.expectEqual(sidecarCount(cell), retained);
+    }
+    if (screen.history_scalars) |*storage| {
+        for (screen.history orelse &.{}, 0..) |cell, index| {
+            const retained = try storage.validate(index, cell.combining_len);
+            try std.testing.expectEqual(sidecarCount(cell), retained);
+        }
+    }
+
+    try screen.resize(std.testing.allocator, 4, 4);
+    try std.testing.expect(!containsCodepoint(&screen, 0x754c));
+    try std.testing.expect(!containsCodepoint(&screen, 0x8a9e));
+}
+
+test "one-column omission releases every failed prepared resize candidate" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        oneColumnOmissionAllocation,
+        .{},
+    );
+}
+
+fn oneColumnOmissionAllocation(allocator: std.mem.Allocator) !void {
+    var screen = try oneColumnOmissionFixture();
+    defer screen.deinit(std.testing.allocator);
+    const cells_before = try std.testing.allocator.dupe(ScreenCell, screen.cells.?);
+    defer std.testing.allocator.free(cells_before);
+    const ranges_before = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(ranges_before);
+    const pages_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.scalars.?.pages),
+    );
+    defer std.testing.allocator.free(pages_before);
+    const cursor_before = screen.cursor;
+    const history_count_before = screen.history_count;
+
+    var candidate = screen.prepareResize(allocator, 4, 1) catch |err| {
+        try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
+        try std.testing.expectEqualSlices(
+            scalar_storage.Range,
+            ranges_before,
+            screen.scalars.?.ranges,
+        );
+        try std.testing.expectEqualSlices(
+            u8,
+            pages_before,
+            std.mem.sliceAsBytes(screen.scalars.?.pages),
+        );
+        try std.testing.expectEqualDeep(cursor_before, screen.cursor);
+        try std.testing.expectEqual(history_count_before, screen.history_count);
+        return err;
+    };
+    candidate.deinit(allocator);
+}
+
+fn oneColumnOmissionFixture() !Screen {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        4,
+    );
+    errdefer screen.deinit(std.testing.allocator);
+    screen.writeCell(0x8a9e);
+    screen.writeCell('H');
+    screen.cursor.setColByClient(0);
+    screen.lineFeed();
+    screen.lineFeed();
+    screen.writeCell('A');
+    screen.writeCell(0x754c);
+    var scalar: u21 = 0x0300;
+    while (scalar < 0x0300 + 23) : (scalar += 1)
+        screen.writeCell(scalar);
+    screen.writeCell('B');
+    return screen;
+}
+
+fn containsCodepoint(screen: *const Screen, codepoint: u32) bool {
+    for (screen.cells orelse &.{}) |cell|
+        if (cell.codepoint == codepoint) return true;
+    if (screen.history) |history| {
+        for (history) |cell|
+            if (cell.codepoint == codepoint) return true;
+    }
+    for (screen.history_lines.items) |line| {
+        for (line.cells.items) |cell|
+            if (cell.codepoint == codepoint) return true;
+    }
+    return false;
+}
+
+test "Unicode scalar pressure preserves wide occupancy and terminal facts" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 1, 3);
+    defer screen.deinit(std.testing.allocator);
+    screen.writeCell(0x754c);
+    var scalar_value: u21 = 0x0300;
+    while (scalar_value < 0x0300 + 23) : (scalar_value += 1)
+        screen.writeCell(scalar_value);
+
+    const cells_before = try std.testing.allocator.dupe(
+        ScreenCell,
+        screen.cells.?,
+    );
+    defer std.testing.allocator.free(cells_before);
+    const cursor_before = screen.cursor;
+    const wrap_before = screen.wrap_pending;
+    const graphic_before = screen.last_graphic;
+    const ranges_before = try std.testing.allocator.dupe(
+        scalar_storage.Range,
+        screen.scalars.?.ranges,
+    );
+    defer std.testing.allocator.free(ranges_before);
+    const pages_before = try std.testing.allocator.dupe(
+        u8,
+        std.mem.sliceAsBytes(screen.scalars.?.pages),
+    );
+    defer std.testing.allocator.free(pages_before);
+
+    screen.writeCell(0x0317);
+    try std.testing.expectEqualSlices(ScreenCell, cells_before, screen.cells.?);
+    try std.testing.expectEqualDeep(cursor_before, screen.cursor);
+    try std.testing.expectEqual(wrap_before, screen.wrap_pending);
+    try std.testing.expectEqualDeep(graphic_before, screen.last_graphic);
+    try std.testing.expectEqualSlices(
+        scalar_storage.Range,
+        ranges_before,
+        screen.scalars.?.ranges,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        pages_before,
+        std.mem.sliceAsBytes(screen.scalars.?.pages),
+    );
 }
 
 test "REP reports no preceding graphic separately from scalar pressure" {
@@ -5273,7 +6114,7 @@ fn reflowLogicalLines(
 
     var total_rows: usize = 0;
     for (lines.logical_lines.items) |line| {
-        const rows = rowCountForCells(screenCount32(line.cells.items.len), cols);
+        const rows = rowCountForSemanticCells(line.cells.items, cols);
         total_rows = std.math.add(usize, total_rows, rows) catch
             return error.OutOfMemory;
     }
@@ -5294,10 +6135,19 @@ fn reflowLogicalLines(
         const rewrapped_before = result.rewrapped.items.len;
         const has_cursor = lines.cursor_found and lines.cursor_line_index == line_idx;
         const line_cursor_offset = boundedCursorOffset(line, has_cursor, lines.cursor_offset);
-        const row_count: u16 = @intCast(rowCountForCells(screenCount32(line.cells.items.len), cols));
+        const row_count: u16 = @intCast(
+            rowCountForSemanticCells(line.cells.items, cols),
+        );
         try result.line_row_starts.append(allocator, @intCast(result.rewrapped.items.len));
         try result.line_row_counts.append(allocator, row_count);
-        updateCursor(&result, row_cursor_base, line_cursor_offset, cols, has_cursor);
+        updateSemanticCursor(
+            &result,
+            row_cursor_base,
+            line.cells.items,
+            line_cursor_offset,
+            cols,
+            has_cursor,
+        );
         try appendRewrappedRows(allocator, &result, line, row_count, cols);
         row_cursor_base += row_count;
 
@@ -5323,39 +6173,69 @@ fn appendRewrappedRows(
     if (row_count == 0) unreachable;
 
     const flat_rows_before = screenCount32(result.flat_rows.items.len);
-    const cell_len = screenCount32(line.cells.items.len);
-
+    const rewrapped_before = result.rewrapped.items.len;
     var row_idx: u16 = 0;
     while (row_idx < row_count) : (row_idx += 1) {
-        const start = rowStart(row_idx, cols);
-        const end = @min(cell_len, start + screenResizeColCount(cols));
-        std.debug.assert(start <= end);
-        std.debug.assert(end <= cell_len);
         try result.rewrapped.append(allocator, .{
             .start = screenCount32(result.flat_rows.items.len),
-            .len = @intCast(end - start),
+            .len = 0,
             .wrapped = row_idx + 1 < row_count,
         });
-        const destination_start = result.flat_rows.items.len;
-        try appendRowCells(allocator, &result.flat_rows, line.cells.items, start, cols);
-        const copied = end - start;
-        if (copied > 0) {
-            const source = if (line.scalars) |*storage|
+        try appendBlankRow(allocator, &result.flat_rows, cols);
+    }
+
+    var source_index: usize = 0;
+    var destination_row: usize = 0;
+    var destination_col: u16 = 0;
+    while (source_index < line.cells.items.len) {
+        const cell = line.cells.items[source_index];
+        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+            source_index += 1;
+            continue;
+        }
+        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        if (span > cols) {
+            std.debug.assert(source_index + span <= line.cells.items.len);
+            source_index += span;
+            continue;
+        }
+        if (destination_col + span > cols) {
+            destination_row += 1;
+            destination_col = 0;
+        }
+        std.debug.assert(destination_row < row_count);
+        const destination =
+            @as(usize, flat_rows_before) +
+            destination_row * @as(usize, cols) +
+            destination_col;
+        result.flat_rows.items[destination] = cell;
+        if (span == 2) {
+            std.debug.assert(source_index + 1 < line.cells.items.len);
+            const continuation = line.cells.items[source_index + 1];
+            std.debug.assert(
+                isSemanticWideCell(continuation) and
+                    isCellContinuation(continuation),
+            );
+            result.flat_rows.items[destination + 1] = continuation;
+        }
+        copyScalarCells(
+            if (line.scalars) |*storage|
                 storage
             else
-                @panic("accepted logical scalar owner missing");
-            copyScalarCells(
-                source,
-                line.cells.items[@intCast(start)..@intCast(end)],
-                start,
-                &result.scalars.?,
-                destination_start,
-                copied,
-            ) catch |err| switch (err) {
-                error.ScalarCapacity => return error.ScalarCapacity,
-                error.InvalidRange => @panic("accepted logical scalar mismatch"),
-            };
-        }
+                @panic("accepted logical scalar owner missing"),
+            line.cells.items[source_index..][0..1],
+            @intCast(source_index),
+            &result.scalars.?,
+            destination,
+            1,
+        ) catch |err| switch (err) {
+            error.ScalarCapacity => return error.ScalarCapacity,
+            error.InvalidRange => @panic("accepted logical scalar mismatch"),
+        };
+        destination_col += span;
+        result.rewrapped.items[rewrapped_before + destination_row].len =
+            destination_col;
+        source_index += span;
     }
 
     std.debug.assert(
@@ -5364,26 +6244,24 @@ fn appendRewrappedRows(
     );
 }
 
-fn appendRowCells(
+fn appendBlankRow(
     allocator: std.mem.Allocator,
     flat_rows: *std.ArrayListUnmanaged(ScreenCell),
-    cells: []const ScreenCell,
-    start: u32,
     cols: u16,
 ) std.mem.Allocator.Error!void {
-    const cell_len = screenCount32(cells.len);
     var col_idx: u16 = 0;
-    while (col_idx < cols) : (col_idx += 1) {
-        const src_idx = start + @as(u32, col_idx);
-        if (src_idx < cell_len) {
-            try flat_rows.append(allocator, cells[@intCast(src_idx)]);
-        } else {
-            try flat_rows.append(allocator, blank_cell);
-        }
-    }
+    while (col_idx < cols) : (col_idx += 1)
+        try flat_rows.append(allocator, blank_cell);
 }
 
-fn updateCursor(result: *ReflowState, row_cursor_base: u32, line_cursor_offset: u32, cols: u16, has_cursor: bool) void {
+fn updateSemanticCursor(
+    result: *ReflowState,
+    row_cursor_base: u32,
+    cells: []const ScreenCell,
+    line_cursor_offset: u32,
+    cols: u16,
+    has_cursor: bool,
+) void {
     if (!has_cursor) return;
     if (cols == 0) {
         result.global_cursor_row = 0;
@@ -5392,16 +6270,163 @@ fn updateCursor(result: *ReflowState, row_cursor_base: u32, line_cursor_offset: 
         return;
     }
 
-    if (lineCursorWraps(line_cursor_offset, cols)) {
-        result.global_cursor_row = row_cursor_base + @as(u32, line_cursor_offset / cols) - 1;
+    var source_index: u32 = 0;
+    var row: u32 = 0;
+    var col: u16 = 0;
+    while (source_index < line_cursor_offset and source_index < cells.len) {
+        const cell = cells[source_index];
+        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+            source_index += 1;
+            continue;
+        }
+        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        if (span > cols) {
+            const span_end = source_index + span;
+            if (line_cursor_offset <= span_end) {
+                source_index = line_cursor_offset;
+                break;
+            }
+            source_index = span_end;
+            continue;
+        }
+        if (col + span > cols) {
+            row += 1;
+            col = 0;
+        }
+        const remaining = line_cursor_offset - source_index;
+        if (remaining < span) {
+            col += @intCast(remaining);
+            source_index = line_cursor_offset;
+            break;
+        }
+        col += span;
+        source_index += span;
+        if (col == cols and source_index < line_cursor_offset) {
+            row += 1;
+            col = 0;
+        }
+    }
+    if (col == cols) {
+        result.global_cursor_row = row_cursor_base + row;
         result.global_cursor_col = cols - 1;
         result.next_wrap_pending = true;
-        return;
+    } else {
+        result.global_cursor_row = row_cursor_base + row;
+        result.global_cursor_col = col;
+        result.next_wrap_pending = false;
     }
+}
 
-    result.global_cursor_row = row_cursor_base + @as(u32, line_cursor_offset / cols);
-    result.global_cursor_col = @intCast(line_cursor_offset % cols);
-    result.next_wrap_pending = false;
+fn rowCountForSemanticCells(cells: []const ScreenCell, cols: u16) u32 {
+    if (cols == 0) return 0;
+    if (cells.len == 0) return 1;
+    var rows: u32 = 1;
+    var col: u16 = 0;
+    var index: usize = 0;
+    while (index < cells.len) {
+        const cell = cells[index];
+        if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+            index += 1;
+            continue;
+        }
+        const span: u16 = if (isSemanticWideLead(cell)) cell.width else 1;
+        if (span > cols) {
+            std.debug.assert(index + span <= cells.len);
+            index += span;
+            continue;
+        }
+        if (col + span > cols) {
+            rows += 1;
+            col = 0;
+        }
+        col += span;
+        index += span;
+        if (col == cols and index < cells.len) {
+            rows += 1;
+            col = 0;
+        }
+    }
+    return rows;
+}
+
+// Removes semantic spans that cannot fit the destination grid from the private
+// logical snapshot. Scalar ranges compact with their lead cells, and the
+// accepted Screen remains unchanged until the prepared replacement is swapped.
+fn omitUnrepresentableSemanticWidths(
+    lines: *LogicalSnapshot,
+    cols: u16,
+) void {
+    if (cols >= 2) return;
+    for (lines.logical_lines.items, 0..) |*line, line_index| {
+        const storage: ?*scalar_storage.Storage = if (line.scalars) |*owner|
+            owner
+        else
+            null;
+        const original_len = line.cells.items.len;
+        var source: usize = 0;
+        var destination: usize = 0;
+        var adjusted_cursor = if (lines.cursor_found and
+            lines.cursor_line_index == line_index)
+            lines.cursor_offset
+        else
+            0;
+        while (source < original_len) {
+            const cell = line.cells.items[source];
+            if (isSemanticWideCell(cell) and isCellContinuation(cell)) {
+                @panic("accepted logical continuation missing its lead");
+            }
+            const span: usize = if (isSemanticWideLead(cell)) cell.width else 1;
+            if (span > cols) {
+                std.debug.assert(source + span <= original_len);
+                const continuation = line.cells.items[source + 1];
+                if (!isSemanticWideCell(continuation) or
+                    !isCellContinuation(continuation))
+                    @panic("accepted logical semantic span mismatch");
+                if (storage) |owner| {
+                    clearAcceptedTail(owner, source, cell.combining_len);
+                } else if (sidecarCount(cell) != 0) {
+                    @panic("accepted logical scalar owner missing");
+                }
+                line.cells.items[source] = blank_cell;
+                line.cells.items[source + 1] = blank_cell;
+                if (adjusted_cursor > source) {
+                    const removed_before_cursor = @min(
+                        span,
+                        adjusted_cursor - source,
+                    );
+                    adjusted_cursor -= @intCast(removed_before_cursor);
+                }
+                source += span;
+                continue;
+            }
+
+            var offset: usize = 0;
+            while (offset < span) : (offset += 1) {
+                const source_cell = source + offset;
+                const destination_cell = destination + offset;
+                if (source_cell == destination_cell) continue;
+                if (storage) |owner| {
+                    owner.move(
+                        source_cell,
+                        line.cells.items[source_cell].combining_len,
+                        destination_cell,
+                        line.cells.items[destination_cell].combining_len,
+                    ) catch @panic("accepted logical scalar compaction mismatch");
+                } else if (sidecarCount(line.cells.items[source_cell]) != 0 or
+                    sidecarCount(line.cells.items[destination_cell]) != 0)
+                {
+                    @panic("accepted logical scalar owner missing");
+                }
+                line.cells.items[destination_cell] = line.cells.items[source_cell];
+                line.cells.items[source_cell] = blank_cell;
+            }
+            source += span;
+            destination += span;
+        }
+        line.cells.items.len = destination;
+        if (lines.cursor_found and lines.cursor_line_index == line_index)
+            lines.cursor_offset = @intCast(@min(adjusted_cursor, destination));
+    }
 }
 
 // Select the visible tail and hidden-history boundary from reflow output.

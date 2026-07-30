@@ -4932,8 +4932,10 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
         .auto_wrap => |enabled| return vt.setDecMode(7, enabled),
         .origin_mode => |enabled| return vt.setDecMode(6, enabled),
 
+        .write_codepoint => |codepoint| {
+            return vt.screen_state.active().writeCodepoint(codepoint);
+        },
         .write_text,
-        .write_codepoint,
         .carriage_return,
         .horizontal_tab_forward,
         .horizontal_tab_back,
@@ -9035,4 +9037,52 @@ test "input error set excludes unrelated terminal owner limits" {
         try std.testing.expect(!std.mem.eql(u8, name, "ConsequenceLimit"));
         try std.testing.expect(!std.mem.eql(u8, name, "PropertyLimit"));
     }
+}
+
+test "Unicode scalar pressure does not advance terminal semantic identity" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 3);
+    defer terminal.deinit();
+    var encoded: [4]u8 = undefined;
+
+    var len = try std.unicode.utf8Encode(0x754c, &encoded);
+    try std.testing.expect((try terminal.feed(encoded[0..len])).state_changed);
+    var scalar: u21 = 0x0300;
+    while (scalar < 0x0300 + 23) : (scalar += 1) {
+        len = try std.unicode.utf8Encode(scalar, &encoded);
+        try std.testing.expect((try terminal.feed(encoded[0..len])).state_changed);
+    }
+    const sequence = terminal.semanticSequence();
+    var before: [24]u21 = undefined;
+    const before_scalars = terminal.semanticView(0).cellScalarsAt(0, 0, &before);
+    try std.testing.expectEqual(@as(usize, 24), before_scalars.len);
+
+    len = try std.unicode.utf8Encode(0x0317, &encoded);
+    try std.testing.expect(!(try terminal.feed(encoded[0..len])).state_changed);
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    var after: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(
+        u21,
+        before_scalars,
+        terminal.semanticView(0).cellScalarsAt(0, 0, &after),
+    );
+    try std.testing.expectEqual(@as(u8, 2), terminal.semanticView(0).cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), terminal.semanticView(0).cellInfoAt(0, 1).x);
+}
+
+test "Unicode wide occupancy remains isolated across alternate-screen transitions" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("界")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h語")).state_changed);
+    var alternate = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0x8a9e), alternate.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 2), alternate.cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), alternate.cellInfoAt(0, 1).x);
+
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    const primary = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 0x754c), primary.cellInfoAt(0, 0).codepoint);
+    try std.testing.expectEqual(@as(u8, 2), primary.cellInfoAt(0, 0).width);
+    try std.testing.expectEqual(@as(u8, 1), primary.cellInfoAt(0, 1).x);
 }

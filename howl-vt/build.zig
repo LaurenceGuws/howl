@@ -11,6 +11,21 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile the VT module and every owned proof");
     const test_step = b.step("test", "Run every owned VT proof");
 
+    const unicode_digest_module = b.createModule(.{
+        .root_source_file = b.path("src/unicode_17_digest.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const unicode_digest = b.addExecutable(.{
+        .name = "howl-vt-check-unicode-17",
+        .root_module = unicode_digest_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    const run_unicode_digest = b.addRunArtifact(unicode_digest);
+    check.dependOn(&run_unicode_digest.step);
+    test_step.dependOn(&run_unicode_digest.step);
+
     const unit_module = b.createModule(.{
         .root_source_file = b.path("test_unit.zig"),
         .target = target,

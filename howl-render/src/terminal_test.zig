@@ -82,6 +82,41 @@ test "full projection resolves presentation, caller selection, geometry, and cur
     }
 }
 
+test "projection preserves VT-owned Unicode wide lead and continuation occupancy" {
+    var source = try vt.Terminal.init(std.testing.allocator, 1, 4);
+    defer source.deinit();
+    try std.testing.expect((try source.feed("界A")).state_changed);
+
+    var storage: Storage = .{};
+    const update = try full(&source, &storage, null);
+    try std.testing.expectEqual(@as(usize, 4), update.cells.len);
+    try std.testing.expectEqual(@as(u21, 0x754c), update.cells[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 2), update.cells[0].sizing.width);
+    try std.testing.expectEqual(@as(u8, 0), update.cells[0].sizing.x);
+    try std.testing.expectEqual(@as(u8, 2), update.cells[1].sizing.width);
+    try std.testing.expectEqual(@as(u8, 1), update.cells[1].sizing.x);
+    try std.testing.expectEqual(@as(u21, 'A'), update.cells[2].codepoint);
+    try std.testing.expectEqual(@as(u8, 1), update.cells[2].sizing.width);
+    try std.testing.expectEqual(@as(u8, 0), update.cells[2].sizing.x);
+}
+
+test "projection preserves VS16 semantic lead and continuation occupancy" {
+    var source = try vt.Terminal.init(std.testing.allocator, 1, 4);
+    defer source.deinit();
+    try std.testing.expect((try source.feed("☺️A")).state_changed);
+
+    var storage: Storage = .{};
+    const update = try full(&source, &storage, null);
+    try std.testing.expectEqual(@as(u21, 0x263a), update.cells[0].codepoint);
+    try std.testing.expectEqual(@as(u8, 1), update.cells[0].combining_len);
+    try std.testing.expectEqual(@as(u21, 0xfe0f), update.cells[0].combining[0]);
+    try std.testing.expectEqual(@as(u8, 2), update.cells[0].sizing.width);
+    try std.testing.expectEqual(@as(u8, 0), update.cells[0].sizing.x);
+    try std.testing.expectEqual(@as(u8, 2), update.cells[1].sizing.width);
+    try std.testing.expectEqual(@as(u8, 1), update.cells[1].sizing.x);
+    try std.testing.expectEqual(@as(u21, 'A'), update.cells[2].codepoint);
+}
+
 test "projection resolves indexed, RGB, dynamic-default, and reverse colors" {
     var source = try vt.Terminal.init(std.testing.allocator, 1, 6);
     defer source.deinit();
