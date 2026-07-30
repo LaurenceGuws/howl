@@ -361,6 +361,7 @@ const Logical = struct {
     font_group: ?font_owner.GroupRef,
     font_released_hidden: bool = false,
     font_reveal_candidate: bool = false,
+    ligature_mode: render.terminal_text.LigatureMode = .never,
     content: render.terminal.Content,
     visual: *VisualState,
     transfer: Transfer,
@@ -448,6 +449,17 @@ const Logical = struct {
     /// Returns the borrowed master descriptor for the runtime poll set.
     fn masterFd(self: *const Logical) error{NotStarted}!std.posix.fd_t {
         return self.transport.masterFd();
+    }
+
+    /// Replaces this pane's ligature policy and requires one complete
+    /// publication only when the retained mode changes.
+    fn setLigatureMode(
+        self: *Logical,
+        mode: render.terminal_text.LigatureMode,
+    ) void {
+        if (self.ligature_mode == mode) return;
+        self.ligature_mode = mode;
+        self.dirty = true;
     }
 
     /// Resizes the PTY first and commits its completely prepared VT state only afterward.
@@ -645,6 +657,7 @@ const Logical = struct {
             work,
             self.visual.scalarBaseline(),
             self.geometry,
+            .{ .ligature_mode = self.ligature_mode },
             if (producer) |*value| .{ .shared = value } else .local,
         ) catch |failure| {
             switch (failure) {
@@ -728,6 +741,7 @@ const Logical = struct {
             work,
             self.visual.scalarBaseline(),
             self.geometry,
+            .{ .ligature_mode = self.ligature_mode },
             .local,
         ) catch |failure| switch (failure) {
             error.CommandLimit,
@@ -3016,6 +3030,21 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     try std.testing.expect(try runtime.resizePointFonts(&boundary, request));
     const first = &runtime.owners[runtime.find(first_pane).?].?;
     const second = &runtime.owners[runtime.find(second_pane).?].?;
+    first.dirty = false;
+    first.setLigatureMode(.never);
+    try std.testing.expect(!first.dirty);
+    first.setLigatureMode(.always);
+    try std.testing.expect(first.dirty);
+    first.setLigatureMode(.never);
+    second.setLigatureMode(.cursor);
+    try std.testing.expectEqual(
+        render.terminal_text.LigatureMode.never,
+        first.ligature_mode,
+    );
+    try std.testing.expectEqual(
+        render.terminal_text.LigatureMode.cursor,
+        second.ligature_mode,
+    );
     try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
     try std.testing.expect((try first.machine.feed("\u{f460}")).state_changed);
     try std.testing.expect((try second.machine.feed("\u{f460}")).state_changed);
@@ -3104,6 +3133,10 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     try runtime.reconcileAcceptedVisibility(&boundary);
     try std.testing.expect(second.font_group == null);
     try std.testing.expect(second.font_released_hidden);
+    try std.testing.expectEqual(
+        render.terminal_text.LigatureMode.cursor,
+        second.ligature_mode,
+    );
     try std.testing.expect(!first.font_released_hidden);
     try std.testing.expect(first.font_group != null);
     try std.testing.expect((try second.machine.feed("hidden")).state_changed);
@@ -3135,6 +3168,10 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     try runtime.reconcileAcceptedVisibility(&boundary);
     try std.testing.expect(!second.font_released_hidden);
     try std.testing.expect(!second.font_reveal_candidate);
+    try std.testing.expectEqual(
+        render.terminal_text.LigatureMode.cursor,
+        second.ligature_mode,
+    );
     try std.testing.expect(std.meta.eql(
         first.font_group.?,
         second.font_group.?,
@@ -4026,6 +4063,9 @@ test "pane point policy reaches each Logical atomically and new panes start at z
         runtime.owners[runtime.find(second).?].?.font_state.offset_points,
     );
 
+    const retired_index = runtime.find(first).?;
+    runtime.owners[retired_index].?.setLigatureMode(.always);
+    try runtime.remove(first);
     try runtime.add(
         fresh,
         "/bin/sh",
@@ -4034,9 +4074,14 @@ test "pane point policy reaches each Logical atomically and new panes start at z
         .{ .dedicated = &new_slot },
     );
     const fresh_state = runtime.owners[runtime.find(fresh).?].?.font_state;
+    try std.testing.expectEqual(retired_index, runtime.find(fresh).?);
     try std.testing.expectEqual(@as(f64, 0.0), fresh_state.offset_points);
     try std.testing.expectEqual(@as(u64, 2), fresh_state.request_revision);
     try std.testing.expect(runtime.owners[runtime.find(fresh).?].?.font_group != null);
+    try std.testing.expectEqual(
+        render.terminal_text.LigatureMode.never,
+        runtime.owners[runtime.find(fresh).?].?.ligature_mode,
+    );
 }
 
 test "pane pixels remain authoritative across equal grids and rejected resize" {

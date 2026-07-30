@@ -59,6 +59,17 @@ pub const RowInput = struct {
     geometry: terminal.LineGeometry,
     /// Supplies normal text metrics; line geometry and baseline do not alter them.
     metrics: CellMetrics,
+    /// Selects pane-local contextual-ligature behavior for this row.
+    ligature_mode: LigatureMode = .never,
+    /// Identifies the visible cursor column only for `cursor` mode.
+    cursor_col: ?u16 = null,
+};
+
+/// Selects Kitty-compatible pane-local contextual-ligature behavior.
+pub const LigatureMode = enum(u2) {
+    never,
+    cursor,
+    always,
 };
 
 /// Identifies one native raster within the lifetime of its exact font map.
@@ -109,6 +120,8 @@ pub const PositionedGlyph = struct {
     x_advance_26_6: i32,
     /// Retains shaped vertical pen movement.
     y_advance_26_6: i32,
+    /// Identifies this component inside a Kitty-rendered multi-cell group.
+    group_glyph_index: u16 = 0,
 };
 
 /// Stores the exact ownership form of one homogeneous prepared run.
@@ -411,7 +424,7 @@ pub const PrepareError = error{
     InvalidSpan,
     InvalidMetrics,
 } || if (features.native_text)
-    native.ShapeError || native.GlyphWidthError || error{
+    native.ShapeError || native.GlyphWidthError || native.GroupError || error{
         InvalidPlacement,
         MissingFontConfiguration,
         InsufficientCodepoints,
@@ -796,33 +809,16 @@ fn nativeRun(
     }
     std.debug.assert(used == scalar_count);
 
-    const shaped = try set.shape(scratch.shaper, .{
-        .codepoints = codepoints,
-        .clusters = clusters,
-    }, scratch.shaped);
-    if (shaped.glyphs.len > scratch.positioned.len)
-        return error.InsufficientPositionedGlyphs;
-    const positioned = scratch.positioned[0..shaped.glyphs.len];
-    // Synchronous shaping has released scalar staging; reuse it for unordered cluster coverage.
-    const cluster_ends = clusterEnds(
-        shaped.glyphs,
-        selected_bounds.end - selected_bounds.first,
-        scratch.clusters,
-    );
-    const run_len = selected_bounds.end - selected_bounds.first;
-    @memcpy(scratch.codepoints[0..run_len], cluster_ends);
-    const retained_ends = scratch.codepoints[0..run_len];
-    const cluster_pens = scratch.clusters[0..run_len];
-    try positionNativeGlyphs(
-        shaped.glyphs,
-        run_len,
-        selected_bounds.first,
-        input.metrics.width_px,
+    const face_index = selected_face orelse return error.MissingGlyph;
+    const positioned = try shapeRunPolicy(
+        set,
+        input,
+        selected_bounds,
         font_key,
-        shaped.face_index,
-        retained_ends,
-        cluster_pens,
-        positioned,
+        face_index,
+        codepoints,
+        clusters,
+        scratch,
     );
     return .{
         .first_cell = selected_bounds.first,
@@ -835,6 +831,775 @@ fn nativeRun(
         },
         .glyphs = .{ .native = positioned },
     };
+}
+
+const LigatureGroup = struct {
+    first_cell: u16 = 0,
+    first_glyph: u16 = 0,
+    num_cells: u16 = 0,
+    num_glyphs: u16 = 0,
+    has_special: bool = false,
+    started_infinite: bool = false,
+};
+
+fn roundedAdvance26_6(value: i32) error{InvalidPlacement}!i64 {
+    const magnitude: u64 = @intCast(if (value < 0)
+        -@as(i64, value)
+    else
+        value);
+    const pixels = (magnitude + 32) / 64;
+    const signed: i64 = @intCast(pixels);
+    return (if (value < 0) -signed else signed) * 64;
+}
+
+fn placeLigatureGroup(
+    glyphs: []const native.Glyph,
+    group: LigatureGroup,
+    first_cell: u16,
+    cell_width_px: u16,
+    positioned: []PositionedGlyph,
+) error{InvalidPlacement}!void {
+    if (!group.has_special or group.num_cells <= 1) return;
+    const glyph_first: usize = group.first_glyph;
+    const glyph_end = std.math.add(
+        usize,
+        glyph_first,
+        group.num_glyphs,
+    ) catch return error.InvalidPlacement;
+    if (glyph_end > glyphs.len or glyph_end > positioned.len)
+        return error.InvalidPlacement;
+    const local_end = std.math.add(
+        u16,
+        group.first_cell,
+        group.num_cells,
+    ) catch return error.InvalidPlacement;
+    const source_start = std.math.add(
+        u16,
+        first_cell,
+        group.first_cell,
+    ) catch return error.InvalidPlacement;
+    const source_end = std.math.add(
+        u16,
+        first_cell,
+        local_end,
+    ) catch return error.InvalidPlacement;
+    var pen_x: i64 = 0;
+    for (
+        glyphs[glyph_first..glyph_end],
+        positioned[glyph_first..glyph_end],
+        0..,
+    ) |glyph, *value, group_glyph_index| {
+        const cell_origin = std.math.mul(
+            i64,
+            group.first_cell,
+            @as(i64, cell_width_px) * 64,
+        ) catch return error.InvalidPlacement;
+        const x = std.math.add(
+            i64,
+            cell_origin,
+            std.math.add(i64, pen_x, glyph.x_offset) catch
+                return error.InvalidPlacement,
+        ) catch return error.InvalidPlacement;
+        value.source_start = source_start;
+        value.source_end = source_end;
+        value.x_26_6 = std.math.cast(i32, x) orelse
+            return error.InvalidPlacement;
+        value.y_26_6 = glyph.y_offset;
+        value.key.native.cell_span = group.num_cells;
+        value.group_glyph_index = @intCast(group_glyph_index);
+        pen_x = std.math.add(
+            i64,
+            pen_x,
+            try roundedAdvance26_6(glyph.x_advance),
+        ) catch return error.InvalidPlacement;
+    }
+}
+
+const GlyphGroupClass = struct {
+    ligature: native.LigatureType,
+    special: bool,
+    empty: bool,
+};
+
+const GroupConsumer = union(enum) {
+    cursor: struct {
+        column: u16,
+        found: ?CellRange = null,
+    },
+    position: struct {
+        glyphs: []const native.Glyph,
+        first_cell: u16,
+        cell_width_px: u16,
+        output: []PositionedGlyph,
+    },
+    cursor_position: struct {
+        column: u16,
+        found: ?CellRange = null,
+        glyphs: []const native.Glyph,
+        first_cell: u16,
+        cell_width_px: u16,
+        output: []PositionedGlyph,
+    },
+};
+
+fn consumeLigatureGroup(
+    consumer: *GroupConsumer,
+    group: LigatureGroup,
+) PrepareError!bool {
+    if (!group.has_special or group.num_cells <= 1) return false;
+    switch (consumer.*) {
+        .cursor => |*cursor| {
+            const end = std.math.add(
+                u16,
+                group.first_cell,
+                group.num_cells,
+            ) catch return error.InvalidPlacement;
+            if (group.first_cell <= cursor.column and cursor.column < end) {
+                cursor.found = .{ .first = group.first_cell, .end = end };
+                return true;
+            }
+        },
+        .position => |position| try placeLigatureGroup(
+            position.glyphs,
+            group,
+            position.first_cell,
+            position.cell_width_px,
+            position.output,
+        ),
+        .cursor_position => |*combined| {
+            try placeLigatureGroup(
+                combined.glyphs,
+                group,
+                combined.first_cell,
+                combined.cell_width_px,
+                combined.output,
+            );
+            const end = std.math.add(
+                u16,
+                group.first_cell,
+                group.num_cells,
+            ) catch return error.InvalidPlacement;
+            if (group.first_cell <= combined.column and
+                combined.column < end)
+            {
+                combined.found = .{ .first = group.first_cell, .end = end };
+                return true;
+            }
+        },
+    }
+    return false;
+}
+
+fn kittyClassificationCodepoint(codepoint: u32) u32 {
+    return if (codepoint == 0xfe0e or codepoint == 0xfe0f) 0 else codepoint;
+}
+
+test "Kitty special classification removes variation selectors" {
+    try std.testing.expectEqual(@as(u32, 0), kittyClassificationCodepoint(0xfe0e));
+    try std.testing.expectEqual(@as(u32, 0), kittyClassificationCodepoint(0xfe0f));
+    try std.testing.expectEqual(@as(u32, 'A'), kittyClassificationCodepoint('A'));
+}
+
+test "normal grouping consumes special and empty components once" {
+    const FixtureClassifier = struct {
+        classes: []const GlyphGroupClass,
+        counts: []u8,
+
+        fn classify(
+            self: @This(),
+            glyph: native.Glyph,
+        ) PrepareError!GlyphGroupClass {
+            const index: usize = @intCast(glyph.scalar_index);
+            if (index >= self.classes.len or index >= self.counts.len)
+                return error.InvalidPlacement;
+            self.counts[index] = std.math.add(
+                u8,
+                self.counts[index],
+                1,
+            ) catch return error.InvalidPlacement;
+            return self.classes[index];
+        }
+    };
+    const glyphs = [_]native.Glyph{
+        .{
+            .id = 1,
+            .cluster = 0,
+            .scalar_index = 0,
+            .x_advance = 64,
+            .y_advance = 0,
+            .x_offset = 0,
+            .y_offset = 0,
+        },
+        .{
+            .id = 2,
+            .cluster = 1,
+            .scalar_index = 1,
+            .x_advance = 64,
+            .y_advance = 0,
+            .x_offset = 0,
+            .y_offset = 0,
+        },
+    };
+    const classes = [_]GlyphGroupClass{
+        .{ .ligature = .unknown, .special = true, .empty = false },
+        .{ .ligature = .unknown, .special = true, .empty = true },
+    };
+    var counts = [_]u8{ 0, 0 };
+    const scalar_cells = [_]u32{ 0, 1 };
+    var consumer = GroupConsumer{ .cursor = .{ .column = 0 } };
+    try walkLigatureGroups(
+        &glyphs,
+        &scalar_cells,
+        2,
+        .after,
+        FixtureClassifier{ .classes = &classes, .counts = &counts },
+        &consumer,
+    );
+    try std.testing.expectEqual(CellRange{ .first = 0, .end = 2 }, consumer.cursor.found.?);
+    try std.testing.expectEqualSlices(u8, &.{ 1, 1 }, &counts);
+}
+
+const NativeGroupClassifier = struct {
+    set: *native.FontSet,
+    codepoints: []const u32,
+    face_index: u8,
+    strategy: native.SpacerStrategy,
+
+    fn classify(
+        self: NativeGroupClassifier,
+        glyph: native.Glyph,
+    ) PrepareError!GlyphGroupClass {
+        if (glyph.scalar_index >= self.codepoints.len)
+            return error.InvalidPlacement;
+        const ligature = try self.set.glyphLigatureType(
+            self.face_index,
+            glyph.id,
+            self.strategy,
+        );
+        if (self.strategy == .iosevka) return .{
+            .ligature = ligature,
+            .special = false,
+            .empty = false,
+        };
+        const codepoint = kittyClassificationCodepoint(
+            self.codepoints[glyph.scalar_index],
+        );
+        const special = glyph.id != 0 and try self.set.glyphIsSpecial(
+            self.face_index,
+            glyph.id,
+            codepoint,
+        );
+        return .{
+            .ligature = ligature,
+            .special = special,
+            .empty = special and try self.set.glyphIsEmpty(
+                self.face_index,
+                glyph.id,
+            ),
+        };
+    }
+};
+
+fn walkLigatureGroups(
+    glyphs: []const native.Glyph,
+    scalar_cells: []const u32,
+    run_len: u16,
+    strategy: native.SpacerStrategy,
+    // This parameter is compile-time duck typing: Zig monomorphizes the one
+    // walker for the native classifier and the deterministic test classifier.
+    // No classifier value is retained and no runtime interface or erasure
+    // exists on the shaping path.
+    classifier: anytype,
+    consumer: *GroupConsumer,
+) PrepareError!void {
+    if (glyphs.len == 0) return;
+    var group = LigatureGroup{};
+    var cell_index: u16 = 0;
+    var scalar_index: usize = 0;
+    var previous = GlyphGroupClass{
+        .ligature = .unknown,
+        .special = false,
+        .empty = false,
+    };
+    var current = try classifier.classify(glyphs[0]);
+    var after = if (glyphs.len > 1)
+        try classifier.classify(glyphs[1])
+    else
+        GlyphGroupClass{
+            .ligature = .unknown,
+            .special = false,
+            .empty = false,
+        };
+    for (glyphs, 0..) |glyph, glyph_index| {
+        var end_group = false;
+        if (strategy == .iosevka) {
+            if (group.num_glyphs != 0) {
+                if (iosevkaEnder(
+                    previous.ligature,
+                    current.ligature,
+                    after.ligature,
+                ))
+                    end_group = true
+                else if (group.num_cells == 0 and !group.has_special) {
+                    if (iosevkaStarter(
+                        previous.ligature,
+                        current.ligature,
+                        after.ligature,
+                    ))
+                        group.has_special = true
+                    else
+                        end_group = true;
+                }
+            }
+        } else {
+            const add = if (group.num_glyphs == 0)
+                true
+            else if (group.started_infinite)
+                if (previous.ligature == .end)
+                    current.empty and strategy == .after
+                else
+                    current.ligature == .middle or
+                        current.ligature == .end or current.empty
+            else if (current.special)
+                group.num_cells == 0 or
+                    if (strategy == .before) previous.empty else current.empty
+            else
+                !previous.special or group.num_cells == 0;
+            if (!add) {
+                if (try consumeLigatureGroup(consumer, group)) return;
+                group = .{};
+            }
+        }
+        if (group.num_glyphs == 0) {
+            group.first_cell = cell_index;
+            group.first_glyph = @intCast(glyph_index);
+            if (strategy == .iosevka) {
+                if (iosevkaStarter(
+                    previous.ligature,
+                    current.ligature,
+                    after.ligature,
+                ))
+                    group.has_special = true
+                else
+                    end_group = true;
+            } else {
+                group.started_infinite =
+                    current.ligature == .start or current.ligature == .middle;
+            }
+        }
+        group.num_glyphs = std.math.add(u16, group.num_glyphs, 1) catch
+            return error.InvalidPlacement;
+        if (current.special) group.has_special = true;
+        if (glyph_index + 1 == glyphs.len) {
+            group.num_cells = std.math.add(
+                u16,
+                group.num_cells,
+                run_len - cell_index,
+            ) catch return error.InvalidPlacement;
+            cell_index = run_len;
+        } else {
+            const next = glyphs[glyph_index + 1].scalar_index;
+            const count = if (next > glyph.scalar_index)
+                next - glyph.scalar_index
+            else
+                glyph.scalar_index - next;
+            const consumed = try consumedCells(
+                scalar_cells,
+                &scalar_index,
+                count,
+                run_len,
+            );
+            group.num_cells = std.math.add(
+                u16,
+                group.num_cells,
+                consumed,
+            ) catch return error.InvalidPlacement;
+            cell_index = std.math.add(u16, cell_index, consumed) catch
+                return error.InvalidPlacement;
+            if (strategy != .iosevka and consumed != 0 and !current.special) {
+                if (try consumeLigatureGroup(consumer, group)) return;
+                group = .{};
+            }
+        }
+        if (strategy == .iosevka and end_group and group.num_cells != 0) {
+            if (try consumeLigatureGroup(consumer, group)) return;
+            group = .{};
+        }
+        previous = current;
+        current = after;
+        after = if (glyph_index + 2 < glyphs.len)
+            try classifier.classify(glyphs[glyph_index + 2])
+        else
+            .{
+                .ligature = .unknown,
+                .special = false,
+                .empty = false,
+            };
+    }
+    if (try consumeLigatureGroup(consumer, group)) return;
+}
+
+const CellRange = struct {
+    first: u16,
+    end: u16,
+};
+
+fn shapeRunPolicy(
+    set: *native.FontSet,
+    input: RowInput,
+    bounds: Bounds,
+    font_key: FontKey,
+    face_index: u8,
+    codepoints: []u32,
+    clusters: []u32,
+    scratch: NativeScratch,
+) PrepareError![]PositionedGlyph {
+    if (input.ligature_mode == .never)
+        return shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.end,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            0,
+        );
+    if (input.ligature_mode == .always)
+        return shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.end,
+            font_key,
+            face_index,
+            true,
+            scratch,
+            0,
+        );
+    const cursor = input.cursor_col orelse
+        return shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.end,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            0,
+        );
+    if (cursor < bounds.first or cursor >= bounds.end)
+        return shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.end,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            0,
+        );
+    if (bounds.end - bounds.first == 1)
+        return shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.end,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            0,
+        );
+    const strategy = try set.spacerStrategy(
+        scratch.shaper,
+        scratch.shaped,
+        face_index,
+    );
+    const scalar_count = try flattenSegment(
+        input,
+        bounds.first,
+        bounds.end,
+        codepoints,
+        clusters,
+    );
+    const shaped = try set.shapeFace(
+        scratch.shaper,
+        .{
+            .codepoints = codepoints[0..scalar_count],
+            .clusters = clusters[0..scalar_count],
+        },
+        scratch.shaped,
+        face_index,
+        false,
+    );
+    const positioned = try positionShapedSegment(
+        shaped.glyphs,
+        bounds.end - bounds.first,
+        bounds.first,
+        input.metrics.width_px,
+        font_key,
+        face_index,
+        scratch,
+        0,
+    );
+    const restored_count = try flattenSegment(
+        input,
+        bounds.first,
+        bounds.end,
+        codepoints,
+        clusters,
+    );
+    if (restored_count != scalar_count) return error.InvalidPlacement;
+    var group_consumer = GroupConsumer{ .cursor_position = .{
+        .column = cursor - bounds.first,
+        .glyphs = shaped.glyphs,
+        .first_cell = bounds.first,
+        .cell_width_px = input.metrics.width_px,
+        .output = positioned,
+    } };
+    try walkLigatureGroups(
+        shaped.glyphs,
+        clusters[0..scalar_count],
+        bounds.end - bounds.first,
+        strategy,
+        NativeGroupClassifier{
+            .set = set,
+            .codepoints = codepoints[0..scalar_count],
+            .face_index = face_index,
+            .strategy = strategy,
+        },
+        &group_consumer,
+    );
+    const split = group_consumer.cursor_position.found orelse return positioned;
+    var used: usize = 0;
+    if (split.first != 0) {
+        used += (try shapeSegment(
+            set,
+            input,
+            bounds.first,
+            bounds.first + split.first,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            used,
+        )).len;
+    }
+    used += (try shapeSegment(
+        set,
+        input,
+        bounds.first + split.first,
+        bounds.first + split.end,
+        font_key,
+        face_index,
+        true,
+        scratch,
+        used,
+    )).len;
+    if (split.end < bounds.end - bounds.first) {
+        used += (try shapeSegment(
+            set,
+            input,
+            bounds.first + split.end,
+            bounds.end,
+            font_key,
+            face_index,
+            false,
+            scratch,
+            used,
+        )).len;
+    }
+    return scratch.positioned[0..used];
+}
+
+fn shapeSegment(
+    set: *native.FontSet,
+    input: RowInput,
+    first: u16,
+    end: u16,
+    font_key: FontKey,
+    face_index: u8,
+    disable_contextual: bool,
+    scratch: NativeScratch,
+    output_start: usize,
+) PrepareError![]PositionedGlyph {
+    const scalar_count = try flattenSegment(
+        input,
+        first,
+        end,
+        scratch.codepoints,
+        scratch.clusters,
+    );
+    const strategy = if (end - first > 1)
+        try set.spacerStrategy(
+            scratch.shaper,
+            scratch.shaped,
+            face_index,
+        )
+    else
+        null;
+    const shaped = try set.shapeFace(
+        scratch.shaper,
+        .{
+            .codepoints = scratch.codepoints[0..scalar_count],
+            .clusters = scratch.clusters[0..scalar_count],
+        },
+        scratch.shaped,
+        face_index,
+        disable_contextual,
+    );
+    const positioned = try positionShapedSegment(
+        shaped.glyphs,
+        end - first,
+        first,
+        input.metrics.width_px,
+        font_key,
+        face_index,
+        scratch,
+        output_start,
+    );
+    if (strategy == null) return positioned;
+    const restored_count = try flattenSegment(
+        input,
+        first,
+        end,
+        scratch.codepoints,
+        scratch.clusters,
+    );
+    if (restored_count != scalar_count) return error.InvalidPlacement;
+    var group_consumer = GroupConsumer{ .position = .{
+        .glyphs = shaped.glyphs,
+        .first_cell = first,
+        .cell_width_px = set.metrics.advance_width,
+        .output = positioned,
+    } };
+    try walkLigatureGroups(
+        shaped.glyphs,
+        scratch.clusters[0..scalar_count],
+        end - first,
+        strategy.?,
+        NativeGroupClassifier{
+            .set = set,
+            .codepoints = scratch.codepoints[0..scalar_count],
+            .face_index = face_index,
+            .strategy = strategy.?,
+        },
+        &group_consumer,
+    );
+    return positioned;
+}
+
+fn positionShapedSegment(
+    glyphs: []const native.Glyph,
+    run_len: u16,
+    first: u16,
+    cell_width_px: u16,
+    font_key: FontKey,
+    face_index: u8,
+    scratch: NativeScratch,
+    output_start: usize,
+) PrepareError![]PositionedGlyph {
+    const output_end = std.math.add(
+        usize,
+        output_start,
+        glyphs.len,
+    ) catch return error.InsufficientPositionedGlyphs;
+    if (output_end > scratch.positioned.len)
+        return error.InsufficientPositionedGlyphs;
+    const cluster_ends = clusterEnds(
+        glyphs,
+        run_len,
+        scratch.clusters,
+    );
+    @memcpy(scratch.codepoints[0..run_len], cluster_ends);
+    const output = scratch.positioned[output_start..output_end];
+    try positionNativeGlyphs(
+        glyphs,
+        run_len,
+        first,
+        cell_width_px,
+        font_key,
+        face_index,
+        scratch.codepoints[0..run_len],
+        scratch.clusters[0..run_len],
+        output,
+    );
+    return output;
+}
+
+fn flattenSegment(
+    input: RowInput,
+    first: u16,
+    end: u16,
+    codepoints: []u32,
+    clusters: []u32,
+) PrepareError!usize {
+    var used: usize = 0;
+    var col = first;
+    while (col < end) : (col += 1) {
+        var retained: [terminal.maximum_scalars]u32 = undefined;
+        const sequence = try cellScalars(input, col, &retained);
+        if (sequence.len > codepoints.len - used or
+            sequence.len > clusters.len - used)
+            return error.InsufficientCodepoints;
+        for (sequence) |scalar| {
+            codepoints[used] = scalar;
+            clusters[used] = col - first;
+            used += 1;
+        }
+    }
+    return used;
+}
+
+fn consumedCells(
+    scalar_cells: []const u32,
+    scalar_index: *usize,
+    count: u32,
+    run_len: u16,
+) PrepareError!u16 {
+    var remaining = count;
+    var cells: u16 = 0;
+    while (remaining != 0 and scalar_index.* < scalar_cells.len) {
+        const current = scalar_cells[scalar_index.*];
+        scalar_index.* += 1;
+        remaining -= 1;
+        if (scalar_index.* == scalar_cells.len or
+            scalar_cells[scalar_index.*] != current)
+        {
+            const next = if (scalar_index.* < scalar_cells.len)
+                scalar_cells[scalar_index.*]
+            else
+                run_len;
+            if (next <= current or next > run_len) return error.InvalidPlacement;
+            cells = std.math.add(u16, cells, @intCast(next - current)) catch
+                return error.InvalidPlacement;
+        }
+    }
+    return cells;
+}
+
+fn iosevkaStarter(
+    before: native.LigatureType,
+    current: native.LigatureType,
+    after: native.LigatureType,
+) bool {
+    return (current == .end or
+        (current == .unknown and (after == .start or after == .middle))) and
+        !(before == .end or before == .middle);
+}
+
+fn iosevkaEnder(
+    before: native.LigatureType,
+    current: native.LigatureType,
+    after: native.LigatureType,
+) bool {
+    return (current == .start or
+        (current == .unknown and (before == .end or before == .middle))) and
+        !(after == .start or after == .middle);
 }
 
 fn cellScalars(
@@ -1274,7 +2039,10 @@ fn nativeRaster(allocator: std.mem.Allocator, fonts: *FontMap, key: NativeGlyphK
         key.cell_span,
     ) catch return error.InvalidWidth;
     if (key.cell_span == 0 or maximum_width == 0) return error.InvalidWidth;
-    var raster = try set.rasterize(allocator, key.face_index, key.glyph_id, maximum_width);
+    var raster = if (key.cell_span > 1)
+        try set.rasterizeGroup(allocator, key.face_index, key.glyph_id, maximum_width)
+    else
+        try set.rasterize(allocator, key.face_index, key.glyph_id, maximum_width);
     const result = Raster{
         .allocator = raster.allocator,
         .width = raster.width,

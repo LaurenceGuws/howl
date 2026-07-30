@@ -18,6 +18,27 @@ const metrics = terminal_text.CellMetrics{
     .baseline_px = 12,
 };
 
+fn rowGlyphResources(
+    commands: []const canvas.Input,
+    row_y: i32,
+    row_height: u16,
+    output: []canvas.ResourceRef,
+) usize {
+    var used: usize = 0;
+    for (commands) |command| switch (command) {
+        .alpha_mask => |mask| {
+            if (mask.clip.y < row_y or
+                mask.clip.y >= row_y + @as(i32, row_height))
+                continue;
+            std.debug.assert(used < output.len);
+            output[used] = mask.resource.resource;
+            used += 1;
+        },
+        else => {},
+    };
+    return used;
+}
+
 fn contentLimits() terminal.Content.Limits {
     return .{
         .cells = 16,
@@ -68,6 +89,7 @@ test "terminal text public surface follows selected sources" {
     );
     try std.testing.expect(@hasDecl(terminal_text, "CellMetrics"));
     try std.testing.expect(@hasDecl(terminal_text, "RowInput"));
+    try std.testing.expect(@hasDecl(terminal_text, "LigatureMode"));
     try std.testing.expect(@hasDecl(terminal_text, "GlyphKey"));
     try std.testing.expect(@hasDecl(terminal_text, "PositionedGlyph"));
     try std.testing.expect(@hasDecl(terminal_text, "PreparedGlyphs"));
@@ -78,6 +100,8 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expect(@hasDecl(terminal_text, "prepareNextRun"));
     try std.testing.expect(@hasDecl(terminal_text, "rasterizeGlyph"));
     try std.testing.expect(@hasDecl(terminal, "Content"));
+    try std.testing.expectEqual(@as(usize, 1), @sizeOf(terminal_text.LigatureMode));
+    try std.testing.expectEqual(@as(usize, 1), @sizeOf(terminal.Content.TextPolicy));
 }
 
 test "Content rejects mismatched scalar baseline before candidate mutation" {
@@ -1545,6 +1569,459 @@ test "native map and one-run preparation preserve exact tuple and coverage" {
     );
 }
 
+test "Iosevka contextual ligature policy shapes exact cursor group" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{
+        cell('A'),
+        cell('!'),
+        cell('='),
+        cell('B'),
+    };
+    cells[0].combining_len = 1;
+    cells[0].combining[0] = 0x0301;
+    var row = input(&cells, 0, cells.len - 1);
+    row.geometry = .single_width;
+    row.metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+
+    row.ligature_mode = .never;
+    const enabled = try prepare(&scratch, &map, row, 0);
+    const enabled_glyphs = enabled.glyphs.native;
+    var enabled_ids: [8]u32 = @splat(0);
+    for (enabled_glyphs, 0..) |glyph, index| enabled_ids[index] = glyph.key.native.glyph_id;
+    const enabled_len = enabled_glyphs.len;
+    var enabled_group_members: usize = 0;
+    var preserved_group_overhang = false;
+    for (enabled_glyphs) |glyph| {
+        if (glyph.source_start != 1 or glyph.source_end != 3) continue;
+        try std.testing.expectEqual(@as(u16, 2), glyph.key.native.cell_span);
+        var raster = try terminal_text.rasterizeGlyph(
+            std.testing.allocator,
+            &map,
+            glyph.key,
+        );
+        defer raster.deinit();
+        preserved_group_overhang = preserved_group_overhang or raster.left < 0;
+        enabled_group_members += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), enabled_group_members);
+    try std.testing.expect(preserved_group_overhang);
+
+    row.ligature_mode = .always;
+    const disabled = try prepare(&scratch, &map, row, 0);
+    const disabled_glyphs = disabled.glyphs.native;
+    var disabled_ids: [8]u32 = @splat(0);
+    for (disabled_glyphs, 0..) |glyph, index|
+        disabled_ids[index] = glyph.key.native.glyph_id;
+    const disabled_len = disabled_glyphs.len;
+    try std.testing.expectEqual(enabled_len, disabled_len);
+    try std.testing.expect(!std.mem.eql(
+        u32,
+        enabled_ids[0..enabled_len],
+        disabled_ids[0..disabled_len],
+    ));
+
+    row.ligature_mode = .cursor;
+    row.cursor_col = 0;
+    const before = try prepare(&scratch, &map, row, 0);
+    for (before.glyphs.native, 0..) |glyph, index|
+        try std.testing.expectEqual(enabled_ids[index], glyph.key.native.glyph_id);
+    row.cursor_col = 1;
+    const inside = try prepare(&scratch, &map, row, 0);
+    for (inside.glyphs.native, 0..) |glyph, index|
+        try std.testing.expectEqual(disabled_ids[index], glyph.key.native.glyph_id);
+    row.cursor_col = 3;
+    const after = try prepare(&scratch, &map, row, 0);
+    for (after.glyphs.native, 0..) |glyph, index|
+        try std.testing.expectEqual(enabled_ids[index], glyph.key.native.glyph_id);
+
+    const triple_cells = [_]terminal.Cell{
+        cell('='),
+        cell('='),
+        cell('='),
+    };
+    var triple = input(&triple_cells, 0, triple_cells.len - 1);
+    triple.geometry = .single_width;
+    triple.metrics = row.metrics;
+    triple.ligature_mode = .never;
+    const triple_enabled = try prepare(&scratch, &map, triple, 0);
+    var triple_ids: [8]u32 = @splat(0);
+    for (triple_enabled.glyphs.native, 0..) |glyph, index|
+        triple_ids[index] = glyph.key.native.glyph_id;
+    const triple_len = triple_enabled.glyphs.native.len;
+    try std.testing.expectEqual(@as(usize, 3), triple_len);
+    for (triple_enabled.glyphs.native, 0..) |glyph, index| {
+        try std.testing.expectEqual(@as(u16, 0), glyph.source_start);
+        try std.testing.expectEqual(@as(u16, 3), glyph.source_end);
+        try std.testing.expectEqual(@as(u16, 3), glyph.key.native.cell_span);
+        try std.testing.expectEqual(
+            @as(i32, @intCast(index * triple.metrics.width_px * 64)),
+            glyph.x_26_6,
+        );
+    }
+    triple.ligature_mode = .always;
+    const triple_disabled = try prepare(&scratch, &map, triple, 0);
+    try std.testing.expectEqual(triple_len, triple_disabled.glyphs.native.len);
+    for (triple_disabled.glyphs.native, 0..) |glyph, index|
+        try std.testing.expect(triple_ids[index] != glyph.key.native.glyph_id);
+}
+
+test "Iosevka operator groups retain complete Kitty spans" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const operators = [_][]const u8{ "<->", "<=>", "!=", ">=", "<=" };
+    for (operators) |operator| {
+        var cells: [3]terminal.Cell = undefined;
+        for (operator, 0..) |scalar, index| cells[index] = cell(scalar);
+        var row = input(
+            cells[0..operator.len],
+            0,
+            @intCast(operator.len - 1),
+        );
+        row.geometry = .single_width;
+        row.metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+        const run = try prepare(&scratch, &map, row, 0);
+        try std.testing.expectEqual(@as(u16, 0), run.first_cell);
+        try std.testing.expectEqual(@as(u16, @intCast(operator.len)), run.end_cell);
+        for (run.glyphs.native) |glyph| {
+            try std.testing.expectEqual(@as(u16, 0), glyph.source_start);
+            try std.testing.expectEqual(
+                @as(u16, @intCast(operator.len)),
+                glyph.source_end,
+            );
+            try std.testing.expectEqual(
+                @as(u16, @intCast(operator.len)),
+                glyph.key.native.cell_span,
+            );
+        }
+    }
+}
+
+test "Content mode and cursor transitions mutate only exact ligature resources" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var content = try terminal.Content.init(
+        std.testing.allocator,
+        contentLimits(),
+        &map,
+    );
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(
+        std.testing.allocator,
+        content.limits,
+    );
+    defer work.deinit();
+    const configured = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    const geometry = terminal.Content.Geometry{
+        .x = 0,
+        .y = 0,
+        .clip = .{
+            .x = 0,
+            .y = 0,
+            .width = configured.width_px * 4,
+            .height = configured.height_px,
+        },
+        .metrics = configured,
+        .underline_y = configured.height_px - 2,
+        .underline_height = 1,
+        .strike_y = configured.height_px / 2,
+        .strike_height = 1,
+    };
+    const cells = [_]terminal.Cell{
+        cell('A'),
+        cell('!'),
+        cell('='),
+        cell('B'),
+    };
+    const row_geometry = [_]terminal.LineGeometry{.single_width};
+    var cursor = hiddenCursor();
+    cursor.visible = true;
+    cursor.shape = .block;
+    cursor.col = 1;
+    try content.recover(.{
+        .rows = 1,
+        .cols = cells.len,
+        .cursor = cursor,
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const scalars = terminal.ScalarBaseline.empty(cells.len);
+    const enabled = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .never },
+        .local,
+    );
+    try std.testing.expect(enabled.uploads.len != 0);
+
+    cursor.col = 2;
+    try content.apply(.{
+        .rows = 1,
+        .cols = cells.len,
+        .full = false,
+        .cells = &.{},
+        .row_patches = &.{},
+        .cursor = cursor,
+    }, null);
+    const never_moved = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .never },
+        .local,
+    );
+    try std.testing.expectEqual(@as(usize, 0), never_moved.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), never_moved.removals.len);
+
+    const always = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .always },
+        .local,
+    );
+    try std.testing.expect(always.uploads.len != 0);
+    try std.testing.expect(always.removals.len != 0);
+    const always_revision = @backingInt(always.revision);
+
+    cursor.col = 0;
+    try content.apply(.{
+        .rows = 1,
+        .cols = cells.len,
+        .full = false,
+        .cells = &.{},
+        .row_patches = &.{},
+        .cursor = cursor,
+    }, null);
+    const always_moved = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .always },
+        .local,
+    );
+    try std.testing.expectEqual(@as(usize, 0), always_moved.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), always_moved.removals.len);
+    try std.testing.expectEqual(always_revision + 1, @backingInt(always_moved.revision));
+
+    const cursor_before = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .cursor },
+        .local,
+    );
+    try std.testing.expect(cursor_before.uploads.len != 0);
+    cursor.col = 1;
+    try content.apply(.{
+        .rows = 1,
+        .cols = cells.len,
+        .full = false,
+        .cells = &.{},
+        .row_patches = &.{},
+        .cursor = cursor,
+    }, null);
+    const cursor_inside = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .cursor },
+        .local,
+    );
+    try std.testing.expect(cursor_inside.uploads.len != 0);
+    try std.testing.expect(cursor_inside.removals.len != 0);
+}
+
+test "cursor transition restores old row and disables new row atomically" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var content = try terminal.Content.init(
+        std.testing.allocator,
+        contentLimits(),
+        &map,
+    );
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(
+        std.testing.allocator,
+        content.limits,
+    );
+    defer work.deinit();
+    const configured = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    const geometry = terminal.Content.Geometry{
+        .x = 0,
+        .y = 0,
+        .clip = .{
+            .x = 0,
+            .y = 0,
+            .width = configured.width_px * 4,
+            .height = configured.height_px * 2,
+        },
+        .metrics = configured,
+        .underline_y = configured.height_px - 2,
+        .underline_height = 1,
+        .strike_y = configured.height_px / 2,
+        .strike_height = 1,
+    };
+    const cells = [_]terminal.Cell{
+        cell('A'),
+        cell('!'),
+        cell('='),
+        cell('B'),
+        cell('A'),
+        cell('!'),
+        cell('='),
+        cell('B'),
+    };
+    const row_geometry = [_]terminal.LineGeometry{
+        .single_width,
+        .single_width,
+    };
+    var cursor = hiddenCursor();
+    cursor.visible = true;
+    cursor.shape = .block;
+    cursor.row = 0;
+    cursor.col = 1;
+    try content.recover(.{
+        .rows = 2,
+        .cols = 4,
+        .cursor = cursor,
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const scalars = terminal.ScalarBaseline.empty(cells.len);
+    const first = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .cursor },
+        .local,
+    );
+    var first_row_zero: [32]canvas.ResourceRef = undefined;
+    var first_row_one: [32]canvas.ResourceRef = undefined;
+    const first_zero_count = rowGlyphResources(
+        first.commands,
+        0,
+        configured.height_px,
+        &first_row_zero,
+    );
+    const first_one_count = rowGlyphResources(
+        first.commands,
+        configured.height_px,
+        configured.height_px,
+        &first_row_one,
+    );
+    const first_revision = @backingInt(first.revision);
+
+    cursor.row = 1;
+    try content.apply(.{
+        .rows = 2,
+        .cols = 4,
+        .full = false,
+        .cells = &.{},
+        .row_patches = &.{},
+        .cursor = cursor,
+    }, null);
+    const second = try content.takeUpdate(
+        &work,
+        scalars,
+        geometry,
+        .{ .ligature_mode = .cursor },
+        .local,
+    );
+    try std.testing.expectEqual(first_revision + 1, @backingInt(second.revision));
+    try std.testing.expectEqual(@as(usize, 0), second.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), second.removals.len);
+    var second_row_zero: [32]canvas.ResourceRef = undefined;
+    var second_row_one: [32]canvas.ResourceRef = undefined;
+    const second_zero_count = rowGlyphResources(
+        second.commands,
+        0,
+        configured.height_px,
+        &second_row_zero,
+    );
+    const second_one_count = rowGlyphResources(
+        second.commands,
+        configured.height_px,
+        configured.height_px,
+        &second_row_one,
+    );
+    try std.testing.expectEqual(first_one_count, second_zero_count);
+    try std.testing.expectEqual(first_zero_count, second_one_count);
+    try std.testing.expectEqualSlices(
+        canvas.ResourceRef,
+        first_row_one[0..first_one_count],
+        second_row_zero[0..second_zero_count],
+    );
+    try std.testing.expectEqualSlices(
+        canvas.ResourceRef,
+        first_row_zero[0..first_zero_count],
+        second_row_one[0..second_one_count],
+    );
+}
+
+test "semantic wide continuation bounds Iosevka cursor grouping" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{
+        cell(0x4e00),
+        cell(0),
+        cell('!'),
+        cell('='),
+    };
+    cells[0].sizing.width = 2;
+    cells[1].sizing = .{ .width = 2, .x = 1 };
+    var row = input(&cells, 0, cells.len - 1);
+    row.geometry = .single_width;
+    row.metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    row.ligature_mode = .cursor;
+    row.cursor_col = 2;
+
+    const wide = try prepare(&scratch, &map, row, 0);
+    try std.testing.expectEqual(@as(u16, 1), wide.end_cell);
+    const continuation = try prepare(&scratch, &map, row, 1);
+    try std.testing.expect(continuation.glyphs == .none);
+    try std.testing.expectEqual(@as(u16, 2), continuation.end_cell);
+    const ligature = try prepare(&scratch, &map, row, 2);
+    try std.testing.expectEqual(@as(u16, 2), ligature.first_cell);
+    try std.testing.expectEqual(@as(u16, 4), ligature.end_cell);
+    for (ligature.glyphs.native) |glyph| {
+        try std.testing.expect(glyph.source_start >= 2);
+        try std.testing.expect(glyph.source_end <= 4);
+    }
+}
+
 test "native FontMap replacement swaps all styles and leaves retired owner" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     const old_configs = [_]terminal_text.FontConfig{
@@ -1633,7 +2110,8 @@ test "native private-use presentation borrows only immediate blank cells" {
         cell(0x2002),
         cell('X'),
     };
-    const run = try prepare(&scratch, &map, input(&cells, 0, 3), 0);
+    const ordinary_input = input(&cells, 0, 3);
+    const run = try prepare(&scratch, &map, ordinary_input, 0);
     try std.testing.expect(run.glyphs == .native);
     try std.testing.expectEqual(@as(u16, 3), run.end_cell);
     for (run.glyphs.native) |glyph| {
@@ -1642,8 +2120,23 @@ test "native private-use presentation borrows only immediate blank cells" {
         try std.testing.expectEqual(run.end_cell, glyph.key.native.cell_span);
         try std.testing.expect(run.borrowed_blank_span);
     }
+    var ordinary_keys: [8]terminal_text.GlyphKey = undefined;
+    for (run.glyphs.native, 0..) |glyph, index| ordinary_keys[index] = glyph.key;
+    const ordinary_glyph_count = run.glyphs.native.len;
     try std.testing.expectEqual(@as(u21, ' '), cells[1].codepoint);
     try std.testing.expectEqual(@as(u21, 0x2002), cells[2].codepoint);
+    var cursor_input = ordinary_input;
+    cursor_input.ligature_mode = .cursor;
+    cursor_input.cursor_col = 1;
+    const cursor_run = try prepare(&scratch, &map, cursor_input, 0);
+    try std.testing.expectEqual(run.end_cell, cursor_run.end_cell);
+    try std.testing.expect(cursor_run.borrowed_blank_span);
+    try std.testing.expectEqual(ordinary_glyph_count, cursor_run.glyphs.native.len);
+    for (cursor_run.glyphs.native, 0..) |glyph, index|
+        try std.testing.expectEqual(
+            ordinary_keys[index],
+            glyph.key,
+        );
 
     const blocked = [_]terminal.Cell{ cell(0xf303), cell('X'), cell(' ') };
     const blocked_run = try prepare(&scratch, &map, input(&blocked, 0, 2), 0);
@@ -1944,7 +2437,10 @@ test "fallback private-use presentation selects and retains the fallback face" {
     var scratch = try TestScratch.init();
     defer scratch.deinit();
     const cells = [_]terminal.Cell{ cell(0xf303), cell(' '), cell(' ') };
-    const run = try prepare(&scratch, &map, input(&cells, 0, 2), 0);
+    var row = input(&cells, 0, 2);
+    row.ligature_mode = .cursor;
+    row.cursor_col = 1;
+    const run = try prepare(&scratch, &map, row, 0);
     try std.testing.expect(run.glyphs == .native);
     try std.testing.expect(run.glyphs.native[0].key.native.face_index != 0);
     try std.testing.expectEqual(@as(u16, 3), run.end_cell);
@@ -2006,6 +2502,45 @@ test "font map validates complete tuple set before native ownership" {
         constructMap,
         .{},
     );
+}
+
+test "Fira normal strategy classifies groups and places one exact ligature span" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{
+            .primary = fonts.normal_ligature_font,
+            .size = .{ .pixels = 32 },
+        },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{ cell('#'), cell('_'), cell('(') };
+    var row = input(&cells, 0, 2);
+    row.geometry = .single_width;
+    row.metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+
+    const run = try terminal_text.prepareNextRun(
+        &map,
+        row,
+        0,
+        scratch.borrow(),
+    );
+    try std.testing.expectEqual(@as(u16, 0), run.first_cell);
+    try std.testing.expectEqual(@as(u16, 3), run.end_cell);
+    try std.testing.expectEqual(@as(usize, 3), run.glyphs.native.len);
+    for (run.glyphs.native, 0..) |glyph, index| {
+        try std.testing.expectEqual(@as(u16, 0), glyph.source_start);
+        try std.testing.expectEqual(@as(u16, 3), glyph.source_end);
+        try std.testing.expectEqual(@as(u16, 3), glyph.key.native.cell_span);
+        try std.testing.expectEqual(
+            @as(i32, @intCast(index * row.metrics.width_px * 64)),
+            glyph.x_26_6,
+        );
+        try std.testing.expectEqual(@as(u16, @intCast(index)), glyph.group_glyph_index);
+    }
 }
 
 test "native combining clusters reuse caller storage" {
@@ -2167,6 +2702,130 @@ test "native scratch capacity failures preserve unwritten destinations" {
         },
     ));
     try std.testing.expectEqual(positioned_sentinel, positioned[0]);
+}
+
+test "undersized strategy scratch rejects before Content output mutation" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 32 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{ cell('!'), cell('=') };
+    var row = input(&cells, 0, 1);
+    row.geometry = .single_width;
+    row.metrics = map.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+    const positioned_sentinel = terminal_text.PositionedGlyph{
+        .key = .{ .native = .{
+            .font = .{ .slot = 0, .style = .normal },
+            .face_index = 7,
+            .glyph_id = 0xaaaaaaaa,
+            .cell_span = 9,
+        } },
+        .source_start = 7,
+        .source_end = 9,
+        .x_26_6 = -1,
+        .y_26_6 = -2,
+        .x_advance_26_6 = -3,
+        .y_advance_26_6 = -4,
+    };
+    const glyph_sentinel = std.mem.zeroes(render.text.Glyph);
+    var shaped = [_]render.text.Glyph{ glyph_sentinel, glyph_sentinel };
+    var positioned = [_]terminal_text.PositionedGlyph{
+        positioned_sentinel,
+        positioned_sentinel,
+    };
+    try std.testing.expectError(
+        error.InsufficientGlyphs,
+        terminal_text.prepareNextRun(&map, row, 0, .{
+            .shaper = &scratch.shaper,
+            .codepoints = scratch.codepoints[0..2],
+            .clusters = scratch.clusters[0..2],
+            .shaped = &shaped,
+            .positioned = &positioned,
+        }),
+    );
+    try std.testing.expectEqual(glyph_sentinel, shaped[0]);
+    try std.testing.expectEqual(glyph_sentinel, shaped[1]);
+    try std.testing.expectEqual(positioned_sentinel, positioned[0]);
+    try std.testing.expectEqual(positioned_sentinel, positioned[1]);
+
+    var content = try terminal.Content.init(
+        std.testing.allocator,
+        contentLimits(),
+        &map,
+    );
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(
+        std.testing.allocator,
+        content.limits,
+    );
+    defer work.deinit();
+    const rows = [_]terminal.LineGeometry{.single_width};
+    const initial_cells = [_]terminal.Cell{cell('A')};
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hiddenCursor(),
+        .cells = &initial_cells,
+        .geometry = &rows,
+    }, emptyImages());
+    const initial = try content.takeUpdate(
+        &work,
+        terminal.ScalarBaseline.empty(1),
+        contentGeometry(row.metrics.width_px, row.metrics.height_px),
+        .{},
+        .local,
+    );
+    try std.testing.expect(initial.commands.len != 0);
+    try content.recover(.{
+        .rows = 1,
+        .cols = 2,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &rows,
+    }, emptyImages());
+    const revision_before = content.producer_revision;
+    const glyph_count_before = content.glyph_count;
+    const identity_before = content.next_resource_id;
+    const original_glyphs = work.native_glyphs;
+    const original_positioned = work.native_positioned;
+    work.native_glyphs = work.native_glyphs[0..2];
+    work.native_positioned = work.native_positioned[0..2];
+    defer {
+        work.native_glyphs = original_glyphs;
+        work.native_positioned = original_positioned;
+    }
+    try std.testing.expectError(
+        error.InsufficientGlyphs,
+        content.takeUpdate(
+            &work,
+            terminal.ScalarBaseline.empty(2),
+            .{
+                .x = 0,
+                .y = 0,
+                .clip = .{
+                    .x = 0,
+                    .y = 0,
+                    .width = row.metrics.width_px * 2,
+                    .height = row.metrics.height_px,
+                },
+                .metrics = row.metrics,
+                .underline_y = row.metrics.height_px - 2,
+                .underline_height = 1,
+                .strike_y = row.metrics.height_px / 2,
+                .strike_height = 1,
+            },
+            .{},
+            .local,
+        ),
+    );
+    try std.testing.expectEqual(revision_before, content.producer_revision);
+    try std.testing.expectEqual(glyph_count_before, content.glyph_count);
+    try std.testing.expectEqual(identity_before, content.next_resource_id);
 }
 
 const Map = if (selected.native_text) terminal_text.FontMap else void;

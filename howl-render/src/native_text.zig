@@ -73,6 +73,9 @@ pub const GlyphWidthError = error{
     InvalidMetrics,
 };
 
+/// Names exact native facts required by Kitty ligature grouping.
+pub const GroupError = ShapeError || error{ GlyphLoad, InvalidRaster };
+
 /// Owns one normalized positive rational factual DPI value.
 pub const Dpi = struct {
     numerator: u32,
@@ -155,6 +158,8 @@ pub const Glyph = struct {
     id: u32,
     /// Retains the caller's source identity for this glyph.
     cluster: u32,
+    /// Retains HarfBuzz's exact scalar index before caller cluster mapping.
+    scalar_index: u32 = 0,
     /// Reports horizontal pen movement in FreeType 26.6 units.
     x_advance: i32,
     /// Reports vertical pen movement in FreeType 26.6 units.
@@ -226,6 +231,23 @@ const Face = struct {
     path: [:0]u8,
     ft: c.FT_Face,
     hb: *c.hb_font_t,
+    spacer_strategy: SpacerStrategy = .unknown,
+};
+
+/// Identifies Kitty's detected empty-glyph placement convention.
+pub const SpacerStrategy = enum {
+    unknown,
+    before,
+    after,
+    iosevka,
+};
+
+/// Classifies variable-length ligature glyph-name components.
+pub const LigatureType = enum {
+    unknown,
+    start,
+    middle,
+    end,
 };
 
 // Native font construction, shaping, and rasterization.
@@ -324,7 +346,32 @@ pub const FontSet = struct {
         try validateText(text);
         if (text.codepoints.len > buffer.capacity)
             return error.InsufficientShapeBuffer;
-        const face_index = self.selectFace(text.codepoints) orelse return error.MissingGlyph;
+        const face_index = self.selectFace(text.codepoints) orelse
+            return error.MissingGlyph;
+        return self.shapeFace(
+            buffer,
+            text,
+            glyph_storage,
+            @intCast(face_index),
+            false,
+        );
+    }
+
+    /// Shapes one complete sequence on an already selected face and optionally
+    /// disables contextual alternates exactly as Kitty does.
+    pub fn shapeFace(
+        self: *FontSet,
+        buffer: *ShapeBuffer,
+        text: Text,
+        glyph_storage: []Glyph,
+        face_index: u8,
+        disable_contextual: bool,
+    ) ShapeError!Run {
+        if (!self.usable) return error.FontState;
+        try validateText(text);
+        if (text.codepoints.len > buffer.capacity)
+            return error.InsufficientShapeBuffer;
+        if (face_index >= self.faces.len) return error.MissingGlyph;
         const face = self.faces[face_index];
         c.hb_buffer_clear_contents(buffer.handle);
         try requireHbBuffer(buffer.handle);
@@ -338,7 +385,13 @@ pub const FontSet = struct {
         try requireHbBuffer(buffer.handle);
         c.hb_buffer_guess_segment_properties(buffer.handle);
         try requireHbBuffer(buffer.handle);
-        c.hb_shape(face.hb, buffer.handle, null, 0);
+        var feature: c.hb_feature_t = undefined;
+        const features: [*c]const c.hb_feature_t = if (disable_contextual) blk: {
+            if (c.hb_feature_from_string("-calt", -1, &feature) == 0)
+                return error.HarfBuzzBuffer;
+            break :blk &feature;
+        } else null;
+        c.hb_shape(face.hb, buffer.handle, features, @intFromBool(disable_contextual));
         try requireHbBuffer(buffer.handle);
 
         var info_count: c_uint = 0;
@@ -363,6 +416,7 @@ pub const FontSet = struct {
             glyph.* = .{
                 .id = infos[i].codepoint,
                 .cluster = text.clusters[cp_index],
+                .scalar_index = @intCast(cp_index),
                 .x_advance = positions[i].x_advance,
                 .y_advance = positions[i].y_advance,
                 .x_offset = positions[i].x_offset,
@@ -370,7 +424,7 @@ pub const FontSet = struct {
             };
         }
         return .{
-            .face_index = @intCast(face_index),
+            .face_index = face_index,
             .glyphs = glyphs,
         };
     }
@@ -427,6 +481,176 @@ pub const FontSet = struct {
         return glyph;
     }
 
+    /// Returns whether one shaped glyph differs from the selected face's
+    /// direct glyph for the exact current scalar.
+    pub fn glyphIsSpecial(
+        self: *FontSet,
+        face_index: u8,
+        glyph_id: u32,
+        codepoint: u32,
+    ) error{InvalidRaster}!bool {
+        if (!self.usable or face_index >= self.faces.len or glyph_id == 0 or
+            codepoint > std.math.maxInt(u21))
+            return error.InvalidRaster;
+        // Kitty removes VS15/VS16 from current-codepoint classification by
+        // passing zero. Zero is a sentinel here, never a cmap comparison.
+        if (codepoint == 0) return false;
+        return glyph_id != c.FT_Get_Char_Index(
+            self.faces[face_index].ft,
+            @intCast(codepoint),
+        );
+    }
+
+    /// Returns Kitty's exact zero-horizontal-metric empty-glyph fact.
+    pub fn glyphIsEmpty(
+        self: *FontSet,
+        face_index: u8,
+        glyph_id: u32,
+    ) error{ GlyphLoad, InvalidRaster }!bool {
+        if (!self.usable or face_index >= self.faces.len or glyph_id == 0)
+            return error.InvalidRaster;
+        const face = self.faces[face_index].ft;
+        if (c.FT_Load_Glyph(face, glyph_id, c.FT_LOAD_DEFAULT) != 0)
+            return error.GlyphLoad;
+        const slot = face.*.glyph orelse return error.InvalidRaster;
+        return @field(slot.*, "metrics").width == 0;
+    }
+
+    /// Classifies Kitty's normal or Iosevka variable-ligature glyph suffix.
+    pub fn glyphLigatureType(
+        self: *FontSet,
+        face_index: u8,
+        glyph_id: u32,
+        strategy: SpacerStrategy,
+    ) error{InvalidRaster}!LigatureType {
+        if (!self.usable or face_index >= self.faces.len or glyph_id == 0)
+            return error.InvalidRaster;
+        var name: [128]u8 = @splat(0);
+        c.hb_font_glyph_to_string(
+            self.faces[face_index].hb,
+            glyph_id,
+            &name,
+            name.len - 1,
+        );
+        const text = std.mem.sliceTo(&name, 0);
+        const separator: u8 = if (strategy == .iosevka) '.' else '_';
+        const suffix = if (std.mem.lastIndexOfScalar(u8, text, separator)) |index|
+            text[index..]
+        else
+            return .unknown;
+        if (strategy == .iosevka) {
+            if (std.mem.eql(u8, suffix, ".join-l")) return .start;
+            if (std.mem.eql(u8, suffix, ".join-m")) return .middle;
+            if (std.mem.eql(u8, suffix, ".join-r")) return .end;
+        } else {
+            if (std.mem.eql(u8, suffix, "_start.seq")) return .start;
+            if (std.mem.eql(u8, suffix, "_middle.seq")) return .middle;
+            if (std.mem.eql(u8, suffix, "_end.seq")) return .end;
+        }
+        return .unknown;
+    }
+
+    /// Detects and retains Kitty's per-face spacer convention using the same
+    /// bounded probe set and caller-owned shaping scratch.
+    pub fn spacerStrategy(
+        self: *FontSet,
+        buffer: *ShapeBuffer,
+        glyph_storage: []Glyph,
+        face_index: u8,
+    ) GroupError!SpacerStrategy {
+        if (!self.usable or face_index >= self.faces.len)
+            return error.InvalidRaster;
+        if (self.faces[face_index].spacer_strategy != .unknown)
+            return self.faces[face_index].spacer_strategy;
+        const probes = [_][]const u8{ "==", "->", "<-", "<<=", "<==>" };
+        var strategy: SpacerStrategy = .before;
+        if (try self.probeEndsEmpty(
+            buffer,
+            glyph_storage,
+            face_index,
+            "===",
+        )) strategy = .after;
+        for (probes) |probe| {
+            const run = try self.shapeAsciiProbe(
+                buffer,
+                glyph_storage,
+                face_index,
+                probe,
+            );
+            for (run.glyphs) |glyph| {
+                const kind = try self.glyphLigatureType(
+                    face_index,
+                    glyph.id,
+                    .iosevka,
+                );
+                if (kind != .unknown) {
+                    strategy = .iosevka;
+                    break;
+                }
+            }
+            if (strategy == .iosevka) break;
+        }
+        if (strategy == .before and try self.probeEndsEmpty(
+            buffer,
+            glyph_storage,
+            face_index,
+            "###",
+        )) strategy = .after;
+        self.faces[face_index].spacer_strategy = strategy;
+        return strategy;
+    }
+
+    fn probeEndsEmpty(
+        self: *FontSet,
+        buffer: *ShapeBuffer,
+        glyph_storage: []Glyph,
+        face_index: u8,
+        probe: []const u8,
+    ) GroupError!bool {
+        const run = try self.shapeAsciiProbe(
+            buffer,
+            glyph_storage,
+            face_index,
+            probe,
+        );
+        if (run.glyphs.len <= 1) return false;
+        const last = run.glyphs[run.glyphs.len - 1];
+        const scalar_index: usize = @intCast(last.scalar_index);
+        if (scalar_index >= probe.len) return error.InvalidShapeResult;
+        const special = try self.glyphIsSpecial(
+            face_index,
+            last.id,
+            probe[scalar_index],
+        );
+        return special and try self.glyphIsEmpty(face_index, last.id);
+    }
+
+    fn shapeAsciiProbe(
+        self: *FontSet,
+        buffer: *ShapeBuffer,
+        glyph_storage: []Glyph,
+        face_index: u8,
+        probe: []const u8,
+    ) ShapeError!Run {
+        var codepoints: [5]u32 = undefined;
+        var clusters: [5]u32 = undefined;
+        if (probe.len > codepoints.len) return error.TextTooLong;
+        for (probe, 0..) |value, index| {
+            codepoints[index] = value;
+            clusters[index] = @intCast(index);
+        }
+        return self.shapeFace(
+            buffer,
+            .{
+                .codepoints = codepoints[0..probe.len],
+                .clusters = clusters[0..probe.len],
+            },
+            glyph_storage,
+            face_index,
+            false,
+        );
+    }
+
     /// Exclusively borrows one native face and rasterizes monochrome or gray
     /// coverage into the requested pixel width. Scalable glyphs wider than
     /// that width are proportionally rerendered, while fixed bitmaps are
@@ -439,6 +663,42 @@ pub const FontSet = struct {
         face_index: u8,
         glyph_id: u32,
         maximum_width_px: u16,
+    ) RasterError!Raster {
+        return self.rasterizeBounded(
+            allocator,
+            face_index,
+            glyph_id,
+            maximum_width_px,
+            true,
+        );
+    }
+
+    /// Rasterizes one glyph for later placement inside a complete multi-cell
+    /// group canvas. Width fitting remains bounded by the group, while native
+    /// bearings and overhang remain intact for group-level clipping.
+    pub fn rasterizeGroup(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+        maximum_width_px: u16,
+    ) RasterError!Raster {
+        return self.rasterizeBounded(
+            allocator,
+            face_index,
+            glyph_id,
+            maximum_width_px,
+            false,
+        );
+    }
+
+    fn rasterizeBounded(
+        self: *FontSet,
+        allocator: std.mem.Allocator,
+        face_index: u8,
+        glyph_id: u32,
+        maximum_width_px: u16,
+        normalize_to_canvas: bool,
     ) RasterError!Raster {
         if (!self.usable) return error.FontState;
         if (maximum_width_px == 0) return error.InvalidWidth;
@@ -462,6 +722,7 @@ pub const FontSet = struct {
         }
         if (raster.width > maximum_width_px)
             try cropRaster(&raster, 0, maximum_width_px);
+        if (!normalize_to_canvas) return raster;
         if (raster.left < 0) {
             const clipped = @min(
                 raster.width,

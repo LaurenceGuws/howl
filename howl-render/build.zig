@@ -83,6 +83,14 @@ pub fn build(b: *std.Build) void {
         );
         fonts.addOption(
             []const u8,
+            "normal_ligature_font",
+            b.root.joinString(
+                b.allocator,
+                "testdata/fira-code-medium.otf",
+            ) catch @panic("OOM"),
+        );
+        fonts.addOption(
+            []const u8,
             "mono_font",
             b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"),
         );

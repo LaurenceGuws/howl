@@ -2,6 +2,8 @@ howl-render deterministic native-text test font data:
 
 - primary.ttf copied from /usr/share/fonts/noto/NotoSans-Regular.ttf
 - symbols.ttf copied from /usr/share/fonts/TTF/IosevkaTermNerdFont-Regular.ttf
+- fira-code-medium.otf copied unmodified from the pinned Kitty reference
+  checkout at kitty/kitty_tests/FiraCode-Medium.otf
 - primary source package: noto-fonts 1:2026.06.01-1
 - symbols source package: ttf-iosevkaterm-nerd 3.4.0-2
 - symbols.ttf maps U+0030 U+FE00 through cmap format 14; primary.ttf does not,
@@ -11,6 +13,7 @@ howl-render deterministic native-text test font data:
 - primary.ttf SHA-256: 478c558ea716033cd60c03438f628dfa75694dcf6b5f6d505a2f05fd2b4f3823
 - symbols.ttf SHA-256: d5116846a175ef4a988f61241dd3572d6a9dd3e09d4d168c67954b10783a7880
 - mono.bdf SHA-256: bb7cd4a7979da5cf92cd0159678857e663baf92a45081ea31b95d6cdaa91783e
+- fira-code-medium.otf SHA-256: f94d9fa1ffb46463e6d8fda12041088397adea1c47de7c50a8f9f57ce9a6d788
 
 Redistributed binary provenance:
 
@@ -19,11 +22,17 @@ Redistributed binary provenance:
 - symbols.ttf package description: `Patched font Iosevka Term from nerd fonts library`
 - symbols.ttf upstream project URL from installed package metadata: `https://github.com/ryanoasis/nerd-fonts`
 - symbols.ttf local package build date from installed package metadata: `Mon Jan 26 22:28:36 2026`
+- fira-code-medium.otf is Kitty's unmodified deterministic Fira Code
+  grouping fixture and is licensed under SIL OFL 1.1
 Attribution note:
 
 - `symbols.ttf` is a patched Nerd Fonts binary for the Iosevka Term family, redistributed here exactly as copied from the installed `ttf-iosevkaterm-nerd 3.4.0-2` package.
 - The installed package license is `OFL-1.1-no-RFN`.
 - The installed package license text names the original font software copyright holder as `Renzhi Li (aka. Belleve Invis, belleve@typeof.net)`.
+- `fira-code-medium.otf` carries: `Copyright 2014-2020 The Fira Code
+  Project Authors (https://github.com/tonsky/FiraCode)`.
+- The SIL OFL 1.1 text included below covers both redistributed OFL fonts,
+  `symbols.ttf` and `fira-code-medium.otf`.
 
 primary.ttf license (Apache-2.0):
 

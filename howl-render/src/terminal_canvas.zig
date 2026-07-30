@@ -87,6 +87,8 @@ const RenderInput = struct {
     images: RetainedImages,
     /// Supplies terminal pixel placement and clipping.
     geometry: PaneGeometry,
+    /// Borrows pane-local ligature shaping policy for this synchronous update.
+    text_policy: Content.TextPolicy,
 };
 
 const RetainedImages = struct {
@@ -158,6 +160,11 @@ const MaskEntry = struct {
 pub const Content = struct {
     /// Supplies one terminal pane's pixel geometry for retained update production.
     pub const Geometry = PaneGeometry;
+    /// Supplies pane-local shaping facts for one synchronous complete update.
+    pub const TextPolicy = struct {
+        /// Selects Kitty-compatible contextual-ligature handling.
+        ligature_mode: text.LigatureMode = .never,
+    };
     /// Supplies the exact terminal-font resource producer for one update.
     pub const FontProducer = if (features.native_text)
         union(enum) {
@@ -760,6 +767,7 @@ pub const Content = struct {
         work: *Work,
         scalars: ScalarBaseline,
         geometry: Geometry,
+        text_policy: TextPolicy,
         producer: FontProducer,
     ) TakeError!canvas.ProducerUpdate {
         errdefer if (comptime features.native_text) switch (producer) {
@@ -811,6 +819,7 @@ pub const Content = struct {
                     .placements = self.activePlacements()[0..self.placement_count],
                 },
                 .geometry = geometry,
+                .text_policy = text_policy,
             },
             .fonts = self.fonts,
             .producer = producer,
@@ -898,8 +907,8 @@ pub const Content = struct {
         geometry: Geometry,
     ) TakeError!canvas.ProducerUpdate {
         if (comptime features.native_text)
-            return self.takeUpdate(work, scalars, geometry, .local);
-        return self.takeUpdate(work, scalars, geometry, {});
+            return self.takeUpdate(work, scalars, geometry, .{}, .local);
+        return self.takeUpdate(work, scalars, geometry, .{}, {});
     }
 
     fn appendRetiredGlyphs(self: *Content) TakeError!bool {
@@ -1607,6 +1616,13 @@ const Build = struct {
                     .affected_end = @intCast(cells.len - 1),
                     .geometry = self.input.projection.geometry[row],
                     .metrics = self.input.geometry.metrics,
+                    .ligature_mode = self.input.text_policy.ligature_mode,
+                    .cursor_col = if (self.input.text_policy.ligature_mode == .cursor and
+                        self.input.projection.cursor.visible and
+                        self.input.projection.cursor.row == row)
+                        self.input.projection.cursor.col
+                    else
+                        null,
                 };
                 const run = if (comptime features.native_text)
                     try text.prepareNextRun(self.fonts, row_input, cell_index, self.buffers.text)
@@ -1784,13 +1800,45 @@ const Build = struct {
             @divFloor(value.x_26_6, 64),
         ) catch
             return error.ArithmeticOverflow;
-        const placed_x = std.math.add(
+        var placed_x = std.math.add(
             i64,
             std.math.add(i64, base_x, raster.left) catch
                 return error.ArithmeticOverflow,
             horizontal_shift,
         ) catch
             return error.ArithmeticOverflow;
+        if (comptime features.native_text) {
+            const native_key = if (comptime features.generated_glyphs)
+                switch (value.key) {
+                    .native => |key| key,
+                    .generated => null,
+                }
+            else
+                @as(?text.NativeGlyphKey, value.key.native);
+            if (native_key) |key| if (key.cell_span > 1 and
+                value.group_glyph_index < 4)
+            {
+                const group_left = std.math.mul(
+                    i64,
+                    value.source_start,
+                    metrics.width_px,
+                ) catch return error.ArithmeticOverflow;
+                const group_right = std.math.mul(
+                    i64,
+                    value.source_end,
+                    metrics.width_px,
+                ) catch return error.ArithmeticOverflow;
+                const raster_right = std.math.add(
+                    i64,
+                    placed_x,
+                    raster.width,
+                ) catch return error.ArithmeticOverflow;
+                if (placed_x > group_left and raster_right > group_right) {
+                    const overflow = raster_right - group_right;
+                    placed_x = @max(group_left, placed_x - overflow);
+                }
+            };
+        }
         const placed_y = std.math.sub(
             i64,
             std.math.sub(i64, metrics.baseline_px, raster.top) catch

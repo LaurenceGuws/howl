@@ -530,7 +530,7 @@ test "terminal Content emits shared glyph and decoration resources through its p
         .underline_height = 1,
         .strike_y = metrics.height_px / 2,
         .strike_height = 1,
-    }, .{ .shared = &producer });
+    }, .{}, .{ .shared = &producer });
     try std.testing.expect(update.uploads.len >=
         @as(usize, if (selected.generated_glyphs) 3 else 2));
     for (update.uploads) |upload|
@@ -628,7 +628,7 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
     var failed = try owner.producer(group);
     try std.testing.expectError(
         error.CommandLimit,
-        content.takeUpdate(&work, empty_scalars, geometry, .{ .shared = &failed }),
+        content.takeUpdate(&work, empty_scalars, geometry, .{}, .{ .shared = &failed }),
     );
     failed.deinit();
     content.deinit();
@@ -659,7 +659,13 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
         .placements = &.{},
     });
     var retry = try owner.producer(group);
-    const update = try content.takeUpdate(&work, empty_scalars, geometry, .{ .shared = &retry });
+    const update = try content.takeUpdate(
+        &work,
+        empty_scalars,
+        geometry,
+        .{},
+        .{ .shared = &retry },
+    );
     try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
     try std.testing.expect(update.uploads[0].resource.resource.isShared());
     try std.testing.expect(try update.uploads[0].resource.resource.identity() > 1);

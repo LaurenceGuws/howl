@@ -6,6 +6,8 @@ const impl = @import("terminal_text_impl");
 pub const CellMetrics = impl.CellMetrics;
 /// Borrows one complete retained row and affected cell span.
 pub const RowInput = impl.RowInput;
+/// Selects pane-local contextual-ligature handling.
+pub const LigatureMode = impl.LigatureMode;
 /// Identifies one generated raster and ordinary baseline placement.
 pub const GeneratedGlyphKey = impl.GeneratedGlyphKey;
 /// Identifies exact generated raster input.

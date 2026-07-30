@@ -12,6 +12,8 @@ pub const CellMetrics = impl.CellMetrics;
 pub const DecorationMetrics = impl.DecorationMetrics;
 /// Borrows one complete retained row and affected cell span.
 pub const RowInput = impl.RowInput;
+/// Selects pane-local contextual-ligature handling.
+pub const LigatureMode = impl.LigatureMode;
 /// Identifies one native raster within an exact font map.
 pub const NativeGlyphKey = impl.NativeGlyphKey;
 /// Identifies exact native raster input.

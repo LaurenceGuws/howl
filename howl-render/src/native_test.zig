@@ -73,6 +73,82 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     for (variation_fallback.glyphs) |glyph| try std.testing.expect(glyph.id != 0);
 }
 
+test "Kitty spacer detection distinguishes normal and Iosevka grouping" {
+    var normal = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .size = .{ .pixels = 32 },
+    });
+    defer normal.deinit();
+    var iosevka = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .size = .{ .pixels = 32 },
+    });
+    defer iosevka.deinit();
+    var shaper = try text.ShapeBuffer.init(16);
+    defer shaper.deinit();
+    var glyphs: [16]text.Glyph = undefined;
+
+    const normal_strategy = try normal.spacerStrategy(
+        &shaper,
+        &glyphs,
+        0,
+    );
+    try std.testing.expect(normal_strategy != .iosevka);
+    try std.testing.expectEqual(
+        normal_strategy,
+        try normal.spacerStrategy(&shaper, &glyphs, 0),
+    );
+    try std.testing.expectEqual(
+        text.SpacerStrategy.iosevka,
+        try iosevka.spacerStrategy(&shaper, &glyphs, 0),
+    );
+}
+
+test "variation sentinel and Fira normal components use native classification" {
+    var fira = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.normal_ligature_font,
+        .size = .{ .pixels = 32 },
+    });
+    defer fira.deinit();
+    var shaper = try text.ShapeBuffer.init(16);
+    defer shaper.deinit();
+    var glyphs: [16]text.Glyph = undefined;
+
+    try std.testing.expect(
+        try fira.spacerStrategy(&shaper, &glyphs, 0) != .iosevka,
+    );
+    const codepoints = [_]u32{ '#', '_', '(' };
+    const clusters = [_]u32{ 0, 1, 2 };
+    const run = try fira.shapeFace(
+        &shaper,
+        .{ .codepoints = &codepoints, .clusters = &clusters },
+        &glyphs,
+        0,
+        false,
+    );
+    try std.testing.expectEqual(@as(usize, 3), run.glyphs.len);
+    var special_count: usize = 0;
+    var empty_count: usize = 0;
+    for (run.glyphs) |glyph| {
+        const scalar_index: usize = @intCast(glyph.scalar_index);
+        try std.testing.expect(scalar_index < codepoints.len);
+        const special = try fira.glyphIsSpecial(
+            0,
+            glyph.id,
+            codepoints[scalar_index],
+        );
+        if (special) {
+            special_count += 1;
+            if (try fira.glyphIsEmpty(0, glyph.id)) empty_count += 1;
+        }
+        // Native classification must honor Kitty's variation-selector
+        // sentinel rather than comparing against the face's glyph for NUL.
+        try std.testing.expect(!try fira.glyphIsSpecial(0, glyph.id, 0));
+    }
+    try std.testing.expectEqual(@as(usize, 3), special_count);
+    try std.testing.expectEqual(@as(usize, 2), empty_count);
+}
+
 test "font configuration validates every path before allocation or native access" {
     var overflow: [text.max_fallbacks + 1][]const u8 = undefined;
     @memset(&overflow, fonts.symbol_font);
