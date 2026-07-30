@@ -647,6 +647,7 @@ pub const Boundary = struct {
     prepared_visible_request: ?VisibleSetRequest = null,
     visible_members: [visible_member_limit]VisibleMember = undefined,
     visible_member_count: u8 = 0,
+    visible_revision: u64 = 0,
     visible_initialized: bool = false,
     font_request: ?FontRequest = null,
     font_request_high_water: u64 = 0,
@@ -1628,8 +1629,26 @@ pub const Boundary = struct {
             state.request.members[0..state.request.count],
         );
         self.visible_member_count = state.request.count;
+        self.visible_revision = 0;
         self.visible_initialized = true;
         self.visible_request = null;
+    }
+
+    /// Copies the exact visible terminal membership accepted by Composer.
+    pub fn acceptedVisibleSet(self: *Boundary) ?VisibleSetRequest {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (!self.visible_initialized or self.visible_revision == 0) return null;
+        var result = VisibleSetRequest{
+            .revision = self.visible_revision,
+            .members = undefined,
+            .count = self.visible_member_count,
+        };
+        @memcpy(
+            result.members[0..result.count],
+            self.visible_members[0..self.visible_member_count],
+        );
+        return result;
     }
 
     /// Reserves one shared block before consumptive terminal update extraction.
@@ -1782,12 +1801,57 @@ pub const Boundary = struct {
     ) CandidateDrainError!CandidateDrainResult {
         var tokens: [visible_member_limit]pool_storage.Token = undefined;
         var token_count: usize = 0;
+        var hidden_source_clears: [visible_member_limit]canvas.SourceId =
+            undefined;
+        var hidden_source_clear_count: usize = 0;
+        var clear_tokens: [visible_member_limit]pool_storage.Token = undefined;
+        var clear_token_count: usize = 0;
         self.mutex.lockUncancelable(self.io);
+        if (visible_revision) |revision| {
+            const state = self.visible_request orelse {
+                self.mutex.unlock(self.io);
+                return error.Stale;
+            };
+            if (state.request.revision != revision or
+                state.phase != .committing)
+            {
+                self.mutex.unlock(self.io);
+                return error.Stale;
+            }
+            for (self.visible_members[0..self.visible_member_count]) |member| {
+                var retained = false;
+                for (composition.sources) |placement| {
+                    if (placement.source == member.source) {
+                        retained = true;
+                        break;
+                    }
+                }
+                if (retained) continue;
+                hidden_source_clears[hidden_source_clear_count] = member.source;
+                hidden_source_clear_count += 1;
+            }
+        }
         for (&self.entries) |*maybe_entry| {
             const entry = if (maybe_entry.*) |*value| value else continue;
             if (entry.state == .retired or entry.state == .removing or
                 entry.ready == null)
                 continue;
+            var clearing = false;
+            for (hidden_source_clears[0..hidden_source_clear_count]) |source| {
+                if (entry.source == source) {
+                    clearing = true;
+                    break;
+                }
+            }
+            if (clearing) {
+                if (clear_token_count == clear_tokens.len) {
+                    self.mutex.unlock(self.io);
+                    return error.ResourceLimit;
+                }
+                clear_tokens[clear_token_count] = entry.ready.?;
+                clear_token_count += 1;
+                continue;
+            }
             if (token_count == tokens.len) {
                 self.mutex.unlock(self.io);
                 return error.ResourceLimit;
@@ -1802,6 +1866,16 @@ pub const Boundary = struct {
         for (tokens[0..token_count]) |token| {
             try self.pool.beginDrain(token);
             claimed += 1;
+            self.mutex.lockUncancelable(self.io);
+            if (self.find(token.pane_id)) |index|
+                self.entries[index].?.draining = true;
+            self.mutex.unlock(self.io);
+        }
+        var clear_claimed: usize = 0;
+        errdefer self.restoreCandidateClaims(clear_tokens[0..clear_claimed]);
+        for (clear_tokens[0..clear_token_count]) |token| {
+            try self.pool.beginDrain(token);
+            clear_claimed += 1;
             self.mutex.lockUncancelable(self.io);
             if (self.find(token.pane_id)) |index|
                 self.entries[index].?.draining = true;
@@ -1823,25 +1897,16 @@ pub const Boundary = struct {
             change_count += 1;
         }
         self.mutex.lockUncancelable(self.io);
-        if (visible_revision) |revision| {
-            const state = self.visible_request orelse {
-                self.mutex.unlock(self.io);
-                return error.Stale;
-            };
-            if (state.request.revision != revision or
-                state.phase != .committing)
-            {
-                self.mutex.unlock(self.io);
-                return error.Stale;
-            }
-        }
         composer.applyCandidate(.{
             .changes = changes[0..change_count],
+            .hidden_source_clears = hidden_source_clears[0..hidden_source_clear_count],
             .composition = composition,
         }) catch |failure| {
             self.mutex.unlock(self.io);
             self.restoreCandidateClaims(tokens[0..claimed]);
+            self.restoreCandidateClaims(clear_tokens[0..clear_claimed]);
             claimed = 0;
+            clear_claimed = 0;
             return failure;
         };
 
@@ -1860,6 +1925,20 @@ pub const Boundary = struct {
                 }
             }
         }
+        for (clear_tokens[0..clear_claimed]) |token| {
+            self.pool.completeDrain(token) catch
+                @panic("accepted hidden-source clear drain became invalid");
+            if (self.find(token.pane_id)) |index| {
+                const entry = &self.entries[index].?;
+                entry.draining = false;
+                if (entry.ready != null and
+                    entry.ready.?.reservation_id == token.reservation_id)
+                {
+                    entry.ready = null;
+                    entry.retry_wake_issued = false;
+                }
+            }
+        }
         if (visible_revision) |revision| {
             const state = self.visible_request.?;
             std.debug.assert(state.request.revision == revision and
@@ -1869,12 +1948,16 @@ pub const Boundary = struct {
                 state.request.members[0..state.request.count],
             );
             self.visible_member_count = state.request.count;
+            self.visible_revision = revision;
             self.visible_initialized = true;
             self.visible_request = null;
         }
         self.mutex.unlock(self.io);
         claimed = 0;
-        if (token_count != 0) self.publishDrained();
+        clear_claimed = 0;
+        if (token_count != 0 or clear_token_count != 0 or
+            visible_revision != null)
+            self.publishDrained();
         return .{ .accepted = token_count };
     }
 
@@ -2918,6 +3001,134 @@ test "atomic Composer candidate restores or releases every exact pool claim" {
             entry.accepted_revision,
         );
     }
+}
+
+test "atomic visible switch clears outgoing source and discards its ready update" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 2,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 2,
+    });
+    defer composer.deinit();
+    const outgoing_pane: PaneId = @fromBackingInt(701);
+    const incoming_pane: PaneId = @fromBackingInt(702);
+    const outgoing_source = try composer.registerSource();
+    const incoming_source = try composer.registerSource();
+    try boundary.register(
+        outgoing_pane,
+        outgoing_source,
+        .{ .width = 1, .height = 1 },
+    );
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const outgoing = try boundary.activateTransfer(outgoing_pane);
+    try boundary.register(
+        incoming_pane,
+        incoming_source,
+        .{ .width = 1, .height = 1 },
+    );
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const incoming = try boundary.activateTransfer(incoming_pane);
+    const first_command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    const second_command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
+    } };
+    const outgoing_token = try boundary.reserveUpdate(outgoing);
+    try boundary.publishUpdate(outgoing_token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{first_command},
+    });
+    const outgoing_member = VisibleMember{
+        .pane = outgoing_pane,
+        .source = outgoing_source,
+    };
+    try boundary.publishVisibleSet(1, &.{outgoing_member});
+    try boundary.completeVisibleSet(1, &.{.{
+        .member = outgoing_member,
+        .revision = @fromBackingInt(1),
+    }}, false);
+    try boundary.claimVisibleSet(1);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(&composer, null, .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{.{
+                .source = outgoing_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            }},
+        }, 1)).accepted,
+    );
+
+    const stale_outgoing = try boundary.reserveUpdate(outgoing);
+    try boundary.publishUpdate(stale_outgoing, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{second_command},
+    });
+    const incoming_member = VisibleMember{
+        .pane = incoming_pane,
+        .source = incoming_source,
+    };
+    try boundary.publishVisibleSet(2, &.{incoming_member});
+    const incoming_group =
+        try boundary.reserveVisibleGroup(2, &.{incoming});
+    const incoming_token = incoming_group.tokens[0];
+    try boundary.publishUpdate(incoming_token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{second_command},
+    });
+    try boundary.completeVisibleSet(2, &.{.{
+        .member = incoming_member,
+        .revision = @fromBackingInt(1),
+    }}, true);
+    try boundary.claimVisibleSet(2);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(&composer, null, .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{.{
+                .source = incoming_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            }},
+        }, 2)).accepted,
+    );
+    const outgoing_entry = boundary.entries[boundary.find(outgoing_pane).?].?;
+    try std.testing.expect(outgoing_entry.ready == null);
+    try std.testing.expectEqual(
+        @as(canvas.ProducerRevision, @fromBackingInt(1)),
+        outgoing_entry.accepted_revision,
+    );
+    try std.testing.expectEqual(
+        incoming_member,
+        boundary.acceptedVisibleSet().?.members[0],
+    );
 }
 
 test "visible group with fifteen free blocks does not partially reserve sixteen" {

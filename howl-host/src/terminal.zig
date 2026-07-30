@@ -310,6 +310,8 @@ const Logical = struct {
     machine: vt.Terminal,
     fonts: *render.terminal_text.FontMap,
     font_group: ?font_owner.GroupRef,
+    font_released_hidden: bool = false,
+    font_reveal_candidate: bool = false,
     content: render.terminal.Content,
     visual: *VisualState,
     transfer: Transfer,
@@ -842,6 +844,7 @@ fn runFallible(
             try boundary.drainTerminalWake();
             if (boundary.isStopping()) break;
             try runtime.reconcileAcceptedBatches(boundary);
+            try runtime.reconcileAcceptedVisibility(boundary);
             runtime.releaseCancelledLifecycleFont(boundary);
             if (runtime.count == 0) {
                 if (boundary.takeFontRequest()) |request| {
@@ -924,6 +927,9 @@ const Runtime = struct {
     accepted_scale: ?handoff.ScaleSnapshot = null,
     accepted_font_policy: handoff.FontPolicy,
     accepted_font_request_revision: u64 = 0,
+    accepted_visible_members: [handoff.visible_member_limit]handoff.VisibleMember = undefined,
+    accepted_visible_count: u8 = 0,
+    accepted_visible_revision: u64 = 0,
 
     /// Allocates the fixed 64-owner table without constructing children.
     fn init(
@@ -1176,6 +1182,94 @@ const Runtime = struct {
         }
     }
 
+    /// Releases font ownership only after Composer accepts the exact hidden set.
+    fn reconcileAcceptedVisibility(
+        self: *Runtime,
+        boundary: *handoff.Boundary,
+    ) font_owner.GroupError!void {
+        const accepted = boundary.acceptedVisibleSet() orelse return;
+        if (accepted.revision <= self.accepted_visible_revision) return;
+        for (self.owners) |*maybe_owner| {
+            const owner = if (maybe_owner.*) |*value| value else continue;
+            var visible = false;
+            for (accepted.members[0..accepted.count]) |member| {
+                if (member.pane == owner.pane) {
+                    visible = true;
+                    break;
+                }
+            }
+            if (visible) {
+                owner.font_reveal_candidate = false;
+                continue;
+            }
+            const group = owner.font_group orelse continue;
+            const source = switch (owner.transfer) {
+                .pooled => |pooled| pooled.member.source_id,
+                .dedicated => null,
+            };
+            if (source) |value| self.shared_fonts.cancelSourceBatches(value);
+            var producer = try self.shared_fonts.producer(group);
+            owner.content.releaseFontResources(.{ .shared = &producer });
+            producer.deinit();
+            owner.content.rebindFonts(self.fonts, .local);
+            try self.shared_fonts.releaseGroup(group);
+            owner.font_group = null;
+            owner.font_released_hidden = true;
+            owner.font_reveal_candidate = false;
+            owner.fonts = self.fonts;
+            owner.visual.requireRecovery();
+            owner.last_published_geometry = null;
+            owner.dirty = true;
+        }
+        @memcpy(
+            self.accepted_visible_members[0..accepted.count],
+            accepted.members[0..accepted.count],
+        );
+        self.accepted_visible_count = accepted.count;
+        self.accepted_visible_revision = accepted.revision;
+    }
+
+    fn paneIsAcceptedVisible(
+        self: *const Runtime,
+        pane: render.chrome.PaneId,
+    ) bool {
+        if (self.accepted_visible_revision == 0) return true;
+        for (self.accepted_visible_members[0..self.accepted_visible_count]) |member|
+            if (member.pane == pane) return true;
+        return false;
+    }
+
+    fn discardSupersededRevealGroups(
+        self: *Runtime,
+        request: handoff.VisibleSetRequest,
+    ) font_owner.GroupError!void {
+        for (self.owners) |*maybe_owner| {
+            const owner = if (maybe_owner.*) |*value| value else continue;
+            if (!owner.font_reveal_candidate) continue;
+            var requested = false;
+            for (request.members[0..request.count]) |member| {
+                if (member.pane == owner.pane) {
+                    requested = true;
+                    break;
+                }
+            }
+            if (requested) continue;
+            const group = owner.font_group orelse return error.InvalidGroup;
+            var producer = try self.shared_fonts.producer(group);
+            owner.content.releaseFontResources(.{ .shared = &producer });
+            producer.deinit();
+            owner.content.rebindFonts(self.fonts, .local);
+            try self.shared_fonts.releaseGroup(group);
+            owner.font_group = null;
+            owner.fonts = self.fonts;
+            owner.font_released_hidden = true;
+            owner.font_reveal_candidate = false;
+            owner.visual.requireRecovery();
+            owner.last_published_geometry = null;
+            owner.dirty = true;
+        }
+    }
+
     /// Attempts the retained latest font request once per external progress wake.
     fn retryPendingFont(
         self: *Runtime,
@@ -1201,12 +1295,100 @@ const Runtime = struct {
         if (completed) self.pending_font = null;
     }
 
+    /// Reconstructs every hidden pane required by one prospective visible set.
+    fn prepareRevealGroups(
+        self: *Runtime,
+        request: handoff.VisibleSetRequest,
+    ) FontResizeError!bool {
+        var indices: [handoff.visible_member_limit]u8 = undefined;
+        var groups: [handoff.visible_member_limit]ResolvedGroup = undefined;
+        var prepared: [handoff.visible_member_limit]?vt.Terminal.PreparedResize =
+            @splat(null);
+        var rows: [handoff.visible_member_limit]u16 = undefined;
+        var cols: [handoff.visible_member_limit]u16 = undefined;
+        var geometries: [handoff.visible_member_limit]terminal_render.Content.Geometry =
+            undefined;
+        var count: usize = 0;
+        var groups_owned = true;
+        defer if (groups_owned) {
+            var index = count;
+            while (index != 0) {
+                index -= 1;
+                self.shared_fonts.releaseGroup(groups[index].reference) catch
+                    @panic("terminal reveal group rollback failed");
+            }
+        };
+        errdefer for (prepared[0..count]) |*candidate|
+            if (candidate.*) |*value| value.deinit();
+
+        for (request.members[0..request.count]) |member| {
+            const owner_index = self.find(member.pane) orelse return false;
+            const owner = &self.owners[owner_index].?;
+            if (!owner.font_released_hidden) continue;
+            std.debug.assert(owner.font_group == null);
+            if (owner.font_state.scale == null) return false;
+            const group = self.pointGroup(owner.font_state) catch |failure| switch (failure) {
+                error.GroupLimit, error.RetirementPending => return false,
+                else => return failure,
+            };
+            indices[count] = @intCast(owner_index);
+            groups[count] = group;
+            count += 1;
+            const candidate_index = count - 1;
+            const metrics =
+                group.map.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
+                return error.FontCapacity;
+            const grid = try gridForPixels(owner.pane_pixels, metrics);
+            prepared[candidate_index] =
+                try owner.machine.prepareResize(grid.rows, grid.cols);
+            rows[candidate_index] = grid.rows;
+            cols[candidate_index] = grid.cols;
+            geometries[candidate_index] =
+                try paneGeometry(owner.pane_pixels, group.map);
+        }
+        if (count == 0) return true;
+
+        var kernel_committed = false;
+        for (indices[0..count], 0..) |owner_index, index| {
+            const owner = &self.owners[owner_index].?;
+            owner.transport.resize(cols[index], rows[index]) catch |failure| {
+                if (kernel_committed) return error.PostKernelResizeFailure;
+                return failure;
+            };
+            kernel_committed = true;
+            prepared[index].?.commit();
+            const metrics = geometries[index].metrics;
+            owner.machine.setCellPixelSize(
+                metrics.width_px,
+                metrics.height_px,
+            ) catch return error.PostKernelResizeFailure;
+        }
+        for (indices[0..count], 0..) |owner_index, index| {
+            const owner = &self.owners[owner_index].?;
+            owner.fonts = groups[index].map;
+            owner.font_group = groups[index].reference;
+            owner.font_released_hidden = false;
+            owner.font_reveal_candidate = true;
+            owner.content.rebindFonts(groups[index].map, .local);
+            owner.visual.rows = rows[index];
+            owner.visual.cols = cols[index];
+            owner.visual.requireRecovery();
+            owner.geometry = geometries[index];
+            owner.last_published_geometry = null;
+            owner.dirty = true;
+        }
+        groups_owned = false;
+        return true;
+    }
+
     /// Prepares the latest complete visible set without consuming a partial group.
     fn prepareVisibleSet(
         self: *Runtime,
         boundary: *handoff.Boundary,
-    ) ServiceError!bool {
+    ) (ServiceError || FontResizeError)!bool {
         const request = boundary.visibleSetRequest() orelse return false;
+        try self.discardSupersededRevealGroups(request);
+        if (!try self.prepareRevealGroups(request)) return false;
         var requirements: [handoff.visible_member_limit]handoff.VisibleRequirement = undefined;
         var needed_members: [handoff.visible_member_limit]terminal_pool.Member = undefined;
         var needed_positions: [handoff.visible_member_limit]u8 = undefined;
@@ -1681,9 +1863,12 @@ const Runtime = struct {
         var new_rows: [owner_limit]u16 = undefined;
         var new_geometry: [owner_limit]terminal_render.Content.Geometry = undefined;
         var changed_indices: [owner_limit]u8 = undefined;
+        var state_indices: [owner_limit]u8 = undefined;
+        var candidate_states: [owner_limit]LogicalFontState = undefined;
         var old_group_refs: [owner_limit]font_owner.GroupRef = undefined;
         var staged_group_refs: [owner_limit]font_owner.GroupRef = undefined;
         var changed_count: usize = 0;
+        var state_count: usize = 0;
         var transition_count: usize = 0;
         var acquired_groups: [owner_limit]bool = @splat(false);
         var staged_owned = true;
@@ -1712,6 +1897,15 @@ const Runtime = struct {
                 .scale = request.scale,
             };
             const new_key = try resolvedGroupKey(state);
+            if (owner.font_state.base_point_size != state.base_point_size or
+                owner.font_state.offset_points != state.offset_points or
+                !std.meta.eql(owner.font_state.scale, state.scale))
+            {
+                state_indices[state_count] = @intCast(index);
+                candidate_states[state_count] = state;
+                state_count += 1;
+            }
+            if (!self.paneIsAcceptedVisible(owner.pane)) continue;
             if (owner.font_group) |old_group| {
                 const old_key = try self.shared_fonts.keyFor(old_group);
                 if (std.meta.eql(new_key, old_key)) continue;
@@ -1780,18 +1974,16 @@ const Runtime = struct {
             owner.geometry = new_geometry[index];
             owner.last_published_geometry = null;
             owner.dirty = true;
-            owner.font_state = .{
-                .request_revision = request.revision,
-                .base_point_size = request.policy.base_point_size,
-                .offset_points = fontOffsetFor(request.policy, owner.pane),
-                .scale = request.scale,
-            };
         }
         for (&old_producers) |*producer| if (producer.*) |*value| {
             value.deinit();
             producer.* = null;
         };
         acquired_owned = false;
+        for (state_indices[0..state_count], candidate_states[0..state_count]) |
+            owner_index,
+            state,
+        | self.owners[owner_index].?.font_state = state;
         self.accepted_font_request_revision = request.revision;
         self.accepted_font_policy = request.policy;
         self.accepted_scale = request.scale;
@@ -2806,6 +2998,62 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         .rgba => {},
     };
     try std.testing.expect(first_shared and second_shared);
+    try runtime.reconcileAcceptedVisibility(&boundary);
+    const second_revision_before_hide = second.last_published_revision;
+
+    try boundary.publishVisibleSet(2, &.{members[0]});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try boundary.claimVisibleSet(2);
+    const first_only = render.canvas.Composer.Composition{
+        .surface = composition.surface,
+        .sources = composition.sources[0..1],
+    };
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            first_only,
+            2,
+        )).accepted,
+    );
+    try runtime.reconcileAcceptedVisibility(&boundary);
+    try std.testing.expect(second.font_group == null);
+    try std.testing.expect(second.font_released_hidden);
+    try std.testing.expect(!first.font_released_hidden);
+    try std.testing.expect(first.font_group != null);
+    try std.testing.expect((try second.machine.feed("hidden")).state_changed);
+    second.dirty = true;
+    try std.testing.expect(!(try second.publishIfDirty(
+        &runtime.shared_fonts,
+        &runtime.work,
+    )));
+
+    try boundary.publishVisibleSet(3, &members);
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try std.testing.expect(second.font_group != null);
+    try std.testing.expect(second.font_reveal_candidate);
+    try std.testing.expect(
+        @backingInt(second.last_published_revision) >
+            @backingInt(second_revision_before_hide),
+    );
+    try boundary.claimVisibleSet(3);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            3,
+        )).accepted,
+    );
+    try runtime.reconcileAcceptedVisibility(&boundary);
+    try std.testing.expect(!second.font_released_hidden);
+    try std.testing.expect(!second.font_reveal_candidate);
+    try std.testing.expect(std.meta.eql(
+        first.font_group.?,
+        second.font_group.?,
+    ));
 
     try std.testing.expect((try first.machine.feed("\x08 \x20\x08")).state_changed);
     try std.testing.expect((try second.machine.feed("\x08 \x20\x08")).state_changed);
@@ -3728,6 +3976,124 @@ test "over-admission point request rolls back before PTY and later request succe
         @as(f64, 1.0),
         owner.font_state.offset_points,
     );
+}
+
+test "hidden clamped offset commits exactly and late visible failure rolls back bytes" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var first_slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    var second_slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer {
+        retireTestSlot(&first_slot);
+        retireTestSlot(&second_slot);
+        first_slot.deinit();
+        second_slot.deinit();
+    }
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const hidden_pane: render.chrome.PaneId = @fromBackingInt(801);
+    const visible_pane: render.chrome.PaneId = @fromBackingInt(802);
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try runtime.add(
+        hidden_pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &first_slot },
+    );
+    try runtime.add(
+        visible_pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &second_slot },
+    );
+    var initial_policy = try handoff.FontPolicy.init(10.0);
+    initial_policy.count = 1;
+    initial_policy.offsets[0] = .{
+        .pane = hidden_pane,
+        .offset_points = 150.0,
+    };
+    const scale = handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 72, .denominator = 1 },
+        .dpi_y = .{ .numerator = 72, .denominator = 1 },
+    };
+    const initial = handoff.FontRequest{
+        .revision = 1,
+        .scale = scale,
+        .policy = initial_policy,
+    };
+    try std.testing.expect(try runtime.resizePointFonts(&boundary, initial));
+    const hidden = &runtime.owners[runtime.find(hidden_pane).?].?;
+    const visible = &runtime.owners[runtime.find(visible_pane).?].?;
+    const clamped_key = try resolvedGroupKey(hidden.font_state);
+
+    const hidden_group = hidden.font_group.?;
+    var producer = try runtime.shared_fonts.producer(hidden_group);
+    hidden.content.releaseFontResources(.{ .shared = &producer });
+    producer.deinit();
+    hidden.content.rebindFonts(runtime.fonts, .local);
+    try runtime.shared_fonts.releaseGroup(hidden_group);
+    hidden.font_group = null;
+    hidden.fonts = runtime.fonts;
+    hidden.font_released_hidden = true;
+    runtime.accepted_visible_revision = 1;
+    runtime.accepted_visible_count = 1;
+    runtime.accepted_visible_members[0] = .{
+        .pane = visible_pane,
+        .source = @fromBackingInt(1),
+    };
+
+    var equal_key_policy = initial_policy;
+    equal_key_policy.offsets[0].offset_points = 151.0;
+    const equal_key = handoff.FontRequest{
+        .revision = 2,
+        .scale = scale,
+        .policy = equal_key_policy,
+    };
+    try std.testing.expect(try runtime.resizePointFonts(&boundary, equal_key));
+    try std.testing.expectEqual(clamped_key, try resolvedGroupKey(hidden.font_state));
+    try std.testing.expectEqual(@as(f64, 151.0), hidden.font_state.offset_points);
+    try std.testing.expectEqual(@as(u64, 2), hidden.font_state.request_revision);
+
+    var retained_state: [@sizeOf(LogicalFontState)]u8 = undefined;
+    @memcpy(&retained_state, std.mem.asBytes(&hidden.font_state));
+    const retained_policy = runtime.accepted_font_policy;
+    const retained_pixels = visible.pane_pixels;
+    visible.pane_pixels = .{
+        .width = std.math.maxInt(u16),
+        .height = std.math.maxInt(u16),
+    };
+    defer visible.pane_pixels = retained_pixels;
+    var rejected_policy = equal_key_policy;
+    rejected_policy.count = 2;
+    rejected_policy.offsets[0].offset_points = 152.0;
+    rejected_policy.offsets[1] = .{
+        .pane = visible_pane,
+        .offset_points = 1.0,
+    };
+    const rejected = handoff.FontRequest{
+        .revision = 3,
+        .scale = scale,
+        .policy = rejected_policy,
+    };
+    try std.testing.expectError(
+        error.TerminalCapacity,
+        runtime.resizePointFonts(&boundary, rejected),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &retained_state,
+        std.mem.asBytes(&hidden.font_state),
+    );
+    try std.testing.expectEqual(retained_policy, runtime.accepted_font_policy);
 }
 
 test "tiny and independent pane pixels derive only through current font metrics" {

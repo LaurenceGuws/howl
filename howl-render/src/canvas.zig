@@ -351,6 +351,9 @@ pub const ProducerUpdate = struct {
 /// allocation-free and transactional.
 pub const Composer = struct {
     const candidate_source_limit: usize = 17;
+    const hidden_source_clear_limit: usize = 16;
+    const candidate_plan_limit: usize =
+        candidate_source_limit + hidden_source_clear_limit;
     const candidate_placement_limit: usize = 65;
     const shared_resource_limit: usize = 2048;
     const shared_pixel_limit: usize = 8 * 1024 * 1024;
@@ -447,6 +450,13 @@ pub const Composer = struct {
     pub const Candidate = struct {
         /// Supplies at most seventeen distinct complete source replacements.
         changes: []const SourceChange,
+        /// Supplies at most sixteen unique live, currently visible sources
+        /// absent from the prospective composition and disjoint from changes.
+        ///
+        /// A clear removes retained commands, local resources, and derived
+        /// shared references while preserving registration, SourceId,
+        /// producer-revision high-water, and local-identity high-water.
+        hidden_source_clears: []const SourceId = &.{},
         /// Supplies the complete prospective visible composition.
         composition: Composition,
     };
@@ -516,6 +526,12 @@ pub const Composer = struct {
     };
 
     const SourcePlan = struct {
+        const Kind = enum {
+            change,
+            clear,
+        };
+
+        kind: Kind,
         source_index: usize,
         change_index: usize,
         revision: u64,
@@ -548,7 +564,7 @@ pub const Composer = struct {
     candidate_pixels: []u8,
     candidate_pixel_count: usize = 0,
     candidate_high_water: u64 = 0,
-    source_plans: [candidate_source_limit]SourcePlan = undefined,
+    source_plans: [candidate_plan_limit]SourcePlan = undefined,
     source_plan_count: usize = 0,
     resource_plan: []u64,
     resource_plan_count: usize = 0,
@@ -803,6 +819,8 @@ pub const Composer = struct {
     ) Composer.Error!void {
         if (candidate.changes.len > candidate_source_limit)
             return error.SourceLimit;
+        if (candidate.hidden_source_clears.len > hidden_source_clear_limit)
+            return error.SourceLimit;
         if (candidate.composition.sources.len > self.composition.len or
             candidate.composition.sources.len > candidate_placement_limit)
             return error.CompositionLimit;
@@ -841,6 +859,7 @@ pub const Composer = struct {
                 self.candidate_pixel_count,
             );
             self.source_plans[self.source_plan_count] = .{
+                .kind = .change,
                 .source_index = source_index,
                 .change_index = change_index,
                 .revision = revision,
@@ -851,6 +870,47 @@ pub const Composer = struct {
                 .final_pixel_start = 0,
                 .pixel_count = self.candidate_pixel_count,
                 .local_high_water = self.candidate_high_water,
+            };
+            self.source_plan_count += 1;
+        }
+        for (candidate.hidden_source_clears, 0..) |source_id, clear_index| {
+            const source_index = try self.sourceIndex(source_id);
+            for (candidate.hidden_source_clears[0..clear_index]) |prior|
+                if (prior == source_id) return error.DuplicateSource;
+            for (candidate.changes) |change|
+                if (change.source == source_id) return error.DuplicateSource;
+            if (self.placementIndex(source_id) == null)
+                return error.InvalidSource;
+            for (candidate.composition.sources) |placement|
+                if (placement.source == source_id) return error.DuplicateSource;
+            const old = self.sources[source_index];
+            prospective_resources = try replaceCount(
+                prospective_resources,
+                old.resource_count,
+                0,
+            );
+            prospective_commands = try replaceCount(
+                prospective_commands,
+                old.command_count,
+                0,
+            );
+            prospective_pixels = try replaceCount(
+                prospective_pixels,
+                old.pixel_count,
+                0,
+            );
+            self.source_plans[self.source_plan_count] = .{
+                .kind = .clear,
+                .source_index = source_index,
+                .change_index = 0,
+                .revision = old.revision,
+                .final_resource_start = 0,
+                .resource_count = 0,
+                .final_command_start = 0,
+                .command_count = 0,
+                .final_pixel_start = 0,
+                .pixel_count = 0,
+                .local_high_water = old.local_high_water,
             };
             self.source_plan_count += 1;
         }
@@ -869,6 +929,7 @@ pub const Composer = struct {
                 if (prior.source == placement.source)
                     return error.DuplicateSource;
             const commands = if (self.planForSource(source_index)) |plan| blk: {
+                if (plan.kind == .clear) return error.InvalidSource;
                 self.stageValidatedCandidate(
                     self.sources[source_index],
                     candidate.changes[plan.change_index].update,
@@ -898,6 +959,10 @@ pub const Composer = struct {
                 const placement_index = self.placementIndex(
                     self.sources[plan.source_index].id,
                 ) orelse continue;
+                if (plan.kind == .clear) {
+                    frame_changed = true;
+                    break;
+                }
                 self.stageValidatedCandidate(
                     self.sources[plan.source_index],
                     candidate.changes[plan.change_index].update,
@@ -1050,6 +1115,7 @@ pub const Composer = struct {
                 plan.final_resource_start = resource_start;
                 plan.final_command_start = command_start;
                 plan.final_pixel_start = pixel_start;
+                if (plan.kind == .clear) continue;
                 const update = candidate.changes[plan.change_index].update;
                 const old_resources = self.resources[source.resource_start .. source.resource_start + source.resource_count];
                 for (old_resources, source.resource_start..) |resource, old_index| {
@@ -1132,11 +1198,11 @@ pub const Composer = struct {
         for (self.sources[0..self.source_count], 0..) |source, source_index| {
             if (!source.live) continue;
             if (excluded_source == source_index) continue;
-            const commands = if (self.planForSource(source_index)) |plan|
-                candidate.changes[plan.change_index].update.commands
-            else
-                self.commands[source.command_start .. source.command_start +
-                    source.command_count];
+            const commands = if (self.planForSource(source_index)) |plan| switch (plan.kind) {
+                .change => candidate.changes[plan.change_index].update.commands,
+                .clear => &.{},
+            } else self.commands[source.command_start .. source.command_start +
+                source.command_count];
             for (commands) |command| switch (command) {
                 .solid => {},
                 .alpha_mask => |value| {
@@ -1533,11 +1599,13 @@ pub const Composer = struct {
             if (!source.live) continue;
             if (self.planIndexForSource(source_index)) |plan_index| {
                 const plan = self.source_plans[plan_index];
-                const update = candidate.changes[plan.change_index].update;
-                @memcpy(
-                    self.commands[plan.final_command_start .. plan.final_command_start + update.commands.len],
-                    update.commands,
-                );
+                if (plan.kind == .change) {
+                    const update = candidate.changes[plan.change_index].update;
+                    @memcpy(
+                        self.commands[plan.final_command_start .. plan.final_command_start + update.commands.len],
+                        update.commands,
+                    );
+                }
                 source.revision = plan.revision;
                 source.local_high_water = plan.local_high_water;
                 source.resource_start = plan.final_resource_start;
@@ -1932,8 +2000,9 @@ pub const Composer = struct {
         candidate: Candidate,
     ) Composer.Error!void {
         const changes = try byteRange(SourceChange, candidate.changes);
+        const clears = try byteRange(SourceId, candidate.hidden_source_clears);
         const placements = try byteRange(Placement, candidate.composition.sources);
-        try self.rejectInternalFrameAliases(&.{ changes, placements });
+        try self.rejectInternalFrameAliases(&.{ changes, clears, placements });
         for (candidate.changes) |change| {
             const update_ranges = [_]ByteRange{
                 try byteRange(ResourceUpload, change.update.uploads),
@@ -3479,15 +3548,15 @@ test "composer atomic candidate plan has exact fixed storage" {
     try std.testing.expectEqual(@as(usize, 80), @sizeOf(Composer.SourcePlan));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(Composer.Placement));
     try std.testing.expectEqual(
-        @as(usize, 3456),
-        @sizeOf([Composer.candidate_source_limit]Composer.SourcePlan) +
+        @as(usize, 4736),
+        @sizeOf([Composer.candidate_plan_limit]Composer.SourcePlan) +
             @sizeOf(usize) +
             @sizeOf([Composer.candidate_placement_limit]Composer.Placement) +
             @sizeOf(usize),
     );
     try std.testing.expectEqual(
-        @as(usize, 19_840),
-        3456 + 2048 * @sizeOf(u64),
+        @as(usize, 21_120),
+        4736 + 2048 * @sizeOf(u64),
     );
 }
 

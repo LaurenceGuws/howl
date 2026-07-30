@@ -1090,6 +1090,271 @@ test "composer atomic candidate commits seventeen sources once" {
     try std.testing.expectEqual(revision, unchanged.revision);
 }
 
+test "composer hidden clears fund sixteen incoming sources and changed chrome" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 33,
+        .retained_resources = 16,
+        .retained_commands = 17,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 17,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    var outgoing: [16]canvas.SourceId = undefined;
+    var incoming: [16]canvas.SourceId = undefined;
+    var outgoing_placements: [16]canvas.Composer.Placement = undefined;
+    var incoming_placements: [17]canvas.Composer.Placement = undefined;
+    var outgoing_uploads: [16]canvas.ResourceUpload = undefined;
+    var incoming_uploads: [16]canvas.ResourceUpload = undefined;
+    var outgoing_commands: [16]canvas.Input = undefined;
+    var incoming_commands: [16]canvas.Input = undefined;
+    var changes: [17]canvas.Composer.SourceChange = undefined;
+    var pixels: [32]u8 = undefined;
+
+    for (0..16) |index| {
+        outgoing[index] = try composer.registerSource();
+        incoming[index] = try composer.registerSource();
+        const outgoing_ref = try local(1, 1);
+        pixels[index] = @intCast(index + 1);
+        outgoing_uploads[index] = .{
+            .resource = outgoing_ref,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = pixels[index..][0..1],
+                .width = 1,
+                .height = 1,
+                .stride = 1,
+            },
+        };
+        outgoing_commands[index] = sharedAlphaCommand(outgoing_ref, 1, 1);
+        try composer.apply(outgoing[index], .{
+            .revision = @fromBackingInt(1),
+            .uploads = outgoing_uploads[index..][0..1],
+            .removals = &.{},
+            .commands = outgoing_commands[index..][0..1],
+        });
+        outgoing_placements[index] = placement(outgoing[index], 0);
+
+        const incoming_ref = try local(1, 1);
+        pixels[16 + index] = @intCast(0x80 + index);
+        incoming_uploads[index] = .{
+            .resource = incoming_ref,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = pixels[16 + index ..][0..1],
+                .width = 1,
+                .height = 1,
+                .stride = 1,
+            },
+        };
+        incoming_commands[index] = sharedAlphaCommand(incoming_ref, 1, 1);
+        changes[index] = .{
+            .source = incoming[index],
+            .update = .{
+                .revision = @fromBackingInt(1),
+                .uploads = incoming_uploads[index..][0..1],
+                .removals = &.{},
+                .commands = incoming_commands[index..][0..1],
+            },
+        };
+        incoming_placements[index] = placement(incoming[index], 0);
+    }
+    try composer.setComposition(.{
+        .surface = .{ .width = 1, .height = 1 },
+        .sources = &outgoing_placements,
+    });
+    const chrome = try composer.registerSource();
+    const chrome_command = solidInput(white);
+    changes[16] = .{
+        .source = chrome,
+        .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{chrome_command},
+        },
+    };
+    incoming_placements[16] = placement(chrome, 0);
+
+    var frame_uploads: [16]canvas.ResourceUploadFact = undefined;
+    var frame_removals: [16]canvas.FrameResourceRef = undefined;
+    var frame_commands: [17]canvas.Command = undefined;
+    var frame_pixels: [16]u8 = undefined;
+    const before = try composer.frame(&.{}, .{
+        .uploads = &frame_uploads,
+        .removals = &frame_removals,
+        .commands = &frame_commands,
+        .pixels = &frame_pixels,
+    });
+    try std.testing.expectError(error.ResourceLimit, composer.applyCandidate(.{
+        .changes = &changes,
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &incoming_placements,
+        },
+    }));
+    const rejected = try composer.frame(&.{}, .{
+        .uploads = &frame_uploads,
+        .removals = &frame_removals,
+        .commands = &frame_commands,
+        .pixels = &frame_pixels,
+    });
+    try std.testing.expectEqual(before.revision, rejected.revision);
+
+    try composer.applyCandidate(.{
+        .changes = &changes,
+        .hidden_source_clears = &outgoing,
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &incoming_placements,
+        },
+    });
+    const accepted = try composer.frame(&.{}, .{
+        .uploads = &frame_uploads,
+        .removals = &frame_removals,
+        .commands = &frame_commands,
+        .pixels = &frame_pixels,
+    });
+    try std.testing.expectEqual(
+        @backingInt(before.revision) + 1,
+        @backingInt(accepted.revision),
+    );
+
+    const reveal_command = solidInput(red);
+    var reveal_placements = incoming_placements;
+    reveal_placements[0] = placement(outgoing[0], 0);
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = outgoing[0], .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{reveal_command},
+        } }},
+        .hidden_source_clears = &.{incoming[0]},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &reveal_placements,
+        },
+    });
+}
+
+test "composer hidden clear validation preserves retained frame and remains reusable" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 3,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const visible = try composer.registerSource();
+    const hidden = try composer.registerSource();
+    const retired = try composer.registerSource();
+    const command = solidInput(white);
+    try composer.apply(visible, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+    });
+    const visible_placement = placement(visible, 0);
+    try composer.setComposition(.{
+        .surface = .{ .width = 1, .height = 1 },
+        .sources = &.{visible_placement},
+    });
+    try composer.removeSource(retired);
+    var uploads: [1]canvas.ResourceUploadFact = undefined;
+    var removals: [1]canvas.FrameResourceRef = undefined;
+    var commands: [1]canvas.Command = undefined;
+    var pixels: [1]u8 = undefined;
+    const before = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+
+    const invalid = [_]canvas.Composer.Candidate{
+        .{
+            .changes = &.{},
+            .hidden_source_clears = &.{ visible, visible },
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{},
+            },
+        },
+        .{
+            .changes = &.{},
+            .hidden_source_clears = &.{hidden},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{},
+            },
+        },
+        .{
+            .changes = &.{.{ .source = visible, .update = .{
+                .revision = @fromBackingInt(2),
+                .uploads = &.{},
+                .removals = &.{},
+                .commands = &.{command},
+            } }},
+            .hidden_source_clears = &.{visible},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{},
+            },
+        },
+        .{
+            .changes = &.{},
+            .hidden_source_clears = &.{retired},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{},
+            },
+        },
+        .{
+            .changes = &.{},
+            .hidden_source_clears = &.{visible},
+            .composition = .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{visible_placement},
+            },
+        },
+    };
+    const expected = [_]canvas.Composer.Error{
+        error.DuplicateSource,
+        error.InvalidSource,
+        error.DuplicateSource,
+        error.RetiredSource,
+        error.DuplicateSource,
+    };
+    for (invalid, expected) |candidate, failure| {
+        try std.testing.expectError(failure, composer.applyCandidate(candidate));
+        const after = try composer.frame(&.{}, .{
+            .uploads = &uploads,
+            .removals = &removals,
+            .commands = &commands,
+            .pixels = &pixels,
+        });
+        try std.testing.expectEqual(before.revision, after.revision);
+        try std.testing.expectEqualDeep(before.commands, after.commands);
+    }
+
+    try composer.applyCandidate(.{
+        .changes = &.{},
+        .hidden_source_clears = &.{visible},
+        .composition = .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{},
+        },
+    });
+}
+
 test "composer atomic candidate admits early growth balanced by later shrink at full capacity" {
     var composer = try canvas.Composer.init(std.testing.allocator, .{
         .sources = 2,
