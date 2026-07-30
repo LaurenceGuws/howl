@@ -99,6 +99,7 @@ const WorkBuffers = struct {
     inputs: []Draw,
     cursor_glyphs: []u16,
     image_order: []u16,
+    borrowed_decoration_leads: []u16,
     decoration_pixels: []u8,
     text: if (features.native_text) text.NativeScratch else void,
 };
@@ -248,6 +249,7 @@ pub const Content = struct {
         draws: []Draw,
         cursor_indices: []u16,
         image_indices: []u16,
+        borrowed_decoration_leads: []u16,
         decoration_pixels: []u8,
         canvas_inputs: []canvas.Input,
         uploads: []canvas.ResourceUpload,
@@ -268,6 +270,9 @@ pub const Content = struct {
             errdefer allocator.free(cursor_indices);
             const image_indices = allocator.alloc(u16, limits.placements) catch return error.OutOfMemory;
             errdefer allocator.free(image_indices);
+            const borrowed_decoration_leads = allocator.alloc(u16, limits.cells) catch
+                return error.OutOfMemory;
+            errdefer allocator.free(borrowed_decoration_leads);
             const decoration_pixels = allocator.alloc(u8, limits.decoration_bytes) catch return error.OutOfMemory;
             errdefer allocator.free(decoration_pixels);
             const canvas_inputs = allocator.alloc(canvas.Input, limits.commands) catch return error.OutOfMemory;
@@ -284,6 +289,7 @@ pub const Content = struct {
                 .draws = draws,
                 .cursor_indices = cursor_indices,
                 .image_indices = image_indices,
+                .borrowed_decoration_leads = borrowed_decoration_leads,
                 .decoration_pixels = decoration_pixels,
                 .canvas_inputs = canvas_inputs,
                 .uploads = uploads,
@@ -324,6 +330,7 @@ pub const Content = struct {
             self.allocator.free(self.uploads);
             self.allocator.free(self.canvas_inputs);
             self.allocator.free(self.decoration_pixels);
+            self.allocator.free(self.borrowed_decoration_leads);
             self.allocator.free(self.image_indices);
             self.allocator.free(self.cursor_indices);
             self.allocator.free(self.draws);
@@ -331,7 +338,8 @@ pub const Content = struct {
         }
 
         fn accepts(self: *const Work, limits: Limits) bool {
-            return self.limits.commands >= limits.commands and
+            return self.limits.cells >= limits.cells and
+                self.limits.commands >= limits.commands and
                 self.limits.placements >= limits.placements and
                 self.limits.decoration_bytes >= limits.decoration_bytes and
                 self.limits.resources_per_update >= limits.resources_per_update and
@@ -810,6 +818,7 @@ pub const Content = struct {
                 .inputs = work.draws,
                 .cursor_glyphs = work.cursor_indices,
                 .image_order = work.image_indices,
+                .borrowed_decoration_leads = work.borrowed_decoration_leads,
                 .decoration_pixels = work.decoration_pixels,
                 .text = if (features.native_text) .{
                     .shaper = &work.native_shape_owner,
@@ -825,6 +834,17 @@ pub const Content = struct {
             .upload_bytes = &upload_bytes,
         };
         try validatePane(build.input);
+        const cell_count = std.math.mul(
+            usize,
+            build.input.projection.rows,
+            build.input.projection.cols,
+        ) catch return error.ArithmeticOverflow;
+        if (cell_count > build.buffers.borrowed_decoration_leads.len)
+            return error.WorkTooSmall;
+        @memset(
+            build.buffers.borrowed_decoration_leads[0..cell_count],
+            std.math.maxInt(u16),
+        );
         try build.backgrounds();
         try build.orderImages();
         try build.imagesFor(false);
@@ -1596,13 +1616,17 @@ const Build = struct {
                     switch (run.glyphs) {
                         .none => {},
                         .generated => |glyph_value| try self.glyph(row, run, glyph_value),
-                        .native => |glyph_values| for (glyph_values) |glyph_value|
+                        .native => |glyph_values| if (run.borrowed_blank_span)
+                            try self.borrowedGlyphs(row, run, glyph_values)
+                        else for (glyph_values) |glyph_value|
                             try self.glyph(row, run, glyph_value),
                     }
                 } else if (comptime features.native_text) {
                     switch (run.glyphs) {
                         .none => {},
-                        .native => |glyph_values| for (glyph_values) |glyph_value|
+                        .native => |glyph_values| if (run.borrowed_blank_span)
+                            try self.borrowedGlyphs(row, run, glyph_values)
+                        else for (glyph_values) |glyph_value|
                             try self.glyph(row, run, glyph_value),
                     }
                 } else {
@@ -1616,11 +1640,81 @@ const Build = struct {
         }
     }
 
+    fn borrowedGlyphs(
+        self: *Build,
+        row: usize,
+        run: text.PreparedRun,
+        values: []const text.PositionedGlyph,
+    ) Content.TakeError!void {
+        const shift = try self.borrowedGlyphShift(run, values);
+        const row_offset = std.math.mul(
+            usize,
+            row,
+            self.input.projection.cols,
+        ) catch return error.ArithmeticOverflow;
+        var col = run.first_cell + 1;
+        while (col < run.end_cell) : (col += 1) {
+            const index = std.math.add(usize, row_offset, col) catch
+                return error.ArithmeticOverflow;
+            self.buffers.borrowed_decoration_leads[index] = run.first_cell;
+        }
+        for (values) |value|
+            try self.glyphShifted(row, run, value, shift);
+    }
+
+    fn borrowedGlyphShift(
+        self: *Build,
+        run: text.PreparedRun,
+        values: []const text.PositionedGlyph,
+    ) Content.TakeError!i64 {
+        if (values.len == 0 or run.end_cell <= run.first_cell + 1) return 0;
+        var left: ?i64 = null;
+        var right: ?i64 = null;
+        for (values) |value| {
+            const raster = try self.content.glyph(
+                self.work,
+                self.allocator,
+                self.fonts,
+                self.producer,
+                value.key,
+                self.upload_count,
+                self.upload_bytes,
+            );
+            if (raster.width == 0 or raster.height == 0) continue;
+            const glyph_left = std.math.add(
+                i64,
+                @divFloor(value.x_26_6, 64),
+                raster.left,
+            ) catch return error.ArithmeticOverflow;
+            const glyph_right = std.math.add(i64, glyph_left, raster.width) catch
+                return error.ArithmeticOverflow;
+            left = if (left) |current| @min(current, glyph_left) else glyph_left;
+            right = if (right) |current| @max(current, glyph_right) else glyph_right;
+        }
+        const rendered_left = left orelse return 0;
+        return borrowedCenterShift(
+            rendered_left,
+            right.?,
+            run.end_cell - run.first_cell,
+            self.input.geometry.metrics.width_px,
+        );
+    }
+
     fn glyph(
         self: *Build,
         row: usize,
         run: text.PreparedRun,
         value: text.PositionedGlyph,
+    ) Content.TakeError!void {
+        try self.glyphShifted(row, run, value, 0);
+    }
+
+    fn glyphShifted(
+        self: *Build,
+        row: usize,
+        run: text.PreparedRun,
+        value: text.PositionedGlyph,
+        horizontal_shift: i64,
     ) Content.TakeError!void {
         const cached = try self.content.glyph(
             self.work,
@@ -1637,6 +1731,7 @@ const Build = struct {
             run,
             value,
             cached,
+            horizontal_shift,
         );
         if (destination.width == 0 or destination.height == 0) return;
         if (run.sizing.width > 1 or run.sizing.height > 1) {
@@ -1663,7 +1758,10 @@ const Build = struct {
                 destination,
                 clip,
                 cached,
-                color(self.cell(row, col).foreground),
+                color(self.cell(
+                    row,
+                    if (run.borrowed_blank_span) value.source_start else col,
+                ).foreground),
             ));
             if (self.cursorCovers(row, col, col + 1))
                 try self.rememberCursorGlyph(index);
@@ -1676,6 +1774,7 @@ const Build = struct {
         run: text.PreparedRun,
         value: text.PositionedGlyph,
         raster: *const GlyphEntry,
+        horizontal_shift: i64,
     ) Content.TakeError!canvas.Rect {
         const metrics = self.input.geometry.metrics;
         const base_x = std.math.add(
@@ -1685,7 +1784,12 @@ const Build = struct {
             @divFloor(value.x_26_6, 64),
         ) catch
             return error.ArithmeticOverflow;
-        const placed_x = std.math.add(i64, base_x, raster.left) catch
+        const placed_x = std.math.add(
+            i64,
+            std.math.add(i64, base_x, raster.left) catch
+                return error.ArithmeticOverflow,
+            horizontal_shift,
+        ) catch
             return error.ArithmeticOverflow;
         const placed_y = std.math.sub(
             i64,
@@ -1744,9 +1848,11 @@ const Build = struct {
             var col: usize = 0;
             while (col < self.input.projection.cols) : (col += 1) {
                 const cell_value = self.cell(row, col);
+                const decoration_source = self.decorationSource(row, col);
+                const decoration_cell = self.cell(row, decoration_source);
                 if (cell_value.sizing.x != 0 or cell_value.sizing.y != 0) continue;
                 if (cell_value.underline and cell_value.underline_style != .none)
-                    try self.underline(row, col, cell_value);
+                    try self.underline(row, col, cell_value, decoration_cell.underline_color);
                 if (cell_value.strikethrough) {
                     const rect = try self.decorationRect(
                         row,
@@ -1767,7 +1873,7 @@ const Build = struct {
                     try self.append(.{ .solid = .{
                         .rect = rect,
                         .clip = clip,
-                        .color = color(cell_value.foreground),
+                        .color = color(decoration_cell.foreground),
                     } });
                 }
             }
@@ -1779,6 +1885,7 @@ const Build = struct {
         row: usize,
         col: usize,
         cell_value: Cell,
+        underline_color: projection.Rgb,
     ) Content.TakeError!void {
         const line = try self.decorationRect(
             row,
@@ -1801,7 +1908,7 @@ const Build = struct {
             .single => try self.append(.{ .solid = .{
                 .rect = line,
                 .clip = clip,
-                .color = color(cell_value.underline_color),
+                .color = color(underline_color),
             } }),
             .double => {
                 const upper_offset = self.input.geometry.underline_y -|
@@ -1816,15 +1923,20 @@ const Build = struct {
                 try self.append(.{ .solid = .{
                     .rect = upper,
                     .clip = clip,
-                    .color = color(cell_value.underline_color),
+                    .color = color(underline_color),
                 } });
                 try self.append(.{ .solid = .{
                     .rect = line,
                     .clip = clip,
-                    .color = color(cell_value.underline_color),
+                    .color = color(underline_color),
                 } });
             },
-            .curly, .dotted, .dashed => try self.patternUnderline(line, clip, cell_value),
+            .curly, .dotted, .dashed => try self.patternUnderline(
+                line,
+                clip,
+                cell_value,
+                underline_color,
+            ),
         }
     }
 
@@ -1833,6 +1945,7 @@ const Build = struct {
         line: canvas.Rect,
         clip: canvas.Rect,
         cell_value: Cell,
+        underline_color: projection.Rgb,
     ) Content.TakeError!void {
         const unit = @max(@as(u16, 1), line.height);
         const pattern_height = std.math.add(u16, line.height, unit) catch
@@ -1886,7 +1999,7 @@ const Build = struct {
             .clip = clip,
             .resource = mask.resource,
             .size = .{ .width = line.width, .height = pattern_height },
-            .color = color(cell_value.underline_color),
+            .color = color(underline_color),
         } });
     }
 
@@ -1969,6 +2082,13 @@ const Build = struct {
 
     fn cell(self: *const Build, row: usize, col: usize) Cell {
         return self.input.projection.cells[row * self.input.projection.cols + col];
+    }
+
+    fn decorationSource(self: *const Build, row: usize, col: usize) usize {
+        const value = self.buffers.borrowed_decoration_leads[
+            row * self.input.projection.cols + col
+        ];
+        return if (value == std.math.maxInt(u16)) col else value;
     }
 
     fn rowCells(self: *const Build, row: usize) []const Cell {
@@ -2408,6 +2528,58 @@ fn i32Coordinate(value: i64) Content.TakeError!i32 {
     if (value < std.math.minInt(i32) or value > std.math.maxInt(i32))
         return error.ArithmeticOverflow;
     return @intCast(value);
+}
+
+fn borrowedCenterShift(
+    rendered_left: i64,
+    rendered_right: i64,
+    span_cells: u16,
+    cell_width: u16,
+) Content.TakeError!i64 {
+    if (span_cells <= 1 or rendered_right <= rendered_left) return 0;
+    const rendered_width = std.math.sub(i64, rendered_right, rendered_left) catch
+        return error.ArithmeticOverflow;
+    const span_width = std.math.mul(i64, span_cells, cell_width) catch
+        return error.ArithmeticOverflow;
+    if (rendered_width >= span_width) return 0;
+    const half = @divFloor(span_width - rendered_width, 2);
+    if (half <= 1 or rendered_left >= half) return 0;
+    return std.math.sub(i64, half, rendered_left) catch
+        return error.ArithmeticOverflow;
+}
+
+test "borrowed symbol centering follows factual raster bounds" {
+    try std.testing.expectEqual(
+        @as(i64, 3),
+        try borrowedCenterShift(0, 18, 3, 8),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 5),
+        try borrowedCenterShift(-2, 16, 3, 8),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 1),
+        try borrowedCenterShift(2, 20, 3, 8),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        try borrowedCenterShift(4, 22, 3, 8),
+    );
+}
+
+test "borrowed symbol centering requires more than one pixel half-space" {
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        try borrowedCenterShift(0, 22, 3, 8),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 2),
+        try borrowedCenterShift(0, 20, 3, 8),
+    );
+    try std.testing.expectEqual(
+        @as(i64, 0),
+        try borrowedCenterShift(0, 6, 1, 8),
+    );
 }
 
 test "local resource identity exhaustion rejects before counter mutation" {

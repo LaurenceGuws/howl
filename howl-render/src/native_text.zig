@@ -65,6 +65,14 @@ pub const RasterError = error{
     InvalidPlacement,
 };
 
+/// Names exact failures while measuring one selected glyph for symbol span.
+pub const GlyphWidthError = error{
+    FontState,
+    InvalidRaster,
+    GlyphLoad,
+    InvalidMetrics,
+};
+
 /// Owns one normalized positive rational factual DPI value.
 pub const Dpi = struct {
     numerator: u32,
@@ -380,6 +388,45 @@ pub const FontSet = struct {
         return @intCast(index);
     }
 
+    /// Returns Kitty-compatible loaded bitmap width when present, otherwise
+    /// the truncated horizontal glyph metric width in pixels.
+    pub fn glyphWidth(
+        self: *FontSet,
+        face_index: u8,
+        glyph_id: u32,
+    ) GlyphWidthError!u16 {
+        if (!self.usable) return error.FontState;
+        if (face_index >= self.faces.len or glyph_id == 0)
+            return error.InvalidRaster;
+        const face = self.faces[face_index].ft;
+        if (c.FT_Load_Glyph(face, glyph_id, c.FT_LOAD_DEFAULT) != 0)
+            return error.GlyphLoad;
+        const slot = face.*.glyph orelse return error.InvalidMetrics;
+        const width = if (slot.*.bitmap.width != 0)
+            slot.*.bitmap.width
+        else blk: {
+            const metric_width = @field(slot.*, "metrics").width;
+            if (metric_width < 0) return error.InvalidMetrics;
+            break :blk @divTrunc(metric_width, 64);
+        };
+        if (width < 0 or width > std.math.maxInt(u16))
+            return error.InvalidMetrics;
+        return @intCast(width);
+    }
+
+    /// Returns the exact selected-face glyph for one Unicode scalar.
+    pub fn glyphForCodepoint(
+        self: *FontSet,
+        face_index: u8,
+        codepoint: u21,
+    ) GlyphWidthError!u32 {
+        if (!self.usable) return error.FontState;
+        if (face_index >= self.faces.len) return error.InvalidRaster;
+        const glyph = c.FT_Get_Char_Index(self.faces[face_index].ft, codepoint);
+        if (glyph == 0) return error.InvalidRaster;
+        return glyph;
+    }
+
     /// Exclusively borrows one native face and rasterizes monochrome or gray
     /// coverage into the requested pixel width. Scalable glyphs wider than
     /// that width are proportionally rerendered, while fixed bitmaps are
@@ -399,9 +446,10 @@ pub const FontSet = struct {
         const face = self.faces[face_index].ft;
         var raster = try rasterizeFace(allocator, face, glyph_id);
         errdefer raster.deinit();
-        if (raster.width <= maximum_width_px) return raster;
 
-        if (face.*.face_flags & c.FT_FACE_FLAG_SCALABLE != 0) {
+        if (raster.width > maximum_width_px and
+            face.*.face_flags & c.FT_FACE_FLAG_SCALABLE != 0)
+        {
             try setFittedSize(face, self.size, maximum_width_px, raster.width);
             const fit_result = rasterizeFace(allocator, face, glyph_id);
             const restore_error = restoreConfiguredSize(face, self.size);
@@ -1378,6 +1426,43 @@ test "native raster honors an arbitrary pixel bound" {
     try std.testing.expect(raster.left >= 0);
     try std.testing.expect(
         @as(u32, @intCast(raster.left)) + raster.width <= 7,
+    );
+}
+
+test "one-cell native raster shifts a positive bearing inside its canvas" {
+    const fonts = @import("test_fonts");
+    var set = try FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .size = .{ .points = .{
+            .points = 16.0,
+            .dpi_x = .{ .numerator = 768, .denominator = 5 },
+            .dpi_y = .{ .numerator = 768, .denominator = 5 },
+        } },
+    });
+    defer set.deinit();
+    const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf460);
+    var native = try rasterizeFace(
+        std.testing.allocator,
+        set.faces[0].ft,
+        glyph_id,
+    );
+    defer native.deinit();
+    try std.testing.expectEqual(@as(u16, 13), native.width);
+    try std.testing.expectEqual(@as(i16, 12), native.left);
+    try std.testing.expectEqual(@as(u16, 17), set.metrics.advance_width);
+
+    var placed = try set.rasterize(
+        std.testing.allocator,
+        0,
+        glyph_id,
+        set.metrics.advance_width,
+    );
+    defer placed.deinit();
+    try std.testing.expectEqual(native.width, placed.width);
+    try std.testing.expectEqual(@as(i16, 4), placed.left);
+    try std.testing.expectEqual(
+        set.metrics.advance_width,
+        @as(u16, @intCast(placed.left)) + placed.width,
     );
 }
 

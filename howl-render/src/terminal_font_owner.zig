@@ -1328,6 +1328,16 @@ test "equal panes share one native group and one logical resource" {
     const second = try owner.intern(testResourceKey(7), try testFacts(&pixels));
     try std.testing.expectEqual(first, second);
     try std.testing.expectEqual(@as(u16, 2), owner.resources[0].pane_references);
+
+    var span_three = testResourceKey(8);
+    span_three.native.cell_span = 3;
+    const first_span = try owner.intern(span_three, try testFacts(&pixels));
+    const second_span = try owner.intern(span_three, try testFacts(&pixels));
+    try std.testing.expectEqual(first_span, second_span);
+    var span_two = span_three;
+    span_two.native.cell_span = 2;
+    const distinct_span = try owner.intern(span_two, try testFacts(&pixels));
+    try std.testing.expect(!std.meta.eql(first_span, distinct_span));
 }
 
 test "canonical point and factual DPI keys share exactly without collapse" {
@@ -1585,14 +1595,14 @@ test "fixed owner memory and declaration bounds are exact" {
     try std.testing.expectEqual(@as(usize, 16), batch_limit);
     try std.testing.expectEqual(@as(usize, 648), mutation_limit);
     try std.testing.expectEqual(@as(usize, 56), @sizeOf(SharedFontResourceKey));
-    try std.testing.expectEqual(@as(usize, 6200), @sizeOf(NativeGroup));
+    try std.testing.expectEqual(@as(usize, 6720), @sizeOf(NativeGroup));
     try std.testing.expectEqual(@as(usize, 104), @sizeOf(SharedResource));
     try std.testing.expectEqual(@as(usize, 20768), @sizeOf(Batch));
-    try std.testing.expectEqual(@as(usize, 1735680), @sizeOf(NativeGroup) * group_limit +
+    try std.testing.expectEqual(@as(usize, 1835520), @sizeOf(NativeGroup) * group_limit +
         @sizeOf(SharedResource) * resource_limit +
         @sizeOf(Batch) * batch_limit);
     try std.testing.expectEqual(
-        @as(usize, 1746152),
+        @as(usize, 1845992),
         @sizeOf(Owner) +
             @sizeOf(NativeGroup) * group_limit +
             @sizeOf(SharedResource) * resource_limit +

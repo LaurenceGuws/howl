@@ -546,6 +546,17 @@ fn runFallible(
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
                     try checkGpuBudget(surface.physical_width, surface.physical_height);
+                    var bootstrap_publication: ?PreparedBootstrapPublication =
+                        if (admitted.new_source != null)
+                            try prepareBootstrapPublication(
+                                &canvas_work,
+                                &admitted.candidate,
+                                admitted.bootstrap(),
+                            )
+                        else
+                            null;
+                    defer if (bootstrap_publication) |*publication|
+                        publication.deinit();
                     var local_retry_used = false;
                     const admission_result = retry: while (true) {
                         const result = try buildCanvasPlan(
@@ -574,17 +585,6 @@ fn runFallible(
                         .retry => return error.InvalidFrame,
                         .accepted => surface_residency.discard(),
                     }
-                    var bootstrap_publication: ?PreparedBootstrapPublication =
-                        if (admitted.new_source != null)
-                            try prepareBootstrapPublication(
-                                &canvas_work,
-                                &admitted.candidate,
-                                admitted.bootstrap(),
-                            )
-                        else
-                            null;
-                    defer if (bootstrap_publication) |*publication|
-                        publication.deinit();
                     const replacement = 1 - active_ring;
                     for (&rings[replacement]) |*slot| slot.* = .{};
                     var replacement_offers: [shared.slot_count]shared.SlotOffer = undefined;
@@ -1563,6 +1563,10 @@ fn buildCanvasPlan(
                     .sources = placements[0..placement_count],
                 },
                 claimed_visible_revision,
+                if (bootstrap != null and !retry_superseded)
+                    .bootstrap_replacement
+                else
+                    .ordinary,
             ) catch |failure| switch (failure) {
                 error.ResourceLimit,
                 error.CommandLimit,
@@ -3218,15 +3222,17 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try std.testing.expectEqual(@as(u8, 0), work.visible_count);
     const local_retry_turn = local_retry_pending;
     local_retry_pending = false;
-    const exact = try buildCanvasPlan(
-        &work,
-        &topology_b,
-        revision_b,
-        .{ .pane = replacement_pane, .source = replacement_source },
-        chrome_appearance,
-        &primitives,
-        &text,
-    );
+    var before_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var before_removals: [32]render_api.canvas.FrameResourceRef = undefined;
+    var before_commands: [256]render_api.canvas.Command = undefined;
+    var before_pixels: [64 * 1024]u8 = undefined;
+    const before_frame = try composer.frame(&.{}, .{
+        .uploads = &before_uploads,
+        .removals = &before_removals,
+        .commands = &before_commands,
+        .pixels = &before_pixels,
+    });
+    const before_visible = terminals.acceptedVisibleSet();
     const next_visible_revision = work.next_visible_revision;
     work.next_visible_revision = std.math.maxInt(u64);
     try std.testing.expectError(
@@ -3247,6 +3253,25 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         @as(usize, 1),
         retained_topology.paneCount(0),
     );
+    var after_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var after_removals: [32]render_api.canvas.FrameResourceRef = undefined;
+    var after_commands: [256]render_api.canvas.Command = undefined;
+    var after_pixels: [64 * 1024]u8 = undefined;
+    const after_frame = try composer.frame(&.{}, .{
+        .uploads = &after_uploads,
+        .removals = &after_removals,
+        .commands = &after_commands,
+        .pixels = &after_pixels,
+    });
+    try std.testing.expectEqual(before_frame.revision, after_frame.revision);
+    try std.testing.expectEqualDeep(before_frame.uploads, after_frame.uploads);
+    try std.testing.expectEqualDeep(before_frame.removals, after_frame.removals);
+    try std.testing.expectEqualDeep(before_frame.commands, after_frame.commands);
+    try std.testing.expectEqualSlices(u8, before_frame.pixels, after_frame.pixels);
+    try std.testing.expectEqualDeep(
+        before_visible,
+        terminals.acceptedVisibleSet(),
+    );
     work.next_visible_revision = next_visible_revision;
     var replacement_publication = try prepareBootstrapPublication(
         &work,
@@ -3254,6 +3279,15 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         replacement_pending.bootstrap(),
     );
     defer replacement_publication.deinit();
+    const exact = try buildCanvasPlan(
+        &work,
+        &topology_b,
+        revision_b,
+        .{ .pane = replacement_pane, .source = replacement_source },
+        chrome_appearance,
+        &primitives,
+        &text,
+    );
     switch (exact) {
         .blocked => return error.TestUnexpectedResult,
         .retry => return error.TestUnexpectedResult,
@@ -3494,6 +3528,19 @@ fn redrawChrome(
     const candidate = if (pending) |value| value.candidate else topology.*;
     const topology_revision = if (pending) |value| value.revision else null;
     try validateTerminalTopology(&candidate);
+    var bootstrap_publication: ?PreparedBootstrapPublication =
+        if (pending) |value|
+            if (value.new_source != null)
+                try prepareBootstrapPublication(
+                    canvas_work,
+                    &candidate,
+                    value.bootstrap(),
+                )
+            else
+                null
+        else
+            null;
+    defer if (bootstrap_publication) |*publication| publication.deinit();
     const plan_result = try buildCanvasPlan(
         canvas_work,
         &candidate,
@@ -3508,19 +3555,6 @@ fn redrawChrome(
         .retry => return .retry,
         .accepted => |plan| plan,
     };
-    var bootstrap_publication: ?PreparedBootstrapPublication =
-        if (pending) |value|
-            if (value.new_source != null)
-                try prepareBootstrapPublication(
-                    canvas_work,
-                    &candidate,
-                    value.bootstrap(),
-                )
-            else
-                null
-        else
-            null;
-    defer if (bootstrap_publication) |*publication| publication.deinit();
     const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
     if (!boundary.canPublishCompletion(generation))
         return error.CompletionUnavailable;

@@ -109,6 +109,14 @@ pub fn build(b: *std.Build) void {
             "../howl-render/testdata/primary.ttf",
         ) catch @panic("OOM"),
     );
+    terminal_runtime_facts.addOption(
+        []const u8,
+        "symbol_font_path",
+        b.root.joinString(
+            b.allocator,
+            "../howl-render/testdata/symbols.ttf",
+        ) catch @panic("OOM"),
+    );
     terminal_runtime.addImport(
         "terminal_runtime_facts",
         terminal_runtime_facts.createModule(),

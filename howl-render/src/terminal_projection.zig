@@ -56,6 +56,14 @@ pub const maximum_scalars: usize = howl_vt.scalar.maximum_scalars;
 /// Bounds trailing scalars retained directly with one lead cell.
 pub const max_combining: usize = howl_vt.scalar.inline_scalars - 1;
 
+/// Borrows pinned Unicode classification used after VT occupancy is complete.
+pub const UnicodeProperties = howl_vt.UnicodeProperties;
+
+/// Returns exact pinned Unicode facts without assigning cell occupancy.
+pub fn unicodeProperties(codepoint: u21) UnicodeProperties {
+    return howl_vt.unicodeProperties(codepoint);
+}
+
 /// Copies one resolved RGB color without terminal palette identity.
 pub const Rgb = struct {
     /// Stores the red component.

@@ -2622,6 +2622,7 @@ test "pool exhaustion preserves PTY progress and shared Work reuse" {
                 }},
             },
             null,
+            .ordinary,
         )).accepted,
     );
     for (reservations[1..]) |token| try boundary.cancelUpdate(token);
@@ -2959,7 +2960,10 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         contentLimits(),
     );
     defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.init(
+        std.testing.allocator,
+        facts.symbol_font_path,
+    );
     defer runtime.deinit();
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
         .sources = 2,
@@ -3013,8 +3017,8 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     const first = &runtime.owners[runtime.find(first_pane).?].?;
     const second = &runtime.owners[runtime.find(second_pane).?].?;
     try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
-    try std.testing.expect((try first.machine.feed("A")).state_changed);
-    try std.testing.expect((try second.machine.feed("A")).state_changed);
+    try std.testing.expect((try first.machine.feed("\u{f460}")).state_changed);
+    try std.testing.expect((try second.machine.feed("\u{f460}")).state_changed);
     first.dirty = true;
     second.dirty = true;
     const members = [_]handoff.VisibleMember{
@@ -3033,7 +3037,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     };
     try std.testing.expectEqual(
         @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, 1)).accepted,
+        (try boundary.applyCandidate(&composer, null, composition, 1, .ordinary)).accepted,
     );
     var uploads: [128]render.canvas.ResourceUploadFact = undefined;
     var removals: [128]render.canvas.FrameResourceRef = undefined;
@@ -3047,10 +3051,20 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     });
     var shared_uploads: usize = 0;
     var first_shared_identity: u64 = 0;
+    var first_shared_size: render.canvas.Size = undefined;
+    var first_shared_stride: usize = 0;
+    var first_shared_hash: u64 = 0;
     for (frame.uploads) |upload| {
         if (!upload.resource.resource.isShared()) continue;
         shared_uploads += 1;
         first_shared_identity = try upload.resource.resource.identity();
+        first_shared_size = upload.size;
+        first_shared_stride = upload.stride;
+        first_shared_hash = std.hash.Wyhash.hash(
+            0,
+            frame.pixels[upload.pixel_offset .. upload.pixel_offset +
+                upload.pixel_count],
+        );
     }
     try std.testing.expectEqual(@as(usize, 1), shared_uploads);
     var first_shared = false;
@@ -3084,6 +3098,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
             null,
             first_only,
             2,
+            .ordinary,
         )).accepted,
     );
     try runtime.reconcileAcceptedVisibility(&boundary);
@@ -3114,6 +3129,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
             null,
             composition,
             3,
+            .ordinary,
         )).accepted,
     );
     try runtime.reconcileAcceptedVisibility(&boundary);
@@ -3124,26 +3140,26 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         second.font_group.?,
     ));
 
-    try std.testing.expect((try first.machine.feed("\x08 \x20\x08")).state_changed);
-    try std.testing.expect((try second.machine.feed("\x08 \x20\x08")).state_changed);
+    try std.testing.expect((try first.machine.feed("\x1b[2J\x1b[H")).state_changed);
+    try std.testing.expect((try second.machine.feed("\x1b[2J\x1b[H")).state_changed);
     first.dirty = true;
     second.dirty = true;
     try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expect(try second.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expectEqual(
         @as(usize, 2),
-        (try boundary.drainReady(&composer)).accepted,
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
     );
 
-    try std.testing.expect((try first.machine.feed("A")).state_changed);
-    try std.testing.expect((try second.machine.feed("A")).state_changed);
+    try std.testing.expect((try first.machine.feed("\u{f460}")).state_changed);
+    try std.testing.expect((try second.machine.feed("\u{f460}")).state_changed);
     first.dirty = true;
     second.dirty = true;
     try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expect(try second.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expectEqual(
         @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null)).accepted,
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
     );
     const rebuilt = try composer.frame(&.{}, .{
         .uploads = &uploads,
@@ -3158,8 +3174,114 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         try std.testing.expect(
             try upload.resource.resource.identity() > first_shared_identity,
         );
+        try std.testing.expectEqual(first_shared_size, upload.size);
+        try std.testing.expectEqual(first_shared_stride, upload.stride);
+        try std.testing.expectEqual(
+            first_shared_hash,
+            std.hash.Wyhash.hash(
+                0,
+                rebuilt.pixels[upload.pixel_offset .. upload.pixel_offset +
+                    upload.pixel_count],
+            ),
+        );
     }
     try std.testing.expectEqual(@as(usize, 1), rebuilt_shared_uploads);
+
+    for ([_]*Logical{ first, second }) |owner| {
+        try std.testing.expect(
+            (try owner.machine.feed("\x1b[?1049h\x1b[3C\u{f460}")).state_changed,
+        );
+        owner.dirty = true;
+        try std.testing.expect(try owner.publishIfDirty(
+            &runtime.shared_fonts,
+            &runtime.work,
+        ));
+    }
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
+    );
+    for ([_]*Logical{ first, second }) |owner| {
+        try std.testing.expect(
+            (try owner.machine.feed("\x1b[?1049l")).state_changed,
+        );
+        owner.dirty = true;
+        try std.testing.expect(try owner.publishIfDirty(
+            &runtime.shared_fonts,
+            &runtime.work,
+        ));
+    }
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
+    );
+    const after_alternate = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &frame_pixels,
+    });
+    var alternate_icon_found = false;
+    for (after_alternate.uploads) |upload| {
+        if (!upload.resource.resource.isShared() or
+            !std.meta.eql(upload.size, first_shared_size) or
+            upload.stride != first_shared_stride)
+            continue;
+        if (std.hash.Wyhash.hash(
+            0,
+            after_alternate.pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
+        ) != first_shared_hash) continue;
+        alternate_icon_found = true;
+    }
+    try std.testing.expect(alternate_icon_found);
+
+    for ([_]*Logical{ first, second }) |owner| {
+        try std.testing.expect(
+            (try owner.machine.feed("\r\n\r\n\r\n")).state_changed,
+        );
+        owner.dirty = true;
+        try std.testing.expect(try owner.publishIfDirty(
+            &runtime.shared_fonts,
+            &runtime.work,
+        ));
+    }
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
+    );
+    for ([_]*Logical{ first, second }) |owner| {
+        try std.testing.expect(
+            (try owner.machine.feed("\x1b[2J\x1b[H\u{f460}")).state_changed,
+        );
+        owner.dirty = true;
+        try std.testing.expect(try owner.publishIfDirty(
+            &runtime.shared_fonts,
+            &runtime.work,
+        ));
+    }
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
+    );
+    const after_scroll = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &frame_pixels,
+    });
+    var scrolled_icon_found = false;
+    for (after_scroll.uploads) |upload| {
+        if (!upload.resource.resource.isShared() or
+            !std.meta.eql(upload.size, first_shared_size) or
+            upload.stride != first_shared_stride)
+            continue;
+        if (std.hash.Wyhash.hash(
+            0,
+            after_scroll.pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
+        ) != first_shared_hash) continue;
+        scrolled_icon_found = true;
+    }
+    try std.testing.expect(scrolled_icon_found);
 
     const second_group_before = second.font_group.?;
     const second_fonts_before = second.fonts;

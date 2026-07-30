@@ -132,6 +132,8 @@ pub const PreparedRun = struct {
     geometry: terminal.LineGeometry,
     /// Preserves ordinary or Kitty multicell sizing for draw preparation.
     sizing: terminal.TextSizing,
+    /// Uses the lead-cell foreground across Kitty-borrowed blank clips.
+    borrowed_blank_span: bool = false,
     /// Borrows native scratch output, stores one generated glyph, or has no glyph.
     glyphs: PreparedGlyphs,
 };
@@ -180,7 +182,81 @@ pub const FontConfig = if (features.native_text) struct {
     key: FontKey,
     /// Borrows native paths for construction only.
     native: native.Config,
+    /// Supplies the complete unordered narrow-symbol configuration once on
+    /// the default normal tuple; other tuples must leave it empty.
+    narrow_symbols: []const NarrowSymbolRange = &.{},
 } else void;
+
+/// Bounds normalized narrow-symbol ranges in one immutable font generation.
+pub const max_narrow_symbol_ranges: usize = 64;
+
+/// Supplies one inclusive Unicode range and its nonzero presentation-cell cap.
+pub const NarrowSymbolRange = packed struct(u64) {
+    /// Identifies the first included Unicode scalar.
+    first: u21,
+    /// Identifies the last included Unicode scalar.
+    last: u21,
+    /// Caps presentation to this nonzero number of cells.
+    cells: u22,
+};
+
+const NarrowSymbols = struct {
+    ranges: [max_narrow_symbol_ranges]NarrowSymbolRange = undefined,
+    count: u7 = 0,
+
+    fn init(input: []const NarrowSymbolRange) FontMapInitError!NarrowSymbols {
+        for (input) |range| try validateNarrowRange(range);
+        for (input, 0..) |left, left_index| {
+            for (input[left_index + 1 ..]) |right| {
+                if (rangesOverlap(left, right) and
+                    canonicalNarrowRange(left).cells != canonicalNarrowRange(right).cells)
+                    return error.ConflictingNarrowSymbolRange;
+            }
+        }
+
+        var result = NarrowSymbols{};
+        while (true) {
+            var seed: ?NarrowSymbolRange = null;
+            for (input) |raw_range| {
+                const range = canonicalNarrowRange(raw_range);
+                if (containedByNormalized(result, range)) continue;
+                if (seed == null or rangeLessThan(range, seed.?)) seed = range;
+            }
+            var merged = seed orelse break;
+            var changed = true;
+            while (changed) {
+                changed = false;
+                for (input) |raw_range| {
+                    const range = canonicalNarrowRange(raw_range);
+                    if (range.cells != merged.cells or !rangesTouch(merged, range))
+                        continue;
+                    const next = NarrowSymbolRange{
+                        .first = @min(merged.first, range.first),
+                        .last = @max(merged.last, range.last),
+                        .cells = merged.cells,
+                    };
+                    if (!std.meta.eql(next, merged)) {
+                        merged = next;
+                        changed = true;
+                    }
+                }
+            }
+            if (result.count == max_narrow_symbol_ranges)
+                return error.TooManyNarrowSymbolRanges;
+            result.ranges[result.count] = merged;
+            result.count += 1;
+        }
+        return result;
+    }
+
+    fn cap(self: *const NarrowSymbols, codepoint: u21) ?u16 {
+        for (self.ranges[0..self.count]) |range| {
+            if (codepoint < range.first) return null;
+            if (codepoint <= range.last) return @intCast(range.cells);
+        }
+        return null;
+    }
+};
 
 /// Exact normalized factual DPI consumed by terminal native construction.
 pub const Dpi = if (features.native_text) native.Dpi else void;
@@ -195,6 +271,9 @@ pub const FontMapInitError = if (features.native_text)
         TooManyConfigurations,
         DuplicateConfiguration,
         MissingDefaultConfiguration,
+        InvalidNarrowSymbolRange,
+        ConflictingNarrowSymbolRange,
+        TooManyNarrowSymbolRanges,
     }
 else
     error{};
@@ -203,6 +282,8 @@ else
 pub const FontMap = if (features.native_text) struct {
     /// Owns each configured native tuple at its exact bounded key index.
     sets: [64]?native.FontSet,
+    /// Retains one normalized bounded range table for this immutable map.
+    narrow_symbols: NarrowSymbols,
 
     /// Validates every tuple before transactionally constructing native owners.
     pub fn init(
@@ -219,8 +300,18 @@ pub const FontMap = if (features.native_text) struct {
         const default_key = FontKey{ .slot = 0, .style = .normal };
         if (seen & (@as(u64, 1) << @intCast(default_key.index())) == 0)
             return error.MissingDefaultConfiguration;
+        var narrow_input: []const NarrowSymbolRange = &.{};
+        for (configs) |config| {
+            if (config.narrow_symbols.len == 0) continue;
+            if (!std.meta.eql(config.key, default_key) or narrow_input.len != 0)
+                return error.InvalidNarrowSymbolRange;
+            narrow_input = config.narrow_symbols;
+        }
 
-        var result = @This(){ .sets = @splat(null) };
+        var result = @This(){
+            .sets = @splat(null),
+            .narrow_symbols = try NarrowSymbols.init(narrow_input),
+        };
         errdefer result.deinit();
         for (configs) |config| {
             result.sets[config.key.index()] = try native.FontSet.init(allocator, config.native);
@@ -270,14 +361,57 @@ pub const FontMap = if (features.native_text) struct {
     fn get(self: *@This(), key: FontKey) ?*native.FontSet {
         return if (self.sets[key.index()]) |*set| set else null;
     }
+
+    fn narrowSymbolCap(self: *const @This(), codepoint: u21) ?u16 {
+        return self.narrow_symbols.cap(codepoint);
+    }
 } else opaque {};
+
+fn validateNarrowRange(range: NarrowSymbolRange) error{InvalidNarrowSymbolRange}!void {
+    if (range.first > range.last or range.cells == 0)
+        return error.InvalidNarrowSymbolRange;
+}
+
+fn canonicalNarrowRange(range: NarrowSymbolRange) NarrowSymbolRange {
+    var canonical = range;
+    canonical.cells = @min(canonical.cells, 5);
+    return canonical;
+}
+
+fn rangesOverlap(left: NarrowSymbolRange, right: NarrowSymbolRange) bool {
+    return left.first <= right.last and right.first <= left.last;
+}
+
+fn rangesTouch(left: NarrowSymbolRange, right: NarrowSymbolRange) bool {
+    if (rangesOverlap(left, right)) return true;
+    return @as(u32, left.last) + 1 == right.first or
+        @as(u32, right.last) + 1 == left.first;
+}
+
+fn rangeLessThan(left: NarrowSymbolRange, right: NarrowSymbolRange) bool {
+    if (left.first != right.first) return left.first < right.first;
+    if (left.last != right.last) return left.last < right.last;
+    return left.cells < right.cells;
+}
+
+fn containedByNormalized(
+    normalized: NarrowSymbols,
+    range: NarrowSymbolRange,
+) bool {
+    for (normalized.ranges[0..normalized.count]) |existing| {
+        if (existing.cells == range.cells and existing.first <= range.first and
+            existing.last >= range.last)
+            return true;
+    }
+    return false;
+}
 
 /// Reports exact span, metric, caller capacity, placement, configuration, or shaping failure.
 pub const PrepareError = error{
     InvalidSpan,
     InvalidMetrics,
 } || if (features.native_text)
-    native.ShapeError || error{
+    native.ShapeError || native.GlyphWidthError || error{
         InvalidPlacement,
         MissingFontConfiguration,
         InsufficientCodepoints,
@@ -312,6 +446,8 @@ pub fn prepareNextRunNative(
     scratch: NativeScratch,
 ) PrepareError!PreparedRun {
     comptime std.debug.assert(features.native_text);
+    try validateInput(input, start_cell);
+    if (try symbolRun(fonts, input, start_cell, scratch)) |run| return run;
     const bounds = try runBounds(input, start_cell);
     return switch (bounds.kind) {
         .none => noGlyphRun(input, bounds),
@@ -321,6 +457,151 @@ pub fn prepareNextRunNative(
             noGlyphRun(input, bounds),
         .native => |facts| nativeRun(fonts, input, start_cell, bounds, facts.font, scratch),
     };
+}
+
+const max_borrowed_symbol_cells: u16 = 4;
+
+fn symbolRun(
+    fonts: *FontMap,
+    input: RowInput,
+    cell_index: u16,
+    scratch: NativeScratch,
+) PrepareError!?PreparedRun {
+    const cell = input.cells[cell_index];
+    const kind = kindAt(cell);
+    const facts = switch (kind) {
+        .native => |value| value,
+        else => return null,
+    };
+    const set = fonts.get(facts.font) orelse
+        return error.MissingFontConfiguration;
+    var retained: [terminal.maximum_scalars]u32 = undefined;
+    const sequence = try cellScalars(input, cell_index, &retained);
+    const selected_face = (try set.faceFor(sequence)) orelse return null;
+    if (!eligibleSymbol(sequence, cell, selected_face)) return null;
+    if (sequence.len > scratch.codepoints.len or sequence.len > scratch.clusters.len)
+        return error.InsufficientCodepoints;
+    @memcpy(scratch.codepoints[0..sequence.len], sequence);
+    @memset(scratch.clusters[0..sequence.len], 0);
+    const shaped = try set.shape(scratch.shaper, .{
+        .codepoints = scratch.codepoints[0..sequence.len],
+        .clusters = scratch.clusters[0..sequence.len],
+    }, scratch.shaped);
+    if (shaped.glyphs.len == 0) return null;
+    const measured_glyph = try set.glyphForCodepoint(
+        shaped.face_index,
+        cell.codepoint,
+    );
+    const glyph_width = try set.glyphWidth(shaped.face_index, measured_glyph);
+    const desired_unbounded = std.math.divCeil(
+        u32,
+        glyph_width,
+        input.metrics.width_px,
+    ) catch return error.InvalidMetrics;
+    var desired: u16 = @intCast(@min(desired_unbounded, 5));
+    if (fonts.narrowSymbolCap(cell.codepoint)) |cap|
+        desired = @min(desired, cap);
+    if (desired <= 1) return null;
+
+    var borrowed: u16 = 0;
+    while (borrowed < max_borrowed_symbol_cells and borrowed + 1 < desired) {
+        const follower_index = std.math.add(
+            usize,
+            cell_index,
+            @as(usize, borrowed) + 1,
+        ) catch return error.InvalidSpan;
+        if (follower_index >= input.cells.len or
+            !borrowableBlank(input.cells[follower_index]))
+            break;
+        borrowed += 1;
+    }
+    if (borrowed == 0) return null;
+    const span = borrowed + 1;
+    const scalar_count = std.math.add(usize, sequence.len, borrowed) catch
+        return error.TextTooLong;
+    if (scalar_count > scratch.codepoints.len or
+        scalar_count > scratch.clusters.len)
+        return error.InsufficientClusters;
+    @memcpy(scratch.codepoints[0..sequence.len], sequence);
+    @memset(scratch.clusters[0..sequence.len], 0);
+    for (0..borrowed) |extra| {
+        const source = @as(usize, cell_index) + extra + 1;
+        scratch.codepoints[sequence.len + extra] = input.cells[source].codepoint;
+        scratch.clusters[sequence.len + extra] = @intCast(extra + 1);
+    }
+    const admitted_shape = try set.shape(scratch.shaper, .{
+        .codepoints = scratch.codepoints[0..scalar_count],
+        .clusters = scratch.clusters[0..scalar_count],
+    }, scratch.shaped);
+    var admitted_glyph_count: usize = 0;
+    while (admitted_glyph_count < admitted_shape.glyphs.len and
+        admitted_shape.glyphs[admitted_glyph_count].cluster == 0)
+        admitted_glyph_count += 1;
+    if (admitted_glyph_count == 0) return error.InvalidShapeResult;
+    if (admitted_glyph_count > scratch.positioned.len)
+        return error.InsufficientPositionedGlyphs;
+    const admitted_glyphs = admitted_shape.glyphs[0..admitted_glyph_count];
+    const positioned = scratch.positioned[0..admitted_glyph_count];
+    const cluster_ends = scratch.clusters[0..span];
+    @memset(cluster_ends, span);
+    @memcpy(scratch.codepoints[0..span], cluster_ends);
+    try positionNativeGlyphs(
+        admitted_glyphs,
+        span,
+        cell_index,
+        input.metrics.width_px,
+        facts.font,
+        admitted_shape.face_index,
+        scratch.codepoints[0..span],
+        scratch.clusters[0..span],
+        positioned,
+    );
+    return .{
+        .first_cell = cell_index,
+        .end_cell = cell_index + span,
+        .baseline = facts.baseline,
+        .geometry = input.geometry,
+        .sizing = facts.sizing,
+        .borrowed_blank_span = true,
+        .glyphs = .{ .native = positioned },
+    };
+}
+
+fn eligibleSymbol(sequence: []const u32, cell: terminal.Cell, face: u8) bool {
+    const first: u21 = @intCast(sequence[0]);
+    const properties = terminal.unicodeProperties(first);
+    const emoji_presentation = hasEmojiPresentation(sequence, cell, properties);
+    return face != 0 and !emoji_presentation and properties.isSymbol() or
+        properties.isPrivateUse() or
+        isNonEmojiDingbat(first, properties);
+}
+
+fn hasEmojiPresentation(
+    sequence: []const u32,
+    cell: terminal.Cell,
+    properties: terminal.UnicodeProperties,
+) bool {
+    if (cell.sizing.width <= 1 or !properties.isEmoji()) return false;
+    const text_presentation = properties.width() < 2;
+    return if (text_presentation)
+        sequence.len > 1 and sequence[1] == 0xfe0f
+    else
+        sequence.len == 1 or sequence[1] != 0xfe0e;
+}
+
+fn isNonEmojiDingbat(
+    codepoint: u21,
+    properties: terminal.UnicodeProperties,
+) bool {
+    return !properties.isEmoji() and
+        (codepoint >= 0x2700 and codepoint <= 0x27bf or
+            codepoint >= 0x1f100 and codepoint <= 0x1f1ff);
+}
+
+fn borrowableBlank(cell: terminal.Cell) bool {
+    return (cell.codepoint == 0x20 or cell.codepoint == 0x2002) and
+        cell.combining_len == 0 and cell.sizing.width == 1 and
+        cell.sizing.height == 1 and cell.sizing.x == 0 and cell.sizing.y == 0;
 }
 
 /// Discovers and prepares one generated/no-glyph run without native vocabulary.
@@ -459,12 +740,18 @@ fn nativeRun(
 ) PrepareError!PreparedRun {
     const set = fonts.get(font_key) orelse return error.MissingFontConfiguration;
     var selected_bounds = bounds;
+    if (selected_bounds.first < start_cell and
+        try symbolRun(fonts, input, selected_bounds.first, scratch) != null)
+        selected_bounds.first = start_cell;
     var selected_face: ?u8 = null;
     var selected_end: u16 = undefined;
     while (true) {
         selected_face = null;
         selected_end = selected_bounds.first;
         while (selected_end < bounds.end) : (selected_end += 1) {
+            if (selected_end > selected_bounds.first and
+                try symbolRun(fonts, input, selected_end, scratch) != null)
+                break;
             var coverage: [terminal.maximum_scalars]u32 = undefined;
             const sequence = try cellScalars(input, selected_end, &coverage);
             const face = try set.faceFor(sequence);

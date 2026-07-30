@@ -874,7 +874,8 @@ pub const Boundary = struct {
         revision: u64,
         committed: bool = false,
 
-        /// Replaces the prior request and wakes Runtime without further failure.
+        /// Accepts the empty bootstrap membership, replaces the prior request,
+        /// and wakes Runtime without further failure.
         pub fn commit(self: *PreparedVisibleSet) void {
             const boundary = self.boundary;
             boundary.mutex.lockUncancelable(boundary.io);
@@ -886,6 +887,13 @@ pub const Boundary = struct {
                         error.Stale => {},
                     };
             }
+            @memcpy(
+                boundary.visible_members[0..request.count],
+                request.members[0..request.count],
+            );
+            boundary.visible_member_count = request.count;
+            boundary.visible_revision = 0;
+            boundary.visible_initialized = true;
             boundary.visible_request = .{ .request = request };
             boundary.prepared_visible_request = null;
             boundary.mutex.unlock(boundary.io);
@@ -905,6 +913,13 @@ pub const Boundary = struct {
             boundary.mutex.unlock(boundary.io);
             self.committed = true;
         }
+    };
+
+    /// Qualifies whether one atomic candidate replaces accepted membership
+    /// with a lifecycle-owned empty bootstrap source.
+    pub const CandidateMode = enum {
+        ordinary,
+        bootstrap_replacement,
     };
 
     /// Validates and retains one invisible bootstrap request before Host commit.
@@ -1793,13 +1808,16 @@ pub const Boundary = struct {
     ///
     /// Every ready block is claimed before Composer preflight. Failure restores
     /// each exact block to ready; success releases each block and advances its
-    /// accepted revision. No claim survives this synchronous call.
+    /// accepted revision. Bootstrap replacement additionally clears outgoing
+    /// accepted sources before their prepared empty membership commits. No
+    /// claim survives this synchronous call.
     pub fn applyCandidate(
         self: *Boundary,
         composer: *canvas.Composer,
         chrome: ?canvas.Composer.SourceChange,
         composition: canvas.Composer.Composition,
         visible_revision: ?u64,
+        mode: CandidateMode,
     ) CandidateDrainError!CandidateDrainResult {
         var tokens: [visible_member_limit]pool_storage.Token = undefined;
         var token_count: usize = 0;
@@ -1820,6 +1838,19 @@ pub const Boundary = struct {
                 self.mutex.unlock(self.io);
                 return error.Stale;
             }
+            for (self.visible_members[0..self.visible_member_count]) |member| {
+                var retained = false;
+                for (composition.sources) |placement| {
+                    if (placement.source == member.source) {
+                        retained = true;
+                        break;
+                    }
+                }
+                if (retained) continue;
+                hidden_source_clears[hidden_source_clear_count] = member.source;
+                hidden_source_clear_count += 1;
+            }
+        } else if (mode == .bootstrap_replacement) {
             for (self.visible_members[0..self.visible_member_count]) |member| {
                 var retained = false;
                 for (composition.sources) |placement| {
@@ -2947,6 +2978,7 @@ test "atomic Composer candidate restores or releases every exact pool claim" {
             .sources = &placements,
         },
         null,
+        .ordinary,
     ));
     for (panes) |pane| {
         const entry = boundary.entries[boundary.find(pane).?].?;
@@ -2988,7 +3020,7 @@ test "atomic Composer candidate restores or releases every exact pool claim" {
     const result = try boundary.applyCandidate(&accepted, null, .{
         .surface = .{ .width = 2, .height = 1 },
         .sources = &placements,
-    }, 1);
+    }, 1, .ordinary);
     try std.testing.expectEqual(@as(usize, 2), result.accepted);
     try std.testing.expectEqual(
         VisibleSetStatus.stale,
@@ -3081,7 +3113,7 @@ test "atomic visible switch clears outgoing source and discards its ready update
                 .origin = .{ .x = 0, .y = 0 },
                 .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
             }},
-        }, 1)).accepted,
+        }, 1, .ordinary)).accepted,
     );
 
     const stale_outgoing = try boundary.reserveUpdate(outgoing);
@@ -3119,7 +3151,7 @@ test "atomic visible switch clears outgoing source and discards its ready update
                 .origin = .{ .x = 0, .y = 0 },
                 .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
             }},
-        }, 2)).accepted,
+        }, 2, .ordinary)).accepted,
     );
     const outgoing_entry = boundary.entries[boundary.find(outgoing_pane).?].?;
     try std.testing.expect(outgoing_entry.ready == null);
@@ -3130,6 +3162,130 @@ test "atomic visible switch clears outgoing source and discards its ready update
     try std.testing.expectEqual(
         incoming_member,
         boundary.acceptedVisibleSet().?.members[0],
+    );
+}
+
+test "accepted empty bootstrap replaces visible membership before first update" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(4, 4, 16),
+    );
+    defer boundary.deinit();
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 2,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 2,
+    });
+    defer composer.deinit();
+    const outgoing_pane: PaneId = @fromBackingInt(711);
+    const incoming_pane: PaneId = @fromBackingInt(712);
+    const outgoing_source = try composer.registerSource();
+    const incoming_source = try composer.registerSource();
+    try boundary.register(
+        outgoing_pane,
+        outgoing_source,
+        .{ .width = 1, .height = 1 },
+    );
+    try std.testing.expect(boundary.takeLifecycle().? == .create);
+    const outgoing = try boundary.activateTransfer(outgoing_pane);
+    try boundary.register(
+        incoming_pane,
+        incoming_source,
+        .{ .width = 1, .height = 1 },
+    );
+    try std.testing.expect(boundary.takeLifecycle().? == .create);
+    const incoming = try boundary.activateTransfer(incoming_pane);
+    const command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    const outgoing_token = try boundary.reserveUpdate(outgoing);
+    try boundary.publishUpdate(outgoing_token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+    });
+    const outgoing_member = VisibleMember{
+        .pane = outgoing_pane,
+        .source = outgoing_source,
+    };
+    try boundary.publishVisibleSet(1, &.{outgoing_member});
+    try boundary.completeVisibleSet(1, &.{.{
+        .member = outgoing_member,
+        .revision = @fromBackingInt(1),
+    }}, false);
+    try boundary.claimVisibleSet(1);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(&composer, null, .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{.{
+                .source = outgoing_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            }},
+        }, 1, .ordinary)).accepted,
+    );
+
+    const stale_outgoing = try boundary.reserveUpdate(outgoing);
+    try boundary.publishUpdate(stale_outgoing, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+    });
+    const incoming_member = VisibleMember{
+        .pane = incoming_pane,
+        .source = incoming_source,
+    };
+    var prepared = try boundary.prepareVisibleSet(2, &.{incoming_member});
+    defer prepared.deinit();
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try boundary.applyCandidate(&composer, null, .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{.{
+                .source = incoming_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            }},
+        }, null, .bootstrap_replacement)).accepted,
+    );
+    prepared.commit();
+    try std.testing.expectEqual(incoming_member, boundary.visible_members[0]);
+    try std.testing.expectEqual(@as(u8, 1), boundary.visible_member_count);
+    try std.testing.expect(boundary.entries[boundary.find(outgoing_pane).?].?.ready == null);
+
+    const group = try boundary.reserveVisibleGroup(2, &.{incoming});
+    try boundary.publishUpdate(group.tokens[0], .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+    });
+    try boundary.completeVisibleSet(2, &.{.{
+        .member = incoming_member,
+        .revision = @fromBackingInt(1),
+    }}, true);
+    try boundary.claimVisibleSet(2);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(&composer, null, .{
+            .surface = .{ .width = 1, .height = 1 },
+            .sources = &.{.{
+                .source = incoming_source,
+                .origin = .{ .x = 0, .y = 0 },
+                .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            }},
+        }, 2, .ordinary)).accepted,
     );
 }
 

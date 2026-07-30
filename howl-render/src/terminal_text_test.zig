@@ -1616,6 +1616,340 @@ test "terminal cell span bounds oversized native raster" {
     try std.testing.expect(raster.width <= configured.width_px * key.native.cell_span);
 }
 
+test "native private-use presentation borrows only immediate blank cells" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+
+    const cells = [_]terminal.Cell{
+        cell(0xf303),
+        cell(' '),
+        cell(0x2002),
+        cell('X'),
+    };
+    const run = try prepare(&scratch, &map, input(&cells, 0, 3), 0);
+    try std.testing.expect(run.glyphs == .native);
+    try std.testing.expectEqual(@as(u16, 3), run.end_cell);
+    for (run.glyphs.native) |glyph| {
+        try std.testing.expectEqual(@as(u16, 0), glyph.source_start);
+        try std.testing.expectEqual(run.end_cell, glyph.source_end);
+        try std.testing.expectEqual(run.end_cell, glyph.key.native.cell_span);
+        try std.testing.expect(run.borrowed_blank_span);
+    }
+    try std.testing.expectEqual(@as(u21, ' '), cells[1].codepoint);
+    try std.testing.expectEqual(@as(u21, 0x2002), cells[2].codepoint);
+
+    const blocked = [_]terminal.Cell{ cell(0xf303), cell('X'), cell(' ') };
+    const blocked_run = try prepare(&scratch, &map, input(&blocked, 0, 2), 0);
+    try std.testing.expectEqual(
+        @as(u16, 1),
+        blocked_run.glyphs.native[0].key.native.cell_span,
+    );
+    try std.testing.expect(!blocked_run.borrowed_blank_span);
+    const boundary = [_]terminal.Cell{cell(0xf303)};
+    const boundary_run = try prepare(&scratch, &map, input(&boundary, 0, 0), 0);
+    try std.testing.expectEqual(@as(u16, 1), boundary_run.end_cell);
+}
+
+test "ordinary native run stops before an embedded borrowable symbol" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{
+        cell('A'),
+        cell(0xf024b),
+        cell(' '),
+        cell(' '),
+        cell('B'),
+    };
+    const ordinary = try prepare(&scratch, &map, input(&cells, 0, 4), 0);
+    try std.testing.expectEqual(@as(u16, 0), ordinary.first_cell);
+    try std.testing.expectEqual(@as(u16, 1), ordinary.end_cell);
+    const symbol = try prepare(&scratch, &map, input(&cells, 0, 4), ordinary.end_cell);
+    try std.testing.expect(symbol.borrowed_blank_span);
+    try std.testing.expectEqual(@as(u16, 1), symbol.first_cell);
+    try std.testing.expectEqual(@as(u16, 3), symbol.end_cell);
+    for (symbol.glyphs.native) |glyph|
+        try std.testing.expectEqual(@as(u16, 2), glyph.key.native.cell_span);
+
+    const repeated = try prepare(&scratch, &map, input(&cells, 0, 4), 0);
+    try std.testing.expectEqual(ordinary.first_cell, repeated.first_cell);
+    try std.testing.expectEqual(ordinary.end_cell, repeated.end_cell);
+}
+
+test "forward run after a leading borrowed symbol cannot shape it again" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{
+        cell(0xf024b),
+        cell(' '),
+        cell('B'),
+    };
+    const symbol = try prepare(&scratch, &map, input(&cells, 0, 2), 0);
+    try std.testing.expect(symbol.borrowed_blank_span);
+    try std.testing.expectEqual(@as(u16, 0), symbol.first_cell);
+    try std.testing.expectEqual(@as(u16, 2), symbol.end_cell);
+
+    const following = try prepare(
+        &scratch,
+        &map,
+        input(&cells, 0, 2),
+        symbol.end_cell,
+    );
+    try std.testing.expect(!following.borrowed_blank_span);
+    try std.testing.expectEqual(symbol.end_cell, following.first_cell);
+    try std.testing.expectEqual(@as(u16, 3), following.end_cell);
+    for (following.glyphs.native) |glyph| {
+        try std.testing.expect(glyph.source_start >= symbol.end_cell);
+        try std.testing.expect(glyph.key.native.cell_span <= 1);
+    }
+}
+
+test "borrowed symbol centers raster and substitutes decoration color" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const fallback_paths = [_][]const u8{fonts.symbol_font};
+    const configs = [_]terminal_text.FontConfig{.{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{
+            .primary = fonts.primary_font,
+            .fallbacks = &fallback_paths,
+            .size = .{ .pixels = 18 },
+        },
+    }};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &configs);
+    defer map.deinit();
+    var content = try terminal.Content.init(
+        std.testing.allocator,
+        contentLimits(),
+        &map,
+    );
+    defer content.deinit();
+    var work = try terminal.Content.Work.init(std.testing.allocator, content.limits);
+    defer work.deinit();
+    var cells = [_]terminal.Cell{ cell(0xf303), cell(' '), cell(' ') };
+    cells[0].foreground = .{ .r = 7, .g = 8, .b = 9 };
+    cells[0].underline_color = .{ .r = 17, .g = 18, .b = 19 };
+    for (&cells) |*value| {
+        value.underline = true;
+        value.underline_style = .single;
+    }
+    cells[1].underline_color = .{ .r = 27, .g = 28, .b = 29 };
+    cells[2].underline_color = .{ .r = 37, .g = 38, .b = 39 };
+    const rows = [_]terminal.LineGeometry{.single_width};
+    try content.recover(.{
+        .rows = 1,
+        .cols = cells.len,
+        .cursor = hiddenCursor(),
+        .cells = &cells,
+        .geometry = &rows,
+    }, emptyImages());
+    const update = try content.takeLocalUpdate(
+        &work,
+        empty_scalars_3,
+        contentGeometry(24, 16),
+    );
+    var glyph_count: usize = 0;
+    var underline_count: usize = 0;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |glyph| {
+            if (glyph.destination.height == 0) continue;
+            try std.testing.expectEqual(@as(i32, 3), glyph.destination.x);
+            try std.testing.expectEqual(@as(u8, 7), glyph.color.r);
+            glyph_count += 1;
+        },
+        .solid => |solid| {
+            if (solid.rect.y != 14 or solid.rect.height != 1) continue;
+            try std.testing.expectEqual(@as(u8, 17), solid.color.r);
+            try std.testing.expectEqual(@as(u8, 18), solid.color.g);
+            try std.testing.expectEqual(@as(u8, 19), solid.color.b);
+            underline_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 3), glyph_count);
+    try std.testing.expectEqual(@as(usize, 3), underline_count);
+
+    var accepted_commands: [16]canvas.Input = undefined;
+    try std.testing.expect(update.commands.len <= accepted_commands.len);
+    @memcpy(accepted_commands[0..update.commands.len], update.commands);
+    const accepted_count = update.commands.len;
+    const accepted_revision = update.revision;
+    var invalid_geometry = contentGeometry(24, 16);
+    invalid_geometry.x = std.math.maxInt(i32);
+    invalid_geometry.clip.x = std.math.maxInt(i32);
+    try std.testing.expectError(
+        error.ArithmeticOverflow,
+        content.takeLocalUpdate(&work, empty_scalars_3, invalid_geometry),
+    );
+    const recovered = try content.takeLocalUpdate(
+        &work,
+        empty_scalars_3,
+        contentGeometry(24, 16),
+    );
+    try std.testing.expectEqual(accepted_revision, recovered.revision);
+    try std.testing.expectEqualDeep(
+        accepted_commands[0..accepted_count],
+        recovered.commands,
+    );
+}
+
+test "narrow-symbol normalization is bounded and transactional" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    var compatible: [65]terminal_text.NarrowSymbolRange = undefined;
+    for (&compatible, 0..) |*range, index| range.* = .{
+        .first = @intCast(0xe000 + compatible.len - 1 - index),
+        .last = @intCast(0xe000 + compatible.len - 1 - index),
+        .cells = 1,
+    };
+    const merged_config = terminal_text.FontConfig{
+        .key = .{ .slot = 0, .style = .normal },
+        .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
+        .narrow_symbols = &compatible,
+    };
+    var merged = try terminal_text.FontMap.init(
+        std.testing.allocator,
+        &.{merged_config},
+    );
+    defer merged.deinit();
+
+    var full: [terminal_text.max_narrow_symbol_ranges]terminal_text.NarrowSymbolRange =
+        undefined;
+    for (&full, 0..) |*range, index| range.* = .{
+        .first = @intCast(0x1000 + index * 2),
+        .last = @intCast(0x1000 + index * 2),
+        .cells = 1,
+    };
+    var accepted = try terminal_text.FontMap.init(std.testing.allocator, &.{
+        .{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
+            .narrow_symbols = &full,
+        },
+    });
+    defer accepted.deinit();
+    const before = accepted.cellMetrics(.{ .slot = 0, .style = .normal }).?;
+
+    var overflow: [65]terminal_text.NarrowSymbolRange = undefined;
+    for (&overflow, 0..) |*range, index| range.* = .{
+        .first = @intCast(0x2000 + index * 2),
+        .last = @intCast(0x2000 + index * 2),
+        .cells = 1,
+    };
+    try std.testing.expectError(
+        error.TooManyNarrowSymbolRanges,
+        terminal_text.FontMap.init(std.testing.allocator, &.{
+            .{
+                .key = .{ .slot = 0, .style = .normal },
+                .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
+                .narrow_symbols = &overflow,
+            },
+        }),
+    );
+    try std.testing.expectEqual(
+        before,
+        accepted.cellMetrics(.{ .slot = 0, .style = .normal }).?,
+    );
+
+    const conflict = [_]terminal_text.NarrowSymbolRange{
+        .{ .first = 0xe000, .last = 0xe010, .cells = 1 },
+        .{ .first = 0xe008, .last = 0xe020, .cells = 2 },
+    };
+    try std.testing.expectError(
+        error.ConflictingNarrowSymbolRange,
+        terminal_text.FontMap.init(std.testing.allocator, &.{
+            .{
+                .key = .{ .slot = 0, .style = .normal },
+                .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
+                .narrow_symbols = &conflict,
+            },
+        }),
+    );
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(terminal_text.NarrowSymbolRange));
+    try std.testing.expectEqual(@as(usize, 520), @sizeOf(terminal_text.FontMap) - 64 * @sizeOf(?render.text.FontSet));
+}
+
+test "narrow-symbol cap and generated exclusion preserve one-cell presentation" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const narrow = [_]terminal_text.NarrowSymbolRange{
+        .{ .first = 0xf303, .last = 0xf303, .cells = 1 },
+    };
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &.{
+        .{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = fonts.symbol_font, .size = .{ .pixels = 18 } },
+            .narrow_symbols = &narrow,
+        },
+    });
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const private_cells = [_]terminal.Cell{ cell(0xf303), cell(' '), cell(' ') };
+    const private_run = try prepare(
+        &scratch,
+        &map,
+        input(&private_cells, 0, 2),
+        0,
+    );
+    try std.testing.expectEqual(
+        @as(u16, 1),
+        private_run.glyphs.native[0].key.native.cell_span,
+    );
+
+    if (comptime selected.generated_glyphs) {
+        const generated_cells = [_]terminal.Cell{ cell(0xe0b0), cell(' '), cell(' ') };
+        const generated_run = try prepare(
+            &scratch,
+            &map,
+            input(&generated_cells, 0, 2),
+            0,
+        );
+        try std.testing.expect(generated_run.glyphs == .generated);
+        try std.testing.expectEqual(@as(u16, 1), generated_run.end_cell);
+    }
+}
+
+test "fallback private-use presentation selects and retains the fallback face" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    const fallback_paths = [_][]const u8{fonts.symbol_font};
+    var map = try terminal_text.FontMap.init(std.testing.allocator, &.{
+        .{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{
+                .primary = fonts.primary_font,
+                .fallbacks = &fallback_paths,
+                .size = .{ .pixels = 18 },
+            },
+        },
+    });
+    defer map.deinit();
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{ cell(0xf303), cell(' '), cell(' ') };
+    const run = try prepare(&scratch, &map, input(&cells, 0, 2), 0);
+    try std.testing.expect(run.glyphs == .native);
+    try std.testing.expect(run.glyphs.native[0].key.native.face_index != 0);
+    try std.testing.expectEqual(@as(u16, 3), run.end_cell);
+}
+
 test "native missing tuple and glyph failures preserve reusable scratch" {
     if (comptime !selected.native_text) return error.SkipZigTest;
     var map = try initMap();

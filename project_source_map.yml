@@ -9,7 +9,7 @@ accepted:
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and borrowed semantic views
-  howl-vt/src/howl_vt.zig: curated Terminal plus bounded scalar-storage embedding facts
+  howl-vt/src/howl_vt.zig: curated Terminal plus bounded scalar-storage and pinned Unicode-classification embedding facts
   howl-vt/src/scalar_storage.zig: fixed owner-local overflow-scalar banks, range ownership, first-fit admission, coalescing, and rollback
   howl-vt/src/unicode_17.zig: generated Unicode 17 width, presentation, and grapheme-transition lookup
   howl-vt/src/unicode_17*.bin: pinned generated Unicode 17 runtime and conformance facts
@@ -29,7 +29,7 @@ accepted:
   howl-render/build.zig: independently selected capability graphs and native-text-only translated headers
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
   howl-render/src/root*.zig: curated roots for selected render capabilities
-  howl-render/src/native_text.zig: native font loading, shaping, metrics, and alpha rasterization
+  howl-render/src/native_text.zig: native font loading, shaping, metrics, Kitty-compatible glyph-width measurement, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
   howl-render/src/terminal_projection.zig: stateless VT cell semantic projection into caller buffers
   howl-render/src/image_projection.zig: stateless VT image-plane projection into caller buffers
@@ -44,7 +44,7 @@ accepted:
   howl-render/src/chrome_native.zig: native-capable Chrome Content retention and Canvas update production
   howl-render/src/terminal_canvas.zig: native/generated-capable terminal Content retention and Canvas update production
   howl-render/src/vertical_test.zig: capable-root terminal/chrome producer-to-Composer composition proof
-  howl-render/src/terminal_text*.zig: one-run text preparation, raster identity, and native decoration metrics
+  howl-render/src/terminal_text*.zig: one-run text preparation, bounded normalized narrow-symbol configuration, Kitty symbol-span admission, raster identity, and native decoration metrics
   howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts

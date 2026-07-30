@@ -45,6 +45,21 @@ pub const Properties = struct {
         return self.value & (@as(u32, 1) << 18) != 0;
     }
 
+    /// Reports Kitty's generated broad emoji classification.
+    pub fn isEmoji(self: Properties) bool {
+        return self.value & (@as(u32, 1) << 12) != 0;
+    }
+
+    /// Reports a Unicode symbol-category scalar.
+    pub fn isSymbol(self: Properties) bool {
+        return self.value & (@as(u32, 1) << 21) != 0;
+    }
+
+    /// Reports a Unicode private-use scalar.
+    pub fn isPrivateUse(self: Properties) bool {
+        return (self.value >> 13) & 0x1f == 29;
+    }
+
     fn graphemeProperty(self: Properties) u7 {
         return @intCast(self.value >> 25);
     }
@@ -91,6 +106,9 @@ test "Unicode 17 generated properties preserve width and presentation facts" {
     try std.testing.expectEqual(@as(i4, 0), properties(0x0301).width());
     try std.testing.expectEqual(@as(i4, 2), properties(0x754c).width());
     try std.testing.expect(properties(0x263a).isEmojiPresentationBase());
+    try std.testing.expect(properties(0x263a).isEmoji());
+    try std.testing.expect(properties(0x2605).isSymbol());
+    try std.testing.expect(properties(0xe0c1).isPrivateUse());
     try std.testing.expect(properties(0xd800).isInvalid());
 }
 

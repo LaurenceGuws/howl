@@ -2,12 +2,17 @@
 
 const terminal = @import("terminal.zig");
 const scalar_storage = @import("scalar_storage.zig");
+const unicode_17 = @import("unicode_17.zig");
 const std = @import("std");
 
 /// Owns one terminal emulator, its retained state, replies, and consequences.
 pub const Terminal = terminal.Terminal;
 /// Owns bounded overflow scalars for one caller-owned cell cohort.
 pub const ScalarStorage = scalar_storage.Storage;
+/// Borrows pinned Unicode 17 classification without transferring VT occupancy.
+pub const UnicodeProperties = unicode_17.Properties;
+/// Returns pinned Unicode 17 facts for one valid scalar.
+pub const unicodeProperties = unicode_17.properties;
 /// Reports the fixed scalar-storage contract.
 pub const scalar = struct {
     /// Number of cells qualified by one fixed scalar bank.

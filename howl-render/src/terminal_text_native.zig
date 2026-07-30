@@ -28,6 +28,10 @@ pub const PreparedRun = impl.PreparedRun;
 pub const Raster = impl.Raster;
 /// Configures one exact native font tuple.
 pub const FontConfig = impl.FontConfig;
+/// Bounds normalized narrow-symbol ranges in one immutable configuration.
+pub const max_narrow_symbol_ranges = impl.max_narrow_symbol_ranges;
+/// Supplies one inclusive narrow-symbol range and presentation-cell cap.
+pub const NarrowSymbolRange = impl.NarrowSymbolRange;
 /// Retains one normalized factual DPI axis.
 pub const Dpi = impl.Dpi;
 /// Canonical validated terminal point-size and factual DPI identity.
