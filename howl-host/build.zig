@@ -40,6 +40,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
+    const dev_config_options = b.addOptions();
+    dev_config_options.addOption(
+        []const u8,
+        "repository_config_path",
+        b.root.joinString(
+            b.allocator,
+            "../.howl/config/howl.conf",
+        ) catch @panic("OOM"),
+    );
+    const dev_config = b.createModule(.{
+        .root_source_file = b.path("src/dev_config.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    dev_config.addImport("dev_config_options", dev_config_options.createModule());
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = optimize,
@@ -57,6 +72,7 @@ pub fn build(b: *std.Build) void {
     });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
+    root.addImport("dev_config", dev_config);
     const chrome_state = b.createModule(.{
         .root_source_file = b.path("src/chrome_state.zig"),
         .target = target,
@@ -195,6 +211,8 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
+    const dev_config_tests = b.addTest(.{ .root_module = dev_config, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(dev_config_tests).step);
     test_step.dependOn(&fixture_check.step);
     const window_test_module = b.createModule(.{
         .root_source_file = b.path("src/window.zig"),

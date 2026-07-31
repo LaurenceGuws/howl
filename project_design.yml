@@ -26,8 +26,8 @@ workspace:
   children: each surviving capability owns its package identity, direct dependencies, native facts, and proofs
   root: exports no product module or artifact
   toolchain: exact tracked Zig pin resolved through ignored .zig/zig; product and proof artifacts use self-hosted codegen and linker
-  evidence: protocol evidence is family-owned at the root
+  evidence: protocol and cross-capability cursor design evidence are family-owned at the root
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome and multiplexed terminal runtime accepted; pane-local font and text ownership hardening is active
+  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome, multiplexed terminal runtime, and Kitty-compatible text machinery accepted; cursor redesign is active

@@ -5,8 +5,9 @@ const renderer = @import("renderer.zig");
 const shared = @import("shared.zig");
 const terminal_runtime = @import("terminal_runtime");
 const window = @import("window.zig");
+const dev_config = @import("dev_config");
 
-const MainError = std.Thread.SpawnError || error{
+const MainError = std.Thread.SpawnError || dev_config.LoadError || error{
     ArithmeticOverflow,
     Signal,
     OwnerDidNotStop,
@@ -18,12 +19,15 @@ const MainError = std.Thread.SpawnError || error{
 /// first construction or owner failure after reverse cleanup.
 pub fn main(init: std.process.Init) MainError!void {
     var iterator = init.minimal.args.iterate();
-    const executable_name = iterator.next() orelse return error.InvalidArguments;
-    if (executable_name.len == 0) return error.InvalidArguments;
-    if (!std.mem.eql(u8, iterator.next() orelse return error.InvalidArguments, "--font"))
-        return error.InvalidArguments;
-    const font_path = iterator.next() orelse return error.InvalidArguments;
-    if (font_path.len == 0 or iterator.next() != null) return error.InvalidArguments;
+    var args: [8][]const u8 = undefined;
+    var arg_count: usize = 0;
+    while (iterator.next()) |argument| {
+        if (arg_count == args.len) return error.InvalidArguments;
+        args[arg_count] = argument;
+        arg_count += 1;
+    }
+    const parsed = try dev_config.parseArguments(args[0..arg_count]);
+    try dev_config.validateFile(init.io, init.gpa, parsed.config_path);
     var boundary = try shared.Boundary.init(init.io);
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
@@ -33,7 +37,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const terminal_thread = std.Thread.spawn(
         .{},
         terminal_runtime.run,
-        .{ &terminals, init.gpa, font_path, "/bin/sh" },
+        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh" },
     ) catch |failure| {
         boundary.requestStop(.render);
         window_thread.join();
@@ -43,7 +47,7 @@ pub fn main(init: std.process.Init) MainError!void {
         &boundary,
         &terminals,
         init.gpa,
-        font_path,
+        parsed.font_path,
     }) catch |failure| {
         boundary.requestStop(.render);
         terminals.shutdown();

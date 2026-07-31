@@ -2,6 +2,7 @@ accepted:
   .zigversion: exact Zig compiler pin resolved locally through ignored .zig/zig
   protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
   protocol_coverage.nu: catalogue normalization, validation, and query commands
+  cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   build.zig: development-only aliases that invoke surviving child build graphs
@@ -53,6 +54,8 @@ accepted:
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/manual-fixtures: bounded compositor-visible color and generated-glyph receipts
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
+  howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
+  .howl/config/howl.conf: repository-local development cursor configuration defaults
   howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
   howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation

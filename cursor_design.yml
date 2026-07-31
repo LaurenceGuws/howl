@@ -1,0 +1,104 @@
+schema: 1
+status: evidence
+goal: >-
+  Replace Howl's provisional cursor presentation with a small, deterministic
+  Kitty-led cursor pipeline whose semantic target, damage, animation, timing,
+  configuration, and physical rendering owners remain explicit.
+
+references:
+  primary: /home/home/personal/projects/dev_references/terminals/kitty
+  required:
+    - kitty/cursor_trail.c
+    - kitty/child-monitor.c
+    - kitty/shaders.c
+    - kitty/animation.c
+    - kitty/options/definition.py
+
+operator_policy:
+  scope: cursor_only
+  baseline: current_resolved_kitty_configuration
+  resolved_values:
+    cursor.shape: beam
+    cursor.color: "#73f990"
+    cursor.unfocused_shape: hollow
+    cursor.beam_thickness_points: 1.5
+    cursor.underline_thickness_points: 2.0
+    cursor.blink_interval: system
+    cursor.stop_blinking_after_seconds: 15.0
+    cursor.trail_delay_ms: 1
+    cursor.trail_decay_seconds: [0.1, 0.4]
+    cursor.trail_start_threshold_cells: 0
+    cursor.trail_color: cursor
+  excluded:
+    - font_face_selection
+    - text_blink
+    - underline_and_decoration_styles
+    - selection
+    - generic_animation_framework
+    - configuration_hot_reload
+    - downstream_configuration_paths
+
+development_configuration:
+  authoritative_path: .howl/config/howl.conf
+  lifetime: one synchronous startup read before thread construction
+  grammar:
+    record: one key followed by typed whitespace-separated values
+    comment: hash to end of line
+    duplicate_keys: reject
+    unknown_keys: reject
+    malformed_values: reject
+  storage: one typed immutable resolved configuration; no retained string dictionary
+  path_policy:
+    default: repository_local_only
+    explicit_override: --config PATH
+    home_or_xdg_fallback: forbidden_for_dev_family
+  deferred: [reload, inotify, includes, environment_expansion, scripting, compatibility_aliases]
+
+ownership:
+  process_root: validates the repository-local configuration before thread construction; typed retention and owner-specific distribution begin with the first cursor-owner checkpoint
+  vt: owns factual cursor position, visibility, program-selected shape, and blink intent only
+  render: owns backend-neutral cursor projection, damage facts, geometry, and visual command facts
+  host_renderer: owns monotonic time, animation scheduling, frame demand, and concrete presentation policy
+  vulkan: consumes generic validated physical cursor geometry without terminal semantics
+  unresolved:
+    - exact owner of retained trail corners and opacity
+    - exact boundary between backend-neutral trail geometry and Vulkan drawing facts
+    - exact cursor-only frame scheduling contract
+
+invariants:
+  - Semantic cursor movement commits immediately to the exact VT target cell.
+  - Animation never invents intermediate VT positions or feeds presentation state back into VT.
+  - A cursor-only change cannot dirty unrelated terminal cells, glyph resources, images, Chrome, or topology.
+  - Alternate-screen scrolling preserves exact cursor and viewport causality.
+  - Animation timing uses monotonic facts and never busy-polls.
+  - Failure preserves the prior complete frame and accepted cursor target.
+  - Every wait remains interruptible by existing shutdown ownership.
+  - Configuration is immutable after startup during the development family.
+
+research_queries:
+  required_fields: [id, status, question, evidence, conclusion, residual]
+  indexes:
+    - current_howl_cursor_ownership
+    - kitty_cursor_ownership
+    - cursor_damage_flow
+    - neovim_alternate_screen_reproduction
+    - cursor_trail_state_machine
+    - cursor_blink_state_machine
+    - scheduling_and_wake_contract
+    - memory_and_allocation_bounds
+    - rollback_and_shutdown
+
+checkpoints:
+  - {id: minimal_dev_config_ingestion, status: approved, product_change: allowed, boundary: startup parsing and immutable distribution only}
+  - {id: current_howl_cursor_pipeline, status: evidence_required, product_change: forbidden}
+  - {id: kitty_cursor_pipeline, status: evidence_required, product_change: forbidden}
+  - {id: neovim_cursor_damage_receipt, status: evidence_required, product_change: forbidden}
+  - {id: finite_cursor_contract, status: blocked_on_evidence, product_change: forbidden}
+  - {id: cursor_implementation, status: blocked_on_finite_contract, product_change: forbidden}
+
+review_boundary:
+  - The first owner of excessive Neovim cursor-related redraw is proven rather than inferred.
+  - Kitty target, trail, blink, scheduling, damage, and GPU facts are mapped symbol by symbol.
+  - Existing Howl cursor attempts are classified as retained, replaced, or deleted.
+  - Public signatures, retained bounds, errors, rollback, cleanup, and deterministic receipts are finite.
+  - Every product-policy question is surfaced to the operator before implementation.
