@@ -24,7 +24,7 @@ fn expectViewsEqual(a: Terminal.SemanticView, b: Terminal.SemanticView) !void {
 test "borrowed semantic view exposes complete cells and cursor facts" {
     var terminal = try Terminal.init(std.testing.allocator, 5, 10);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("HELLO")).state_changed);
+    try std.testing.expect((try terminal.feed("HELLO")).stateChanged());
 
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 5), view.rows);
@@ -41,13 +41,13 @@ test "borrowed semantic view exposes complete cells and cursor facts" {
 test "borrowed semantic view is deterministic across identical terminals and feed splits" {
     var whole = try Terminal.init(std.testing.allocator, 2, 10);
     defer whole.deinit();
-    try std.testing.expect((try whole.feed("ABCDEFGHIJ")).state_changed);
+    try std.testing.expect((try whole.feed("ABCDEFGHIJ")).stateChanged());
 
     var split = try Terminal.init(std.testing.allocator, 2, 10);
     defer split.deinit();
-    try std.testing.expect((try split.feed("AB")).state_changed);
-    try std.testing.expect((try split.feed("CDE")).state_changed);
-    try std.testing.expect((try split.feed("FGHIJ")).state_changed);
+    try std.testing.expect((try split.feed("AB")).stateChanged());
+    try std.testing.expect((try split.feed("CDE")).stateChanged());
+    try std.testing.expect((try split.feed("FGHIJ")).stateChanged());
 
     try expectViewsEqual(whole.semanticView(0), split.semanticView(0));
 }
@@ -62,7 +62,7 @@ test "semantic view carries OSC colors and complete cell presentation" {
             "\x1b]12;#313233\x1b\\" ++
             "\x1b[38;5;2;48;2;4;5;6;58;2;7;8;9;2;4:3;8;9mX",
     );
-    try std.testing.expect(summary.state_changed);
+    try std.testing.expect(summary.stateChanged());
 
     const presentation = terminal.presentation();
     try std.testing.expectEqual(Terminal.Rgb{ .r = 1, .g = 2, .b = 3 }, presentation.palette[2]);
@@ -87,7 +87,7 @@ test "semantic view carries OSC colors and complete cell presentation" {
 test "retained history facts survive ring wraparound" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 2);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("111\r\n222\r\n333\r\n444\r\n555")).state_changed);
+    try std.testing.expect((try terminal.feed("111\r\n222\r\n333\r\n444\r\n555")).stateChanged());
 
     const live = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u32, 2), live.history_count);

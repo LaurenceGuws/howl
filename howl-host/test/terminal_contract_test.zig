@@ -69,7 +69,7 @@ const Producer = struct {
 
     fn feed(self: *Producer, bytes: []const u8) !void {
         const summary = try self.machine.feed(bytes);
-        try std.testing.expect(summary.state_changed);
+        try std.testing.expect(summary.stateChanged());
     }
 
     fn recover(self: *Producer) !void {

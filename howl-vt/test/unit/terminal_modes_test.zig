@@ -8,7 +8,7 @@ const Modifier = @FieldType(MouseEvent, "mod");
 
 fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 const expected_color_preference_query_capacity: u8 = 16;
@@ -198,9 +198,9 @@ test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
         .buttons_down = 0,
     };
 
-    try std.testing.expect(!(try terminal.feed("\x1b[?9")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?9")).stateChanged());
     try std.testing.expectEqualStrings("", encodeMouse(&terminal, press));
-    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expect((try terminal.feed("h")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[M $#", encodeMouse(&terminal, press));
     try std.testing.expectEqualStrings("", encodeMouse(&terminal, release));
     try std.testing.expectEqualStrings("", encodeMouse(&terminal, .{
@@ -211,7 +211,7 @@ test "legacy X10 mouse mode owns exact input query save and reset lifetime" {
         .mod = .{},
         .buttons_down = 1,
     }));
-    try std.testing.expect(!(try terminal.feed("\x1b[?9h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?9h")).stateChanged());
 
     try feed(&terminal, "\x1b[?9$p");
     try std.testing.expectEqualStrings("\x1b[?9;1$y", pendingOutput(&terminal));
@@ -250,12 +250,12 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
-    try std.testing.expect((try terminal.feed("12345678")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1000h\x1b[?1006h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?1016")).state_changed);
-    try std.testing.expect((try terminal.feed("h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
+    try std.testing.expect((try terminal.feed("12345678")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1000h\x1b[?1006h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?1016")).stateChanged());
+    try std.testing.expect((try terminal.feed("h")).stateChanged());
 
     const pixel_press = MouseEvent{
         .kind = .press,
@@ -280,12 +280,12 @@ test "mouse and focus modes own exact protocol selection mutation and pixel repo
     };
     try std.testing.expectEqualStrings("", encodeMouse(&terminal, missing_pixel));
 
-    try std.testing.expect((try terminal.feed("\x1b[?1016l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1016l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1004h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1004h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1016l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1016l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1004h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1004h")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
-    try std.testing.expect((try terminal.feed("\x1b[?1004l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1004l")).stateChanged());
     try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
 }
 
@@ -307,34 +307,34 @@ test "kitty keyboard stack has exact flags depth mutation and replies" {
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b[=128u")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[=128u")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?u")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
-    try std.testing.expect(!(try terminal.feed("\x1b[=127;1")).state_changed);
-    try std.testing.expect((try terminal.feed("u")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[=127u")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
-    try std.testing.expect((try terminal.feed("u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[=127;1")).stateChanged());
+    try std.testing.expect((try terminal.feed("u")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[=127u")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).stateChanged());
+    try std.testing.expect((try terminal.feed("u")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?127u", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b[=8;3u\x1b[=3;2u\x1b[?u")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[=8;3u\x1b[=3;2u\x1b[?u")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?119u", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
     try std.testing.expect((try terminal.feed(
         "\x1b[>1u\x1b[>2u\x1b[>3u\x1b[>4u\x1b[>5u\x1b[>6u\x1b[>7u\x1b[>8u",
-    )).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[<7u\x1b[?u")).state_changed);
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[<7u\x1b[?u")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?1u", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b[<u\x1b[?u")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[<u\x1b[?u")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?0u", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect(!(try terminal.feed("\x1b[<u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[<u")).stateChanged());
 }
 
 test "invalid Kitty keyboard set mode preserves state" {
@@ -475,9 +475,9 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     defer default_repeat.deinit();
     try std.testing.expectEqualStrings("a", default_repeat.bytes);
 
-    try std.testing.expect(!(try terminal.feed("\x1b[?8")).state_changed);
-    try std.testing.expect((try terminal.feed("l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?8")).stateChanged());
+    try std.testing.expect((try terminal.feed("l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).stateChanged());
     var suppressed = try terminal.encodeInput(std.testing.allocator, &scratch, .{
         .key = .{
             .key = try Terminal.Key.initUnicode('a'),
@@ -488,9 +488,9 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     defer suppressed.deinit();
     try std.testing.expectEqualStrings("", suppressed.bytes);
 
-    try std.testing.expect((try terminal.feed("xxxx\x1b[?8l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[=31u")).state_changed);
+    try std.testing.expect((try terminal.feed("xxxx\x1b[?8l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?8l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[=31u")).stateChanged());
     var press = try terminal.encodeInput(std.testing.allocator, &scratch, .{
         .key = .{ .key = try Terminal.Key.initUnicode('a') },
     });
@@ -505,19 +505,19 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     defer release.deinit();
     try std.testing.expectEqualStrings("\x1b[97;1:3u", release.bytes);
 
-    try std.testing.expect((try terminal.feed("\x1b[?8s\x1b[?8h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?8s\x1b[?8h")).stateChanged());
     var enabled_repeat = try terminal.encodeInput(std.testing.allocator, &scratch, .{
         .key = .{ .key = try Terminal.Key.initUnicode('a'), .action = .repeat },
     });
     defer enabled_repeat.deinit();
     try std.testing.expectEqualStrings("\x1b[97;1:2u", enabled_repeat.bytes);
-    try std.testing.expect((try terminal.feed("\x1b[?8r")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?8r")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?8$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?8;2$y", pendingOutput(&terminal));
-    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     var reset_repeat = try terminal.encodeInput(std.testing.allocator, &scratch, .{
         .key = .{
             .key = try Terminal.Key.initUnicode('a'),
@@ -528,7 +528,7 @@ test "DECARM owns repeat encoding query save and reset lifetime" {
     defer reset_repeat.deinit();
     try std.testing.expectEqualStrings("a", reset_repeat.bytes);
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?8$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?8;1$y", pendingOutput(&terminal));
 }
 
@@ -540,25 +540,25 @@ test "Kitty parameterless mode save restores the exact curated mode set" {
         "\x1b[20h\x1b[4h" ++
         "\x1b[?8l\x1b[?2004h\x1b[?1004h\x1b[?2031h\x1b[?5522h\x1b[?2048h" ++
         "\x1b[?1h\x1b[?25l\x1b[?7l\x1b[?1003h\x1b[?1006h\x1b[?5h";
-    try std.testing.expect((try terminal.feed(enable)).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
-    try std.testing.expect((try terminal.feed("s")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?s")).state_changed);
+    try std.testing.expect((try terminal.feed(enable)).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).stateChanged());
+    try std.testing.expect((try terminal.feed("s")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?s")).stateChanged());
 
     const invert =
         "\x1b[20l\x1b[4l" ++
         "\x1b[?8h\x1b[?2004l\x1b[?1004l\x1b[?2031l\x1b[?5522l\x1b[?2048l" ++
         "\x1b[?1l\x1b[?25h\x1b[?7h\x1b[?1003l\x1b[?1006l\x1b[?5l";
-    try std.testing.expect((try terminal.feed(invert)).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?")).state_changed);
-    try std.testing.expect((try terminal.feed("r")).state_changed);
+    try std.testing.expect((try terminal.feed(invert)).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?")).stateChanged());
+    try std.testing.expect((try terminal.feed("r")).stateChanged());
 
     try consumeReplies(&terminal);
     try std.testing.expect((try terminal.feed(
         "\x1b[20$p\x1b[4$p" ++
             "\x1b[?8$p\x1b[?2004$p\x1b[?1004$p\x1b[?2031$p\x1b[?5522$p\x1b[?2048$p" ++
             "\x1b[?1$p\x1b[?25$p\x1b[?7$p\x1b[?1003$p\x1b[?1006$p\x1b[?5$p",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[20;1$y\x1b[4;1$y" ++
             "\x1b[?8;2$y\x1b[?2004;1$y\x1b[?1004;1$y\x1b[?2031;1$y" ++
@@ -567,12 +567,12 @@ test "Kitty parameterless mode save restores the exact curated mode set" {
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
-    try std.testing.expect(!(try terminal.feed("\x1b[?r")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?r")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?r")).stateChanged());
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?8$p\x1b[?25$p\x1b[?7$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?8$p\x1b[?25$p\x1b[?7$p")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[?8;2$y\x1b[?25;2$y\x1b[?7;2$y",
         pendingOutput(&terminal),
@@ -593,24 +593,24 @@ test "individual DEC mode saves retain every implemented mode without saturation
         var bytes: [24]u8 = undefined;
         const command = try std.fmt.bufPrint(&bytes, "\x1b[?{d}s", .{mode});
         const first = try terminal.feed(command);
-        changed_count += @intFromBool(first.state_changed);
+        changed_count += @intFromBool(first.stateChanged());
         const second = try terminal.feed(command);
-        try std.testing.expect(!second.state_changed);
+        try std.testing.expect(!second.stateChanged());
     }
     try std.testing.expectEqual(@as(usize, 4), changed_count);
-    try std.testing.expect(!(try terminal.feed("\x1b[?9999s\x1b[?9999r")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?9999s\x1b[?9999r")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?5522h\x1b[?5522r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?5522h\x1b[?5522r")).stateChanged());
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?5522$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?5522$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?5522;2$y", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?1;7;25h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1;7;25l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1$p\x1b[?7$p\x1b[?25$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1;7;25h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1;7;25l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1;7;25l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1$p\x1b[?7$p\x1b[?25$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?1;2$y\x1b[?7;2$y\x1b[?25;2$y", pendingOutput(&terminal));
 }
 
@@ -725,30 +725,30 @@ test "Kitty caller-coordinated modes retain exact state reports and color notifi
     try std.testing.expect(!(try terminal.reportColorSchemePreference(.dark)));
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 
-    try std.testing.expect((try terminal.feed("\x1b[?2031h\x1b[?5522h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?199")).state_changed);
-    try std.testing.expect((try terminal.feed("97h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2031h\x1b[?5522h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?199")).stateChanged());
+    try std.testing.expect((try terminal.feed("97h")).stateChanged());
     try std.testing.expect(terminal.colorPreferenceNotifications());
     try std.testing.expect(terminal.pasteEvents());
     try std.testing.expect(terminal.termiosSignals());
-    try std.testing.expect(!(try terminal.feed("\x1b[?2031h\x1b[?5522h\x1b[?19997h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?2031h\x1b[?5522h\x1b[?19997h")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?2031$p\x1b[?5522$p\x1b[?19997$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2031$p\x1b[?5522$p\x1b[?19997$p")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[?2031;1$y\x1b[?5522;1$y\x1b[?19997;0$y",
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b G")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b G")).stateChanged());
     try std.testing.expect(try terminal.reportColorSchemePreference(.dark));
     try std.testing.expect(try terminal.reportColorSchemePreference(.light));
     try std.testing.expectEqualStrings("\x1b[?997;1n\x1b[?997;2n", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997s")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?2031l\x1b[?5522l\x1b[?19997l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997s")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?2031l\x1b[?5522l\x1b[?19997l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?2031;5522;19997r")).stateChanged());
     try std.testing.expect(terminal.colorPreferenceNotifications());
     try std.testing.expect(terminal.pasteEvents());
     try std.testing.expect(!terminal.termiosSignals());
@@ -759,7 +759,7 @@ test "Kitty caller-coordinated modes retain exact state reports and color notifi
     try std.testing.expectEqual(fill.len, pendingOutput(&terminal).len);
     try std.testing.expect(terminal.colorPreferenceNotifications());
 
-    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     try std.testing.expect(!terminal.colorPreferenceNotifications());
     try std.testing.expect(!terminal.pasteEvents());
     try std.testing.expect(!terminal.termiosSignals());
@@ -770,8 +770,8 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b[?99")).state_changed);
-    try std.testing.expect((try terminal.feed("6n\x9b?996n")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?99")).stateChanged());
+    try std.testing.expect((try terminal.feed("6n\x9b?996n")).stateChanged());
     try std.testing.expectEqual(@as(u8, 2), terminal.consequenceCount());
     try std.testing.expectEqual(@as(u64, 1), terminal.consequenceHead().?.color_preference_query.id);
     try std.testing.expectError(
@@ -795,7 +795,7 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
     try std.testing.expectEqual(@as(u8, 1), terminal.consequenceCount());
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1bc\x1b G\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b G\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(4, 10);
     try terminal.replyColorPreference(2, .light);
     try std.testing.expectEqualStrings("\x1b[?997;2n", pendingOutput(&terminal));
@@ -803,7 +803,7 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
 
     try consumeReplies(&terminal);
     for (0..expected_color_preference_query_capacity) |_| {
-        try std.testing.expect((try terminal.feed("\x1b[?996n")).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b[?996n")).stateChanged());
     }
     try std.testing.expectEqual(expected_color_preference_query_capacity, terminal.consequenceCount());
     const head_before_full = terminal.consequenceHead().?.color_preference_query.id;
@@ -818,7 +818,7 @@ test "Kitty color-preference queries retain ordered intent and transactional rep
         try consumeReplies(&terminal);
     }
     try std.testing.expect(terminal.consequenceHead() == null);
-    try std.testing.expect(!(try terminal.feed("\x1b[?996;1n")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?996;1n")).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expectError(
         error.StaleColorPreferenceQuery,
@@ -835,9 +835,9 @@ test "iTerm2 caller-coordinated input modes retain reports and terminal lifetime
     try std.testing.expect(!terminal.metaSendsEscape());
     try std.testing.expect(!terminal.reportKeyUp());
 
-    try std.testing.expect(!(try terminal.feed("\x1b[?100")).state_changed);
-    try std.testing.expect((try terminal.feed("7h\x1b[?1036h\x1b[?1337h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1007h\x1b[?1036h\x1b[?1337h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?100")).stateChanged());
+    try std.testing.expect((try terminal.feed("7h\x1b[?1036h\x1b[?1337h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1007h\x1b[?1036h\x1b[?1337h")).stateChanged());
     try std.testing.expect(terminal.alternateScroll());
     try std.testing.expect(terminal.metaSendsEscape());
     try std.testing.expect(terminal.reportKeyUp());
@@ -867,20 +867,20 @@ test "iTerm2 caller-coordinated input modes retain reports and terminal lifetime
         } },
     ));
 
-    try std.testing.expect((try terminal.feed("\x1b[?1007$p\x1b[?1036$p\x1b[?1337$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1007$p\x1b[?1036$p\x1b[?1337$p")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[?1007;1$y\x1b[?1036;1$y\x1b[?1337;1$y",
         pendingOutput(&terminal),
     );
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).stateChanged());
     try terminal.resize(4, 10);
     try std.testing.expect(terminal.alternateScroll());
     try std.testing.expect(terminal.metaSendsEscape());
     try std.testing.expect(terminal.reportKeyUp());
 
-    try std.testing.expect((try terminal.feed("\x1b[?1036l\x1b[?1036$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1036l\x1b[?1036$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?1036;2$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
     var disabled = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
@@ -891,7 +891,7 @@ test "iTerm2 caller-coordinated input modes retain reports and terminal lifetime
     defer disabled.deinit();
     try std.testing.expectEqualStrings("a", disabled.bytes);
 
-    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     try std.testing.expect(!terminal.alternateScroll());
     try std.testing.expect(!terminal.metaSendsEscape());
     try std.testing.expect(!terminal.reportKeyUp());
@@ -903,9 +903,9 @@ test "input mode category preserves encoding gates screen stacks and reset lifet
     defer terminal.deinit();
     var scratch: Terminal.InputScratch = .{};
 
-    try std.testing.expect(!(try terminal.feed("\x1b[?1")).state_changed);
-    try std.testing.expect((try terminal.feed("h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1")).stateChanged());
+    try std.testing.expect((try terminal.feed("h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1h\x1b=\x1b[?1004h\x1b[?1003h\x1b[?1016h\x1b[?2004h\x1b[?8l")).stateChanged());
     try std.testing.expectEqualStrings("\x1bOA", encodeKey(&terminal, .{ .named = .up }, .{}));
     try std.testing.expectEqualStrings("\x1bOk", encodeKey(&terminal, .{ .named = .keypad_add }, .{}));
     try std.testing.expectEqualStrings("\x1b[I", encodeFocusIn(&terminal));
@@ -932,8 +932,8 @@ test "input mode category preserves encoding gates screen stacks and reset lifet
     defer repeat.deinit();
     try std.testing.expectEqualStrings("", repeat.bytes);
 
-    try std.testing.expect(!(try terminal.feed("\x1b[=3")).state_changed);
-    try std.testing.expect((try terminal.feed("u")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[=3")).stateChanged());
+    try std.testing.expect((try terminal.feed("u")).stateChanged());
     var release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
         .key = try Terminal.Key.initUnicode('a'),
         .action = .release,
@@ -941,14 +941,14 @@ test "input mode category preserves encoding gates screen stacks and reset lifet
     defer release.deinit();
     try std.testing.expectEqualStrings("\x1b[97;1:3u", release.bytes);
 
-    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
     var alternate_release = try terminal.encodeInput(allocator, &scratch, .{ .key = .{
         .key = try Terminal.Key.initUnicode('a'),
         .action = .release,
     } });
     defer alternate_release.deinit();
     try std.testing.expectEqualStrings("", alternate_release.bytes);
-    try std.testing.expect((try terminal.feed("\x1b[?1049l\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l\x1bc")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[A", encodeKey(&terminal, .{ .named = .up }, .{}));
     try std.testing.expectEqualStrings("+", encodeKey(&terminal, .{ .named = .keypad_add }, .{}));
     try std.testing.expectEqualStrings("", encodeFocusIn(&terminal));
@@ -991,11 +991,11 @@ test "device and status queries retain exact scalar transcripts and origin coord
         "\x1b[1c\x1b[>1c\x1b[=1c\x1b[5;6n\x1b[?6;7n\x1b[6;7$p\x1b[?6;7$p\x1b[0;1x\x1b[?9999n" ++
             "\x1b[0$c\x1b[>0$c\x1b[=0$c\x1b[5$n\x1b[?6$n\x1b[?6$#p\x1b[0$x",
     );
-    try std.testing.expect(!malformed.state_changed);
+    try std.testing.expect(!malformed.stateChanged());
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 
     const unknown = try terminal.feed("\x1b[?9999$p\x1b[0x\x1b[1x\x1b[2x");
-    try std.testing.expect(unknown.state_changed);
+    try std.testing.expect(unknown.stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[?9999;0$y\x1b[2;1;1;128;128;1;0x\x1b[3;1;1;128;128;1;0x",
         pendingOutput(&terminal),
@@ -1088,7 +1088,7 @@ test "fragmented mixed report families preserve order and per-query rollback" {
     var completed_queries: usize = 0;
     while (offset < request.len) : (offset += 1) {
         const summary = try terminal.feed(request[offset .. offset + 1]);
-        if (summary.state_changed) completed_queries += 1;
+        if (summary.stateChanged()) completed_queries += 1;
     }
     try std.testing.expectEqual(@as(usize, 12), completed_queries);
     try std.testing.expectEqualStrings(
@@ -1119,7 +1119,7 @@ test "terminal size reports use exact current cell and pixel facts" {
     try std.testing.expectEqualStrings("\x1b[8;3;5t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect(!(try terminal.feed("\x1b[14t\x1b[16t")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[14t\x1b[16t")).stateChanged());
     try std.testing.expectEqualStrings("", pendingOutput(&terminal));
 
     try terminal.setCellPixelSize(9, 17);
@@ -1157,7 +1157,7 @@ test "container controls retain ordered bounded caller requests and lifetime" {
 
     try std.testing.expect((try terminal.feed(
         "\x1b[3;2147483647;42t\x1b[8;80;132t\x1b[11t\x1b[13t",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expectEqual(@as(u8, 4), terminal.consequenceCount());
     var occurrence = terminal.consequenceHead().?.container;
     try std.testing.expectEqual(@as(u64, 1), occurrence.generation);
@@ -1198,14 +1198,14 @@ test "container controls retain ordered bounded caller requests and lifetime" {
 
     // Consume enough entries to wrap the fixed ring, then fill it exactly.
     for (0..20) |_| {
-        try std.testing.expect((try terminal.feed("\x1b[1t")).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b[1t")).stateChanged());
         try terminal.consumeConsequence(terminal.consequenceHead().?.container.generation);
     }
     for (0..expected_container_request_capacity) |index| {
         const x: u32 = @intCast(index + 1);
         var bytes: [32]u8 = undefined;
         const request = try std.fmt.bufPrint(&bytes, "\x1b[3;{d};{d}t", .{ x, x + 100 });
-        try std.testing.expect((try terminal.feed(request)).state_changed);
+        try std.testing.expect((try terminal.feed(request)).stateChanged());
     }
     try std.testing.expectEqual(expected_container_request_capacity, terminal.consequenceCount());
     const head_before_full = terminal.consequenceHead().?.container;
@@ -1229,14 +1229,14 @@ test "container controls retain ordered bounded caller requests and lifetime" {
     try std.testing.expect(terminal.consequenceHead() == null);
 
     try std.testing.expect(
-        !(try terminal.feed("\x1b[4;10t\x1b[8;10;20;30t\x1b[3;-1;2t")).state_changed,
+        !(try terminal.feed("\x1b[4;10t\x1b[8;10;20;30t\x1b[3;-1;2t")).stateChanged(),
     );
-    try std.testing.expect(!(try terminal.feed("\x1b[4;10")).state_changed);
-    try std.testing.expect((try terminal.feed("\x18;20t")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[4;10")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x18;20t")).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 
-    try std.testing.expect((try terminal.feed("\x1b[2t")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2t")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(4, 7);
     occurrence = terminal.consequenceHead().?.container;
     try std.testing.expectEqual(.iconify, std.meta.activeTag(occurrence.request));
@@ -1269,7 +1269,7 @@ test "iTerm2 container operations retain exact bounded caller intent" {
     try feed(&terminal, first);
     try feed(&terminal, second);
     try std.testing.expectEqual(@as(u8, expected.len * 2), terminal.consequenceCount());
-    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(4, 7);
     for (0..2) |repetition| {
         for (expected, 1..) |request, offset| {
@@ -1298,7 +1298,7 @@ test "iTerm2 container operations retain exact bounded caller intent" {
 
     try std.testing.expect(!(try terminal.feed(
         "\x1b[1;0t\x1b[2;0t\x1b[3;-1;2t\x1b[5;0t\x1b[6;0t\x1b[8;1t",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -1328,7 +1328,7 @@ test "application resize requests retain exact ordered caller intent" {
     // Repeated occurrences remain distinct, and terminal state lifetime does not consume caller intent.
     try feed(&terminal, "\x1b[8;12;34t\x1b[8;12;34t");
     try std.testing.expectEqual(@as(u8, 2), terminal.consequenceCount());
-    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(30, 100);
     for (4..6) |generation| {
         const occurrence = terminal.consequenceHead().?.container;
@@ -1340,7 +1340,7 @@ test "application resize requests retain exact ordered caller intent" {
 
     try std.testing.expect(!(try terminal.feed(
         "\x1b[4;1t\x1b[4;-1;2t\x1b[4;1;2;3t\x1b[8;1t\x1b[8;1;-2t\x1b[8;1;2;3t",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -1371,7 +1371,7 @@ test "DEC cell dimension requests retain exact ordered caller intent" {
 
     try std.testing.expect(!(try terminal.feed(
         "\x1b[*|\x1b[0*|\x1b[256*|\x1b[42;1*|\x1b[81$|\x1b[80;1$|",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -1380,7 +1380,7 @@ test "container query replies require matching live intent and serialize transac
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[11t\x1b[13t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[11t\x1b[13t")).stateChanged());
     try std.testing.expectEqual(@as(u8, 2), terminal.consequenceCount());
     try std.testing.expectError(
         error.StaleContainerRequest,
@@ -1407,17 +1407,17 @@ test "container query replies require matching live intent and serialize transac
     try std.testing.expectEqualStrings("\x1b[3;4294967295;42t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b G\x1b[19t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b G\x1b[19t")).stateChanged());
     try terminal.replyContainer(3, .{ .screen_cells = .{ .rows = 2160, .cols = 3840 } });
     try std.testing.expectEqualStrings("\x1b[9;2160;3840t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[20t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[20t")).stateChanged());
     try terminal.replyContainer(4, .{ .icon_title = "build" });
     try std.testing.expectEqualStrings("\x1b]Lbuild\x1b\\", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[19t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[19t")).stateChanged());
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
     try std.testing.expectError(
@@ -1433,7 +1433,7 @@ test "container query replies require matching live intent and serialize transac
     const oversized = try allocator.alloc(u8, expected_metadata_bytes + 1);
     defer allocator.free(oversized);
     @memset(oversized, 'x');
-    try std.testing.expect((try terminal.feed("\x1b[20t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[20t")).stateChanged());
     try std.testing.expectError(
         error.ConsequenceLimit,
         terminal.replyContainer(6, .{ .icon_title = oversized }),
@@ -1449,10 +1449,10 @@ test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[?20")).state_changed == false);
-    try std.testing.expect((try terminal.feed("48h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?2048h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?20")).stateChanged() == false);
+    try std.testing.expect((try terminal.feed("48h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?2048h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?2048;1$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
@@ -1461,19 +1461,19 @@ test "in-band resize mode emits transactional iTerm2 and Kitty reports" {
     try std.testing.expectEqualStrings("\x1b[48;4;7;68;63t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b G")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b G")).stateChanged());
     try terminal.resize(2, 3);
     try std.testing.expectEqualStrings("\x9b48;2;3;34;27t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?2048s\x1b[?2048l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?2048r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2048s\x1b[?2048l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?2048r")).stateChanged());
     try terminal.resize(3, 4);
     try std.testing.expectEqualStrings("\x9b48;3;4;51;36t", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[!p")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[!p")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?2048$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?2048;2$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
     try terminal.resize(4, 5);
@@ -1485,7 +1485,7 @@ test "in-band resize report saturation preserves dimensions and pending output" 
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();
     try terminal.setCellPixelSize(std.math.maxInt(u32), std.math.maxInt(u32));
-    try std.testing.expect((try terminal.feed("\x1b[?2048h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2048h")).stateChanged());
 
     const fill = try reply_fill.fill(&terminal, allocator, expected_reply_bytes - 1, false);
     defer allocator.free(fill);
@@ -1501,25 +1501,25 @@ test "title stack retains exact bounded title lifecycle and report bytes" {
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b[22t")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[22t")).stateChanged());
     try feed(&terminal, "\x1b]2;on");
     const first = try terminal.feed("e\x1b\\");
-    try std.testing.expect(first.state_changed and first.title_changed);
+    try std.testing.expect(first.stateChanged() and first.titleChanged());
 
     const push_first = try terminal.feed("\x1b[22t");
-    try std.testing.expect(push_first.state_changed and !push_first.title_changed);
+    try std.testing.expect(push_first.stateChanged() and !push_first.titleChanged());
     try feed(&terminal, "\x1b]2;two\x07\x1b[22;2;0t\x1b]2;three\x1b\\");
-    try std.testing.expect(!(try terminal.feed("\x1b[22;1t\x1b[23;1t")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[22;1t\x1b[23;1t")).stateChanged());
 
     const pop_second = try terminal.feed("\x1b[23;2;0t");
-    try std.testing.expect(pop_second.state_changed and pop_second.title_changed);
+    try std.testing.expect(pop_second.stateChanged() and pop_second.titleChanged());
     try std.testing.expectEqualStrings("two", terminal.title().?);
 
     try feed(&terminal, "\x1bc");
     const pop_first = try terminal.feed("\x1b[23t");
-    try std.testing.expect(pop_first.state_changed and pop_first.title_changed);
+    try std.testing.expect(pop_first.stateChanged() and pop_first.titleChanged());
     try std.testing.expectEqualStrings("one", terminal.title().?);
-    try std.testing.expect(!(try terminal.feed("\x1b[23t")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[23t")).stateChanged());
 
     try consumeReplies(&terminal);
     try feed(&terminal, "\x1b G\x9b2");
@@ -1794,27 +1794,27 @@ test "DECRSPS restores bounded cursor rendition wrap origin and line drawing" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 12);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[2;3m")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1bP1$t3;12;1;")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[2;3m")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1bP1$t3;12;1;")).stateChanged());
     const restored = try terminal.feed("O;@;I;0;2;O;0BBB\x1b\\");
-    try std.testing.expect(restored.state_changed);
+    try std.testing.expect(restored.stateChanged());
 
     const restored_view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 2), restored_view.cursor_row);
     try std.testing.expectEqual(@as(u16, 11), restored_view.cursor_col);
 
     const repeated = try terminal.feed("\x1bP1$t3;12;1;O;@;I;0;2;O;0BBB\x1b\\");
-    try std.testing.expect(!repeated.state_changed);
+    try std.testing.expect(!repeated.stateChanged());
     const malformed = try terminal.feed("\x1bP1$tbad;12;1;O;@;I;0;2;O;0BBB\x1b\\");
-    try std.testing.expect(!malformed.state_changed);
+    try std.testing.expect(!malformed.stateChanged());
     const sequence_before = terminal.semanticSequence();
     const trailing_field = try terminal.feed("\x1bP1$t1;1;1;@;@;@;0;2;O;BBBB;extra\x1b\\");
-    try std.testing.expect(!trailing_field.state_changed);
+    try std.testing.expect(!trailing_field.stateChanged());
     const trailing_designation = try terminal.feed("\x1bP1$t1;1;1;@;@;@;0;2;O;BBBBx\x1b\\");
-    try std.testing.expect(!trailing_designation.state_changed);
+    try std.testing.expect(!trailing_designation.stateChanged());
     try std.testing.expectEqual(sequence_before, terminal.semanticSequence());
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_row);
-    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expect((try terminal.feed("q")).stateChanged());
     const restored_cell = terminal.semanticView(0).cellInfoAt(3, 0);
     try std.testing.expectEqual(@as(u21, 0x2500), restored_cell.codepoint);
     try std.testing.expect(restored_cell.attrs.reverse);
@@ -1822,18 +1822,18 @@ test "DECRSPS restores bounded cursor rendition wrap origin and line drawing" {
     try std.testing.expect(restored_cell.attrs.underline);
     try std.testing.expect(restored_cell.attrs.bold);
     const clamped = try terminal.feed("\x1bP1$t999999;999999;1;O;@;A;0;2;O;0BBB\x1b\\");
-    try std.testing.expect(clamped.state_changed);
+    try std.testing.expect(clamped.stateChanged());
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 11), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("x")).state_changed);
+    try std.testing.expect((try terminal.feed("x")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0x2502), terminal.semanticView(0).cellAt(3, 11));
 
-    try std.testing.expect((try terminal.feed("\x1b)A\x0e")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[4;12H#")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b)A\x0e")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[4;12H#")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0x00a3), terminal.semanticView(0).cellAt(3, 11));
     const restore_g0 = try terminal.feed("\x1bP1$t4;12;1;O;@;A;0;2;O;BBBB\x1b\\");
-    try std.testing.expect(restore_g0.state_changed);
-    try std.testing.expect((try terminal.feed("\x0f\x1b[4;11H#\x0e\x1b[4;12H#")).state_changed);
+    try std.testing.expect(restore_g0.stateChanged());
+    try std.testing.expect((try terminal.feed("\x0f\x1b[4;11H#\x0e\x1b[4;12H#")).stateChanged());
     try std.testing.expectEqual(@as(u21, '#'), terminal.semanticView(0).cellAt(3, 10));
     try std.testing.expectEqual(@as(u21, 0x00a3), terminal.semanticView(0).cellAt(3, 11));
 }
@@ -1842,30 +1842,30 @@ test "DECRSPS replaces active bounded tab stops transactionally" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 18);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\r")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad")).state_changed);
-    try std.testing.expect((try terminal.feed("/0/3\x1b\\")).state_changed);
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\r")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad")).stateChanged());
+    try std.testing.expect((try terminal.feed("/0/3\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cursor_col);
 
     try terminal.resize(2, 6);
-    try std.testing.expect((try terminal.feed("\r\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\r\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
     try terminal.resize(2, 18);
-    try std.testing.expect((try terminal.feed("\r\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\r\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
 
-    try std.testing.expect((try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1bP2$t\x1b\\")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1bP2$t\x1b\\")).state_changed);
-    try std.testing.expect((try terminal.feed("\r\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t3/11/999/bad/0/3\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1bP2$t\x1b\\")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1bP2$t\x1b\\")).stateChanged());
+    try std.testing.expect((try terminal.feed("\r\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 17), terminal.semanticView(0).cursor_col);
 }
 
@@ -1950,8 +1950,8 @@ test "DECRQSS reports conformance and page length across framing modes" {
 
     // DECSCL shares DA1's VT220 identity. DECSLPP follows iTerm2's minimum
     // page length of 24 while retaining larger owned screen dimensions.
-    try std.testing.expect(!(try terminal.feed("\x1bP$q\"")).state_changed);
-    try std.testing.expect((try terminal.feed("p\x1b\\\x1bP$qt\x1b\\\x1b[c")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP$q\"")).stateChanged());
+    try std.testing.expect((try terminal.feed("p\x1b\\\x1bP$qt\x1b\\\x1b[c")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1bP1$r62\"p\x1b\\\x1bP1$r24t\x1b\\\x1b[?62;22c",
         pendingOutput(&terminal),
@@ -1968,8 +1968,8 @@ test "XTGETTCAP replies preserve ordered names values failures and C1 serializat
     var terminal = try Terminal.init(allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1bP+q436F;636f6c6f")).state_changed);
-    try std.testing.expect((try terminal.feed("7273;524742;5463;5375;626f677573;4;zz\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP+q436F;636f6c6f")).stateChanged());
+    try std.testing.expect((try terminal.feed("7273;524742;5463;5375;626f677573;4;zz\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1bP1+r436F=323536\x1b\\" ++
             "\x1bP1+r636f6c6f7273=323536\x1b\\" ++
@@ -1983,11 +1983,11 @@ test "XTGETTCAP replies preserve ordered names values failures and C1 serializat
     );
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1bP+Q6E616D65\x1b\\")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bP+Q6E616D65\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("\x1bP0+R6E616D65\x1b\\", pendingOutput(&terminal));
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b G\x90+q436f;5463\x9c")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b G\x90+q436f;5463\x9c")).stateChanged());
     try std.testing.expectEqualStrings("\x901+r436f=323536\x9c\x901+r5463\x9c", pendingOutput(&terminal));
 }
 
@@ -2032,7 +2032,7 @@ test "iTerm2 DCS payloads retain bounded unescaped occurrences in order" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1bP1000pdiscard\x18")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP1000pdiscard\x18")).stateChanged());
 
     const commands = [_]struct {
         introducer: []const u8,
@@ -2044,11 +2044,11 @@ test "iTerm2 DCS payloads retain bounded unescaped occurrences in order" {
         .{ .introducer = "\x1bPt", .payload = "tmux;wrapped\x1b\x1b[31m", .terminator = "\x1b\\" },
     };
     for (commands) |command| {
-        try std.testing.expect(!(try terminal.feed(command.introducer)).state_changed);
+        try std.testing.expect(!(try terminal.feed(command.introducer)).stateChanged());
         const split = command.payload.len / 2;
-        try std.testing.expect(!(try terminal.feed(command.payload[0..split])).state_changed);
-        try std.testing.expect(!(try terminal.feed(command.payload[split..])).state_changed);
-        try std.testing.expect((try terminal.feed(command.terminator)).state_changed);
+        try std.testing.expect(!(try terminal.feed(command.payload[0..split])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(command.payload[split..])).stateChanged());
+        try std.testing.expect((try terminal.feed(command.terminator)).stateChanged());
     }
 
     const expected = [_]struct { kind: Terminal.DcsPayloadKind, payload: []const u8 }{
@@ -2069,7 +2069,7 @@ test "iTerm2 DCS payloads retain bounded unescaped occurrences in order" {
         "\x1bP1000;1ptrailing-param\x1b\\",
         "\x1bPtother;payload\x1b\\",
     };
-    for (ignored) |bytes| try std.testing.expect(!(try terminal.feed(bytes)).state_changed);
+    for (ignored) |bytes| try std.testing.expect(!(try terminal.feed(bytes)).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -2093,10 +2093,10 @@ test "Kitty caller-directed DCS commands retain exact handler payloads in order"
         .{ .bytes = "kitty-edit|edit", .kind = .kitty_edit, .payload = "edit" },
     };
     for (commands) |command| {
-        try std.testing.expect(!(try terminal.feed("\x1bP@")).state_changed);
-        try std.testing.expect(!(try terminal.feed(command.bytes[0 .. command.bytes.len / 2])).state_changed);
-        try std.testing.expect(!(try terminal.feed(command.bytes[command.bytes.len / 2 ..])).state_changed);
-        try std.testing.expect((try terminal.feed("\x1b\\")).state_changed);
+        try std.testing.expect(!(try terminal.feed("\x1bP@")).stateChanged());
+        try std.testing.expect(!(try terminal.feed(command.bytes[0 .. command.bytes.len / 2])).stateChanged());
+        try std.testing.expect(!(try terminal.feed(command.bytes[command.bytes.len / 2 ..])).stateChanged());
+        try std.testing.expect((try terminal.feed("\x1b\\")).stateChanged());
     }
     try std.testing.expectEqual(@as(u8, commands.len), terminal.consequenceCount());
     for (commands, 1..) |wanted, generation| {
@@ -2107,7 +2107,7 @@ test "Kitty caller-directed DCS commands retain exact handler payloads in order"
         try terminal.consumeConsequence(occurrence.generation);
     }
 
-    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-unknown|drop\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-unknown|drop\x1b\\")).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 }
 
@@ -2131,10 +2131,10 @@ test "DCS consequence queue proves sixteen-entry saturation and preserves identi
     defer terminal.deinit();
 
     for (0..5) |_| {
-        try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
+        try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).stateChanged());
         try terminal.consumeConsequence(terminal.consequenceHead().?.dcs.generation);
     }
-    for (0..16) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).state_changed);
+    for (0..16) |_| try std.testing.expect((try terminal.feed("\x1bP+pA\x1b\\")).stateChanged());
     try std.testing.expectEqual(@as(u8, 16), terminal.consequenceCount());
     const head = terminal.consequenceHead().?.dcs;
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bP+pB\x1b\\"));
@@ -2151,24 +2151,24 @@ test "DCS payload bound reports overflow and remains restartable" {
     const header = "\x1bP+p436F=";
     const half = (expected_string_control_bytes - 5) / 2;
     const remainder = expected_string_control_bytes - 5 - half;
-    try std.testing.expect(!(try terminal.feed(header)).history_lost);
-    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('x')))).history_lost);
-    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('x')))).history_lost);
-    try std.testing.expect(!(try terminal.feed("\x1b\\")).history_lost);
+    try std.testing.expect(!(try terminal.feed(header)).historyLost());
+    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('x')))).historyLost());
+    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('x')))).historyLost());
+    try std.testing.expect(!(try terminal.feed("\x1b\\")).historyLost());
     try std.testing.expectEqual(expected_string_control_bytes, dcsPayload(&terminal).?.len);
 
-    try std.testing.expect(!(try terminal.feed(header)).history_lost);
-    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('y')))).history_lost);
-    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('y')))).history_lost);
+    try std.testing.expect(!(try terminal.feed(header)).historyLost());
+    try std.testing.expect(!(try terminal.feed(&@as([half]u8, @splat('y')))).historyLost());
+    try std.testing.expect(!(try terminal.feed(&@as([remainder]u8, @splat('y')))).historyLost());
     try std.testing.expectError(error.StringControlLimit, terminal.feed("y"));
     try std.testing.expectEqual(expected_string_control_bytes, dcsPayload(&terminal).?.len);
     try std.testing.expectEqual(@as(u8, 'x'), dcsPayload(&terminal).?[5]);
 
     try terminal.consumeConsequence(terminal.consequenceHead().?.dcs.generation);
-    try std.testing.expect(!(try terminal.feed("\x1bP+pkeep\x1b\\")).history_lost);
+    try std.testing.expect(!(try terminal.feed("\x1bP+pkeep\x1b\\")).historyLost());
     try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
 
-    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bc\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(5, 9);
     try std.testing.expectEqualStrings("keep", dcsPayload(&terminal).?);
 }
@@ -2177,16 +2177,16 @@ test "APC PM and SOS retain bounded ordered fallback payloads" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b_A")).state_changed);
-    try std.testing.expect((try terminal.feed("P\x1b\x1bC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b_A")).stateChanged());
+    try std.testing.expect((try terminal.feed("P\x1b\x1bC\x1b\\\x9ePM\x9c\x1bXSOS\x1b\\")).stateChanged());
     const expected = [_]struct { kind: Terminal.StringPayloadKind, payload: []const u8 }{
         .{ .kind = .apc, .payload = "AP\x1bC" },
         .{ .kind = .pm, .payload = "PM" },
         .{ .kind = .sos, .payload = "SOS" },
     };
     try terminal.resize(5, 9);
-    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l\x1bc")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h\x1b[?1049l\x1bc")).stateChanged());
     try std.testing.expectEqual(@as(u8, expected.len), terminal.consequenceCount());
     for (expected, 1..) |wanted, generation| {
         const occurrence = terminal.consequenceHead().?.string_control;
@@ -2202,18 +2202,18 @@ test "generic string fallback cancellation overflow and queue saturation preserv
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b_drop\x18")).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
     try std.testing.expect(!(try terminal.feed(
         "\x1b_" ++ @as([2049]u8, @splat('x')) ++ "\x1b\\",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(terminal.consequenceHead() == null);
 
     for (0..5) |_| {
-        try std.testing.expect((try terminal.feed("\x1b_A\x1b\\")).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b_A\x1b\\")).stateChanged());
         try terminal.consumeConsequence(terminal.consequenceHead().?.string_control.generation);
     }
-    for (0..32) |_| try std.testing.expect((try terminal.feed("\x1b^P\x1b\\")).state_changed);
+    for (0..32) |_| try std.testing.expect((try terminal.feed("\x1b^P\x1b\\")).stateChanged());
     const head = terminal.consequenceHead().?.string_control;
     try std.testing.expectError(error.ConsequenceLimit, terminal.feed("\x1bXS\x1b\\"));
     try std.testing.expectEqual(head.generation, terminal.consequenceHead().?.string_control.generation);
@@ -2230,7 +2230,7 @@ test "generic string aggregate budget rolls back and is reclaimed by consumption
     try sequence.appendSlice(allocator, "\x1b_");
     try sequence.appendNTimes(allocator, 'a', 1200);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expect((try terminal.feed(sequence.items)).stateChanged());
     const first = terminal.consequenceHead().?.string_control;
     try std.testing.expectEqual(@as(u64, 1), first.generation);
     try std.testing.expectEqual(@as(usize, 1200), first.payload.len);
@@ -2245,12 +2245,12 @@ test "generic string aggregate budget rolls back and is reclaimed by consumption
     try std.testing.expectEqualStrings(first.payload, terminal.consequenceHead().?.string_control.payload);
 
     try terminal.consumeConsequence(first.generation);
-    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expect((try terminal.feed(sequence.items)).stateChanged());
     sequence.clearRetainingCapacity();
     try sequence.appendSlice(allocator, "\x1bX");
     try sequence.appendNTimes(allocator, 'c', 1000);
     try sequence.appendSlice(allocator, "\x1b\\");
-    try std.testing.expect((try terminal.feed(sequence.items)).state_changed);
+    try std.testing.expect((try terminal.feed(sequence.items)).stateChanged());
 
     const second = terminal.consequenceHead().?.string_control;
     try std.testing.expectEqual(@as(u64, 2), second.generation);
@@ -2270,7 +2270,7 @@ test "legacy Tektronix C0 and ESC controls retain ordered consequences" {
 
     try std.testing.expect((try terminal.feed(
         "\x1c\x1d\x1e\x1f\x1b\x17\x1b\x1c\x1bl\x1bs",
-    )).state_changed);
+    )).stateChanged());
     const expected = [_]Terminal.LegacyControlKind{
         .tek_point_plot,
         .tek_graph,
@@ -2318,10 +2318,10 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
 
     try std.testing.expect((try terminal.feed(
         "\x1b[?5h\x1b[?6h\x1b[?7l\x1b[?25l\x1b[3;4H\x1b[4 q\x1b[1m\x1b)0\x0e\x1b[?1048h",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect((try terminal.feed(
         "\x1b[?5l\x1b[?6l\x1b[?7h\x1b[?25h\x1b[1;1H\x1b[1 q\x1b[0m\x1b)B\x0f\x1b[?1048l",
-    )).state_changed);
+    )).stateChanged());
     const restored = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 2), restored.cursor_row);
     try std.testing.expectEqual(@as(u16, 3), restored.cursor_col);
@@ -2329,27 +2329,27 @@ test "DEC cursor and alternate modes preserve bounded lifecycle truth" {
     try std.testing.expect(!restored.cursor_blink);
     try std.testing.expect(!restored.cursor_visible);
     try std.testing.expect(terminal.presentation().reverse_screen);
-    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expect((try terminal.feed("q")).stateChanged());
     const restored_cell = terminal.semanticView(0).cellInfoAt(2, 3);
     try std.testing.expectEqual(@as(u21, 0x2500), restored_cell.codepoint);
     try std.testing.expect(restored_cell.attrs.bold);
 
     try consumeReplies(&terminal);
     const query = try terminal.feed("\x1b[?6$p\x1b[?7$p");
-    try std.testing.expect(!query.title_changed and !query.icon_changed);
+    try std.testing.expect(!query.titleChanged() and !query.iconChanged());
     try std.testing.expectEqualStrings("\x1b[?6;1$y\x1b[?7;2$y", pendingOutput(&terminal));
 
-    try std.testing.expect((try terminal.feed("\x1b[?25h\x1b[?1049h\x1b[?25l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?25h\x1b[?1049h\x1b[?25l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
     try std.testing.expect(terminal.semanticView(0).cursor_visible);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?9999h\x1b[?1049x")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?9999h\x1b[?1049x")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?1047hALT")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1047l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047hALT")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1047l")).stateChanged());
     try terminal.resize(5, 10);
-    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).stateChanged());
     const alternate = terminal.semanticView(0);
     try std.testing.expect(alternate.is_alternate_screen);
     try std.testing.expectEqual(@as(u16, 5), alternate.rows);
@@ -2363,37 +2363,37 @@ test "Kitty alternate-screen modes preserve banks and apply transition effects o
     var terminal = try Terminal.init(std.testing.allocator, 3, 6);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("MAIN\x1b[?47hALT\x1b[31m")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect((try terminal.feed("MAIN\x1b[?47hALT\x1b[31m")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'M'), terminal.semanticView(0).cellAt(0, 0));
 
-    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).stateChanged());
     var alternate = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'A'), alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_row);
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_col);
     try std.testing.expectEqual(Terminal.default_cell_attrs, alternate.cellInfoAt(0, 0).attrs);
-    try std.testing.expect(!(try terminal.feed("\x1b[?47h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?47h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?1047h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1047h")).stateChanged());
     alternate = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'A'), alternate.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_row);
     try std.testing.expectEqual(@as(u16, 0), alternate.cursor_col);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1047h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1047l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1047h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1047l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[?1049hX")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;3H\x1b[?1049hX")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049h")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'X'), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
-    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?1049l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
 }
 
@@ -2401,45 +2401,45 @@ test "DEC screen origin and autowrap modes own exact repeated command effects" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[1;8HX")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?7")).state_changed);
-    try std.testing.expect((try terminal.feed("h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;8HX")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?7")).stateChanged());
+    try std.testing.expect((try terminal.feed("h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?5h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?5h")).stateChanged());
     try std.testing.expect(terminal.presentation().reverse_screen);
-    try std.testing.expect(!(try terminal.feed("\x1b[?5h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?5l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?5l")).stateChanged());
     try std.testing.expect(!terminal.presentation().reverse_screen);
-    try std.testing.expect(!(try terminal.feed("\x1b[?5l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?5l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[?69h\x1b[3;6s\x1b[4;7H")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?6h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[?69h\x1b[3;6s\x1b[4;7H")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?6h")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
-    try std.testing.expect(!(try terminal.feed("\x1b[?6h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[2;2H\x1b[?6h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?6h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[2;2H\x1b[?6h")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\x1b[?6l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?6l")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
-    try std.testing.expect(!(try terminal.feed("\x1b[?6l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?6l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[?47h\x1b#6\x1b[?47l\x1b[?69h\x1b[?47h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?69l\x1b[?47h\x1b#6\x1b[?47l\x1b[?69h\x1b[?47h")).stateChanged());
     try std.testing.expectEqual(.double_width, terminal.semanticView(0).lineGeometry(0));
-    try std.testing.expect((try terminal.feed("\x1b[?69h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?69h")).stateChanged());
     try std.testing.expectEqual(.single_width, terminal.semanticView(0).lineGeometry(0));
-    try std.testing.expect(!(try terminal.feed("\x1b[?69h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?47l\x1b[?69l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?69l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?69h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?47l\x1b[?69l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?69l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[1;8HA\x1b[?7l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?7l")).state_changed);
-    try std.testing.expect((try terminal.feed("B")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;8HA\x1b[?7l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?7l")).stateChanged());
+    try std.testing.expect((try terminal.feed("B")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 7));
-    try std.testing.expect((try terminal.feed("\x1b[?7h")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?7h")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?7h")).stateChanged());
 }
 
 test "ignored and unknown DEC modes preserve pending wrap and grid state" {
@@ -2449,16 +2449,16 @@ test "ignored and unknown DEC modes preserve pending wrap and grid state" {
     for (modes) |mode| for (finals) |final| {
         var terminal = try Terminal.init(std.testing.allocator, 2, 2);
         defer terminal.deinit();
-        try std.testing.expect((try terminal.feed("AB")).state_changed);
+        try std.testing.expect((try terminal.feed("AB")).stateChanged());
 
         var bytes: [16]u8 = undefined;
         const prefix = try std.fmt.bufPrint(bytes[0..], "\x1b[?{d}", .{mode});
-        try std.testing.expect(!(try terminal.feed(prefix)).state_changed);
-        try std.testing.expect(!(try terminal.feed(&.{final})).state_changed);
+        try std.testing.expect(!(try terminal.feed(prefix)).stateChanged());
+        try std.testing.expect(!(try terminal.feed(&.{final})).stateChanged());
         try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
         try std.testing.expectEqual(@as(u21, 'B'), terminal.semanticView(0).cellAt(0, 1));
 
-        try std.testing.expect((try terminal.feed("C")).state_changed);
+        try std.testing.expect((try terminal.feed("C")).stateChanged());
         try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(1, 0));
     };
 }
@@ -2561,13 +2561,13 @@ test "media-copy commands retain bounded ordered caller intent" {
 
     // Exercise ring wrap before filling the fixed burst bound.
     for (0..5) |_| {
-        try std.testing.expect((try terminal.feed("\x1b[5i")).state_changed);
+        try std.testing.expect((try terminal.feed("\x1b[5i")).stateChanged());
         try terminal.consumeConsequence(terminal.consequenceHead().?.media_copy.generation);
     }
     for (0..8) |parameter| {
         var bytes: [16]u8 = undefined;
         const command = try std.fmt.bufPrint(&bytes, "\x1b[{d}i", .{parameter});
-        try std.testing.expect((try terminal.feed(command)).state_changed);
+        try std.testing.expect((try terminal.feed(command)).stateChanged());
     }
     try std.testing.expectEqual(@as(u8, 8), terminal.consequenceCount());
     const head_before = terminal.consequenceHead().?.media_copy;
@@ -2576,13 +2576,13 @@ test "media-copy commands retain bounded ordered caller intent" {
 
     try std.testing.expectError(error.StaleConsequence, terminal.consumeConsequence(head_before.generation + 1));
     try terminal.consumeConsequence(head_before.generation);
-    try std.testing.expect((try terminal.feed("\x1b[?4i")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?4i")).stateChanged());
     while (terminal.consequenceHead()) |occurrence| {
         try terminal.consumeConsequence(occurrence.id());
     }
 
-    try std.testing.expect(!(try terminal.feed("\x1b[1;2i\x1b[-1i\x1b[?1;2i")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[5i\x1bc\x1b[?1049h\x1b[?1049l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[1;2i\x1b[-1i\x1b[?1;2i")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[5i\x1bc\x1b[?1049h\x1b[?1049l")).stateChanged());
     try terminal.resize(5, 9);
     try std.testing.expectEqualDeep(
         Terminal.MediaCopyRequest{ .private = false, .parameter = 5 },
@@ -2595,103 +2595,103 @@ test "reverse wrap owns backspace margins phantom state query save and reset" {
     var terminal = try Terminal.init(allocator, 4, 5);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h")).state_changed);
-    try std.testing.expect((try terminal.feed("abcde")).state_changed);
-    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h")).stateChanged());
+    try std.testing.expect((try terminal.feed("abcde")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
 
     terminal.hardReset();
-    try std.testing.expect((try terminal.feed("abcdef\r")).state_changed);
-    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("abcdef\r")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cursor_col);
 
     terminal.hardReset();
-    try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;4s\x1b[?45h\x1b[2;2H")).state_changed);
-    try std.testing.expect((try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?69h\x1b[2;4s\x1b[?45h\x1b[2;2H")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).cursor_col);
-    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[2;2H")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;4r\x1b[2;2H")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_col);
 
     terminal.hardReset();
-    try std.testing.expect((try terminal.feed("abcdef\r\x1b[?69h\x1b[2;4s\x1b[2;2H")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("abcdef\r\x1b[?69h\x1b[2;4s\x1b[2;2H")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
     terminal.hardReset();
-    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?7l\x1b[2;1H")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x08")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?7l\x1b[2;1H")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x08")).stateChanged());
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h\x1b[?45;1045s")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?45l\x1b[?1045l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?45$p\x1b[?1045$p")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?45;1045r\x1b[?45$p\x1b[?1045$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?45h\x1b[?1045h\x1b[?45;1045s")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?45l\x1b[?1045l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?45$p\x1b[?1045$p")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?45;1045r\x1b[?45$p\x1b[?1045$p")).stateChanged());
     try std.testing.expectEqualStrings(
         "\x1b[?45;2$y\x1b[?1045;2$y\x1b[?45;1$y\x1b[?1045;1$y",
         pendingOutput(&terminal),
     );
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?45$p\x1b[?1045$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?45$p\x1b[?1045$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?45;2$y\x1b[?1045;2$y", pendingOutput(&terminal));
-    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
 }
 
 test "DEC column modes own permission preservation query save and reset lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("kept\x1b[2;3H\x1b[?40l")).state_changed);
+    try std.testing.expect((try terminal.feed("kept\x1b[2;3H\x1b[?40l")).stateChanged());
     const cursor_row_before_denied = terminal.semanticView(0).cursor_row;
     const cursor_col_before_denied = terminal.semanticView(0).cursor_col;
-    try std.testing.expect(!(try terminal.feed("\x1b[?3h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?3h")).stateChanged());
     try std.testing.expectEqual(cursor_row_before_denied, terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(cursor_col_before_denied, terminal.semanticView(0).cursor_col);
     try std.testing.expectEqual(@as(u21, 'k'), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect((try terminal.feed("\x1b[?3$p\x1b[?40$p\x1b[?95$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?3$p\x1b[?40$p\x1b[?95$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?3;2$y\x1b[?40;2$y\x1b[?95;2$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
 
-    try std.testing.expect((try terminal.feed("\x1b[?40h\x1b[?95")).state_changed);
-    try std.testing.expect((try terminal.feed("h\x1b[?3h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?40h\x1b[?95")).stateChanged());
+    try std.testing.expect((try terminal.feed("h\x1b[?3h")).stateChanged());
     try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cols);
     try std.testing.expectEqual(cursor_row_before_denied, terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(cursor_col_before_denied, terminal.semanticView(0).cursor_col);
     try std.testing.expectEqual(@as(u21, 'k'), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect(!(try terminal.feed("\x1b[?3h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?3h")).stateChanged());
     try terminal.resize(4, 10);
     try std.testing.expectEqual(@as(u16, 10), terminal.semanticView(0).cols);
     try std.testing.expectEqual(@as(u21, 'k'), terminal.semanticView(0).cellAt(0, 0));
 
-    try std.testing.expect((try terminal.feed("\x1b[?1049h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?3$p\x1b[?40$p\x1b[?95$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?3$p\x1b[?40$p\x1b[?95$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?3;1$y\x1b[?40;1$y\x1b[?95;1$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?40;95s\x1b[?40;95l\x1b[?3$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?40;95s\x1b[?40;95l\x1b[?3$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?3;2$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?40;95r")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?40;95r")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?95l\x1b[?3l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?95l\x1b[?3l")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
     try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect(!(try terminal.feed("\x1b[?3l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?3l")).stateChanged());
 
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?95h\x1b[!p\x1b[?40$p\x1b[?95$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?95h\x1b[!p\x1b[?40$p\x1b[?95$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?40;1$y\x1b[?95;2$y", pendingOutput(&terminal));
-    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
     try consumeReplies(&terminal);
     terminal.hardReset();
-    try std.testing.expect((try terminal.feed("\x1b[?40$p\x1b[?95$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?40$p\x1b[?95$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?40;1$y\x1b[?95;2$y", pendingOutput(&terminal));
 }
 
@@ -2699,35 +2699,35 @@ test "DEC more-fix owns pending-wrap tab query save and reset lifetime" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 10);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("0123456789")).state_changed);
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("0123456789")).stateChanged());
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 9), terminal.semanticView(0).cursor_col);
 
-    try std.testing.expect((try terminal.feed("\r\x1b[?41")).state_changed);
-    try std.testing.expect((try terminal.feed("h0123456789")).state_changed);
-    try std.testing.expect((try terminal.feed("\t")).state_changed);
+    try std.testing.expect((try terminal.feed("\r\x1b[?41")).stateChanged());
+    try std.testing.expect((try terminal.feed("h0123456789")).stateChanged());
+    try std.testing.expect((try terminal.feed("\t")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.semanticView(0).cursor_row);
     try std.testing.expectEqual(@as(u16, 8), terminal.semanticView(0).cursor_col);
     try std.testing.expectEqual(@as(u21, '0'), terminal.semanticView(0).cellAt(0, 0));
-    try std.testing.expect(!(try terminal.feed("\x1b[?41h")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?41h")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?41$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?41$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;1$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?41;1002s\x1b[?41l\x1b[?1000h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?41$p\x1b[?1002$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1002h\x1b[?41;1002s\x1b[?41l\x1b[?1000h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?41$p\x1b[?1002$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;2$y\x1b[?1002;2$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?41;1002r\x1b[?1049h\x1b[?41$p\x1b[?1002$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?41;1002r\x1b[?1049h\x1b[?41$p\x1b[?1002$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;1$y\x1b[?1002;1$y", pendingOutput(&terminal));
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?41$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[!p\x1b[?41$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
-    try std.testing.expect(!(try terminal.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[!p")).stateChanged());
 
     terminal.hardReset();
     try consumeReplies(&terminal);
-    try std.testing.expect((try terminal.feed("\x1b[?41$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?41$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?41;2$y", pendingOutput(&terminal));
 }

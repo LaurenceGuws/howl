@@ -6,7 +6,7 @@ const Terminal = terminal_mod.Terminal;
 
 fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 pub const Record = struct {
@@ -98,10 +98,10 @@ test "pty feed replay matches whole feed" {
     try replay(&replayed, &record);
 
     const wrap_probe = "\r1234567890abcdef";
-    try std.testing.expect((try whole.feed(wrap_probe)).state_changed);
-    try std.testing.expect((try replayed.feed(wrap_probe)).state_changed);
-    try std.testing.expect((try whole.feed("Z")).state_changed);
-    try std.testing.expect((try replayed.feed("Z")).state_changed);
+    try std.testing.expect((try whole.feed(wrap_probe)).stateChanged());
+    try std.testing.expect((try replayed.feed(wrap_probe)).stateChanged());
+    try std.testing.expect((try whole.feed("Z")).stateChanged());
+    try std.testing.expect((try replayed.feed("Z")).stateChanged());
 
     const whole_view = whole.semanticView(0);
     const replay_view = replayed.semanticView(0);

@@ -64,7 +64,7 @@ fn prepareResizeDiscardTransaction(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
     defer terminal.deinit();
     const fed = try terminal.feed("AB\r\nCD");
-    try std.testing.expect(fed.state_changed);
+    try std.testing.expect(fed.stateChanged());
     const semantic_sequence = terminal.semanticSequence();
     const view_before = terminal.semanticView(0);
     const cursor_row = view_before.cursor_row;
@@ -100,7 +100,7 @@ fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
     defer terminal.deinit();
     try terminal.setCellPixelSize(9, 17);
     const enabled = try terminal.feed("\x1b[?2048h");
-    try std.testing.expect(enabled.state_changed);
+    try std.testing.expect(enabled.stateChanged());
 
     terminal.resize(3, 5) catch |failure| {
         try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
@@ -118,7 +118,7 @@ test "prepared resize commits exact eight-bit report once" {
     defer terminal.deinit();
     try terminal.setCellPixelSize(9, 17);
     const configured = try terminal.feed("\x1b[?2048h\x1b G");
-    try std.testing.expect(configured.state_changed);
+    try std.testing.expect(configured.stateChanged());
     const semantic_sequence = terminal.semanticSequence();
 
     var prepared = try terminal.prepareResize(3, 5);
@@ -4400,12 +4400,307 @@ fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
     };
 }
 
+/// Packs the semantic owners affected by one accepted feed.
+///
+/// This is the only mutation combination carried across the VT boundary. The
+/// individual bits are derived while applying the event and are never kept as
+/// a parallel summary representation.
+pub const MutationFacts = packed struct(u8) {
+    /// Cursor position, visibility, style, color, or blink-intent mutation.
+    cursor: bool = false,
+    /// Cell, attribute, line, or grapheme mutation.
+    text: bool = false,
+    /// Scroll, history offset, or visible-row mutation.
+    viewport: bool = false,
+    /// Terminal image-plane mutation.
+    images: bool = false,
+    /// Terminal mode or alternate-screen mutation.
+    mode: bool = false,
+    /// Window title metadata mutation.
+    title: bool = false,
+    /// Window icon metadata mutation.
+    icon: bool = false,
+    /// Bounded history-loss mutation.
+    history_loss: bool = false,
+
+    /// Returns whether any semantic owner changed.
+    pub fn stateChanged(self: MutationFacts) bool {
+        return @as(u8, @bitCast(self)) != 0;
+    }
+
+    /// Returns whether this feed changes only cursor-owned facts.
+    pub fn cursorOnly(self: MutationFacts) bool {
+        return self.cursor and
+            !self.text and
+            !self.viewport and
+            !self.images and
+            !self.mode and
+            !self.title and
+            !self.icon and
+            !self.history_loss;
+    }
+
+    /// Merges one event's owner bits without retaining another representation.
+    pub fn merge(self: *MutationFacts, other: MutationFacts) void {
+        self.* = @bitCast(@as(u8, @bitCast(self.*)) | @as(u8, @bitCast(other)));
+    }
+};
+
+/// Captures the accepted cursor and viewport owners before one feed mutates VT.
+const MutationObservation = struct {
+    cursor: CursorObservation,
+    viewport: ViewportObservation,
+    graphics_generation: u64,
+    history_loss_generation: u64,
+
+    const CursorObservation = struct {
+        row: u16,
+        col: u16,
+        visible: bool,
+        shape: Screen.CursorShape,
+        blink: bool,
+        default_shape: Screen.CursorShape,
+        default_blink: bool,
+        override_present: bool,
+        override_shape: Screen.CursorShape,
+        override_blink: bool,
+        cursor_color: Screen.Rgb,
+        text_color: Screen.Rgb,
+        wrap_pending: bool,
+    };
+
+    const ViewportObservation = struct {
+        alternate: bool,
+        history_count: u32,
+        history_write_idx: u32,
+        history_row_base: u32,
+        row_origin: u16,
+        view_padding_rows: u16,
+        scroll_top: u16,
+        scroll_bottom: u16,
+        left_right_margin_mode: bool,
+        left_margin: u16,
+        right_margin: u16,
+    };
+
+    fn capture(terminal: *const Terminal) MutationObservation {
+        const active = terminal.screen_state.activeConst();
+        const colors = terminal.properties.colors;
+        return .{
+            .cursor = .{
+                .row = active.cursor.row,
+                .col = active.cursor.col,
+                .visible = active.cursor.visible,
+                .shape = active.cursor.effective_shape,
+                .blink = active.cursor.blink_intent,
+                .default_shape = active.cursor.default_style.shape,
+                .default_blink = active.cursor.default_style.blink,
+                .override_present = active.cursor.program_override_style != null,
+                .override_shape = if (active.cursor.program_override_style) |style| style.shape else .block,
+                .override_blink = if (active.cursor.program_override_style) |style| style.blink else false,
+                .cursor_color = active.cursor.cursor_color orelse colors.cursor orelse colors.foreground,
+                .text_color = active.cursor.cursor_text_color orelse colors.cursor_text orelse colors.background,
+                .wrap_pending = active.wrap_pending,
+            },
+            .viewport = .{
+                .alternate = terminal.screen_state.alt_active,
+                .history_count = active.history_count,
+                .history_write_idx = active.history_write_idx,
+                .history_row_base = active.history_row_base,
+                .row_origin = active.row_origin,
+                .view_padding_rows = active.view_padding_rows,
+                .scroll_top = active.scroll_top,
+                .scroll_bottom = active.scroll_bottom,
+                .left_right_margin_mode = active.left_right_margin_mode,
+                .left_margin = active.left_margin,
+                .right_margin = active.right_margin,
+            },
+            .graphics_generation = terminal.graphics.generation(),
+            .history_loss_generation = terminal.screen_state.primary.history_loss_generation,
+        };
+    }
+
+    /// Derives cursor, viewport, image, and history facts from accepted owners.
+    fn mergeInto(self: MutationObservation, after: MutationObservation, facts: *MutationFacts) void {
+        if (!std.meta.eql(self.cursor, after.cursor)) facts.cursor = true;
+        if (!std.meta.eql(self.viewport, after.viewport)) facts.viewport = true;
+        if (self.graphics_generation != after.graphics_generation) facts.images = true;
+        if (self.history_loss_generation != after.history_loss_generation) facts.history_loss = true;
+    }
+};
+
 // Observable terminal mutations produced while applying one parser event.
 const EventEffect = struct {
     changed: bool,
+    mutations: MutationFacts = .{},
+    suppress_owner_fallback: bool = false,
+};
+
+fn suppressOwnerFallback(event: SemanticEvent) bool {
+    return switch (event) {
+        .cursor_up,
+        .cursor_down,
+        .cursor_forward,
+        .cursor_back,
+        .cursor_next_line,
+        .cursor_prev_line,
+        .cursor_horizontal_absolute,
+        .cursor_vertical_absolute,
+        .cursor_position,
+        .line_feed,
+        .next_line,
+        .carriage_return,
+        .backspace,
+        .horizontal_tab,
+        .horizontal_tab_forward,
+        .horizontal_tab_back,
+        .cursor_visible,
+        .cursor_blink,
+        .cursor_style,
+        .cursor_shape,
+        .cursor_color,
+        .cursor_text_color,
+        => true,
+        else => false,
+    };
+}
+
+fn semanticMutationFacts(
+    event: SemanticEvent,
+    changed: bool,
     title_changed: bool,
     icon_changed: bool,
-};
+) MutationFacts {
+    var facts: MutationFacts = .{};
+    if (title_changed) facts.title = true;
+    if (icon_changed) facts.icon = true;
+    switch (event) {
+        .cursor_up,
+        .cursor_down,
+        .cursor_forward,
+        .cursor_back,
+        .cursor_next_line,
+        .cursor_prev_line,
+        .cursor_horizontal_absolute,
+        .cursor_vertical_absolute,
+        .cursor_position,
+        .cursor_visible,
+        .cursor_blink,
+        .cursor_style,
+        .cursor_shape,
+        .cursor_color,
+        .cursor_text_color,
+        .restore_cursor,
+        .restore_cursor_information,
+        .restore_cursor_appearance,
+        => {},
+        // Cursor and pending-wrap consequences are derived from the accepted
+        // screen state below; event names do not own cursor publication.
+        .line_feed,
+        .next_line,
+        .carriage_return,
+        .backspace,
+        .horizontal_tab,
+        .horizontal_tab_forward,
+        .horizontal_tab_back,
+        .horizontal_tab_set,
+        .tab_clear_current,
+        .tab_clear_all,
+        .reset_default_tab_stops,
+        => {},
+        .scroll_up_lines,
+        .scroll_down_lines,
+        .scroll_down_from_history,
+        .reverse_index,
+        .forward_index,
+        .back_index,
+        => {
+            facts.viewport = changed;
+            facts.text = changed;
+        },
+        // Payload consequences are not intrinsically image mutations.  The
+        // complete feed compares the graphics generation and sets `images`
+        // only when the image plane actually changed.
+        .dcs_payload,
+        .string_payload,
+        => {},
+        .title_and_icon_set,
+        .title_set,
+        .icon_set,
+        .title_stack,
+        => {},
+        .enter_alt_screen => |options| {
+            facts.mode = changed;
+            facts.text = options.clear and changed;
+        },
+        .exit_alt_screen => {
+            facts.mode = changed;
+            facts.text = changed;
+        },
+        .hard_reset => {
+            facts.mode = changed;
+            facts.text = changed;
+        },
+        .soft_reset => {
+            facts.mode = changed;
+        },
+        .save_cursor => facts.mode = changed,
+        .auto_wrap,
+        .origin_mode,
+        .insert_mode,
+        .reverse_screen_mode,
+        .eight_bit_controls,
+        .auto_repeat,
+        .application_cursor_keys,
+        .application_keypad,
+        .column_mode_132,
+        .allow_column_mode,
+        .preserve_screen_on_column_mode,
+        .more_fix,
+        .ansi_mode_set,
+        .ansi_mode_reset,
+        .modify_other_keys_set,
+        .modify_other_keys_disable,
+        .key_format_change,
+        .pointer_mode,
+        .reverse_wraparound_mode,
+        .extended_reverse_wraparound_mode,
+        .focus_reporting,
+        .alternate_scroll,
+        .meta_sends_escape,
+        .report_key_up,
+        .bracketed_paste,
+        .synchronized_output,
+        .inband_resize_notifications,
+        .color_preference_notifications,
+        .paste_events,
+        .termios_signals,
+        .mouse_tracking_off,
+        .mouse_tracking_x10,
+        .mouse_tracking_normal,
+        .mouse_tracking_button_event,
+        .mouse_tracking_any_event,
+        .mouse_protocol_utf8,
+        .mouse_protocol_sgr,
+        .mouse_protocol_urxvt,
+        .mouse_protocol_sgr_pixel,
+        .kitty_keyboard_set,
+        .kitty_keyboard_push,
+        .kitty_keyboard_pop,
+        .dec_mode_set,
+        .dec_mode_reset,
+        .dec_mode_save,
+        .dec_mode_restore,
+        .shell_integration_set,
+        .text_size,
+        .set_scroll_region,
+        => facts.mode = changed,
+        else => {
+            if (changed) facts.text = true;
+        },
+    }
+    return facts;
+}
 
 /// Classify one parsed event into the canonical parser-to-domain vocabulary.
 fn routeParserEvent(event: parser_mod.Event) ?SemanticEvent {
@@ -4449,26 +4744,29 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
     switch (event) {
         .invoke_charset => |slot| {
             const changed = vt.charset.selectGl(slot);
-            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
+            return .{ .changed = changed };
         },
         .configure_charset => |cfg| {
             const changed = vt.charset.configureCharset(cfg.slot, cfg.designation);
-            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
+            return .{ .changed = changed };
         },
         else => {},
     }
 
     const semantic = routeParserEvent(event) orelse return .{
         .changed = false,
-        .title_changed = false,
-        .icon_changed = false,
     };
     if (semantic == .title_stack) {
         const effect = try applyTitleStack(&vt.properties, semantic.title_stack);
         return .{
             .changed = effect.changed,
-            .title_changed = effect.title_changed,
-            .icon_changed = false,
+            .mutations = semanticMutationFacts(
+                semantic,
+                effect.changed,
+                effect.title_changed,
+                false,
+            ),
+            .suppress_owner_fallback = false,
         };
     }
     const title_changed = switch (semantic) {
@@ -4482,10 +4780,20 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         else => false,
     };
     const changed = try applySemantic(vt, semantic);
+    var mutations = semanticMutationFacts(
+        semantic,
+        changed,
+        title_changed,
+        icon_changed,
+    );
+    if (changed and (semantic == .line_feed or semantic == .next_line)) {
+        const active = vt.screen_state.activeConst();
+        if (active.cursor.row == active.scrollBottom()) mutations.text = true;
+    }
     return .{
         .changed = changed,
-        .title_changed = title_changed,
-        .icon_changed = icon_changed,
+        .mutations = mutations,
+        .suppress_owner_fallback = suppressOwnerFallback(semantic),
     };
 }
 
@@ -4999,12 +5307,29 @@ const TerminalFeedError = error{
     StringControlLimit,
 };
 
-// Reports terminal mutation and distinct title or icon metadata changes.
-const TerminalFeedSummary = struct {
-    state_changed: bool,
-    title_changed: bool,
-    icon_changed: bool,
-    history_lost: bool,
+/// Reports the one packed mutation fact crossing the VT feed boundary.
+pub const TerminalFeedSummary = struct {
+    mutations: MutationFacts,
+
+    /// Derives the legacy aggregate state-change question from `mutations`.
+    pub fn stateChanged(self: TerminalFeedSummary) bool {
+        return self.mutations.stateChanged();
+    }
+
+    /// Reports whether title metadata changed in this feed.
+    pub fn titleChanged(self: TerminalFeedSummary) bool {
+        return self.mutations.title;
+    }
+
+    /// Reports whether icon metadata changed in this feed.
+    pub fn iconChanged(self: TerminalFeedSummary) bool {
+        return self.mutations.icon;
+    }
+
+    /// Reports whether bounded history lost rows in this feed.
+    pub fn historyLost(self: TerminalFeedSummary) bool {
+        return self.mutations.history_loss;
+    }
 };
 
 // Fragmented parser-stream ownership.
@@ -5170,21 +5495,19 @@ const TerminalStream = struct {
     /// Feeds one byte and omits the optional mutation summary while preserving failures.
     fn next(self: *TerminalStream, byte: u8) TerminalFeedError!void {
         const summary = try self.nextSliceSummary(&.{byte});
-        std.debug.assert(!summary.title_changed or summary.state_changed);
-        std.debug.assert(!summary.icon_changed or summary.state_changed);
+        std.debug.assert(!summary.titleChanged() or summary.stateChanged());
+        std.debug.assert(!summary.iconChanged() or summary.stateChanged());
     }
 
     /// Feeds a borrowed byte slice and omits the optional mutation summary.
     fn nextSlice(self: *TerminalStream, bytes: []const u8) TerminalFeedError!void {
         const summary = try self.nextSliceSummary(bytes);
-        std.debug.assert(!summary.title_changed or summary.state_changed);
-        std.debug.assert(!summary.icon_changed or summary.state_changed);
+        std.debug.assert(!summary.titleChanged() or summary.stateChanged());
+        std.debug.assert(!summary.iconChanged() or summary.stateChanged());
     }
 
     fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!TerminalFeedSummary {
-        var state_changed = false;
-        var title_changed = false;
-        var icon_changed = false;
+        var mutations: MutationFacts = .{};
         const state = &self.terminal.stream_state;
 
         errdefer {
@@ -5198,41 +5521,39 @@ const TerminalStream = struct {
 
         for (phases) |phase| {
             if (phase) |action| {
+                const graphics_before = self.terminal.graphics.generation();
                 const effect = try self.applyAction(action);
-                state_changed = state_changed or effect.changed;
-                title_changed = title_changed or effect.title_changed;
-                icon_changed = icon_changed or effect.icon_changed;
+                var event_mutations = effect.mutations;
+                if (self.terminal.graphics.generation() != graphics_before)
+                    event_mutations.images = true;
+                if (effect.changed and
+                    !effect.suppress_owner_fallback and
+                    !event_mutations.stateChanged())
+                    event_mutations.mode = true;
+                mutations.merge(event_mutations);
             }
         }
 
         return .{
-            .state_changed = state_changed,
-            .title_changed = title_changed,
-            .icon_changed = icon_changed,
-            .history_lost = false,
+            .mutations = mutations,
         };
     }
 
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
-        var summary: TerminalFeedSummary = .{
-            .state_changed = false,
-            .title_changed = false,
-            .icon_changed = false,
-            .history_lost = false,
-        };
+        var summary: TerminalFeedSummary = .{ .mutations = .{} };
         var completed = false;
-        defer if (!completed) self.terminal.completeStreamMutation(summary.state_changed);
+        const before = MutationObservation.capture(self.terminal);
+        defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
         const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
         for (bytes) |byte| {
             const byte_summary = try self.nextSummary(byte);
-            summary.state_changed = summary.state_changed or byte_summary.state_changed;
-            summary.title_changed = summary.title_changed or byte_summary.title_changed;
-            summary.icon_changed = summary.icon_changed or byte_summary.icon_changed;
+            summary.mutations.merge(byte_summary.mutations);
         }
-        summary.history_lost =
-            self.terminal.screen_state.primary.history_loss_generation != history_loss_before;
-        self.terminal.completeStreamMutation(summary.state_changed);
+        before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
+        if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
+            summary.mutations.history_loss = true;
+        self.terminal.completeStreamMutation(summary.stateChanged());
         completed = true;
         return summary;
     }
@@ -5299,8 +5620,6 @@ const TerminalStream = struct {
                     self.terminal.charset.selectGl(slot);
                 return .{
                     .changed = changed,
-                    .title_changed = false,
-                    .icon_changed = false,
                 };
             },
             else => return try self.applyEvent(.{ .control = ctrl }),
@@ -5321,8 +5640,6 @@ const TerminalStream = struct {
                     const changed = self.terminal.charset.configureCharset(slot, esc.final);
                     return .{
                         .changed = changed,
-                        .title_changed = false,
-                        .icon_changed = false,
                     };
                 },
                 '#' => {
@@ -5335,7 +5652,7 @@ const TerminalStream = struct {
                         '8' => active.alignmentDisplay(),
                         else => return try self.applyEvent(.{ .esc_dispatch = esc }),
                     };
-                    return .{ .changed = changed, .title_changed = false, .icon_changed = false };
+                    return .{ .changed = changed };
                 },
                 '%' => {
                     const latin1 = switch (esc.final) {
@@ -5345,8 +5662,6 @@ const TerminalStream = struct {
                     };
                     return .{
                         .changed = self.terminal.stream_state.parser.selectLatin1(latin1),
-                        .title_changed = false,
-                        .icon_changed = false,
                     };
                 },
                 else => {},
@@ -5363,7 +5678,7 @@ const TerminalStream = struct {
                 'O' => self.terminal.charset.selectSingleShift(3),
                 else => return try self.applyEvent(.{ .esc_dispatch = esc }),
             };
-            return .{ .changed = changed, .title_changed = false, .icon_changed = false };
+            return .{ .changed = changed };
         }
         return try self.applyEvent(.{ .esc_dispatch = esc });
     }
@@ -5376,8 +5691,6 @@ const TerminalStream = struct {
         try self.terminal.stream_state.dcs.start(hook);
         return .{
             .changed = false,
-            .title_changed = false,
-            .icon_changed = false,
         };
     }
 
@@ -5385,8 +5698,6 @@ const TerminalStream = struct {
         try self.terminal.stream_state.dcs.put(byte);
         return .{
             .changed = false,
-            .title_changed = false,
-            .icon_changed = false,
         };
     }
 
@@ -5466,7 +5777,7 @@ const TerminalStream = struct {
             screen.cursor.col = @min(saved_col, screen.lineRightBoundary(screen.cursor.row));
             screen.wrap_pending = false;
         }
-        return .{ .changed = true, .title_changed = false, .icon_changed = false };
+        return .{ .changed = true };
     }
 
     fn cancelDcs(self: *TerminalStream) EventEffect {
@@ -5495,16 +5806,12 @@ const TerminalStream = struct {
             defer capture.reset();
             return .{
                 .changed = try applyKittyGraphicsPacket(self.terminal, capture.bytes.items[1..]),
-                .title_changed = false,
-                .icon_changed = false,
             };
         }
         const payload: consequences.StringInput = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
         defer capture.reset();
         return .{
             .changed = try applySemantic(self.terminal, .{ .string_payload = payload }),
-            .title_changed = false,
-            .icon_changed = false,
         };
     }
 
@@ -5527,8 +5834,6 @@ fn capturedKittyGraphics(capture: *const StringCapture) bool {
 fn discardedStringControl() EventEffect {
     return .{
         .changed = false,
-        .title_changed = false,
-        .icon_changed = false,
     };
 }
 
@@ -5672,11 +5977,11 @@ test "xterm pointer mode retains the clamped protocol resource value" {
     defer terminal.deinit();
 
     try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
-    try std.testing.expect((try terminal.feed("\x1b[>2p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[>2p")).stateChanged());
     try std.testing.expectEqual(@as(u2, 2), terminal.modes.pointer_mode);
-    try std.testing.expect((try terminal.feed("\x1b[>9p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[>9p")).stateChanged());
     try std.testing.expectEqual(@as(u2, 3), terminal.modes.pointer_mode);
-    try std.testing.expect((try terminal.feed("\x1b[>p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[>p")).stateChanged());
     try std.testing.expectEqual(@as(u2, 1), terminal.modes.pointer_mode);
 }
 
@@ -6367,8 +6672,13 @@ pub const Terminal = struct {
     /// Applies a borrowed byte slice and reports mutation; failures reset transient parser state.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!FeedSummary {
         self.requireNoPreparedResize();
+        const graphics_before = self.graphics.generation();
         var stream = TerminalStream.init(self);
-        return stream.nextSliceSummary(bytes);
+        var summary = try stream.nextSliceSummary(bytes);
+        if (self.graphics.generation() != graphics_before) {
+            summary.mutations.images = true;
+        }
+        return summary;
     }
 
     fn completeStreamMutation(
@@ -7837,7 +8147,7 @@ test "terminal borrows bounded caller-selected history projections" {
     defer vt.deinit();
 
     const feed = try vt.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
-    try std.testing.expect(feed.state_changed);
+    try std.testing.expect(feed.stateChanged());
     try std.testing.expect(vt.semanticView(0).history_count > 0);
     const top = vt.semanticView(std.math.maxInt(u32));
     try std.testing.expectEqual(vt.semanticView(0).history_count, top.history_offset);
@@ -7850,14 +8160,69 @@ test "terminal feed retains no caller scrolling intent" {
     defer vt.deinit();
 
     const initial_feed = try vt.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD");
-    try std.testing.expect(initial_feed.state_changed);
+    try std.testing.expect(initial_feed.stateChanged());
     const before = vt.semanticView(1).cellAt(0, 0);
 
     const append_feed = try vt.feed("\r\n5EEEE");
-    try std.testing.expect(append_feed.state_changed);
+    try std.testing.expect(append_feed.stateChanged());
 
     try std.testing.expectEqual(before, vt.semanticView(2).cellAt(0, 0));
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_offset);
+}
+
+test "feed mutation facts keep cursor-only and mixed ownership distinct" {
+    try std.testing.expectEqual(@as(usize, 1), @sizeOf(MutationFacts));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(MutationFacts));
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const cursor = try terminal.feed("\x1b[1C");
+    try std.testing.expect(cursor.stateChanged());
+    try std.testing.expect(cursor.mutations.cursor);
+    try std.testing.expect(cursor.mutations.cursorOnly());
+    try std.testing.expect(!cursor.mutations.text);
+    try std.testing.expect(!cursor.mutations.viewport);
+    try std.testing.expect(!cursor.mutations.images);
+    try std.testing.expect(!cursor.mutations.mode);
+
+    const mixed = try terminal.feed("\x1b[1Cx");
+    try std.testing.expect(mixed.stateChanged());
+    try std.testing.expect(mixed.mutations.cursor);
+    try std.testing.expect(mixed.mutations.text);
+    try std.testing.expect(!mixed.mutations.cursorOnly());
+}
+
+test "feed mutation facts derive printing, tabs, regions, scrolling, images, and no-ops" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 4, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect(!(try terminal.feed("\x1b[?9999h")).stateChanged());
+
+    const printed = try terminal.feed("x");
+    try std.testing.expect(printed.mutations.text);
+    try std.testing.expect(printed.mutations.cursor);
+
+    const tabbed = try terminal.feed("\t");
+    try std.testing.expect(tabbed.mutations.cursorOnly());
+
+    const region = try terminal.feed("\x1b[2;3r");
+    try std.testing.expect(region.mutations.mode);
+    try std.testing.expect(region.mutations.viewport);
+    try std.testing.expect(region.mutations.cursor);
+
+    const filled = try terminal.feed("a\nb\nc");
+    try std.testing.expect(filled.stateChanged());
+    const scrolled = try terminal.feed("\x1b[2S");
+    try std.testing.expect(scrolled.mutations.text);
+    try std.testing.expect(scrolled.mutations.viewport);
+
+    var image_terminal = try Terminal.init(std.testing.allocator, 8, 12);
+    defer image_terminal.deinit();
+    try image_terminal.setCellPixelSize(2, 3);
+    try std.testing.expect(!(try image_terminal.feed("\x1bPq\"1;1;3;6#1;2;100;")).stateChanged());
+    const image = try image_terminal.feed("0;0!3~\x1b\\");
+    try std.testing.expect(image.mutations.images);
+    try std.testing.expect(!image.mutations.text);
 }
 
 test "feed summary and semantic state report dropped history" {
@@ -7867,8 +8232,8 @@ test "feed summary and semantic state report dropped history" {
     failing.fail_index = failing.alloc_index;
 
     const dropped = try terminal.feed("\x1b[S");
-    try std.testing.expect(dropped.state_changed);
-    try std.testing.expect(dropped.history_lost);
+    try std.testing.expect(dropped.stateChanged());
+    try std.testing.expect(dropped.historyLost());
     try std.testing.expectEqual(
         @as(u64, 1),
         terminal.historyLossCount(),
@@ -7876,7 +8241,7 @@ test "feed summary and semantic state report dropped history" {
 
     failing.fail_index = std.math.maxInt(usize);
     const retained = try terminal.feed("\x1b[S");
-    try std.testing.expect(!retained.history_lost);
+    try std.testing.expect(!retained.historyLost());
     try std.testing.expectEqual(
         @as(u64, 1),
         terminal.historyLossCount(),
@@ -7888,26 +8253,26 @@ test "terminal retains every bounded bell and remains reusable" {
     defer vt.deinit();
 
     const first = try vt.feed("\x07");
-    try std.testing.expect(first.state_changed);
+    try std.testing.expect(first.stateChanged());
     try std.testing.expectEqual(@as(u64, 1), vt.consequenceHead().?.bell.id);
 
     const second = try vt.feed("\x07x");
-    try std.testing.expect(second.state_changed);
+    try std.testing.expect(second.stateChanged());
     try std.testing.expectEqual(@as(u16, 2), vt.consequenceCount());
     try std.testing.expectEqual(@as(u21, 'x'), vt.semanticView(0).cellAt(0, 0));
 
-    try std.testing.expect((try vt.feed("\x07")).state_changed);
+    try std.testing.expect((try vt.feed("\x07")).stateChanged());
     while (vt.consequenceHead()) |consequence|
         try vt.consumeConsequence(consequence.id());
     const reused = try vt.feed("y");
-    try std.testing.expect(reused.state_changed);
+    try std.testing.expect(reused.stateChanged());
     try std.testing.expectEqual(@as(u21, 'y'), vt.semanticView(0).cellAt(0, 1));
 }
 
 test "container query may be declined by exact identity without fabricated reply" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 2);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b[13t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[13t")).stateChanged());
     const occurrence = terminal.consequenceHead().?.container;
     try std.testing.expect(occurrence.request == .report_position);
     try terminal.declineContainerQuery(occurrence.generation);
@@ -7930,7 +8295,7 @@ test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
     };
     for (parts) |part| {
         const summary = try terminal.feed(part);
-        std.debug.assert(!summary.title_changed and !summary.icon_changed);
+        std.debug.assert(!summary.titleChanged() and !summary.iconChanged());
     }
     try std.testing.expect(terminal.semanticSequence() > before);
     const screen = terminal.screen_state.activeConst();
@@ -7960,7 +8325,7 @@ test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
         }
     }
 
-    try std.testing.expect((try terminal.feed("\x1b[2;2HX")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;2HX")).stateChanged());
     const continuation = terminal.screen_state.activeConst().cellInfoAt(1, 1);
     try std.testing.expectEqual(@as(u32, 0), continuation.codepoint);
     try std.testing.expectEqual(@as(u8, 4), continuation.width);
@@ -7968,7 +8333,7 @@ test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
     try std.testing.expectEqual(@as(u8, 1), continuation.x);
     try std.testing.expectEqual(@as(u8, 1), continuation.y);
     try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(1, 4).codepoint);
-    try std.testing.expect((try terminal.feed("\x1b[1;2HX")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[1;2HX")).stateChanged());
     try std.testing.expectEqual(@as(u32, 'X'), terminal.screen_state.activeConst().cellInfoAt(0, 1).codepoint);
     try std.testing.expectEqual(@as(u32, ' '), terminal.screen_state.activeConst().cellInfoAt(0, 0).codepoint);
     try std.testing.expectEqual(@as(u32, ' '), terminal.screen_state.activeConst().cellInfoAt(1, 3).codepoint);
@@ -7978,11 +8343,11 @@ test "OSC 66 malformed and overlong cell text preserve terminal state" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
     const sequence = terminal.semanticSequence();
-    try std.testing.expect(!(try terminal.feed("\x1b]66;s=x;bad\x07")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b]66;s=x;bad\x07")).stateChanged());
     try std.testing.expect(!(try terminal.feed(
         "\x1b]66;w=2;abcdefghijklmnopqrstuvwxy\x07",
-    )).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b]66;s=8:w=8;A\x07")).state_changed);
+    )).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b]66;s=8:w=8;A\x07")).stateChanged());
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.activeConst().cursor.col);
 }
@@ -7990,7 +8355,7 @@ test "OSC 66 malformed and overlong cell text preserve terminal state" {
 test "OSC 66 natural width splits bounded base and combining clusters" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b]66;s=2;A\xcc\x81B\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2;A\xcc\x81B\x07")).stateChanged());
     const screen = terminal.screen_state.activeConst();
     try std.testing.expectEqual(@as(u16, 4), screen.cursor.col);
     try std.testing.expectEqual(@as(u32, 'A'), screen.cellInfoAt(0, 0).codepoint);
@@ -8004,7 +8369,7 @@ test "OSC 66 natural width splits bounded base and combining clusters" {
 test "OSC 66 resize drops complete clusters without stale continuations" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
     try terminal.resize(3, 5);
     const screen = terminal.screen_state.activeConst();
     var row: u16 = 0;
@@ -8023,7 +8388,7 @@ test "OSC 66 resize drops complete clusters without stale continuations" {
 test "OSC 66 cluster survives whole-grid scroll and erase repairs every member" {
     var terminal = try Terminal.init(std.testing.allocator, 5, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2;1H\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
     const screen = terminal.screen_state.active();
     try std.testing.expect(screen.scrollUpRegion(0, 4, 1));
     try std.testing.expectEqual(@as(u8, 0), screen.cellInfoAt(0, 0).y);
@@ -8049,7 +8414,7 @@ test "OSC 66 cluster survives whole-grid scroll and erase repairs every member" 
 test "OSC 66 rectangular copy rejects cluster source without destination mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
     const screen = terminal.screen_state.active();
     const before = screen.cellInfoAt(3, 6);
     try std.testing.expect(!screen.copyRect(.{
@@ -8067,7 +8432,7 @@ test "OSC 66 rectangular copy rejects cluster source without destination mutatio
 test "OSC 66 character insertion removes the whole intersecting cluster" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]66;s=2:w=2;Hi\x07")).stateChanged());
     const screen = terminal.screen_state.active();
     screen.cursor.row = 0;
     screen.cursor.col = 1;
@@ -9045,11 +9410,11 @@ test "Unicode scalar pressure does not advance terminal semantic identity" {
     var encoded: [4]u8 = undefined;
 
     var len = try std.unicode.utf8Encode(0x754c, &encoded);
-    try std.testing.expect((try terminal.feed(encoded[0..len])).state_changed);
+    try std.testing.expect((try terminal.feed(encoded[0..len])).stateChanged());
     var scalar: u21 = 0x0300;
     while (scalar < 0x0300 + 23) : (scalar += 1) {
         len = try std.unicode.utf8Encode(scalar, &encoded);
-        try std.testing.expect((try terminal.feed(encoded[0..len])).state_changed);
+        try std.testing.expect((try terminal.feed(encoded[0..len])).stateChanged());
     }
     const sequence = terminal.semanticSequence();
     var before: [24]u21 = undefined;
@@ -9057,7 +9422,7 @@ test "Unicode scalar pressure does not advance terminal semantic identity" {
     try std.testing.expectEqual(@as(usize, 24), before_scalars.len);
 
     len = try std.unicode.utf8Encode(0x0317, &encoded);
-    try std.testing.expect(!(try terminal.feed(encoded[0..len])).state_changed);
+    try std.testing.expect(!(try terminal.feed(encoded[0..len])).stateChanged());
     try std.testing.expectEqual(sequence, terminal.semanticSequence());
     var after: [24]u21 = undefined;
     try std.testing.expectEqualSlices(
@@ -9073,14 +9438,14 @@ test "Unicode wide occupancy remains isolated across alternate-screen transition
     var terminal = try Terminal.init(std.testing.allocator, 1, 4);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("界")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?1049h語")).state_changed);
+    try std.testing.expect((try terminal.feed("界")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?1049h語")).stateChanged());
     var alternate = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 0x8a9e), alternate.cellInfoAt(0, 0).codepoint);
     try std.testing.expectEqual(@as(u8, 2), alternate.cellInfoAt(0, 0).width);
     try std.testing.expectEqual(@as(u8, 1), alternate.cellInfoAt(0, 1).x);
 
-    try std.testing.expect((try terminal.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1049l")).stateChanged());
     const primary = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 0x754c), primary.cellInfoAt(0, 0).codepoint);
     try std.testing.expectEqual(@as(u8, 2), primary.cellInfoAt(0, 0).width);

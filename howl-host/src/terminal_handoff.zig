@@ -24,6 +24,85 @@ pub const VisibleMember = struct {
     source: canvas.SourceId,
 };
 
+/// Copies the four-byte color facts required by a semantic cursor target.
+pub const CursorColor = packed struct(u32) {
+    /// Red channel.
+    r: u8 = 0,
+    /// Green channel.
+    g: u8 = 0,
+    /// Blue channel.
+    b: u8 = 0,
+    /// Alpha channel, normally opaque.
+    a: u8 = 255,
+};
+
+/// Identifies the finite semantic cursor shapes copied from VT.
+pub const CursorShape = enum(u8) {
+    block,
+    underline,
+    bar,
+    none,
+};
+
+/// Copies one accepted VT cursor target without animation or GPU state.
+pub const CursorTarget = struct {
+    /// Copies the accepted visible row.
+    row: u16,
+    /// Copies the accepted visible column.
+    col: u16,
+    /// Copies DECTCEM visibility after history projection.
+    visible: bool,
+    /// Copies the accepted program-selected cursor shape.
+    shape: CursorShape,
+    /// Copies VT blink intent.
+    blink: bool,
+    /// Retains the Kitty fast-blink distinction when one is available.
+    blink_fast: bool,
+    /// Copies the effective cursor color.
+    cursor_color: CursorColor,
+    /// Copies the effective cursor-text color.
+    text_color: CursorColor,
+};
+
+/// Identifies one latest-wins cursor observation bound to a live source.
+pub const CursorPublication = struct {
+    /// Identifies the exact live pane.
+    pane: PaneId,
+    /// Identifies the exact Composer source.
+    source: canvas.SourceId,
+    /// Identifies the accepted VT semantic sequence.
+    terminal_sequence: u64,
+    /// Orders cursor observations for latest-wins admission.
+    cursor_revision: u64,
+    /// Binds the target to the accepted visible membership.
+    visible_set_revision: u64,
+    /// Binds the target to the live lifecycle admission.
+    lifecycle_revision: LifecycleRevision,
+    /// Copies the complete semantic target without presentation state.
+    target: CursorTarget,
+};
+
+/// Reports transactional cursor-inbox admission failures.
+pub const CursorPublishError = error{
+    Stopping,
+    InvalidCursorPublication,
+    UnknownPane,
+    RetiredPane,
+    SourceStale,
+    LifecycleStale,
+    CursorRevisionStale,
+};
+
+const CursorSlot = struct {
+    pane: PaneId = @fromBackingInt(@intCast(0)),
+    source: canvas.SourceId = @fromBackingInt(@intCast(0)),
+    lifecycle_revision: LifecycleRevision = @fromBackingInt(0),
+    cursor_revision_high_water: u64 = 0,
+    publication: CursorPublication = undefined,
+    live: bool = false,
+    pending: bool = false,
+};
+
 /// Copies one latest bounded Renderer-owned visible-set request.
 pub const VisibleSetRequest = struct {
     /// Identifies a nonzero, monotonically issued candidate.
@@ -653,6 +732,8 @@ pub const Boundary = struct {
     visible_initialized: bool = false,
     font_request: ?FontRequest = null,
     font_request_high_water: u64 = 0,
+    cursor_slots: [owner_limit]CursorSlot = @splat(.{}),
+    cursor_lifecycle_high_water: u64 = 0,
 
     /// Creates directional nonblocking eventfds without allocating pane storage.
     pub fn init(
@@ -721,11 +802,19 @@ pub const Boundary = struct {
         const index = self.freeUnreservedIndex() orelse return error.OwnerLimit;
         if (self.operation_count + self.reserved_operation_count == self.operations.len)
             return error.OperationLimit;
+        const lifecycle_revision = self.nextCursorLifecycleLocked() catch
+            return error.OperationLimit;
         self.pushReservedLocked(.{ .create = .{ .pane = pane, .pixels = pixels } });
         self.entries[index] = .{
             .pane = pane,
             .source = source,
             .descriptor_index = @intCast(index),
+        };
+        self.cursor_slots[index] = .{
+            .pane = pane,
+            .source = source,
+            .lifecycle_revision = lifecycle_revision,
+            .live = true,
         };
         self.descriptor_issued[index] = true;
         signal(self.terminal_fd);
@@ -807,6 +896,17 @@ pub const Boundary = struct {
                     .pane = registration.pane,
                     .source = registration.source,
                     .descriptor_index = @intCast(index),
+                };
+                const lifecycle_revision = self.revision;
+                boundary.cursor_lifecycle_high_water = @max(
+                    boundary.cursor_lifecycle_high_water,
+                    @backingInt(lifecycle_revision),
+                );
+                boundary.cursor_slots[index] = .{
+                    .pane = registration.pane,
+                    .source = registration.source,
+                    .lifecycle_revision = lifecycle_revision,
+                    .live = true,
                 };
                 boundary.descriptor_issued[index] = true;
             }
@@ -1167,6 +1267,7 @@ pub const Boundary = struct {
         self.operation_count = 0;
         self.input_head = 0;
         self.input_count = 0;
+        for (&self.cursor_slots) |*slot| slot.pending = false;
         signal(self.terminal_fd);
         signal(self.renderer_fd);
     }
@@ -1368,6 +1469,9 @@ pub const Boundary = struct {
     }
 
     /// Activates one exact pool descriptor under terminal-thread ownership.
+    /// Lifecycle remains registered until the owner has been constructed and
+    /// the terminal thread calls markLive; cursor publication admits only
+    /// after that exact transition.
     pub fn activateTransfer(
         self: *Boundary,
         pane: PaneId,
@@ -2064,6 +2168,103 @@ pub const Boundary = struct {
         signal(self.renderer_fd);
     }
 
+    /// Borrows the exact lifecycle and visible-set identity for one live source.
+    /// Unknown, retired, and source-mismatched entries reject before the
+    /// caller can construct a publication; a live but hidden source returns
+    /// null because it retains semantic facts without presentation.
+    pub fn cursorPublicationIdentity(
+        self: *Boundary,
+        pane: PaneId,
+        source: canvas.SourceId,
+    ) CursorPublishError!?struct {
+        lifecycle_revision: LifecycleRevision,
+        visible_set_revision: u64,
+    } {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(pane) orelse return error.UnknownPane;
+        const entry = self.entries[index].?;
+        if (entry.source != source) return error.SourceStale;
+        if (entry.state != .live) return error.RetiredPane;
+        const slot = &self.cursor_slots[index];
+        if (!slot.live or slot.source != source) return error.SourceStale;
+        if (self.visible_revision == 0) return null;
+        var visible = false;
+        for (self.visible_members[0..self.visible_member_count]) |member| {
+            if (member.pane == pane and member.source == source) {
+                visible = true;
+                break;
+            }
+        }
+        if (!visible) return null;
+        return .{
+            .lifecycle_revision = slot.lifecycle_revision,
+            .visible_set_revision = self.visible_revision,
+        };
+    }
+
+    /// Publishes one latest-wins cursor target without touching terminal Content.
+    ///
+    /// Every identity field is supplied by the caller and checked against the
+    /// live Boundary entry before the fixed inbox slot is changed.
+    pub fn publishCursor(
+        self: *Boundary,
+        value: CursorPublication,
+    ) CursorPublishError!void {
+        if (@backingInt(value.pane) == 0 or @backingInt(value.source) == 0 or
+            value.terminal_sequence == 0 or value.cursor_revision == 0 or
+            value.visible_set_revision == 0 or
+            value.lifecycle_revision == @as(LifecycleRevision, @fromBackingInt(0)))
+            return error.InvalidCursorPublication;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        const index = self.find(value.pane) orelse return error.UnknownPane;
+        const entry = self.entries[index].?;
+        if (entry.source != value.source) return error.SourceStale;
+        if (entry.state != .live) return error.RetiredPane;
+        const slot = &self.cursor_slots[index];
+        if (!slot.live or slot.pane != value.pane) return error.RetiredPane;
+        if (slot.source != value.source) return error.SourceStale;
+        if (slot.lifecycle_revision != value.lifecycle_revision)
+            return error.LifecycleStale;
+        if (self.visible_revision == 0 or
+            self.visible_revision != value.visible_set_revision)
+            return error.LifecycleStale;
+        if (value.cursor_revision <= slot.cursor_revision_high_water)
+            return error.CursorRevisionStale;
+        slot.publication = value;
+        slot.cursor_revision_high_water = value.cursor_revision;
+        slot.pending = true;
+        signal(self.renderer_fd);
+    }
+
+    /// Takes one pending exact cursor target and clears only its inbox bit.
+    pub fn takeCursor(self: *Boundary, pane: PaneId) ?CursorPublication {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(pane) orelse return null;
+        const slot = &self.cursor_slots[index];
+        if (!slot.live or !slot.pending) return null;
+        slot.pending = false;
+        return slot.publication;
+    }
+
+    /// Cancels one still-pending cursor revision without touching its high-water.
+    pub fn cancelCursor(
+        self: *Boundary,
+        pane: PaneId,
+        cursor_revision: u64,
+    ) error{ UnknownPane, CursorStale }!void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(pane) orelse return error.UnknownPane;
+        const slot = &self.cursor_slots[index];
+        if (!slot.pending or slot.publication.cursor_revision != cursor_revision)
+            return error.CursorStale;
+        slot.pending = false;
+    }
+
     /// Records completed logical-owner retirement for Renderer source removal.
     pub fn markRetired(self: *Boundary, pane: PaneId) error{UnknownPane}!void {
         self.mutex.lockUncancelable(self.io);
@@ -2071,6 +2272,8 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return error.UnknownPane;
         if (self.entries[index].?.state != .closing) return error.UnknownPane;
         self.entries[index].?.state = .retired;
+        self.cursor_slots[index].live = false;
+        self.cursor_slots[index].pending = false;
         signal(self.renderer_fd);
     }
 
@@ -2219,6 +2422,13 @@ pub const Boundary = struct {
         return null;
     }
 
+    fn nextCursorLifecycleLocked(self: *Boundary) error{RevisionOverflow}!LifecycleRevision {
+        const value = std.math.add(u64, self.cursor_lifecycle_high_water, 1) catch
+            return error.RevisionOverflow;
+        self.cursor_lifecycle_high_water = value;
+        return @fromBackingInt(value);
+    }
+
     fn freeUnreservedIndex(self: *const Boundary) ?usize {
         for (self.entries, 0..) |entry, index| {
             const reserved = if (self.reserved_entry_index) |value|
@@ -2329,6 +2539,297 @@ test "terminal boundary admits typed lifecycle and directional wakes" {
     );
     try std.testing.expectEqual(Lifecycle{ .close = pane }, boundary.takeLifecycle().?);
     try std.testing.expect(boundary.takeLifecycle() == null);
+}
+
+test "cursor inbox admits sixty four exact panes and rejects stale retirement" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    const target = CursorTarget{
+        .row = 2,
+        .col = 3,
+        .visible = true,
+        .shape = .block,
+        .blink = true,
+        .blink_fast = false,
+        .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
+        .text_color = .{ .r = 4, .g = 5, .b = 6 },
+    };
+    var first_pane: PaneId = @fromBackingInt(0);
+    for (0..owner_limit) |index| {
+        const pane: PaneId = @fromBackingInt(@intCast(1_000 + index));
+        const source: canvas.SourceId = @fromBackingInt(@intCast(2_000 + index));
+        if (index == 0) first_pane = pane;
+        try boundary.register(pane, source, .{ .width = 16, .height = 16 });
+        if (index == 0) {
+            try std.testing.expectError(
+                error.RetiredPane,
+                boundary.cursorPublicationIdentity(pane, source),
+            );
+            try std.testing.expectError(
+                error.RetiredPane,
+                boundary.publishCursor(.{
+                    .pane = pane,
+                    .source = source,
+                    .terminal_sequence = 1,
+                    .cursor_revision = 1,
+                    .visible_set_revision = 1,
+                    .lifecycle_revision = @fromBackingInt(1),
+                    .target = target,
+                }),
+            );
+        }
+        try std.testing.expectEqual(
+            Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 16, .height = 16 } } },
+            boundary.takeLifecycle().?,
+        );
+        try boundary.markLive(pane);
+        boundary.visible_members[0] = .{ .pane = pane, .source = source };
+        boundary.visible_member_count = 1;
+        const identity = (try boundary.cursorPublicationIdentity(pane, source)).?;
+        try boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 10 + index,
+            .cursor_revision = 10 + index,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = target,
+        });
+        const copied = boundary.takeCursor(pane).?;
+        try std.testing.expectEqual(pane, copied.pane);
+        try std.testing.expectEqual(source, copied.source);
+        try std.testing.expectEqual(@as(u64, 10 + index), copied.cursor_revision);
+    }
+    try std.testing.expectError(
+        error.OwnerLimit,
+        boundary.register(
+            @fromBackingInt(9_999),
+            @fromBackingInt(10_000),
+            .{ .width = 16, .height = 16 },
+        ),
+    );
+
+    const first_source: canvas.SourceId = @fromBackingInt(2_000);
+    boundary.visible_members[0] = .{ .pane = first_pane, .source = first_source };
+    const first_identity = (try boundary.cursorPublicationIdentity(first_pane, first_source)).?;
+    try boundary.close(first_pane);
+    try std.testing.expectError(
+        error.RetiredPane,
+        boundary.publishCursor(.{
+            .pane = first_pane,
+            .source = first_source,
+            .terminal_sequence = 100,
+            .cursor_revision = 100,
+            .visible_set_revision = first_identity.visible_set_revision,
+            .lifecycle_revision = first_identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+    try std.testing.expectEqual(
+        Lifecycle{ .close = first_pane },
+        boundary.takeLifecycle().?,
+    );
+    try boundary.markRetired(first_pane);
+    try std.testing.expectError(
+        error.RetiredPane,
+        boundary.publishCursor(.{
+            .pane = first_pane,
+            .source = first_source,
+            .terminal_sequence = 101,
+            .cursor_revision = 101,
+            .visible_set_revision = first_identity.visible_set_revision,
+            .lifecycle_revision = first_identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+    try std.testing.expectEqual(first_pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(first_pane);
+    try std.testing.expectError(
+        error.UnknownPane,
+        boundary.publishCursor(.{
+            .pane = first_pane,
+            .source = first_source,
+            .terminal_sequence = 102,
+            .cursor_revision = 102,
+            .visible_set_revision = first_identity.visible_set_revision,
+            .lifecycle_revision = first_identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+}
+
+test "cursor inbox rejects source and stale revisions without changing pending bytes" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    boundary.visible_revision = 4;
+    boundary.visible_initialized = true;
+    const pane: PaneId = @fromBackingInt(44);
+    const source: canvas.SourceId = @fromBackingInt(55);
+    const target = CursorTarget{
+        .row = 1,
+        .col = 1,
+        .visible = false,
+        .shape = .none,
+        .blink = false,
+        .blink_fast = false,
+        .cursor_color = .{},
+        .text_color = .{},
+    };
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 8, .height = 8 } } },
+        boundary.takeLifecycle().?,
+    );
+    try boundary.markLive(pane);
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    boundary.visible_member_count = 1;
+    const identity = (try boundary.cursorPublicationIdentity(pane, source)).?;
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 7,
+        .cursor_revision = 7,
+        .visible_set_revision = identity.visible_set_revision,
+        .lifecycle_revision = identity.lifecycle_revision,
+        .target = target,
+    });
+    try std.testing.expectError(
+        error.SourceStale,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = @fromBackingInt(56),
+            .terminal_sequence = 8,
+            .cursor_revision = 8,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 8,
+        .cursor_revision = 8,
+        .visible_set_revision = identity.visible_set_revision,
+        .lifecycle_revision = identity.lifecycle_revision,
+        .target = target,
+    });
+    try std.testing.expectError(
+        error.CursorRevisionStale,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 9,
+            .cursor_revision = 7,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+    try std.testing.expectError(
+        error.LifecycleStale,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 9,
+            .cursor_revision = 9,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = @fromBackingInt(@backingInt(identity.lifecycle_revision) + 1),
+            .target = target,
+        }),
+    );
+    const copied = boundary.takeCursor(pane).?;
+    try std.testing.expectEqual(@as(u64, 8), copied.cursor_revision);
+    try std.testing.expectEqual(@as(u64, 8), copied.terminal_sequence);
+}
+
+test "cursor cancellation and shutdown preserve high-water without pending ownership" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    const pane: PaneId = @fromBackingInt(64);
+    const source: canvas.SourceId = @fromBackingInt(65);
+    const target = CursorTarget{
+        .row = 0,
+        .col = 0,
+        .visible = true,
+        .shape = .bar,
+        .blink = true,
+        .blink_fast = false,
+        .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
+        .text_color = .{ .r = 4, .g = 5, .b = 6 },
+    };
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 8, .height = 8 } } },
+        boundary.takeLifecycle().?,
+    );
+    try boundary.markLive(pane);
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    boundary.visible_member_count = 1;
+    const identity = (try boundary.cursorPublicationIdentity(pane, source)).?;
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 3,
+        .cursor_revision = 3,
+        .visible_set_revision = identity.visible_set_revision,
+        .lifecycle_revision = identity.lifecycle_revision,
+        .target = target,
+    });
+    try boundary.cancelCursor(pane, 3);
+    try std.testing.expect(boundary.takeCursor(pane) == null);
+    try std.testing.expectError(error.CursorStale, boundary.cancelCursor(pane, 3));
+    try std.testing.expectError(
+        error.CursorRevisionStale,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 4,
+            .cursor_revision = 3,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 4,
+        .cursor_revision = 4,
+        .visible_set_revision = identity.visible_set_revision,
+        .lifecycle_revision = identity.lifecycle_revision,
+        .target = target,
+    });
+    boundary.shutdown();
+    try std.testing.expect(boundary.takeCursor(pane) == null);
+    try std.testing.expectError(
+        error.Stopping,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 5,
+            .cursor_revision = 5,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = target,
+        }),
+    );
 }
 
 test "prepared lifecycle discard is byte-silent and commit publishes once" {

@@ -29,7 +29,7 @@ fn expectAliased(source: vt.Terminal.Images, buffers: images.Buffers) !void {
 test "image projection uploads, reuses, and removes retained identities" {
     var source = try vt.Terminal.init(std.testing.allocator, 2, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).stateChanged());
     const view = source.images(0);
     var storage: Storage = .{};
     const first = try images.project(view, storage.buffers());
@@ -46,7 +46,7 @@ test "image projection uploads, reuses, and removes retained identities" {
     try std.testing.expectEqual(@as(usize, 0), reused.pixels.len);
 
     const old_generation = first.uploads[0].identity.generation;
-    try std.testing.expect((try source.feed("\x1b_Ga=t,f=32,s=1,v=1,i=7;BQYHCA==\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b_Ga=t,f=32,s=1,v=1,i=7;BQYHCA==\x1b\\")).stateChanged());
     const replacement_view = source.images(0);
     var replacement_storage: Storage = .{};
     const replacement = try images.project(replacement_view, .{
@@ -61,7 +61,7 @@ test "image projection uploads, reuses, and removes retained identities" {
     try std.testing.expect(replacement.uploads[0].identity.generation != old_generation);
     try std.testing.expectEqual(@as(usize, 0), replacement.removals.len);
 
-    try std.testing.expect((try source.feed("\x1b_Ga=d,d=I,i=7\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b_Ga=d,d=I,i=7\x1b\\")).stateChanged());
     const removed_view = source.images(0);
     var removal_storage: Storage = .{};
     var removal_buffers = removal_storage.buffers();
@@ -74,7 +74,7 @@ test "image projection uploads, reuses, and removes retained identities" {
 test "image projection preserves bytes on every capacity failure" {
     var source = try vt.Terminal.init(std.testing.allocator, 2, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).stateChanged());
     const view = source.images(0);
 
     var pixels = @as([3]u8, @splat(0xaa));
@@ -126,7 +126,7 @@ test "image projection preserves bytes on every capacity failure" {
 test "image projection rejects every output and retained storage alias class" {
     var source = try vt.Terminal.init(std.testing.allocator, 2, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b_Ga=T,f=32,s=1,v=1,i=7;AQIDBA==\x1b\\")).stateChanged());
     const view = source.images(0);
     var storage: Storage = .{};
     var alias_bytes: [256]u8 align(@alignOf(images.ImageUpload)) = undefined;
@@ -187,10 +187,10 @@ test "image projection retains crop placement z order and generation" {
     try source.setCellPixelSize(8, 16);
     try std.testing.expect((try source.feed(
         "\x1b_Ga=t,f=32,s=2,v=2,i=1;AQIDBAUGBwgJCgsMDQ4PEA==\x1b\\",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect((try source.feed(
         "\x1b_Ga=p,i=1,p=3,x=1,y=0,w=1,h=2,c=2,r=3,X=2,Y=4,z=-7\x1b\\",
-    )).state_changed);
+    )).stateChanged());
     const view = source.images(0);
     var storage: Storage = .{};
     const update = try images.project(view, storage.buffers());

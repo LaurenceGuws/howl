@@ -5,7 +5,7 @@ const Terminal = terminal_mod.Terminal;
 
 fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 fn view(terminal: *const Terminal) Terminal.SemanticView {
@@ -60,20 +60,20 @@ test "terminal cursor: DECSCUSR restores the canonical default and rejects unsup
         .{ .bytes = "\x1b[6 q", .shape = .bar, .blink = false },
     };
     for (cases) |case| {
-        try std.testing.expect((try terminal.feed(case.bytes)).state_changed);
+        try std.testing.expect((try terminal.feed(case.bytes)).stateChanged());
         try std.testing.expectEqual(case.shape, view(&terminal).cursor_shape);
         try std.testing.expectEqual(case.blink, view(&terminal).cursor_blink);
     }
 
-    try std.testing.expect(!(try terminal.feed("\x1b[0 ")).state_changed);
-    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[0 ")).stateChanged());
+    try std.testing.expect((try terminal.feed("q")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
-    try std.testing.expect(!(try terminal.feed("\x1b[ q\x1b[7 q\x1b[999999 q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[ q\x1b[7 q\x1b[999999 q")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
 
-    try std.testing.expect((try terminal.feed("\x1bP$q q\x1b\\")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1bP$q q\x1b\\")).stateChanged());
     try std.testing.expectEqualStrings("\x1bP1$r1 q\x1b\\", terminal.replyBytes());
 }
 
@@ -81,10 +81,10 @@ test "terminal cursor: Kitty multiple-cursor forms are exact unsupported no-ops"
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[4 q")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[4 q")).stateChanged());
     const before = view(&terminal);
-    try std.testing.expect(!(try terminal.feed("\x1b[>100;29:2:1")).state_changed);
-    try std.testing.expect(!(try terminal.feed(":2 q\x1b[> q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[>100;29:2:1")).stateChanged());
+    try std.testing.expect(!(try terminal.feed(":2 q\x1b[> q")).stateChanged());
     const after = view(&terminal);
     try std.testing.expectEqual(before.cursor_shape, after.cursor_shape);
     try std.testing.expectEqual(before.cursor_blink, after.cursor_blink);
@@ -99,12 +99,12 @@ test "terminal cursor: Kitty DCS restores each bank default across fragmented in
     try std.testing.expect((try terminal.feed(
         "\x1b[1 q\x1b[?25l\x1b]12;#112233\x1b\\\x1b]21;cursor_text=#445566\x1b\\" ++
             "\x1b[?47h\x1b[2;3H\x1b[4 q",
-    )).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor\x18")).state_changed);
+    )).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor\x18")).stateChanged());
     try std.testing.expectEqual(.underline, view(&terminal).cursor_shape);
     try std.testing.expect(!view(&terminal).cursor_visible);
-    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appe")).state_changed);
-    try std.testing.expect((try terminal.feed("arance|ignored\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appe")).stateChanged());
+    try std.testing.expect((try terminal.feed("arance|ignored\x1b\\")).stateChanged());
 
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
@@ -112,14 +112,14 @@ test "terminal cursor: Kitty DCS restores each bank default across fragmented in
     try std.testing.expectEqual(@as(u16, 2), view(&terminal).cursor_col);
     try std.testing.expect(view(&terminal).cursor_visible);
     try std.testing.expectEqual(@as(?Terminal.Rgb, null), terminal.presentation().cursor);
-    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|\x1b\\")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
-    try std.testing.expect((try terminal.feed("\x90@kitty-restore-cursor-appearance|x\x9c")).state_changed);
+    try std.testing.expect((try terminal.feed("\x90@kitty-restore-cursor-appearance|x\x9c")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
-    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|x\x1b\\")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1bP@kitty-restore-cursor-appearance|x\x1b\\")).stateChanged());
 }
 
 test "terminal cursor: savepoint restores presentation while caller colors remain current" {
@@ -130,11 +130,11 @@ test "terminal cursor: savepoint restores presentation while caller colors remai
     try std.testing.expect((try terminal.feed(
         "\x1b[?5h\x1b[?6h\x1b[?7l\x1b[?25l\x1b[3;6H\x1b[6 q\x1b[1m" ++
             "\x1b]12;#112233\x1b\\\x1b]21;cursor_text=#445566\x1b\\\x1b)0\x1b7",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect((try terminal.feed(
         "\x1b[1;1H\x1b[1 q\x1b[22m\x1b[?5l\x1b[?6l\x1b[?7h\x1b[?25h" ++
             "\x1b]12;#010203\x1b\\\x1b]21;cursor_text=#040506\x1b\\\x1b)B\x1b8X",
-    )).state_changed);
+    )).stateChanged());
 
     try std.testing.expectEqual(@as(u16, 2), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 6), view(&terminal).cursor_col);
@@ -169,33 +169,33 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
-    try std.testing.expect(!(try terminal.feed("\x1b[6 ")).state_changed);
-    try std.testing.expect((try terminal.feed("q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[6 ")).stateChanged());
+    try std.testing.expect((try terminal.feed("q")).stateChanged());
     try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
     try std.testing.expect(!view(&terminal).cursor_blink);
-    try std.testing.expect(!(try terminal.feed("\x1b[6 q")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[6 q")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?12h\x1b[?25l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12h\x1b[?25l")).stateChanged());
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
-    try std.testing.expect(!(try terminal.feed("\x1b[?12h\x1b[?25l")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[?12h\x1b[?25l")).stateChanged());
 
-    try std.testing.expect((try terminal.feed("\x1b[?12;25s")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?12l\x1b[?25h")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?12;25r")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12;25s")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?12l\x1b[?25h")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?12;25r")).stateChanged());
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
-    try std.testing.expect((try terminal.feed("\x1b[?12$p\x1b[?25$p")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12$p\x1b[?25$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?12;1$y\x1b[?25;2$y", terminal.replyBytes());
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
-    try std.testing.expect((try terminal.feed("\x1b[?47h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?47h")).stateChanged());
     try std.testing.expectEqual(.none, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
-    try std.testing.expect((try terminal.feed("\x1b[?12l")).state_changed);
-    try std.testing.expect(!(try terminal.feed("\x1b[?25l")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1b[?47l")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?12l")).stateChanged());
+    try std.testing.expect(!(try terminal.feed("\x1b[?25l")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1b[?47l")).stateChanged());
     try std.testing.expectEqual(.bar, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
@@ -205,11 +205,11 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
 
-    try std.testing.expect((try terminal.feed("\x1b[2 q")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[2 q")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(!view(&terminal).cursor_blink);
-    try std.testing.expect(!(try terminal.feed("\x1b[2 q")).state_changed);
-    try std.testing.expect((try terminal.feed("\x1bc")).state_changed);
+    try std.testing.expect(!(try terminal.feed("\x1b[2 q")).stateChanged());
+    try std.testing.expect((try terminal.feed("\x1bc")).stateChanged());
     try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(view(&terminal).cursor_visible);

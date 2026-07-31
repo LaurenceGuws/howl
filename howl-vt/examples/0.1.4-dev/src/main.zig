@@ -9,7 +9,7 @@ pub fn main() !void {
     defer terminal.deinit();
 
     const summary: howl_vt.Terminal.FeedSummary = try terminal.feed("Howl\x1b[5n");
-    if (!summary.state_changed) return error.TerminalStateDidNotChange;
+    if (!summary.stateChanged()) return error.TerminalStateDidNotChange;
 
     const view = terminal.semanticView(0);
     if (view.cellAt(0, 0) != 'H' or view.cellAt(0, 3) != 'l')

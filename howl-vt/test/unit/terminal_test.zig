@@ -5,7 +5,7 @@ const Terminal = terminal_mod.Terminal;
 
 fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 const expected_logical_output_bytes: usize = 1024 * 1024;
@@ -33,7 +33,7 @@ fn initTerminalWithHistory(allocator: std.mem.Allocator) !void {
 
 fn feedChanged(terminal: *Terminal, bytes: []const u8) !void {
     const summary = try terminal.feed(bytes);
-    try std.testing.expect(summary.state_changed);
+    try std.testing.expect(summary.stateChanged());
 }
 
 test "finalized logical output keeps identity across resize and rejects an evicted cursor" {
@@ -164,7 +164,7 @@ test "text extraction owns exact allocation failures" {
 test "text extraction resolves projected history reverse ranges and bounded copy" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD")).state_changed);
+    try std.testing.expect((try terminal.feed("1AAAA\r\n2BBBB\r\n3CCCC\r\n4DDDD")).stateChanged());
     const range: Terminal.TextRange = .{
         .start = .{ .row = 1, .col = 1 },
         .end = .{ .row = 0, .col = 0 },
@@ -181,7 +181,7 @@ test "text extraction resolves projected history reverse ranges and bounded copy
 test "text extraction joins soft-wrapped rows without inventing a newline" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 3);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("ABCDEF")).state_changed);
+    try std.testing.expect((try terminal.feed("ABCDEF")).stateChanged());
     const copied = try terminal.copyText(
         std.testing.allocator,
         .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 1, .col = 2 } },
@@ -194,7 +194,7 @@ test "text extraction joins soft-wrapped rows without inventing a newline" {
 fn copyTextAllocation(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.init(allocator, 1, 4);
     defer terminal.deinit();
-    try std.testing.expect((try terminal.feed("COPY")).state_changed);
+    try std.testing.expect((try terminal.feed("COPY")).stateChanged());
     const range: Terminal.TextRange = .{
         .start = .{ .row = 0, .col = 0 },
         .end = .{ .row = 0, .col = 3 },
@@ -232,12 +232,12 @@ test "stationary cursor movement advances semantic identity" {
     var vt = try Terminal.init(std.testing.allocator, 4, 8);
     defer vt.deinit();
 
-    try std.testing.expect(!(try vt.feed("\x1b[?25h")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1b[?25h")).stateChanged());
     const before = vt.semanticView(0);
     try std.testing.expect(before.cursor_visible);
     const before_sequence = vt.semanticSequence();
 
-    try std.testing.expect((try vt.feed("\x1b[3;4H")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[3;4H")).stateChanged());
     const after = vt.semanticView(0);
     try std.testing.expect(vt.semanticSequence() != before_sequence);
     try std.testing.expectEqual(@as(u16, 2), after.cursor_row);
@@ -248,28 +248,28 @@ test "synchronized update DCS shares exact bounded mode state" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
 
-    try std.testing.expect(!(try vt.feed("\x1bP=1sbody")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1bP=1sbody")).stateChanged());
     try std.testing.expect(!vt.synchronizedOutput());
-    try std.testing.expect((try vt.feed("\x1b\\")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b\\")).stateChanged());
     try std.testing.expect(vt.synchronizedOutput());
-    try std.testing.expect(!(try vt.feed("\x90=1s\x9c")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x90=1s\x9c")).stateChanged());
 
     try std.testing.expect(!(try vt.feed(
         "\x1bP=3s\x1b\\\x1bP=1;2s\x1b\\\x1bP=s\x1b\\\x1bP=1q\x1b\\\x1bP?1s\x1b\\",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(vt.synchronizedOutput());
-    try std.testing.expect((try vt.feed("\x90=2signored\x9c")).state_changed);
+    try std.testing.expect((try vt.feed("\x90=2signored\x9c")).stateChanged());
     try std.testing.expect(!vt.synchronizedOutput());
-    try std.testing.expect(!(try vt.feed("\x1bP=2s\x1b\\")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1bP=2s\x1b\\")).stateChanged());
 
-    try std.testing.expect((try vt.feed("\x1b[?2026h\x1b[?2026s\x1bP=2s\x1b\\")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?2026h\x1b[?2026s\x1bP=2s\x1b\\")).stateChanged());
     try std.testing.expect(!vt.synchronizedOutput());
-    try std.testing.expect((try vt.feed("\x1b[?2026r")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?2026r")).stateChanged());
     try std.testing.expect(vt.synchronizedOutput());
-    try std.testing.expect((try vt.feed("\x1b[?2026$p")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?2026$p")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[?2026;1$y", vt.replyBytes());
     try vt.consumeReplyBytes(vt.replyBytes().len);
-    try std.testing.expect((try vt.feed("\x1bc")).state_changed);
+    try std.testing.expect((try vt.feed("\x1bc")).stateChanged());
     try std.testing.expect(!vt.synchronizedOutput());
 }
 
@@ -296,11 +296,11 @@ test "terminal Kitty unscroll consumes primary history in row order" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 4, 8);
     defer vt.deinit();
 
-    try std.testing.expect((try vt.feed("aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee")).state_changed);
+    try std.testing.expect((try vt.feed("aaaa\r\nbbbb\r\ncccc\r\ndddd\r\neeee")).stateChanged());
     try std.testing.expectEqual(@as(u32, 2), vt.semanticView(0).history_count);
     try feedChanged(&vt, "\x1b[2;3H");
 
-    try std.testing.expect((try vt.feed("\x1b[2+T")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[2+T")).stateChanged());
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'a'), vt.semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'b'), vt.semanticView(0).cellAt(1, 0));
@@ -322,8 +322,8 @@ test "terminal Kitty unscroll fragments and preserves alternate history" {
     try feedChanged(&vt, "aaa\r\nbbb\r\nccc");
     try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try feedChanged(&vt, "\x1b[?1049hxxx");
-    try std.testing.expect(!(try vt.feed("\x1b[")).state_changed);
-    try std.testing.expect((try vt.feed("+T")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1b[")).stateChanged());
+    try std.testing.expect((try vt.feed("+T")).stateChanged());
     try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
     try feedChanged(&vt, "\x1b[?1049l\x1b[999999+T");
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
@@ -338,7 +338,7 @@ test "terminal Kitty unscroll preserves logical authority and cell facts" {
     try feedChanged(&vt, "\x1b[31mAAAA\r\n1111\r\n2222");
     try std.testing.expectEqual(@as(u32, 1), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'A'), vt.semanticView(1).cellAt(0, 0));
-    try std.testing.expect((try vt.feed("\x1b[+T")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[+T")).stateChanged());
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_count);
     try std.testing.expectEqual(@as(u21, 'A'), vt.semanticView(0).cellAt(0, 0));
     try std.testing.expectEqual(
@@ -400,7 +400,7 @@ test "terminal RIS delegates hard-reset owners" {
     var vt = try Terminal.init(std.testing.allocator, 2, 8);
     defer vt.deinit();
 
-    try std.testing.expect((try vt.feed("ab\x1b[1;0'z\x1b[1'*{")).state_changed);
+    try std.testing.expect((try vt.feed("ab\x1b[1;0'z\x1b[1'*{")).stateChanged());
     var scratch: Terminal.InputScratch = .{};
     var before = try vt.encodeInput(
         std.testing.allocator,
@@ -419,7 +419,7 @@ test "terminal RIS delegates hard-reset owners" {
     try std.testing.expect(vt.replyBytes().len != 0);
     try vt.consumeReplyBytes(vt.replyBytes().len);
 
-    try std.testing.expect((try vt.feed("\x1bc")).state_changed);
+    try std.testing.expect((try vt.feed("\x1bc")).stateChanged());
 
     try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
     var after = try vt.encodeInput(
@@ -448,14 +448,14 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     const row_before = vt.semanticView(0).cursor_row;
     const col_before = vt.semanticView(0).cursor_col;
     try std.testing.expect(vt.semanticView(0).lineGeometry(row_before) == .double_width);
-    try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[5n")).stateChanged());
     try std.testing.expectEqualStrings("\x9b0n", vt.replyBytes());
     try vt.consumeReplyBytes(vt.replyBytes().len);
 
     const prefix = try vt.feed("\x1b[!");
-    try std.testing.expect(!prefix.state_changed);
+    try std.testing.expect(!prefix.stateChanged());
     const reset = try vt.feed("p");
-    try std.testing.expect(reset.state_changed);
+    try std.testing.expect(reset.stateChanged());
 
     var view = vt.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 0));
@@ -463,12 +463,12 @@ test "terminal DECSTR preserves text and position while resetting terminal state
     try std.testing.expectEqual(col_before, view.cursor_col);
     try std.testing.expectEqual(Terminal.LineGeometry.single_width, view.lineGeometry(row_before));
     try std.testing.expect(view.cursor_visible);
-    try std.testing.expect((try vt.feed("\x1b[5n")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[5n")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[0n", vt.replyBytes());
     const repeated = try vt.feed("\x1b[!p");
-    try std.testing.expect(!repeated.state_changed);
+    try std.testing.expect(!repeated.stateChanged());
 
-    try std.testing.expect((try vt.feed("\x0eq")).state_changed);
+    try std.testing.expect((try vt.feed("\x0eq")).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'q'), view.cellAt(row_before, col_before));
 }
@@ -479,19 +479,19 @@ test "terminal DECSTR resets mirrored modes across alternate-screen banks" {
 
     try std.testing.expect((try vt.feed(
         "ABC\x1b[1;1H\x1b[4h\x1b[?69h\x1b[?25l\x1b[?47hDEF\x1b[1;1H",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(!vt.semanticView(0).cursor_visible);
 
-    try std.testing.expect((try vt.feed("\x1b[!p")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[!p")).stateChanged());
     try std.testing.expect(vt.semanticView(0).cursor_visible);
-    try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1b[!p")).stateChanged());
 
-    try std.testing.expect((try vt.feed("X\x1b[?47l\x1b[1;1HX")).state_changed);
+    try std.testing.expect((try vt.feed("X\x1b[?47l\x1b[1;1HX")).stateChanged());
     var view = vt.semanticView(0);
     try std.testing.expect(view.cursor_visible);
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'B'), view.cellAt(0, 1));
-    try std.testing.expect((try vt.feed("\x1b[?47h")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?47h")).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'X'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'E'), view.cellAt(0, 1));
@@ -505,7 +505,7 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     // that must survive an alternate-bank soft reset and a narrower resize.
     try std.testing.expect((try vt.feed(
         "PRIMARY\x1b[4;8H\x1b[1;3m\x1b)0\x0e\x1b[?5h\x1b[?1049h",
-    )).state_changed);
+    )).stateChanged());
     try std.testing.expect(vt.semanticView(0).is_alternate_screen);
     try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
 
@@ -513,23 +513,23 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     // mirrored input, margin, and visibility facts owned by Terminal.
     try std.testing.expect((try vt.feed(
         "ALT\x1b[4h\x1b[?25l\x1b[?69h\x1b[2;5s\x1b[3;4H\x1b[!p",
-    )).state_changed);
+    )).stateChanged());
     var view = vt.semanticView(0);
     try std.testing.expect(view.is_alternate_screen);
     try std.testing.expectEqual(@as(u21, 'A'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
     try std.testing.expect(view.cursor_visible);
-    try std.testing.expect(!(try vt.feed("\x1b[!p")).state_changed);
+    try std.testing.expect(!(try vt.feed("\x1b[!p")).stateChanged());
 
     try vt.resize(2, 4);
-    try std.testing.expect((try vt.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?1049l")).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expect(!view.is_alternate_screen);
     try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
     try std.testing.expect(vt.presentation().reverse_screen);
-    try std.testing.expect((try vt.feed("q")).state_changed);
+    try std.testing.expect((try vt.feed("q")).stateChanged());
     const saved = vt.semanticView(0).cellInfoAt(1, 3);
     try std.testing.expectEqual(@as(u21, 0x2500), @as(u21, @intCast(saved.codepoint)));
     try std.testing.expect(saved.attrs.bold);
@@ -537,19 +537,19 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
 
     // RIS resets the selected bank and all terminal-global save state without
     // inventing an implicit screen switch or erasing the inactive bank.
-    try std.testing.expect((try vt.feed("\x1b[HKEEP\x1b[?47hALT2\x1b7\x1bc")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[HKEEP\x1b[?47hALT2\x1b7\x1bc")).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expect(view.is_alternate_screen);
     try std.testing.expectEqual(@as(u21, 0), view.cellAt(0, 0));
     try std.testing.expect(!vt.presentation().reverse_screen);
 
-    try std.testing.expect((try vt.feed("\x1b[?47l\x1b8")).state_changed);
+    try std.testing.expect((try vt.feed("\x1b[?47l\x1b8")).stateChanged());
     view = vt.semanticView(0);
     try std.testing.expect(!view.is_alternate_screen);
     try std.testing.expectEqual(@as(u21, 'K'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
     try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
-    try std.testing.expect((try vt.feed("X")).state_changed);
+    try std.testing.expect((try vt.feed("X")).stateChanged());
     const restored = vt.semanticView(0).cellInfoAt(0, 0);
     try std.testing.expect(restored.attrs.bold);
     try std.testing.expect(restored.attrs.italic);

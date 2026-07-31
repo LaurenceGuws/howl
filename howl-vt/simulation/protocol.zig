@@ -424,7 +424,7 @@ fn feedChecked(
     bytes: []const u8,
 ) error{ ConsequenceLimit, OutOfMemory, ParsedEventLimit, PropertyLimit, ReplyLimit, StringControlLimit }!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 fn digestTerminal(terminal: *Terminal) VtDigest {
@@ -479,13 +479,13 @@ fn hashCell(hasher: *std.hash.Fnv1a_64, cell: Cell) void {
     hashBool(hasher, cell.attrs.blink_fast);
     hashBool(hasher, cell.attrs.reverse);
     hashBool(hasher, cell.attrs.underline);
-    hashU8(hasher, @intFromEnum(cell.attrs.underline_style));
+    hashU8(hasher, @backingInt(cell.attrs.underline_style));
     hashColor(hasher, cell.attrs.underline_color);
     hashU32(hasher, cell.attrs.link_id);
 }
 
 fn hashColor(hasher: *std.hash.Fnv1a_64, color: Color) void {
-    hashU8(hasher, @intFromEnum(color.kind));
+    hashU8(hasher, @backingInt(color.kind));
     hashU32(hasher, color.value);
 }
 

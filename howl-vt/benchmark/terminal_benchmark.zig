@@ -4,7 +4,7 @@ const pty_feed_record = @import("pty_feed_record.zig");
 
 fn feed(terminal: *terminal_mod.Terminal, bytes: []const u8) terminal_mod.Terminal.FeedError!void {
     const summary = try terminal.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 const RunCount = u32;

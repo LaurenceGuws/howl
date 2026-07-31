@@ -178,7 +178,7 @@ fn applyWriteBurst(vt: *Terminal, rand: std.Random) !void {
 
 fn feedChecked(vt: *Terminal, bytes: []const u8) !void {
     const summary = try vt.feed(bytes);
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 fn applyResize(vt: *Terminal, rand: std.Random) !void {

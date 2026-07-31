@@ -58,7 +58,7 @@ test "full projection resolves presentation, caller selection, geometry, and cur
     defer source.deinit();
     try std.testing.expect((try source.feed(
         "\x1b[38;2;1;2;3;48;2;4;5;6;58;2;7;8;9;3;4mA\r\nB\x1b#6",
-    )).state_changed);
+    )).stateChanged());
 
     var storage: Storage = .{};
     const update = try full(&source, &storage, .{
@@ -85,7 +85,7 @@ test "full projection resolves presentation, caller selection, geometry, and cur
 test "projection preserves VT-owned Unicode wide lead and continuation occupancy" {
     var source = try vt.Terminal.init(std.testing.allocator, 1, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("界A")).state_changed);
+    try std.testing.expect((try source.feed("界A")).stateChanged());
 
     var storage: Storage = .{};
     const update = try full(&source, &storage, null);
@@ -103,7 +103,7 @@ test "projection preserves VT-owned Unicode wide lead and continuation occupancy
 test "projection preserves VS16 semantic lead and continuation occupancy" {
     var source = try vt.Terminal.init(std.testing.allocator, 1, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("☺️A")).state_changed);
+    try std.testing.expect((try source.feed("☺️A")).stateChanged());
 
     var storage: Storage = .{};
     const update = try full(&source, &storage, null);
@@ -125,7 +125,7 @@ test "projection resolves indexed, RGB, dynamic-default, and reverse colors" {
             "\x1b]10;#aabbcc\x1b\\" ++
             "\x1b]11;#0d0e0f\x1b\\" ++
             "\x1b[38;5;1;48;2;4;5;6mA\x1b[39mB\x1b[7mC",
-    )).state_changed);
+    )).stateChanged());
     var storage: Storage = .{};
     const update = try full(&source, &storage, null);
     try std.testing.expectEqual(terminal.Rgb{ .r = 1, .g = 2, .b = 3 }, update.cells[0].foreground);
@@ -139,7 +139,7 @@ test "projection resolves indexed, RGB, dynamic-default, and reverse colors" {
 test "projection derives sparse cell and cursor differences from retained facts" {
     var source = try vt.Terminal.init(std.testing.allocator, 3, 8);
     defer source.deinit();
-    try std.testing.expect((try source.feed("abcdef")).state_changed);
+    try std.testing.expect((try source.feed("abcdef")).stateChanged());
 
     var storage: Storage = .{};
     var frame: [24]terminal.Cell = undefined;
@@ -158,7 +158,7 @@ test "projection derives sparse cell and cursor differences from retained facts"
     );
     try std.testing.expectEqual(@as(usize, 0), unchanged.row_patches.len);
 
-    try std.testing.expect((try source.feed("\x1b[1;2HX")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[1;2HX")).stateChanged());
     const sparse = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -175,7 +175,7 @@ test "projection derives sparse cell and cursor differences from retained facts"
     try std.testing.expectEqual(@as(u21, 'X'), sparse.cells[0].codepoint);
     applyUpdate(&frame, &frame_geometry, sparse);
 
-    try std.testing.expect((try source.feed("\x1b[3;2H")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[3;2H")).stateChanged());
     const cursor = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -198,7 +198,7 @@ test "projection derives sparse cell and cursor differences from retained facts"
 test "cursor damage is exact for same-row movement and visibility changes" {
     var source = try vt.Terminal.init(std.testing.allocator, 3, 8);
     defer source.deinit();
-    try std.testing.expect((try source.feed("abc")).state_changed);
+    try std.testing.expect((try source.feed("abc")).stateChanged());
     var storage: Storage = .{};
     var frame: [24]terminal.Cell = undefined;
     var geometry: [3]terminal.LineGeometry = undefined;
@@ -206,7 +206,7 @@ test "cursor damage is exact for same-row movement and visibility changes" {
     @memcpy(frame[0..initial.cells.len], initial.cells);
     for (initial.row_patches) |patch| geometry[patch.row] = patch.geometry;
 
-    try std.testing.expect((try source.feed("\x1b[1;6H")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[1;6H")).stateChanged());
     const moved = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -220,7 +220,7 @@ test "cursor damage is exact for same-row movement and visibility changes" {
     try std.testing.expectEqual(@as(u16, 5), moved.row_patches[0].damage_end);
     applyUpdate(&frame, &geometry, moved);
 
-    try std.testing.expect((try source.feed("\x1b[?25l")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[?25l")).stateChanged());
     const hidden = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -237,7 +237,7 @@ test "cursor damage is exact for same-row movement and visibility changes" {
 test "selection is caller-owned and changes are sparse" {
     var source = try vt.Terminal.init(std.testing.allocator, 1, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("abcd")).state_changed);
+    try std.testing.expect((try source.feed("abcd")).stateChanged());
     var storage: Storage = .{};
     const unselected = try full(&source, &storage, null);
     var frame: [4]terminal.Cell = undefined;
@@ -260,7 +260,7 @@ test "selection is caller-owned and changes are sparse" {
 test "selection normalizes, clips, clears, and expands top-clipped OSC 66 continuations" {
     var source = try vt.Terminal.init(std.testing.allocator, 3, 6);
     defer source.deinit();
-    try std.testing.expect((try source.feed("\x1b]66;s=2:w=2:n=1:d=2:v=2:h=1;Hi\x1b\\")).state_changed);
+    try std.testing.expect((try source.feed("\x1b]66;s=2:w=2:n=1:d=2:v=2:h=1;Hi\x1b\\")).stateChanged());
     var storage: Storage = .{};
     const clipped = try full(&source, &storage, .{
         .start = .{ .row = 9, .col = 99 },
@@ -397,14 +397,14 @@ test "projection capacity failures preserve caller destinations" {
 test "geometry-only changes damage a full row without recopying cells" {
     var source = try vt.Terminal.init(std.testing.allocator, 2, 4);
     defer source.deinit();
-    try std.testing.expect((try source.feed("\x1b[?25labcd")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[?25labcd")).stateChanged());
     var storage: Storage = .{};
     var frame: [8]terminal.Cell = undefined;
     var geometry: [2]terminal.LineGeometry = undefined;
     const initial = try full(&source, &storage, null);
     @memcpy(frame[0..initial.cells.len], initial.cells);
     for (initial.row_patches) |patch| geometry[patch.row] = patch.geometry;
-    try std.testing.expect((try source.feed("\x1b[2;1H\x1b#6")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[2;1H\x1b#6")).stateChanged());
     const update = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -430,7 +430,7 @@ test "multiple skipped semantic mutations compare cumulatively against one basel
     const initial = try full(&source, &storage, null);
     @memcpy(frame[0..initial.cells.len], initial.cells);
     for (initial.row_patches) |patch| geometry[patch.row] = patch.geometry;
-    try std.testing.expect((try source.feed("\x1b[1;1HA\x1b[2;2HB")).state_changed);
+    try std.testing.expect((try source.feed("\x1b[1;1HA\x1b[2;2HB")).stateChanged());
     const update = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -452,7 +452,7 @@ test "changed cell beneath an unchanged cursor remains a cell patch" {
     const initial = try full(&source, &storage, null);
     @memcpy(frame[0..initial.cells.len], initial.cells);
     for (initial.row_patches) |patch| geometry[patch.row] = patch.geometry;
-    try std.testing.expect((try source.feed("\x1b7X\x1b8")).state_changed);
+    try std.testing.expect((try source.feed("\x1b7X\x1b8")).stateChanged());
     const update = try terminal.project(
         source.semanticView(0),
         source.presentation(),
@@ -470,7 +470,7 @@ test "changed cell beneath an unchanged cursor remains a cell patch" {
 test "history offset projects the caller-selected semantic rows" {
     var source = try vt.Terminal.initWithHistory(std.testing.allocator, 2, 4, 8);
     defer source.deinit();
-    try std.testing.expect((try source.feed("1111\r\n2222\r\n3333")).state_changed);
+    try std.testing.expect((try source.feed("1111\r\n2222\r\n3333")).stateChanged());
     var storage: Storage = .{};
     const update = try terminal.project(
         source.semanticView(1),

@@ -71,11 +71,11 @@ fn fuzzTerminal(_: void, smith: *std.testing.Smith) !void {
                 try std.testing.expectEqual(before.cols, after.cols);
                 try std.testing.expectEqual(before.history_count, after.history_count);
                 try std.testing.expectEqual(before.is_alternate_screen, after.is_alternate_screen);
-                try std.testing.expect((try terminal.feed("R")).state_changed);
+                try std.testing.expect((try terminal.feed("R")).stateChanged());
             },
             .reset_and_reuse => {
                 terminal.hardReset();
-                try std.testing.expect((try terminal.feed("R")).state_changed);
+                try std.testing.expect((try terminal.feed("R")).stateChanged());
             },
             .input_bytes => try encodeBytes(&terminal, smith),
             .keyboard => try encodeKeyboard(&terminal, smith),
@@ -101,12 +101,12 @@ fn feedHostile(terminal: *howl_vt.Terminal, bytes: []const u8) !void {
         error.ParsedEventLimit,
         error.StringControlLimit,
         => {
-            try std.testing.expect((try terminal.feed("R")).state_changed);
+            try std.testing.expect((try terminal.feed("R")).stateChanged());
             return;
         },
         error.OutOfMemory => return err,
     };
-    std.debug.assert(!summary.history_lost or summary.state_changed);
+    std.debug.assert(!summary.historyLost() or summary.stateChanged());
 }
 
 fn encodeBytes(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
@@ -248,7 +248,7 @@ fn extractText(terminal: *howl_vt.Terminal, smith: *std.testing.Smith) !void {
     // known cell without weakening the generated live-terminal mutation.
     var proof = try howl_vt.Terminal.init(std.testing.allocator, 1, 1);
     defer proof.deinit();
-    try std.testing.expect((try proof.feed("S")).state_changed);
+    try std.testing.expect((try proof.feed("S")).stateChanged());
     const range: howl_vt.Terminal.TextRange = .{
         .start = .{ .row = 0, .col = 0 },
         .end = .{ .row = 0, .col = 0 },

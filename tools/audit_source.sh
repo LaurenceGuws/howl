@@ -7,6 +7,7 @@ status=0
 
 root_publics=(
     'pub const Terminal = terminal.Terminal;'
+    'pub const MutationFacts = terminal.MutationFacts;'
     'pub const ScalarStorage = scalar_storage.Storage;'
     'pub const UnicodeProperties = unicode_17.Properties;'
     'pub const unicodeProperties = unicode_17.properties;'

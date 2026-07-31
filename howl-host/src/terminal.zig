@@ -102,6 +102,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     terminal_render.Error || terminal_render.Content.RecoverError ||
     terminal_render.Content.ApplyError || terminal_images.Error ||
     font_owner.ResourceError || font_owner.BatchError ||
+    handoff.CursorPublishError ||
     handoff.PublishError || terminal_pool.ReserveError ||
     terminal_pool.TransitionError || terminal_pool.PublishError;
 /// Reports a fallible VT candidate or PTY kernel resize before VT commit.
@@ -564,7 +565,15 @@ const Logical = struct {
                 else => return failure,
             };
             const summary = try self.machine.feed(buffer[0..count]);
-            self.dirty = self.dirty or summary.state_changed;
+            self.routeMutation(summary) catch |failure| switch (failure) {
+                error.LifecycleStale,
+                error.CursorRevisionStale,
+                error.UnknownPane,
+                error.RetiredPane,
+                error.SourceStale,
+                => {},
+                else => return failure,
+            };
             result.read_bytes += count;
             const transferred = collectReplies(&self.machine, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => break,
@@ -576,6 +585,75 @@ const Logical = struct {
         result.published_update = try self.publishIfDirty(shared_fonts, work);
         try self.observe();
         return result;
+    }
+
+    fn routeMutation(self: *Logical, summary: vt.Terminal.FeedSummary) handoff.CursorPublishError!void {
+        if (summary.mutations.cursor) {
+            self.publishCursorTarget(summary) catch |failure| {
+                switch (failure) {
+                    error.LifecycleStale,
+                    error.CursorRevisionStale,
+                    error.UnknownPane,
+                    error.RetiredPane,
+                    error.SourceStale,
+                    => {
+                        if (!summary.mutations.cursorOnly()) self.dirty = true;
+                    },
+                    else => {
+                        if (!summary.mutations.cursorOnly()) self.dirty = true;
+                        return failure;
+                    },
+                }
+            };
+        }
+        if (summary.stateChanged() and !summary.mutations.cursorOnly()) self.dirty = true;
+    }
+
+    fn publishCursorTarget(
+        self: *Logical,
+        summary: vt.Terminal.FeedSummary,
+    ) handoff.CursorPublishError!void {
+        if (!summary.mutations.cursor) return;
+        const pooled = switch (self.transfer) {
+            .pooled => |value| value,
+            .dedicated => return,
+        };
+        const view = self.machine.semanticView(0);
+        const presentation = self.machine.presentation();
+        const cursor_color: vt.Terminal.Rgb = presentation.cursor orelse
+            presentation.foreground;
+        const text_color: vt.Terminal.Rgb = presentation.cursor_text orelse
+            presentation.background;
+        const maybe_identity = pooled.boundary.cursorPublicationIdentity(
+            self.pane,
+            pooled.member.source_id,
+        ) catch |failure| return failure;
+        const identity = maybe_identity orelse return error.LifecycleStale;
+        try pooled.boundary.publishCursor(
+            .{
+                .pane = self.pane,
+                .source = pooled.member.source_id,
+                .terminal_sequence = self.machine.semanticSequence(),
+                .cursor_revision = self.machine.semanticSequence(),
+                .visible_set_revision = identity.visible_set_revision,
+                .lifecycle_revision = identity.lifecycle_revision,
+                .target = .{
+                    .row = view.cursor_row,
+                    .col = view.cursor_col,
+                    .visible = view.cursor_visible,
+                    .shape = switch (view.cursor_shape) {
+                        .block => .block,
+                        .underline => .underline,
+                        .bar => .bar,
+                        .none => .none,
+                    },
+                    .blink = view.cursor_blink,
+                    .blink_fast = false,
+                    .cursor_color = .{ .r = cursor_color.r, .g = cursor_color.g, .b = cursor_color.b, .a = cursor_color.a },
+                    .text_color = .{ .r = text_color.r, .g = text_color.g, .b = text_color.b, .a = text_color.a },
+                },
+            },
+        );
     }
 
     fn publishIfDirty(
@@ -2239,7 +2317,7 @@ test "reply collection preserves bytes on queue saturation" {
     var terminal = try vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
     const summary = try terminal.feed("\x1b[5n");
-    try std.testing.expect(summary.state_changed);
+    try std.testing.expect(summary.stateChanged());
     try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
     var queue = WriteQueue{};
     queue.count = queue.bytes.len;
@@ -2266,10 +2344,131 @@ test "older VT replies remain ordered before newly encoded input" {
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
     const summary = try owner.machine.feed("\x1b[5n");
-    try std.testing.expect(summary.state_changed);
+    try std.testing.expect(summary.stateChanged());
     try owner.input(.{ .bytes = "x" });
     try std.testing.expectEqualStrings("\x1b[0nx", owner.writes.pending());
     try std.testing.expectEqualStrings("", owner.machine.replyBytes());
+}
+
+test "cursor-only mutation routing leaves terminal publication clean" {
+    var slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(901);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        try testPixels(runtime.fonts, 8, 2),
+        .{ .dedicated = &slot },
+    );
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = false;
+    const before_revision = owner.last_published_revision;
+    try owner.routeMutation(try owner.machine.feed("\x1b[?9999h"));
+    try std.testing.expect(!owner.dirty);
+    const cursor = try owner.machine.feed("\x1b[1C");
+    try owner.routeMutation(cursor);
+    try std.testing.expect(!owner.dirty);
+    try std.testing.expectEqual(before_revision, owner.last_published_revision);
+
+    const mixed = try owner.machine.feed("\x1b[1Cx");
+    try owner.routeMutation(mixed);
+    try std.testing.expect(owner.dirty);
+}
+
+test "pooled cursor route publishes inbox without pool or content work" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(902);
+    const source: render.canvas.SourceId = @fromBackingInt(1902);
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(pane, source, pixels);
+    try std.testing.expectEqual(
+        handoff.Lifecycle{ .create = .{ .pane = pane, .pixels = pixels } },
+        boundary.takeLifecycle().?,
+    );
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = member } },
+    );
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_member_count = 1;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = false;
+    const before = owner.last_published_revision;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
+    try std.testing.expect(!owner.dirty);
+    try std.testing.expectEqual(before, owner.last_published_revision);
+    const cursor = boundary.takeCursor(pane).?;
+    try std.testing.expectEqual(pane, cursor.pane);
+    try std.testing.expectEqual(source, cursor.source);
+    try std.testing.expectEqual(@as(u16, 1), cursor.target.col);
+
+    // A hidden member remains registered but has no cursor presentation.
+    boundary.visible_member_count = 0;
+    try std.testing.expect((try boundary.cursorPublicationIdentity(pane, source)) == null);
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1Cy"));
+    try std.testing.expect(owner.dirty);
+    boundary.visible_member_count = 1;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(boundary.takeCursor(pane) != null);
+
+    owner.transfer.pooled.member.source_id = @fromBackingInt(1903);
+    try std.testing.expectError(
+        error.SourceStale,
+        boundary.cursorPublicationIdentity(pane, @fromBackingInt(1903)),
+    );
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
+    try std.testing.expect(!owner.dirty);
+    owner.transfer.pooled.member.source_id = source;
+
+    try boundary.close(pane);
+    try std.testing.expectEqual(
+        handoff.Lifecycle{ .close = pane },
+        boundary.takeLifecycle().?,
+    );
+    try std.testing.expect(try boundary.retireTransfer(pane));
+    try boundary.markRetired(pane);
+    try std.testing.expectError(
+        error.RetiredPane,
+        boundary.cursorPublicationIdentity(pane, source),
+    );
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
+    try std.testing.expect(!owner.dirty);
+    try std.testing.expectEqual(pane, boundary.takeRetired().?.pane);
+    try boundary.finishRetired(pane);
+    try std.testing.expectError(
+        error.UnknownPane,
+        boundary.cursorPublicationIdentity(pane, source),
+    );
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
+    try std.testing.expect(!owner.dirty);
+
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
+    try std.testing.expect(owner.dirty);
 }
 
 test "all consequence variants are exhaustively classified without consumption" {
@@ -2305,7 +2504,7 @@ test "repeated consequences are consumed by exact identity without stalling prog
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(7));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect((try owner.machine.feed("\x07\x07")).state_changed);
+    try std.testing.expect((try owner.machine.feed("\x07\x07")).stateChanged());
     const first = owner.machine.consequenceHead().?;
     try std.testing.expectError(
         error.StaleConsequence,
@@ -2315,7 +2514,7 @@ test "repeated consequences are consumed by exact identity without stalling prog
     try std.testing.expect(owner.machine.consequenceHead() != null);
     try owner.disposeConsequence();
     try std.testing.expect(owner.machine.consequenceHead() == null);
-    try std.testing.expect((try owner.machine.feed("x")).state_changed);
+    try std.testing.expect((try owner.machine.feed("x")).stateChanged());
     try std.testing.expectEqual(@as(u21, 'x'), owner.machine.semanticView(0).cellAt(0, 0));
 }
 
@@ -2331,14 +2530,14 @@ test "reply-required consequences receive bounded Host replies and clear the hea
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
     const owner = &runtime.owners[runtime.find(pane).?].?;
 
-    try std.testing.expect((try owner.machine.feed("\x1b]52;c;?\x07")).state_changed);
+    try std.testing.expect((try owner.machine.feed("\x1b]52;c;?\x07")).stateChanged());
     try owner.disposeConsequence();
     try std.testing.expect(owner.machine.consequenceHead() == null);
     try std.testing.expect(owner.machine.replyBytes().len != 0);
     const transferred = try collectReplies(&owner.machine, &owner.writes);
     try std.testing.expect(transferred != 0);
 
-    try std.testing.expect((try owner.machine.feed("\x1b[?996n")).state_changed);
+    try std.testing.expect((try owner.machine.feed("\x1b[?996n")).stateChanged());
     try owner.disposeConsequence();
     try std.testing.expect(owner.machine.consequenceHead() == null);
     try std.testing.expect(owner.machine.replyBytes().len != 0);
@@ -2370,7 +2569,7 @@ test "realistic configured sparse terminal fits the production Composer candidat
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect((try owner.machine.feed(
         "\x1b[4mHowl terminal runtime\x1b[0m\r\n$ ",
-    )).state_changed);
+    )).stateChanged());
     try owner.visual.project(&owner.machine, &owner.content);
     var work = try render.terminal.Content.Work.init(
         std.testing.allocator,
@@ -2433,20 +2632,20 @@ test "alternate-screen exit publishes complete retained resource turnover" {
         ),
     );
 
-    try std.testing.expect((try owner.machine.feed("\x1b[?1049h")).state_changed);
+    try std.testing.expect((try owner.machine.feed("\x1b[?1049h")).stateChanged());
     const styles = [_][]const u8{ "\x1b[0m", "\x1b[1m", "\x1b[3m", "\x1b[1;3m" };
     var position: [16]u8 = undefined;
     var alternate_changed = false;
     for (styles, 0..) |style, row| {
         const move = try std.fmt.bufPrint(&position, "\x1b[{d};1H", .{row + 1});
-        alternate_changed = (try owner.machine.feed(move)).state_changed or
+        alternate_changed = (try owner.machine.feed(move)).stateChanged() or
             alternate_changed;
-        alternate_changed = (try owner.machine.feed(style)).state_changed or
+        alternate_changed = (try owner.machine.feed(style)).stateChanged() or
             alternate_changed;
         var scalar: u8 = 33;
         while (scalar <= 126) : (scalar += 1) {
             const byte = [_]u8{scalar};
-            alternate_changed = (try owner.machine.feed(&byte)).state_changed or
+            alternate_changed = (try owner.machine.feed(&byte)).stateChanged() or
                 alternate_changed;
         }
     }
@@ -2460,7 +2659,7 @@ test "alternate-screen exit publishes complete retained resource turnover" {
     try std.testing.expect(alternate.uploads.len > 128);
     try composer.apply(source, alternate);
 
-    try std.testing.expect((try owner.machine.feed("\x1b[?1049l")).state_changed);
+    try std.testing.expect((try owner.machine.feed("\x1b[?1049l")).stateChanged());
     try owner.visual.project(&owner.machine, &owner.content);
     const primary = try owner.content.takeLocalUpdate(
         &runtime.work,
@@ -2489,7 +2688,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
         const sequence = if (index % 2 == 0) "\x1b[40m " else "\x1b[41m ";
         @memcpy(transcript[index * 6 ..][0..6], sequence);
     }
-    try std.testing.expect((try owner.machine.feed(transcript)).state_changed);
+    try std.testing.expect((try owner.machine.feed(transcript)).stateChanged());
     try std.testing.expect(!try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expect(owner.dirty);
     try std.testing.expect(!try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
@@ -2987,7 +3186,7 @@ test "visible-set preparation publishes hidden newest state through real Content
     try boundary.claimVisibleSet(2);
     try boundary.commitVisibleSet(2);
     const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect((try owner.machine.feed("newest")).state_changed);
+    try std.testing.expect((try owner.machine.feed("newest")).stateChanged());
     owner.dirty = true;
     try std.testing.expect(!(try owner.publishIfDirty(
         &runtime.shared_fonts,
@@ -3085,8 +3284,8 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         second.ligature_mode,
     );
     try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
-    try std.testing.expect((try first.machine.feed("\u{f460}")).state_changed);
-    try std.testing.expect((try second.machine.feed("\u{f460}")).state_changed);
+    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
+    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
     first.dirty = true;
     second.dirty = true;
     const members = [_]handoff.VisibleMember{
@@ -3178,7 +3377,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     );
     try std.testing.expect(!first.font_released_hidden);
     try std.testing.expect(first.font_group != null);
-    try std.testing.expect((try second.machine.feed("hidden")).state_changed);
+    try std.testing.expect((try second.machine.feed("hidden")).stateChanged());
     second.dirty = true;
     try std.testing.expect(!(try second.publishIfDirty(
         &runtime.shared_fonts,
@@ -3216,8 +3415,8 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         second.font_group.?,
     ));
 
-    try std.testing.expect((try first.machine.feed("\x1b[2J\x1b[H")).state_changed);
-    try std.testing.expect((try second.machine.feed("\x1b[2J\x1b[H")).state_changed);
+    try std.testing.expect((try first.machine.feed("\x1b[2J\x1b[H")).stateChanged());
+    try std.testing.expect((try second.machine.feed("\x1b[2J\x1b[H")).stateChanged());
     first.dirty = true;
     second.dirty = true;
     try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
@@ -3227,8 +3426,8 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
     );
 
-    try std.testing.expect((try first.machine.feed("\u{f460}")).state_changed);
-    try std.testing.expect((try second.machine.feed("\u{f460}")).state_changed);
+    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
+    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
     first.dirty = true;
     second.dirty = true;
     try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
@@ -3265,7 +3464,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
 
     for ([_]*Logical{ first, second }) |owner| {
         try std.testing.expect(
-            (try owner.machine.feed("\x1b[?1049h\x1b[3C\u{f460}")).state_changed,
+            (try owner.machine.feed("\x1b[?1049h\x1b[3C\u{f460}")).stateChanged(),
         );
         owner.dirty = true;
         try std.testing.expect(try owner.publishIfDirty(
@@ -3279,7 +3478,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     );
     for ([_]*Logical{ first, second }) |owner| {
         try std.testing.expect(
-            (try owner.machine.feed("\x1b[?1049l")).state_changed,
+            (try owner.machine.feed("\x1b[?1049l")).stateChanged(),
         );
         owner.dirty = true;
         try std.testing.expect(try owner.publishIfDirty(
@@ -3313,7 +3512,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
 
     for ([_]*Logical{ first, second }) |owner| {
         try std.testing.expect(
-            (try owner.machine.feed("\r\n\r\n\r\n")).state_changed,
+            (try owner.machine.feed("\r\n\r\n\r\n")).stateChanged(),
         );
         owner.dirty = true;
         try std.testing.expect(try owner.publishIfDirty(
@@ -3327,7 +3526,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     );
     for ([_]*Logical{ first, second }) |owner| {
         try std.testing.expect(
-            (try owner.machine.feed("\x1b[2J\x1b[H\u{f460}")).state_changed,
+            (try owner.machine.feed("\x1b[2J\x1b[H\u{f460}")).stateChanged(),
         );
         owner.dirty = true;
         try std.testing.expect(try owner.publishIfDirty(
@@ -3465,7 +3664,7 @@ test "factual admission publishes generated joins and Powerline through shared p
             "\x1b[H\u{2502}\x1b[2;1H\u{2502}" ++
                 "\x1b[3;1H\u{e0b1}\u{e0b1}" ++
                 "\x1b[4;1H\u{f5d0}\u{f5d0}\u{f5ee}\u{f5ee}\x1b[4;9H",
-        )).state_changed,
+        )).stateChanged(),
     );
     owner.dirty = true;
     try std.testing.expect(try owner.publishIfDirty(
@@ -3873,7 +4072,7 @@ test "PTY resize failure discards prepared VT and later live resize commits" {
     var machine = try vt.Terminal.init(std.testing.allocator, 2, 4);
     defer machine.deinit();
     const fed = try machine.feed("AB");
-    try std.testing.expect(fed.state_changed);
+    try std.testing.expect(fed.stateChanged());
     const semantic_sequence = machine.semanticSequence();
     const cell = machine.semanticView(0).cellAt(0, 0);
     {
@@ -4421,7 +4620,7 @@ test "configured operator font styles and optional missing cells remain renderab
     );
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect(
-        (try owner.machine.feed("\x1b[1mA\x1b[3mB\x1b[0m\xef\xbf\xa1")).state_changed,
+        (try owner.machine.feed("\x1b[1mA\x1b[3mB\x1b[0m\xef\xbf\xa1")).stateChanged(),
     );
     owner.dirty = true;
     try std.testing.expect(try owner.publishIfDirty(

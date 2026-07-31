@@ -7,6 +7,8 @@ const std = @import("std");
 
 /// Owns one terminal emulator, its retained state, replies, and consequences.
 pub const Terminal = terminal.Terminal;
+/// Packs the semantic owners affected by one accepted PTY feed.
+pub const MutationFacts = terminal.MutationFacts;
 /// Owns bounded overflow scalars for one caller-owned cell cohort.
 pub const ScalarStorage = scalar_storage.Storage;
 /// Borrows pinned Unicode 17 classification without transferring VT occupancy.

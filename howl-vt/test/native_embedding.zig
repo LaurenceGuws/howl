@@ -8,7 +8,7 @@ test "native root owns the complete embedding contract" {
     defer terminal.deinit();
 
     const feed = try terminal.feed("ABCD");
-    try std.testing.expect(feed.state_changed);
+    try std.testing.expect(feed.stateChanged());
 
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u16, 2), view.rows);
@@ -24,7 +24,7 @@ test "native root owns the complete embedding contract" {
     defer std.testing.allocator.free(selected);
     try std.testing.expectEqualStrings("BC", selected);
 
-    try std.testing.expect((try terminal.feed("\x1b[?2004h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2004h")).stateChanged());
     var input_scratch: howl_vt.Terminal.InputScratch = .{};
     var named_key = try terminal.encodeInput(
         std.testing.allocator,
@@ -50,11 +50,11 @@ test "native root owns the complete embedding contract" {
     defer encoded.deinit();
     try std.testing.expectEqualStrings("\x1b[200~paste\x1b[201~", encoded.bytes);
 
-    try std.testing.expect((try terminal.feed("\x1b[5n")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[5n")).stateChanged());
     try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
-    try std.testing.expect((try terminal.feed("\x1b]52;c;SG93bA==\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b]52;c;SG93bA==\x07")).stateChanged());
     const clipboard_request = terminal.consequenceHead().?.clipboard;
     const clipboard = (try terminal.takeClipboard(
         clipboard_request.generation,

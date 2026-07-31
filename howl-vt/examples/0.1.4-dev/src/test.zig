@@ -24,9 +24,9 @@ test "fragmented output mutates borrowed terminal state and retains replies" {
     defer terminal.deinit();
 
     const text: howl_vt.Terminal.FeedSummary = try feedTyped(&terminal, "Howl\x1b[");
-    try std.testing.expect(text.state_changed);
+    try std.testing.expect(text.stateChanged());
     const reply = try feedTyped(&terminal, "5n");
-    try std.testing.expect(reply.state_changed);
+    try std.testing.expect(reply.stateChanged());
 
     const view = terminal.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'H'), view.cellAt(0, 0));
@@ -48,7 +48,7 @@ test "ordered consequences are borrowed and consumed by exact identity" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x07")).state_changed);
+    try std.testing.expect((try terminal.feed("\x07")).stateChanged());
     try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
 
     const consequence = terminal.consequenceHead() orelse
@@ -65,7 +65,7 @@ test "container request and reply use the typed terminal contract" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 8);
     defer terminal.deinit();
 
-    try std.testing.expect((try terminal.feed("\x1b[11t")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[11t")).stateChanged());
     const consequence = terminal.consequenceHead() orelse
         return error.MissingContainerRequest;
     const request: howl_vt.Terminal.ContainerRequest = switch (consequence) {
@@ -115,7 +115,7 @@ test "terminal modes determine key and paste encoding" {
     defer mouse_result.deinit();
     try std.testing.expectEqualStrings("", mouse_result.bytes);
 
-    try std.testing.expect((try terminal.feed("\x1b[?1004h\x1b[?1000h\x1b[?1006h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?1004h\x1b[?1000h\x1b[?1006h")).stateChanged());
     var focused = try encodeTyped(&terminal, std.testing.allocator, &scratch, focus);
     defer focused.deinit();
     try std.testing.expectEqualStrings("\x1b[I", focused.bytes);
@@ -131,7 +131,7 @@ test "terminal modes determine key and paste encoding" {
         } }),
     );
 
-    try std.testing.expect((try terminal.feed("\x1b[?2004h")).state_changed);
+    try std.testing.expect((try terminal.feed("\x1b[?2004h")).stateChanged());
     var paste = try terminal.encodeInput(
         std.testing.allocator,
         &scratch,
@@ -170,7 +170,7 @@ test "semantic row continuation is borrowed terminal state" {
     var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 2);
     defer terminal.deinit();
 
-    try std.testing.expect((try feedTyped(&terminal, "abc")).state_changed);
+    try std.testing.expect((try feedTyped(&terminal, "abc")).stateChanged());
     const view = terminal.semanticView(0);
     try std.testing.expect(view.rowWrapped(0));
     try std.testing.expect(!view.rowWrapped(1));

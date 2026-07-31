@@ -29,6 +29,14 @@ operator_policy:
     cursor.trail_decay_seconds: [0.1, 0.4]
     cursor.trail_start_threshold_cells: 0
     cursor.trail_color: cursor
+  focus_policy:
+    focused_pane: exactly one visible cursor and trail target
+    other_visible_panes: retain VT cursor facts but render no cursor or trail
+    os_window_unfocused: render the focused pane cursor with the configured hollow shape
+    pane_focus_change: immediately select the new pane semantic target; presentation animates between accepted targets
+  kitty_resolutions:
+    trail_visibility: follows VT DECTCEM cursor visibility
+    linux_wayland_system_blink_interval_ms: 500
   excluded:
     - font_face_selection
     - text_blink
@@ -74,6 +82,21 @@ invariants:
   - Failure preserves the prior complete frame and accepted cursor target.
   - Every wait remains interruptible by existing shutdown ownership.
   - Configuration is immutable after startup during the development family.
+  - Cursor geometry derives from the focused pane's exact accepted font metrics; an accepted metric change updates cursor position and dimensions atomically.
+  - Trail corners animate toward the complete new cursor rectangle, including width and height changes caused by pane or window-base font mutation.
+  - No frame combines old cursor geometry with new pane metrics, or new cursor geometry with old pane metrics.
+
+font_metric_dependency:
+  implementation_order: cursor machinery first; window-base font-policy correction remains an isolated later checkpoint
+  window_base: shared font-size state used by Chrome and as the base for every terminal pane
+  pane_state: each pane retains one independent signed offset
+  effective_pane_size: clamp window_base_plus_pane_offset to the shared lower and upper bounds
+  clamp_rule: clamping changes only effective size; it never rewrites or discards the retained pane offset
+  mutation_scope:
+    window_base: recompute Chrome and every pane in one accepted transaction
+    pane_offset: recompute only the selected pane
+  cursor_rule: the focused cursor consumes the pane's accepted effective metrics and does not own font-size policy
+  rollback: rejected font publication preserves prior Chrome, pane, grid, cursor geometry, trail state, and every retained offset
 
 research_queries:
   required_fields: [id, status, question, evidence, conclusion, residual]
@@ -89,11 +112,11 @@ research_queries:
     - rollback_and_shutdown
 
 checkpoints:
-  - {id: minimal_dev_config_ingestion, status: approved, product_change: allowed, boundary: startup parsing and immutable distribution only}
-  - {id: current_howl_cursor_pipeline, status: evidence_required, product_change: forbidden}
-  - {id: kitty_cursor_pipeline, status: evidence_required, product_change: forbidden}
-  - {id: neovim_cursor_damage_receipt, status: evidence_required, product_change: forbidden}
-  - {id: finite_cursor_contract, status: blocked_on_evidence, product_change: forbidden}
+  - {id: minimal_dev_config_ingestion, status: accepted, product_change: allowed, boundary: startup validation only}
+  - {id: current_howl_cursor_pipeline, status: accepted, product_change: forbidden}
+  - {id: kitty_cursor_pipeline, status: accepted, product_change: forbidden}
+  - {id: neovim_cursor_damage_receipt, status: accepted, product_change: forbidden}
+  - {id: finite_cursor_contract, status: hostile_correction_required, product_change: forbidden}
   - {id: cursor_implementation, status: blocked_on_finite_contract, product_change: forbidden}
 
 review_boundary:
