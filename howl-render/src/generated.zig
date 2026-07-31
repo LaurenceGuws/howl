@@ -135,19 +135,19 @@ pub fn rasterizeWithStroke(
     if (pixels.len < required) return error.BufferTooSmall;
     const family = classify(codepoint) orelse return error.UnsupportedGlyph;
     if (family == .box) return error.InvalidMetrics;
-    if (codepoint == 0xe0b1) return error.InvalidMetrics;
+    if (powerlineRequiresStroke(codepoint)) return error.InvalidMetrics;
     @memset(pixels[0..required], 0);
     switch (family) {
         .box => unreachable,
         .powerline => switch (codepoint) {
-            0xe0b0, 0xe0b4 => try generated_powerline
+            0xe0b0, 0xe0b2, 0xe0b4, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be => try generated_powerline
                 .rasterizeGeneratedPowerlineAlphaMetricFree(
                 pixels,
                 width_px,
                 height_px,
                 codepoint,
             ),
-            0xe0b1 => unreachable,
+            0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => unreachable,
             else => try generated_powerline.rasterizeGeneratedPowerlineAlpha(
                 pixels,
                 width_px,
@@ -211,8 +211,9 @@ pub fn rasterizeBox(
     );
 }
 
-/// Rasterizes the proven metric-sensitive Kitty Powerline glyph from exact
-/// point, DPI, and multicell scale facts. Other Powerline glyphs reject.
+/// Rasterizes the proven metric-sensitive Kitty Powerline subset from exact
+/// point, DPI, and multicell scale facts. Metric-free and unproven glyphs
+/// reject.
 pub fn rasterizePowerline(
     pixels: []u8,
     width_px: u16,
@@ -224,10 +225,16 @@ pub fn rasterizePowerline(
     if (width_px == 0 or height_px == 0) return error.InvalidSize;
     if (width_px > max_extent_px or height_px > max_extent_px)
         return error.RasterTooLarge;
-    if (codepoint != 0xe0b1) return error.UnsupportedGlyph;
+    if (!powerlineRequiresStroke(codepoint)) return error.UnsupportedGlyph;
     const required = @as(usize, width_px) * height_px;
     if (pixels.len < required) return error.BufferTooSmall;
     const strokes = try deriveBoxDrawingStrokes(config, sizing);
+    const vertical_line_width = try thicknessFloat(
+        config.stroke_points[1],
+        config.dpi_x,
+        sizing,
+        1,
+    );
     @memset(pixels[0..required], 0);
     try generated_powerline.rasterizeGeneratedPowerlineAlphaWithStrokes(
         pixels,
@@ -235,7 +242,15 @@ pub fn rasterizePowerline(
         height_px,
         codepoint,
         strokes,
+        vertical_line_width,
     );
+}
+
+fn powerlineRequiresStroke(codepoint: u32) bool {
+    return switch (codepoint) {
+        0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        else => false,
+    };
 }
 
 fn deriveBoxDrawingStrokes(
@@ -273,4 +288,27 @@ fn thickness(points: f32, dpi: Dpi, scale: f32, supersample: u8) Error!u16 {
     if (!std.math.isFinite(value) or value <= 0 or value > max_extent_px * 4)
         return error.InvalidStroke;
     return @intFromFloat(value);
+}
+
+fn thicknessFloat(
+    points: f32,
+    dpi: Dpi,
+    sizing: BoxDrawingSizing,
+    supersample: u8,
+) Error!f64 {
+    var scale: f32 = @floatFromInt(sizing.scale);
+    if (sizing.subscale_n > 0) {
+        scale *= @as(f32, @floatFromInt(sizing.subscale_n)) /
+            @as(f32, @floatFromInt(sizing.subscale_d));
+    }
+    const value =
+        @as(f64, @floatFromInt(supersample)) *
+        @as(f64, scale) *
+        @as(f64, points) *
+        @as(f64, @floatFromInt(dpi.numerator)) /
+        @as(f64, @floatFromInt(dpi.denominator)) /
+        72.0;
+    if (!std.math.isFinite(value) or value <= 0 or value > max_extent_px * 4)
+        return error.InvalidStroke;
+    return value;
 }

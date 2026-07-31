@@ -15,7 +15,19 @@ pub fn rasterizeGeneratedPowerlineAlphaMetricFree(
 ) error{UnsupportedGlyph}!void {
     switch (codepoint) {
         0xe0b0 => rasterizeKittyTriangle(pixels, width, height),
+        0xe0b2 => {
+            rasterizeKittyTriangle(pixels, width, height);
+            mirrorPixels(pixels, width, height);
+        },
         0xe0b4 => rasterizeKittyFilledD(pixels, width, height),
+        0xe0b6 => {
+            rasterizeKittyFilledD(pixels, width, height);
+            mirrorPixels(pixels, width, height);
+        },
+        0xe0b8 => rasterizeKittyCornerTriangle(pixels, width, height, .bottom_left),
+        0xe0ba => rasterizeKittyCornerTriangle(pixels, width, height, .bottom_right),
+        0xe0bc => rasterizeKittyCornerTriangle(pixels, width, height, .top_left),
+        0xe0be => rasterizeKittyCornerTriangle(pixels, width, height, .top_right),
         else => return error.UnsupportedGlyph,
     }
 }
@@ -27,6 +39,7 @@ pub fn rasterizeGeneratedPowerlineAlphaWithStrokes(
     height: u16,
     codepoint: u32,
     strokes: BoxDrawingStrokes,
+    vertical_line_width: f64,
 ) error{UnsupportedGlyph}!void {
     switch (codepoint) {
         0xe0b1 => rasterizeKittyHalfCross(
@@ -34,7 +47,27 @@ pub fn rasterizeGeneratedPowerlineAlphaWithStrokes(
             width,
             height,
             strokes.vertical_supersampled[1],
+            true,
         ),
+        0xe0b3 => rasterizeKittyHalfCross(pixels, width, height, strokes.vertical_supersampled[1], false),
+        0xe0b5 => rasterizeKittyRoundedSeparator(
+            pixels,
+            width,
+            height,
+            strokes.vertical[1],
+            vertical_line_width,
+            true,
+        ),
+        0xe0b7 => rasterizeKittyRoundedSeparator(
+            pixels,
+            width,
+            height,
+            strokes.vertical[1],
+            vertical_line_width,
+            false,
+        ),
+        0xe0b9, 0xe0bf => rasterizeKittyCrossLine(pixels, width, height, strokes.vertical_supersampled[1], true),
+        0xe0bb, 0xe0bd => rasterizeKittyCrossLine(pixels, width, height, strokes.vertical_supersampled[1], false),
         else => return error.UnsupportedGlyph,
     }
 }
@@ -100,6 +133,7 @@ fn rasterizeKittyHalfCross(
     width: u16,
     height: u16,
     base_stroke: u16,
+    left: bool,
 ) void {
     const ss_width = width * 4;
     const ss_height = height * 4;
@@ -110,8 +144,9 @@ fn rasterizeKittyHalfCross(
         for (0..4) |local_y| for (0..4) |local_x| {
             const sample_x: u16 = @intCast(x * 4 + local_x);
             const sample_y: u16 = @intCast(y * 4 + local_y);
+            const projected_x = if (left) sample_x else ss_width - 1 - sample_x;
             if (kittyThickLineContains(
-                sample_x,
+                projected_x,
                 sample_y,
                 0,
                 0,
@@ -119,12 +154,47 @@ fn rasterizeKittyHalfCross(
                 mid,
                 diagonal,
             ) or kittyThickLineContains(
-                sample_x,
+                projected_x,
                 sample_y,
                 0,
                 ss_height - 1,
                 ss_width - 1,
                 mid,
+                diagonal,
+            ))
+                hits += 1;
+        };
+        pixels[y * width + x] = @intCast(hits * 255 / 16);
+    };
+}
+
+fn rasterizeKittyCrossLine(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    base_stroke: u16,
+    left: bool,
+) void {
+    const ss_width = width * 4;
+    const ss_height = height * 4;
+    const diagonal = kittyDiagonalThickness(
+        base_stroke,
+        ss_width - 1,
+        ss_height - 1,
+    );
+    for (0..height) |y| for (0..width) |x| {
+        var hits: u16 = 0;
+        for (0..4) |local_y| for (0..4) |local_x| {
+            const sample_x: u16 = @intCast(x * 4 + local_x);
+            const sample_y: u16 = @intCast(y * 4 + local_y);
+            const projected_x = if (left) sample_x else ss_width - 1 - sample_x;
+            if (kittyThickLineContains(
+                projected_x,
+                sample_y,
+                0,
+                0,
+                ss_width - 1,
+                ss_height - 1,
                 diagonal,
             ))
                 hits += 1;
@@ -155,6 +225,114 @@ fn rasterizeKittyFilledD(pixels: []u8, width: u16, height: u16) void {
     }
     for (pixels[0 .. @as(usize, width) * height]) |*value|
         value.* = @intCast(@as(u16, value.*) * 255 / 16);
+}
+
+fn rasterizeKittyCornerTriangle(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    corner: PowerlineCorner,
+) void {
+    const ss_width = width * 4;
+    const ss_height = height * 4;
+    for (0..height) |y| for (0..width) |x| {
+        var hits: u16 = 0;
+        for (0..4) |local_y| for (0..4) |local_x| {
+            const sample_x = x * 4 + local_x;
+            const sample_y = y * 4 + local_y;
+            const down = kittyLineY(0, 0, ss_width - 1, ss_height - 1, sample_x);
+            const up = kittyLineY(ss_width - 1, 0, 0, ss_height - 1, sample_x);
+            const inside = switch (corner) {
+                .top_left => @as(f64, @floatFromInt(sample_y)) <= up,
+                .top_right => @as(f64, @floatFromInt(sample_y)) <= down,
+                .bottom_left => @as(f64, @floatFromInt(sample_y)) >= down,
+                .bottom_right => @as(f64, @floatFromInt(sample_y)) >= up,
+            };
+            if (inside) hits += 1;
+        };
+        pixels[y * width + x] = @intCast(hits * 255 / 16);
+    };
+}
+
+fn rasterizeKittyRoundedSeparator(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    gap: u16,
+    line_width: f64,
+    left: bool,
+) void {
+    const curve_width = @max(width -| gap, 1);
+    const control = kittyDControl(curve_width);
+    const half_gap = gap / 2;
+    const end_y = height -| (1 + half_gap);
+    const sample_limit = @max(width, height);
+    const max_step = 1.0 / @as(f64, @floatFromInt(sample_limit));
+    const min_step = max_step / 1000.0;
+    for (0..height) |y| for (0..width) |x| {
+        const pixel_x =
+            @as(f64, @floatFromInt(if (left) x else width - 1 - x)) + 0.5;
+        const pixel_y = @as(f64, @floatFromInt(y)) + 0.5;
+        var minimum = std.math.floatMax(f64);
+        var t: f64 = 0;
+        while (true) {
+            // Kitty stores the terminal t=1 sample but excludes it through
+            // num_samples=i; preserve that generic curve-walker behavior.
+            if (t >= 1.0) break;
+            const sample_x = kittyBezierX(control, t);
+            const sample_y =
+                kittyBezierYForEnd(end_y, t) + @as(f64, @floatFromInt(half_gap));
+            const dx = sample_x - pixel_x;
+            const dy = sample_y - pixel_y;
+            minimum = @min(minimum, dx * dx + dy * dy);
+            const derivative_x = kittyBezierPrimeX(control, t);
+            const derivative_y = kittyBezierPrimeY(end_y, t);
+            const distance = @sqrt(
+                derivative_x * derivative_x + derivative_y * derivative_y,
+            );
+            t = @min(
+                t + std.math.clamp(
+                    1.0 / @max(1e-6, distance),
+                    min_step,
+                    max_step,
+                ),
+                1.0,
+            );
+        }
+        const alpha = std.math.clamp(
+            @max(line_width, 1.0) / 2.0 -
+                @sqrt(minimum) + 0.5,
+            0.0,
+            1.0,
+        );
+        pixels[y * width + x] = @intFromFloat(alpha * 255.0);
+    };
+}
+
+fn kittyBezierYForEnd(end_y: u16, t: f64) f64 {
+    const u = 1.0 - t;
+    const end: f64 = @floatFromInt(end_y);
+    return 3.0 * t * t * u * end + t * t * t * end;
+}
+
+fn kittyBezierPrimeX(control: u16, t: f64) f64 {
+    const u = 1.0 - t;
+    const value: f64 = @floatFromInt(control);
+    return 3.0 * u * u * value - 3.0 * t * t * value;
+}
+
+fn kittyBezierPrimeY(end_y: u16, t: f64) f64 {
+    const u = 1.0 - t;
+    const end: f64 = @floatFromInt(end_y);
+    return 6.0 * t * u * end;
+}
+
+fn mirrorPixels(pixels: []u8, width: u16, height: u16) void {
+    for (0..height) |y| for (0..width / 2) |x| {
+        const left = y * width + x;
+        const right = y * width + width - 1 - x;
+        std.mem.swap(u8, &pixels[left], &pixels[right]);
+    };
 }
 
 fn kittyLineY(

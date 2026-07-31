@@ -130,7 +130,17 @@ test "generated work and stroke bounds reject without mutation and permit reuse"
     );
 
     @memset(&pixels, 0xa5);
-    try generated.rasterize(&pixels, 16, 16, 0xe0b5);
+    try generated.rasterizePowerline(
+        &pixels,
+        16,
+        16,
+        0xe0b5,
+        .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .{},
+    );
     try std.testing.expect(
         std.mem.indexOfNone(u8, pixels[0 .. 16 * 16], &.{0}) != null,
     );
@@ -330,6 +340,13 @@ test "Powerline metric rejection is transactional and storage is reusable" {
         ),
     );
     try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    for ([_]u32{ 0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf }) |codepoint| {
+        try std.testing.expectError(
+            error.InvalidMetrics,
+            generated.rasterize(&pixels, 8, 20, codepoint),
+        );
+        try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    }
     try std.testing.expectError(
         error.InvalidMetrics,
         generated.rasterize(&pixels, 8, 20, 0xe0b1),
@@ -406,6 +423,63 @@ test "Powerline metric rejection is transactional and storage is reusable" {
     try std.testing.expectEqual(
         @as(u64, 0xae0ba8cb9f9c5670),
         std.hash.Wyhash.hash(0, &pixels),
+    );
+}
+
+test "remaining Powerline family uses exact metric ownership" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var pixels: [13 * 20]u8 = undefined;
+    for ([_]u32{ 0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf }) |codepoint| {
+        try generated.rasterizePowerline(
+            &pixels,
+            13,
+            20,
+            codepoint,
+            config,
+            .{},
+        );
+        try std.testing.expect(std.mem.indexOfNone(u8, &pixels, &.{0}) != null);
+    }
+    for ([_]u32{ 0xe0b0, 0xe0b2, 0xe0b4, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be }) |codepoint| {
+        try generated.rasterize(&pixels, 13, 20, codepoint);
+        const first = std.hash.Wyhash.hash(0, &pixels);
+        try generated.rasterize(&pixels, 13, 20, codepoint);
+        try std.testing.expectEqual(first, std.hash.Wyhash.hash(0, &pixels));
+        try std.testing.expectError(
+            error.UnsupportedGlyph,
+            generated.rasterizePowerline(
+                &pixels,
+                13,
+                20,
+                codepoint,
+                config,
+                .{},
+            ),
+        );
+    }
+}
+
+test "rounded Powerline keeps floating width separate from integer gap" {
+    // Kitty level one at 96 DPI is exactly 4/3 pixels: the curve uses that
+    // floating width while its inset gap uses ceil(4/3) == 2.
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var left: [8 * 20]u8 = undefined;
+    var right: [8 * 20]u8 = undefined;
+    try generated.rasterizePowerline(&left, 8, 20, 0xe0b5, config, .{});
+    try generated.rasterizePowerline(&right, 8, 20, 0xe0b7, config, .{});
+    try std.testing.expectEqual(
+        @as(u64, 0xb8bfbc71f33fd1af),
+        std.hash.Wyhash.hash(0, &left),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x503f8e79ede8dbe3),
+        std.hash.Wyhash.hash(0, &right),
     );
 }
 
@@ -513,7 +587,10 @@ fn rasterizeTest(
             config,
             .{},
         );
-    if (codepoint == 0xe0b1)
+    if (switch (codepoint) {
+        0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        else => false,
+    })
         return generated.rasterizePowerline(
             pixels,
             width,

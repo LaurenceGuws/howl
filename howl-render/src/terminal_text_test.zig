@@ -1428,6 +1428,20 @@ test "generated metric identity retains exact configuration axes and sizing" {
     cells[0] = cell(0xe0b4);
     const metric_free_d = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
     try std.testing.expect(metric_free_d.glyphs.generated.key.generated.stroke == null);
+    for ([_]u21{ 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf }) |codepoint| {
+        cells[0] = cell(codepoint);
+        const prepared = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+        try std.testing.expect(
+            prepared.glyphs.generated.key.generated.stroke != null,
+        );
+    }
+    for ([_]u21{ 0xe0b2, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be }) |codepoint| {
+        cells[0] = cell(codepoint);
+        const prepared = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+        try std.testing.expect(
+            prepared.glyphs.generated.key.generated.stroke == null,
+        );
+    }
     cells[0] = cell(0xe0b1);
     var changed_powerline = input(&cells, 0, 0);
     changed_powerline.generated_box.dpi_x =

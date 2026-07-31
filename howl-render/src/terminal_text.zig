@@ -2159,7 +2159,10 @@ fn requiresGeneratedStrokeIdentity(
     codepoint: u21,
     family: generated.Glyph,
 ) bool {
-    return family == .box or codepoint == 0xe0b1;
+    return family == .box or switch (codepoint) {
+        0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        else => false,
+    };
 }
 
 fn baselineOf(kind: RunKind) terminal.CellBaseline {

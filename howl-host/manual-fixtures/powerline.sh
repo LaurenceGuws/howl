@@ -9,7 +9,20 @@ set -eu
 escape=$(printf '\033')
 right=$(printf '\356\202\260')
 right_thin=$(printf '\356\202\261')
+left=$(printf '\356\202\262')
+left_thin=$(printf '\356\202\263')
 right_round=$(printf '\356\202\264')
+right_round_thin=$(printf '\356\202\265')
+left_round=$(printf '\356\202\266')
+left_round_thin=$(printf '\356\202\267')
+bottom_left=$(printf '\356\202\270')
+descending_left=$(printf '\356\202\271')
+bottom_right=$(printf '\356\202\272')
+ascending_right=$(printf '\356\202\273')
+top_left=$(printf '\356\202\274')
+ascending_right_alias=$(printf '\356\202\275')
+top_right=$(printf '\356\202\276')
+descending_left_alias=$(printf '\356\202\277')
 
 reset="${escape}[0m"
 white="${escape}[38;2;242;242;242m"
@@ -57,4 +70,20 @@ printf '%s%s%s%s%s%s%s%s%s\n' \
     "$gold_fg" "$right_round" "$right_round"
 printf '%s\n' "$reset"
 
-printf 'Gate: inspect filled joins, thin-stroke continuity, rounded edge, and duplicate overlays.\n'
+# The complete U+E0B0-U+E0BF family is grouped in codepoint order. Spaces keep
+# neighboring rasters visually independent so mirroring, curves, diagonals,
+# corner fill, clipping, and accidental duplicate draws remain inspectable.
+printf '\ncomplete family\n'
+printf 'E0B0-3  %s%s%s %s %s %s%s\n' \
+    "$slate_bg" "$white" "$right" "$right_thin" "$left" "$left_thin" "$reset"
+printf 'E0B4-7  %s%s%s %s %s %s%s\n' \
+    "$slate_bg" "$gold_fg" "$right_round" "$right_round_thin" \
+    "$left_round" "$left_round_thin" "$reset"
+printf 'E0B8-B  %s%s%s %s %s %s%s\n' \
+    "$slate_bg" "$blue_fg" "$bottom_left" "$descending_left" \
+    "$bottom_right" "$ascending_right" "$reset"
+printf 'E0BC-F  %s%s%s %s %s %s%s\n' \
+    "$slate_bg" "$purple_fg" "$top_left" "$ascending_right_alias" \
+    "$top_right" "$descending_left_alias" "$reset"
+
+printf '\nGate: inspect joins, mirrored pairs, curves, diagonals, corners, clipping, and duplicate overlays.\n'

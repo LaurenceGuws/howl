@@ -1284,8 +1284,10 @@ fn validGeneratedStroke(stroke: GeneratedStrokeIdentity) bool {
 }
 
 fn requiresGeneratedStrokeIdentity(codepoint: u21) bool {
-    return codepoint >= 0x2500 and codepoint <= 0x257f or
-        codepoint == 0xe0b1;
+    return codepoint >= 0x2500 and codepoint <= 0x257f or switch (codepoint) {
+        0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        else => false,
+    };
 }
 
 const test_facts = if (@import("builtin").is_test)
@@ -1709,26 +1711,32 @@ test "shared generated metric identity retains exact DPI and stroke configuratio
     {
         var invalid = try owner.producer(group);
         defer invalid.deinit();
-        try std.testing.expectError(
-            error.InvalidResource,
-            invalid.internGlyph(
-                missing_stroke,
-                .alpha8,
-                .{ .width = 1, .height = 1 },
-                1,
-                &bytes,
-            ),
-        );
-        try std.testing.expectError(
-            error.InvalidResource,
-            invalid.internGlyph(
-                metric_free_with_stroke,
-                .alpha8,
-                .{ .width = 1, .height = 1 },
-                1,
-                &bytes,
-            ),
-        );
+        for ([_]u21{ 0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf }) |codepoint| {
+            missing_stroke.generated.codepoint = codepoint;
+            try std.testing.expectError(
+                error.InvalidResource,
+                invalid.internGlyph(
+                    missing_stroke,
+                    .alpha8,
+                    .{ .width = 1, .height = 1 },
+                    1,
+                    &bytes,
+                ),
+            );
+        }
+        for ([_]u21{ 0xe0b0, 0xe0b2, 0xe0b4, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be }) |codepoint| {
+            metric_free_with_stroke.generated.codepoint = codepoint;
+            try std.testing.expectError(
+                error.InvalidResource,
+                invalid.internGlyph(
+                    metric_free_with_stroke,
+                    .alpha8,
+                    .{ .width = 1, .height = 1 },
+                    1,
+                    &bytes,
+                ),
+            );
+        }
     }
     const first, const second = produced: {
         var producer = try owner.producer(group);
