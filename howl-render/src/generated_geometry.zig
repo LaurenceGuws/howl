@@ -12,9 +12,9 @@ pub const BoxDrawingStroke = struct {
 
 /// Stores independently derived Kitty box geometry for both factual axes.
 pub const BoxDrawingStrokes = struct {
-    /// Uses Y DPI for horizontal line thickness at levels zero through three.
+    /// Uses Y DPI for horizontal box-line thickness at levels zero through three.
     horizontal: [4]u16,
-    /// Uses X DPI for vertical line thickness at levels zero through three.
+    /// Uses X DPI for vertical box-line thickness at levels zero through three.
     vertical: [4]u16,
     /// Retains independently rounded 4× horizontal curve thicknesses.
     horizontal_supersampled: [4]u16,

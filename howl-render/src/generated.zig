@@ -6,6 +6,7 @@ const generated_box = @import("generated_box.zig");
 const generated_geometry = @import("generated_geometry.zig");
 const generated_legacy = @import("generated_legacy.zig");
 const generated_powerline = @import("generated_powerline.zig");
+const generated_progress = @import("generated_progress.zig");
 
 /// Bounds each generated terminal-cell dimension and stroke to 256 pixels,
 /// limiting the most expensive rounded glyph to 6,356,992 curve samples.
@@ -29,6 +30,7 @@ pub const Glyph = enum {
     sextant,
     octant,
     powerline,
+    progress,
 };
 
 /// Configures bounded box lines with heavy geometry at least as wide as light.
@@ -94,6 +96,7 @@ pub fn classify(codepoint: u32) ?Glyph {
         0x1fb00...0x1fb3b => .sextant,
         0x1cd00...0x1cde5, 0x1fbe6, 0x1fbe7 => .octant,
         0xe0b0...0xe0bf, 0xe0d6...0xe0d7 => .powerline,
+        0xee00...0xee0b => .progress,
         else => null,
     };
 }
@@ -135,7 +138,7 @@ pub fn rasterizeWithStroke(
     if (pixels.len < required) return error.BufferTooSmall;
     const family = classify(codepoint) orelse return error.UnsupportedGlyph;
     if (family == .box) return error.InvalidMetrics;
-    if (powerlineRequiresStroke(codepoint)) return error.InvalidMetrics;
+    if (requiresStroke(codepoint)) return error.InvalidMetrics;
     @memset(pixels[0..required], 0);
     switch (family) {
         .box => unreachable,
@@ -156,6 +159,7 @@ pub fn rasterizeWithStroke(
                 box_drawing,
             ),
         },
+        .progress => unreachable,
         .block => try generated_block.rasterizeGeneratedBlockAlpha(
             pixels,
             width_px,
@@ -225,7 +229,10 @@ pub fn rasterizePowerline(
     if (width_px == 0 or height_px == 0) return error.InvalidSize;
     if (width_px > max_extent_px or height_px > max_extent_px)
         return error.RasterTooLarge;
-    if (!powerlineRequiresStroke(codepoint)) return error.UnsupportedGlyph;
+    if (!switch (codepoint) {
+        0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        else => false,
+    }) return error.UnsupportedGlyph;
     const required = @as(usize, width_px) * height_px;
     if (pixels.len < required) return error.BufferTooSmall;
     const strokes = try deriveBoxDrawingStrokes(config, sizing);
@@ -246,9 +253,45 @@ pub fn rasterizePowerline(
     );
 }
 
-fn powerlineRequiresStroke(codepoint: u32) bool {
+/// Rasterizes Kitty's generated U+EE00-U+EE0B progress/spinner family from
+/// exact point, DPI, and multicell scale facts.
+pub fn rasterizeProgress(
+    pixels: []u8,
+    width_px: u16,
+    height_px: u16,
+    codepoint: u32,
+    config: BoxDrawingConfig,
+    sizing: BoxDrawingSizing,
+) Error!void {
+    if (width_px == 0 or height_px == 0) return error.InvalidSize;
+    if (width_px > max_extent_px or height_px > max_extent_px)
+        return error.RasterTooLarge;
+    if (codepoint < 0xee00 or codepoint > 0xee0b)
+        return error.UnsupportedGlyph;
+    const required = @as(usize, width_px) * height_px;
+    if (pixels.len < required) return error.BufferTooSmall;
+    const strokes = try deriveBoxDrawingStrokes(config, sizing);
+    const vertical_line_width = try thicknessFloat(
+        config.stroke_points[1],
+        config.dpi_x,
+        sizing,
+        1,
+    );
+    @memset(pixels[0..required], 0);
+    try generated_progress.rasterize(
+        pixels,
+        width_px,
+        height_px,
+        codepoint,
+        strokes,
+        vertical_line_width,
+    );
+}
+
+fn requiresStroke(codepoint: u32) bool {
     return switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        0xee00...0xee0b => true,
         else => false,
     };
 }
@@ -277,12 +320,14 @@ fn deriveBoxDrawingStrokes(
 }
 
 fn thickness(points: f32, dpi: Dpi, scale: f32, supersample: u8) Error!u16 {
+    const dpi_value =
+        @as(f64, @floatFromInt(dpi.numerator)) /
+        @as(f64, @floatFromInt(dpi.denominator));
     const value = @ceil(
         @as(f64, @floatFromInt(supersample)) *
             @as(f64, scale) *
             @as(f64, points) *
-            @as(f64, @floatFromInt(dpi.numerator)) /
-            @as(f64, @floatFromInt(dpi.denominator)) /
+            dpi_value /
             72.0,
     );
     if (!std.math.isFinite(value) or value <= 0 or value > max_extent_px * 4)
@@ -301,12 +346,14 @@ fn thicknessFloat(
         scale *= @as(f32, @floatFromInt(sizing.subscale_n)) /
             @as(f32, @floatFromInt(sizing.subscale_d));
     }
+    const dpi_value =
+        @as(f64, @floatFromInt(dpi.numerator)) /
+        @as(f64, @floatFromInt(dpi.denominator));
     const value =
         @as(f64, @floatFromInt(supersample)) *
         @as(f64, scale) *
         @as(f64, points) *
-        @as(f64, @floatFromInt(dpi.numerator)) /
-        @as(f64, @floatFromInt(dpi.denominator)) /
+        dpi_value /
         72.0;
     if (!std.math.isFinite(value) or value <= 0 or value > max_extent_px * 4)
         return error.InvalidStroke;

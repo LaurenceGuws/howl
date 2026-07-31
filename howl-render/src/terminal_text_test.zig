@@ -1435,6 +1435,13 @@ test "generated metric identity retains exact configuration axes and sizing" {
             prepared.glyphs.generated.key.generated.stroke != null,
         );
     }
+    for (0xee00..0xee0c) |codepoint| {
+        cells[0] = cell(@intCast(codepoint));
+        const prepared = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+        try std.testing.expect(
+            prepared.glyphs.generated.key.generated.stroke != null,
+        );
+    }
     for ([_]u21{ 0xe0b2, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be }) |codepoint| {
         cells[0] = cell(codepoint);
         const prepared = try prepare(&scratch, &map, input(&cells, 0, 0), 0);

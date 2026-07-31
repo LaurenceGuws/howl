@@ -23,6 +23,20 @@ top_left=$(printf '\356\202\274')
 ascending_right_alias=$(printf '\356\202\275')
 top_right=$(printf '\356\202\276')
 descending_left_alias=$(printf '\356\202\277')
+right_extended=$(printf '\356\203\226')
+left_extended=$(printf '\356\203\227')
+progress_left=$(printf '\356\270\200')
+progress_middle=$(printf '\356\270\201')
+progress_right=$(printf '\356\270\202')
+progress_left_filled=$(printf '\356\270\203')
+progress_middle_filled=$(printf '\356\270\204')
+progress_right_filled=$(printf '\356\270\205')
+spinner_0=$(printf '\356\270\206')
+spinner_1=$(printf '\356\270\207')
+spinner_2=$(printf '\356\270\210')
+spinner_3=$(printf '\356\270\211')
+spinner_4=$(printf '\356\270\212')
+spinner_5=$(printf '\356\270\213')
 
 reset="${escape}[0m"
 white="${escape}[38;2;242;242;242m"
@@ -85,5 +99,21 @@ printf 'E0B8-B  %s%s%s %s %s %s%s\n' \
 printf 'E0BC-F  %s%s%s %s %s %s%s\n' \
     "$slate_bg" "$purple_fg" "$top_left" "$ascending_right_alias" \
     "$top_right" "$descending_left_alias" "$reset"
+printf 'E0D6-7  %s%s%s %s%s\n' \
+    "$slate_bg" "$white" "$right_extended" "$left_extended" "$reset"
 
-printf '\nGate: inspect joins, mirrored pairs, curves, diagonals, corners, clipping, and duplicate overlays.\n'
+# Kitty's Fira Code progress family is generated independently of the selected
+# font. Adjacent segments expose frame/fill discontinuities; spinner phases
+# expose clipping, arc geometry, and stale shared-resource reuse.
+printf '\nprogress and spinner family\n'
+printf 'EE00-2  %s%s%s%s%s%s%s\n' \
+    "$blue_fg" "$progress_left" "$progress_middle" "$progress_right" \
+    "$white" "$progress_left" "$reset"
+printf 'EE03-5  %s%s%s%s%s%s%s\n' \
+    "$gold_fg" "$progress_left_filled" "$progress_middle_filled" \
+    "$progress_right_filled" "$white" "$progress_middle_filled" "$reset"
+printf 'EE06-B  %s%s %s %s %s %s %s%s\n' \
+    "$purple_fg" "$spinner_0" "$spinner_1" "$spinner_2" "$spinner_3" \
+    "$spinner_4" "$spinner_5" "$reset"
+
+printf '\nGate: inspect joins, mirrored pairs, curves, diagonals, corners, progress frames/fills, spinner arcs, clipping, and duplicate overlays.\n'

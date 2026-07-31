@@ -2138,6 +2138,17 @@ fn generatedRaster(allocator: std.mem.Allocator, key: GeneratedGlyphKey) RasterE
                 key.height_px,
                 key.codepoint,
             ),
+        .progress => {
+            const stroke = key.stroke orelse return error.UnsupportedGlyph;
+            try generated.rasterizeProgress(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+                stroke.config,
+                stroke.sizing,
+            );
+        },
         else => try generated.rasterize(
             pixels,
             key.width_px,
@@ -2161,6 +2172,7 @@ fn requiresGeneratedStrokeIdentity(
 ) bool {
     return family == .box or switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        0xee00...0xee0b => true,
         else => false,
     };
 }

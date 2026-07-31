@@ -29,15 +29,18 @@ test "generated families classify exact retained ranges and reject neighbors" {
         .{ @as(u32, 0x1fb00), generated.Glyph.sextant },
         .{ @as(u32, 0x1cd00), generated.Glyph.octant },
         .{ @as(u32, 0xe0b0), generated.Glyph.powerline },
+        .{ @as(u32, 0xee00), generated.Glyph.progress },
     };
     inline for (cases) |case| try std.testing.expectEqual(
         case[1],
         generated.classify(case[0]).?,
     );
     try std.testing.expect(generated.classify(0x1fb3c) == null);
+    try std.testing.expect(generated.classify(0xedff) == null);
+    try std.testing.expect(generated.classify(0xee0c) == null);
     try std.testing.expect(generated.classify(0xf5d0) == null);
 
-    var family_counts = @as([6]u16, @splat(0));
+    var family_counts = @as([7]u16, @splat(0));
     var codepoint: u32 = 0;
     while (codepoint <= 0x10ffff) : (codepoint += 1) {
         const family = generated.classify(codepoint) orelse continue;
@@ -45,7 +48,7 @@ test "generated families classify exact retained ranges and reject neighbors" {
     }
     try std.testing.expectEqualSlices(
         u16,
-        &.{ 128, 32, 256, 60, 232, 18 },
+        &.{ 128, 32, 256, 60, 232, 18, 12 },
         &family_counts,
     );
 }
@@ -483,6 +486,133 @@ test "rounded Powerline keeps floating width separate from integer gap" {
     );
 }
 
+test "Fira progress and spinner family matches Kitty exact hashes" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const hashes = [_]u64{
+        0x4fc1951496c78a70,
+        0xd8baa1dab8f48cc4,
+        0x1779877b71b2f248,
+        0xef5d857c0baccd0c,
+        0xb9c5a0cccce80549,
+        0x67914e1d877caa6b,
+        0xd1334dff159975a8,
+        0xca3ab95c1d542679,
+        0xe9df48bc29852b24,
+        0x5ddac9f65c975161,
+        0xcf7ce5e5f4b66a54,
+        0xcccc21c2226ce5d4,
+    };
+    var pixels: [8 * 20]u8 = undefined;
+    for (hashes, 0..) |hash, index| {
+        try generated.rasterizeProgress(
+            &pixels,
+            8,
+            20,
+            @intCast(0xee00 + index),
+            config,
+            .{},
+        );
+        try std.testing.expectEqual(hash, std.hash.Wyhash.hash(0, &pixels));
+    }
+}
+
+test "progress bars use Kitty screen-axis DPI naming" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var pixels: [16 * 20]u8 = undefined;
+    try generated.rasterizeProgress(
+        &pixels,
+        16,
+        20,
+        0xee00,
+        config,
+        .{},
+    );
+
+    // Kitty derives h=3 from X DPI and v=2 from Y DPI, then its frame
+    // includes the boundary pixel: four complete top rows and three left
+    // columns below them.
+    for (0..4) |row|
+        try std.testing.expectEqualSlices(
+            u8,
+            &@as([16]u8, @splat(255)),
+            pixels[row * 16 ..][0..16],
+        );
+    for (4..16) |row| {
+        try std.testing.expectEqualSlices(
+            u8,
+            &@as([3]u8, @splat(255)),
+            pixels[row * 16 ..][0..3],
+        );
+        try std.testing.expectEqual(@as(u8, 0), pixels[row * 16 + 3]);
+    }
+}
+
+test "Fira progress invalid metrics and output reject transactionally" {
+    var pixels: [8 * 20]u8 = @splat(0xa5);
+    var invalid = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    invalid.stroke_points[1] = std.math.nan(f32);
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterizeProgress(&pixels, 8, 20, 0xee00, invalid, .{}),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    var bounded: [@as(usize, generated.max_extent_px) + 1]u8 = @splat(0xa5);
+    try std.testing.expectError(
+        error.RasterTooLarge,
+        generated.rasterizeProgress(
+            &bounded,
+            generated.max_extent_px + 1,
+            1,
+            0xee00,
+            .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &bounded, 0xa5));
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        generated.rasterizeProgress(
+            pixels[0 .. pixels.len - 1],
+            8,
+            20,
+            0xee06,
+            .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.UnsupportedGlyph,
+        generated.rasterizeProgress(
+            &pixels,
+            8,
+            20,
+            0xf5d0,
+            .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+}
+
 const Edges = struct {
     left: u16,
     right: u16,
@@ -592,6 +722,15 @@ fn rasterizeTest(
         else => false,
     })
         return generated.rasterizePowerline(
+            pixels,
+            width,
+            height,
+            codepoint,
+            config,
+            .{},
+        );
+    if (family == .progress)
+        return generated.rasterizeProgress(
             pixels,
             width,
             height,

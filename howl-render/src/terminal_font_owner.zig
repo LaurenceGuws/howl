@@ -1286,6 +1286,7 @@ fn validGeneratedStroke(stroke: GeneratedStrokeIdentity) bool {
 fn requiresGeneratedStrokeIdentity(codepoint: u21) bool {
     return codepoint >= 0x2500 and codepoint <= 0x257f or switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
+        0xee00...0xee0b => true,
         else => false,
     };
 }
@@ -1724,6 +1725,19 @@ test "shared generated metric identity retains exact DPI and stroke configuratio
                 ),
             );
         }
+        for (0xee00..0xee0c) |codepoint| {
+            missing_stroke.generated.codepoint = @intCast(codepoint);
+            try std.testing.expectError(
+                error.InvalidResource,
+                invalid.internGlyph(
+                    missing_stroke,
+                    .alpha8,
+                    .{ .width = 1, .height = 1 },
+                    1,
+                    &bytes,
+                ),
+            );
+        }
         for ([_]u21{ 0xe0b0, 0xe0b2, 0xe0b4, 0xe0b6, 0xe0b8, 0xe0ba, 0xe0bc, 0xe0be }) |codepoint| {
             metric_free_with_stroke.generated.codepoint = codepoint;
             try std.testing.expectError(
@@ -1835,6 +1849,30 @@ test "shared generated metric identity retains exact DPI and stroke configuratio
     );
     try std.testing.expect(metric_free_resource.resource.resource.isShared());
     metric_free_producer.commitUpdate();
+
+    var progress_key = first_key;
+    progress_key.generated.codepoint = 0xee06;
+    var progress_changed = progress_key;
+    progress_changed.generated.stroke.?.config.stroke_points[1] = 1.5;
+    var progress_producer = try owner.producer(group);
+    defer progress_producer.deinit();
+    const progress = try progress_producer.internGlyph(
+        progress_key,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    const changed = try progress_producer.internGlyph(
+        progress_changed,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    try std.testing.expect(progress.resource.resource.isShared());
+    try std.testing.expect(!std.meta.eql(progress.resource, changed.resource));
+    progress_producer.commitUpdate();
 }
 
 test "capacity cohorts, total pane bound, padded rows and batch bound are explicit" {

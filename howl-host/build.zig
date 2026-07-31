@@ -136,6 +136,27 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile the host");
     check.dependOn(&executable.step);
+    const fixture_classifier_module = b.createModule(.{
+        .root_source_file = b.path("manual-fixtures/generated-classifier.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    fixture_classifier_module.addImport(
+        "howl_render",
+        render.module("howl_render"),
+    );
+    const fixture_classifier = b.addExecutable(.{
+        .name = "howl-generated-fixture-classifier",
+        .root_module = fixture_classifier_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    const fixture_check = b.addSystemCommand(
+        &.{ "sh", "manual-fixtures/check-generated.sh" },
+    );
+    fixture_check.addArtifactArg(fixture_classifier);
+    fixture_check.setCwd(b.path("."));
+    check.dependOn(&fixture_check.step);
     const terminal_pool_check = b.addObject(.{
         .name = "howl-host-terminal-pool-check",
         .root_module = terminal_pool,
@@ -174,6 +195,7 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&fixture_check.step);
     const window_test_module = b.createModule(.{
         .root_source_file = b.path("src/window.zig"),
         .target = target,
