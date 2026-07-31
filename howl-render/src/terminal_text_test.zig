@@ -1364,7 +1364,7 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
     }
 }
 
-test "generated box identity retains exact configuration axes and sizing" {
+test "generated metric identity retains exact configuration axes and sizing" {
     try std.testing.expectEqual(
         @as(usize, 64),
         @sizeOf(terminal_text.GeneratedGlyphKey),
@@ -1406,6 +1406,36 @@ test "generated box identity retains exact configuration axes and sizing" {
     try std.testing.expect(!std.meta.eql(
         first_key,
         fourth.glyphs.generated.key.generated,
+    ));
+
+    cells[0] = cell(0xe0b1);
+    const powerline = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    const powerline_key = powerline.glyphs.generated.key.generated;
+    try std.testing.expect(powerline_key.stroke != null);
+    cells[0] = cell(0xe0b0);
+    const metric_free = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    try std.testing.expect(metric_free.glyphs.generated.key.generated.stroke == null);
+    var irrelevant_metrics = input(&cells, 0, 0);
+    irrelevant_metrics.generated_box.dpi_x =
+        .{ .numerator = 768, .denominator = 5 };
+    cells[0].sizing.height = 2;
+    const metric_free_changed = try prepare(&scratch, &map, irrelevant_metrics, 0);
+    try std.testing.expectEqualDeep(
+        metric_free.glyphs.generated.key.generated,
+        metric_free_changed.glyphs.generated.key.generated,
+    );
+    cells[0].sizing = .{};
+    cells[0] = cell(0xe0b4);
+    const metric_free_d = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    try std.testing.expect(metric_free_d.glyphs.generated.key.generated.stroke == null);
+    cells[0] = cell(0xe0b1);
+    var changed_powerline = input(&cells, 0, 0);
+    changed_powerline.generated_box.dpi_x =
+        .{ .numerator = 768, .denominator = 5 };
+    const powerline_dpi = try prepare(&scratch, &map, changed_powerline, 0);
+    try std.testing.expect(!std.meta.eql(
+        powerline_key,
+        powerline_dpi.glyphs.generated.key.generated,
     ));
 }
 

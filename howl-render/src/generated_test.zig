@@ -212,6 +212,228 @@ test "box metrics preserve factual axes scale and independent curve derivation" 
     try std.testing.expect(std.mem.allEqual(u8, &horizontal, 0xa5));
 }
 
+test "Powerline raster matches Kitty endpoints across factual metric changes" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const cases = .{
+        .{ @as(u32, 0xe0b0), @as(u64, 0x512f830677c1bfd5), Edges{
+            .left = 20,
+            .right = 2,
+            .top = 1,
+            .bottom = 1,
+        } },
+        .{ @as(u32, 0xe0b1), @as(u64, 0xae0ba8cb9f9c5670), Edges{
+            .left = 5,
+            .right = 5,
+            .top = 2,
+            .bottom = 2,
+        } },
+        .{ @as(u32, 0xe0b4), @as(u64, 0xc63a27a5d963eba2), Edges{
+            .left = 20,
+            .right = 10,
+            .top = 4,
+            .bottom = 4,
+        } },
+    };
+    var pixels: [8 * 20]u8 = undefined;
+    inline for (cases) |case| {
+        if (case[0] == 0xe0b1)
+            try generated.rasterizePowerline(
+                &pixels,
+                8,
+                20,
+                case[0],
+                config,
+                .{},
+            )
+        else
+            try generated.rasterize(&pixels, 8, 20, case[0]);
+        try std.testing.expectEqual(
+            case[1],
+            std.hash.Wyhash.hash(0, &pixels),
+        );
+        try std.testing.expectEqualDeep(
+            case[2],
+            edgeOccupancy(&pixels, 8, 20),
+        );
+    }
+
+    var unit: [7 * 17]u8 = undefined;
+    var integer: [7 * 17]u8 = undefined;
+    var fractional: [7 * 17]u8 = undefined;
+    try generated.rasterizePowerline(&unit, 7, 17, 0xe0b1, config, .{});
+    try generated.rasterizePowerline(
+        &integer,
+        7,
+        17,
+        0xe0b1,
+        config,
+        .{ .scale = 2 },
+    );
+    try generated.rasterizePowerline(
+        &fractional,
+        7,
+        17,
+        0xe0b1,
+        config,
+        .{ .scale = 3, .subscale_n = 1, .subscale_d = 2 },
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x64e134e6f01919f9),
+        std.hash.Wyhash.hash(0, &unit),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0xd3ae752e2a69d68d),
+        std.hash.Wyhash.hash(0, &integer),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0x8733d93762f7e1a9),
+        std.hash.Wyhash.hash(0, &fractional),
+    );
+
+    var asymmetric = config;
+    asymmetric.dpi_x = .{ .numerator = 768, .denominator = 5 };
+    var x_dpi: [13 * 20]u8 = undefined;
+    try generated.rasterizePowerline(
+        &x_dpi,
+        13,
+        20,
+        0xe0b1,
+        asymmetric,
+        .{},
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0xd9d9e3e73f9d9fc6),
+        std.hash.Wyhash.hash(0, &x_dpi),
+    );
+}
+
+test "Powerline metric rejection is transactional and storage is reusable" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var pixels: [8 * 20]u8 = @splat(0xa5);
+    var invalid = config;
+    invalid.stroke_points[1] = std.math.nan(f32);
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterizePowerline(
+            &pixels,
+            8,
+            20,
+            0xe0b1,
+            invalid,
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterize(&pixels, 8, 20, 0xe0b1),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.UnsupportedGlyph,
+        generated.rasterizePowerline(
+            &pixels,
+            8,
+            20,
+            0xe0b0,
+            config,
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.UnsupportedGlyph,
+        generated.rasterizePowerline(
+            &pixels,
+            8,
+            20,
+            0xe0b2,
+            config,
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.UnsupportedGlyph,
+        generated.rasterizePowerline(
+            &pixels,
+            8,
+            20,
+            0xe0b4,
+            config,
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterizePowerline(
+            &pixels,
+            8,
+            20,
+            0xe0b1,
+            config,
+            .{ .scale = 0 },
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        generated.rasterizePowerline(
+            pixels[0 .. pixels.len - 1],
+            8,
+            20,
+            0xe0b1,
+            config,
+            .{},
+        ),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+    try generated.rasterizePowerline(
+        &pixels,
+        8,
+        20,
+        0xe0b1,
+        config,
+        .{},
+    );
+    try std.testing.expectEqual(
+        @as(u64, 0xae0ba8cb9f9c5670),
+        std.hash.Wyhash.hash(0, &pixels),
+    );
+}
+
+const Edges = struct {
+    left: u16,
+    right: u16,
+    top: u16,
+    bottom: u16,
+};
+
+fn edgeOccupancy(
+    pixels: []const u8,
+    width: u16,
+    height: u16,
+) Edges {
+    var result = Edges{ .left = 0, .right = 0, .top = 0, .bottom = 0 };
+    for (0..height) |y| {
+        if (pixels[y * width] != 0) result.left += 1;
+        if (pixels[y * width + width - 1] != 0) result.right += 1;
+    }
+    for (0..width) |x| {
+        if (pixels[x] != 0) result.top += 1;
+        if (pixels[@as(usize, height - 1) * width + x] != 0)
+            result.bottom += 1;
+    }
+    return result;
+}
+
 fn occupiedRows(pixels: []const u8, width: usize) usize {
     var count: usize = 0;
     var offset: usize = 0;
@@ -277,18 +499,28 @@ fn rasterizeTest(
     height: u16,
     codepoint: u32,
 ) generated.Error!void {
-    if (generated.classify(codepoint) == .box) {
+    const family = generated.classify(codepoint);
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    if (family == .box)
         return generated.rasterizeBox(
             pixels,
             width,
             height,
             codepoint,
-            .{
-                .dpi_x = .{ .numerator = 96, .denominator = 1 },
-                .dpi_y = .{ .numerator = 96, .denominator = 1 },
-            },
+            config,
             .{},
         );
-    }
+    if (codepoint == 0xe0b1)
+        return generated.rasterizePowerline(
+            pixels,
+            width,
+            height,
+            codepoint,
+            config,
+            .{},
+        );
     return generated.rasterize(pixels, width, height, codepoint);
 }

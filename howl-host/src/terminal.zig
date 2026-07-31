@@ -3400,7 +3400,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     )));
 }
 
-test "factual admission publishes generated joins through shared pool ownership" {
+test "factual admission publishes generated joins and Powerline through shared pool ownership" {
     var boundary = try handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -3435,6 +3435,11 @@ test "factual admission publishes generated joins through shared pool ownership"
     const pane_pixels = render.canvas.Size{ .width = 80, .height = 128 };
     try boundary.register(pane, source, pane_pixels);
     const lifecycle = boundary.takeLifecycle().?;
+    runtime.accepted_scale = .{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
     try runtime.applyLifecycle(
         &boundary,
         try testAdmittedLifecycle(&runtime, lifecycle),
@@ -3442,10 +3447,24 @@ test "factual admission publishes generated joins through shared pool ownership"
     );
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect(owner.font_group != null);
-    try std.testing.expect(owner.fonts.generatedBoxConfig() != null);
+    const accepted_config = owner.fonts.generatedBoxConfig().?;
+    try std.testing.expectEqual(
+        @TypeOf(accepted_config.dpi_x){
+            .numerator = 768,
+            .denominator = 5,
+        },
+        accepted_config.dpi_x,
+    );
+    try std.testing.expectEqual(
+        @TypeOf(accepted_config.dpi_y){ .numerator = 96, .denominator = 1 },
+        accepted_config.dpi_y,
+    );
     try std.testing.expect(runtime.accepted_scale != null);
     try std.testing.expect(
-        (try owner.machine.feed("\x1b[H\u{2502}\x1b[2;1H\u{2502}")).state_changed,
+        (try owner.machine.feed(
+            "\x1b[H\u{2502}\x1b[2;1H\u{2502}" ++
+                "\x1b[3;1H\u{e0b1}\u{e0b1}\x1b[4;1H",
+        )).state_changed,
     );
     owner.dirty = true;
     try std.testing.expect(try owner.publishIfDirty(
@@ -3464,21 +3483,54 @@ test "factual admission publishes generated joins through shared pool ownership"
         boundary.pool.retryDrain(token) catch
             @panic("test pool claim rollback failed");
     const pooled = try boundary.pool.drainingUpdate(token);
-    try std.testing.expectEqual(@as(usize, 1), pooled.uploads.len);
-    const declaration = pooled.uploads[0];
-    try std.testing.expect(declaration.resource.resource.isShared());
-    try std.testing.expectEqual(render.canvas.ResourceFormat.alpha8, declaration.format);
-    try std.testing.expectEqual(owner.geometry.metrics.width_px, declaration.pixels.width);
-    try std.testing.expectEqual(owner.geometry.metrics.height_px, declaration.pixels.height);
+    try std.testing.expectEqual(@as(usize, 2), pooled.uploads.len);
+    for (pooled.uploads) |declaration| {
+        try std.testing.expect(declaration.resource.resource.isShared());
+        try std.testing.expectEqual(
+            render.canvas.ResourceFormat.alpha8,
+            declaration.format,
+        );
+        try std.testing.expectEqual(
+            owner.geometry.metrics.width_px,
+            declaration.pixels.width,
+        );
+        try std.testing.expectEqual(
+            owner.geometry.metrics.height_px,
+            declaration.pixels.height,
+        );
+    }
+    var exact_pixels: [64 * 1024]u8 = undefined;
+    const exact_len =
+        @as(usize, owner.geometry.metrics.width_px) *
+        owner.geometry.metrics.height_px;
+    try render.generated.rasterizePowerline(
+        exact_pixels[0..exact_len],
+        owner.geometry.metrics.width_px,
+        owner.geometry.metrics.height_px,
+        0xe0b1,
+        accepted_config,
+        .{},
+    );
 
     var joins: [2]render.canvas.Input = undefined;
     var join_count: usize = 0;
+    var powerline: [2]render.canvas.Input = undefined;
+    var powerline_count: usize = 0;
     for (pooled.commands) |command| switch (command) {
         .alpha_mask => |mask| {
-            if (!std.meta.eql(mask.resource.resource, declaration.resource)) continue;
-            try std.testing.expect(join_count < joins.len);
-            joins[join_count] = command;
-            join_count += 1;
+            if (mask.destination.y == 0 or
+                mask.destination.y == owner.geometry.metrics.height_px)
+            {
+                try std.testing.expect(join_count < joins.len);
+                joins[join_count] = command;
+                join_count += 1;
+            } else if (mask.destination.y ==
+                @as(i32, owner.geometry.metrics.height_px) * 2)
+            {
+                try std.testing.expect(powerline_count < powerline.len);
+                powerline[powerline_count] = command;
+                powerline_count += 1;
+            }
         },
         else => {},
     };
@@ -3490,6 +3542,28 @@ test "factual admission publishes generated joins through shared pool ownership"
         lower.destination.y,
     );
     try std.testing.expectEqual(upper.destination.x, lower.destination.x);
+    try std.testing.expectEqual(powerline.len, powerline_count);
+    const powerline_left = powerline[0].alpha_mask;
+    const powerline_right = powerline[1].alpha_mask;
+    try std.testing.expectEqual(
+        powerline_left.resource.resource,
+        powerline_right.resource.resource,
+    );
+    const powerline_resource = powerline_left.resource.resource;
+    try std.testing.expect(powerline_resource.resource.isShared());
+    try std.testing.expectEqual(
+        powerline_left.destination.x +
+            @as(i32, @intCast(powerline_left.destination.width)),
+        powerline_right.destination.x,
+    );
+    const powerline_declaration = for (pooled.uploads) |candidate| {
+        if (std.meta.eql(candidate.resource, powerline_resource))
+            break candidate;
+    } else return error.TestExpectedEqual;
+    const declaration = for (pooled.uploads) |candidate| {
+        if (!std.meta.eql(candidate.resource, powerline_resource))
+            break candidate;
+    } else return error.TestExpectedEqual;
     const row_bytes: usize = declaration.pixels.width;
     try std.testing.expect(std.mem.indexOfNone(
         u8,
@@ -3503,6 +3577,26 @@ test "factual admission publishes generated joins through shared pool ownership"
         declaration.pixels.bytes[final_row..][0..row_bytes],
         &.{0},
     ) != null);
+
+    try std.testing.expectEqualSlices(
+        u8,
+        exact_pixels[0..exact_len],
+        powerline_declaration.pixels.bytes,
+    );
+    try std.testing.expectEqual(
+        render.canvas.Size{
+            .width = owner.geometry.metrics.width_px,
+            .height = owner.geometry.metrics.height_px,
+        },
+        render.canvas.Size{
+            .width = powerline_declaration.pixels.width,
+            .height = powerline_declaration.pixels.height,
+        },
+    );
+    try std.testing.expectEqual(
+        @as(usize, owner.geometry.metrics.width_px),
+        powerline_declaration.pixels.stride,
+    );
     try boundary.pool.retryDrain(token);
     pool_claimed = false;
 
@@ -3544,17 +3638,64 @@ test "factual admission publishes generated joins through shared pool ownership"
         .commands = &commands,
         .pixels = &pixels,
     });
-    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
-    try std.testing.expect(frame.uploads[0].resource.resource.isShared());
+    try std.testing.expectEqual(@as(usize, 2), frame.uploads.len);
+    for (frame.uploads) |upload|
+        try std.testing.expect(upload.resource.resource.isShared());
+    var frame_powerline_upload_count: usize = 0;
+    var frame_powerline_upload: render.canvas.ResourceUploadFact = undefined;
+    for (frame.uploads) |upload| {
+        if (upload.resource.resource != powerline_resource.resource or
+            upload.resource.generation != powerline_resource.generation)
+            continue;
+        frame_powerline_upload = upload;
+        frame_powerline_upload_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), frame_powerline_upload_count);
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        @backingInt(frame_powerline_upload.resource.source),
+    );
+    try std.testing.expectEqual(
+        render.canvas.Size{
+            .width = powerline_declaration.pixels.width,
+            .height = powerline_declaration.pixels.height,
+        },
+        frame_powerline_upload.size,
+    );
+    try std.testing.expectEqual(
+        powerline_declaration.pixels.stride,
+        frame_powerline_upload.stride,
+    );
+    try std.testing.expectEqual(
+        powerline_declaration.pixels.bytes.len,
+        frame_powerline_upload.pixel_count,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        powerline_declaration.pixels.bytes,
+        frame.pixels[frame_powerline_upload.pixel_offset..][0..frame_powerline_upload.pixel_count],
+    );
     var frame_join_count: usize = 0;
+    var frame_powerline_count: usize = 0;
     for (frame.commands) |command| switch (command) {
         .alpha_mask => |mask| {
             if (!mask.resource.resource.resource.isShared()) continue;
-            frame_join_count += 1;
+            if (std.meta.eql(
+                mask.resource.resource.resource,
+                upper.resource.resource.resource,
+            )) {
+                frame_join_count += 1;
+            } else if (std.meta.eql(
+                mask.resource.resource,
+                frame_powerline_upload.resource,
+            )) {
+                frame_powerline_count += 1;
+            }
         },
         else => {},
     };
     try std.testing.expectEqual(@as(usize, 2), frame_join_count);
+    try std.testing.expectEqual(@as(usize, 2), frame_powerline_count);
 }
 
 test "PTY resize failure discards prepared VT and later live resize commits" {

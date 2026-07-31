@@ -135,16 +135,27 @@ pub fn rasterizeWithStroke(
     if (pixels.len < required) return error.BufferTooSmall;
     const family = classify(codepoint) orelse return error.UnsupportedGlyph;
     if (family == .box) return error.InvalidMetrics;
+    if (codepoint == 0xe0b1) return error.InvalidMetrics;
     @memset(pixels[0..required], 0);
     switch (family) {
         .box => unreachable,
-        .powerline => try generated_powerline.rasterizeGeneratedPowerlineAlpha(
-            pixels,
-            width_px,
-            height_px,
-            codepoint,
-            box_drawing,
-        ),
+        .powerline => switch (codepoint) {
+            0xe0b0, 0xe0b4 => try generated_powerline
+                .rasterizeGeneratedPowerlineAlphaMetricFree(
+                pixels,
+                width_px,
+                height_px,
+                codepoint,
+            ),
+            0xe0b1 => unreachable,
+            else => try generated_powerline.rasterizeGeneratedPowerlineAlpha(
+                pixels,
+                width_px,
+                height_px,
+                codepoint,
+                box_drawing,
+            ),
+        },
         .block => try generated_block.rasterizeGeneratedBlockAlpha(
             pixels,
             width_px,
@@ -192,6 +203,33 @@ pub fn rasterizeBox(
     const strokes = try deriveBoxDrawingStrokes(config, sizing);
     @memset(pixels[0..required], 0);
     try generated_box.rasterizeGeneratedBoxAlphaExact(
+        pixels,
+        width_px,
+        height_px,
+        codepoint,
+        strokes,
+    );
+}
+
+/// Rasterizes the proven metric-sensitive Kitty Powerline glyph from exact
+/// point, DPI, and multicell scale facts. Other Powerline glyphs reject.
+pub fn rasterizePowerline(
+    pixels: []u8,
+    width_px: u16,
+    height_px: u16,
+    codepoint: u32,
+    config: BoxDrawingConfig,
+    sizing: BoxDrawingSizing,
+) Error!void {
+    if (width_px == 0 or height_px == 0) return error.InvalidSize;
+    if (width_px > max_extent_px or height_px > max_extent_px)
+        return error.RasterTooLarge;
+    if (codepoint != 0xe0b1) return error.UnsupportedGlyph;
+    const required = @as(usize, width_px) * height_px;
+    if (pixels.len < required) return error.BufferTooSmall;
+    const strokes = try deriveBoxDrawingStrokes(config, sizing);
+    @memset(pixels[0..required], 0);
+    try generated_powerline.rasterizeGeneratedPowerlineAlphaWithStrokes(
         pixels,
         width_px,
         height_px,

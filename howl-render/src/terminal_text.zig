@@ -91,9 +91,9 @@ pub const NativeGlyphKey = struct {
     cell_span: u16,
 };
 
-/// Identifies one generated raster and its reproducible normal placement.
-pub const GeneratedBoxIdentity = struct {
-    /// Retains every byte-affecting box stroke and factual DPI input.
+/// Retains exact metric inputs for generated families whose bytes depend on them.
+pub const GeneratedStrokeIdentity = struct {
+    /// Retains every byte-affecting stroke and factual DPI input.
     config: generated.BoxDrawingConfig,
     /// Retains the exact bounded multicell sizing input.
     sizing: generated.BoxDrawingSizing,
@@ -109,8 +109,8 @@ pub const GeneratedGlyphKey = struct {
     height_px: u16,
     /// Places the full-cell mask relative to the ordinary baseline.
     baseline_px: u16,
-    /// Qualifies only Unicode box drawing with every byte-affecting metric.
-    box: ?GeneratedBoxIdentity,
+    /// Qualifies exactly box glyphs and metric-sensitive Powerline rasters.
+    stroke: ?GeneratedStrokeIdentity,
 };
 
 /// Identifies a selected native or generated raster without cache residency.
@@ -758,7 +758,10 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
                 .width_px = input.metrics.width_px,
                 .height_px = input.metrics.height_px,
                 .baseline_px = input.metrics.baseline_px,
-                .box = if (family == .box) .{
+                .stroke = if (requiresGeneratedStrokeIdentity(
+                    cell.codepoint,
+                    family,
+                )) .{
                     .config = input.generated_box,
                     .sizing = .{
                         .scale = cell.sizing.height,
@@ -2099,22 +2102,48 @@ fn generatedRaster(allocator: std.mem.Allocator, key: GeneratedGlyphKey) RasterE
     const count = @as(usize, key.width_px) * key.height_px;
     const pixels = allocator.alloc(u8, count) catch return error.OutOfMemory;
     errdefer allocator.free(pixels);
-    if (key.box) |box| {
-        try generated.rasterizeBox(
+    const family = generated.classify(key.codepoint) orelse
+        return error.UnsupportedGlyph;
+    const requires_stroke = requiresGeneratedStrokeIdentity(
+        key.codepoint,
+        family,
+    );
+    if (requires_stroke != (key.stroke != null))
+        return error.UnsupportedGlyph;
+    switch (family) {
+        .box => {
+            const stroke = key.stroke orelse return error.UnsupportedGlyph;
+            try generated.rasterizeBox(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+                stroke.config,
+                stroke.sizing,
+            );
+        },
+        .powerline => if (key.stroke) |stroke|
+            try generated.rasterizePowerline(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+                stroke.config,
+                stroke.sizing,
+            )
+        else
+            try generated.rasterize(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+            ),
+        else => try generated.rasterize(
             pixels,
             key.width_px,
             key.height_px,
             key.codepoint,
-            box.config,
-            box.sizing,
-        );
-    } else {
-        try generated.rasterize(
-            pixels,
-            key.width_px,
-            key.height_px,
-            key.codepoint,
-        );
+        ),
     }
     return .{
         .allocator = allocator,
@@ -2124,6 +2153,13 @@ fn generatedRaster(allocator: std.mem.Allocator, key: GeneratedGlyphKey) RasterE
         .top = @intCast(key.baseline_px),
         .pixels = pixels,
     };
+}
+
+fn requiresGeneratedStrokeIdentity(
+    codepoint: u21,
+    family: generated.Glyph,
+) bool {
+    return family == .box or codepoint == 0xe0b1;
 }
 
 fn baselineOf(kind: RunKind) terminal.CellBaseline {

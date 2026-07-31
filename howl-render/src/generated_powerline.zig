@@ -4,6 +4,40 @@ const std = @import("std");
 const geometry = @import("generated_geometry.zig");
 const special_box = @import("generated_box.zig");
 const BoxDrawingStroke = geometry.BoxDrawingStroke;
+const BoxDrawingStrokes = geometry.BoxDrawingStrokes;
+
+/// Rasterizes the proven metric-independent Kitty-exact Powerline subset.
+pub fn rasterizeGeneratedPowerlineAlphaMetricFree(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+) error{UnsupportedGlyph}!void {
+    switch (codepoint) {
+        0xe0b0 => rasterizeKittyTriangle(pixels, width, height),
+        0xe0b4 => rasterizeKittyFilledD(pixels, width, height),
+        else => return error.UnsupportedGlyph,
+    }
+}
+
+/// Rasterizes the proven metric-sensitive Kitty-exact Powerline subset.
+pub fn rasterizeGeneratedPowerlineAlphaWithStrokes(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    codepoint: u32,
+    strokes: BoxDrawingStrokes,
+) error{UnsupportedGlyph}!void {
+    switch (codepoint) {
+        0xe0b1 => rasterizeKittyHalfCross(
+            pixels,
+            width,
+            height,
+            strokes.vertical_supersampled[1],
+        ),
+        else => return error.UnsupportedGlyph,
+    }
+}
 
 /// Rasterizes one classified Powerline separator or extended triangle, or
 /// returns `error.UnsupportedGlyph` for an unclassified codepoint.
@@ -33,6 +67,173 @@ pub fn rasterizeGeneratedPowerlineAlpha(
         0xe0d7 => rasterizePowerlineTriangle(pixels, width, height, true, false),
         // The sole generated classifier accepts only these implemented ranges.
         else => return error.UnsupportedGlyph,
+    }
+}
+
+fn rasterizeKittyTriangle(pixels: []u8, width: u16, height: u16) void {
+    const ss_width = width * 4;
+    const ss_height = height * 4;
+    const mid = ss_height / 2;
+    for (0..height) |y| for (0..width) |x| {
+        var hits: u16 = 0;
+        for (0..4) |local_y| for (0..4) |local_x| {
+            const sample_x = x * 4 + local_x;
+            const sample_y = y * 4 + local_y;
+            const upper = kittyLineY(0, 0, ss_width - 1, mid, sample_x);
+            const lower = kittyLineY(
+                0,
+                ss_height - 1,
+                ss_width - 1,
+                mid,
+                sample_x,
+            );
+            if (@as(f64, @floatFromInt(sample_y)) >= upper and
+                @as(f64, @floatFromInt(sample_y)) <= lower)
+                hits += 1;
+        };
+        pixels[y * width + x] = @intCast(hits * 255 / 16);
+    };
+}
+
+fn rasterizeKittyHalfCross(
+    pixels: []u8,
+    width: u16,
+    height: u16,
+    base_stroke: u16,
+) void {
+    const ss_width = width * 4;
+    const ss_height = height * 4;
+    const mid = (ss_height - 1) / 2;
+    const diagonal = kittyDiagonalThickness(base_stroke, ss_width - 1, mid);
+    for (0..height) |y| for (0..width) |x| {
+        var hits: u16 = 0;
+        for (0..4) |local_y| for (0..4) |local_x| {
+            const sample_x: u16 = @intCast(x * 4 + local_x);
+            const sample_y: u16 = @intCast(y * 4 + local_y);
+            if (kittyThickLineContains(
+                sample_x,
+                sample_y,
+                0,
+                0,
+                ss_width - 1,
+                mid,
+                diagonal,
+            ) or kittyThickLineContains(
+                sample_x,
+                sample_y,
+                0,
+                ss_height - 1,
+                ss_width - 1,
+                mid,
+                diagonal,
+            ))
+                hits += 1;
+        };
+        pixels[y * width + x] = @intCast(hits * 255 / 16);
+    };
+}
+
+fn rasterizeKittyFilledD(pixels: []u8, width: u16, height: u16) void {
+    const ss_width = width * 4;
+    const ss_height = height * 4;
+    const control = kittyDControl(ss_width);
+    var start_t: f64 = 0;
+    const max_x: usize = @intFromFloat(kittyBezierX(control, 0.5));
+    for (0..max_x + 1) |sample_x| {
+        if (sample_x > 0)
+            start_t = kittyFindT(control, @floatFromInt(sample_x), start_t);
+        const upper = kittyBezierY(ss_height, start_t);
+        const lower = kittyBezierY(ss_height, 1.0 - start_t);
+        if (@abs(upper - lower) <= 2.0) break;
+        var sample_y: usize = 0;
+        while (sample_y < ss_height) : (sample_y += 1) {
+            if (@as(f64, @floatFromInt(sample_y)) < upper or
+                @as(f64, @floatFromInt(sample_y)) > lower)
+                continue;
+            pixels[(sample_y / 4) * width + sample_x / 4] += 1;
+        }
+    }
+    for (pixels[0 .. @as(usize, width) * height]) |*value|
+        value.* = @intCast(@as(u16, value.*) * 255 / 16);
+}
+
+fn kittyLineY(
+    x1: u16,
+    y1: u16,
+    x2: u16,
+    y2: u16,
+    x: usize,
+) f64 {
+    const slope =
+        (@as(f64, @floatFromInt(y2)) - @as(f64, @floatFromInt(y1))) /
+        (@as(f64, @floatFromInt(x2)) - @as(f64, @floatFromInt(x1)));
+    return slope * (@as(f64, @floatFromInt(x)) -
+        @as(f64, @floatFromInt(x1))) + @as(f64, @floatFromInt(y1));
+}
+
+fn kittyDiagonalThickness(base: u16, dx: u16, dy: u16) u16 {
+    const slope =
+        @as(f64, @floatFromInt(dy)) / @as(f64, @floatFromInt(dx));
+    return @max(
+        @as(u16, 1),
+        @as(u16, @intFromFloat(@round(
+            @as(f64, @floatFromInt(base)) * @sqrt(1.0 + slope * slope),
+        ))),
+    );
+}
+
+fn kittyThickLineContains(
+    x: u16,
+    y: u16,
+    x1: u16,
+    y1: u16,
+    x2: u16,
+    y2: u16,
+    thickness: u16,
+) bool {
+    if (x < x1 or x > x2) return false;
+    const center: i32 = @intFromFloat(kittyLineY(x1, y1, x2, y2, x));
+    const delta: i32 = thickness / 2;
+    const extra: i32 = thickness % 2;
+    return y >= @max(@as(i32, 0), center - delta) and
+        y < center + delta + extra;
+}
+
+fn kittyDControl(width: u16) u16 {
+    var control = width - 1;
+    var last = control;
+    while (true) : (control += 1) {
+        if (kittyBezierX(control, 0.5) > width - 1) return last;
+        last = control;
+    }
+}
+
+fn kittyBezierX(control: u16, t: f64) f64 {
+    const u = 1.0 - t;
+    return 3.0 * t * u * @as(f64, @floatFromInt(control));
+}
+
+fn kittyBezierY(height: u16, t: f64) f64 {
+    const u = 1.0 - t;
+    const end: f64 = @floatFromInt(height - 1);
+    return 3.0 * t * t * u * end + t * t * t * end;
+}
+
+fn kittyFindT(control: u16, x: f64, initial: f64) f64 {
+    var start = initial;
+    if (@abs(kittyBezierX(control, start) - x) < 0.1) return start;
+    var increment = 0.5 - start;
+    while (true) {
+        const value = kittyBezierX(control, start + increment);
+        if (@abs(value - x) < 0.1) return start + increment;
+        if (value > x) {
+            increment /= 2.0;
+            if (increment < 1e-6) return start;
+        } else {
+            start += increment;
+            increment = 0.5 - start;
+            if (increment <= 0) return start;
+        }
     }
 }
 

@@ -9,7 +9,7 @@ pub const GeneratedBoxConfig = impl.GeneratedBoxConfig;
 /// Copies exact generated-box multicell scale identity.
 pub const GeneratedBoxSizing = impl.GeneratedBoxSizing;
 /// Retains every byte-affecting generated-box identity fact.
-pub const GeneratedBoxIdentity = impl.GeneratedBoxIdentity;
+pub const GeneratedStrokeIdentity = impl.GeneratedStrokeIdentity;
 /// Borrows one complete retained row and affected cell span.
 pub const RowInput = impl.RowInput;
 /// Selects pane-local contextual-ligature handling.

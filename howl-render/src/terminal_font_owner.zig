@@ -109,22 +109,22 @@ pub const PreparedGroupTransition = struct {
     }
 };
 
-const GeneratedBoxSizing = packed struct(u16) {
+const GeneratedStrokeSizing = packed struct(u16) {
     scale: u8,
     subscale_n: u4,
     subscale_d: u4,
 };
 
-const GeneratedBoxDpi = packed struct(u64) {
+const GeneratedStrokeDpi = packed struct(u64) {
     numerator: u32,
     denominator: u32,
 };
 
-const GeneratedBoxIdentity = struct {
+const GeneratedStrokeIdentity = struct {
     stroke_points: [4]f32,
-    dpi_x: GeneratedBoxDpi,
-    dpi_y: GeneratedBoxDpi,
-    sizing: GeneratedBoxSizing,
+    dpi_x: GeneratedStrokeDpi,
+    dpi_y: GeneratedStrokeDpi,
+    sizing: GeneratedStrokeSizing,
 };
 
 /// Identifies one exact raster-affecting terminal font resource.
@@ -150,7 +150,8 @@ pub const SharedFontResourceKey = union(enum) {
         cell_span: u16,
         cell_width_px: u16,
         cell_height_px: u16,
-        box: ?GeneratedBoxIdentity,
+        /// Qualifies exactly box glyphs and metric-sensitive Powerline bytes.
+        stroke: ?GeneratedStrokeIdentity,
     },
     decoration_mask: struct {
         configuration_generation: u64,
@@ -179,12 +180,14 @@ pub const SharedFontResourceKey = union(enum) {
                     value.cell_span == 0 or
                     value.cell_width_px == 0 or
                     value.cell_height_px == 0 or
-                    if (value.box) |box|
-                        !validGeneratedBox(box) or
-                            box.dpi_x.numerator != value.logical_dpi_x.numerator or
-                            box.dpi_x.denominator != value.logical_dpi_x.denominator or
-                            box.dpi_y.numerator != value.logical_dpi_y.numerator or
-                            box.dpi_y.denominator != value.logical_dpi_y.denominator
+                    requiresGeneratedStrokeIdentity(value.codepoint) !=
+                        (value.stroke != null) or
+                    if (value.stroke) |stroke|
+                        !validGeneratedStroke(stroke) or
+                            stroke.dpi_x.numerator != value.logical_dpi_x.numerator or
+                            stroke.dpi_x.denominator != value.logical_dpi_x.denominator or
+                            stroke.dpi_y.numerator != value.logical_dpi_y.numerator or
+                            stroke.dpi_y.denominator != value.logical_dpi_y.denominator
                     else
                         false)
                     return error.InvalidResource;
@@ -372,20 +375,20 @@ pub const Producer = struct {
                         .cell_span = 1,
                         .cell_width_px = value.width_px,
                         .cell_height_px = value.height_px,
-                        .box = if (value.box) |box| .{
-                            .stroke_points = box.config.stroke_points,
+                        .stroke = if (value.stroke) |stroke| .{
+                            .stroke_points = stroke.config.stroke_points,
                             .dpi_x = .{
-                                .numerator = box.config.dpi_x.numerator,
-                                .denominator = box.config.dpi_x.denominator,
+                                .numerator = stroke.config.dpi_x.numerator,
+                                .denominator = stroke.config.dpi_x.denominator,
                             },
                             .dpi_y = .{
-                                .numerator = box.config.dpi_y.numerator,
-                                .denominator = box.config.dpi_y.denominator,
+                                .numerator = stroke.config.dpi_y.numerator,
+                                .denominator = stroke.config.dpi_y.denominator,
                             },
                             .sizing = .{
-                                .scale = box.sizing.scale,
-                                .subscale_n = box.sizing.subscale_n,
-                                .subscale_d = box.sizing.subscale_d,
+                                .scale = stroke.sizing.scale,
+                                .subscale_n = stroke.sizing.subscale_n,
+                                .subscale_d = stroke.sizing.subscale_d,
                             },
                         } else null,
                     } },
@@ -1265,19 +1268,24 @@ fn resourceMatchesGroup(resource_key: SharedFontResourceKey, group_key: GroupKey
         std.meta.eql(dpi_y, group_key.logical_dpi_y);
 }
 
-fn validGeneratedBox(box: GeneratedBoxIdentity) bool {
-    if (box.dpi_x.numerator == 0 or box.dpi_x.denominator == 0 or
-        box.dpi_y.numerator == 0 or box.dpi_y.denominator == 0 or
-        std.math.gcd(box.dpi_x.numerator, box.dpi_x.denominator) != 1 or
-        std.math.gcd(box.dpi_y.numerator, box.dpi_y.denominator) != 1 or
-        box.sizing.scale == 0 or
-        (box.sizing.subscale_n == 0) != (box.sizing.subscale_d == 0) or
-        box.sizing.subscale_n > 0 and
-            box.sizing.subscale_n >= box.sizing.subscale_d)
+fn validGeneratedStroke(stroke: GeneratedStrokeIdentity) bool {
+    if (stroke.dpi_x.numerator == 0 or stroke.dpi_x.denominator == 0 or
+        stroke.dpi_y.numerator == 0 or stroke.dpi_y.denominator == 0 or
+        std.math.gcd(stroke.dpi_x.numerator, stroke.dpi_x.denominator) != 1 or
+        std.math.gcd(stroke.dpi_y.numerator, stroke.dpi_y.denominator) != 1 or
+        stroke.sizing.scale == 0 or
+        (stroke.sizing.subscale_n == 0) != (stroke.sizing.subscale_d == 0) or
+        stroke.sizing.subscale_n > 0 and
+            stroke.sizing.subscale_n >= stroke.sizing.subscale_d)
         return false;
-    for (box.stroke_points) |points|
+    for (stroke.stroke_points) |points|
         if (!std.math.isFinite(points) or points <= 0) return false;
     return true;
+}
+
+fn requiresGeneratedStrokeIdentity(codepoint: u21) bool {
+    return codepoint >= 0x2500 and codepoint <= 0x257f or
+        codepoint == 0xe0b1;
 }
 
 const test_facts = if (@import("builtin").is_test)
@@ -1674,7 +1682,7 @@ test "fixed owner memory and declaration bounds are exact" {
     );
 }
 
-test "shared generated box identity retains exact DPI and stroke configuration" {
+test "shared generated metric identity retains exact DPI and stroke configuration" {
     var owner = try Owner.init(std.testing.allocator);
     defer owner.deinit();
     const configs = testConfigs(16);
@@ -1682,11 +1690,11 @@ test "shared generated box identity retains exact DPI and stroke configuration" 
 
     const bytes = [_]u8{0xaa};
     const first_key = terminal_text.GlyphKey{ .generated = .{
-        .codepoint = 0x2500,
+        .codepoint = 0xe0b1,
         .width_px = 1,
         .height_px = 1,
         .baseline_px = 1,
-        .box = .{
+        .stroke = .{
             .config = .{
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -1694,6 +1702,34 @@ test "shared generated box identity retains exact DPI and stroke configuration" 
             .sizing = .{},
         },
     } };
+    var missing_stroke = first_key;
+    missing_stroke.generated.stroke = null;
+    var metric_free_with_stroke = first_key;
+    metric_free_with_stroke.generated.codepoint = 0xe0b0;
+    {
+        var invalid = try owner.producer(group);
+        defer invalid.deinit();
+        try std.testing.expectError(
+            error.InvalidResource,
+            invalid.internGlyph(
+                missing_stroke,
+                .alpha8,
+                .{ .width = 1, .height = 1 },
+                1,
+                &bytes,
+            ),
+        );
+        try std.testing.expectError(
+            error.InvalidResource,
+            invalid.internGlyph(
+                metric_free_with_stroke,
+                .alpha8,
+                .{ .width = 1, .height = 1 },
+                1,
+                &bytes,
+            ),
+        );
+    }
     const first, const second = produced: {
         var producer = try owner.producer(group);
         defer producer.deinit();
@@ -1704,9 +1740,17 @@ test "shared generated box identity retains exact DPI and stroke configuration" 
             1,
             &bytes,
         );
+        const reused = try producer.internGlyph(
+            first_key,
+            .alpha8,
+            .{ .width = 1, .height = 1 },
+            1,
+            &bytes,
+        );
+        try std.testing.expectEqual(first.resource, reused.resource);
 
         var changed_stroke = first_key;
-        changed_stroke.generated.box.?.config.stroke_points[0] =
+        changed_stroke.generated.stroke.?.config.stroke_points[0] =
             @bitCast(@as(u32, 0x3a831270));
         const second = try producer.internGlyph(
             changed_stroke,
@@ -1729,7 +1773,7 @@ test "shared generated box identity retains exact DPI and stroke configuration" 
     );
     const dpi_group = try owner.acquireGroup(dpi_group_key, &dpi_configs);
     var changed_dpi = first_key;
-    changed_dpi.generated.box.?.config.dpi_x =
+    changed_dpi.generated.stroke.?.config.dpi_x =
         .{ .numerator = 768, .denominator = 5 };
     const third = produced: {
         var producer = try owner.producer(dpi_group);
@@ -1769,6 +1813,20 @@ test "shared generated box identity retains exact DPI and stroke configuration" 
         owner.producer_acquisition_count,
     );
     try std.testing.expectEqualDeep(retained, owner.resources[0..3].*);
+
+    var metric_free = missing_stroke;
+    metric_free.generated.codepoint = 0xe0b0;
+    var metric_free_producer = try owner.producer(group);
+    defer metric_free_producer.deinit();
+    const metric_free_resource = try metric_free_producer.internGlyph(
+        metric_free,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    try std.testing.expect(metric_free_resource.resource.resource.isShared());
+    metric_free_producer.commitUpdate();
 }
 
 test "capacity cohorts, total pane bound, padded rows and batch bound are explicit" {
