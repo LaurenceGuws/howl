@@ -91,8 +91,6 @@ fn fillQuadrant(pixels: []u8, width: u16, height: u16, quadrant: BlockQuadrant) 
     geometry.fillRectAlpha(pixels, width, x, y, width - x - if (x == 0) width - half_w else 0, height - y - if (y == 0) height - half_h else 0, 255);
 }
 
-const ShadeDensity = enum { light, medium, dark };
-
 fn fillShade(pixels: []u8, width: u16, height: u16, density: ShadeDensity) void {
     const alpha: u8 = switch (density) {
         .light => 0x40,
@@ -101,6 +99,8 @@ fn fillShade(pixels: []u8, width: u16, height: u16, density: ShadeDensity) void 
     };
     geometry.fillRectAlpha(pixels, width, 0, 0, width, height, alpha);
 }
+
+const ShadeDensity = enum { light, medium, dark };
 
 fn rasterizeBrailleAlpha(pixels: []u8, width: u16, height: u16, mask: u8) void {
     if (mask == 0) return;

@@ -18,14 +18,17 @@ test "public namespaces exactly match compile-time selection" {
     );
     try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal"));
     try std.testing.expectEqual(selected.terminal, @hasDecl(render, "terminal_images"));
-    try std.testing.expectEqual(
-        selected.terminal_text,
-        @hasDecl(render, "terminal_text"),
-    );
+    try std.testing.expect(!@hasDecl(render, "terminal_text"));
     if (selected.terminal) {
+        try std.testing.expect(@hasDecl(render.terminal, "Content"));
+        try std.testing.expect(@hasDecl(
+            render.terminal,
+            "GeneratedBoxConfig",
+        ));
+        try std.testing.expect(@hasDecl(render.terminal, "FontMap"));
         try std.testing.expectEqual(
-            selected.terminal_text,
-            @hasDecl(render.terminal, "Content"),
+            selected.native_text,
+            @sizeOf(render.terminal.FontMap) != 0,
         );
     }
 }
@@ -38,5 +41,5 @@ comptime {
         std.testing.refAllDecls(@import("vertical_test.zig"));
     if (selected.native_text) std.testing.refAllDecls(@import("native_test.zig"));
     if (selected.generated_glyphs) std.testing.refAllDecls(@import("generated_test.zig"));
-    if (selected.terminal_text) std.testing.refAllDecls(@import("terminal_text_test.zig"));
+    if (selected.terminal) std.testing.refAllDecls(@import("terminal_text_test.zig"));
 }

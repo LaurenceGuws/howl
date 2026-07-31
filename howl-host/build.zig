@@ -44,7 +44,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .native_text = true,
-        .generated_glyphs = false,
         .terminal = true,
     });
     const pty = b.dependency("howl_pty", .{

@@ -4,6 +4,12 @@ const impl = @import("terminal_text_impl");
 
 /// Supplies ordinary cell metrics without resolving presentation effects.
 pub const CellMetrics = impl.CellMetrics;
+/// Supplies exact generated-box point and DPI configuration.
+pub const GeneratedBoxConfig = impl.GeneratedBoxConfig;
+/// Copies exact generated-box multicell scale identity.
+pub const GeneratedBoxSizing = impl.GeneratedBoxSizing;
+/// Retains every byte-affecting generated-box identity fact.
+pub const GeneratedBoxIdentity = impl.GeneratedBoxIdentity;
 /// Borrows one complete retained row and affected cell span.
 pub const RowInput = impl.RowInput;
 /// Selects pane-local contextual-ligature handling.

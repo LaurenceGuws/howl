@@ -6,9 +6,9 @@
 //! font resources only; terminal images remain source-local and are rejected.
 
 const std = @import("std");
+const terminal_text = @import("terminal_text_capability");
 const render = struct {
     const canvas = @import("canvas");
-    const terminal_text = @import("terminal_text_capability");
 };
 
 /// Maximum live pane references admitted by the terminal runtime owner.
@@ -29,7 +29,7 @@ const batch_limit: usize = 16;
 const mutation_limit: usize = 648;
 
 /// Reports exact native-group construction, admission, identity and retirement failures.
-pub const GroupError = render.terminal_text.FontMapInitError || error{
+pub const GroupError = terminal_text.FontMapInitError || error{
     GroupLimit,
     IdentityExhausted,
     InvalidConfiguration,
@@ -54,8 +54,8 @@ pub const BatchError = GroupError || ResourceError || error{ BatchLimit, Invalid
 pub const GroupKey = struct {
     configuration_generation: u64,
     point_size: f64,
-    logical_dpi_x: render.terminal_text.Dpi,
-    logical_dpi_y: render.terminal_text.Dpi,
+    logical_dpi_x: terminal_text.Dpi,
+    logical_dpi_y: terminal_text.Dpi,
 
     fn validate(self: GroupKey) GroupError!void {
         if (self.configuration_generation == 0)
@@ -63,7 +63,7 @@ pub const GroupKey = struct {
         if (!std.math.isFinite(self.point_size) or
             std.math.isNan(self.point_size) or self.point_size <= 0.0)
             return error.InvalidMetrics;
-        const native_size = render.terminal_text.PointSize{
+        const native_size = terminal_text.PointSize{
             .points = self.point_size,
             .dpi_x = self.logical_dpi_x,
             .dpi_y = self.logical_dpi_y,
@@ -109,13 +109,31 @@ pub const PreparedGroupTransition = struct {
     }
 };
 
+const GeneratedBoxSizing = packed struct(u16) {
+    scale: u8,
+    subscale_n: u4,
+    subscale_d: u4,
+};
+
+const GeneratedBoxDpi = packed struct(u64) {
+    numerator: u32,
+    denominator: u32,
+};
+
+const GeneratedBoxIdentity = struct {
+    stroke_points: [4]f32,
+    dpi_x: GeneratedBoxDpi,
+    dpi_y: GeneratedBoxDpi,
+    sizing: GeneratedBoxSizing,
+};
+
 /// Identifies one exact raster-affecting terminal font resource.
 pub const SharedFontResourceKey = union(enum) {
     native: struct {
         configuration_generation: u64,
         point_size: f64,
-        logical_dpi_x: render.terminal_text.Dpi,
-        logical_dpi_y: render.terminal_text.Dpi,
+        logical_dpi_x: terminal_text.Dpi,
+        logical_dpi_y: terminal_text.Dpi,
         font_slot: u4,
         style_slot: u2,
         face_index: u16,
@@ -126,19 +144,19 @@ pub const SharedFontResourceKey = union(enum) {
     generated: struct {
         configuration_generation: u64,
         point_size: f64,
-        logical_dpi_x: render.terminal_text.Dpi,
-        logical_dpi_y: render.terminal_text.Dpi,
+        logical_dpi_x: terminal_text.Dpi,
+        logical_dpi_y: terminal_text.Dpi,
         codepoint: u21,
         cell_span: u16,
         cell_width_px: u16,
         cell_height_px: u16,
-        stroke_variant: u8,
+        box: ?GeneratedBoxIdentity,
     },
     decoration_mask: struct {
         configuration_generation: u64,
         point_size: f64,
-        logical_dpi_x: render.terminal_text.Dpi,
-        logical_dpi_y: render.terminal_text.Dpi,
+        logical_dpi_x: terminal_text.Dpi,
+        logical_dpi_y: terminal_text.Dpi,
         style: u8,
         cell_span: u16,
         cell_width_px: u16,
@@ -160,7 +178,15 @@ pub const SharedFontResourceKey = union(enum) {
                     !validResourceSize(value.point_size, value.logical_dpi_x, value.logical_dpi_y) or
                     value.cell_span == 0 or
                     value.cell_width_px == 0 or
-                    value.cell_height_px == 0)
+                    value.cell_height_px == 0 or
+                    if (value.box) |box|
+                        !validGeneratedBox(box) or
+                            box.dpi_x.numerator != value.logical_dpi_x.numerator or
+                            box.dpi_x.denominator != value.logical_dpi_x.denominator or
+                            box.dpi_y.numerator != value.logical_dpi_y.numerator or
+                            box.dpi_y.denominator != value.logical_dpi_y.denominator
+                    else
+                        false)
                     return error.InvalidResource;
             },
             .decoration_mask => |value| {
@@ -178,13 +204,13 @@ pub const SharedFontResourceKey = union(enum) {
 
 fn validResourceSize(
     point_size: f64,
-    dpi_x: render.terminal_text.Dpi,
-    dpi_y: render.terminal_text.Dpi,
+    dpi_x: terminal_text.Dpi,
+    dpi_y: terminal_text.Dpi,
 ) bool {
     if (!std.math.isFinite(point_size) or std.math.isNan(point_size) or
         point_size <= 0.0)
         return false;
-    const native_size = render.terminal_text.PointSize{
+    const native_size = terminal_text.PointSize{
         .points = point_size,
         .dpi_x = dpi_x,
         .dpi_y = dpi_y,
@@ -252,7 +278,7 @@ const NativeGroup = struct {
     pane_users: u8 = 0,
     staged_users: u8 = 0,
     borrows: u16 = 0,
-    map: ?render.terminal_text.FontMap = null,
+    map: ?terminal_text.FontMap = null,
 };
 
 const ResourceState = enum(u8) { free, interned, accepted, retiring };
@@ -281,7 +307,7 @@ const Batch = struct {
 const Borrow = struct {
     owner: *Owner,
     group: GroupRef,
-    map: *render.terminal_text.FontMap,
+    map: *terminal_text.FontMap,
     active: bool = true,
 
     /// Ends the synchronous borrow exactly once; repeated cleanup is a no-op.
@@ -324,7 +350,7 @@ pub const Producer = struct {
     /// Interns one native or generated glyph using exact group and raster facts.
     pub fn internGlyph(
         self: *Producer,
-        key: render.terminal_text.GlyphKey,
+        key: terminal_text.GlyphKey,
         format: render.canvas.ResourceFormat,
         size: render.canvas.Size,
         stride: usize,
@@ -334,7 +360,7 @@ pub const Producer = struct {
             return error.InvalidResource;
         if (group_entry.state != .active) return error.InvalidResource;
         const resource_key: SharedFontResourceKey =
-            if (comptime @hasField(render.terminal_text.GlyphKey, "generated"))
+            if (comptime @hasField(terminal_text.GlyphKey, "generated"))
                 switch (key) {
                     .native => |value| nativeResourceKey(group_entry.key, value),
                     .generated => |value| .{ .generated = .{
@@ -346,7 +372,22 @@ pub const Producer = struct {
                         .cell_span = 1,
                         .cell_width_px = value.width_px,
                         .cell_height_px = value.height_px,
-                        .stroke_variant = 0,
+                        .box = if (value.box) |box| .{
+                            .stroke_points = box.config.stroke_points,
+                            .dpi_x = .{
+                                .numerator = box.config.dpi_x.numerator,
+                                .denominator = box.config.dpi_x.denominator,
+                            },
+                            .dpi_y = .{
+                                .numerator = box.config.dpi_y.numerator,
+                                .denominator = box.config.dpi_y.denominator,
+                            },
+                            .sizing = .{
+                                .scale = box.sizing.scale,
+                                .subscale_n = box.sizing.subscale_n,
+                                .subscale_d = box.sizing.subscale_d,
+                            },
+                        } else null,
                     } },
                 }
             else switch (key) {
@@ -421,7 +462,7 @@ pub const Producer = struct {
 
 fn nativeResourceKey(
     group: GroupKey,
-    glyph: render.terminal_text.NativeGlyphKey,
+    glyph: terminal_text.NativeGlyphKey,
 ) SharedFontResourceKey {
     return .{ .native = .{
         .configuration_generation = group.configuration_generation,
@@ -503,7 +544,7 @@ pub const Owner = struct {
     pub fn acquireGroup(
         self: *Owner,
         key: GroupKey,
-        configs: []const render.terminal_text.FontConfig,
+        configs: []const terminal_text.FontConfig,
     ) GroupError!GroupRef {
         try key.validate();
         for (self.groups, 0..) |*entry, index| {
@@ -526,7 +567,7 @@ pub const Owner = struct {
     pub fn stageGroup(
         self: *Owner,
         key: GroupKey,
-        configs: []const render.terminal_text.FontConfig,
+        configs: []const terminal_text.FontConfig,
     ) GroupError!GroupRef {
         try key.validate();
         if (!configsMatchGroup(key, configs)) return error.InvalidConfiguration;
@@ -559,7 +600,7 @@ pub const Owner = struct {
         } else return error.GroupLimit;
         if (self.group_generation_high_water == std.math.maxInt(u64))
             return error.IdentityExhausted;
-        var candidate = try render.terminal_text.FontMap.init(self.allocator, configs);
+        var candidate = try terminal_text.FontMap.init(self.allocator, configs);
         errdefer candidate.deinit();
         const generation = self.group_generation_high_water + 1;
         self.groups[free_index] = .{
@@ -621,7 +662,7 @@ pub const Owner = struct {
     pub fn mapFor(
         self: *Owner,
         reference: GroupRef,
-    ) GroupError!*render.terminal_text.FontMap {
+    ) GroupError!*terminal_text.FontMap {
         const entry = try self.lookupGroup(reference);
         if (entry.state != .active or entry.pane_users == 0)
             return error.InvalidGroup;
@@ -640,7 +681,7 @@ pub const Owner = struct {
     pub fn stagedMapFor(
         self: *Owner,
         reference: GroupRef,
-    ) GroupError!*render.terminal_text.FontMap {
+    ) GroupError!*terminal_text.FontMap {
         const entry = try self.lookupGroup(reference);
         if ((entry.state != .candidate and entry.state != .active) or
             entry.staged_users == 0)
@@ -1167,7 +1208,7 @@ pub const Owner = struct {
 
 fn configsMatchGroup(
     key: GroupKey,
-    configs: []const render.terminal_text.FontConfig,
+    configs: []const terminal_text.FontConfig,
 ) bool {
     if (configs.len == 0) return false;
     for (configs) |config| switch (config.native.size) {
@@ -1224,6 +1265,21 @@ fn resourceMatchesGroup(resource_key: SharedFontResourceKey, group_key: GroupKey
         std.meta.eql(dpi_y, group_key.logical_dpi_y);
 }
 
+fn validGeneratedBox(box: GeneratedBoxIdentity) bool {
+    if (box.dpi_x.numerator == 0 or box.dpi_x.denominator == 0 or
+        box.dpi_y.numerator == 0 or box.dpi_y.denominator == 0 or
+        std.math.gcd(box.dpi_x.numerator, box.dpi_x.denominator) != 1 or
+        std.math.gcd(box.dpi_y.numerator, box.dpi_y.denominator) != 1 or
+        box.sizing.scale == 0 or
+        (box.sizing.subscale_n == 0) != (box.sizing.subscale_d == 0) or
+        box.sizing.subscale_n > 0 and
+            box.sizing.subscale_n >= box.sizing.subscale_d)
+        return false;
+    for (box.stroke_points) |points|
+        if (!std.math.isFinite(points) or points <= 0) return false;
+    return true;
+}
+
 const test_facts = if (@import("builtin").is_test)
     struct {
         const font_path = "testdata/primary.ttf";
@@ -1231,7 +1287,7 @@ const test_facts = if (@import("builtin").is_test)
 else
     struct {};
 
-fn testConfigs(point_size: u16) [4]render.terminal_text.FontConfig {
+fn testConfigs(point_size: u16) [4]terminal_text.FontConfig {
     return testConfigsAt(
         point_size,
         .{ .numerator = 96, .denominator = 1 },
@@ -1241,10 +1297,10 @@ fn testConfigs(point_size: u16) [4]render.terminal_text.FontConfig {
 
 fn testConfigsAt(
     point_size: u16,
-    dpi_x: render.terminal_text.Dpi,
-    dpi_y: render.terminal_text.Dpi,
-) [4]render.terminal_text.FontConfig {
-    const size = render.terminal_text.Size{ .points = .{
+    dpi_x: terminal_text.Dpi,
+    dpi_y: terminal_text.Dpi,
+) [4]terminal_text.FontConfig {
+    const size = terminal_text.Size{ .points = .{
         .points = @floatFromInt(point_size),
         .dpi_x = dpi_x,
         .dpi_y = dpi_y,
@@ -1594,15 +1650,15 @@ test "fixed owner memory and declaration bounds are exact" {
     try std.testing.expectEqual(@as(usize, 2048), resource_limit);
     try std.testing.expectEqual(@as(usize, 16), batch_limit);
     try std.testing.expectEqual(@as(usize, 648), mutation_limit);
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(SharedFontResourceKey));
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(SharedFontResourceKey));
     try std.testing.expectEqual(@as(usize, 6720), @sizeOf(NativeGroup));
-    try std.testing.expectEqual(@as(usize, 104), @sizeOf(SharedResource));
+    try std.testing.expectEqual(@as(usize, 152), @sizeOf(SharedResource));
     try std.testing.expectEqual(@as(usize, 20768), @sizeOf(Batch));
-    try std.testing.expectEqual(@as(usize, 1835520), @sizeOf(NativeGroup) * group_limit +
+    try std.testing.expectEqual(@as(usize, 1933824), @sizeOf(NativeGroup) * group_limit +
         @sizeOf(SharedResource) * resource_limit +
         @sizeOf(Batch) * batch_limit);
     try std.testing.expectEqual(
-        @as(usize, 1845992),
+        @as(usize, 1944296),
         @sizeOf(Owner) +
             @sizeOf(NativeGroup) * group_limit +
             @sizeOf(SharedResource) * resource_limit +
@@ -1616,6 +1672,103 @@ test "fixed owner memory and declaration bounds are exact" {
             @sizeOf(SharedResource) * 2048 +
             @sizeOf(Batch) * 16,
     );
+}
+
+test "shared generated box identity retains exact DPI and stroke configuration" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = testConfigs(16);
+    const group = try owner.acquireGroup(testGroupKey(16), &configs);
+
+    const bytes = [_]u8{0xaa};
+    const first_key = terminal_text.GlyphKey{ .generated = .{
+        .codepoint = 0x2500,
+        .width_px = 1,
+        .height_px = 1,
+        .baseline_px = 1,
+        .box = .{
+            .config = .{
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            },
+            .sizing = .{},
+        },
+    } };
+    const first, const second = produced: {
+        var producer = try owner.producer(group);
+        defer producer.deinit();
+        const first = try producer.internGlyph(
+            first_key,
+            .alpha8,
+            .{ .width = 1, .height = 1 },
+            1,
+            &bytes,
+        );
+
+        var changed_stroke = first_key;
+        changed_stroke.generated.box.?.config.stroke_points[0] =
+            @bitCast(@as(u32, 0x3a831270));
+        const second = try producer.internGlyph(
+            changed_stroke,
+            .alpha8,
+            .{ .width = 1, .height = 1 },
+            1,
+            &bytes,
+        );
+        producer.commitUpdate();
+        break :produced .{ first, second };
+    };
+    try std.testing.expect(!std.meta.eql(first.resource, second.resource));
+
+    var dpi_group_key = testGroupKey(16);
+    dpi_group_key.logical_dpi_x = .{ .numerator = 768, .denominator = 5 };
+    const dpi_configs = testConfigsAt(
+        16,
+        dpi_group_key.logical_dpi_x,
+        dpi_group_key.logical_dpi_y,
+    );
+    const dpi_group = try owner.acquireGroup(dpi_group_key, &dpi_configs);
+    var changed_dpi = first_key;
+    changed_dpi.generated.box.?.config.dpi_x =
+        .{ .numerator = 768, .denominator = 5 };
+    const third = produced: {
+        var producer = try owner.producer(dpi_group);
+        defer producer.deinit();
+        const result = try producer.internGlyph(
+            changed_dpi,
+            .alpha8,
+            .{ .width = 1, .height = 1 },
+            1,
+            &bytes,
+        );
+        producer.commitUpdate();
+        break :produced result;
+    };
+    try std.testing.expect(!std.meta.eql(first.resource, third.resource));
+    try std.testing.expect(!std.meta.eql(second.resource, third.resource));
+
+    var producer = try owner.producer(group);
+    defer producer.deinit();
+    const high_water = owner.shared_identity_high_water;
+    const acquisition_count = owner.producer_acquisition_count;
+    const retained = owner.resources[0..3].*;
+    const wider = [_]u8{ 0xaa, 0xbb };
+    try std.testing.expectError(
+        error.ConflictingResource,
+        producer.internGlyph(
+            first_key,
+            .alpha8,
+            .{ .width = 2, .height = 1 },
+            2,
+            &wider,
+        ),
+    );
+    try std.testing.expectEqual(high_water, owner.shared_identity_high_water);
+    try std.testing.expectEqual(
+        acquisition_count,
+        owner.producer_acquisition_count,
+    );
+    try std.testing.expectEqualDeep(retained, owner.resources[0..3].*);
 }
 
 test "capacity cohorts, total pane bound, padded rows and batch bound are explicit" {

@@ -2,6 +2,13 @@
 
 const std = @import("std");
 const render = @import("howl_render");
+
+fn generatedBoxConfig() render.terminal.GeneratedBoxConfig {
+    return .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+}
 const fonts = @import("test_fonts");
 const selected = @import("selected_capabilities");
 
@@ -42,14 +49,14 @@ fn chromeLimits() chrome.Content.Limits {
     };
 }
 
-fn fontConfig() render.terminal_text.FontConfig {
+fn fontConfig() render.terminal.FontConfig {
     return .{
         .key = .{ .slot = 0, .style = .normal },
         .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
     };
 }
 
-fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
+fn fontConfigs(pixel_height: u16) [4]render.terminal.FontConfig {
     return .{
         .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
         .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = fonts.primary_font, .size = .{ .pixels = pixel_height } } },
@@ -58,8 +65,8 @@ fn fontConfigs(pixel_height: u16) [4]render.terminal_text.FontConfig {
     };
 }
 
-fn pointFontConfigs(points: f64) [4]render.terminal_text.FontConfig {
-    const size = render.terminal_text.Size{ .points = .{
+fn pointFontConfigs(points: f64) [4]render.terminal.FontConfig {
+    const size = render.terminal.Size{ .points = .{
         .points = points,
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -118,7 +125,7 @@ fn updateHasResource(update: canvas.ProducerUpdate, local: canvas.ResourceRef) b
 }
 
 test "capable root composes terminal and chrome producer updates" {
-    var map = try render.terminal_text.FontMap.init(
+    var map = try render.terminal.FontMap.init(
         std.testing.allocator,
         &.{fontConfig()},
     );
@@ -179,6 +186,7 @@ test "capable root composes terminal and chrome producer updates" {
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },
         .metrics = .{ .width_px = 8, .height_px = 16, .baseline_px = 12 },
+        .generated_box = generatedBoxConfig(),
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -526,13 +534,14 @@ test "terminal Content emits shared glyph and decoration resources through its p
             .height = metrics.height_px,
         },
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = metrics.height_px - 2,
         .underline_height = 1,
         .strike_y = metrics.height_px / 2,
         .strike_height = 1,
     }, .{}, .{ .shared = &producer });
     try std.testing.expect(update.uploads.len >=
-        @as(usize, if (selected.generated_glyphs) 3 else 2));
+        @as(usize, 3));
     for (update.uploads) |upload|
         try std.testing.expect(upload.resource.resource.isShared());
     var shared_commands: usize = 0;
@@ -620,6 +629,7 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = metrics.width_px, .height = metrics.height_px },
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = metrics.height_px - 2,
         .underline_height = 1,
         .strike_y = metrics.height_px / 2,
@@ -677,9 +687,9 @@ test "late Content failure rolls back shared acquisitions and reraster succeeds"
 test "shared FontMap owners invalidate independently without identity reuse" {
     const old_configs = fontConfigs(16);
     const new_configs = fontConfigs(24);
-    var map = try render.terminal_text.FontMap.init(std.testing.allocator, &old_configs);
+    var map = try render.terminal.FontMap.init(std.testing.allocator, &old_configs);
     defer map.deinit();
-    var replacement = try render.terminal_text.FontMap.init(std.testing.allocator, &new_configs);
+    var replacement = try render.terminal.FontMap.init(std.testing.allocator, &new_configs);
     defer replacement.deinit();
     var first = try terminal.Content.init(std.testing.allocator, terminalLimits(), &map);
     defer first.deinit();
@@ -749,6 +759,7 @@ test "shared FontMap owners invalidate independently without identity reuse" {
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 32, .height = 24 },
         .metrics = .{ .width_px = 8, .height_px = 16, .baseline_px = 12 },
+        .generated_box = generatedBoxConfig(),
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -799,6 +810,7 @@ test "shared FontMap owners invalidate independently without identity reuse" {
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 48, .height = 32 },
         .metrics = new_metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = new_decoration.underline_y,
         .underline_height = new_decoration.underline_height,
         .strike_y = new_decoration.strike_y,

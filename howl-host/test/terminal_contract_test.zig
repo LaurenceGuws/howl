@@ -36,7 +36,7 @@ const Producer = struct {
 
     fn init(
         allocator: std.mem.Allocator,
-        fonts: *render.terminal_text.FontMap,
+        fonts: *render.terminal.FontMap,
         work: *terminal.Content.Work,
     ) !Producer {
         var machine = try vt.Terminal.init(allocator, rows, cols);
@@ -242,6 +242,10 @@ fn geometry(x: i32) terminal.Content.Geometry {
         .y = 0,
         .clip = .{ .x = x, .y = 0, .width = 64, .height = 32 },
         .metrics = .{ .width_px = 8, .height_px = 16, .baseline_px = 12 },
+        .generated_box = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -320,7 +324,7 @@ fn pendingCopiedBytes(slot: *const terminal_handoff.PendingSlot) usize {
 }
 
 test "real PendingSlot publication copies coherent terminal updates" {
-    var fonts = try render.terminal_text.FontMap.init(
+    var fonts = try render.terminal.FontMap.init(
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
@@ -352,8 +356,84 @@ test "real PendingSlot publication copies coherent terminal updates" {
     }
 }
 
+test "production terminal capability generates repeated vertical joins" {
+    var fonts = try render.terminal.FontMap.init(
+        std.testing.allocator,
+        &.{.{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = facts.font_path, .size = .{ .points = .{
+                .points = 12.0,
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            } } },
+        }},
+    );
+    defer fonts.deinit();
+    var work = try terminal.Content.Work.init(std.testing.allocator, contentLimits());
+    defer work.deinit();
+    var producer = try Producer.init(std.testing.allocator, &fonts, &work);
+    defer producer.deinit();
+    try producer.feed("\x1b[H\u{2502}\x1b[2;1H\u{2502}");
+    try producer.recover();
+    var slot = try terminal_handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer {
+        const discarded = slot.retire() catch
+            @panic("test slot retirement failed");
+        std.debug.assert(discarded);
+        slot.deinit();
+    }
+    try producer.publish(&slot, geometry(0));
+
+    var joins: [2]canvas.Input = undefined;
+    var join_count: usize = 0;
+    for (slot.commands[0..slot.command_count]) |command| switch (command) {
+        .alpha_mask => |mask| {
+            if (mask.destination.height != 16 or mask.destination.width != 8)
+                continue;
+            try std.testing.expect(join_count < joins.len);
+            joins[join_count] = command;
+            join_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(joins.len, join_count);
+    const upper = joins[0].alpha_mask;
+    const lower = joins[1].alpha_mask;
+    try std.testing.expectEqual(upper.resource.resource, lower.resource.resource);
+    try std.testing.expectEqual(upper.destination.x, lower.destination.x);
+    try std.testing.expectEqual(
+        upper.destination.y + @as(i32, @intCast(upper.destination.height)),
+        lower.destination.y,
+    );
+
+    var upload: ?canvas.ResourceUpload = null;
+    for (slot.uploads[0..slot.upload_count]) |candidate| {
+        if (!std.meta.eql(candidate.resource, upper.resource.resource)) continue;
+        upload = candidate;
+        break;
+    }
+    const joined = upload orelse return error.TestExpectedEqual;
+    try std.testing.expectEqual(canvas.ResourceFormat.alpha8, joined.format);
+    try std.testing.expectEqual(@as(u16, 16), joined.pixels.height);
+    const row_bytes: usize = joined.pixels.width;
+    try std.testing.expect(std.mem.indexOfNone(
+        u8,
+        joined.pixels.bytes[0..row_bytes],
+        &.{0},
+    ) != null);
+    const final_row = (joined.pixels.height - 1) * joined.pixels.stride;
+    try std.testing.expect(std.mem.indexOfNone(
+        u8,
+        joined.pixels.bytes[final_row..][0..row_bytes],
+        &.{0},
+    ) != null);
+}
+
 test "two real terminals cross copied slots into distinct Composer sources" {
-    var fonts = try render.terminal_text.FontMap.init(
+    var fonts = try render.terminal.FontMap.init(
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },

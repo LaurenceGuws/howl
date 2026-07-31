@@ -5,7 +5,7 @@ const render = @import("howl_render");
 const selected = @import("selected_capabilities");
 const fonts = if (selected.native_text) @import("test_fonts") else struct {};
 const terminal = render.terminal;
-const terminal_text = render.terminal_text;
+const terminal_text = @import("terminal_text_test_capability");
 const canvas = render.canvas;
 const empty_scalars = terminal.ScalarBaseline.empty(1);
 const empty_scalars_2 = terminal.ScalarBaseline.empty(2);
@@ -83,10 +83,7 @@ test "terminal text public surface follows selected sources" {
         selected.native_text,
         @hasDecl(terminal_text, "FontMapInitError"),
     );
-    try std.testing.expectEqual(
-        selected.generated_glyphs,
-        @hasDecl(terminal_text, "GeneratedGlyphKey"),
-    );
+    try std.testing.expect(@hasDecl(terminal_text, "GeneratedGlyphKey"));
     try std.testing.expect(@hasDecl(terminal_text, "CellMetrics"));
     try std.testing.expect(@hasDecl(terminal_text, "RowInput"));
     try std.testing.expect(@hasDecl(terminal_text, "LigatureMode"));
@@ -102,6 +99,18 @@ test "terminal text public surface follows selected sources" {
     try std.testing.expect(@hasDecl(terminal, "Content"));
     try std.testing.expectEqual(@as(usize, 1), @sizeOf(terminal_text.LigatureMode));
     try std.testing.expectEqual(@as(usize, 1), @sizeOf(terminal.Content.TextPolicy));
+    if (comptime selected.native_text) {
+        try std.testing.expect(terminal.FontMap == terminal_text.FontMap);
+        try std.testing.expect(terminal.FontConfig == terminal_text.FontConfig);
+        try std.testing.expect(terminal.Size == terminal_text.Size);
+        try std.testing.expect(terminal.PointSize == terminal_text.PointSize);
+        try std.testing.expect(terminal.Dpi == terminal_text.Dpi);
+        try std.testing.expect(terminal.CellMetrics == terminal_text.CellMetrics);
+        try std.testing.expect(terminal.LigatureMode == terminal_text.LigatureMode);
+        try std.testing.expect(
+            terminal.FontMapInitError == terminal_text.FontMapInitError,
+        );
+    }
 }
 
 test "Content rejects mismatched scalar baseline before candidate mutation" {
@@ -225,6 +234,7 @@ test "retained terminal content emits one complete producer update" {
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -1015,7 +1025,6 @@ test "decoration masks retire transactionally across geometry churn" {
 }
 
 test "retained terminal content preserves OSC 66 scaling alignment and clipping" {
-    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
     var content = try initContent(&map);
@@ -1045,6 +1054,7 @@ test "retained terminal content preserves OSC 66 scaling alignment and clipping"
         .y = 5,
         .clip = .{ .x = 3, .y = 5, .width = 32, .height = 16 },
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -1066,7 +1076,6 @@ test "retained terminal content preserves OSC 66 scaling alignment and clipping"
 }
 
 test "retained terminal content preserves DEC double-width placement" {
-    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
     var content = try initContent(&map);
@@ -1322,7 +1331,6 @@ test "image capacity rejection preserves retained bytes and generation" {
 }
 
 test "generated and no-glyph runs retain exact coverage without allocation" {
-    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
     var scratch = try TestScratch.init();
@@ -1354,6 +1362,51 @@ test "generated and no-glyph runs retain exact coverage without allocation" {
         try std.testing.expectEqual(@as(u16, 4), third.end_cell);
         try std.testing.expect(third.glyphs == .none);
     }
+}
+
+test "generated box identity retains exact configuration axes and sizing" {
+    try std.testing.expectEqual(
+        @as(usize, 64),
+        @sizeOf(terminal_text.GeneratedGlyphKey),
+    );
+    try std.testing.expectEqual(
+        @as(usize, if (selected.native_text) 72 else 64),
+        @sizeOf(terminal_text.GlyphKey),
+    );
+    try std.testing.expectEqual(
+        @as(usize, 72),
+        @sizeOf(terminal.Content.Geometry),
+    );
+    var map = try initMap();
+    defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    var cells = [_]terminal.Cell{cell(0x2500)};
+
+    const first = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    const first_key = first.glyphs.generated.key.generated;
+    var changed_dpi = input(&cells, 0, 0);
+    changed_dpi.generated_box.dpi_x = .{ .numerator = 768, .denominator = 5 };
+    const second = try prepare(&scratch, &map, changed_dpi, 0);
+    const second_key = second.glyphs.generated.key.generated;
+    try std.testing.expect(!std.meta.eql(first_key, second_key));
+
+    cells[0].sizing.height = 2;
+    const scaled = try prepare(&scratch, &map, input(&cells, 0, 0), 0);
+    try std.testing.expect(!std.meta.eql(
+        first_key,
+        scaled.glyphs.generated.key.generated,
+    ));
+
+    cells[0].sizing = .{};
+    var changed_points = input(&cells, 0, 0);
+    changed_points.generated_box.stroke_points[0] =
+        @bitCast(@as(u32, 0x3a831270));
+    const fourth = try prepare(&scratch, &map, changed_points, 0);
+    try std.testing.expect(!std.meta.eql(
+        first_key,
+        fourth.glyphs.generated.key.generated,
+    ));
 }
 
 test "multicell anchor prepares once and continuations are no-glyph coverage" {
@@ -1407,19 +1460,16 @@ test "run discovery rejects malformed spans and metrics before ownership" {
         error.InvalidMetrics,
         prepare(&scratch, &map, invalid, 0),
     );
-    if (comptime selected.generated_glyphs) {
-        invalid.metrics.height_px = std.math.maxInt(u16);
-        invalid.metrics.baseline_px = 12;
-        try std.testing.expectError(
-            error.InvalidMetrics,
-            prepare(&scratch, &map, invalid, 0),
-        );
-    }
+    invalid.metrics.height_px = std.math.maxInt(u16);
+    invalid.metrics.baseline_px = 12;
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        prepare(&scratch, &map, invalid, 0),
+    );
 }
 
 test "generated extent validation does not reject native or blank mixed runs" {
-    if (comptime !(selected.native_text and selected.generated_glyphs))
-        return error.SkipZigTest;
+    if (comptime !selected.native_text) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
     var scratch = try TestScratch.init();
@@ -1435,8 +1485,35 @@ test "generated extent validation does not reject native or blank mixed runs" {
     try std.testing.expectError(error.InvalidMetrics, prepare(&scratch, &map, oversized, 2));
 }
 
+test "native terminal graph cannot exclude generated box selection" {
+    if (comptime !selected.native_text) return error.SkipZigTest;
+    var map = try initMap();
+    defer deinitMap(&map);
+    var scratch = try TestScratch.init();
+    defer scratch.deinit();
+    const cells = [_]terminal.Cell{
+        cell('A'),
+        cell(0x2500),
+        cell(0x2502),
+    };
+    const row = input(&cells, 0, cells.len - 1);
+    const ordinary = try prepare(&scratch, &map, row, 0);
+    try std.testing.expect(ordinary.glyphs == .native);
+    const horizontal = try prepare(&scratch, &map, row, 1);
+    try std.testing.expect(horizontal.glyphs == .generated);
+    try std.testing.expectEqual(
+        @as(u21, 0x2500),
+        horizontal.glyphs.generated.key.generated.codepoint,
+    );
+    const vertical = try prepare(&scratch, &map, row, 2);
+    try std.testing.expect(vertical.glyphs == .generated);
+    try std.testing.expectEqual(
+        @as(u21, 0x2502),
+        vertical.glyphs.generated.key.generated.codepoint,
+    );
+}
+
 test "generated raster owns exact alpha and allocation rollback" {
-    if (comptime !selected.generated_glyphs) return error.SkipZigTest;
     var map = try initMap();
     defer deinitMap(&map);
     var scratch = try TestScratch.init();
@@ -1741,6 +1818,7 @@ test "Content mode and cursor transitions mutate only exact ligature resources" 
             .height = configured.height_px,
         },
         .metrics = configured,
+        .generated_box = generatedBoxConfig(),
         .underline_y = configured.height_px - 2,
         .underline_height = 1,
         .strike_y = configured.height_px / 2,
@@ -1882,6 +1960,7 @@ test "cursor transition restores old row and disables new row atomically" {
             .height = configured.height_px * 2,
         },
         .metrics = configured,
+        .generated_box = generatedBoxConfig(),
         .underline_y = configured.height_px - 2,
         .underline_height = 1,
         .strike_y = configured.height_px / 2,
@@ -2407,17 +2486,15 @@ test "narrow-symbol cap and generated exclusion preserve one-cell presentation" 
         private_run.glyphs.native[0].key.native.cell_span,
     );
 
-    if (comptime selected.generated_glyphs) {
-        const generated_cells = [_]terminal.Cell{ cell(0xe0b0), cell(' '), cell(' ') };
-        const generated_run = try prepare(
-            &scratch,
-            &map,
-            input(&generated_cells, 0, 2),
-            0,
-        );
-        try std.testing.expect(generated_run.glyphs == .generated);
-        try std.testing.expectEqual(@as(u16, 1), generated_run.end_cell);
-    }
+    const generated_cells = [_]terminal.Cell{ cell(0xe0b0), cell(' '), cell(' ') };
+    const generated_run = try prepare(
+        &scratch,
+        &map,
+        input(&generated_cells, 0, 2),
+        0,
+    );
+    try std.testing.expect(generated_run.glyphs == .generated);
+    try std.testing.expectEqual(@as(u16, 1), generated_run.end_cell);
 }
 
 test "fallback private-use presentation selects and retains the fallback face" {
@@ -2814,6 +2891,7 @@ test "undersized strategy scratch rejects before Content output mutation" {
                     .height = row.metrics.height_px,
                 },
                 .metrics = row.metrics,
+                .generated_box = generatedBoxConfig(),
                 .underline_y = row.metrics.height_px - 2,
                 .underline_height = 1,
                 .strike_y = row.metrics.height_px / 2,
@@ -2893,6 +2971,7 @@ fn contentGeometry(width: u16, height: u16) terminal.Content.Geometry {
         .y = 0,
         .clip = .{ .x = 0, .y = 0, .width = width, .height = height },
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
         .underline_y = 14,
         .underline_height = 1,
         .strike_y = 8,
@@ -2943,6 +3022,14 @@ fn input(cells: []const terminal.Cell, start: u16, end: u16) terminal_text.RowIn
         .affected_end = end,
         .geometry = .double_height_top,
         .metrics = metrics,
+        .generated_box = generatedBoxConfig(),
+    };
+}
+
+fn generatedBoxConfig() terminal_text.GeneratedBoxConfig {
+    return .{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
 }
 

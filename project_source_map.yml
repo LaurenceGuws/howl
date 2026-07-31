@@ -26,9 +26,9 @@ accepted:
   howl-pty/build.zig: PTY package build, coherent translated Linux headers, and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
   howl-pty/src/howl_pty.zig: Linux PTY transport, foreground termios signals, and child-process lifecycle
-  howl-render/build.zig: independently selected capability graphs and native-text-only translated headers
+  howl-render/build.zig: independently selected generic text, standalone generated, terminal projection, and mandatory native-plus-generated terminal-text graphs
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
-  howl-render/src/root*.zig: curated roots for selected render capabilities
+  howl-render/src/root*.zig: curated roots exposing generic text and standalone generated APIs independently while routing all terminal rendering through render.terminal
   howl-render/src/native_text.zig: native font loading, shaping, metrics, Kitty-compatible glyph-width measurement, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
   howl-render/src/terminal_projection.zig: stateless VT cell semantic projection into caller buffers
@@ -42,10 +42,10 @@ accepted:
   howl-render/src/chrome_test.zig: deterministic chrome geometry, overlap order, clipping, hit, capacity, rollback, and alias proofs
   howl-render/src/chrome_reuse_test.zig: independent editor-like native-text and chrome reuse proof through the curated package root
   howl-render/src/chrome_native.zig: native-capable Chrome Content retention and Canvas update production
-  howl-render/src/terminal_canvas.zig: native/generated-capable terminal Content retention and Canvas update production
+  howl-render/src/terminal_canvas.zig: sole public terminal-rendering surface, exact Host font contracts, native/generated Content retention, and Canvas update production
   howl-render/src/vertical_test.zig: capable-root terminal/chrome producer-to-Composer composition proof
-  howl-render/src/terminal_text*.zig: one-run text preparation, bounded normalized narrow-symbol configuration, Kitty symbol-span admission, raster identity, and native decoration metrics
-  howl-render/src/terminal_text_test.zig: selected native and generated run preparation proofs
+  howl-render/src/terminal_text*.zig: private one-run native/generated selection, bounded narrow-symbol configuration, Kitty symbol-span admission, ligature positioning, raster identity, and native decoration metrics
+  howl-render/src/terminal_text_test.zig: private generated-only and mandatory native-plus-generated terminal run-preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
   howl-render/LICENSES: render-owned asset and native-library provenance

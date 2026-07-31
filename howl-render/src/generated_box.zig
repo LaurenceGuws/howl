@@ -3,29 +3,29 @@
 const std = @import("std");
 const geometry = @import("generated_geometry.zig");
 const BoxDrawingStroke = geometry.BoxDrawingStroke;
+const BoxDrawingStrokes = geometry.BoxDrawingStrokes;
 
-/// Rasterizes one classified box-drawing glyph with explicit stroke geometry,
-/// or returns `error.UnsupportedGlyph` for an unclassified codepoint.
-pub fn rasterizeGeneratedBoxAlpha(
+/// Rasterizes one box glyph from independently derived axis and curve strokes.
+pub fn rasterizeGeneratedBoxAlphaExact(
     pixels: []u8,
     width: u16,
     height: u16,
     codepoint: u32,
-    box_drawing: BoxDrawingStroke,
+    box_drawing: BoxDrawingStrokes,
 ) error{UnsupportedGlyph}!void {
     switch (codepoint) {
-        0x2504 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.light_stroke_px, 2),
-        0x2505 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.heavy_stroke_px, 2),
-        0x2506 => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.light_stroke_px, 2),
-        0x2507 => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.heavy_stroke_px, 2),
-        0x2508 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.light_stroke_px, 3),
-        0x2509 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.heavy_stroke_px, 3),
-        0x250a => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.light_stroke_px, 3),
-        0x250b => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.heavy_stroke_px, 3),
-        0x254c => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.light_stroke_px, 1),
-        0x254d => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.heavy_stroke_px, 1),
-        0x254e => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.light_stroke_px, 1),
-        0x254f => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.heavy_stroke_px, 1),
+        0x2504 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[1], 2),
+        0x2505 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[3], 2),
+        0x2506 => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[1], 2),
+        0x2507 => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[3], 2),
+        0x2508 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[1], 3),
+        0x2509 => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[3], 3),
+        0x250a => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[1], 3),
+        0x250b => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[3], 3),
+        0x254c => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[1], 1),
+        0x254d => rasterizeDashedBoxLine(pixels, width, height, .horizontal, box_drawing.horizontal[3], 1),
+        0x254e => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[1], 1),
+        0x254f => rasterizeDashedBoxLine(pixels, width, height, .vertical, box_drawing.vertical[3], 1),
         0x2500...0x2503, 0x250c...0x254b, 0x2550...0x256c, 0x2574...0x257f => {
             // Every classified non-special box codepoint has one line spec.
             rasterizeBoxLines(
@@ -36,11 +36,11 @@ pub fn rasterizeGeneratedBoxAlpha(
                 box_drawing,
             );
         },
-        0x2571 => rasterizeCrossLine(pixels, width, height, false, box_drawing),
-        0x2572 => rasterizeCrossLine(pixels, width, height, true, box_drawing),
+        0x2571 => rasterizeCrossLineExact(pixels, width, height, false, box_drawing),
+        0x2572 => rasterizeCrossLineExact(pixels, width, height, true, box_drawing),
         0x2573 => {
-            rasterizeCrossLine(pixels, width, height, false, box_drawing);
-            rasterizeCrossLine(pixels, width, height, true, box_drawing);
+            rasterizeCrossLineExact(pixels, width, height, false, box_drawing);
+            rasterizeCrossLineExact(pixels, width, height, true, box_drawing);
         },
         0x256d => rasterizeRoundedCorner(pixels, width, height, .top_left, box_drawing),
         0x256e => rasterizeRoundedCorner(pixels, width, height, .top_right, box_drawing),
@@ -197,19 +197,23 @@ fn lineSpecHalf(cp: u32) ?BoxLines {
     };
 }
 
-fn rasterizeBoxLines(pixels: []u8, width: u16, height: u16, lines: BoxLines, box_drawing: BoxDrawingStroke) void {
-    const light = box_drawing.light_stroke_px;
-    const heavy = box_drawing.heavy_stroke_px;
+fn rasterizeBoxLines(pixels: []u8, width: u16, height: u16, lines: BoxLines, box_drawing: BoxDrawingStrokes) void {
+    const h_light_px = box_drawing.horizontal[1];
+    const h_heavy_px = box_drawing.horizontal[3];
+    const h_gap_px = box_drawing.horizontal[2];
+    const v_light_px = box_drawing.vertical[1];
+    const v_heavy_px = box_drawing.vertical[3];
+    const v_gap_px = box_drawing.vertical[2];
 
-    const h_light = centeredRange(height, height / 2, light);
-    const h_heavy = centeredRange(height, height / 2, heavy);
-    const h_double_top = (h_light[0] -| light);
-    const h_double_bottom = @min(h_light[1] + light, height);
+    const h_light = centeredRange(height, height / 2, h_light_px);
+    const h_heavy = centeredRange(height, height / 2, h_heavy_px);
+    const h_double_top = (h_light[0] -| h_gap_px);
+    const h_double_bottom = @min(h_light[1] + h_gap_px, height);
 
-    const v_light = centeredRange(width, width / 2, light);
-    const v_heavy = centeredRange(width, width / 2, heavy);
-    const v_double_left = (v_light[0] -| light);
-    const v_double_right = @min(v_light[1] + light, width);
+    const v_light = centeredRange(width, width / 2, v_light_px);
+    const v_heavy = centeredRange(width, width / 2, v_heavy_px);
+    const v_double_left = (v_light[0] -| v_gap_px);
+    const v_double_right = @min(v_light[1] + v_gap_px, width);
 
     const up_bottom = if (lines.left == .heavy or lines.right == .heavy)
         h_heavy[1]
@@ -247,10 +251,10 @@ fn rasterizeBoxLines(pixels: []u8, width: u16, height: u16, lines: BoxLines, box
     else
         v_light[1];
 
-    drawBoxVerticalArm(pixels, width, height, lines.up, 0, up_bottom, v_light, v_heavy, v_double_left, v_double_right, lines.left == .double, lines.right == .double, light);
-    drawBoxHorizontalArm(pixels, width, height, lines.right, right_left, width, h_light, h_heavy, h_double_top, h_double_bottom, lines.up == .double, lines.down == .double, light);
-    drawBoxVerticalArm(pixels, width, height, lines.down, down_top, height, v_light, v_heavy, v_double_left, v_double_right, lines.left == .double, lines.right == .double, light);
-    drawBoxHorizontalArm(pixels, width, height, lines.left, 0, left_right, h_light, h_heavy, h_double_top, h_double_bottom, lines.up == .double, lines.down == .double, light);
+    drawBoxVerticalArm(pixels, width, height, lines.up, 0, up_bottom, v_light, v_heavy, v_double_left, v_double_right, lines.left == .double, lines.right == .double, v_gap_px);
+    drawBoxHorizontalArm(pixels, width, height, lines.right, right_left, width, h_light, h_heavy, h_double_top, h_double_bottom, lines.up == .double, lines.down == .double, h_gap_px);
+    drawBoxVerticalArm(pixels, width, height, lines.down, down_top, height, v_light, v_heavy, v_double_left, v_double_right, lines.left == .double, lines.right == .double, v_gap_px);
+    drawBoxHorizontalArm(pixels, width, height, lines.left, 0, left_right, h_light, h_heavy, h_double_top, h_double_bottom, lines.up == .double, lines.down == .double, h_gap_px);
 }
 
 fn drawBoxVerticalArm(pixels: []u8, width: u16, height: u16, style: BoxLineStyle, y0: u16, y1: u16, light_range: [2]u16, heavy_range: [2]u16, double_left: u16, double_right: u16, joins_left_double: bool, joins_right_double: bool, light: u16) void {
@@ -322,11 +326,12 @@ fn rasterizeDashedBoxLine(pixels: []u8, width: u16, height: u16, axis: BoxLineAx
     }
 }
 
-fn rasterizeRoundedCorner(pixels: []u8, width: u16, height: u16, corner: RoundedCorner, box_drawing: BoxDrawingStroke) void {
-    const stroke_u = box_drawing.light_stroke_px;
-    const stroke = @as(f64, @floatFromInt(stroke_u));
-    const hori = centeredRange(height, height / 2, stroke_u);
-    const vert = centeredRange(width, width / 2, stroke_u);
+fn rasterizeRoundedCorner(pixels: []u8, width: u16, height: u16, corner: RoundedCorner, box_drawing: BoxDrawingStrokes) void {
+    const h_stroke = box_drawing.horizontal[1];
+    const v_stroke = box_drawing.vertical[1];
+    const stroke = @as(f64, @floatFromInt(@max(h_stroke, v_stroke)));
+    const hori = centeredRange(height, height / 2, h_stroke);
+    const vert = centeredRange(width, width / 2, v_stroke);
     const adjusted_hx = @as(f64, @floatFromInt(vert[0])) + @as(f64, @floatFromInt(vert[1] - vert[0])) / 2.0;
     const adjusted_hy = @as(f64, @floatFromInt(hori[0])) + @as(f64, @floatFromInt(hori[1] - hori[0])) / 2.0;
     const radius = @min(adjusted_hx, adjusted_hy);
@@ -366,12 +371,12 @@ fn rasterizeRoundedCorner(pixels: []u8, width: u16, height: u16, corner: Rounded
         }
     }
 
-    snapRoundedCornerConnections(pixels, width, height, corner, stroke_u);
+    snapRoundedCornerConnections(pixels, width, height, corner, h_stroke, v_stroke);
 }
 
-fn snapRoundedCornerConnections(pixels: []u8, width: u16, height: u16, corner: RoundedCorner, stroke_px: u16) void {
-    const h_range = centeredRange(height, height / 2, stroke_px);
-    const v_range = centeredRange(width, width / 2, stroke_px);
+fn snapRoundedCornerConnections(pixels: []u8, width: u16, height: u16, corner: RoundedCorner, h_stroke: u16, v_stroke: u16) void {
+    const h_range = centeredRange(height, height / 2, h_stroke);
+    const v_range = centeredRange(width, width / 2, v_stroke);
     const h_x: u16 = switch (corner) {
         .top_left, .bottom_left => width - 1,
         .top_right, .bottom_right => 0,
@@ -394,7 +399,29 @@ fn snapRoundedCornerConnections(pixels: []u8, width: u16, height: u16, corner: R
 
 /// Draws the diagonal Powerline aliases shared with box geometry.
 pub fn rasterizeCrossLine(pixels: []u8, width: u16, height: u16, left: bool, box_drawing: BoxDrawingStroke) void {
-    const line_w = @as(f64, @floatFromInt(box_drawing.light_stroke_px));
+    const light = box_drawing.light_stroke_px;
+    const heavy = box_drawing.heavy_stroke_px;
+    rasterizeCrossLineExact(pixels, width, height, left, .{
+        .horizontal = .{ light, light, heavy, heavy },
+        .vertical = .{ light, light, heavy, heavy },
+        .horizontal_supersampled = .{
+            light * 4,
+            light * 4,
+            heavy * 4,
+            heavy * 4,
+        },
+        .vertical_supersampled = .{
+            light * 4,
+            light * 4,
+            heavy * 4,
+            heavy * 4,
+        },
+    });
+}
+
+fn rasterizeCrossLineExact(pixels: []u8, width: u16, height: u16, left: bool, box_drawing: BoxDrawingStrokes) void {
+    const line_w =
+        @as(f64, @floatFromInt(box_drawing.vertical_supersampled[1])) / 4.0;
     const x1: f64 = if (left) 0 else @floatFromInt(width - 1);
     const y1: f64 = 0;
     const x2: f64 = if (left) @floatFromInt(width - 1) else 0;
@@ -446,19 +473,21 @@ test "every line-spec box codepoint dispatches exactly once" {
 
 test "box junction topology reaches only declared arms" {
     var pixels: [9 * 9]u8 = undefined;
-    const stroke = BoxDrawingStroke{
-        .light_stroke_px = 1,
-        .heavy_stroke_px = 2,
+    const stroke = BoxDrawingStrokes{
+        .horizontal = .{ 1, 1, 2, 2 },
+        .vertical = .{ 1, 1, 2, 2 },
+        .horizontal_supersampled = .{ 4, 4, 8, 8 },
+        .vertical_supersampled = .{ 4, 4, 8, 8 },
     };
     @memset(&pixels, 0);
-    try rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x250c, stroke);
+    try rasterizeGeneratedBoxAlphaExact(&pixels, 9, 9, 0x250c, stroke);
     try std.testing.expectEqual(@as(u8, 0), pixels[4]);
     try std.testing.expectEqual(@as(u8, 0), pixels[4 * 9]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9 + 8]);
     try std.testing.expectEqual(@as(u8, 255), pixels[8 * 9 + 4]);
 
     @memset(&pixels, 0);
-    try rasterizeGeneratedBoxAlpha(&pixels, 9, 9, 0x253c, stroke);
+    try rasterizeGeneratedBoxAlphaExact(&pixels, 9, 9, 0x253c, stroke);
     try std.testing.expectEqual(@as(u8, 255), pixels[4]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9]);
     try std.testing.expectEqual(@as(u8, 255), pixels[4 * 9 + 8]);

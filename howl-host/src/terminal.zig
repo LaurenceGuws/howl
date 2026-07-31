@@ -91,7 +91,7 @@ const LogicalInitError = error{InvalidPane} ||
 /// Reports runtime table or runtime-owned native-font construction failure.
 const RuntimeInitError = error{ OutOfMemory, InvalidLimits } ||
     error{InvalidFontPolicy} ||
-    render.terminal_text.FontMapInitError;
+    render.terminal.FontMapInitError;
 /// Reports one bounded PTY/VT service-turn failure.
 const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.FeedError || ReplyTransferError ||
@@ -108,7 +108,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
 const ResizeError = vt.Terminal.ResizeError || pty.ResizeError ||
     error{ InvalidPane, FontCapacity, TerminalCapacity };
 /// Reports bounded pane point/DPI replacement and its irreversible PTY boundary.
-const FontResizeError = render.terminal_text.FontMapInitError ||
+const FontResizeError = render.terminal.FontMapInitError ||
     font_owner.GroupError ||
     ResizeError || error{
     FontCapacity,
@@ -357,11 +357,11 @@ const Logical = struct {
     pane: render.chrome.PaneId,
     transport: pty.Owned,
     machine: vt.Terminal,
-    fonts: *render.terminal_text.FontMap,
+    fonts: *render.terminal.FontMap,
     font_group: ?font_owner.GroupRef,
     font_released_hidden: bool = false,
     font_reveal_candidate: bool = false,
-    ligature_mode: render.terminal_text.LigatureMode = .never,
+    ligature_mode: render.terminal.LigatureMode = .never,
     content: render.terminal.Content,
     visual: *VisualState,
     transfer: Transfer,
@@ -387,7 +387,7 @@ const Logical = struct {
         shell: []const u8,
         command: ?[]const u8,
         pane_pixels: render.canvas.Size,
-        fonts: *render.terminal_text.FontMap,
+        fonts: *render.terminal.FontMap,
         font_group: ?font_owner.GroupRef,
         font_state: LogicalFontState,
         transfer: Transfer,
@@ -455,7 +455,7 @@ const Logical = struct {
     /// publication only when the retained mode changes.
     fn setLigatureMode(
         self: *Logical,
-        mode: render.terminal_text.LigatureMode,
+        mode: render.terminal.LigatureMode,
     ) void {
         if (self.ligature_mode == mode) return;
         self.ligature_mode = mode;
@@ -969,19 +969,19 @@ const PendingLifecycleFont = struct {
     revision: handoff.LifecycleRevision,
     pane: render.chrome.PaneId,
     group: font_owner.GroupRef,
-    map: *render.terminal_text.FontMap,
+    map: *render.terminal.FontMap,
 };
 
 const ResolvedGroup = struct {
     reference: font_owner.GroupRef,
-    map: *render.terminal_text.FontMap,
+    map: *render.terminal.FontMap,
 };
 
 /// Owns the fixed logical-terminal collection and stable poll scheduling.
 const Runtime = struct {
     allocator: std.mem.Allocator,
     font_path: []const u8,
-    fonts: *render.terminal_text.FontMap,
+    fonts: *render.terminal.FontMap,
     shared_fonts: font_owner.Owner,
     owners: []?Logical,
     work: render.terminal.Content.Work,
@@ -1006,9 +1006,9 @@ const Runtime = struct {
         const owners = try allocator.alloc(?Logical, owner_limit);
         errdefer allocator.free(owners);
         @memset(owners, null);
-        const fonts = try allocator.create(render.terminal_text.FontMap);
+        const fonts = try allocator.create(render.terminal.FontMap);
         errdefer allocator.destroy(fonts);
-        fonts.* = try render.terminal_text.FontMap.init(
+        fonts.* = try render.terminal.FontMap.init(
             allocator,
             &.{
                 .{
@@ -1043,6 +1043,45 @@ const Runtime = struct {
             .work = work,
             .accepted_font_policy = font_policy,
         };
+    }
+
+    /// Constructs the production owner, then explicitly installs the factual
+    /// point/DPI fixture required by tests that bypass lifecycle admission.
+    fn initTest(
+        allocator: std.mem.Allocator,
+        font_path: []const u8,
+    ) RuntimeInitError!Runtime {
+        var result = try Runtime.init(allocator, font_path);
+        errdefer result.deinit();
+        const factual_size = render.terminal.Size{ .points = .{
+            .points = 12.0,
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        } };
+        const factual = try render.terminal.FontMap.init(
+            allocator,
+            &.{
+                .{
+                    .key = .{ .slot = 0, .style = .normal },
+                    .native = .{ .primary = font_path, .size = factual_size },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .bold },
+                    .native = .{ .primary = font_path, .size = factual_size },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .italic },
+                    .native = .{ .primary = font_path, .size = factual_size },
+                },
+                .{
+                    .key = .{ .slot = 0, .style = .bold_italic },
+                    .native = .{ .primary = font_path, .size = factual_size },
+                },
+            },
+        );
+        result.fonts.deinit();
+        result.fonts.* = factual;
+        return result;
     }
 
     /// Stops every live child in reverse table order and releases the table.
@@ -1635,7 +1674,7 @@ const Runtime = struct {
         var candidate_group: ?struct {
             pane: render.chrome.PaneId,
             reference: font_owner.GroupRef,
-            map: *render.terminal_text.FontMap,
+            map: *render.terminal.FontMap,
         } = null;
         var retained = false;
         defer if (!retained) if (candidate_group) |candidate|
@@ -1919,7 +1958,7 @@ const Runtime = struct {
             return true;
         }
         var groups: [owner_limit]?font_owner.GroupRef = @splat(null);
-        var maps: [owner_limit]?*render.terminal_text.FontMap = @splat(null);
+        var maps: [owner_limit]?*render.terminal.FontMap = @splat(null);
         var old_producers: [owner_limit]?font_owner.Producer = @splat(null);
         defer for (&old_producers) |*producer| if (producer.*) |*value| {
             value.deinit();
@@ -2062,11 +2101,11 @@ fn resolvedGroupKey(
     state: LogicalFontState,
 ) error{FontCapacity}!font_owner.GroupKey {
     const scale = state.scale orelse return error.FontCapacity;
-    const dpi_x = render.terminal_text.Dpi{
+    const dpi_x = render.terminal.Dpi{
         .numerator = scale.dpi_x.numerator,
         .denominator = scale.dpi_x.denominator,
     };
-    const dpi_y = render.terminal_text.Dpi{
+    const dpi_y = render.terminal.Dpi{
         .numerator = scale.dpi_y.numerator,
         .denominator = scale.dpi_y.denominator,
     };
@@ -2092,8 +2131,8 @@ fn resolvedGroupKey(
 fn pointGroupConfigs(
     font_path: []const u8,
     key: font_owner.GroupKey,
-) [4]render.terminal_text.FontConfig {
-    const size = render.terminal_text.Size{ .points = .{
+) [4]render.terminal.FontConfig {
+    const size = render.terminal.Size{ .points = .{
         .points = key.point_size,
         .dpi_x = key.logical_dpi_x,
         .dpi_y = key.logical_dpi_y,
@@ -2221,7 +2260,7 @@ test "older VT replies remain ordered before newly encoded input" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -2261,7 +2300,7 @@ test "repeated consequences are consumed by exact identity without stalling prog
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(7));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -2286,7 +2325,7 @@ test "reply-required consequences receive bounded Host replies and clear the hea
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(70));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -2324,7 +2363,7 @@ test "realistic configured sparse terminal fits the production Composer candidat
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(10));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 240, 100), .{ .dedicated = &slot });
@@ -2366,7 +2405,7 @@ test "alternate-screen exit publishes complete retained resource turnover" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(72);
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 100, 5), .{ .dedicated = &slot });
@@ -2439,7 +2478,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(71));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 256, 128), .{ .dedicated = &slot });
@@ -2461,7 +2500,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
 test "close racing an occupied slot retries and retires exactly once" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(9));
     const source = try render.canvas.Composer.init(std.testing.allocator, .{
@@ -2517,7 +2556,7 @@ test "two-owner renderer drainage retires one source without stale drainage" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(@intCast(11));
     const second: render.chrome.PaneId = @fromBackingInt(@intCast(12));
@@ -2575,7 +2614,7 @@ test "pool exhaustion preserves PTY progress and shared Work reuse" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(21));
     const source = try composer.registerSource();
@@ -2656,7 +2695,7 @@ test "consumed publication failure releases reservation and forces recovery" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(22));
     const source = try composer.registerSource();
@@ -2790,7 +2829,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
         noisy_slot.deinit();
         quiet_slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const noisy_id: render.chrome.PaneId = @fromBackingInt(@intCast(41));
     const quiet_id: render.chrome.PaneId = @fromBackingInt(@intCast(42));
@@ -2865,7 +2904,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
 test "runtime admits observes and retires real shell owners transactionally" {
     var first_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
     var second_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer {
         runtime.deinit();
         retireTestSlot(&first_slot);
@@ -2907,7 +2946,7 @@ test "visible-set preparation publishes hidden newest state through real Content
         contentLimits(),
     );
     defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
         .sources = 1,
@@ -2974,7 +3013,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         contentLimits(),
     );
     defer boundary.deinit();
-    var runtime = try Runtime.init(
+    var runtime = try Runtime.initTest(
         std.testing.allocator,
         facts.symbol_font_path,
     );
@@ -3038,11 +3077,11 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     first.setLigatureMode(.never);
     second.setLigatureMode(.cursor);
     try std.testing.expectEqual(
-        render.terminal_text.LigatureMode.never,
+        render.terminal.LigatureMode.never,
         first.ligature_mode,
     );
     try std.testing.expectEqual(
-        render.terminal_text.LigatureMode.cursor,
+        render.terminal.LigatureMode.cursor,
         second.ligature_mode,
     );
     try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
@@ -3134,7 +3173,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     try std.testing.expect(second.font_group == null);
     try std.testing.expect(second.font_released_hidden);
     try std.testing.expectEqual(
-        render.terminal_text.LigatureMode.cursor,
+        render.terminal.LigatureMode.cursor,
         second.ligature_mode,
     );
     try std.testing.expect(!first.font_released_hidden);
@@ -3169,7 +3208,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     try std.testing.expect(!second.font_released_hidden);
     try std.testing.expect(!second.font_reveal_candidate);
     try std.testing.expectEqual(
-        render.terminal_text.LigatureMode.cursor,
+        render.terminal.LigatureMode.cursor,
         second.ligature_mode,
     );
     try std.testing.expect(std.meta.eql(
@@ -3361,6 +3400,163 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     )));
 }
 
+test "factual admission publishes generated joins through shared pool ownership" {
+    var boundary = try handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer boundary.deinit();
+    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+
+    // The executable bootstrap remains pixel-sized and carries no accepted
+    // factual DPI or generated-raster authority.
+    try std.testing.expect(runtime.accepted_scale == null);
+    try std.testing.expect(runtime.fonts.generatedBoxConfig() == null);
+    try std.testing.expectError(
+        error.FontCapacity,
+        resolvedGroupKey(runtime.logicalFontState(@fromBackingInt(201))),
+    );
+
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 64,
+        .retained_commands = 256,
+        .retained_pixel_bytes = 64 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 64,
+        .candidate_commands = 256,
+        .candidate_pixel_bytes = 64 * 1024,
+    });
+    defer composer.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(201);
+    const source = try composer.registerSource();
+    const pane_pixels = render.canvas.Size{ .width = 80, .height = 128 };
+    try boundary.register(pane, source, pane_pixels);
+    const lifecycle = boundary.takeLifecycle().?;
+    try runtime.applyLifecycle(
+        &boundary,
+        try testAdmittedLifecycle(&runtime, lifecycle),
+        "/bin/sh",
+    );
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    try std.testing.expect(owner.font_group != null);
+    try std.testing.expect(owner.fonts.generatedBoxConfig() != null);
+    try std.testing.expect(runtime.accepted_scale != null);
+    try std.testing.expect(
+        (try owner.machine.feed("\x1b[H\u{2502}\x1b[2;1H\u{2502}")).state_changed,
+    );
+    owner.dirty = true;
+    try std.testing.expect(try owner.publishIfDirty(
+        &runtime.shared_fonts,
+        &runtime.work,
+    ));
+
+    const token = for (boundary.entries) |entry| {
+        const retained = entry orelse continue;
+        if (retained.pane != pane) continue;
+        break retained.ready.?;
+    } else return error.TestExpectedEqual;
+    try boundary.pool.beginDrain(token);
+    var pool_claimed = true;
+    defer if (pool_claimed)
+        boundary.pool.retryDrain(token) catch
+            @panic("test pool claim rollback failed");
+    const pooled = try boundary.pool.drainingUpdate(token);
+    try std.testing.expectEqual(@as(usize, 1), pooled.uploads.len);
+    const declaration = pooled.uploads[0];
+    try std.testing.expect(declaration.resource.resource.isShared());
+    try std.testing.expectEqual(render.canvas.ResourceFormat.alpha8, declaration.format);
+    try std.testing.expectEqual(owner.geometry.metrics.width_px, declaration.pixels.width);
+    try std.testing.expectEqual(owner.geometry.metrics.height_px, declaration.pixels.height);
+
+    var joins: [2]render.canvas.Input = undefined;
+    var join_count: usize = 0;
+    for (pooled.commands) |command| switch (command) {
+        .alpha_mask => |mask| {
+            if (!std.meta.eql(mask.resource.resource, declaration.resource)) continue;
+            try std.testing.expect(join_count < joins.len);
+            joins[join_count] = command;
+            join_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(joins.len, join_count);
+    const upper = joins[0].alpha_mask;
+    const lower = joins[1].alpha_mask;
+    try std.testing.expectEqual(
+        upper.destination.y + @as(i32, @intCast(upper.destination.height)),
+        lower.destination.y,
+    );
+    try std.testing.expectEqual(upper.destination.x, lower.destination.x);
+    const row_bytes: usize = declaration.pixels.width;
+    try std.testing.expect(std.mem.indexOfNone(
+        u8,
+        declaration.pixels.bytes[0..row_bytes],
+        &.{0},
+    ) != null);
+    const final_row =
+        (@as(usize, declaration.pixels.height) - 1) * declaration.pixels.stride;
+    try std.testing.expect(std.mem.indexOfNone(
+        u8,
+        declaration.pixels.bytes[final_row..][0..row_bytes],
+        &.{0},
+    ) != null);
+    try boundary.pool.retryDrain(token);
+    pool_claimed = false;
+
+    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
+    try boundary.publishVisibleSet(1, &.{visible});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try boundary.claimVisibleSet(1);
+    const composition = render.canvas.Composer.Composition{
+        .surface = pane_pixels,
+        .sources = &.{.{
+            .source = source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{
+                .x = 0,
+                .y = 0,
+                .width = pane_pixels.width,
+                .height = pane_pixels.height,
+            },
+        }},
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            1,
+            .ordinary,
+        )).accepted,
+    );
+    try runtime.reconcileAcceptedBatches(&boundary);
+    var uploads: [64]render.canvas.ResourceUploadFact = undefined;
+    var removals: [64]render.canvas.FrameResourceRef = undefined;
+    var commands: [256]render.canvas.Command = undefined;
+    var pixels: [64 * 1024]u8 = undefined;
+    const frame = try composer.frame(&.{}, .{
+        .uploads = &uploads,
+        .removals = &removals,
+        .commands = &commands,
+        .pixels = &pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+    try std.testing.expect(frame.uploads[0].resource.resource.isShared());
+    var frame_join_count: usize = 0;
+    for (frame.commands) |command| switch (command) {
+        .alpha_mask => |mask| {
+            if (!mask.resource.resource.resource.isShared()) continue;
+            frame_join_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 2), frame_join_count);
+}
+
 test "PTY resize failure discards prepared VT and later live resize commits" {
     var transport = try pty.Owned.init(
         std.testing.allocator,
@@ -3387,7 +3583,7 @@ test "PTY resize failure discards prepared VT and later live resize commits" {
     try std.testing.expectEqual(cell, unchanged.cellAt(0, 0));
     try std.testing.expectEqual(semantic_sequence, machine.semanticSequence());
 
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
     defer {
         runtime.deinit();
@@ -3539,7 +3735,7 @@ test "interpreted unmatched keys route by PaneId under current VT modes" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -3578,11 +3774,15 @@ test "reaped child final output remains drainable without a busy HUP loop" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var fonts = try render.terminal_text.FontMap.init(
+    var fonts = try render.terminal.FontMap.init(
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .size = .{ .pixels = 16 } },
+            .native = .{ .primary = facts.font_path, .size = .{ .points = .{
+                .points = 12.0,
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            } } },
         }},
     );
     defer fonts.deinit();
@@ -3647,7 +3847,7 @@ test "typed lifecycle creates resizes retires and never reuses pane sources" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     const first_source = try composer.registerSource();
@@ -3718,7 +3918,7 @@ const Grid = struct { cols: u16, rows: u16 };
 
 fn gridForPixels(
     pixels: render.canvas.Size,
-    metrics: render.terminal_text.CellMetrics,
+    metrics: render.terminal.CellMetrics,
 ) error{ InvalidPane, FontCapacity, TerminalCapacity }!Grid {
     if (pixels.width == 0 or pixels.height == 0) return error.InvalidPane;
     if (metrics.width_px == 0 or metrics.height_px == 0) return error.FontCapacity;
@@ -3733,12 +3933,14 @@ fn gridForPixels(
 
 fn paneGeometry(
     pixels: render.canvas.Size,
-    fonts: *render.terminal_text.FontMap,
+    fonts: *render.terminal.FontMap,
 ) error{ InvalidPane, FontCapacity }!terminal_render.Content.Geometry {
     if (pixels.width == 0 or pixels.height == 0) return error.InvalidPane;
     const metrics = fonts.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
         return error.FontCapacity;
     const decoration = fonts.decorationMetrics(.{ .slot = 0, .style = .normal }) orelse
+        return error.FontCapacity;
+    const generated_box = fonts.generatedBoxConfig() orelse
         return error.FontCapacity;
     return .{
         .x = 0,
@@ -3750,6 +3952,7 @@ fn paneGeometry(
             .height = pixels.height,
         },
         .metrics = metrics,
+        .generated_box = generated_box,
         .underline_y = decoration.underline_y,
         .underline_height = decoration.underline_height,
         .strike_y = decoration.strike_y,
@@ -3758,7 +3961,7 @@ fn paneGeometry(
 }
 
 fn testPixels(
-    fonts: *render.terminal_text.FontMap,
+    fonts: *render.terminal.FontMap,
     cols: u16,
     rows: u16,
 ) !render.canvas.Size {
@@ -3902,7 +4105,7 @@ test "configured operator font styles and optional missing cells remain renderab
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(83);
     try runtime.add(
@@ -3924,7 +4127,7 @@ test "configured operator font styles and optional missing cells remain renderab
 }
 
 test "factual DPI-only request reaches Runtime without font reconstruction" {
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const before = runtime.fonts.cellMetrics(.{
         .slot = 0,
@@ -3981,7 +4184,7 @@ test "pane point policy reaches each Logical atomically and new panes start at z
         second_slot.deinit();
         new_slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(101);
     const second: render.chrome.PaneId = @fromBackingInt(102);
@@ -4079,7 +4282,7 @@ test "pane point policy reaches each Logical atomically and new panes start at z
     try std.testing.expectEqual(@as(u64, 2), fresh_state.request_revision);
     try std.testing.expect(runtime.owners[runtime.find(fresh).?].?.font_group != null);
     try std.testing.expectEqual(
-        render.terminal_text.LigatureMode.never,
+        render.terminal.LigatureMode.never,
         runtime.owners[runtime.find(fresh).?].?.ligature_mode,
     );
 }
@@ -4090,7 +4293,7 @@ test "pane pixels remain authoritative across equal grids and rejected resize" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(92);
     const initial = try testPixels(runtime.fonts, 8, 2);
@@ -4136,7 +4339,7 @@ test "over-admission point request rolls back before PTY and later request succe
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(151);
     try runtime.add(
@@ -4231,7 +4434,7 @@ test "hidden clamped offset commits exactly and late visible failure rolls back 
         first_slot.deinit();
         second_slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const hidden_pane: render.chrome.PaneId = @fromBackingInt(801);
     const visible_pane: render.chrome.PaneId = @fromBackingInt(802);
@@ -4333,7 +4536,7 @@ test "hidden clamped offset commits exactly and late visible failure rolls back 
 }
 
 test "tiny and independent pane pixels derive only through current font metrics" {
-    const metrics = render.terminal_text.CellMetrics{
+    const metrics = render.terminal.CellMetrics{
         .width_px = 9,
         .height_px = 22,
         .baseline_px = 17,
@@ -4351,7 +4554,7 @@ test "tiny and independent pane pixels derive only through current font metrics"
         first_slot.deinit();
         second_slot.deinit();
     }
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(93);
     const second: render.chrome.PaneId = @fromBackingInt(94);
@@ -4364,7 +4567,7 @@ test "tiny and independent pane pixels derive only through current font metrics"
 }
 
 test "runtime lifecycle admission derives exact grids without owner mutation" {
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 1,
@@ -4411,7 +4614,7 @@ test "runtime lifecycle admission derives exact grids without owner mutation" {
 test "new-pane admission retains exact resolved metrics until commit or cancellation" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 3,

@@ -1,4 +1,4 @@
-//! Exposes the selected compile-time Howl rendering capabilities.
+//! Exposes native terminal text with mandatory generated terminal glyphs.
 
 /// Owns bounded backend-neutral clipped drawing facts.
 pub const canvas = @import("canvas");
@@ -11,7 +11,5 @@ pub const text = @import("native_text");
 pub const terminal = @import("terminal_projection");
 /// Owns stateless terminal image-to-upload projection.
 pub const terminal_images = @import("image_projection");
-/// Owns one-run terminal text preparation without cache or backend policy.
-pub const terminal_text = @import("terminal_text_capability");
 /// Owns bounded terminal native groups and shared font-resource production.
 pub const terminal_font_owner = @import("terminal_font_owner");

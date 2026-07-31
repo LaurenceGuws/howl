@@ -4,7 +4,7 @@ const std = @import("std");
 const terminal = @import("terminal_projection");
 const features = @import("terminal_text_features");
 const native = if (features.native_text) @import("native_text") else struct {};
-const generated = if (features.generated_glyphs) @import("generated_glyphs") else struct {};
+const generated = @import("generated_glyphs");
 
 /// Selects the exact native font style retained by terminal cells.
 pub const FontStyle = enum(u2) { normal, bold, italic, bold_italic };
@@ -30,6 +30,11 @@ pub const CellMetrics = struct {
     /// Locates the ordinary baseline within the cell height.
     baseline_px: u16,
 };
+
+/// Supplies immutable generated-box configuration independently of backend state.
+pub const GeneratedBoxConfig = generated.BoxDrawingConfig;
+/// Copies exact generated-box multicell scale identity.
+pub const GeneratedBoxSizing = generated.BoxDrawingSizing;
 
 /// Copies native decoration placement for later backend draw preparation.
 pub const DecorationMetrics = struct {
@@ -59,6 +64,8 @@ pub const RowInput = struct {
     geometry: terminal.LineGeometry,
     /// Supplies normal text metrics; line geometry and baseline do not alter them.
     metrics: CellMetrics,
+    /// Supplies exact point/DPI inputs only to generated box raster identity.
+    generated_box: GeneratedBoxConfig,
     /// Selects pane-local contextual-ligature behavior for this row.
     ligature_mode: LigatureMode = .never,
     /// Identifies the visible cursor column only for `cursor` mode.
@@ -85,6 +92,14 @@ pub const NativeGlyphKey = struct {
 };
 
 /// Identifies one generated raster and its reproducible normal placement.
+pub const GeneratedBoxIdentity = struct {
+    /// Retains every byte-affecting box stroke and factual DPI input.
+    config: generated.BoxDrawingConfig,
+    /// Retains the exact bounded multicell sizing input.
+    sizing: generated.BoxDrawingSizing,
+};
+
+/// Identifies one generated raster and its reproducible normal placement.
 pub const GeneratedGlyphKey = struct {
     /// Selects an implemented generated terminal glyph.
     codepoint: u21,
@@ -94,13 +109,13 @@ pub const GeneratedGlyphKey = struct {
     height_px: u16,
     /// Places the full-cell mask relative to the ordinary baseline.
     baseline_px: u16,
+    /// Qualifies only Unicode box drawing with every byte-affecting metric.
+    box: ?GeneratedBoxIdentity,
 };
 
 /// Identifies a selected native or generated raster without cache residency.
-pub const GlyphKey = if (features.native_text and features.generated_glyphs)
+pub const GlyphKey = if (features.native_text)
     union(enum) { native: NativeGlyphKey, generated: GeneratedGlyphKey }
-else if (features.native_text)
-    union(enum) { native: NativeGlyphKey }
 else
     union(enum) { generated: GeneratedGlyphKey };
 
@@ -125,10 +140,8 @@ pub const PositionedGlyph = struct {
 };
 
 /// Stores the exact ownership form of one homogeneous prepared run.
-pub const PreparedGlyphs = if (features.native_text and features.generated_glyphs)
+pub const PreparedGlyphs = if (features.native_text)
     union(enum) { native: []const PositionedGlyph, generated: PositionedGlyph, none }
-else if (features.native_text)
-    union(enum) { native: []const PositionedGlyph, none }
 else
     union(enum) { generated: PositionedGlyph, none };
 
@@ -371,6 +384,25 @@ pub const FontMap = if (features.native_text) struct {
         };
     }
 
+    /// Copies factual DPI from the default terminal tuple into generated-box
+    /// configuration without exposing native face ownership.
+    pub fn generatedBoxConfig(self: *@This()) ?GeneratedBoxConfig {
+        const set = self.get(.{ .slot = 0, .style = .normal }) orelse return null;
+        return switch (set.size) {
+            .pixels => null,
+            .points => |value| .{
+                .dpi_x = .{
+                    .numerator = value.dpi_x.numerator,
+                    .denominator = value.dpi_x.denominator,
+                },
+                .dpi_y = .{
+                    .numerator = value.dpi_y.numerator,
+                    .denominator = value.dpi_y.denominator,
+                },
+            },
+        };
+    }
+
     fn get(self: *@This(), key: FontKey) ?*native.FontSet {
         return if (self.sets[key.index()]) |*set| set else null;
     }
@@ -437,7 +469,7 @@ else
 /// Reports exact native/generated raster and allocation failures.
 pub const RasterError = error{OutOfMemory} ||
     (if (features.native_text) native.RasterError else error{}) ||
-    (if (features.generated_glyphs) generated.Error else error{});
+    generated.Error;
 
 const RunKind = union(enum) {
     none: terminal.CellBaseline,
@@ -464,10 +496,7 @@ pub fn prepareNextRunNative(
     const bounds = try runBounds(input, start_cell);
     return switch (bounds.kind) {
         .none => noGlyphRun(input, bounds),
-        .generated => if (features.generated_glyphs)
-            try generatedRun(input, bounds)
-        else
-            noGlyphRun(input, bounds),
+        .generated => try generatedRun(input, bounds),
         .native => |facts| nativeRun(fonts, input, start_cell, bounds, facts.font, scratch),
     };
 }
@@ -619,7 +648,7 @@ fn borrowableBlank(cell: terminal.Cell) bool {
 
 /// Discovers and prepares one generated/no-glyph run without native vocabulary.
 pub fn prepareNextRunGenerated(input: RowInput, cell: u16) PrepareError!PreparedRun {
-    comptime std.debug.assert(!features.native_text and features.generated_glyphs);
+    comptime std.debug.assert(!features.native_text);
     const bounds = try runBounds(input, cell);
     return switch (bounds.kind) {
         .none => noGlyphRun(input, bounds),
@@ -635,14 +664,9 @@ pub fn rasterizeGlyphNative(
     key: GlyphKey,
 ) RasterError!Raster {
     comptime std.debug.assert(features.native_text);
-    if (comptime features.generated_glyphs) {
-        return switch (key) {
-            .native => |facts| nativeRaster(allocator, fonts, facts),
-            .generated => |facts| generatedRaster(allocator, facts),
-        };
-    }
     return switch (key) {
         .native => |facts| nativeRaster(allocator, fonts, facts),
+        .generated => |facts| generatedRaster(allocator, facts),
     };
 }
 
@@ -651,7 +675,7 @@ pub fn rasterizeGlyphGenerated(
     allocator: std.mem.Allocator,
     key: GlyphKey,
 ) RasterError!Raster {
-    comptime std.debug.assert(!features.native_text and features.generated_glyphs);
+    comptime std.debug.assert(!features.native_text);
     return switch (key) {
         .generated => |facts| generatedRaster(allocator, facts),
     };
@@ -683,7 +707,7 @@ fn validateInput(input: RowInput, cell: u16) PrepareError!void {
 fn kindAt(cell: terminal.Cell) RunKind {
     if (cell.sizing.x != 0 or cell.sizing.y != 0) return .{ .none = cell.baseline };
     if (cell.invisible or cell.codepoint == 0) return .{ .none = cell.baseline };
-    if (features.generated_glyphs and cell.combining_len == 0 and
+    if (cell.combining_len == 0 and
         generated.classify(cell.codepoint) != null)
         return .{ .generated = cell.sizing };
     if (features.native_text) return .{ .native = .{
@@ -720,6 +744,8 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
         input.metrics.height_px > generated.max_extent_px)
         return error.InvalidMetrics;
     const cell = input.cells[bounds.first];
+    const family = generated.classify(cell.codepoint) orelse
+        return error.InvalidMetrics;
     return .{
         .first_cell = bounds.first,
         .end_cell = bounds.end,
@@ -732,6 +758,14 @@ fn generatedRun(input: RowInput, bounds: Bounds) PrepareError!PreparedRun {
                 .width_px = input.metrics.width_px,
                 .height_px = input.metrics.height_px,
                 .baseline_px = input.metrics.baseline_px,
+                .box = if (family == .box) .{
+                    .config = input.generated_box,
+                    .sizing = .{
+                        .scale = cell.sizing.height,
+                        .subscale_n = cell.sizing.subscale_n,
+                        .subscale_d = cell.sizing.subscale_d,
+                    },
+                } else null,
             } },
             .source_start = bounds.first,
             .source_end = bounds.end,
@@ -2004,8 +2038,6 @@ test "terminal cluster arithmetic failures do not alter caller output" {
 }
 
 test "generated terminal placement remains cell exact" {
-    if (comptime !features.generated_glyphs) return error.SkipZigTest;
-
     var cells = [_]terminal.Cell{std.mem.zeroes(terminal.Cell)};
     cells[0].codepoint = 0x250c;
     cells[0].baseline = .normal;
@@ -2016,6 +2048,10 @@ test "generated terminal placement remains cell exact" {
         .affected_end = 0,
         .geometry = .single_width,
         .metrics = .{ .width_px = 9, .height_px = 17, .baseline_px = 13 },
+        .generated_box = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
     }, .{
         .first = 0,
         .end = 1,
@@ -2063,7 +2099,23 @@ fn generatedRaster(allocator: std.mem.Allocator, key: GeneratedGlyphKey) RasterE
     const count = @as(usize, key.width_px) * key.height_px;
     const pixels = allocator.alloc(u8, count) catch return error.OutOfMemory;
     errdefer allocator.free(pixels);
-    try generated.rasterize(pixels, key.width_px, key.height_px, key.codepoint);
+    if (key.box) |box| {
+        try generated.rasterizeBox(
+            pixels,
+            key.width_px,
+            key.height_px,
+            key.codepoint,
+            box.config,
+            box.sizing,
+        );
+    } else {
+        try generated.rasterize(
+            pixels,
+            key.width_px,
+            key.height_px,
+            key.codepoint,
+        );
+    }
     return .{
         .allocator = allocator,
         .width = key.width_px,

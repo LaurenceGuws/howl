@@ -20,6 +20,42 @@ const NativeShapedGlyph = if (features.native_text)
 else
     void;
 
+/// Selects one exact normal/bold/italic terminal font configuration.
+pub const FontStyle = if (features.native_text) text.FontStyle else void;
+/// Identifies one terminal font slot and style configuration.
+pub const FontKey = if (features.native_text) text.FontKey else void;
+/// Supplies ordinary terminal cell metrics.
+pub const CellMetrics = text.CellMetrics;
+/// Supplies exact generated-box point and factual DPI configuration.
+pub const GeneratedBoxConfig = text.GeneratedBoxConfig;
+/// Selects pane-local contextual-ligature handling.
+pub const LigatureMode = text.LigatureMode;
+/// Configures one exact native terminal font tuple.
+pub const FontConfig = if (features.native_text) text.FontConfig else void;
+/// Bounds one normalized narrow-symbol presentation range.
+pub const NarrowSymbolRange = if (features.native_text)
+    text.NarrowSymbolRange
+else
+    void;
+/// Bounds normalized narrow-symbol ranges in one immutable font configuration.
+pub const max_narrow_symbol_ranges = if (features.native_text)
+    text.max_narrow_symbol_ranges
+else
+    0;
+/// Retains one normalized factual DPI axis.
+pub const Dpi = if (features.native_text) text.Dpi else void;
+/// Retains canonical point size and factual X/Y DPI identity.
+pub const PointSize = if (features.native_text) text.PointSize else void;
+/// Selects pixel or canonical point/DPI native construction.
+pub const Size = if (features.native_text) text.Size else void;
+/// Reports exact native terminal font-map construction failures.
+pub const FontMapInitError = if (features.native_text)
+    text.FontMapInitError
+else
+    error{};
+/// Owns the bounded terminal font tuple map.
+pub const FontMap = if (features.native_text) text.FontMap else void;
+
 /// Preserves the terminal projection's bounded combining-scalar limit.
 pub const max_combining = projection.max_combining;
 /// Borrows one complete accepted overflow-scalar cohort synchronously.
@@ -70,6 +106,8 @@ const PaneGeometry = struct {
     clip: canvas.Rect,
     /// Supplies ordinary cell metrics used by terminal shaping.
     metrics: text.CellMetrics,
+    /// Supplies exact generated-box point/DPI configuration.
+    generated_box: text.GeneratedBoxConfig,
     /// Locates the fallback underline from the cell top.
     underline_y: u16,
     /// Supplies fallback underline thickness.
@@ -1616,6 +1654,7 @@ const Build = struct {
                     .affected_end = @intCast(cells.len - 1),
                     .geometry = self.input.projection.geometry[row],
                     .metrics = self.input.geometry.metrics,
+                    .generated_box = self.input.geometry.generated_box,
                     .ligature_mode = self.input.text_policy.ligature_mode,
                     .cursor_col = if (self.input.text_policy.ligature_mode == .cursor and
                         self.input.projection.cursor.visible and
@@ -1628,18 +1667,10 @@ const Build = struct {
                     try text.prepareNextRun(self.fonts, row_input, cell_index, self.buffers.text)
                 else
                     try text.prepareNextRun(row_input, cell_index);
-                if (comptime features.native_text and features.generated_glyphs) {
+                if (comptime features.native_text) {
                     switch (run.glyphs) {
                         .none => {},
                         .generated => |glyph_value| try self.glyph(row, run, glyph_value),
-                        .native => |glyph_values| if (run.borrowed_blank_span)
-                            try self.borrowedGlyphs(row, run, glyph_values)
-                        else for (glyph_values) |glyph_value|
-                            try self.glyph(row, run, glyph_value),
-                    }
-                } else if (comptime features.native_text) {
-                    switch (run.glyphs) {
-                        .none => {},
                         .native => |glyph_values| if (run.borrowed_blank_span)
                             try self.borrowedGlyphs(row, run, glyph_values)
                         else for (glyph_values) |glyph_value|
@@ -1808,13 +1839,10 @@ const Build = struct {
         ) catch
             return error.ArithmeticOverflow;
         if (comptime features.native_text) {
-            const native_key = if (comptime features.generated_glyphs)
-                switch (value.key) {
-                    .native => |key| key,
-                    .generated => null,
-                }
-            else
-                @as(?text.NativeGlyphKey, value.key.native);
+            const native_key = switch (value.key) {
+                .native => |key| key,
+                .generated => null,
+            };
             if (native_key) |key| if (key.cell_span > 1 and
                 value.group_glyph_index < 4)
             {
@@ -2428,6 +2456,11 @@ fn drawInput(draw: Draw) canvas.Input {
             },
         } },
     };
+}
+
+test "generated box identity retained storage remains exactly bounded" {
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(GlyphEntry));
+    try std.testing.expectEqual(@as(usize, 72), @sizeOf(PaneGeometry));
 }
 
 fn validatePane(input: RenderInput) Content.TakeError!void {
