@@ -439,7 +439,6 @@ fn present(state: *State, completion: shared.Completion) !void {
     try state.boundary.recordPresentation(completion.generation, completion.slot, completion.release_point);
     if (retire_fractional and state.fractional_manager != null and state.viewporter != null)
         try prepareFractionalSurface(state);
-    std.debug.print("Window commit generation={d} revision={d} slot={d} acquire={d} release={d}\n", .{ completion.generation, completion.revision, completion.slot, completion.acquire_point, completion.release_point });
 }
 
 fn selectFeedback(state: *const State) ?shared.Feedback {
@@ -849,7 +848,6 @@ fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) 
     const state: *State = @ptrCast(@alignCast(data.?));
     if (callback) |value| c.wl_callback_destroy(value);
     state.frame_callback = null;
-    std.debug.print("Window frame generation={d} revision={d}\n", .{ state.presented_generation, state.presented });
 }
 const frame_listener = c.wl_callback_listener{ .done = frameDone };
 

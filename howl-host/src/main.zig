@@ -69,5 +69,4 @@ pub fn main(init: std.process.Init) MainError!void {
         std.debug.print("Howl stopped after {s} runtime failure\n", .{@tagName(failure)});
         return error.HostFailure;
     }
-    std.debug.print("Howl Vulkan surface retired cleanly\n", .{});
 }

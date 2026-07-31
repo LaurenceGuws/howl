@@ -3,4 +3,5 @@ zig-out/
 .zig/
 howl-probe*.jsonl
 howl-window-probe*.jsonl
+trace.jsonl
 temp/

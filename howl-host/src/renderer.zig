@@ -15,7 +15,6 @@ const chrome_state = @import("chrome_state");
 const vk_surface = howl_vk.surface;
 const input_actions = @import("input_actions");
 const terminal_handoff = @import("terminal_handoff");
-
 const chrome_appearance = chrome_state.Appearance{
     .style = .{
         .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
@@ -124,7 +123,6 @@ const CanvasWork = struct {
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
-    terminal_rejection_reported: bool = false,
     terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     font_request_high_water: u64 = 0,
@@ -429,7 +427,6 @@ fn runFallible(
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
         slot.release_point = 1;
     }
-    std.debug.print("Render ring submitted revisions=3 slots=3 generation={d}\n", .{initial_surface.generation});
 
     // The first generation exercises real slot reuse before any resize: once
     // Window has superseded slot 0, import its compositor release fence into
@@ -445,7 +442,6 @@ fn runFallible(
     try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
     rings[0][0].release_point = 2;
-    std.debug.print("Render same-generation reuse slot=0 acquire={d} release=2 generation={d}\n", .{ next_acquire_point, initial_surface.generation });
     next_acquire_point += 1;
 
     var active_ring: usize = 0;
@@ -1577,13 +1573,6 @@ fn buildCanvasPlan(
                         try work.terminals.releaseVisibleSetClaim(revision);
                         claimed_visible_revision = null;
                     }
-                    if (!work.terminal_rejection_reported) {
-                        std.debug.print(
-                            "Canvas candidate retained after Composer rejection: {s}\n",
-                            .{@errorName(failure)},
-                        );
-                        work.terminal_rejection_reported = true;
-                    }
                     break :blk null;
                 },
                 else => return failure,
@@ -1595,7 +1584,6 @@ fn buildCanvasPlan(
             work.producer_revision = producer_revision;
             work.chrome_retry = null;
         }
-        work.terminal_rejection_reported = false;
         if (claimed_visible_revision != null) {
             @memcpy(
                 work.visible_placements[0..work.pending_count],
@@ -1664,15 +1652,6 @@ fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
         .pixels = work.frame_pixels,
     });
     const generic = try adaptCanvasFrame(frame, work.surface_uploads, work.surface_removals, work.surface_commands);
-    std.debug.print(
-        "Canvas frame rev={d} uploads={d} removals={d} commands={d}\n",
-        .{
-            generic.revision,
-            generic.uploads.len,
-            generic.removals.len,
-            generic.commands.len,
-        },
-    );
     try work.residency.stage(generic);
     errdefer work.residency.discard();
     return try work.builder.build(work.residency, generic);
@@ -3604,7 +3583,6 @@ fn redrawChrome(
     prepared_completion.commit();
     slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
-    std.debug.print("Render interactive chrome generation={d} revision={d} slot={d} release={d}\n", .{ generation, acquire_point, slot_index, release_point });
     return .published;
 }
 
