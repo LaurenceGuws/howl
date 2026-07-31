@@ -367,7 +367,7 @@ pub const Pool = struct {
                 const descriptor = self.descriptorAt(
                     @intCast(owner.descriptor_index),
                 ) orelse return error.Stale;
-                if (descriptor.block_index != self.blockIndex(owner))
+                if (descriptor.block_index != @as(u8, @intCast(index)))
                     return error.Stale;
                 if (owner.reservation_id == 0) return error.Stale;
             }
@@ -855,12 +855,6 @@ pub const Pool = struct {
         return self.layout.blocks_offset + index * self.layout.block_stride;
     }
 
-    fn blockIndex(self: *Pool, owner: *BlockOwner) u8 {
-        const base = @intFromPtr(self.bytes().ptr) + self.layout.blocks_offset;
-        const offset = @intFromPtr(owner) - base;
-        return @intCast(offset / self.layout.block_stride);
-    }
-
     fn bytes(self: *Pool) []u8 {
         return std.mem.sliceAsBytes(self.backing);
     }
@@ -1101,6 +1095,18 @@ test "group reservation is atomic and cancellation is exact" {
             blockState(pool.blockOwner(token.block_index)),
         );
     }
+    const first_descriptor = pool.descriptorAt(members[0].descriptor_index).?;
+    const first_block = first_descriptor.block_index.?;
+    first_descriptor.block_index = @intCast((@as(usize, first_block) + 1) %
+        block_limit);
+    try std.testing.expectError(error.Stale, pool.cancelGroup(9));
+    for (group.tokens) |token| {
+        try std.testing.expectEqual(
+            BlockState.reserved,
+            blockState(pool.blockOwner(token.block_index)),
+        );
+    }
+    first_descriptor.block_index = first_block;
     const first = group.tokens[0];
     try std.testing.expectError(error.Stale, pool.cancelGroup(8));
     try pool.cancelGroup(9);

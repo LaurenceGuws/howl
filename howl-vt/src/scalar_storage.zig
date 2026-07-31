@@ -498,8 +498,10 @@ pub const Storage = struct {
         if (first.len == 0 or second.len == 0) return false;
         const first_start = @intFromPtr(first.ptr);
         const second_start = @intFromPtr(second.ptr);
-        return first_start < second_start + second.len and
-            second_start < first_start + first.len;
+        return if (first_start <= second_start)
+            second_start - first_start < first.len
+        else
+            first_start - second_start < second.len;
     }
 };
 
@@ -738,6 +740,27 @@ test "range validity derives presence and count from the owning cell fact" {
         page_cells + 7,
         maximum_scalars,
     ));
+}
+
+test "owner-native alias ranges preserve exact boundary semantics" {
+    var storage = try Storage.init(std.testing.allocator, page_cells);
+    defer storage.deinit();
+    const owned = std.mem.sliceAsBytes(storage.ranges);
+
+    try std.testing.expect(!Storage.overlaps(owned[0..0], owned));
+    try std.testing.expect(!Storage.overlaps(owned[0..8], owned[8..16]));
+    try std.testing.expect(Storage.overlaps(owned[0..8], owned[7..16]));
+    try std.testing.expect(Storage.overlaps(owned[0..16], owned[4..12]));
+    try std.testing.expect(Storage.overlaps(owned[4..12], owned[0..16]));
+    try std.testing.expect(!Storage.overlaps(owned[0..4], owned[8..12]));
+    try std.testing.expect(storage.aliases(owned[8..16]));
+
+    const shallow_alias = storage;
+    try std.testing.expect(storage.overlapsStorage(&shallow_alias));
+
+    var independent = try Storage.init(std.testing.allocator, page_cells);
+    defer independent.deinit();
+    try std.testing.expect(!storage.overlapsStorage(&independent));
 }
 
 test "invalid source and destination correspondence preserves all ownership" {
