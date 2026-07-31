@@ -3,6 +3,7 @@
 const std = @import("std");
 const generated_block = @import("generated_block.zig");
 const generated_box = @import("generated_box.zig");
+const generated_branch = @import("generated_branch.zig");
 const generated_geometry = @import("generated_geometry.zig");
 const generated_legacy = @import("generated_legacy.zig");
 const generated_powerline = @import("generated_powerline.zig");
@@ -31,6 +32,7 @@ pub const Glyph = enum {
     octant,
     powerline,
     progress,
+    branch,
 };
 
 /// Configures bounded box lines with heavy geometry at least as wide as light.
@@ -97,6 +99,7 @@ pub fn classify(codepoint: u32) ?Glyph {
         0x1cd00...0x1cde5, 0x1fbe6, 0x1fbe7 => .octant,
         0xe0b0...0xe0bf, 0xe0d6...0xe0d7 => .powerline,
         0xee00...0xee0b => .progress,
+        0xf5d0...0xf60d => .branch,
         else => null,
     };
 }
@@ -160,6 +163,16 @@ pub fn rasterizeWithStroke(
             ),
         },
         .progress => unreachable,
+        .branch => if (codepoint == 0xf5ee)
+            try generated_branch.rasterize(
+                pixels,
+                width_px,
+                height_px,
+                codepoint,
+                null,
+            )
+        else
+            unreachable,
         .block => try generated_block.rasterizeGeneratedBlockAlpha(
             pixels,
             width_px,
@@ -288,10 +301,39 @@ pub fn rasterizeProgress(
     );
 }
 
+/// Rasterizes Kitty's generated U+F5D0-U+F60D branch family from exact point,
+/// DPI, and multicell scale facts. U+F5EE is metric-free and must instead use
+/// `rasterize`; surplus metric identity is rejected.
+pub fn rasterizeBranch(
+    pixels: []u8,
+    width_px: u16,
+    height_px: u16,
+    codepoint: u32,
+    config: BoxDrawingConfig,
+    sizing: BoxDrawingSizing,
+) Error!void {
+    if (width_px == 0 or height_px == 0) return error.InvalidSize;
+    if (width_px > max_extent_px or height_px > max_extent_px)
+        return error.RasterTooLarge;
+    if (codepoint < 0xf5d0 or codepoint > 0xf60d or codepoint == 0xf5ee)
+        return error.UnsupportedGlyph;
+    const required = @as(usize, width_px) * height_px;
+    if (pixels.len < required) return error.BufferTooSmall;
+    const strokes = try deriveBoxDrawingStrokes(config, sizing);
+    try generated_branch.rasterize(
+        pixels,
+        width_px,
+        height_px,
+        codepoint,
+        strokes,
+    );
+}
+
 fn requiresStroke(codepoint: u32) bool {
     return switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
         0xee00...0xee0b => true,
+        0xf5d0...0xf5ed, 0xf5ef...0xf60d => true,
         else => false,
     };
 }

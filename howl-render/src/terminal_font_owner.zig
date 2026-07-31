@@ -150,7 +150,10 @@ pub const SharedFontResourceKey = union(enum) {
         cell_span: u16,
         cell_width_px: u16,
         cell_height_px: u16,
-        /// Qualifies exactly box glyphs and metric-sensitive Powerline bytes.
+        /// Qualifies metric-sensitive generated rasters: box drawing,
+        /// Powerline, progress/spinner, and the metric-sensitive members of
+        /// the branch-drawing family. Metric-free generated members carry no
+        /// stroke value.
         stroke: ?GeneratedStrokeIdentity,
     },
     decoration_mask: struct {
@@ -1287,6 +1290,7 @@ fn requiresGeneratedStrokeIdentity(codepoint: u21) bool {
     return codepoint >= 0x2500 and codepoint <= 0x257f or switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
         0xee00...0xee0b => true,
+        0xf5d0...0xf5ed, 0xf5ef...0xf60d => true,
         else => false,
     };
 }
@@ -1873,6 +1877,39 @@ test "shared generated metric identity retains exact DPI and stroke configuratio
     try std.testing.expect(progress.resource.resource.isShared());
     try std.testing.expect(!std.meta.eql(progress.resource, changed.resource));
     progress_producer.commitUpdate();
+
+    var branch_key = first_key;
+    branch_key.generated.codepoint = 0xf5d0;
+    var branch_changed = branch_key;
+    branch_changed.generated.stroke.?.config.stroke_points[1] = 1.5;
+    var branch_producer = try owner.producer(group);
+    defer branch_producer.deinit();
+    const branch = try branch_producer.internGlyph(
+        branch_key,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    const branch_dpi = try branch_producer.internGlyph(
+        branch_changed,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    try std.testing.expect(!std.meta.eql(branch.resource, branch_dpi.resource));
+    var branch_free = missing_stroke;
+    branch_free.generated.codepoint = 0xf5ee;
+    const free = try branch_producer.internGlyph(
+        branch_free,
+        .alpha8,
+        .{ .width = 1, .height = 1 },
+        1,
+        &bytes,
+    );
+    try std.testing.expect(free.resource.resource.isShared());
+    branch_producer.commitUpdate();
 }
 
 test "capacity cohorts, total pane bound, padded rows and batch bound are explicit" {

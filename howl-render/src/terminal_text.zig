@@ -109,7 +109,9 @@ pub const GeneratedGlyphKey = struct {
     height_px: u16,
     /// Places the full-cell mask relative to the ordinary baseline.
     baseline_px: u16,
-    /// Qualifies exactly box glyphs and metric-sensitive Powerline rasters.
+    /// Qualifies metric-sensitive generated rasters: box drawing, Powerline,
+    /// progress/spinner, and the metric-sensitive members of the branch-
+    /// drawing family. Metric-free generated members carry no stroke value.
     stroke: ?GeneratedStrokeIdentity,
 };
 
@@ -2149,6 +2151,22 @@ fn generatedRaster(allocator: std.mem.Allocator, key: GeneratedGlyphKey) RasterE
                 stroke.sizing,
             );
         },
+        .branch => if (key.stroke) |stroke|
+            try generated.rasterizeBranch(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+                stroke.config,
+                stroke.sizing,
+            )
+        else
+            try generated.rasterize(
+                pixels,
+                key.width_px,
+                key.height_px,
+                key.codepoint,
+            ),
         else => try generated.rasterize(
             pixels,
             key.width_px,
@@ -2173,6 +2191,7 @@ fn requiresGeneratedStrokeIdentity(
     return family == .box or switch (codepoint) {
         0xe0b1, 0xe0b3, 0xe0b5, 0xe0b7, 0xe0b9, 0xe0bb, 0xe0bd, 0xe0bf => true,
         0xee00...0xee0b => true,
+        0xf5d0...0xf5ed, 0xf5ef...0xf60d => true,
         else => false,
     };
 }

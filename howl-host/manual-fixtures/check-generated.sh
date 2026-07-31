@@ -33,6 +33,7 @@ powerline = output("powerline.sh")
 box = output("generated-box.sh")
 computing = output("generated-computing.sh")
 progress = output("generated-progress.sh")
+branch = output("generated-branch.sh")
 fixtures = {
     "box": ("generated-box.sh", box),
     "block": ("generated-computing.sh", computing),
@@ -41,6 +42,7 @@ fixtures = {
     "octant": ("generated-computing.sh", computing),
     "powerline": ("powerline.sh", powerline),
     "progress": ("generated-progress.sh", progress),
+    "branch": ("generated-branch.sh", branch),
 }
 
 classified = subprocess.run(

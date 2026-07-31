@@ -30,6 +30,7 @@ test "generated families classify exact retained ranges and reject neighbors" {
         .{ @as(u32, 0x1cd00), generated.Glyph.octant },
         .{ @as(u32, 0xe0b0), generated.Glyph.powerline },
         .{ @as(u32, 0xee00), generated.Glyph.progress },
+        .{ @as(u32, 0xf5d0), generated.Glyph.branch },
     };
     inline for (cases) |case| try std.testing.expectEqual(
         case[1],
@@ -38,9 +39,10 @@ test "generated families classify exact retained ranges and reject neighbors" {
     try std.testing.expect(generated.classify(0x1fb3c) == null);
     try std.testing.expect(generated.classify(0xedff) == null);
     try std.testing.expect(generated.classify(0xee0c) == null);
-    try std.testing.expect(generated.classify(0xf5d0) == null);
+    try std.testing.expect(generated.classify(0xf5cf) == null);
+    try std.testing.expect(generated.classify(0xf60e) == null);
 
-    var family_counts = @as([7]u16, @splat(0));
+    var family_counts = @as([8]u16, @splat(0));
     var codepoint: u32 = 0;
     while (codepoint <= 0x10ffff) : (codepoint += 1) {
         const family = generated.classify(codepoint) orelse continue;
@@ -48,7 +50,7 @@ test "generated families classify exact retained ranges and reject neighbors" {
     }
     try std.testing.expectEqualSlices(
         u16,
-        &.{ 128, 32, 256, 60, 232, 18, 12 },
+        &.{ 128, 32, 256, 60, 232, 18, 12, 62 },
         &family_counts,
     );
 }
@@ -613,6 +615,67 @@ test "Fira progress invalid metrics and output reject transactionally" {
     try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
 }
 
+test "branch family matches pinned Kitty asymmetric receipts" {
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 768, .denominator = 5 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const cases = [_]struct { codepoint: u32, hash: u64 }{
+        .{ .codepoint = 0xf5d0, .hash = 0x3318920c2eedcf0f },
+        .{ .codepoint = 0xf5d6, .hash = 0xac89c8d589884605 },
+        .{ .codepoint = 0xf5ef, .hash = 0xdb913ba1bbae34bb },
+        .{ .codepoint = 0xf60d, .hash = 0xa617f6b0738a81da },
+    };
+    var pixels: [13 * 20]u8 = undefined;
+    for (cases) |case| {
+        try generated.rasterizeBranch(
+            &pixels,
+            13,
+            20,
+            case.codepoint,
+            config,
+            .{},
+        );
+        try std.testing.expectEqual(case.hash, fnv64(&pixels));
+    }
+    try generated.rasterize(&pixels, 13, 20, 0xf5ee);
+    try std.testing.expectEqual(@as(u64, 0x53210417387cde87), fnv64(&pixels));
+}
+
+test "branch identity and geometry failures preserve output" {
+    var pixels: [8 * 20]u8 = @splat(0xa5);
+    const config = generated.BoxDrawingConfig{
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterize(&pixels, 8, 20, 0xf5d0),
+    );
+    try std.testing.expectError(
+        error.UnsupportedGlyph,
+        generated.rasterizeBranch(&pixels, 8, 20, 0xf5ee, config, .{}),
+    );
+    try std.testing.expectError(
+        error.BufferTooSmall,
+        generated.rasterizeBranch(
+            pixels[0 .. pixels.len - 1],
+            8,
+            20,
+            0xf5d0,
+            config,
+            .{},
+        ),
+    );
+    var invalid = config;
+    invalid.dpi_x.denominator = 0;
+    try std.testing.expectError(
+        error.InvalidMetrics,
+        generated.rasterizeBranch(&pixels, 8, 20, 0xf5d0, invalid, .{}),
+    );
+    try std.testing.expect(std.mem.allEqual(u8, &pixels, 0xa5));
+}
+
 const Edges = struct {
     left: u16,
     right: u16,
@@ -738,5 +801,20 @@ fn rasterizeTest(
             config,
             .{},
         );
+    if (family == .branch and codepoint != 0xf5ee)
+        return generated.rasterizeBranch(
+            pixels,
+            width,
+            height,
+            codepoint,
+            config,
+            .{},
+        );
     return generated.rasterize(pixels, width, height, codepoint);
+}
+
+fn fnv64(bytes: []const u8) u64 {
+    var hash: u64 = 0xcbf29ce484222325;
+    for (bytes) |byte| hash = (hash ^ byte) *% 0x100000001b3;
+    return hash;
 }
