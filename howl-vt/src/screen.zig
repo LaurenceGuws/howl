@@ -5808,12 +5808,16 @@ const ScreenSemanticCursor = struct {
         self.* = init(default_style);
     }
 
-    /// Returns position and pending wrap to the alternate-screen origin.
+    /// Returns the cursor position and style to the alternate-screen origin;
+    /// the enclosing Screen owns pending-wrap reset.
     fn resetForAltEntry(self: *ScreenSemanticCursor) void {
         self.row = 0;
         self.col = 0;
-        self.effective_shape = .none;
-        self.blink_intent = true;
+        // Alternate-screen entry clears the program override, matching Kitty's
+        // NO_CURSOR_SHAPE sentinel while retaining the configured default for
+        // the next visible cursor publication.
+        self.effective_shape = self.default_style.shape;
+        self.blink_intent = self.default_style.blink;
         self.program_override_style = null;
         self.position_changed_by_client_at = 0;
     }

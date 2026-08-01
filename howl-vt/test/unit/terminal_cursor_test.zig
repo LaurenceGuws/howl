@@ -43,7 +43,7 @@ test "terminal cursor: alt screen enter resets alt cursor instead of copying pri
     try std.testing.expect(view(&terminal).is_alternate_screen);
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_row);
     try std.testing.expectEqual(@as(u16, 0), view(&terminal).cursor_col);
-    try std.testing.expectEqual(.none, view(&terminal).cursor_shape);
+    try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
 }
 
@@ -190,7 +190,7 @@ test "terminal cursor: presentation modes preserve exact bank and lifetime truth
     try terminal.consumeReplyBytes(terminal.replyBytes().len);
 
     try std.testing.expect((try terminal.feed("\x1b[?47h")).stateChanged());
-    try std.testing.expectEqual(.none, view(&terminal).cursor_shape);
+    try std.testing.expectEqual(.block, view(&terminal).cursor_shape);
     try std.testing.expect(view(&terminal).cursor_blink);
     try std.testing.expect(!view(&terminal).cursor_visible);
     try std.testing.expect((try terminal.feed("\x1b[?12l")).stateChanged());

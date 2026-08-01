@@ -9451,3 +9451,16 @@ test "Unicode wide occupancy remains isolated across alternate-screen transition
     try std.testing.expectEqual(@as(u8, 2), primary.cellInfoAt(0, 0).width);
     try std.testing.expectEqual(@as(u8, 1), primary.cellInfoAt(0, 1).x);
 }
+
+test "alternate-screen reset keeps default cursor shape for synchronized visibility" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+
+    const sequence = "\x1b[?1049h\x1b[?2026h\x1b[?25lX\x1b[?25h\x1b[?2026l";
+    try std.testing.expect((try terminal.feed(sequence)).stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expect(view.is_alternate_screen);
+    try std.testing.expect(view.cursor_visible);
+    try std.testing.expectEqual(Screen.CursorShape.block, view.cursor_shape);
+    try std.testing.expect(view.cursor_blink);
+}
