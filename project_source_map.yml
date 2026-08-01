@@ -5,6 +5,7 @@ accepted:
   cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
+  tools/json_logger.zig: reusable QAgent-derived bounded structured JSONL logger, disconnected from product package/runtime dependencies
   build.zig: development-only aliases that invoke surviving child build graphs
   build.zig.zon: workspace identity and surviving child source paths
   howl-vt/build.zig: VT package build and proof commands

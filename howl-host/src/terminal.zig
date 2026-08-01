@@ -101,6 +101,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     error{ StaleContainerRequest, ContainerReplyMismatch } ||
     terminal_render.Error || terminal_render.Content.RecoverError ||
     terminal_render.Content.ApplyError || terminal_images.Error ||
+    error{ArithmeticOverflow} ||
     font_owner.ResourceError || font_owner.BatchError ||
     handoff.CursorPublishError ||
     handoff.PublishError || terminal_pool.ReserveError ||
@@ -362,6 +363,14 @@ const Logical = struct {
     font_group: ?font_owner.GroupRef,
     font_released_hidden: bool = false,
     font_reveal_candidate: bool = false,
+    /// Exact semantic cursor target retained independently of focus. Composer
+    /// chooses the one focused source atomically; terminal owners always keep
+    /// complete cursor glyph-component eligibility and target facts.
+    cursor_target: handoff.CursorTarget,
+    /// Overall VT semantic sequence at which `cursor_target` was accepted.
+    cursor_target_terminal_sequence: u64,
+    /// Host-local high-water revision for changes to `cursor_target` only.
+    cursor_target_revision: u64,
     ligature_mode: render.terminal.LigatureMode = .never,
     content: render.terminal.Content,
     visual: *VisualState,
@@ -380,7 +389,6 @@ const Logical = struct {
     dirty: bool = true,
     last_published_revision: render.canvas.ProducerRevision = @fromBackingInt(0),
     last_published_geometry: ?terminal_render.Content.Geometry = null,
-
     /// Constructs and starts one shell owner transactionally.
     fn init(
         allocator: std.mem.Allocator,
@@ -421,6 +429,7 @@ const Logical = struct {
         visual.* = try VisualState.init(allocator, grid.rows, grid.cols);
         errdefer visual.deinit();
         try visual.project(&machine, &content);
+        const initial_cursor_target = cursorTarget(&machine);
         return .{
             .allocator = allocator,
             .pane = pane,
@@ -434,6 +443,9 @@ const Logical = struct {
             .pane_pixels = pane_pixels,
             .geometry = try paneGeometry(pane_pixels, fonts),
             .font_state = font_state,
+            .cursor_target = initial_cursor_target,
+            .cursor_target_terminal_sequence = machine.semanticSequence(),
+            .cursor_target_revision = 1,
         };
     }
 
@@ -588,16 +600,22 @@ const Logical = struct {
     }
 
     fn routeMutation(self: *Logical, summary: vt.Terminal.FeedSummary) handoff.CursorPublishError!void {
-        if (summary.mutations.cursor) {
-            self.publishCursorTarget(summary) catch |failure| {
+        const cursor_changed = self.refreshCursorTarget();
+        if (summary.mutations.cursor and cursor_changed) {
+            self.publishCursorTarget() catch |failure| {
                 switch (failure) {
                     error.LifecycleStale,
-                    error.CursorRevisionStale,
                     error.UnknownPane,
                     error.RetiredPane,
                     error.SourceStale,
                     => {
                         if (!summary.mutations.cursorOnly()) self.dirty = true;
+                    },
+                    error.CursorRevisionStale => {
+                        // A concurrent pooled drain rejected the new target
+                        // before acceptance. Keep the exact target pending in
+                        // the next ordinary cursor-free retry.
+                        self.dirty = true;
                     },
                     else => {
                         if (!summary.mutations.cursorOnly()) self.dirty = true;
@@ -609,51 +627,40 @@ const Logical = struct {
         if (summary.stateChanged() and !summary.mutations.cursorOnly()) self.dirty = true;
     }
 
-    fn publishCursorTarget(
-        self: *Logical,
-        summary: vt.Terminal.FeedSummary,
-    ) handoff.CursorPublishError!void {
-        if (!summary.mutations.cursor) return;
+    fn publishCursorTarget(self: *Logical) handoff.CursorPublishError!void {
         const pooled = switch (self.transfer) {
             .pooled => |value| value,
             .dedicated => return,
         };
-        const view = self.machine.semanticView(0);
-        const presentation = self.machine.presentation();
-        const cursor_color: vt.Terminal.Rgb = presentation.cursor orelse
-            presentation.foreground;
-        const text_color: vt.Terminal.Rgb = presentation.cursor_text orelse
-            presentation.background;
         const maybe_identity = pooled.boundary.cursorPublicationIdentity(
             self.pane,
             pooled.member.source_id,
         ) catch |failure| return failure;
-        const identity = maybe_identity orelse return error.LifecycleStale;
-        try pooled.boundary.publishCursor(
-            .{
-                .pane = self.pane,
-                .source = pooled.member.source_id,
-                .terminal_sequence = self.machine.semanticSequence(),
-                .cursor_revision = self.machine.semanticSequence(),
-                .visible_set_revision = identity.visible_set_revision,
-                .lifecycle_revision = identity.lifecycle_revision,
-                .target = .{
-                    .row = view.cursor_row,
-                    .col = view.cursor_col,
-                    .visible = view.cursor_visible,
-                    .shape = switch (view.cursor_shape) {
-                        .block => .block,
-                        .underline => .underline,
-                        .bar => .bar,
-                        .none => .none,
-                    },
-                    .blink = view.cursor_blink,
-                    .blink_fast = false,
-                    .cursor_color = .{ .r = cursor_color.r, .g = cursor_color.g, .b = cursor_color.b, .a = cursor_color.a },
-                    .text_color = .{ .r = text_color.r, .g = text_color.g, .b = text_color.b, .a = text_color.a },
-                },
-            },
-        );
+        const identity = maybe_identity orelse {
+            return error.LifecycleStale;
+        };
+        try pooled.boundary.publishCursor(.{
+            .pane = self.pane,
+            .source = pooled.member.source_id,
+            .terminal_sequence = self.cursor_target_terminal_sequence,
+            .cursor_revision = self.cursor_target_revision,
+            .visible_set_revision = identity.visible_set_revision,
+            .lifecycle_revision = identity.lifecycle_revision,
+            .target = self.cursor_target,
+        });
+    }
+
+    /// Compares complete accepted cursor facts after each VT feed. The
+    /// revision advances only when the target changes, while ordinary text
+    /// mutations retain the target's original terminal sequence.
+    fn refreshCursorTarget(self: *Logical) bool {
+        const target = cursorTarget(&self.machine);
+        if (std.meta.eql(target, self.cursor_target)) return false;
+        self.cursor_target = target;
+        self.cursor_target_terminal_sequence = self.machine.semanticSequence();
+        self.cursor_target_revision = std.math.add(u64, self.cursor_target_revision, 1) catch
+            @panic("cursor target revision exhausted");
+        return true;
     }
 
     fn publishIfDirty(
@@ -682,11 +689,25 @@ const Logical = struct {
         ) catch return false;
         if (@backingInt(accepted) != 0)
             try shared_fonts.observeAccepted(pooled.member.source_id, accepted);
-        const token = pooled.boundary.reserveUpdate(pooled.member) catch |failure| switch (failure) {
+        const reserved = pooled.boundary.reserveUpdateRecovering(pooled.member) catch |failure| switch (failure) {
             error.Busy, error.NoCapacity, error.GroupPriority => return false,
             else => return failure,
         };
-        return self.publishReservedPooled(shared_fonts, pooled, token, work);
+        if (reserved.discarded) |discarded| {
+            if (self.font_group != null) {
+                const identity = font_owner.BatchIdentity{
+                    .reservation_id = discarded.reservation_id,
+                    .source = discarded.source,
+                    .producer_revision = discarded.producer_revision,
+                };
+                shared_fonts.cancelBatchAfterDiscard(identity) catch |failure| {
+                    pooled.boundary.cancelUpdate(reserved.token) catch
+                        @panic("discarded ready reservation cleanup failed");
+                    return failure;
+                };
+            }
+        }
+        return self.publishReservedPooled(shared_fonts, pooled, reserved.token, work, null);
     }
 
     fn publishReservedPooled(
@@ -695,6 +716,7 @@ const Logical = struct {
         pooled: PooledTransfer,
         token: terminal_pool.Token,
         work: *render.terminal.Content.Work,
+        visible_set_revision: ?u64,
     ) ServiceError!bool {
         // Close may legitimately move the Boundary entry to closing after
         // reservation and before publication. That exact Stale result cancels
@@ -731,11 +753,20 @@ const Logical = struct {
         else
             null;
         defer if (producer) |*value| value.deinit();
-        const update = self.content.takeUpdate(
+        // A visible-set replacement may clear the outgoing Composer source
+        // in the same transaction that introduces this update. The shared
+        // font owner can still report the identity as accepted because the
+        // outgoing pane retains a producer reference, so require the incoming
+        // candidate to carry its declaration bytes explicitly.
+        if (visible_set_revision != null)
+            if (producer) |*value| value.requireDeclarations();
+        var update = self.content.takeUpdate(
             work,
             self.visual.scalarBaseline(),
             self.geometry,
-            .{ .ligature_mode = self.ligature_mode },
+            .{
+                .ligature_mode = self.ligature_mode,
+            },
             if (producer) |*value| .{ .shared = value } else .local,
         ) catch |failure| {
             switch (failure) {
@@ -749,7 +780,61 @@ const Logical = struct {
                 else => return failure,
             }
         };
+        // takeUpdate() has synchronously committed Content ownership. Any
+        // later identity or pool failure must leave the next ordinary
+        // publication responsible for complete recovery.
         update_consumed = true;
+        const maybe_identity = (if (visible_set_revision) |revision|
+            pooled.boundary.cursorPublicationIdentityForVisibleSet(
+                self.pane,
+                pooled.member.source_id,
+                revision,
+            )
+        else
+            pooled.boundary.cursorPublicationIdentity(
+                self.pane,
+                pooled.member.source_id,
+            )) catch |failure| switch (failure) {
+            error.LifecycleStale,
+            error.CursorRevisionStale,
+            error.UnknownPane,
+            error.SourceStale,
+            => return false,
+            error.RetiredPane => null,
+            else => return failure,
+        };
+        if (maybe_identity) |identity| {
+            const target = self.cursor_target;
+            update.cursor_binding = .{
+                .pane = @backingInt(self.pane),
+                .source = pooled.member.source_id,
+                .terminal_sequence = self.cursor_target_terminal_sequence,
+                .cursor_revision = self.cursor_target_revision,
+                .visible_set_revision = identity.visible_set_revision,
+                .lifecycle_revision = @backingInt(identity.lifecycle_revision),
+                .rect = try cursorRect(target, self.geometry),
+                .clip = self.geometry.clip,
+                .shape = switch (target.shape) {
+                    .block => .block,
+                    .underline => .underline,
+                    .bar => .bar,
+                    .none => .none,
+                },
+                .color = .{
+                    .r = target.cursor_color.r,
+                    .g = target.cursor_color.g,
+                    .b = target.cursor_color.b,
+                    .a = target.cursor_color.a,
+                },
+                .text_color = .{
+                    .r = target.text_color.r,
+                    .g = target.text_color.g,
+                    .b = target.text_color.b,
+                    .a = target.text_color.a,
+                },
+                .visible = target.visible and target.shape != .none,
+            };
+        }
         const batch_identity = font_owner.BatchIdentity{
             .reservation_id = token.reservation_id,
             .source = token.source_id,
@@ -819,7 +904,9 @@ const Logical = struct {
             work,
             self.visual.scalarBaseline(),
             self.geometry,
-            .{ .ligature_mode = self.ligature_mode },
+            .{
+                .ligature_mode = self.ligature_mode,
+            },
             .local,
         ) catch |failure| switch (failure) {
             error.CommandLimit,
@@ -1653,6 +1740,7 @@ const Runtime = struct {
                 pooled,
                 token,
                 &self.work,
+                request.revision,
             ))
                 return false;
             owner.dirty = false;
@@ -2471,6 +2559,95 @@ test "pooled cursor route publishes inbox without pool or content work" {
     try std.testing.expect(owner.dirty);
 }
 
+test "ready supersession releases every runtime font batch before replacement" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 16,
+        .retained_resources = 1024,
+        .retained_commands = admitted_commands,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 16,
+        .candidate_resources = 1024,
+        .candidate_commands = admitted_commands,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+
+    var panes: [16]render.chrome.PaneId = undefined;
+    var sources: [16]render.canvas.SourceId = undefined;
+    var members: [16]terminal_pool.Member = undefined;
+    for (0..16) |index| {
+        panes[index] = @fromBackingInt(@intCast(1000 + index));
+        sources[index] = try composer.registerSource();
+        const pixels = try testPixels(runtime.fonts, 8, 2);
+        try boundary.register(panes[index], sources[index], pixels);
+        const lifecycle = boundary.takeLifecycle().?;
+        try runtime.applyLifecycle(
+            &boundary,
+            try testAdmittedLifecycle(&runtime, lifecycle),
+            "/bin/sh",
+        );
+        const owner_index = runtime.find(panes[index]).?;
+        const owner = &runtime.owners[owner_index].?;
+        members[index] = owner.transfer.pooled.member;
+    }
+    boundary.visible_initialized = true;
+    boundary.visible_revision = 1;
+    boundary.visible_member_count = 16;
+    for (members, 0..) |member, index|
+        boundary.visible_members[index] = .{ .pane = member.pane_id, .source = member.source_id };
+
+    // Fill all sixteen immutable ready blocks and declaration batches first.
+    for (panes) |pane| {
+        const owner = &runtime.owners[runtime.find(pane).?].?;
+        try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    }
+    var ready_count: usize = 0;
+    for (boundary.entries) |entry| {
+        if (entry) |value| {
+            if (value.ready != null) ready_count += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 16), ready_count);
+
+    // A newer cursor target makes every ready binding discardable. Runtime
+    // must cancel the exact font batch before reconstructing its replacement.
+    for (panes, 0..) |pane, index| {
+        const owner = &runtime.owners[runtime.find(pane).?].?;
+        owner.cursor_target_revision = 2;
+        owner.cursor_target_terminal_sequence += 1;
+        const cursor_identity = (try boundary.cursorPublicationIdentity(
+            pane,
+            sources[index],
+        )).?;
+        try boundary.publishCursor(.{
+            .pane = pane,
+            .source = sources[index],
+            .terminal_sequence = owner.cursor_target_terminal_sequence,
+            .cursor_revision = owner.cursor_target_revision,
+            .visible_set_revision = 1,
+            .lifecycle_revision = cursor_identity.lifecycle_revision,
+            .target = owner.cursor_target,
+        });
+        owner.dirty = true;
+        try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    }
+    ready_count = 0;
+    for (boundary.entries) |entry| {
+        if (entry) |value| {
+            if (value.ready != null) ready_count += 1;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 16), ready_count);
+
+    const drainage = try boundary.drainReady(&composer);
+    try std.testing.expectEqual(@as(usize, 16), drainage.accepted);
+    try runtime.reconcileAcceptedBatches(&boundary);
+}
+
 test "all consequence variants are exhaustively classified without consumption" {
     comptime {
         const fields = @typeInfo(vt.Terminal.Consequence).@"union".field_names;
@@ -2689,11 +2866,8 @@ test "hostile admitted command pressure remains recoverable and retryable" {
         @memcpy(transcript[index * 6 ..][0..6], sequence);
     }
     try std.testing.expect((try owner.machine.feed(transcript)).stateChanged());
-    try std.testing.expect(!try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(!try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try slot.reserve();
-    slot.cancelReserved();
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expect(!owner.dirty);
 }
 
 test "close racing an occupied slot retries and retires exactly once" {
@@ -2914,6 +3088,7 @@ test "consumed publication failure releases reservation and forces recovery" {
             pooled,
             token,
             &runtime.work,
+            null,
         ),
     );
     try std.testing.expect(!owner.visual.initialized);
@@ -3597,6 +3772,131 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         &runtime.shared_fonts,
         &runtime.work,
     )));
+}
+
+test "visible-set replacement redeclares shared resources cleared with outgoing source" {
+    var boundary = try handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer boundary.deinit();
+    var runtime = try Runtime.initTest(
+        std.testing.allocator,
+        facts.symbol_font_path,
+    );
+    defer runtime.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 256,
+        .retained_commands = 8192,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 2,
+        .candidate_resources = 256,
+        .candidate_commands = 8192,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+
+    const first_pane: render.chrome.PaneId = @fromBackingInt(281);
+    const first_source = try composer.registerSource();
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(first_pane, first_source, pixels);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const first_member = try boundary.activateTransfer(first_pane);
+    try runtime.add(
+        first_pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = first_member } },
+    );
+
+    const request = handoff.FontRequest{
+        .revision = 1,
+        .scale = .{
+            .revision = 1,
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        .policy = try handoff.FontPolicy.init(16.0),
+    };
+    try runtime.preflightFontRequest(request);
+    try std.testing.expect(try runtime.resizePointFonts(&boundary, request));
+    const first = &runtime.owners[runtime.find(first_pane).?].?;
+    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
+    first.dirty = true;
+
+    try boundary.publishVisibleSet(1, &.{.{ .pane = first_pane, .source = first_source }});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try boundary.claimVisibleSet(1);
+    const first_composition = render.canvas.Composer.Composition{
+        .surface = .{ .width = pixels.width, .height = pixels.height },
+        .sources = &.{.{
+            .source = first_source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = pixels.width, .height = pixels.height },
+        }},
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            first_composition,
+            1,
+            .ordinary,
+        )).accepted,
+    );
+    try runtime.reconcileAcceptedVisibility(&boundary);
+
+    // The second pane acquires the same active group while the first source
+    // still owns the shared resources. Its first visible update therefore
+    // receives accepted identities but must carry declarations because the
+    // visible-set transaction clears the outgoing first source.
+    const second_pane: render.chrome.PaneId = @fromBackingInt(282);
+    const second_source = try composer.registerSource();
+    try boundary.register(second_pane, second_source, pixels);
+    try std.testing.expect(
+        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
+    );
+    const second_member = try boundary.activateTransfer(second_pane);
+    try runtime.add(
+        second_pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = second_member } },
+    );
+    const second = &runtime.owners[runtime.find(second_pane).?].?;
+    try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
+    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
+    second.dirty = true;
+
+    try boundary.publishVisibleSet(2, &.{.{ .pane = second_pane, .source = second_source }});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try boundary.claimVisibleSet(2);
+    const second_composition = render.canvas.Composer.Composition{
+        .surface = .{ .width = pixels.width, .height = pixels.height },
+        .sources = &.{.{
+            .source = second_source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = pixels.width, .height = pixels.height },
+        }},
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            second_composition,
+            2,
+            .ordinary,
+        )).accepted,
+    );
+    try runtime.reconcileAcceptedVisibility(&boundary);
 }
 
 test "factual admission publishes generated joins and Powerline through shared pool ownership" {
@@ -4461,6 +4761,66 @@ fn paneGeometry(
         .strike_y = decoration.strike_y,
         .strike_height = decoration.strike_height,
     };
+}
+
+fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
+    const view = machine.semanticView(0);
+    const presentation = machine.presentation();
+    const cursor_color: vt.Terminal.Rgb = presentation.cursor orelse
+        presentation.foreground;
+    const text_color: vt.Terminal.Rgb = presentation.cursor_text orelse
+        presentation.background;
+    return .{
+        .row = view.cursor_row,
+        .col = view.cursor_col,
+        .visible = view.cursor_visible,
+        .shape = switch (view.cursor_shape) {
+            .block => .block,
+            .underline => .underline,
+            .bar => .bar,
+            .none => .none,
+        },
+        .blink = view.cursor_blink,
+        .blink_fast = false,
+        .cursor_color = .{
+            .r = cursor_color.r,
+            .g = cursor_color.g,
+            .b = cursor_color.b,
+            .a = cursor_color.a,
+        },
+        .text_color = .{
+            .r = text_color.r,
+            .g = text_color.g,
+            .b = text_color.b,
+            .a = text_color.a,
+        },
+    };
+}
+
+fn cursorRect(
+    cursor: handoff.CursorTarget,
+    geometry: terminal_render.Content.Geometry,
+) error{ArithmeticOverflow}!render.canvas.Rect {
+    const x = std.math.mul(i32, @intCast(cursor.col), @intCast(geometry.metrics.width_px)) catch
+        return error.ArithmeticOverflow;
+    const y = std.math.mul(i32, @intCast(cursor.row), @intCast(geometry.metrics.height_px)) catch
+        return error.ArithmeticOverflow;
+    var result = render.canvas.Rect{
+        .x = std.math.add(i32, x, geometry.x) catch return error.ArithmeticOverflow,
+        .y = std.math.add(i32, y, geometry.y) catch return error.ArithmeticOverflow,
+        .width = geometry.metrics.width_px,
+        .height = geometry.metrics.height_px,
+    };
+    switch (cursor.shape) {
+        .block, .none => {},
+        .underline => {
+            result.y = std.math.add(i32, result.y, result.height - 1) catch
+                return error.ArithmeticOverflow;
+            result.height = 1;
+        },
+        .bar => result.width = 1,
+    }
+    return result;
 }
 
 fn testPixels(

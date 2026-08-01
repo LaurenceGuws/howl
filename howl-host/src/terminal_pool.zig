@@ -116,7 +116,10 @@ const BlockOwner = struct {
     reservation_id: u64,
     upload_count: usize,
     removal_count: usize,
+    /// Counts the complete cursor-free command list in the command bank.
     command_count: usize,
+    /// Binds the separately composed cursor overlay to its semantic publication.
+    cursor_binding: ?canvas.CursorBinding,
 };
 
 const PoolMeta = struct {
@@ -278,6 +281,17 @@ pub const Pool = struct {
         );
     }
 
+    /// Preflights the non-member conditions required to reserve the exact
+    /// descriptor block immediately after a ready supersession is released.
+    /// Boundary calls this while its identity lock is held so discarding a
+    /// ready block cannot strand the Runtime's recovery identity behind a
+    /// predictable pool admission failure.
+    pub fn recoveryReservePossible(self: *Pool) ReserveError!void {
+        if (groupPhase(self.metaPtr()) != .idle) return error.GroupPriority;
+        const next = self.nextReservationId(1) catch return error.ReservationExhausted;
+        std.debug.assert(next != 0);
+    }
+
     /// Reserves one complete validated group or leaves all pool bytes unchanged.
     pub fn reserveGroup(
         self: *Pool,
@@ -420,9 +434,10 @@ pub const Pool = struct {
         token: Token,
         update: canvas.ProducerUpdate,
     ) PublishError!Token {
+        const command_count = update.commands.len;
         if (update.uploads.len > resource_limit or
             update.removals.len > resource_limit or
-            update.commands.len > command_limit)
+            command_count > command_limit)
             return error.InvalidCounts;
         const descriptor = try self.claimDescriptor(token);
         const owner = try self.claimBlock(token, .reserved);
@@ -460,6 +475,7 @@ pub const Pool = struct {
         owner.upload_count = update.uploads.len;
         owner.removal_count = update.removals.len;
         owner.command_count = update.commands.len;
+        owner.cursor_binding = update.cursor_binding;
         descriptor.revision = update.revision;
         descriptor.upload_count = update.uploads.len;
         descriptor.removal_count = update.removals.len;
@@ -502,6 +518,7 @@ pub const Pool = struct {
         owner.upload_count = upload_count;
         owner.removal_count = removal_count;
         owner.command_count = command_count;
+        owner.cursor_binding = null;
         descriptor.revision = revision;
         descriptor.upload_count = upload_count;
         descriptor.removal_count = removal_count;
@@ -538,6 +555,35 @@ pub const Pool = struct {
             return error.Stale;
     }
 
+    /// Borrows one ready update for ownership validation without changing its
+    /// producer-owned state. The borrow ends when the caller discards or
+    /// drains the exact token.
+    pub fn readyUpdate(
+        self: *Pool,
+        token: Token,
+    ) TransitionError!canvas.ProducerUpdate {
+        const owner = try self.claimBlock(token, .ready);
+        if (owner.revision != token.producer_revision)
+            return error.Stale;
+        return .{
+            .revision = owner.revision,
+            .uploads = self.blockUploads(token.block_index)[0..owner.upload_count],
+            .removals = self.blockRemovals(token.block_index)[0..owner.removal_count],
+            .commands = self.blockCommands(token.block_index)[0..owner.command_count],
+            .cursor_binding = owner.cursor_binding,
+        };
+    }
+
+    /// Releases one ready update that a newer semantic target superseded
+    /// before Composer acceptance.
+    pub fn discardReady(
+        self: *Pool,
+        token: Token,
+    ) TransitionError!void {
+        try self.beginDrain(token);
+        try self.completeDrain(token);
+    }
+
     /// Borrows the immutable canonical update held by Renderer drainage.
     ///
     /// The slices remain valid until `retryDrain` or `completeDrain` transfers
@@ -554,6 +600,7 @@ pub const Pool = struct {
             .uploads = self.blockUploads(token.block_index)[0..owner.upload_count],
             .removals = self.blockRemovals(token.block_index)[0..owner.removal_count],
             .commands = self.blockCommands(token.block_index)[0..owner.command_count],
+            .cursor_binding = owner.cursor_binding,
         };
     }
 
@@ -688,6 +735,7 @@ pub const Pool = struct {
         owner.upload_count = 0;
         owner.removal_count = 0;
         owner.command_count = 0;
+        owner.cursor_binding = null;
         descriptor.block_index = block_index;
         descriptor.candidate_revision = candidate_revision;
         owner.state.store(@backingInt(BlockState.reserved), .release);
@@ -878,6 +926,10 @@ fn validateClaimedBlock(
         owner.candidate_revision != token.candidate_revision or
         owner.reservation_id != token.reservation_id)
         return error.Stale;
+    if (owner.command_count > command_limit) return error.Stale;
+    if (owner.cursor_binding) |binding|
+        if (binding.source != token.source_id or
+            binding.pane != @backingInt(token.pane_id)) return error.Stale;
 }
 
 fn blockState(owner: *const BlockOwner) BlockState {
@@ -900,6 +952,7 @@ fn releaseBlock(owner: *BlockOwner) void {
     owner.upload_count = 0;
     owner.removal_count = 0;
     owner.command_count = 0;
+    owner.cursor_binding = null;
     owner.state.store(@backingInt(BlockState.free), .release);
 }
 
@@ -1042,17 +1095,17 @@ test "fixed pool layout matches checked executable receipt" {
     const block = try calculateBlockLayout();
     const layout = try calculateLayout();
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(Descriptor));
-    try std.testing.expectEqual(@as(usize, 72), @sizeOf(BlockOwner));
+    try std.testing.expectEqual(@as(usize, 176), @sizeOf(BlockOwner));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(PoolMeta));
-    try std.testing.expectEqual(@as(usize, 72), block.uploads_offset);
-    try std.testing.expectEqual(@as(usize, 57_416), block.removals_offset);
-    try std.testing.expectEqual(@as(usize, 73_800), block.commands_offset);
-    try std.testing.expectEqual(@as(usize, 2_433_096), block.pixels_offset);
-    try std.testing.expectEqual(@as(usize, 6_627_400), block.total);
+    try std.testing.expectEqual(@as(usize, 176), block.uploads_offset);
+    try std.testing.expectEqual(@as(usize, 57_520), block.removals_offset);
+    try std.testing.expectEqual(@as(usize, 73_904), block.commands_offset);
+    try std.testing.expectEqual(@as(usize, 2_433_200), block.pixels_offset);
+    try std.testing.expectEqual(@as(usize, 6_627_504), block.total);
     try std.testing.expectEqual(@as(usize, 0), layout.metadata_offset);
     try std.testing.expectEqual(@as(usize, 32), layout.descriptors_offset);
     try std.testing.expectEqual(@as(usize, 4_128), layout.blocks_offset);
-    try std.testing.expectEqual(@as(usize, 106_042_528), layout.total);
+    try std.testing.expectEqual(@as(usize, 106_044_192), layout.total);
     try std.testing.expectError(
         error.ArithmeticOverflow,
         checkedAdd(std.math.maxInt(usize), 1),

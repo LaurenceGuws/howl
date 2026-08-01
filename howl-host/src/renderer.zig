@@ -521,9 +521,8 @@ fn runFallible(
         const local_redraw_retry_turn = local_redraw_retry_pending;
         local_redraw_retry_pending = false;
         if (!local_redraw_retry_turn) {
-            terminal_redraw_pending =
-                (try waitRenderWakeBlocking(boundary, terminals)) or
-                terminal_redraw_pending;
+            const terminal_woke = try waitRenderWakeBlocking(boundary, terminals);
+            terminal_redraw_pending = terminal_woke or terminal_redraw_pending;
         }
         const terminal_status = terminals.status();
         if (terminal_status.stopped)
@@ -1501,7 +1500,14 @@ fn buildCanvasPlan(
             )) and
             work.terminals.visibleSetStatus(revision) == .ready)
         {
-            try work.terminals.claimVisibleSet(revision);
+            work.terminals.claimVisibleSet(revision) catch |failure| switch (failure) {
+                // The readiness check and exclusive claim are separate
+                // locked observations. A terminal retirement or newer
+                // producer can invalidate the request between them; keep
+                // the accepted composition and retry the candidate instead
+                // of turning that expected race into Renderer failure.
+                error.Stale => return .blocked,
+            };
             claimed_visible_revision = revision;
         }
     }
@@ -1531,6 +1537,17 @@ fn buildCanvasPlan(
         .clip = .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
     };
     placement_count += 1;
+    const focused_source = blk: {
+        const focused_pane = topology.focusedPaneId();
+        if (work.terminals.sourceFor(focused_pane)) |source|
+            if (placementContainsSource(terminal_placements, source)) break :blk source;
+        if (bootstrap) |value| {
+            if (value.pane == focused_pane and
+                placementContainsSource(terminal_placements, value.source))
+                break :blk value.source;
+        }
+        break :blk null;
+    };
     if (!retrying_chrome and chrome_change != null) {
         var retry = ChromeRetry{
             .update = chrome_change.?.update,
@@ -1557,6 +1574,7 @@ fn buildCanvasPlan(
                 .{
                     .surface = surface,
                     .sources = placements[0..placement_count],
+                    .focused_source = focused_source,
                 },
                 claimed_visible_revision,
                 if (bootstrap != null and !retry_superseded)
@@ -1568,6 +1586,7 @@ fn buildCanvasPlan(
                 error.CommandLimit,
                 error.PixelLimit,
                 error.CompositionLimit,
+                error.Stale,
                 => blk: {
                     if (claimed_visible_revision) |revision| {
                         try work.terminals.releaseVisibleSetClaim(revision);
@@ -1982,7 +2001,8 @@ fn waitRenderWakeBlocking(
     while (true) {
         const result = c.poll(&descriptors, descriptors.len, -1);
         if (result > 0) {
-            if (descriptors[0].revents & c.POLLIN != 0)
+            const boundary_woke = descriptors[0].revents & c.POLLIN != 0;
+            if (boundary_woke)
                 try boundary.drainRenderWake();
             const terminal_dirty = descriptors[1].revents & c.POLLIN != 0;
             if (terminal_dirty) try terminals.drainRendererWake();
@@ -2826,7 +2846,7 @@ test "one complete terminal and Chrome resource set fits every runtime bank" {
 }
 
 test "borrowed Chrome retry preserves one consumptive sparse update" {
-    try std.testing.expectEqual(@as(usize, 608), @sizeOf(ChromeRetry));
+    try std.testing.expectEqual(@as(usize, 712), @sizeOf(ChromeRetry));
     var content = try render_api.chrome.Content.init(
         std.testing.allocator,
         .{

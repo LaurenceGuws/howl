@@ -314,6 +314,9 @@ pub const Input = union(enum) {
         resource: ResourceView,
         /// Colors the sampled alpha mask.
         color: Color,
+        /// Marks a terminal glyph component eligible for a later block
+        /// cursor recolor. Decorations and unrelated masks remain false.
+        cursor_component: bool = false,
     },
     /// Draws one retained RGBA region.
     rgba: struct {
@@ -340,8 +343,48 @@ pub const ProducerUpdate = struct {
     uploads: []const ResourceUpload,
     /// Borrows sparse exact-generation removals.
     removals: []const ResourceRemoval,
-    /// Borrows the complete ordered producer-local command list.
+    /// Borrows the complete ordered cursor-free producer-local base command
+    /// list. Cursor presentation is carried by `cursor_binding`.
     commands: []const Input,
+    /// Binds the overlay to the exact semantic publication which produced it.
+    /// The Host fills this identity before Pool admission; Render remains
+    /// backend-neutral and treats the fields as checked transaction facts.
+    cursor_binding: ?CursorBinding = null,
+};
+
+/// Selects one backend-neutral cursor overlay shape.
+pub const CursorShape = enum { block, underline, bar, none };
+
+/// Identifies one cursor overlay without importing terminal or lifecycle
+/// policy into the backend-neutral Canvas package.
+pub const CursorBinding = struct {
+    /// Globally issued pane identity, copied as an opaque nonzero value.
+    pane: u64,
+    /// Exact Composer source identity.
+    source: SourceId,
+    /// Terminal semantic sequence causally associated with this target.
+    terminal_sequence: u64,
+    /// Producer-issued cursor-target revision.
+    cursor_revision: u64,
+    /// Visible-set identity against which this binding was prepared.
+    visible_set_revision: u64,
+    /// Live lifecycle identity against which this binding was prepared.
+    lifecycle_revision: u64,
+    /// Exact cursor target rectangle in surface coordinates.
+    rect: Rect,
+    /// Exact surface-coordinate clip supplied by pane geometry.
+    clip: Rect,
+    /// Selects the one generic cursor overlay shape.
+    shape: CursorShape = .block,
+    /// Cursor background color.
+    color: Color = .{ .r = 0, .g = 0, .b = 0, .a = 255 },
+    /// Cursor text recolor used for intersecting glyph components.
+    text_color: Color = .{ .r = 255, .g = 255, .b = 255, .a = 255 },
+    /// Reports whether the target contributes presentation.
+    visible: bool,
+    /// Filled by Composer with the frame revision which accepted the pair.
+    /// Producers leave this zero during preflight.
+    frame_revision: u64 = 0,
 };
 
 /// Retains bounded producer state and derives complete backend-neutral frames.
@@ -436,6 +479,10 @@ pub const Composer = struct {
         surface: Size,
         /// Borrows the complete back-to-front visible source order.
         sources: []const Placement,
+        /// Selects the one source whose separately bound cursor overlay is
+        /// presented. Null preserves the local multi-source test graph where
+        /// cursor presentation is not selected by a Host topology.
+        focused_source: ?SourceId = null,
     };
 
     /// Borrows one complete replacement for one exact live source.
@@ -457,6 +504,11 @@ pub const Composer = struct {
         /// shared references while preserving registration, SourceId,
         /// producer-revision high-water, and local-identity high-water.
         hidden_source_clears: []const SourceId = &.{},
+        /// Rebinds retained visible cursor targets to the visible-set
+        /// revision committed with this composition. The target, lifecycle,
+        /// and terminal facts remain unchanged; only the composition
+        /// membership identity is advanced transactionally.
+        cursor_visible_set_revision: ?u64 = null,
         /// Supplies the complete prospective visible composition.
         composition: Composition,
     };
@@ -497,6 +549,7 @@ pub const Composer = struct {
         resource_count: usize = 0,
         command_start: usize = 0,
         command_count: usize = 0,
+        cursor_binding: ?CursorBinding = null,
         pixel_start: usize = 0,
         pixel_count: usize = 0,
         live: bool = true,
@@ -556,6 +609,7 @@ pub const Composer = struct {
     pixel_count: usize = 0,
     composition: []Placement,
     composition_count: usize = 0,
+    focused_source: ?SourceId = null,
     surface: Size = .{ .width = 1, .height = 1 },
     candidate_resources: []Resource,
     candidate_resource_count: usize = 0,
@@ -751,6 +805,7 @@ pub const Composer = struct {
             self.composition_count -= 1;
             self.frame_revision += 1;
         }
+        if (self.focused_source == source) self.focused_source = null;
     }
 
     /// Copies one strictly newer complete local-only producer state
@@ -763,6 +818,10 @@ pub const Composer = struct {
         update: ProducerUpdate,
     ) Composer.Error!void {
         if (updateContainsShared(update)) return error.InvalidIdentity;
+        if (update.cursor_binding) |binding| {
+            if (binding.source != source) return error.InvalidIdentity;
+            try validateCursorBinding(binding);
+        }
         const index = try self.sourceIndex(source);
         const old = self.sources[index];
         const revision = @backingInt(update.revision);
@@ -796,12 +855,17 @@ pub const Composer = struct {
                 );
             }
             visible_changed = !try self.visibleContributionEqual(old, placement);
+            if (!visible_changed and self.focused_source == source)
+                visible_changed = !cursorBindingsEqual(old.cursor_binding, update.cursor_binding);
         }
         if (visible_changed and self.frame_revision == std.math.maxInt(u64))
             return error.RevisionExhausted;
 
-        self.commitCandidate(index, revision);
-        if (visible_changed) self.frame_revision += 1;
+        self.commitCandidate(index, revision, update.cursor_binding);
+        if (visible_changed) {
+            self.frame_revision += 1;
+            self.refreshVisibleCursorBindings();
+        } else self.refreshVisibleCursorBindings();
     }
 
     /// Atomically replaces bounded complete sources, shared logical resources,
@@ -824,6 +888,7 @@ pub const Composer = struct {
         if (candidate.composition.sources.len > self.composition.len or
             candidate.composition.sources.len > candidate_placement_limit)
             return error.CompositionLimit;
+        try self.validateFocusedSource(candidate.composition);
         try self.validateCandidateAliases(candidate);
         if (candidate.composition.surface.width == 0 or
             candidate.composition.surface.height == 0)
@@ -842,6 +907,10 @@ pub const Composer = struct {
             const revision = @backingInt(change.update.revision);
             if (revision == 0 or revision <= old.revision)
                 return error.InvalidRevision;
+            if (change.update.cursor_binding) |binding| {
+                if (binding.source != change.source) return error.InvalidIdentity;
+                try validateCursorBinding(binding);
+            }
             try self.buildCandidate(old, change.update);
             prospective_resources = try replaceCount(
                 prospective_resources,
@@ -953,7 +1022,7 @@ pub const Composer = struct {
         ) or !placementsEqual(
             self.composition[0..self.composition_count],
             candidate.composition.sources,
-        );
+        ) or self.focused_source != candidate.composition.focused_source;
         if (!frame_changed) {
             for (self.source_plans[0..self.source_plan_count]) |plan| {
                 const placement_index = self.placementIndex(
@@ -974,6 +1043,15 @@ pub const Composer = struct {
                     frame_changed = true;
                     break;
                 }
+                if (self.focused_source == self.sources[plan.source_index].id and
+                    !cursorBindingsEqual(
+                        self.sources[plan.source_index].cursor_binding,
+                        candidate.changes[plan.change_index].update.cursor_binding,
+                    ))
+                {
+                    frame_changed = true;
+                    break;
+                }
             }
         }
         if (frame_changed and self.frame_revision == std.math.maxInt(u64))
@@ -988,7 +1066,11 @@ pub const Composer = struct {
         );
         self.composition_count = self.candidate_composition_count;
         self.surface = candidate.composition.surface;
-        if (frame_changed) self.frame_revision += 1;
+        self.focused_source = candidate.composition.focused_source;
+        if (frame_changed) {
+            self.frame_revision += 1;
+            self.refreshVisibleCursorBindings();
+        } else self.refreshVisibleCursorBindings();
     }
 
     /// Replaces the complete ordered visible composition transactionally.
@@ -1000,6 +1082,7 @@ pub const Composer = struct {
             return error.InvalidGeometry;
         if (value.sources.len > self.composition.len)
             return error.CompositionLimit;
+        try self.validateFocusedSource(value);
         for (value.sources, 0..) |placement, index| {
             const source_index = self.sourceIndex(placement.source) catch |err|
                 return err;
@@ -1019,6 +1102,7 @@ pub const Composer = struct {
         }
         if (std.meta.eql(self.surface, value.surface) and
             self.composition_count == value.sources.len and
+            self.focused_source == value.focused_source and
             placementsEqual(
                 self.composition[0..self.composition_count],
                 value.sources,
@@ -1029,7 +1113,23 @@ pub const Composer = struct {
         @memcpy(self.composition[0..value.sources.len], value.sources);
         self.composition_count = value.sources.len;
         self.surface = value.surface;
+        self.focused_source = value.focused_source;
         self.frame_revision += 1;
+        self.refreshVisibleCursorBindings();
+    }
+
+    /// Returns the accepted cursor binding for one live source.
+    ///
+    /// The optional result is absent when the source has not published a
+    /// cursor target or when it is no longer live. The returned value is a
+    /// copy; Composer retains the authoritative binding until the next
+    /// accepted source or composition transaction.
+    pub fn cursorBinding(
+        self: *const Composer,
+        source: SourceId,
+    ) ?CursorBinding {
+        const index = self.sourceIndex(source) catch return null;
+        return self.sources[index].cursor_binding;
     }
 
     /// Derives one complete frame against borrowed backend residency.
@@ -1088,6 +1188,34 @@ pub const Composer = struct {
         if (index >= self.source_count) return error.InvalidSource;
         if (!self.sources[index].live) return error.RetiredSource;
         return index;
+    }
+
+    fn validateFocusedSource(self: *const Composer, composition: Composition) Composer.Error!void {
+        const focused = composition.focused_source orelse return;
+        var found = false;
+        for (composition.sources) |placement| {
+            if (placement.source == focused) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) return error.InvalidSource;
+        const source_index = self.sourceIndex(focused) catch |failure|
+            return failure;
+        if (self.sources[source_index].id != focused)
+            return error.InvalidSource;
+    }
+
+    fn refreshVisibleCursorBindings(self: *Composer) void {
+        for (self.composition[0..self.composition_count]) |placement| {
+            const index = self.sourceIndex(placement.source) catch continue;
+            if (self.sources[index].cursor_binding) |*binding|
+                binding.frame_revision = self.frame_revision;
+        }
+    }
+
+    fn sourceCommands(self: *const Composer, source: Source) []const Input {
+        return self.commands[source.command_start .. source.command_start + source.command_count];
     }
 
     fn planForSource(self: *const Composer, source_index: usize) ?SourcePlan {
@@ -1599,8 +1727,10 @@ pub const Composer = struct {
             if (!source.live) continue;
             if (self.planIndexForSource(source_index)) |plan_index| {
                 const plan = self.source_plans[plan_index];
+                var binding: ?CursorBinding = null;
                 if (plan.kind == .change) {
                     const update = candidate.changes[plan.change_index].update;
+                    binding = update.cursor_binding;
                     @memcpy(
                         self.commands[plan.final_command_start .. plan.final_command_start + update.commands.len],
                         update.commands,
@@ -1612,6 +1742,7 @@ pub const Composer = struct {
                 source.resource_count = plan.resource_count;
                 source.command_start = plan.final_command_start;
                 source.command_count = plan.command_count;
+                source.cursor_binding = binding;
                 source.pixel_start = plan.final_pixel_start;
                 source.pixel_count = plan.pixel_count;
                 final_command_end = plan.final_command_start;
@@ -1623,6 +1754,14 @@ pub const Composer = struct {
                     self.commands[source.command_start .. source.command_start + source.command_count],
                 );
                 source.command_start = final_command_end;
+                if (candidate.cursor_visible_set_revision) |revision| {
+                    for (candidate.composition.sources) |placement| {
+                        if (placement.source != source.id) continue;
+                        if (source.cursor_binding) |*binding|
+                            binding.visible_set_revision = revision;
+                        break;
+                    }
+                }
             }
         }
         self.resource_count = self.resource_plan_count;
@@ -1884,7 +2023,12 @@ pub const Composer = struct {
         validateExtent(view.size, view.source) catch |err| return mapFactError(err);
     }
 
-    fn commitCandidate(self: *Composer, index: usize, revision: u64) void {
+    fn commitCandidate(
+        self: *Composer,
+        index: usize,
+        revision: u64,
+        cursor_binding: ?CursorBinding,
+    ) void {
         const old = self.sources[index];
         const resource_delta = signedDelta(
             self.candidate_resource_count,
@@ -1939,6 +2083,7 @@ pub const Composer = struct {
         self.sources[index].local_high_water = self.candidate_high_water;
         self.sources[index].resource_count = self.candidate_resource_count;
         self.sources[index].command_count = self.candidate_command_count;
+        self.sources[index].cursor_binding = cursor_binding;
         self.sources[index].pixel_count = self.candidate_pixel_count;
     }
 
@@ -1953,7 +2098,7 @@ pub const Composer = struct {
         self.candidate_command_count = new_commands;
         self.candidate_pixel_count = new_pixels;
         self.candidate_high_water = self.sources[index].local_high_water;
-        self.commitCandidate(index, self.sources[index].revision);
+        self.commitCandidate(index, self.sources[index].revision, null);
     }
 
     fn validateResidencies(
@@ -2060,11 +2205,16 @@ pub const Composer = struct {
             const source = self.sources[
                 @intCast(@backingInt(placement.source) - 1)
             ];
-            for (self.commands[source.command_start .. source.command_start + source.command_count]) |command| {
+            for (self.sourceCommands(source)) |command| {
                 if (try self.frameCommand(placement, command) != null)
                     commands_needed.* = std.math.add(usize, commands_needed.*, 1) catch
                         return error.ArithmeticOverflow;
             }
+            commands_needed.* = std.math.add(
+                usize,
+                commands_needed.*,
+                try self.cursorOverlayCount(source),
+            ) catch return error.ArithmeticOverflow;
             for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
                 if (!try self.resourceVisible(placement, source, resource.local))
                     continue;
@@ -2113,12 +2263,13 @@ pub const Composer = struct {
             const source = self.sources[
                 @intCast(@backingInt(placement.source) - 1)
             ];
-            for (self.commands[source.command_start .. source.command_start + source.command_count]) |command| {
+            for (self.sourceCommands(source)) |command| {
                 const output = (try self.frameCommand(placement, command)) orelse
                     continue;
                 buffers.commands[command_count.*] = output;
                 command_count.* += 1;
             }
+            try self.writeCursorOverlay(placement, source, buffers, command_count);
             for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
                 if (!try self.resourceVisible(placement, source, resource.local) or
                     residencyMatches(residency, source.id, resource))
@@ -2174,6 +2325,72 @@ pub const Composer = struct {
         input: Input,
     ) Composer.Error!?Command {
         return frameCommandAt(self.surface, placement, input);
+    }
+
+    fn cursorOverlayCount(
+        self: *const Composer,
+        source: Source,
+    ) Composer.Error!usize {
+        if (self.focused_source == null or self.focused_source.? != source.id)
+            return 0;
+        const binding = source.cursor_binding orelse return 0;
+        if (!binding.visible or binding.shape == .none) return 0;
+        var count: usize = 1;
+        if (binding.shape != .block) return count;
+        for (self.sourceCommands(source)) |command| {
+            switch (command) {
+                .alpha_mask => |value| {
+                    if (value.cursor_component and
+                        (try intersectRects(value.destination, binding.rect)) != null)
+                        count = std.math.add(usize, count, 1) catch
+                            return error.ArithmeticOverflow;
+                },
+                else => {},
+            }
+        }
+        return count;
+    }
+
+    fn writeCursorOverlay(
+        self: *const Composer,
+        placement: Placement,
+        source: Source,
+        buffers: FrameBuffers,
+        command_count: *usize,
+    ) Composer.Error!void {
+        if (self.focused_source == null or self.focused_source.? != source.id)
+            return;
+        const binding = source.cursor_binding orelse return;
+        if (!binding.visible or binding.shape == .none) return;
+        const background = Input{ .solid = .{
+            .rect = binding.rect,
+            .clip = binding.clip,
+            .color = binding.color,
+        } };
+        if (try self.frameCommand(placement, background)) |output| {
+            buffers.commands[command_count.*] = output;
+            command_count.* += 1;
+        }
+        if (binding.shape != .block) return;
+        for (self.sourceCommands(source)) |command| switch (command) {
+            .alpha_mask => |value| {
+                if (!value.cursor_component) continue;
+                const clip = (try intersectRects(value.clip, binding.clip)) orelse continue;
+                const cursor_clip = (try intersectRects(clip, binding.rect)) orelse continue;
+                const recolored = Input{ .alpha_mask = .{
+                    .destination = value.destination,
+                    .clip = cursor_clip,
+                    .resource = value.resource,
+                    .color = binding.text_color,
+                    .cursor_component = false,
+                } };
+                if (try self.frameCommand(placement, recolored)) |output| {
+                    buffers.commands[command_count.*] = output;
+                    command_count.* += 1;
+                }
+            },
+            else => {},
+        };
     }
 
     fn visibleContributionEqual(
@@ -2349,6 +2566,26 @@ fn validateComposerLimits(limits: Composer.Limits) Composer.Error!void {
         @sizeOf(Composer.Resource),
     );
     try validateAllocationSize(limits.candidate_commands, @sizeOf(Input));
+}
+
+fn validateCursorBinding(binding: CursorBinding) Composer.Error!void {
+    if (binding.pane == 0 or @backingInt(binding.source) == 0 or
+        binding.terminal_sequence == 0 or binding.cursor_revision == 0 or
+        binding.visible_set_revision == 0 or binding.lifecycle_revision == 0 or
+        binding.frame_revision != 0)
+        return error.InvalidIdentity;
+    try validateComposerRect(binding.rect);
+    try validateComposerRect(binding.clip);
+    if ((try intersectRects(binding.rect, binding.clip)) == null)
+        return error.InvalidGeometry;
+}
+
+fn cursorBindingsEqual(left: ?CursorBinding, right: ?CursorBinding) bool {
+    var a = left;
+    var b = right;
+    if (a) |*value| value.frame_revision = 0;
+    if (b) |*value| value.frame_revision = 0;
+    return std.meta.eql(a, b);
 }
 
 fn validateAllocationSize(count: usize, item_size: usize) Composer.Error!void {
@@ -3157,6 +3394,22 @@ fn clipped(rect: Rect, clip: Rect, surface: Size) Error!?Rect {
         .y = @intCast(top),
         .width = @intCast(right - left),
         .height = @intCast(bottom - top),
+    };
+}
+
+fn intersectRects(left_rect: Rect, right_rect: Rect) Composer.Error!?Rect {
+    const left = edges(left_rect) catch |err| return mapCanvasGeometry(err);
+    const right = edges(right_rect) catch |err| return mapCanvasGeometry(err);
+    const x0 = @max(left.left, right.left);
+    const y0 = @max(left.top, right.top);
+    const x1 = @min(left.right, right.right);
+    const y1 = @min(left.bottom, right.bottom);
+    if (x0 >= x1 or y0 >= y1) return null;
+    return .{
+        .x = std.math.cast(i32, x0) orelse return error.ArithmeticOverflow,
+        .y = std.math.cast(i32, y0) orelse return error.ArithmeticOverflow,
+        .width = std.math.cast(u16, x1 - x0) orelse return error.ArithmeticOverflow,
+        .height = std.math.cast(u16, y1 - y0) orelse return error.ArithmeticOverflow,
     };
 }
 

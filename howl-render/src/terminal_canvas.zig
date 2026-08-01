@@ -137,7 +137,6 @@ const RetainedImages = struct {
 
 const WorkBuffers = struct {
     inputs: []Draw,
-    cursor_glyphs: []u16,
     image_order: []u16,
     borrowed_decoration_leads: []u16,
     decoration_pixels: []u8,
@@ -152,6 +151,7 @@ const Draw = union(enum) {
         resource: canvas.ResourceRef,
         size: canvas.Size,
         color: canvas.Color,
+        cursor_component: bool = false,
     },
     rgba: struct {
         destination: canvas.Rect,
@@ -292,7 +292,6 @@ pub const Content = struct {
         allocator: std.mem.Allocator,
         limits: Limits,
         draws: []Draw,
-        cursor_indices: []u16,
         image_indices: []u16,
         borrowed_decoration_leads: []u16,
         decoration_pixels: []u8,
@@ -311,8 +310,6 @@ pub const Content = struct {
             try validateLimits(limits);
             const draws = allocator.alloc(Draw, limits.commands) catch return error.OutOfMemory;
             errdefer allocator.free(draws);
-            const cursor_indices = allocator.alloc(u16, limits.commands) catch return error.OutOfMemory;
-            errdefer allocator.free(cursor_indices);
             const image_indices = allocator.alloc(u16, limits.placements) catch return error.OutOfMemory;
             errdefer allocator.free(image_indices);
             const borrowed_decoration_leads = allocator.alloc(u16, limits.cells) catch
@@ -332,7 +329,6 @@ pub const Content = struct {
                 .allocator = allocator,
                 .limits = limits,
                 .draws = draws,
-                .cursor_indices = cursor_indices,
                 .image_indices = image_indices,
                 .borrowed_decoration_leads = borrowed_decoration_leads,
                 .decoration_pixels = decoration_pixels,
@@ -377,7 +373,6 @@ pub const Content = struct {
             self.allocator.free(self.decoration_pixels);
             self.allocator.free(self.borrowed_decoration_leads);
             self.allocator.free(self.image_indices);
-            self.allocator.free(self.cursor_indices);
             self.allocator.free(self.draws);
             self.* = undefined;
         }
@@ -863,7 +858,6 @@ pub const Content = struct {
             .producer = producer,
             .buffers = .{
                 .inputs = work.draws,
-                .cursor_glyphs = work.cursor_indices,
                 .image_order = work.image_indices,
                 .borrowed_decoration_leads = work.borrowed_decoration_leads,
                 .decoration_pixels = work.decoration_pixels,
@@ -897,7 +891,6 @@ pub const Content = struct {
         try build.imagesFor(false);
         try build.glyphs();
         try build.decorations();
-        try build.cursor();
         try build.imagesFor(true);
         const mask_changed = try self.appendRetiredMasks();
         const glyph_changed = try self.appendRetiredGlyphs();
@@ -927,6 +920,7 @@ pub const Content = struct {
             .uploads = work.uploads[0..upload_count],
             .removals = self.pending_removals[0..self.pending_removal_count],
             .commands = work.canvas_inputs[0..build.input_used],
+            .cursor_binding = null,
         };
         self.pending_removal_count = 0;
         if (comptime features.native_text) switch (producer) {
@@ -1503,7 +1497,6 @@ const Build = struct {
     upload_count: *usize,
     upload_bytes: *usize,
     input_used: usize = 0,
-    cursor_used: usize = 0,
     decoration_used: usize = 0,
 
     fn backgrounds(self: *Build) Content.TakeError!void {
@@ -1783,15 +1776,12 @@ const Build = struct {
         if (destination.width == 0 or destination.height == 0) return;
         if (run.sizing.width > 1 or run.sizing.height > 1) {
             const clip = intersectRect(destination, self.input.geometry.clip) orelse return;
-            const index = self.input_used;
             try self.append(glyphInput(
                 destination,
                 clip,
                 cached,
                 color(self.cell(row, value.source_start).foreground),
             ));
-            if (self.cursorCovers(row, value.source_start, value.source_end))
-                try self.rememberCursorGlyph(index);
             return;
         }
         var col = value.source_start;
@@ -1800,7 +1790,6 @@ const Build = struct {
                 try self.cellRect(row, col, 1, 1),
                 self.input.geometry.clip,
             ) orelse continue;
-            const index = self.input_used;
             try self.append(glyphInput(
                 destination,
                 clip,
@@ -1810,8 +1799,6 @@ const Build = struct {
                     if (run.borrowed_blank_span) value.source_start else col,
                 ).foreground),
             ));
-            if (self.cursorCovers(row, col, col + 1))
-                try self.rememberCursorGlyph(index);
         }
     }
 
@@ -1895,27 +1882,20 @@ const Build = struct {
         raster: *const GlyphEntry,
         glyph_color: canvas.Color,
     ) Draw {
-        return .{ .alpha_mask = .{
-            .destination = destination,
-            .clip = clip,
-            .resource = raster.resource.?,
-            .size = .{ .width = raster.width, .height = raster.height },
-            .color = glyph_color,
-        } };
-    }
-
-    fn cursorCovers(self: *const Build, row: usize, start: u16, end: u16) bool {
-        const value = self.input.projection.cursor;
-        return value.visible and value.shape == .block and value.row == row and
-            value.col >= start and value.col < end;
-    }
-
-    fn rememberCursorGlyph(self: *Build, input_index: usize) Content.TakeError!void {
-        if (self.cursor_used >= self.buffers.cursor_glyphs.len or
-            input_index > std.math.maxInt(u16))
-            return error.CommandLimit;
-        self.buffers.cursor_glyphs[self.cursor_used] = @intCast(input_index);
-        self.cursor_used += 1;
+        return .{
+            .alpha_mask = .{
+                .destination = destination,
+                .clip = clip,
+                .resource = raster.resource.?,
+                .size = .{ .width = raster.width, .height = raster.height },
+                .color = glyph_color,
+                // Every terminal glyph component is eligible for a later block
+                // cursor intersection. Composer chooses the focused rectangle;
+                // Content must not bake the current cursor position into the
+                // accepted cursor-free base.
+                .cursor_component = true,
+            },
+        };
     }
 
     fn decorations(self: *Build) Content.TakeError!void {
@@ -2118,35 +2098,6 @@ const Build = struct {
         rect.y = std.math.add(i32, rect.y, self.input.geometry.y) catch
             return error.ArithmeticOverflow;
         return rect;
-    }
-
-    fn cursor(self: *Build) Content.TakeError!void {
-        const cursor_value = self.input.projection.cursor;
-        if (!cursor_value.visible or cursor_value.shape == .none) return;
-        var rect = try self.cellRect(cursor_value.row, cursor_value.col, 1, 1);
-        switch (cursor_value.shape) {
-            .block => {},
-            .underline => {
-                rect.y = std.math.add(i32, rect.y, rect.height - 1) catch
-                    return error.ArithmeticOverflow;
-                rect.height = 1;
-            },
-            .bar => rect.width = 1,
-            .none => return,
-        }
-        try self.append(.{ .solid = .{
-            .rect = rect,
-            .clip = self.input.geometry.clip,
-            .color = color(cursor_value.color),
-        } });
-        if (cursor_value.shape != .block) return;
-        const text_clip = intersectRect(rect, self.input.geometry.clip) orelse return;
-        for (self.buffers.cursor_glyphs[0..self.cursor_used]) |index| {
-            var fact = self.buffers.inputs[index];
-            fact.alpha_mask.color = color(cursor_value.text_color);
-            fact.alpha_mask.clip = text_clip;
-            try self.append(fact);
-        }
     }
 
     fn append(self: *Build, input: Draw) Content.TakeError!void {
@@ -2444,6 +2395,7 @@ fn drawInput(draw: Draw) canvas.Input {
                 .size = value.size,
             },
             .color = value.color,
+            .cursor_component = value.cursor_component,
         } },
         .rgba => |value| .{ .rgba = .{
             .destination = value.destination,

@@ -82,6 +82,14 @@ pub const CursorPublication = struct {
     target: CursorTarget,
 };
 
+/// Binds a cursor target to one live lifecycle and visible-set identity.
+pub const CursorPublicationIdentity = struct {
+    /// Exact lifecycle revision accepted for the source.
+    lifecycle_revision: LifecycleRevision,
+    /// Exact current or prepared visible-set revision.
+    visible_set_revision: u64,
+};
+
 /// Reports transactional cursor-inbox admission failures.
 pub const CursorPublishError = error{
     Stopping,
@@ -97,6 +105,7 @@ const CursorSlot = struct {
     pane: PaneId = @fromBackingInt(@intCast(0)),
     source: canvas.SourceId = @fromBackingInt(@intCast(0)),
     lifecycle_revision: LifecycleRevision = @fromBackingInt(0),
+    terminal_sequence_high_water: u64 = 0,
     cursor_revision_high_water: u64 = 0,
     publication: CursorPublication = undefined,
     live: bool = false,
@@ -214,6 +223,26 @@ pub const VisibleTransferFact = struct {
     accepted_revision: canvas.ProducerRevision,
 };
 
+/// Identifies one ready producer update discarded because its cursor binding
+/// was superseded before Composer acceptance.
+pub const DiscardedReadyUpdate = struct {
+    /// Identifies the exact Pool reservation whose bytes were released.
+    reservation_id: u64,
+    /// Identifies the exact Composer source and font batch owner.
+    source: canvas.SourceId,
+    /// Identifies the exact producer revision carried by the discarded bytes.
+    producer_revision: canvas.ProducerRevision,
+};
+
+/// Returns a replacement reservation together with any exact discarded
+/// ready-update identity requiring Runtime-owned font-batch cancellation.
+pub const ReservedUpdate = struct {
+    /// Identifies the fresh Pool reservation for ordinary reconstruction.
+    token: pool_storage.Token,
+    /// Identifies only the ready update discarded during this reservation.
+    discarded: ?DiscardedReadyUpdate = null,
+};
+
 /// Reports fixed pool construction or native wake-descriptor failure.
 pub const BoundaryInitError = error{
     ArithmeticOverflow,
@@ -282,7 +311,10 @@ pub const PendingSlot = struct {
     pixels: []u8,
     upload_count: usize = 0,
     removal_count: usize = 0,
+    /// Counts the complete cursor-free command list in `commands`.
     command_count: usize = 0,
+    /// Copies the binding accepted with the cursor-free command list.
+    cursor_binding: ?canvas.CursorBinding = null,
     revision: canvas.ProducerRevision = @fromBackingInt(@intCast(0)),
     state: std.atomic.Value(u8) = .init(@backingInt(State.free)),
 
@@ -415,6 +447,7 @@ pub const PendingSlot = struct {
         self.upload_count = update.uploads.len;
         self.removal_count = update.removals.len;
         self.command_count = update.commands.len;
+        self.cursor_binding = update.cursor_binding;
         self.revision = update.revision;
     }
 
@@ -459,6 +492,7 @@ pub const PendingSlot = struct {
             .uploads = self.uploads[0..self.upload_count],
             .removals = self.removals[0..self.removal_count],
             .commands = self.commands[0..self.command_count],
+            .cursor_binding = self.cursor_binding,
         };
     }
 
@@ -1777,6 +1811,23 @@ pub const Boundary = struct {
         self: *Boundary,
         member: pool_storage.Member,
     ) pool_storage.ReserveError!pool_storage.Token {
+        return (try self.reserveUpdateInternal(member, false)).token;
+    }
+
+    /// Reserves one update and, when a cursor-bound ready update was
+    /// superseded, returns its exact identity for Runtime-owned font cleanup.
+    pub fn reserveUpdateRecovering(
+        self: *Boundary,
+        member: pool_storage.Member,
+    ) pool_storage.ReserveError!ReservedUpdate {
+        return self.reserveUpdateInternal(member, true);
+    }
+
+    fn reserveUpdateInternal(
+        self: *Boundary,
+        member: pool_storage.Member,
+        recover_superseded_ready: bool,
+    ) pool_storage.ReserveError!ReservedUpdate {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const index = self.find(member.pane_id) orelse return error.Stale;
@@ -1788,7 +1839,6 @@ pub const Boundary = struct {
         if (entry.state != .registered and entry.state != .live)
             return error.Stale;
         if (entry.pool_retiring) return error.Stale;
-        if (entry.ready != null) return error.Busy;
         if (self.visible_request != null) return error.GroupPriority;
         var visible = false;
         for (self.visible_members[0..self.visible_member_count]) |value| {
@@ -1798,7 +1848,40 @@ pub const Boundary = struct {
             }
         }
         if (self.visible_initialized and !visible) return error.GroupPriority;
-        return self.pool.reserve(member);
+        var discarded: ?DiscardedReadyUpdate = null;
+        if (entry.ready) |ready| {
+            if (!recover_superseded_ready) return error.Busy;
+            const ready_update = self.pool.readyUpdate(ready) catch
+                return error.Busy;
+            const superseded = if (ready_update.cursor_binding) |binding|
+                self.cursorBindingNeedsRebuildLocked(ready, binding)
+            else
+                false;
+            if (!superseded) return error.Busy;
+            self.pool.recoveryReservePossible() catch |failure| switch (failure) {
+                error.GroupPriority => return error.GroupPriority,
+                error.ReservationExhausted => return error.ReservationExhausted,
+                else => unreachable,
+            };
+            self.pool.discardReady(ready) catch |failure| switch (failure) {
+                error.Busy => return error.Busy,
+                error.Stale => return error.Stale,
+                error.InvalidCounts,
+                error.InvalidProducerRevision,
+                => @panic("superseded ready block metadata became invalid"),
+            };
+            discarded = .{
+                .reservation_id = ready.reservation_id,
+                .source = ready.source_id,
+                .producer_revision = ready.producer_revision,
+            };
+            entry.ready = null;
+            entry.retry_wake_issued = false;
+        }
+        return .{
+            .token = try self.pool.reserve(member),
+            .discarded = discarded,
+        };
     }
 
     /// Cancels one reserved block after producer construction failure.
@@ -1826,6 +1909,8 @@ pub const Boundary = struct {
             (entry.state != .registered and entry.state != .live) or
             entry.pool_retiring or entry.ready != null)
             return error.Stale;
+        if (update.cursor_binding) |binding|
+            try self.validateCursorBindingLocked(token, binding);
         const published = try self.pool.publishUpdate(token, update);
         entry.ready = published;
         entry.retry_wake_issued = false;
@@ -1869,6 +1954,25 @@ pub const Boundary = struct {
             var claim = DrainClaim{ .pool = &self.pool, .token = token };
             defer claim.deinit();
             const update = claim.update();
+            if (update.cursor_binding) |binding| {
+                self.mutex.lockUncancelable(self.io);
+                const valid = self.validateCursorBindingLocked(token, binding);
+                self.mutex.unlock(self.io);
+                if (valid) |_| {} else |_| {
+                    claim.reject();
+                    self.mutex.lockUncancelable(self.io);
+                    if (self.find(token.pane_id)) |index| {
+                        const entry = &self.entries[index].?;
+                        entry.draining = false;
+                    }
+                    self.mutex.unlock(self.io);
+                    // The producer owns the ready block and must rebuild its
+                    // binding before Renderer can make progress. Wake the
+                    // terminal poller without changing any ownership fact.
+                    signal(self.terminal_fd);
+                    continue;
+                }
+            }
             composer.apply(token.source_id, update) catch |failure| {
                 claim.reject();
                 self.mutex.lockUncancelable(self.io);
@@ -1891,6 +1995,8 @@ pub const Boundary = struct {
             self.mutex.lockUncancelable(self.io);
             if (self.find(token.pane_id)) |index| {
                 const entry = &self.entries[index].?;
+                if (update.cursor_binding) |binding|
+                    self.acceptCursorBindingLocked(index, binding);
                 entry.draining = false;
                 if (entry.ready != null and
                     entry.ready.?.reservation_id == token.reservation_id)
@@ -1905,6 +2011,163 @@ pub const Boundary = struct {
         }
         if (drained != 0) self.publishDrained();
         return .{ .accepted = drained, .rejected = rejected };
+    }
+
+    fn validateCursorBindingLocked(
+        self: *const Boundary,
+        token: pool_storage.Token,
+        binding: canvas.CursorBinding,
+    ) error{Stale}!void {
+        try self.validateCursorBindingForCandidateLocked(
+            token,
+            binding,
+            null,
+            &.{},
+        );
+    }
+
+    fn validateCursorBindingForCandidateLocked(
+        self: *const Boundary,
+        token: pool_storage.Token,
+        binding: canvas.CursorBinding,
+        candidate_visible_revision: ?u64,
+        candidate_composition: []const canvas.Composer.Placement,
+    ) error{Stale}!void {
+        if (binding.pane != @backingInt(token.pane_id) or
+            binding.source != token.source_id)
+            return error.Stale;
+        const index = self.find(token.pane_id) orelse return error.Stale;
+        const entry = self.entries[index].?;
+        if (entry.state != .live or entry.source != token.source_id)
+            return error.Stale;
+        const slot = self.cursor_slots[index];
+        if (!slot.live or slot.source != token.source_id or
+            @backingInt(slot.lifecycle_revision) != binding.lifecycle_revision)
+            return error.Stale;
+        if (slot.cursor_revision_high_water != 0) {
+            if (binding.cursor_revision < slot.cursor_revision_high_water)
+                return error.Stale;
+            if (binding.cursor_revision == slot.cursor_revision_high_water and
+                binding.terminal_sequence != slot.terminal_sequence_high_water)
+                return error.Stale;
+            if (binding.cursor_revision > slot.cursor_revision_high_water and
+                binding.terminal_sequence <= slot.terminal_sequence_high_water)
+                return error.Stale;
+        }
+        var current_member = false;
+        if (self.visible_revision != 0 and
+            binding.visible_set_revision == self.visible_revision)
+        {
+            for (self.visible_members[0..self.visible_member_count]) |member| {
+                if (member.pane == token.pane_id and member.source == token.source_id) {
+                    current_member = true;
+                    break;
+                }
+            }
+        }
+        if (current_member) return;
+        const pending_visible_revision = if (candidate_visible_revision == null)
+            if (self.visible_request) |state|
+                if (state.phase == .requested)
+                    state.request.revision
+                else
+                    null
+            else
+                null
+        else
+            null;
+        if (candidate_visible_revision orelse pending_visible_revision) |revision| {
+            if (binding.visible_set_revision != revision) return error.Stale;
+            const request = self.visible_request orelse return error.Stale;
+            if (pending_visible_revision != null) {
+                if (request.request.revision != revision or
+                    request.phase != .requested)
+                    return error.Stale;
+                for (request.request.members[0..request.request.count]) |member| {
+                    if (member.pane == token.pane_id and
+                        member.source == token.source_id)
+                        return;
+                }
+                return error.Stale;
+            }
+            for (candidate_composition) |placement| {
+                if (placement.source == token.source_id) {
+                    if (request.request.revision != revision or
+                        request.phase != .committing)
+                        return error.Stale;
+                    for (request.request.members[0..request.request.count]) |member| {
+                        if (member.pane == token.pane_id and
+                            member.source == token.source_id)
+                            return;
+                    }
+                    return error.Stale;
+                }
+            }
+        }
+        return error.Stale;
+    }
+
+    fn cursorBindingNeedsRebuildLocked(
+        self: *const Boundary,
+        token: pool_storage.Token,
+        binding: canvas.CursorBinding,
+    ) bool {
+        const index = self.find(token.pane_id) orelse return false;
+        const slot = self.cursor_slots[index];
+        if (!slot.live or slot.source != token.source_id) return false;
+        if (slot.cursor_revision_high_water == 0) return false;
+        return binding.cursor_revision < slot.cursor_revision_high_water or
+            (binding.cursor_revision == slot.cursor_revision_high_water and
+                binding.terminal_sequence != slot.terminal_sequence_high_water) or
+            (binding.cursor_revision > slot.cursor_revision_high_water and
+                binding.terminal_sequence <= slot.terminal_sequence_high_water);
+    }
+
+    fn acceptCursorBindingLocked(
+        self: *Boundary,
+        index: usize,
+        binding: canvas.CursorBinding,
+    ) void {
+        const slot = &self.cursor_slots[index];
+        if (slot.cursor_revision_high_water == 0) {
+            slot.terminal_sequence_high_water = binding.terminal_sequence;
+            slot.cursor_revision_high_water = binding.cursor_revision;
+            return;
+        }
+        if (binding.cursor_revision == slot.cursor_revision_high_water) {
+            std.debug.assert(slot.terminal_sequence_high_water == binding.terminal_sequence);
+            return;
+        }
+        std.debug.assert(binding.cursor_revision > slot.cursor_revision_high_water);
+        std.debug.assert(binding.terminal_sequence > slot.terminal_sequence_high_water);
+        slot.terminal_sequence_high_water = binding.terminal_sequence;
+        slot.cursor_revision_high_water = binding.cursor_revision;
+    }
+
+    fn validateCandidateBindingsLocked(
+        self: *const Boundary,
+        tokens: []const pool_storage.Token,
+        changes: []canvas.Composer.SourceChange,
+        visible_revision: ?u64,
+        composition: []const canvas.Composer.Placement,
+    ) CandidateDrainError!void {
+        for (tokens, 0..) |token, index| {
+            if (changes[index].update.cursor_binding) |binding| {
+                self.validateCursorBindingForCandidateLocked(
+                    token,
+                    binding,
+                    visible_revision,
+                    composition,
+                ) catch |failure| return failure;
+                if (visible_revision) |revision| {
+                    if (binding.visible_set_revision != revision) {
+                        var rebound = binding;
+                        rebound.visible_set_revision = revision;
+                        changes[index].update.cursor_binding = rebound;
+                    }
+                }
+            }
+        }
     }
 
     /// Atomically applies every claimed pooled update, optional Chrome update,
@@ -2034,9 +2297,24 @@ pub const Boundary = struct {
             change_count += 1;
         }
         self.mutex.lockUncancelable(self.io);
+        self.validateCandidateBindingsLocked(
+            tokens[0..claimed],
+            changes[0..claimed],
+            visible_revision,
+            composition.sources,
+        ) catch |failure| {
+            self.mutex.unlock(self.io);
+            self.restoreCandidateClaims(tokens[0..claimed]);
+            self.restoreCandidateClaims(clear_tokens[0..clear_claimed]);
+            claimed = 0;
+            clear_claimed = 0;
+            if (failure == error.Stale) signal(self.terminal_fd);
+            return failure;
+        };
         composer.applyCandidate(.{
             .changes = changes[0..change_count],
             .hidden_source_clears = hidden_source_clears[0..hidden_source_clear_count],
+            .cursor_visible_set_revision = visible_revision,
             .composition = composition,
         }) catch |failure| {
             self.mutex.unlock(self.io);
@@ -2046,12 +2324,13 @@ pub const Boundary = struct {
             clear_claimed = 0;
             return failure;
         };
-
-        for (tokens[0..claimed]) |token| {
+        for (tokens[0..claimed], 0..) |token, token_index| {
             self.pool.completeDrain(token) catch
                 @panic("accepted atomic candidate drain became invalid");
             if (self.find(token.pane_id)) |index| {
                 const entry = &self.entries[index].?;
+                if (changes[token_index].update.cursor_binding) |binding|
+                    self.acceptCursorBindingLocked(index, binding);
                 entry.draining = false;
                 if (entry.ready != null and
                     entry.ready.?.reservation_id == token.reservation_id)
@@ -2176,10 +2455,7 @@ pub const Boundary = struct {
         self: *Boundary,
         pane: PaneId,
         source: canvas.SourceId,
-    ) CursorPublishError!?struct {
-        lifecycle_revision: LifecycleRevision,
-        visible_set_revision: u64,
-    } {
+    ) CursorPublishError!?CursorPublicationIdentity {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const index = self.find(pane) orelse return error.UnknownPane;
@@ -2203,6 +2479,40 @@ pub const Boundary = struct {
         };
     }
 
+    /// Borrows the exact live identity for a source in the currently
+    /// prepared visible-set request. This lets a reveal bind its retained
+    /// cursor target before the new membership becomes Composer-visible.
+    /// The request is validated under the same Boundary lock as lifecycle and
+    /// source ownership; no target or accepted membership is changed here.
+    pub fn cursorPublicationIdentityForVisibleSet(
+        self: *Boundary,
+        pane: PaneId,
+        source: canvas.SourceId,
+        visible_set_revision: u64,
+    ) CursorPublishError!?CursorPublicationIdentity {
+        if (visible_set_revision == 0) return error.InvalidCursorPublication;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(pane) orelse return error.UnknownPane;
+        const entry = self.entries[index].?;
+        if (entry.source != source) return error.SourceStale;
+        if (entry.state != .live) return error.RetiredPane;
+        const slot = &self.cursor_slots[index];
+        if (!slot.live or slot.source != source) return error.SourceStale;
+        const state = self.visible_request orelse return error.LifecycleStale;
+        if (state.request.revision != visible_set_revision or
+            state.phase != .requested)
+            return error.LifecycleStale;
+        for (state.request.members[0..state.request.count]) |member| {
+            if (member.pane == pane and member.source == source)
+                return .{
+                    .lifecycle_revision = slot.lifecycle_revision,
+                    .visible_set_revision = visible_set_revision,
+                };
+        }
+        return null;
+    }
+
     /// Publishes one latest-wins cursor target without touching terminal Content.
     ///
     /// Every identity field is supplied by the caller and checked against the
@@ -2223,6 +2533,10 @@ pub const Boundary = struct {
         const entry = self.entries[index].?;
         if (entry.source != value.source) return error.SourceStale;
         if (entry.state != .live) return error.RetiredPane;
+        // A pooled base is being validated against this slot. Defer the
+        // cursor-only target to the next ordinary retry rather than allowing
+        // its high-water to advance between validation and Composer acceptance.
+        if (entry.draining) return error.CursorRevisionStale;
         const slot = &self.cursor_slots[index];
         if (!slot.live or slot.pane != value.pane) return error.RetiredPane;
         if (slot.source != value.source) return error.SourceStale;
@@ -2234,6 +2548,7 @@ pub const Boundary = struct {
         if (value.cursor_revision <= slot.cursor_revision_high_water)
             return error.CursorRevisionStale;
         slot.publication = value;
+        slot.terminal_sequence_high_water = value.terminal_sequence;
         slot.cursor_revision_high_water = value.cursor_revision;
         slot.pending = true;
         signal(self.renderer_fd);
@@ -2832,6 +3147,515 @@ test "cursor cancellation and shutdown preserve high-water without pending owner
     );
 }
 
+test "ordinary cursor binding rejects stale lifecycle before pool mutation" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(66);
+    const source: canvas.SourceId = @fromBackingInt(67);
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 8, .height = 8 } } },
+        boundary.takeLifecycle().?,
+    );
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    boundary.visible_member_count = 1;
+    const index = boundary.find(pane).?;
+    const lifecycle_revision = @backingInt(
+        boundary.cursor_slots[index].lifecycle_revision,
+    );
+    const binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @as(u64, lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    const reserved = try boundary.reserveUpdate(member);
+    var stale = binding;
+    stale.lifecycle_revision += 1;
+    try std.testing.expectError(
+        error.Stale,
+        boundary.publishUpdate(reserved, .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+            .cursor_binding = stale,
+        }),
+    );
+    try std.testing.expect(boundary.entries[index].?.ready == null);
+    try boundary.cancelUpdate(reserved);
+
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 7,
+        .cursor_revision = 7,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @fromBackingInt(@intCast(lifecycle_revision)),
+        .target = .{
+            .row = 0,
+            .col = 0,
+            .visible = true,
+            .shape = .block,
+            .blink = false,
+            .blink_fast = false,
+            .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
+            .text_color = .{ .r = 4, .g = 5, .b = 6 },
+        },
+    });
+    const delayed = try boundary.reserveUpdate(member);
+    try std.testing.expectError(
+        error.Stale,
+        boundary.publishUpdate(delayed, .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+            .cursor_binding = binding,
+        }),
+    );
+    try boundary.cancelUpdate(delayed);
+}
+
+test "cursor binding catches up after hidden reveal and draining race" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(68);
+    const source: canvas.SourceId = @fromBackingInt(1);
+    try boundary.register(pane, source, .{ .width = 1, .height = 1 });
+    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    boundary.visible_member_count = 1;
+    const lifecycle_revision = boundary.cursor_slots[0].lifecycle_revision;
+    const base_command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 4,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 16,
+    });
+    defer composer.deinit();
+    try std.testing.expectEqual(source, try composer.registerSource());
+
+    const first_binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @backingInt(lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    const first_token = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(first_token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base_command},
+        .cursor_binding = first_binding,
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(@as(u64, 1), boundary.cursor_slots[0].cursor_revision_high_water);
+
+    // The source is hidden while its local target advances; no cursor inbox
+    // publication is possible, so reveal must admit the newer target.
+    boundary.visible_revision = 2;
+    boundary.visible_member_count = 0;
+    boundary.visible_revision = 3;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    boundary.visible_member_count = 1;
+    const reveal_binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 3,
+        .cursor_revision = 2,
+        .visible_set_revision = 3,
+        .lifecycle_revision = @backingInt(lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    const reveal_token = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(reveal_token, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base_command},
+        .cursor_binding = reveal_binding,
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
+
+    var equal_mismatch = first_binding;
+    equal_mismatch.terminal_sequence = 99;
+    const equal_token = try boundary.reserveUpdate(member);
+    try std.testing.expectError(
+        error.Stale,
+        boundary.publishUpdate(equal_token, .{
+            .revision = @fromBackingInt(3),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{base_command},
+            .cursor_binding = equal_mismatch,
+        }),
+    );
+    try boundary.cancelUpdate(equal_token);
+
+    const old_token = try boundary.reserveUpdate(member);
+    try std.testing.expectError(
+        error.Stale,
+        boundary.publishUpdate(old_token, .{
+            .revision = @fromBackingInt(3),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{base_command},
+            .cursor_binding = first_binding,
+        }),
+    );
+    try boundary.cancelUpdate(old_token);
+
+    const catchup_binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 4,
+        .cursor_revision = 3,
+        .visible_set_revision = 3,
+        .lifecycle_revision = @backingInt(lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    const catchup_token = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(catchup_token, .{
+        .revision = @fromBackingInt(4),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{ base_command, base_command },
+        .cursor_binding = catchup_binding,
+    });
+    var narrow = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 16,
+    });
+    defer narrow.deinit();
+    try std.testing.expectEqual(source, try narrow.registerSource());
+    try std.testing.expectError(
+        error.CommandLimit,
+        boundary.applyCandidate(
+            &narrow,
+            null,
+            .{
+                .surface = .{ .width = 1, .height = 1 },
+                .sources = &.{.{
+                    .source = source,
+                    .origin = .{ .x = 0, .y = 0 },
+                    .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+                }},
+            },
+            null,
+            .ordinary,
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
+    try std.testing.expectEqual(@as(u64, 3), boundary.cursor_slots[0].terminal_sequence_high_water);
+    const ready = boundary.entries[0].?.ready.?;
+    try boundary.pool.beginDrain(ready);
+    boundary.entries[0].?.draining = true;
+    try std.testing.expectError(
+        error.CursorRevisionStale,
+        boundary.publishCursor(.{
+            .pane = pane,
+            .source = source,
+            .terminal_sequence = 5,
+            .cursor_revision = 4,
+            .visible_set_revision = 3,
+            .lifecycle_revision = lifecycle_revision,
+            .target = .{
+                .row = 0,
+                .col = 0,
+                .visible = true,
+                .shape = .block,
+                .blink = false,
+                .blink_fast = false,
+                .cursor_color = .{},
+                .text_color = .{},
+            },
+        }),
+    );
+    try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
+    try boundary.pool.retryDrain(ready);
+    boundary.entries[0].?.draining = false;
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(@as(u64, 3), boundary.cursor_slots[0].cursor_revision_high_water);
+
+    // A newer cursor-only publication supersedes an already-ready ordinary
+    // update before Renderer drains it. The terminal side must release that
+    // exact ready block so the next ordinary reconstruction can reserve and
+    // publish instead of remaining permanently Busy.
+    const stale_ready_binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 4,
+        .cursor_revision = 3,
+        .visible_set_revision = 3,
+        .lifecycle_revision = @backingInt(lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    const stale_ready = try boundary.reserveUpdate(member);
+    try boundary.publishUpdate(stale_ready, .{
+        .revision = @fromBackingInt(5),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base_command},
+        .cursor_binding = stale_ready_binding,
+    });
+    try boundary.publishCursor(.{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 5,
+        .cursor_revision = 4,
+        .visible_set_revision = 3,
+        .lifecycle_revision = lifecycle_revision,
+        .target = .{
+            .row = 0,
+            .col = 0,
+            .visible = true,
+            .shape = .block,
+            .blink = false,
+            .blink_fast = false,
+            .cursor_color = .{},
+            .text_color = .{},
+        },
+    });
+    const recovered = try boundary.reserveUpdateRecovering(member);
+    try std.testing.expect(recovered.discarded != null);
+    try std.testing.expectEqual(
+        stale_ready.reservation_id,
+        recovered.discarded.?.reservation_id,
+    );
+    try std.testing.expectEqual(source, recovered.discarded.?.source);
+    try std.testing.expectEqual(
+        @as(canvas.ProducerRevision, @fromBackingInt(5)),
+        recovered.discarded.?.producer_revision,
+    );
+    try std.testing.expect(recovered.token.reservation_id != stale_ready.reservation_id);
+    try boundary.publishUpdate(recovered.token, .{
+        .revision = @fromBackingInt(6),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base_command},
+        .cursor_binding = .{
+            .pane = @backingInt(pane),
+            .source = source,
+            .terminal_sequence = 5,
+            .cursor_revision = 4,
+            .visible_set_revision = 3,
+            .lifecycle_revision = @backingInt(lifecycle_revision),
+            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .visible = true,
+        },
+    });
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(@as(u64, 4), boundary.cursor_slots[0].cursor_revision_high_water);
+    const delayed_after_catchup = try boundary.reserveUpdate(member);
+    try std.testing.expectError(
+        error.Stale,
+        boundary.publishUpdate(delayed_after_catchup, .{
+            .revision = @fromBackingInt(5),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{base_command},
+            .cursor_binding = reveal_binding,
+        }),
+    );
+    try boundary.cancelUpdate(delayed_after_catchup);
+}
+
+test "prepared visible reveal binds retained cursor target before composition" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 4, 16),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(70);
+    const source: canvas.SourceId = @fromBackingInt(1);
+    try boundary.register(pane, source, .{ .width = 1, .height = 1 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 1, .height = 1 } } },
+        boundary.takeLifecycle().?,
+    );
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 4,
+        .retained_pixel_bytes = 16,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 4,
+        .candidate_pixel_bytes = 16,
+    });
+    defer composer.deinit();
+    try std.testing.expectEqual(source, try composer.registerSource());
+    const command = canvas.Input{ .solid = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+    } };
+    const lifecycle_revision = boundary.cursor_slots[0].lifecycle_revision;
+    const binding = canvas.CursorBinding{
+        .pane = @backingInt(pane),
+        .source = source,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @backingInt(lifecycle_revision),
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    try boundary.publishVisibleSet(1, &.{.{
+        .pane = pane,
+        .source = source,
+    }});
+    const pending_identity = (try boundary.cursorPublicationIdentityForVisibleSet(
+        pane,
+        source,
+        1,
+    )).?;
+    try std.testing.expectEqual(@as(u64, 1), pending_identity.visible_set_revision);
+    const group = try boundary.reserveVisibleGroup(1, &.{member});
+    try boundary.publishUpdate(group.tokens[0], .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+        .cursor_binding = binding,
+    });
+    try boundary.completeVisibleSet(1, &.{.{
+        .member = .{ .pane = pane, .source = source },
+        .revision = @fromBackingInt(1),
+    }}, true);
+    try boundary.claimVisibleSet(1);
+    const composition = canvas.Composer.Composition{
+        .surface = .{ .width = 1, .height = 1 },
+        .sources = &.{.{
+            .source = source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        }},
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            1,
+            .ordinary,
+        )).accepted,
+    );
+    try std.testing.expectEqual(@as(u64, 1), composer.cursorBinding(source).?.visible_set_revision);
+
+    try boundary.publishVisibleSet(2, &.{});
+    try boundary.completeVisibleSet(2, &.{}, false);
+    try boundary.claimVisibleSet(2);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            .{ .surface = .{ .width = 1, .height = 1 }, .sources = &.{} },
+            2,
+            .ordinary,
+        )).accepted,
+    );
+    try std.testing.expect(composer.cursorBinding(source) == null);
+
+    try boundary.publishVisibleSet(3, &.{.{
+        .pane = pane,
+        .source = source,
+    }});
+    const reveal_identity = (try boundary.cursorPublicationIdentityForVisibleSet(
+        pane,
+        source,
+        3,
+    )).?;
+    try std.testing.expectEqual(@as(u64, 3), reveal_identity.visible_set_revision);
+    const reveal_group = try boundary.reserveVisibleGroup(3, &.{member});
+    var rebound = binding;
+    rebound.terminal_sequence = 2;
+    rebound.cursor_revision = 2;
+    rebound.visible_set_revision = 3;
+    try boundary.publishUpdate(reveal_group.tokens[0], .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+        .cursor_binding = rebound,
+    });
+    try boundary.completeVisibleSet(3, &.{.{
+        .member = .{ .pane = pane, .source = source },
+        .revision = @fromBackingInt(2),
+    }}, true);
+    try boundary.claimVisibleSet(3);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            3,
+            .ordinary,
+        )).accepted,
+    );
+    try std.testing.expectEqual(@as(u64, 3), composer.cursorBinding(source).?.visible_set_revision);
+    try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
+}
+
 test "prepared lifecycle discard is byte-silent and commit publishes once" {
     var boundary = try Boundary.init(
         std.testing.io,
@@ -3240,7 +4064,7 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
         .revision = @fromBackingInt(@intCast(1)),
         .uploads = &.{upload},
         .removals = &.{},
-        .commands = &commands,
+        .commands = commands[0..2],
     });
     pixels = @splat(9);
     const ready = boundary.entries[0].?.ready.?;
@@ -3251,6 +4075,7 @@ test "pooled publication copies bytes retries rejection and releases acceptance"
     };
     const borrowed = abandoned_claim.update();
     try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 4 }, borrowed.uploads[0].pixels.bytes);
+    try std.testing.expectEqual(@as(usize, 2), borrowed.commands.len);
     abandoned_claim.deinit();
     try boundary.pool.beginDrain(ready);
     try boundary.pool.retryDrain(ready);
@@ -4270,9 +5095,9 @@ test "terminal receipt slot has exact bounded allocation" {
         @as(usize, 15104),
         try requiredBytes(testLimits(32, 64, 8192)),
     );
-    try std.testing.expectEqual(@as(usize, 120), @sizeOf(PendingSlot));
+    try std.testing.expectEqual(@as(usize, 224), @sizeOf(PendingSlot));
     try std.testing.expectEqual(
-        @as(usize, 974336),
+        @as(usize, 980992),
         (try requiredBytes(testLimits(32, 64, 8192)) +
             @sizeOf(PendingSlot)) * 64,
     );
@@ -4339,11 +5164,11 @@ test "small PendingSlot fixture copies every configured slice" {
         .revision = @fromBackingInt(@intCast(1)),
         .uploads = &uploads,
         .removals = &removals,
-        .commands = &commands,
+        .commands = commands[0..6],
     });
     try std.testing.expectEqual(uploads.len, slot.upload_count);
     try std.testing.expectEqual(removals.len, slot.removal_count);
-    try std.testing.expectEqual(commands.len, slot.command_count);
+    try std.testing.expectEqual(@as(usize, 6), slot.command_count);
     try std.testing.expectEqualSlices(u8, &pixels, slot.pixels[0..pixels.len]);
     slot.storeState(.ready, .release);
     try std.testing.expect(try slot.retire());

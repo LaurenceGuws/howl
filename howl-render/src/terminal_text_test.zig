@@ -426,6 +426,7 @@ test "retained terminal content preserves exact image replacement removal and or
         .placements = &first_placement,
     });
     const first = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
+    try std.testing.expect(first.cursor_binding == null);
     try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
     try std.testing.expectEqual(canvas.ResourceFormat.rgba8, first.uploads[0].format);
     try std.testing.expect(first.commands[0] == .solid);
@@ -747,17 +748,82 @@ test "retained terminal glyph resources rasterize once and survive sparse update
         glyph_uploads += 1;
     };
     try std.testing.expectEqual(@as(usize, 1), glyph_uploads);
-    var cursor_fill = false;
-    var recolored_glyph = false;
+    var cursor_component = false;
     for (first.commands) |command| switch (command) {
-        .solid => |solid| cursor_fill = cursor_fill or
-            std.meta.eql(solid.color, canvas.Color{ .r = 10, .g = 20, .b = 30, .a = 255 }),
-        .alpha_mask => |mask| recolored_glyph = recolored_glyph or
-            std.meta.eql(mask.color, canvas.Color{ .r = 40, .g = 50, .b = 60, .a = 255 }),
+        .solid => {},
+        .alpha_mask => |mask| cursor_component = cursor_component or mask.cursor_component,
         .rgba => {},
     };
-    try std.testing.expect(cursor_fill);
-    try std.testing.expect(recolored_glyph);
+    try std.testing.expect(cursor_component);
+
+    // Exercise the complete Render source/frame path: the terminal update
+    // contributes one cursor-free base and one separately bound target, and
+    // Composer emits that overlay exactly once.
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 8,
+        .retained_commands = 64,
+        .retained_pixel_bytes = 8192,
+        .composition_sources = 1,
+        .candidate_resources = 8,
+        .candidate_commands = 64,
+        .candidate_pixel_bytes = 8192,
+    });
+    defer composer.deinit();
+    const composer_source = try composer.registerSource();
+    var bound_first = first;
+    bound_first.cursor_binding = .{
+        .pane = 1,
+        .source = composer_source,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = 1,
+        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .color = .{ .r = 10, .g = 20, .b = 30, .a = 255 },
+        .text_color = .{ .r = 40, .g = 50, .b = 60, .a = 255 },
+        .visible = true,
+    };
+    try composer.apply(composer_source, bound_first);
+    try composer.setComposition(.{
+        .surface = .{ .width = 8, .height = 16 },
+        .sources = &.{.{
+            .source = composer_source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        }},
+        .focused_source = composer_source,
+    });
+    var frame_uploads: [16]canvas.ResourceUploadFact = undefined;
+    var frame_removals: [16]canvas.FrameResourceRef = undefined;
+    var frame_commands: [64]canvas.Command = undefined;
+    var frame_pixels: [8192]u8 = undefined;
+    const frame = try composer.frame(&.{}, .{
+        .uploads = &frame_uploads,
+        .removals = &frame_removals,
+        .commands = &frame_commands,
+        .pixels = &frame_pixels,
+    });
+    var frame_cursor_fills: usize = 0;
+    var frame_recolored_glyphs: usize = 0;
+    for (frame.commands) |command| switch (command) {
+        .solid => |solid| {
+            if (std.meta.eql(
+                solid.color,
+                canvas.Color{ .r = 10, .g = 20, .b = 30, .a = 255 },
+            )) frame_cursor_fills += 1;
+        },
+        .alpha_mask => |mask| {
+            if (std.meta.eql(
+                mask.color,
+                canvas.Color{ .r = 40, .g = 50, .b = 60, .a = 255 },
+            )) frame_recolored_glyphs += 1;
+        },
+        .rgba => {},
+    };
+    try std.testing.expectEqual(@as(usize, 1), frame_cursor_fills);
+    try std.testing.expectEqual(@as(usize, 1), frame_recolored_glyphs);
     const first_revision = @backingInt(first.revision);
 
     const second = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
@@ -803,6 +869,23 @@ test "retained terminal glyph resources rasterize once and survive sparse update
         @backingInt(replaced.uploads[0].resource.resource) >
             @backingInt(replaced.removals[0].resource.resource),
     );
+
+    // Component eligibility is intrinsic to the glyph, not to the cursor
+    // position or focus which Composer will choose later.
+    var hidden_cursor = block_cursor;
+    hidden_cursor.visible = false;
+    try content.recover(.{
+        .rows = 1,
+        .cols = 1,
+        .cursor = hidden_cursor,
+        .cells = &cells,
+        .geometry = &row_geometry,
+    }, emptyImages());
+    const hidden = try content.takeLocalUpdate(&work, empty_scalars, contentGeometry(8, 16));
+    for (hidden.commands) |command| switch (command) {
+        .solid, .rgba => {},
+        .alpha_mask => |mask| try std.testing.expect(mask.cursor_component),
+    };
 }
 
 test "zero-area native glyphs retain metrics without logical resources" {

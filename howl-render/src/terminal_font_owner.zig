@@ -336,6 +336,11 @@ pub const InternedResource = struct {
 pub const Producer = struct {
     borrow: Borrow,
     session: u64,
+    /// Forces this synchronous update to carry declaration bytes for every
+    /// shared resource it references. A visible-set replacement can remove
+    /// the last Composer-side reference to an otherwise still-live shared
+    /// identity; the replacement candidate must then redeclare its bytes.
+    force_declarations: bool = false,
 
     /// Ends the exact synchronous native-group borrow.
     pub fn deinit(self: *Producer) void {
@@ -351,6 +356,12 @@ pub const Producer = struct {
     /// Rolls back every resource acquisition from an incomplete update.
     pub fn cancelUpdate(self: *Producer) void {
         self.borrow.owner.cancelProducerSession(self.session);
+    }
+
+    /// Requires declaration bytes for this producer session. The flag is
+    /// scoped to this borrow and never changes shared-resource acceptance.
+    pub fn requireDeclarations(self: *Producer) void {
+        self.force_declarations = true;
     }
 
     /// Interns one native or generated glyph using exact group and raster facts.
@@ -399,11 +410,13 @@ pub const Producer = struct {
             else switch (key) {
                 .native => |value| nativeResourceKey(group_entry.key, value),
             };
-        return self.borrow.owner.internProducerResult(
+        var result = try self.borrow.owner.internProducerResult(
             self.session,
             resource_key,
             try ResourceFacts.fromBytes(format, size, stride, bytes),
         );
+        if (self.force_declarations) result.declaration_required = true;
+        return result;
     }
 
     /// Interns one generated decoration mask using its exact style and geometry.
@@ -419,7 +432,7 @@ pub const Producer = struct {
         const group_entry = self.borrow.owner.lookupGroup(self.borrow.group) catch
             return error.InvalidResource;
         if (group_entry.state != .active) return error.InvalidResource;
-        return self.borrow.owner.internProducerResult(self.session, .{ .decoration_mask = .{
+        var result = try self.borrow.owner.internProducerResult(self.session, .{ .decoration_mask = .{
             .configuration_generation = group_entry.key.configuration_generation,
             .point_size = group_entry.key.point_size,
             .logical_dpi_x = group_entry.key.logical_dpi_x,
@@ -436,6 +449,8 @@ pub const Producer = struct {
             width,
             bytes,
         ));
+        if (self.force_declarations) result.declaration_required = true;
+        return result;
     }
 
     /// Reports whether the exact shared identity still needs declaration bytes.
@@ -444,7 +459,7 @@ pub const Producer = struct {
         reference: render.canvas.ResourceRef,
     ) ResourceError!bool {
         const entry = try self.borrow.owner.lookupResource(reference);
-        return entry.state != .accepted;
+        return self.force_declarations or entry.state != .accepted;
     }
 
     /// Releases one producer-side pane resource reference.
@@ -824,6 +839,18 @@ pub const Owner = struct {
         identity: BatchIdentity,
     ) BatchError!void {
         try self.cancelBeforeReady(identity);
+        self.completeRetiredResources();
+    }
+
+    /// Cancels one exact ready/draining batch whose Pool bytes were discarded
+    /// before Composer acceptance, releasing only its declaration pins.
+    pub fn cancelBatchAfterDiscard(
+        self: *Owner,
+        identity: BatchIdentity,
+    ) BatchError!void {
+        const entry = try self.lookupBatch(identity);
+        if (entry.state != .ready_or_draining) return error.InvalidBatch;
+        self.clearBatch(entry);
         self.completeRetiredResources();
     }
 
@@ -1628,6 +1655,67 @@ test "pre-ready cancellation requires recovery while ready rejection retains bat
     const before = owner.batches[0];
     try owner.observeRejection(ready);
     try std.testing.expectEqualDeep(before, owner.batches[0]);
+}
+
+test "discarded ready batches release exact pins across every batch slot" {
+    var owner = try Owner.init(std.testing.allocator);
+    defer owner.deinit();
+    const configs = testConfigs(16);
+    const group = try owner.acquireGroup(testGroupKey(16), &configs);
+    const bytes = [_]u8{ 9, 8, 7, 6 };
+    const resource = try owner.intern(testResourceKey(40), try testFacts(&bytes));
+    var identities: [batch_limit]BatchIdentity = undefined;
+    for (&identities, 0..) |*identity, index| {
+        identity.* = batchIdentity(
+            @intCast(index + 1),
+            @intCast(index + 1),
+            @intCast(index + 1),
+        );
+        const declarations = if (index % 2 == 0) &.{resource} else &.{};
+        const references = if (index % 2 == 0) &.{resource} else &.{};
+        const slot = try owner.reserveBatch(identity.*, group, declarations, references);
+        try std.testing.expect(slot < batch_limit);
+        try owner.markReady(identity.*);
+    }
+    var active: usize = 0;
+    for (owner.batches) |batch| {
+        if (batch.state != .free) active += 1;
+    }
+    try std.testing.expectEqual(batch_limit, active);
+    try std.testing.expectEqual(@as(u8, batch_limit / 2), owner.resources[0].declaration_pins);
+    try std.testing.expectError(
+        error.BatchLimit,
+        owner.reserveBatch(batchIdentity(99, 99, 99), group, &.{}, &.{}),
+    );
+
+    for (identities) |identity|
+        try owner.cancelBatchAfterDiscard(identity);
+    active = 0;
+    for (owner.batches) |batch| {
+        if (batch.state != .free) active += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), active);
+    try std.testing.expectEqual(@as(u8, 0), owner.resources[0].declaration_pins);
+    for (identities) |identity|
+        try std.testing.expectError(error.InvalidBatch, owner.cancelBatchAfterDiscard(identity));
+
+    const replacement = batchIdentity(100, 100, 100);
+    const replacement_slot = try owner.reserveBatch(replacement, group, &.{resource}, &.{resource});
+    try std.testing.expect(replacement_slot < batch_limit);
+    try owner.markReady(replacement);
+    const unrelated = batchIdentity(101, 101, 101);
+    const unrelated_slot = try owner.reserveBatch(unrelated, group, &.{}, &.{});
+    try std.testing.expect(unrelated_slot < batch_limit);
+    try owner.markReady(unrelated);
+    try std.testing.expectError(error.InvalidBatch, owner.cancelBatchAfterDiscard(identities[0]));
+    try std.testing.expectEqual(BatchState.ready_or_draining, (try owner.lookupBatch(unrelated)).state);
+    try owner.reconcileAcceptance(replacement, &.{resource}, &.{resource});
+    try owner.reconcileAcceptance(unrelated, &.{}, &.{});
+    active = 0;
+    for (owner.batches) |batch| {
+        if (batch.state != .free) active += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 0), active);
 }
 
 test "batch and retirement admission reject every invalid ownership form" {

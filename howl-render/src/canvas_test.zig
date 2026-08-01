@@ -490,6 +490,144 @@ test "composer separates producer and visible frame revisions" {
     try std.testing.expectEqualDeep(ordered.commands, after_stale.commands);
 }
 
+test "cursor-free source binds one overlay exactly and rejects stale identity" {
+    var composer = try canvas.Composer.init(
+        std.testing.allocator,
+        composerLimits(),
+    );
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const other = try composer.registerSource();
+    const base = solidInput(red);
+    const binding = canvas.CursorBinding{
+        .pane = 7,
+        .source = producer,
+        .terminal_sequence = 11,
+        .cursor_revision = 13,
+        .visible_set_revision = 17,
+        .lifecycle_revision = 19,
+        .rect = .{ .x = 0, .y = 0, .width = 4, .height = 3 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 8 },
+        .visible = true,
+    };
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base},
+        .cursor_binding = binding,
+    });
+    try composer.setComposition(.{
+        .surface = .{ .width = 16, .height = 8 },
+        .sources = &.{placement(producer, 2)},
+        .focused_source = producer,
+    });
+    var storage: FrameStorage = .{};
+    const first = try composer.frame(&.{}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 2), first.commands.len);
+    try std.testing.expectEqualDeep(red, first.commands[0].solid.color);
+    try std.testing.expectEqualDeep(binding.color, first.commands[1].solid.color);
+    const accepted = composer.cursorBinding(producer) orelse
+        return error.MissingCursorBinding;
+    try std.testing.expectEqual(@as(u64, 7), accepted.pane);
+    try std.testing.expectEqual(@as(u64, 2), accepted.frame_revision);
+
+    var stale = binding;
+    stale.source = other;
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        composer.apply(producer, .{
+            .revision = @fromBackingInt(@intCast(2)),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{base},
+            .cursor_binding = stale,
+        }),
+    );
+    const after = try composer.frame(&.{}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 2), after.commands.len);
+    try std.testing.expectEqualDeep(first.commands, after.commands);
+    try std.testing.expectEqualDeep(accepted, composer.cursorBinding(producer).?);
+
+    const second_binding = canvas.CursorBinding{
+        .pane = 8,
+        .source = other,
+        .terminal_sequence = 23,
+        .cursor_revision = 29,
+        .visible_set_revision = 31,
+        .lifecycle_revision = 37,
+        .rect = .{ .x = 8, .y = 0, .width = 4, .height = 3 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 8 },
+        .visible = true,
+    };
+    try composer.apply(other, .{
+        .revision = @fromBackingInt(@intCast(1)),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{base},
+        .cursor_binding = second_binding,
+    });
+    const both = [_]canvas.Composer.Placement{
+        placement(producer, 2),
+        placement(other, 2),
+    };
+    try composer.setComposition(.{
+        .surface = .{ .width = 16, .height = 8 },
+        .sources = &both,
+        .focused_source = producer,
+    });
+    const focused_first = try composer.frame(&.{}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 3), focused_first.commands.len);
+    try std.testing.expectEqualDeep(red, focused_first.commands[0].solid.color);
+    try std.testing.expectEqualDeep(binding.color, focused_first.commands[1].solid.color);
+    try std.testing.expectEqualDeep(red, focused_first.commands[2].solid.color);
+    try composer.setComposition(.{
+        .surface = .{ .width = 16, .height = 8 },
+        .sources = &both,
+        .focused_source = other,
+    });
+    const focused_second = try composer.frame(&.{}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 3), focused_second.commands.len);
+    try std.testing.expectEqualDeep(red, focused_second.commands[0].solid.color);
+    try std.testing.expectEqualDeep(red, focused_second.commands[1].solid.color);
+    try std.testing.expectEqualDeep(second_binding.color, focused_second.commands[2].solid.color);
+
+    const accepted_after_focus = composer.cursorBinding(producer).?;
+    stale = binding;
+    stale.frame_revision = accepted_after_focus.frame_revision;
+    try std.testing.expectError(
+        error.InvalidIdentity,
+        composer.apply(producer, .{
+            .revision = @fromBackingInt(@intCast(2)),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{base},
+            .cursor_binding = stale,
+        }),
+    );
+    try std.testing.expectEqualDeep(accepted_after_focus, composer.cursorBinding(producer).?);
+
+    // A topology/focus candidate can carry a newer visible-set identity
+    // without rebuilding either source. Composer must rebind every retained
+    // visible target atomically, while preserving the complete frame and its
+    // producer revisions.
+    const before_rebind = try composer.frame(&.{}, storage.buffers());
+    try composer.applyCandidate(.{
+        .changes = &.{},
+        .cursor_visible_set_revision = 41,
+        .composition = .{
+            .surface = .{ .width = 16, .height = 8 },
+            .sources = &both,
+            .focused_source = other,
+        },
+    });
+    const after_rebind = try composer.frame(&.{}, storage.buffers());
+    try std.testing.expectEqual(before_rebind.revision, after_rebind.revision);
+    try std.testing.expectEqualDeep(before_rebind.commands, after_rebind.commands);
+    try std.testing.expectEqual(@as(u64, 41), composer.cursorBinding(producer).?.visible_set_revision);
+    try std.testing.expectEqual(@as(u64, 41), composer.cursorBinding(other).?.visible_set_revision);
+}
+
 test "composer retains resources and derives partial and full recovery" {
     var composer = try canvas.Composer.init(
         std.testing.allocator,

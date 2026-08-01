@@ -65,3 +65,4 @@ howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_modes_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_osc_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_snapshot_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("test/unit/terminal_test.zig");
+tools/json_logger.zig|anytype|pub fn write(self: *Logger, value: anytype) Error!void {

@@ -23,6 +23,20 @@ pub fn build(b: *std.Build) void {
         addChildBuild(b, test_step, child, "test", optimize, target, cpu, true);
     }
 
+    const logger_module = b.createModule(.{
+        .root_source_file = b.path("tools/json_logger.zig"),
+        .target = b.resolveTargetQuery(.{}),
+        .optimize = optimize,
+    });
+    const logger_tests = b.addTest(.{
+        .name = "howl-json-logger",
+        .root_module = logger_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&logger_tests.step);
+    test_step.dependOn(&b.addRunArtifact(logger_tests).step);
+
     const audit = b.step("audit", "Audit maintained Zig source");
     const audit_command = b.addSystemCommand(&.{ "bash", "tools/audit_source.sh" });
     audit_command.setName("workspace source audit");

@@ -17,5 +17,6 @@
         "protocol_coverage.yml",
         "tools/audit_source.sh",
         "tools/source_audit.allow",
+        "tools/json_logger.zig",
     },
 }
