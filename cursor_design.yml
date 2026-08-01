@@ -116,8 +116,13 @@ checkpoints:
   - {id: current_howl_cursor_pipeline, status: accepted, product_change: forbidden}
   - {id: kitty_cursor_pipeline, status: accepted, product_change: forbidden}
   - {id: neovim_cursor_damage_receipt, status: accepted, product_change: forbidden}
-  - {id: finite_cursor_contract, status: hostile_correction_required, product_change: forbidden}
-  - {id: cursor_implementation, status: blocked_on_finite_contract, product_change: forbidden}
+  - {id: finite_cursor_contract, status: accepted, product_change: forbidden}
+  - {id: cursor_mutation_and_publication_boundary, status: accepted, commit: 0a97f7b, product_change: accepted}
+  - {id: cursor_free_base_migration, status: accepted, commit: cfea772, product_change: accepted}
+  - {id: physical_cursor_replay, status: next, product_change: allowed}
+  - {id: cursor_trail_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
+  - {id: cursor_blink_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
+  - {id: cursor_replay_benchmark_reassessment, status: pending, product_change: blocked_on_prior_checkpoint}
 
 review_boundary:
   - The first owner of excessive Neovim cursor-related redraw is proven rather than inferred.
