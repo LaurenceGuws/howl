@@ -119,7 +119,7 @@ checkpoints:
   - {id: finite_cursor_contract, status: accepted, product_change: forbidden}
   - {id: cursor_mutation_and_publication_boundary, status: accepted, commit: 0a97f7b, product_change: accepted}
   - {id: cursor_free_base_migration, status: accepted, commit: cfea772, product_change: accepted}
-  - {id: physical_cursor_replay, status: next, product_change: allowed}
+  - {id: physical_cursor_replay, status: accepted, commit: ad7c4b1, product_change: accepted}
   - {id: cursor_trail_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
   - {id: cursor_blink_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
   - {id: cursor_replay_benchmark_reassessment, status: pending, product_change: blocked_on_prior_checkpoint}

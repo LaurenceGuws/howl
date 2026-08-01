@@ -40,9 +40,10 @@ invariants:
   - source audit and protocol catalogue validation pass without diagnostics
 
 active:
-  - ingest one typed repository-local development configuration before thread construction
-  - prove current Howl and Kitty cursor ownership, damage, scheduling, blink, trail, and physical rendering paths
-  - isolate the first owner of excessive Neovim alternate-screen cursor redraw before implementation
+  - retain the validated development configuration and distribute typed cursor policy only to its runtime owners
+  - implement the bounded cursor trail state machine atop accepted physical replay
+  - implement cursor blink scheduling after trail ownership is accepted
+  - benchmark and reassess physical replay before freezing the cursor milestone
 
 deferred:
   - asciinema/rain performance parity and CPU/RSS optimization
