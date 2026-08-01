@@ -19,7 +19,7 @@ const MainError = std.Thread.SpawnError || dev_config.LoadError || error{
 /// first construction or owner failure after reverse cleanup.
 pub fn main(init: std.process.Init) MainError!void {
     var iterator = init.minimal.args.iterate();
-    var args: [8][]const u8 = undefined;
+    var args: [12][]const u8 = undefined;
     var arg_count: usize = 0;
     while (iterator.next()) |argument| {
         if (arg_count == args.len) return error.InvalidArguments;
@@ -37,7 +37,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const terminal_thread = std.Thread.spawn(
         .{},
         terminal_runtime.run,
-        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh" },
+        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh", parsed.command },
     ) catch |failure| {
         boundary.requestStop(.render);
         window_thread.join();

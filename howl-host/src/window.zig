@@ -323,7 +323,9 @@ fn runFallible(boundary: *shared.Boundary) !void {
         };
         if (state.frame_callback == null) {
             if (boundary.takeCompletion()) |completion| {
-                if (completion.generation == state.ring.generation) try present(&state, completion);
+                if (completion.generation == state.ring.generation) {
+                    try present(&state, completion);
+                }
             }
         }
         if (c.wl_display_dispatch_pending(display) < 0) return error.Dispatch;
@@ -394,7 +396,9 @@ fn constructRing(state: *State, offered: shared.OfferedRing) !void {
 }
 
 fn present(state: *State, completion: shared.Completion) !void {
-    if (completion.slot >= shared.slot_count or completion.revision <= state.presented) return error.InvalidCompletion;
+    if (completion.slot >= shared.slot_count or completion.revision <= state.presented) {
+        return error.InvalidCompletion;
+    }
     if (state.frame_callback != null) return error.PresentationPaced;
     if (completion.generation != state.ring.generation) return error.InvalidCompletion;
     const viewport = if (state.ring.use_viewport or state.fractional_retire_pending)

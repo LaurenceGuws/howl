@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const run_font = b.option([]const u8, "font", "Absolute font path passed to the live host");
+    const run_command = b.option([]const u8, "command", "One-shot /bin/sh -c command for the first pane");
     const headers = b.addWriteFiles();
     const renderer_header = headers.add("renderer-native.h",
         \\#ifdef _FORTIFY_SOURCE
@@ -182,6 +183,7 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&terminal_pool_check.step);
     const run = b.addRunArtifact(executable);
     if (run_font) |font| run.addArgs(&.{ "--font", font });
+    if (run_command) |command| run.addArgs(&.{ "--command", command });
     b.step("run", "Run the bounded live color ring").dependOn(&run.step);
 
     const test_module = b.createModule(.{

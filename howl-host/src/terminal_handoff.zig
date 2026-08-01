@@ -108,6 +108,9 @@ const CursorSlot = struct {
     terminal_sequence_high_water: u64 = 0,
     cursor_revision_high_water: u64 = 0,
     publication: CursorPublication = undefined,
+    /// Binding most recently accepted by Composer. Inbox publication never
+    /// advances this ownership fact.
+    accepted_binding: ?canvas.CursorBinding = null,
     live: bool = false,
     pending: bool = false,
 };
@@ -2044,7 +2047,15 @@ pub const Boundary = struct {
         if (!slot.live or slot.source != token.source_id or
             @backingInt(slot.lifecycle_revision) != binding.lifecycle_revision)
             return error.Stale;
-        if (slot.cursor_revision_high_water != 0) {
+        const is_accepted_binding = if (slot.accepted_binding) |accepted|
+            std.meta.eql(accepted, binding)
+        else
+            false;
+        // A synchronized-output ordinary update may carry the exact binding
+        // already accepted by Composer while a newer semantic target waits
+        // for mode-off. Only a different binding is subject to high-water
+        // validation.
+        if (!is_accepted_binding and slot.cursor_revision_high_water != 0) {
             if (binding.cursor_revision < slot.cursor_revision_high_water)
                 return error.Stale;
             if (binding.cursor_revision == slot.cursor_revision_high_water and
@@ -2115,6 +2126,13 @@ pub const Boundary = struct {
         const index = self.find(token.pane_id) orelse return false;
         const slot = self.cursor_slots[index];
         if (!slot.live or slot.source != token.source_id) return false;
+        // Synchronized-output text publications retain the exact binding
+        // already accepted by Composer while VT's semantic cursor advances.
+        if (slot.accepted_binding) |accepted|
+            if (std.meta.eql(accepted, binding) and
+                slot.cursor_revision_high_water == binding.cursor_revision and
+                slot.terminal_sequence_high_water == binding.terminal_sequence)
+                return false;
         if (slot.cursor_revision_high_water == 0) return false;
         return binding.cursor_revision < slot.cursor_revision_high_water or
             (binding.cursor_revision == slot.cursor_revision_high_water and
@@ -2129,6 +2147,9 @@ pub const Boundary = struct {
         binding: canvas.CursorBinding,
     ) void {
         const slot = &self.cursor_slots[index];
+        if (slot.accepted_binding) |accepted|
+            if (std.meta.eql(accepted, binding)) return;
+        slot.accepted_binding = binding;
         if (slot.cursor_revision_high_water == 0) {
             slot.terminal_sequence_high_water = binding.terminal_sequence;
             slot.cursor_revision_high_water = binding.cursor_revision;
@@ -2513,6 +2534,23 @@ pub const Boundary = struct {
         return null;
     }
 
+    /// Borrows the cursor binding most recently accepted by Composer for one
+    /// live source. A pending inbox publication is deliberately excluded.
+    pub fn acceptedCursorBinding(
+        self: *Boundary,
+        pane: PaneId,
+        source: canvas.SourceId,
+    ) ?canvas.CursorBinding {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(pane) orelse return null;
+        const entry = self.entries[index].?;
+        if (entry.source != source or entry.state != .live) return null;
+        const slot = self.cursor_slots[index];
+        if (!slot.live or slot.source != source) return null;
+        return slot.accepted_binding;
+    }
+
     /// Publishes one latest-wins cursor target without touching terminal Content.
     ///
     /// Every identity field is supplied by the caller and checked against the
@@ -2565,6 +2603,17 @@ pub const Boundary = struct {
         return slot.publication;
     }
 
+    /// Reports whether an ordinary pooled terminal update still awaits
+    /// Renderer drainage. Cursor-only inbox entries do not count here.
+    pub fn hasReadyUpdates(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (self.entries) |maybe_entry| {
+            if (maybe_entry) |entry| if (entry.ready != null) return true;
+        }
+        return false;
+    }
+
     /// Cancels one still-pending cursor revision without touching its high-water.
     pub fn cancelCursor(
         self: *Boundary,
@@ -2589,6 +2638,7 @@ pub const Boundary = struct {
         self.entries[index].?.state = .retired;
         self.cursor_slots[index].live = false;
         self.cursor_slots[index].pending = false;
+        self.cursor_slots[index].accepted_binding = null;
         signal(self.renderer_fd);
     }
 
@@ -3286,6 +3336,10 @@ test "cursor binding catches up after hidden reveal and draining race" {
         .cursor_binding = first_binding,
     });
     try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(
+        first_binding,
+        boundary.acceptedCursorBinding(pane, source).?,
+    );
     try std.testing.expectEqual(@as(u64, 1), boundary.cursor_slots[0].cursor_revision_high_water);
 
     // The source is hidden while its local target advances; no cursor inbox
@@ -3315,6 +3369,10 @@ test "cursor binding catches up after hidden reveal and draining race" {
         .cursor_binding = reveal_binding,
     });
     try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(
+        reveal_binding,
+        boundary.acceptedCursorBinding(pane, source).?,
+    );
     try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
 
     var equal_mismatch = first_binding;
@@ -3395,6 +3453,10 @@ test "cursor binding catches up after hidden reveal and draining race" {
     );
     try std.testing.expectEqual(@as(u64, 2), boundary.cursor_slots[0].cursor_revision_high_water);
     try std.testing.expectEqual(@as(u64, 3), boundary.cursor_slots[0].terminal_sequence_high_water);
+    try std.testing.expectEqual(
+        reveal_binding,
+        boundary.acceptedCursorBinding(pane, source).?,
+    );
     const ready = boundary.entries[0].?.ready.?;
     try boundary.pool.beginDrain(ready);
     boundary.entries[0].?.draining = true;
@@ -3424,6 +3486,10 @@ test "cursor binding catches up after hidden reveal and draining race" {
     boundary.entries[0].?.draining = false;
     try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
     try std.testing.expectEqual(@as(u64, 3), boundary.cursor_slots[0].cursor_revision_high_water);
+    try std.testing.expectEqual(
+        catchup_binding,
+        boundary.acceptedCursorBinding(pane, source).?,
+    );
 
     // A newer cursor-only publication supersedes an already-ready ordinary
     // update before Renderer drains it. The terminal side must release that
@@ -5095,9 +5161,9 @@ test "terminal receipt slot has exact bounded allocation" {
         @as(usize, 15104),
         try requiredBytes(testLimits(32, 64, 8192)),
     );
-    try std.testing.expectEqual(@as(usize, 224), @sizeOf(PendingSlot));
+    try std.testing.expectEqual(@as(usize, 232), @sizeOf(PendingSlot));
     try std.testing.expectEqual(
-        @as(usize, 980992),
+        @as(usize, 981504),
         (try requiredBytes(testLimits(32, 64, 8192)) +
             @sizeOf(PendingSlot)) * 64,
     );

@@ -352,6 +352,14 @@ pub const ProducerUpdate = struct {
     cursor_binding: ?CursorBinding = null,
 };
 
+/// Supplies the pixel origin used to reconstruct one cursor target.
+pub const CursorPoint = struct {
+    /// Horizontal surface offset.
+    x: i32,
+    /// Vertical surface offset.
+    y: i32,
+};
+
 /// Selects one backend-neutral cursor overlay shape.
 pub const CursorShape = enum { block, underline, bar, none };
 
@@ -370,9 +378,14 @@ pub const CursorBinding = struct {
     visible_set_revision: u64,
     /// Live lifecycle identity against which this binding was prepared.
     lifecycle_revision: u64,
-    /// Exact cursor target rectangle in surface coordinates.
+    /// Exact cursor target rectangle in source-local coordinates.
     rect: Rect,
-    /// Exact surface-coordinate clip supplied by pane geometry.
+    /// Source-local pixel origin of terminal cell zero for cursor-only
+    /// reconstruction.
+    cell_origin: CursorPoint = .{ .x = 0, .y = 0 },
+    /// Exact accepted terminal cell dimensions.
+    cell_size: Size = .{ .width = 1, .height = 1 },
+    /// Source-local clip translated through the accepted Composer placement.
     clip: Rect,
     /// Selects the one generic cursor overlay shape.
     shape: CursorShape = .block,
@@ -1141,6 +1154,28 @@ pub const Composer = struct {
         residency: []const Residency,
         buffers: FrameBuffers,
     ) Composer.Error!Frame {
+        return self.frameWithCursor(residency, buffers, true);
+    }
+
+    /// Derives the accepted terminal frame without cursor presentation.
+    ///
+    /// This read-only view is the stable base consumed by physical cursor
+    /// replay; it never mutates Composer source, composition, revision, or
+    /// resource ownership.
+    pub fn frameCursorFree(
+        self: *const Composer,
+        residency: []const Residency,
+        buffers: FrameBuffers,
+    ) Composer.Error!Frame {
+        return self.frameWithCursor(residency, buffers, false);
+    }
+
+    fn frameWithCursor(
+        self: *const Composer,
+        residency: []const Residency,
+        buffers: FrameBuffers,
+        include_cursor: bool,
+    ) Composer.Error!Frame {
         try self.validateFrameAliases(residency, buffers);
         try self.validateResidencies(residency);
 
@@ -1155,6 +1190,21 @@ pub const Composer = struct {
             &needed_removals,
             &needed_pixels,
         );
+        if (!include_cursor) {
+            var cursor_commands: usize = 0;
+            for (self.composition[0..self.composition_count]) |placement| {
+                const source = self.sources[
+                    @intCast(@backingInt(placement.source) - 1)
+                ];
+                cursor_commands = std.math.add(
+                    usize,
+                    cursor_commands,
+                    try self.cursorOverlayCountFor(source, null),
+                ) catch return error.ArithmeticOverflow;
+            }
+            needed_commands = std.math.sub(usize, needed_commands, cursor_commands) catch
+                return error.ArithmeticOverflow;
+        }
         if (needed_commands > buffers.commands.len) return error.CommandLimit;
         if (needed_uploads > buffers.uploads.len) return error.ResourceLimit;
         if (needed_removals > buffers.removals.len) return error.ResourceLimit;
@@ -1171,6 +1221,7 @@ pub const Composer = struct {
             &upload_count,
             &removal_count,
             &pixel_count,
+            include_cursor,
         );
         return .{
             .revision = @fromBackingInt(@intCast(self.frame_revision)),
@@ -2258,6 +2309,7 @@ pub const Composer = struct {
         upload_count: *usize,
         removal_count: *usize,
         pixel_count: *usize,
+        include_cursor: bool,
     ) Composer.Error!void {
         for (self.composition[0..self.composition_count]) |placement| {
             const source = self.sources[
@@ -2269,7 +2321,8 @@ pub const Composer = struct {
                 buffers.commands[command_count.*] = output;
                 command_count.* += 1;
             }
-            try self.writeCursorOverlay(placement, source, buffers, command_count);
+            if (include_cursor)
+                try self.writeCursorOverlay(placement, source, buffers, command_count);
             for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
                 if (!try self.resourceVisible(placement, source, resource.local) or
                     residencyMatches(residency, source.id, resource))
@@ -2331,9 +2384,18 @@ pub const Composer = struct {
         self: *const Composer,
         source: Source,
     ) Composer.Error!usize {
-        if (self.focused_source == null or self.focused_source.? != source.id)
+        return self.cursorOverlayCountFor(source, null);
+    }
+
+    fn cursorOverlayCountFor(
+        self: *const Composer,
+        source: Source,
+        override: ?CursorBinding,
+    ) Composer.Error!usize {
+        if (override == null and
+            (self.focused_source == null or self.focused_source.? != source.id))
             return 0;
-        const binding = source.cursor_binding orelse return 0;
+        const binding = override orelse source.cursor_binding orelse return 0;
         if (!binding.visible or binding.shape == .none) return 0;
         var count: usize = 1;
         if (binding.shape != .block) return count;
@@ -2988,6 +3050,7 @@ fn frameCommandAt(
                 .clip = visible,
                 .resource = qualifyView(placement.source, value.resource),
                 .color = value.color,
+                .cursor_component = value.cursor_component,
             } };
         },
         .rgba => |value| rgba: {
@@ -3126,6 +3189,9 @@ pub const Command = union(enum) {
         resource: FrameResourceView,
         /// Mask color.
         color: Color,
+        /// Marks a terminal glyph component eligible for physical cursor
+        /// recoloring. This fact is intrinsic to the accepted base command.
+        cursor_component: bool = false,
     },
     /// Draws one retained RGBA resource through an exact clip.
     rgba: struct {
@@ -3181,6 +3247,7 @@ pub fn project(
                 .clip = visible,
                 .resource = qualify(source, value.resource),
                 .color = value.color,
+                .cursor_component = value.cursor_component,
             } },
             .rgba => |value| .{ .rgba = .{
                 .destination = value.destination,

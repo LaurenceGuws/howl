@@ -13,6 +13,8 @@ const vk = howl_vk.abi;
 const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
 const vk_surface = howl_vk.surface;
+const replay_command_limit: usize = vk_surface.max_commands;
+const replay_pin_limit: usize = 2_048;
 const input_actions = @import("input_actions");
 const terminal_handoff = @import("terminal_handoff");
 const chrome_appearance = chrome_state.Appearance{
@@ -47,6 +49,381 @@ const CanvasPlanResult = union(enum) {
     retry,
     accepted: vk_surface.Plan,
 };
+
+const ReplayCohort = struct {
+    vertices: []vk_surface.Vertex,
+    indices: []u32,
+    commands: []vk_surface.Command,
+    pins: []vk_surface.ResourceGeneration,
+    vertex_count: usize = 0,
+    index_count: usize = 0,
+    command_count: usize = 0,
+    pin_count: usize = 0,
+};
+
+const ReplayState = struct {
+    allocator: std.mem.Allocator,
+    cohorts: [2]ReplayCohort,
+    accepted: usize = 0,
+    pending: bool = false,
+    accepted_slot: ?usize = null,
+    retiring_cohort: ?usize = null,
+    retiring_slot: ?usize = null,
+
+    fn init(allocator: std.mem.Allocator) !ReplayState {
+        var cohorts: [2]ReplayCohort = undefined;
+        var initialized: usize = 0;
+        errdefer while (initialized > 0) {
+            initialized -= 1;
+            allocator.free(cohorts[initialized].pins);
+            allocator.free(cohorts[initialized].commands);
+            allocator.free(cohorts[initialized].indices);
+            allocator.free(cohorts[initialized].vertices);
+        };
+        for (&cohorts) |*cohort| {
+            cohort.* = .{
+                .vertices = try allocator.alloc(vk_surface.Vertex, replay_command_limit * 4),
+                .indices = try allocator.alloc(u32, replay_command_limit * 6),
+                .commands = try allocator.alloc(vk_surface.Command, replay_command_limit),
+                .pins = try allocator.alloc(vk_surface.ResourceGeneration, replay_pin_limit),
+            };
+            initialized += 1;
+        }
+        return .{ .allocator = allocator, .cohorts = cohorts };
+    }
+
+    fn deinit(self: *ReplayState) void {
+        for (&self.cohorts) |*cohort| {
+            self.allocator.free(cohort.pins);
+            self.allocator.free(cohort.commands);
+            self.allocator.free(cohort.indices);
+            self.allocator.free(cohort.vertices);
+        }
+        self.* = undefined;
+    }
+
+    fn candidate(self: *ReplayState) *ReplayCohort {
+        return &self.cohorts[1 - self.accepted];
+    }
+
+    fn acceptedSlot(self: *const ReplayState) ?usize {
+        return self.accepted_slot;
+    }
+
+    fn canCapture(self: *const ReplayState) bool {
+        return self.retiring_slot == null and !self.pending;
+    }
+
+    fn acceptedPlan(self: *const ReplayState) vk_surface.Plan {
+        const cohort = &self.cohorts[self.accepted];
+        return .{
+            .vertices = cohort.vertices[0..cohort.vertex_count],
+            .indices = cohort.indices[0..cohort.index_count],
+            .commands = cohort.commands[0..cohort.command_count],
+            .atlas_changed = false,
+            .image_atlas_changed = false,
+        };
+    }
+
+    fn capture(self: *ReplayState, plan: vk_surface.Plan, frame: vk_surface.Frame) !void {
+        if (self.retiring_slot != null) return error.Retiring;
+        if (plan.commands.len > frame_command_limit or
+            frame.commands.len > frame_command_limit)
+            return error.InvalidFrame;
+        // Count and validate the complete pin cohort before touching the
+        // staging role. The stack plan is fixed at the accepted bound, so a
+        // pressure rejection cannot partially overwrite a reusable cohort.
+        var planned_pins: [replay_pin_limit]vk_surface.ResourceGeneration = undefined;
+        var planned_pin_count: usize = 0;
+        for (frame.commands) |command| {
+            const resource: ?vk_surface.ResourceGeneration = switch (command) {
+                .solid => null,
+                .alpha_mask => |value| value.resource,
+                .rgba => |value| value.resource,
+            };
+            if (resource) |value| {
+                value.validate() catch return error.InvalidFrame;
+                var seen = false;
+                for (planned_pins[0..planned_pin_count]) |prior| {
+                    if (std.meta.eql(prior, value)) seen = true;
+                }
+                if (!seen) {
+                    if (planned_pin_count == planned_pins.len) return error.InvalidFrame;
+                    planned_pins[planned_pin_count] = value;
+                    planned_pin_count += 1;
+                }
+            }
+        }
+        const cohort = self.candidate();
+        if (plan.vertices.len > cohort.vertices.len or
+            plan.indices.len > cohort.indices.len or
+            plan.commands.len > cohort.commands.len)
+            return error.InvalidFrame;
+        @memcpy(cohort.vertices[0..plan.vertices.len], plan.vertices);
+        @memcpy(cohort.indices[0..plan.indices.len], plan.indices);
+        @memcpy(cohort.commands[0..plan.commands.len], plan.commands);
+        cohort.vertex_count = plan.vertices.len;
+        cohort.index_count = plan.indices.len;
+        cohort.command_count = plan.commands.len;
+        @memcpy(cohort.pins[0..planned_pin_count], planned_pins[0..planned_pin_count]);
+        cohort.pin_count = planned_pin_count;
+        self.pending = true;
+    }
+
+    fn commit(self: *ReplayState, slot_index: usize) void {
+        std.debug.assert(self.pending);
+        std.debug.assert(self.retiring_cohort == null);
+        if (self.accepted_slot) |old_slot| {
+            self.retiring_cohort = self.accepted;
+            self.retiring_slot = old_slot;
+        }
+        self.accepted = 1 - self.accepted;
+        self.accepted_slot = slot_index;
+        self.pending = false;
+    }
+
+    /// Commits a physical cursor presentation without changing the canonical
+    /// cursor-free command cohort. The staging bytes have been restored to the
+    /// base before this method is called.
+    fn commitCursor(self: *ReplayState, slot_index: usize) void {
+        std.debug.assert(self.pending);
+        std.debug.assert(self.retiring_slot == null);
+        if (self.accepted_slot) |old_slot| {
+            self.retiring_slot = old_slot;
+        }
+        self.accepted_slot = slot_index;
+        self.pending = false;
+    }
+
+    /// Restores the staging role to an exact canonical base after its bytes
+    /// were used synchronously to record a cursor presentation.
+    fn restoreCandidateBase(self: *ReplayState, base: vk_surface.Plan) void {
+        const cohort = self.candidate();
+        @memcpy(cohort.vertices[0..base.vertices.len], base.vertices);
+        @memcpy(cohort.indices[0..base.indices.len], base.indices);
+        @memcpy(cohort.commands[0..base.commands.len], base.commands);
+        cohort.vertex_count = base.vertices.len;
+        cohort.index_count = base.indices.len;
+        cohort.command_count = base.commands.len;
+        // Replay never changes the candidate pin cohort.  Keeping it here is
+        // essential for an ordinary replacement: the candidate already owns
+        // the newly accepted base pins, while a cursor-only replay borrows the
+        // canonical accepted pins.
+    }
+
+    fn releaseRetiring(self: *ReplayState, slot_index: usize) void {
+        if (self.retiring_slot == slot_index) {
+            self.retiring_cohort = null;
+            self.retiring_slot = null;
+        }
+    }
+
+    fn discard(self: *ReplayState) void {
+        self.candidate().vertex_count = 0;
+        self.candidate().index_count = 0;
+        self.candidate().command_count = 0;
+        self.candidate().pin_count = 0;
+        self.pending = false;
+    }
+};
+
+test "cursor replay cohorts role-swap and reject pressure transactionally" {
+    var replay = try ReplayState.init(std.testing.allocator);
+    defer replay.deinit();
+
+    const resource = try vk_surface.ResourceGeneration.shared(1, 1);
+    const vertices = [_]vk_surface.Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 1, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 1, 1 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 0, 1 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
+    const commands = [_]vk_surface.Command{.{
+        .kind = .alpha_mask_cursor,
+        .first_index = 0,
+        .index_count = 6,
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+    }};
+    const frame_commands = [_]vk_surface.FrameCommand{.{ .alpha_mask = .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .resource = resource,
+        .color = .{ 1, 1, 1, 1 },
+    } }};
+    const plan = vk_surface.Plan{
+        .vertices = &vertices,
+        .indices = &indices,
+        .commands = &commands,
+        .atlas_changed = false,
+    };
+    const frame = vk_surface.Frame{
+        .revision = 1,
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &frame_commands,
+    };
+
+    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().commands.len);
+    try replay.capture(plan, frame);
+    try std.testing.expect(replay.pending);
+    replay.discard();
+    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().commands.len);
+
+    try replay.capture(plan, frame);
+    replay.commit(2);
+    try std.testing.expectEqual(@as(usize, 1), replay.acceptedPlan().commands.len);
+    try std.testing.expectEqual(@as(usize, 1), replay.cohorts[replay.accepted].pin_count);
+    const accepted_command = replay.acceptedPlan().commands[0];
+
+    const too_many_commands = replay.candidate().commands[0 .. frame_command_limit + 1];
+    try std.testing.expectError(error.InvalidFrame, replay.capture(
+        .{ .vertices = &.{}, .indices = &.{}, .commands = too_many_commands, .atlas_changed = false },
+        frame,
+    ));
+    try std.testing.expectEqual(accepted_command, replay.acceptedPlan().commands[0]);
+    try std.testing.expectEqual(@as(usize, 1), replay.cohorts[replay.accepted].pin_count);
+
+    // A committed replacement keeps the previous physical role pinned until
+    // its exact ring slot is released; staging cannot overwrite that role.
+    try replay.capture(plan, frame);
+    replay.commit(0);
+    try std.testing.expectEqual(@as(?usize, 2), replay.retiring_slot);
+    try std.testing.expectEqual(@as(?usize, 0), replay.acceptedSlot());
+    var replay_slots = [_]Slot{ .{}, .{}, .{} };
+    replay_slots[0].release_point = 4;
+    replay_slots[1].release_point = 9;
+    replay_slots[2].release_point = 7;
+    const release_facts = shared.RetiredRing{
+        .generation = 1,
+        .presented_mask = 0b101,
+        .release_points = .{ 4, 9, 7 },
+    };
+    var unrelated_release = release_facts;
+    unrelated_release.presented_mask = 0b001;
+    try std.testing.expect(retiringSlotReady(&replay, unrelated_release, &replay_slots) == null);
+    try std.testing.expectEqual(
+        @as(?usize, 2),
+        retiringSlotReady(&replay, release_facts, &replay_slots),
+    );
+    try std.testing.expectError(error.Retiring, replay.capture(plan, frame));
+    // Slot 1 sorts before the retiring slot 2, but the exact retiring role is
+    // reconciled first; selecting slot 1 must never leave capture blocked.
+    const released_slots = [_]usize{ 1, 2 };
+    for (released_slots) |slot| {
+        if (replay.retiring_slot == slot) {
+            replay.releaseRetiring(slot);
+            break;
+        }
+    }
+    try std.testing.expect(replay.canCapture());
+
+    const pressure = try std.testing.allocator.alloc(vk_surface.FrameCommand, replay_pin_limit + 1);
+    defer std.testing.allocator.free(pressure);
+    for (pressure, 0..) |*command, index| {
+        command.* = .{ .alpha_mask = .{
+            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .resource = try vk_surface.ResourceGeneration.shared(index + 2, 1),
+            .color = .{ 1, 1, 1, 1 },
+        } };
+    }
+    try std.testing.expectError(error.InvalidFrame, replay.capture(
+        .{ .vertices = &.{}, .indices = &.{}, .commands = &.{}, .atlas_changed = false },
+        .{ .revision = 2, .uploads = &.{}, .removals = &.{}, .commands = pressure },
+    ));
+    try std.testing.expectEqual(accepted_command, replay.acceptedPlan().commands[0]);
+    try std.testing.expectEqual(@as(usize, 1), replay.cohorts[replay.accepted].pin_count);
+}
+
+test "cursor placement translates pane-local geometry and clips at Composer placement" {
+    const binding = render_api.canvas.CursorBinding{
+        .pane = 1,
+        .source = @fromBackingInt(2),
+        .terminal_sequence = 4,
+        .cursor_revision = 3,
+        .visible_set_revision = 5,
+        .lifecycle_revision = 6,
+        .rect = .{ .x = 8, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 0, .y = 0, .width = 24, .height = 32 },
+        .shape = .block,
+        .visible = true,
+    };
+    const placement = render_api.canvas.Composer.Placement{
+        .source = binding.source,
+        .origin = .{ .x = 24, .y = 40 },
+        .clip = .{ .x = 24, .y = 40, .width = 16, .height = 24 },
+    };
+    const overlay = (try cursorOverlayForPlacement(binding, placement)).?;
+    try std.testing.expectEqual(@as(i32, 40), overlay.rect.y);
+    try std.testing.expectEqual(@as(i32, 40), overlay.clip.y);
+    try std.testing.expectEqual(@as(u32, 16), overlay.clip.width);
+    try std.testing.expectEqual(@as(u32, 24), overlay.clip.height);
+    try std.testing.expect(overlay.rect.y != 0);
+}
+
+test "cursor-only replay keeps the canonical base across ten updates" {
+    var replay = try ReplayState.init(std.testing.allocator);
+    defer replay.deinit();
+    const vertices = [_]vk_surface.Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
+    const commands = [_]vk_surface.Command{.{
+        .kind = .solid,
+        .first_index = 0,
+        .index_count = 6,
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+    }};
+    const plan = vk_surface.Plan{
+        .vertices = &vertices,
+        .indices = &indices,
+        .commands = &commands,
+        .atlas_changed = false,
+    };
+    try replay.capture(plan, .{
+        .revision = 1,
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+    });
+    replay.commit(0);
+    const canonical = replay.acceptedPlan();
+    const canonical_commands = canonical.commands[0];
+    var expected_count: ?usize = null;
+    for (0..10) |index| {
+        const candidate_cohort = replay.candidate();
+        const presented = try vk_surface.replayCursor(
+            canonical,
+            .{
+                .rect = .{ .x = @intCast(index), .y = 0, .width = 8, .height = 16 },
+                .clip = .{ .x = 0, .y = 0, .width = 32, .height = 16 },
+                .shape = .bar,
+                .color = .{ 0, 0, 0, 1 },
+                .text_color = .{ 1, 1, 1, 1 },
+                .visible = true,
+            },
+            .{
+                .vertices = candidate_cohort.vertices,
+                .indices = candidate_cohort.indices,
+                .commands = candidate_cohort.commands,
+            },
+        );
+        if (expected_count) |count|
+            try std.testing.expectEqual(count, presented.commands.len)
+        else
+            expected_count = presented.commands.len;
+        replay.pending = true;
+        replay.restoreCandidateBase(canonical);
+        replay.commitCursor(1);
+        if (replay.retiring_slot) |slot| replay.releaseRetiring(slot);
+        try std.testing.expectEqual(canonical_commands, replay.acceptedPlan().commands[0]);
+        try std.testing.expectEqual(@as(usize, 1), replay.acceptedPlan().commands.len);
+    }
+}
 
 const RedrawResult = enum {
     blocked,
@@ -139,6 +516,7 @@ const CanvasWork = struct {
     /// While populated, buildCanvasPlan does not mutate or extract Content and
     /// defers later topology projection to the caller's next loop turn.
     chrome_retry: ?ChromeRetry = null,
+    replay: *ReplayState,
 };
 
 const Slot = struct {
@@ -181,7 +559,12 @@ pub fn run(
     allocator: std.mem.Allocator,
     font_path: []const u8,
 ) void {
-    runFallible(boundary, terminals, allocator, font_path) catch |failure| {
+    runFallible(
+        boundary,
+        terminals,
+        allocator,
+        font_path,
+    ) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
@@ -234,7 +617,7 @@ fn runFallible(
     defer allocator.free(frame_removals);
     const frame_commands = try allocator.alloc(
         render_api.canvas.Command,
-        frame_command_limit,
+        replay_command_limit,
     );
     defer allocator.free(frame_commands);
     const frame_pixels = try allocator.alloc(u8, 8 * 1024 * 1024);
@@ -243,7 +626,7 @@ fn runFallible(
     var surface_removals: [frame_resource_limit]vk_surface.Removal = undefined;
     const surface_commands = try allocator.alloc(
         vk_surface.FrameCommand,
-        frame_command_limit,
+        replay_command_limit,
     );
     defer allocator.free(surface_commands);
     var surface_residencies: [frame_resource_limit]vk_surface.Residency = undefined;
@@ -255,6 +638,8 @@ fn runFallible(
         .pixel_bytes = 8 * 1024 * 1024,
     });
     defer surface_residency.deinit();
+    var replay = try ReplayState.init(allocator);
+    defer replay.deinit();
     var canvas_work = CanvasWork{
         .composer = &composer,
         .content = &chrome_content,
@@ -274,6 +659,7 @@ fn runFallible(
         .terminal_font_policy = try terminal_handoff.FontPolicy.init(
             configured_terminal_base_points,
         ),
+        .replay = &replay,
     };
     try retainTerminalScale(
         canvas_work.terminals,
@@ -419,14 +805,16 @@ fn runFallible(
         .{ 0.52, 0.16, 0.56, 1 },
     };
     var next_acquire_point: u64 = 4;
+    const initial_plan = try buildAcceptedCanvasPlan(&canvas_work);
+    errdefer surface_residency.discard();
+    errdefer replay.discard();
     for (&rings[0], 0..) |*slot, index| {
         queue_active = true;
-        const composer_plan = try buildAcceptedCanvasPlan(&canvas_work);
-        errdefer surface_residency.discard();
-        try render(&graphics, device, queue, family, command, slot, colors[index], composer_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, index + 1);
+        try render(&graphics, device, queue, family, command, slot, colors[index], initial_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, index + 1);
         try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
         slot.release_point = 1;
     }
+    replay.commit(shared.slot_count - 1);
 
     // The first generation exercises real slot reuse before any resize: once
     // Window has superseded slot 0, import its compositor release fence into
@@ -439,8 +827,10 @@ fn runFallible(
     defer vk.vkDestroySemaphore(device, release_wait, null);
     const reuse_plan = try buildAcceptedCanvasPlan(&canvas_work);
     errdefer surface_residency.discard();
+    errdefer replay.discard();
     try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
     try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
+    replay.commit(0);
     rings[0][0].release_point = 2;
     next_acquire_point += 1;
 
@@ -448,6 +838,7 @@ fn runFallible(
     var active_generation = initial_surface.generation;
     var actions = input_actions.State{};
     var terminal_redraw_pending = false;
+    var cursor_replay_pending: ?terminal_handoff.CursorPublication = null;
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
     var pending_topology: ?PendingTopology =
@@ -522,7 +913,15 @@ fn runFallible(
         local_redraw_retry_pending = false;
         if (!local_redraw_retry_turn) {
             const terminal_woke = try waitRenderWakeBlocking(boundary, terminals);
-            terminal_redraw_pending = terminal_woke or terminal_redraw_pending;
+            if (terminal_woke) {
+                terminal_redraw_pending = terminals.hasReadyUpdates() or
+                    terminal_redraw_pending;
+                reconcileFocusedCursor(
+                    terminals,
+                    chrome.focusedPaneId(),
+                    &cursor_replay_pending,
+                );
+            }
         }
         const terminal_status = terminals.status();
         if (terminal_status.stopped)
@@ -541,6 +940,16 @@ fn runFallible(
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
                     try checkGpuBudget(surface.physical_width, surface.physical_height);
+                    if (!try releaseReplayRetirementIfReady(
+                        boundary,
+                        &replay,
+                        active_generation,
+                        &rings[active_ring],
+                        drm_fd,
+                    )) {
+                        terminal_redraw_pending = true;
+                        continue;
+                    }
                     var bootstrap_publication: ?PreparedBootstrapPublication =
                         if (admitted.new_source != null)
                             try prepareBootstrapPublication(
@@ -600,6 +1009,11 @@ fn runFallible(
                         }
                     }
                     if (superseded) {
+                        // The accepted plan was only a candidate until the
+                        // replacement ring completed admission.  A stale
+                        // generation must release its replay staging role
+                        // before the next topology attempt can capture it.
+                        replay.discard();
                         for (&replacement_fds) |*fds| {
                             if (fds.dma >= 0) closeDescriptor(fds.dma);
                             if (fds.acquire >= 0) closeDescriptor(fds.acquire);
@@ -613,6 +1027,7 @@ fn runFallible(
                     boundary.publishOffers(replacement_offers) catch |failure| switch (failure) {
                         error.InvalidOffer => {
                             if (!boundary.isLatestGeneration(surface.generation)) {
+                                replay.discard();
                                 for (&replacement_fds) |*fds| {
                                     if (fds.dma >= 0) closeDescriptor(fds.dma);
                                     if (fds.acquire >= 0) closeDescriptor(fds.acquire);
@@ -631,12 +1046,16 @@ fn runFallible(
                     try waitWindowRing(boundary, surface.generation);
                     var completion_batch: [shared.slot_count]shared.Completion = undefined;
                     var candidate_acquire = next_acquire_point;
+                    const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
+                    errdefer surface_residency.discard();
+                    errdefer replay.discard();
+                    const physical_resized_plan = try physicalPlanForBase(
+                        &canvas_work,
+                        resized_plan,
+                        admitted.candidate.focusedPaneId(),
+                    );
                     for (&rings[replacement], 0..) |*slot, index| {
-                        const resized_plan = try buildAcceptedCanvasPlan(
-                            &canvas_work,
-                        );
-                        errdefer surface_residency.discard();
-                        try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
+                        try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, physical_resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
                         completion_batch[index] = .{
                             .generation = surface.generation,
                             .revision = candidate_acquire,
@@ -647,6 +1066,11 @@ fn runFallible(
                         candidate_acquire = std.math.add(u64, candidate_acquire, 1) catch
                             return error.RevisionOverflow;
                     }
+                    // The replacement ring has copied the cursor-bearing
+                    // candidate. Keep the replay cohort itself cursor-free so
+                    // the next physical cursor update starts from the new
+                    // canonical base.
+                    replay.restoreCandidateBase(resized_plan);
                     var prepared_completions = try boundary.prepareCompletions(&completion_batch);
                     defer prepared_completions.deinit();
                     try admitted.commit();
@@ -655,16 +1079,24 @@ fn runFallible(
                     if (bootstrap_publication) |*publication|
                         publication.commit(&canvas_work);
                     prepared_completions.commit();
+                    replay.commit(shared.slot_count - 1);
                     for (&rings[replacement]) |*slot| slot.release_point = 1;
                     next_acquire_point = candidate_acquire;
                     const old_ring = active_ring;
                     const old_generation = active_generation;
+                    pending_topology = null;
                     active_ring = replacement;
                     active_generation = surface.generation;
-                    pending_topology = null;
+                    reconcileFocusedCursor(
+                        terminals,
+                        chrome.focusedPaneId(),
+                        &cursor_replay_pending,
+                    );
                     try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
                     boundary.requestWindowRingRetirement(old_generation);
                     try waitWindowRingRetired(boundary, old_generation);
+                    if (replay.retiring_slot) |slot_index|
+                        replay.releaseRetiring(slot_index);
                     for (&rings[old_ring]) |*slot|
                         slot.deinit(device, drm_fd, &gpu_bytes);
                 } else if (admitted.phase == .admitted) {
@@ -698,9 +1130,46 @@ fn runFallible(
                             terminal_redraw_pending = true;
                             continue;
                         },
-                        .published => pending_topology = null,
+                        .published => {
+                            pending_topology = null;
+                            dropPendingCursor(&cursor_replay_pending);
+                            reconcileFocusedCursor(
+                                terminals,
+                                chrome.focusedPaneId(),
+                                &cursor_replay_pending,
+                            );
+                        },
                     }
                 }
+            }
+        }
+        if (cursor_replay_pending != null and
+            !terminal_redraw_pending and pending_topology == null and
+            terminal_topology_committed)
+        {
+            const focused_pane = chrome.focusedPaneId();
+            const focused_source = canvas_work.terminals.sourceFor(focused_pane);
+            const replay_result = try replayCursorFrame(
+                boundary,
+                &canvas_work,
+                &cursor_replay_pending,
+                focused_source,
+                &rings[active_ring],
+                active_generation,
+                &graphics,
+                device,
+                queue,
+                family,
+                command,
+                &dispatch,
+                drm_fd,
+                acquire_handle,
+                &next_acquire_point,
+            );
+            switch (replay_result) {
+                .published => dropPendingCursor(&cursor_replay_pending),
+                .retry => local_redraw_retry_pending = true,
+                .blocked => {},
             }
         }
         if (terminal_redraw_pending and pending_topology == null) {
@@ -737,7 +1206,10 @@ fn runFallible(
                     terminal_redraw_pending = true;
                     continue;
                 },
-                .published => terminal_redraw_pending = false,
+                .published => {
+                    terminal_redraw_pending = false;
+                    dropPendingCursor(&cursor_replay_pending);
+                },
             }
         }
     }
@@ -1646,10 +2118,15 @@ fn buildCanvasPlan(
         work.retired_sources[retired_index] =
             work.retired_sources[work.retired_source_count];
     }
-    return .{ .accepted = try buildAcceptedCanvasPlan(work) };
+    const accepted = buildAcceptedCanvasPlan(work) catch |failure| switch (failure) {
+        error.Retiring => return .blocked,
+        else => return failure,
+    };
+    return .{ .accepted = accepted };
 }
 
 fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
+    errdefer work.replay.discard();
     const surface_resident = try work.residency.enumerate(
         work.surface_residencies,
     );
@@ -1664,16 +2141,21 @@ fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
             .size = .{ .width = value.width, .height = value.height },
         };
     }
-    const frame = try work.composer.frame(work.canvas_residencies[0..surface_resident.len], .{
+    const base_frame = try work.composer.frameCursorFree(work.canvas_residencies[0..surface_resident.len], .{
         .uploads = work.frame_uploads,
         .removals = work.frame_removals,
         .commands = work.frame_commands,
         .pixels = work.frame_pixels,
     });
-    const generic = try adaptCanvasFrame(frame, work.surface_uploads, work.surface_removals, work.surface_commands);
-    try work.residency.stage(generic);
+    const generic_base = try adaptCanvasFrame(base_frame, work.surface_uploads, work.surface_removals, work.surface_commands);
+    try work.residency.stage(generic_base);
     errdefer work.residency.discard();
-    return try work.builder.build(work.residency, generic);
+    const base_plan = try work.builder.build(work.residency, generic_base);
+    try work.replay.capture(base_plan, generic_base);
+    // The accepted Renderer cohort is deliberately cursor-free. Cursor
+    // presentation is appended synchronously by the caller and the staging
+    // cohort is restored to this exact base before ordinary commit.
+    return base_plan;
 }
 
 fn waitCanvasPlan(
@@ -1839,6 +2321,7 @@ fn adaptCanvasFrame(
             .resource = try surfaceResource(mask.resource.resource),
             .source = if (mask.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
             .color = surfaceColor(mask.color),
+            .cursor_component = mask.cursor_component,
         } },
         .rgba => |rgba| .{ .rgba = .{
             .rect = surfaceRect(rgba.destination),
@@ -1882,8 +2365,176 @@ fn surfaceRect(value: render_api.canvas.Rect) vk_surface.Rect {
     return .{ .x = value.x, .y = value.y, .width = value.width, .height = value.height };
 }
 
+fn intersectSurfaceRect(left: vk_surface.Rect, right: vk_surface.Rect) ?vk_surface.Rect {
+    const left_x = @max(left.x, right.x);
+    const left_y = @max(left.y, right.y);
+    const left_width = std.math.cast(i32, left.width) orelse return null;
+    const right_width = std.math.cast(i32, right.width) orelse return null;
+    const left_height = std.math.cast(i32, left.height) orelse return null;
+    const right_height = std.math.cast(i32, right.height) orelse return null;
+    const right_x = @min(
+        std.math.add(i32, left.x, left_width) catch return null,
+        std.math.add(i32, right.x, right_width) catch return null,
+    );
+    const right_y = @min(
+        std.math.add(i32, left.y, left_height) catch return null,
+        std.math.add(i32, right.y, right_height) catch return null,
+    );
+    if (right_x <= left_x or right_y <= left_y) return null;
+    return .{
+        .x = left_x,
+        .y = left_y,
+        .width = @intCast(right_x - left_x),
+        .height = @intCast(right_y - left_y),
+    };
+}
+
+fn translateSurfaceRect(
+    local: vk_surface.Rect,
+    placement: render_api.canvas.Composer.Placement,
+) !vk_surface.Rect {
+    return .{
+        .x = std.math.add(i32, local.x, placement.origin.x) catch
+            return error.InvalidFrame,
+        .y = std.math.add(i32, local.y, placement.origin.y) catch
+            return error.InvalidFrame,
+        .width = local.width,
+        .height = local.height,
+    };
+}
+
+fn cursorOverlayForPlacement(
+    binding: render_api.canvas.CursorBinding,
+    placement: render_api.canvas.Composer.Placement,
+) !?vk_surface.CursorOverlay {
+    const local_rect = surfaceRect(binding.rect);
+    const local_clip = surfaceRect(binding.clip);
+    const rect = try translateSurfaceRect(local_rect, placement);
+    const translated_clip = try translateSurfaceRect(local_clip, placement);
+    const clip = intersectSurfaceRect(translated_clip, surfaceRect(placement.clip)) orelse
+        return null;
+    if (intersectSurfaceRect(rect, clip) == null) return null;
+    const shape: vk_surface.CursorOverlayShape = switch (binding.shape) {
+        .block => .block,
+        .underline => .underline,
+        .bar => .bar,
+        .none => .none,
+    };
+    var shaped_rect = rect;
+    switch (shape) {
+        .underline => {
+            shaped_rect.y = std.math.add(i32, shaped_rect.y, @intCast(shaped_rect.height - 1)) catch
+                return error.InvalidFrame;
+            shaped_rect.height = 1;
+        },
+        .bar => shaped_rect.width = 1,
+        .block, .none => {},
+    }
+    return .{
+        .rect = shaped_rect,
+        .clip = clip,
+        .shape = shape,
+        .color = surfaceColor(binding.color),
+        .text_color = surfaceColor(binding.text_color),
+        .visible = binding.visible and shape != .none,
+    };
+}
+
+fn placementForSource(
+    work: *const CanvasWork,
+    source: render_api.canvas.SourceId,
+) ?render_api.canvas.Composer.Placement {
+    for (work.visible_placements[0..work.visible_count]) |placement|
+        if (placement.source == source) return placement;
+    return null;
+}
+
 fn surfaceColor(value: render_api.canvas.Color) [4]f32 {
     return .{ @as(f32, @floatFromInt(value.r)) / 255.0, @as(f32, @floatFromInt(value.g)) / 255.0, @as(f32, @floatFromInt(value.b)) / 255.0, @as(f32, @floatFromInt(value.a)) / 255.0 };
+}
+
+fn cursorOverlayFor(
+    work: *const CanvasWork,
+    publication: terminal_handoff.CursorPublication,
+) !?vk_surface.CursorOverlay {
+    const binding = work.composer.cursorBinding(publication.source) orelse
+        return null;
+    if (binding.pane != @backingInt(publication.pane) or
+        binding.source != publication.source or
+        binding.cell_size.width == 0 or binding.cell_size.height == 0 or
+        binding.visible_set_revision != publication.visible_set_revision or
+        binding.lifecycle_revision != @backingInt(publication.lifecycle_revision) or
+        publication.cursor_revision <= binding.cursor_revision or
+        publication.terminal_sequence < binding.terminal_sequence)
+        return error.InvalidFrame;
+    const placement = placementForSource(work, publication.source) orelse return null;
+    const x_offset = std.math.mul(
+        i32,
+        @intCast(publication.target.col),
+        @intCast(binding.cell_size.width),
+    ) catch return error.InvalidFrame;
+    const y_offset = std.math.mul(
+        i32,
+        @intCast(publication.target.row),
+        @intCast(binding.cell_size.height),
+    ) catch return error.InvalidFrame;
+    var target_binding = binding;
+    target_binding.rect = .{
+        .x = std.math.add(i32, binding.cell_origin.x, x_offset) catch
+            return error.InvalidFrame,
+        .y = std.math.add(i32, binding.cell_origin.y, y_offset) catch
+            return error.InvalidFrame,
+        .width = binding.cell_size.width,
+        .height = binding.cell_size.height,
+    };
+    target_binding.shape = switch (publication.target.shape) {
+        .block => .block,
+        .underline => .underline,
+        .bar => .bar,
+        .none => .none,
+    };
+    target_binding.color = .{
+        .r = publication.target.cursor_color.r,
+        .g = publication.target.cursor_color.g,
+        .b = publication.target.cursor_color.b,
+        .a = publication.target.cursor_color.a,
+    };
+    target_binding.text_color = .{
+        .r = publication.target.text_color.r,
+        .g = publication.target.text_color.g,
+        .b = publication.target.text_color.b,
+        .a = publication.target.text_color.a,
+    };
+    target_binding.visible = publication.target.visible;
+    return cursorOverlayForPlacement(target_binding, placement);
+}
+
+fn cursorOverlayForBinding(
+    work: *const CanvasWork,
+    source: render_api.canvas.SourceId,
+) !?vk_surface.CursorOverlay {
+    const binding = work.composer.cursorBinding(source) orelse return null;
+    const placement = placementForSource(work, source) orelse return null;
+    return cursorOverlayForPlacement(binding, placement);
+}
+
+fn physicalPlanForBase(
+    work: *CanvasWork,
+    base: vk_surface.Plan,
+    focused_pane: render_api.chrome.PaneId,
+) !vk_surface.Plan {
+    const source = work.terminals.sourceFor(focused_pane) orelse return base;
+    const overlay = (try cursorOverlayForBinding(work, source)) orelse return base;
+    const candidate = work.replay.candidate();
+    return vk_surface.replayCursor(
+        base,
+        overlay,
+        .{
+            .vertices = candidate.vertices,
+            .indices = candidate.indices,
+            .commands = candidate.commands,
+        },
+    );
 }
 
 fn waitFeedback(boundary: *shared.Boundary) !shared.Feedback {
@@ -2846,7 +3497,7 @@ test "one complete terminal and Chrome resource set fits every runtime bank" {
 }
 
 test "borrowed Chrome retry preserves one consumptive sparse update" {
-    try std.testing.expectEqual(@as(usize, 712), @sizeOf(ChromeRetry));
+    try std.testing.expectEqual(@as(usize, 720), @sizeOf(ChromeRetry));
     var content = try render_api.chrome.Content.init(
         std.testing.allocator,
         .{
@@ -3083,6 +3734,8 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .{ .resources = 32, .pixel_bytes = 64 * 1024 },
     );
     defer residency.deinit();
+    var replay = try ReplayState.init(std.testing.allocator);
+    defer replay.deinit();
     var work = CanvasWork{
         .composer = &composer,
         .content = &content,
@@ -3100,6 +3753,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .residency = &residency,
         .terminals = &terminals,
         .terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0),
+        .replay = &replay,
     };
     const accepted_topology = try chrome_state.Topology.init(
         .{ .width = 320, .height = 240 },
@@ -3524,6 +4178,13 @@ fn redrawChrome(
     next_acquire_point: *u64,
     pending: ?*PendingTopology,
 ) !RedrawResult {
+    if (!try releaseReplayRetirementIfReady(
+        boundary,
+        canvas_work.replay,
+        generation,
+        slots,
+        drm_fd,
+    )) return .blocked;
     const candidate = if (pending) |value| value.candidate else topology.*;
     const topology_revision = if (pending) |value| value.revision else null;
     try validateTerminalTopology(&candidate);
@@ -3554,10 +4215,28 @@ fn redrawChrome(
         .retry => return .retry,
         .accepted => |plan| plan,
     };
-    const slot_index = try releasedSlot(boundary, generation, slots, drm_fd);
+    // Composer's accepted commands are cursor-free.  The only physical
+    // presentation derived from this candidate is one focused overlay, and
+    // it is translated through the exact terminal placement before replay.
+    const physical_plan = try physicalPlanForBase(
+        canvas_work,
+        composer_plan,
+        candidate.focusedPaneId(),
+    );
+    // Both the staged residency and replay candidate remain owned by this
+    // construction until completion acceptance.  Install rollback before
+    // probing ring capacity so a blocked candidate cannot strand either.
+    errdefer canvas_work.residency.discard();
+    errdefer canvas_work.replay.discard();
+    const slot_index = try releasedSlot(
+        boundary,
+        generation,
+        slots,
+        drm_fd,
+        canvas_work.replay.acceptedSlot(),
+    );
     if (!boundary.canPublishCompletion(generation))
         return error.CompletionUnavailable;
-    errdefer canvas_work.residency.discard();
     const slot = &slots[slot_index];
     const acquire_point = next_acquire_point.*;
     const following_acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
@@ -3575,7 +4254,7 @@ fn redrawChrome(
         command,
         slot,
         slot.clear_color,
-        composer_plan,
+        physical_plan,
         canvas_work.builder.alpha_pixels,
         canvas_work.builder.rgba_pixels,
         canvas_work.residency,
@@ -3585,6 +4264,9 @@ fn redrawChrome(
         acquire_handle,
         acquire_point,
     );
+    // The candidate bytes were used only for this synchronous recording.  Do
+    // not let a cursor-bearing presentation become the next replay base.
+    canvas_work.replay.restoreCandidateBase(composer_plan);
     const completion = shared.Completion{
         .generation = generation,
         .revision = acquire_point,
@@ -3601,9 +4283,223 @@ fn redrawChrome(
             publication.commit(canvas_work);
     }
     prepared_completion.commit();
+    canvas_work.replay.commit(slot_index);
     slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
     return .published;
+}
+
+/// Records one physical cursor replacement without touching Composer, Pool, or
+/// terminal Content. The accepted replay cohort remains authoritative until
+/// completion preparation commits the replacement ring candidate.
+fn replayCursorFrame(
+    boundary: *shared.Boundary,
+    work: *CanvasWork,
+    pending: *?terminal_handoff.CursorPublication,
+    focused_source: ?render_api.canvas.SourceId,
+    slots: *[shared.slot_count]Slot,
+    generation: u64,
+    graphics: *vk_surface.Context,
+    device: vk.VkDevice,
+    queue: vk.VkQueue,
+    family: u32,
+    command: vk.VkCommandBuffer,
+    dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
+    drm_fd: i32,
+    acquire_handle: u32,
+    next_acquire_point: *u64,
+) !RedrawResult {
+    const publication = pending.* orelse return .blocked;
+    if (focused_source == null or focused_source.? != publication.source)
+        return .blocked;
+    const overlay = (cursorOverlayFor(work, publication) catch return .blocked) orelse
+        return .blocked;
+    // Reconcile the exact old replay role before asking the ring for any
+    // candidate slot.  A different released slot must never be allowed to
+    // hide an unreleased retiring cohort.
+    if (!try releaseReplayRetirementIfReady(
+        boundary,
+        work.replay,
+        generation,
+        slots,
+        drm_fd,
+    )) return .blocked;
+    const slot_index = releasedSlot(
+        boundary,
+        generation,
+        slots,
+        drm_fd,
+        work.replay.acceptedSlot(),
+    ) catch |failure| switch (failure) {
+        error.NoReleasedSlot => return .blocked,
+        else => return failure,
+    };
+    if (!work.replay.canCapture()) return .blocked;
+    const base = work.replay.acceptedPlan();
+    if (base.commands.len > frame_command_limit) return .blocked;
+    const candidate_cohort = work.replay.candidate();
+    const candidate = vk_surface.replayCursor(
+        base,
+        overlay,
+        .{
+            .vertices = candidate_cohort.vertices,
+            .indices = candidate_cohort.indices,
+            .commands = candidate_cohort.commands,
+        },
+    ) catch return .blocked;
+    candidate_cohort.vertex_count = candidate.vertices.len;
+    candidate_cohort.index_count = candidate.indices.len;
+    candidate_cohort.command_count = candidate.commands.len;
+    candidate_cohort.pin_count = work.replay.cohorts[work.replay.accepted].pin_count;
+    @memcpy(
+        candidate_cohort.pins[0..candidate_cohort.pin_count],
+        work.replay.cohorts[work.replay.accepted].pins[0..candidate_cohort.pin_count],
+    );
+    work.replay.pending = true;
+    errdefer work.replay.discard();
+    if (!boundary.canPublishCompletion(generation)) return .blocked;
+    const slot = &slots[slot_index];
+    const acquire_point = next_acquire_point.*;
+    const following_acquire_point = std.math.add(u64, acquire_point, 1) catch
+        return .blocked;
+    const release_point = std.math.add(u64, slot.release_point, 1) catch
+        return .blocked;
+    var release_sync_fd: i32 = -1;
+    if (c.drmSyncobjExportSyncFile(drm_fd, slot.release_handle, &release_sync_fd) != 0)
+        return .blocked;
+    errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
+    const release_wait = importReleaseSemaphore(device, dispatch, &release_sync_fd) catch
+        return .blocked;
+    defer vk.vkDestroySemaphore(device, release_wait, null);
+    // A preview-driven cursor burst can publish another target while this
+    // candidate is being prepared.  Revalidate at the last point before
+    // physical submission so an older target is never presented when the
+    // newer one is already waiting in the Boundary inbox: transfer that
+    // exact latest publication to the local pending slot and retry without a
+    // terminal wake or a full Content/Pool/Composer rebuild.
+    if (takeNewerCursorReplay(
+        work.terminals,
+        publication,
+        pending,
+    )) {
+        work.replay.discard();
+        return .retry;
+    }
+    render(
+        graphics,
+        device,
+        queue,
+        family,
+        command,
+        slot,
+        slot.clear_color,
+        candidate,
+        work.builder.alpha_pixels,
+        work.builder.rgba_pixels,
+        null,
+        release_wait,
+        dispatch,
+        drm_fd,
+        acquire_handle,
+        acquire_point,
+    ) catch return .blocked;
+    // Restore the canonical cursor-free bytes before the physical slot is
+    // accepted.  The presented candidate remains owned by the ring slot; the
+    // replay cohort stays a stable base for the next cursor-only update.
+    work.replay.restoreCandidateBase(base);
+    const completion = shared.Completion{
+        .generation = generation,
+        .revision = acquire_point,
+        .slot = @intCast(slot_index),
+        .acquire_point = acquire_point,
+        .release_point = release_point,
+    };
+    var prepared = boundary.prepareCompletions(&.{completion}) catch return .blocked;
+    defer prepared.deinit();
+    prepared.commit();
+    work.replay.commitCursor(slot_index);
+    slot.release_point = release_point;
+    next_acquire_point.* = following_acquire_point;
+    return .published;
+}
+
+fn takeNewerCursorReplay(
+    terminals: *terminal_handoff.Boundary,
+    publication: terminal_handoff.CursorPublication,
+    pending: *?terminal_handoff.CursorPublication,
+) bool {
+    const newest = terminals.takeCursor(publication.pane) orelse return false;
+    std.debug.assert(newest.source == publication.source);
+    std.debug.assert(newest.cursor_revision > publication.cursor_revision);
+    pending.* = newest;
+    return true;
+}
+
+test "cursor replay supersession transfers the newest inbox target" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 4,
+            .upload_bytes = 16,
+            .cells = 4,
+            .rows = 4,
+            .images = 1,
+            .placements = 1,
+            .image_bytes = 16,
+            .glyphs = 4,
+            .masks = 4,
+            .resources_per_update = 4,
+            .raster_bytes = 16,
+            .decoration_bytes = 16,
+        },
+    );
+    defer terminals.deinit();
+
+    const pane: render_api.chrome.PaneId = @fromBackingInt(701);
+    const source: render_api.canvas.SourceId = @fromBackingInt(702);
+    try terminals.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expect(terminals.takeLifecycle() != null);
+    try terminals.markLive(pane);
+    terminals.visible_revision = 1;
+    terminals.visible_initialized = true;
+    terminals.visible_members[0] = .{ .pane = pane, .source = source };
+    terminals.visible_member_count = 1;
+    const identity = (try terminals.cursorPublicationIdentity(pane, source)).?;
+    const target = terminal_handoff.CursorTarget{
+        .row = 2,
+        .col = 3,
+        .visible = true,
+        .shape = .block,
+        .blink = false,
+        .blink_fast = false,
+        .cursor_color = .{},
+        .text_color = .{},
+    };
+    const first = terminal_handoff.CursorPublication{
+        .pane = pane,
+        .source = source,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = identity.visible_set_revision,
+        .lifecycle_revision = identity.lifecycle_revision,
+        .target = target,
+    };
+    try terminals.publishCursor(first);
+    var pending: ?terminal_handoff.CursorPublication = terminals.takeCursor(pane).?;
+    var second = first;
+    second.terminal_sequence = 2;
+    second.cursor_revision = 2;
+    second.target.col = 4;
+    try terminals.publishCursor(second);
+
+    try std.testing.expect(takeNewerCursorReplay(
+        &terminals,
+        first,
+        &pending,
+    ));
+    try std.testing.expectEqual(second, pending.?);
+    try std.testing.expect(terminals.takeCursor(pane) == null);
 }
 
 fn validateTerminalTopology(candidate: *const chrome_state.Topology) !void {
@@ -3619,15 +4515,103 @@ fn validateTerminalTopology(candidate: *const chrome_state.Topology) !void {
     }
 }
 
+/// Keeps only the newest cursor publication belonging to the currently
+/// focused live pane.  This is called both after terminal wakes and after an
+/// accepted topology/focus transition, because focus input can commit without
+/// a second PTY wake.
+fn reconcileFocusedCursor(
+    terminals: *terminal_handoff.Boundary,
+    focused_pane: render_api.chrome.PaneId,
+    pending: *?terminal_handoff.CursorPublication,
+) void {
+    const focused_source = terminals.sourceFor(focused_pane);
+    if (focused_source == null)
+        dropPendingCursor(pending)
+    else if (pending.* != null and pending.*.?.source != focused_source.?)
+        dropPendingCursor(pending);
+    retainFocusedCursor(focused_source, pending, null);
+    if (focused_source == null) return;
+    if (terminals.takeCursor(focused_pane)) |publication| {
+        retainFocusedCursor(focused_source, pending, publication);
+    }
+}
+
+fn dropPendingCursor(pending: *?terminal_handoff.CursorPublication) void {
+    pending.* = null;
+}
+
+fn retainFocusedCursor(
+    focused_source: ?render_api.canvas.SourceId,
+    pending: *?terminal_handoff.CursorPublication,
+    newest: ?terminal_handoff.CursorPublication,
+) void {
+    if (pending.*) |publication| {
+        if (focused_source == null or publication.source != focused_source.?)
+            dropPendingCursor(pending);
+    }
+    if (newest) |publication| {
+        if (focused_source != null and publication.source == focused_source.?) {
+            if (pending.*) |old| if (!std.meta.eql(old, publication))
+                dropPendingCursor(pending);
+            pending.* = publication;
+        }
+    }
+}
+
+test "focused cursor handoff drops A and accepts B without a terminal wake" {
+    const pane_a: render_api.chrome.PaneId = @fromBackingInt(11);
+    const pane_b: render_api.chrome.PaneId = @fromBackingInt(12);
+    const source_a: render_api.canvas.SourceId = @fromBackingInt(21);
+    const source_b: render_api.canvas.SourceId = @fromBackingInt(22);
+    const target = terminal_handoff.CursorTarget{
+        .row = 2,
+        .col = 3,
+        .visible = true,
+        .shape = .block,
+        .blink = false,
+        .blink_fast = false,
+        .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
+        .text_color = .{ .r = 4, .g = 5, .b = 6 },
+    };
+    const publication_a = terminal_handoff.CursorPublication{
+        .pane = pane_a,
+        .source = source_a,
+        .terminal_sequence = 7,
+        .cursor_revision = 7,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @fromBackingInt(1),
+        .target = target,
+    };
+    const publication_b = terminal_handoff.CursorPublication{
+        .pane = pane_b,
+        .source = source_b,
+        .terminal_sequence = 8,
+        .cursor_revision = 8,
+        .visible_set_revision = 1,
+        .lifecycle_revision = @fromBackingInt(1),
+        .target = target,
+    };
+    var pending: ?terminal_handoff.CursorPublication = publication_a;
+    retainFocusedCursor(source_a, &pending, null);
+    try std.testing.expectEqual(publication_a, pending.?);
+    // B's inbox publication is retained while A is focused. Once the Host
+    // focus transition is accepted, the same latest value is consumed without
+    // requiring another terminal descriptor wake.
+    retainFocusedCursor(source_b, &pending, publication_b);
+    try std.testing.expectEqual(publication_b, pending.?);
+}
+
 fn releasedSlot(
     boundary: *shared.Boundary,
     generation: u64,
     slots: *[shared.slot_count]Slot,
     drm_fd: i32,
+    excluded_slot: ?usize,
 ) !usize {
     const facts = boundary.releaseFacts(generation) orelse return error.NoReleasedSlot;
     var first_candidate: ?usize = null;
     for (0..shared.slot_count) |index| {
+        if (excluded_slot == index) continue;
         const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(index))) != 0;
         if (!presented or facts.release_points[index] != slots[index].release_point) continue;
         if (first_candidate == null) first_candidate = index;
@@ -3636,6 +4620,37 @@ fn releasedSlot(
     const index = first_candidate orelse return error.NoReleasedSlot;
     try waitTimeline(drm_fd, slots[index].release_handle, slots[index].release_point);
     return index;
+}
+
+/// Retires the old replay role only after its exact compositor release point
+/// is available. Until then both fixed roles remain occupied and no candidate
+/// may overwrite the old frame's command or resource-generation pins.
+fn releaseReplayRetirementIfReady(
+    boundary: *shared.Boundary,
+    replay: *ReplayState,
+    generation: u64,
+    slots: *[shared.slot_count]Slot,
+    drm_fd: i32,
+) !bool {
+    const retiring_slot = replay.retiring_slot orelse return true;
+    const facts = boundary.releaseFacts(generation) orelse return false;
+    const ready_slot = retiringSlotReady(replay, facts, slots) orelse return false;
+    std.debug.assert(ready_slot == retiring_slot);
+    try waitTimeline(drm_fd, slots[ready_slot].release_handle, slots[ready_slot].release_point);
+    replay.releaseRetiring(ready_slot);
+    return true;
+}
+
+fn retiringSlotReady(
+    replay: *const ReplayState,
+    facts: shared.RetiredRing,
+    slots: *const [shared.slot_count]Slot,
+) ?usize {
+    const slot = replay.retiring_slot orelse return null;
+    const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(slot))) != 0;
+    if (!presented or facts.release_points[slot] != slots[slot].release_point)
+        return null;
+    return slot;
 }
 
 const Physical = struct {
@@ -3839,8 +4854,8 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
     offer.* = .{ .generation = surface.generation, .width = surface.physical_width, .height = surface.physical_height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
 }
 
-fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: *vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
-    errdefer residency_commit.discard();
+fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: ?*vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
+    errdefer if (residency_commit) |store| store.discard();
     try graphics.stage(
         surface_plan,
         alpha_pixels,
@@ -3920,7 +4935,7 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(recording);
-    try residency_commit.complete();
+    if (residency_commit) |store| try store.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;

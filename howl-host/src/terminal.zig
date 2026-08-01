@@ -371,6 +371,11 @@ const Logical = struct {
     cursor_target_terminal_sequence: u64,
     /// Host-local high-water revision for changes to `cursor_target` only.
     cursor_target_revision: u64,
+    /// Last cursor target accepted by Composer. Synchronized output may
+    /// advance the semantic target without advancing this view.
+    accepted_cursor_target: handoff.CursorTarget,
+    accepted_cursor_target_terminal_sequence: u64,
+    accepted_cursor_target_revision: u64,
     ligature_mode: render.terminal.LigatureMode = .never,
     content: render.terminal.Content,
     visual: *VisualState,
@@ -446,6 +451,9 @@ const Logical = struct {
             .cursor_target = initial_cursor_target,
             .cursor_target_terminal_sequence = machine.semanticSequence(),
             .cursor_target_revision = 1,
+            .accepted_cursor_target = initial_cursor_target,
+            .accepted_cursor_target_terminal_sequence = machine.semanticSequence(),
+            .accepted_cursor_target_revision = 1,
         };
     }
 
@@ -601,7 +609,14 @@ const Logical = struct {
 
     fn routeMutation(self: *Logical, summary: vt.Terminal.FeedSummary) handoff.CursorPublishError!void {
         const cursor_changed = self.refreshCursorTarget();
-        if (summary.mutations.cursor and cursor_changed) {
+        const ordinary_mutation = summary.stateChanged() and !summary.mutations.cursorOnly();
+        const synchronized = self.machine.synchronizedOutput();
+        // Synchronized output retains semantic cursor changes but suppresses
+        // physical cursor publication until the accepted mode-off update.
+        // Mixed feeds are carried by their ordinary publication exactly once.
+        if (summary.mutations.cursor and cursor_changed and
+            !synchronized and !summary.mutations.mode)
+        {
             self.publishCursorTarget() catch |failure| {
                 switch (failure) {
                     error.LifecycleStale,
@@ -624,7 +639,7 @@ const Logical = struct {
                 }
             };
         }
-        if (summary.stateChanged() and !summary.mutations.cursorOnly()) self.dirty = true;
+        if (ordinary_mutation) self.dirty = true;
     }
 
     fn publishCursorTarget(self: *Logical) handoff.CursorPublishError!void {
@@ -803,16 +818,31 @@ const Logical = struct {
             error.RetiredPane => null,
             else => return failure,
         };
+        const sync_active = self.machine.synchronizedOutput();
+        if (sync_active) self.refreshAcceptedCursorTarget(pooled);
+        const target = if (sync_active) self.accepted_cursor_target else self.cursor_target;
+        const target_terminal_sequence = if (sync_active)
+            self.accepted_cursor_target_terminal_sequence
+        else
+            self.cursor_target_terminal_sequence;
+        const target_revision = if (sync_active)
+            self.accepted_cursor_target_revision
+        else
+            self.cursor_target_revision;
         if (maybe_identity) |identity| {
-            const target = self.cursor_target;
             update.cursor_binding = .{
                 .pane = @backingInt(self.pane),
                 .source = pooled.member.source_id,
-                .terminal_sequence = self.cursor_target_terminal_sequence,
-                .cursor_revision = self.cursor_target_revision,
+                .terminal_sequence = target_terminal_sequence,
+                .cursor_revision = target_revision,
                 .visible_set_revision = identity.visible_set_revision,
                 .lifecycle_revision = @backingInt(identity.lifecycle_revision),
                 .rect = try cursorRect(target, self.geometry),
+                .cell_origin = .{ .x = self.geometry.x, .y = self.geometry.y },
+                .cell_size = .{
+                    .width = self.geometry.metrics.width_px,
+                    .height = self.geometry.metrics.height_px,
+                },
                 .clip = self.geometry.clip,
                 .shape = switch (target.shape) {
                     .block => .block,
@@ -871,6 +901,102 @@ const Logical = struct {
         self.last_published_revision = update.revision;
         self.last_published_geometry = self.geometry;
         return true;
+    }
+
+    /// Refreshes the presentation cache only from the binding Composer has
+    /// accepted. Inbox publication and ready-pool admission never advance it.
+    fn refreshAcceptedCursorTarget(self: *Logical, pooled: PooledTransfer) void {
+        const binding = pooled.boundary.acceptedCursorBinding(
+            self.pane,
+            pooled.member.source_id,
+        ) orelse return;
+        const reconstructed = reconstructAcceptedCursorTarget(
+            self.accepted_cursor_target,
+            binding,
+        ) catch @panic("invalid Composer-accepted cursor binding");
+        self.accepted_cursor_target = reconstructed.target;
+        self.accepted_cursor_target_terminal_sequence =
+            reconstructed.terminal_sequence;
+        self.accepted_cursor_target_revision = reconstructed.cursor_revision;
+    }
+
+    const AcceptedCursorReconstruction = struct {
+        target: handoff.CursorTarget,
+        terminal_sequence: u64,
+        cursor_revision: u64,
+    };
+
+    /// Reconstructs the semantic cell from one Composer-accepted source-local
+    /// binding. `rect` includes `cell_origin`; subtracting it first keeps the
+    /// accepted cache independent of pane placement.
+    fn reconstructAcceptedCursorTarget(
+        prior: handoff.CursorTarget,
+        binding: render.canvas.CursorBinding,
+    ) error{InvalidAcceptedCursorBinding}!AcceptedCursorReconstruction {
+        const width: i32 = @intCast(binding.cell_size.width);
+        const height: i32 = @intCast(binding.cell_size.height);
+        if (width <= 0 or height <= 0)
+            return error.InvalidAcceptedCursorBinding;
+        const dimensions_valid = switch (binding.shape) {
+            .block, .none => binding.rect.width == binding.cell_size.width and
+                binding.rect.height == binding.cell_size.height,
+            .bar => binding.rect.width == 1 and
+                binding.rect.height == binding.cell_size.height,
+            .underline => binding.rect.width == binding.cell_size.width and
+                binding.rect.height == 1,
+        };
+        if (!dimensions_valid)
+            return error.InvalidAcceptedCursorBinding;
+        const local_x = std.math.sub(
+            i32,
+            binding.rect.x,
+            binding.cell_origin.x,
+        ) catch return error.InvalidAcceptedCursorBinding;
+        var local_y = std.math.sub(
+            i32,
+            binding.rect.y,
+            binding.cell_origin.y,
+        ) catch return error.InvalidAcceptedCursorBinding;
+        if (binding.shape == .underline) {
+            const underline_offset = std.math.sub(i32, height, 1) catch
+                return error.InvalidAcceptedCursorBinding;
+            local_y = std.math.sub(i32, local_y, underline_offset) catch
+                return error.InvalidAcceptedCursorBinding;
+        }
+        if (local_x < 0 or local_y < 0 or
+            @rem(local_x, width) != 0 or @rem(local_y, height) != 0)
+            return error.InvalidAcceptedCursorBinding;
+        const col: u32 = @intCast(@divTrunc(local_x, width));
+        const row: u32 = @intCast(@divTrunc(local_y, height));
+        if (col > std.math.maxInt(u16) or row > std.math.maxInt(u16))
+            return error.InvalidAcceptedCursorBinding;
+        var target = prior;
+        target.col = @intCast(col);
+        target.row = @intCast(row);
+        target.visible = binding.visible;
+        target.shape = switch (binding.shape) {
+            .block => .block,
+            .underline => .underline,
+            .bar => .bar,
+            .none => .none,
+        };
+        target.cursor_color = .{
+            .r = binding.color.r,
+            .g = binding.color.g,
+            .b = binding.color.b,
+            .a = binding.color.a,
+        };
+        target.text_color = .{
+            .r = binding.text_color.r,
+            .g = binding.text_color.g,
+            .b = binding.text_color.b,
+            .a = binding.text_color.a,
+        };
+        return .{
+            .target = target,
+            .terminal_sequence = binding.terminal_sequence,
+            .cursor_revision = binding.cursor_revision,
+        };
     }
 
     fn publishDedicated(
@@ -1042,8 +1168,9 @@ pub fn run(
     allocator: std.mem.Allocator,
     font_path: []const u8,
     shell: []const u8,
+    first_command: ?[]const u8,
 ) void {
-    runFallible(boundary, allocator, font_path, shell) catch |failure| {
+    runFallible(boundary, allocator, font_path, shell, first_command) catch |failure| {
         std.debug.print("Terminal runtime failure: {s}\n", .{@errorName(failure)});
         boundary.markStopped(true);
         return;
@@ -1056,8 +1183,9 @@ fn runFallible(
     allocator: std.mem.Allocator,
     font_path: []const u8,
     shell: []const u8,
+    first_command: ?[]const u8,
 ) !void {
-    var runtime = try Runtime.init(allocator, font_path);
+    var runtime = try Runtime.initWithCommand(allocator, font_path, first_command);
     defer runtime.deinit();
     while (true) {
         var owner_set = try runtime.buildPollSet();
@@ -1146,6 +1274,7 @@ const ResolvedGroup = struct {
 const Runtime = struct {
     allocator: std.mem.Allocator,
     font_path: []const u8,
+    first_command: ?[]const u8,
     fonts: *render.terminal.FontMap,
     shared_fonts: font_owner.Owner,
     owners: []?Logical,
@@ -1167,6 +1296,16 @@ const Runtime = struct {
     fn init(
         allocator: std.mem.Allocator,
         font_path: []const u8,
+    ) RuntimeInitError!Runtime {
+        return initWithCommand(allocator, font_path, null);
+    }
+
+    /// Constructs the runtime with one bounded command retained until the
+    /// first pane creation commits successfully.
+    fn initWithCommand(
+        allocator: std.mem.Allocator,
+        font_path: []const u8,
+        first_command: ?[]const u8,
     ) RuntimeInitError!Runtime {
         const owners = try allocator.alloc(?Logical, owner_limit);
         errdefer allocator.free(owners);
@@ -1202,6 +1341,7 @@ const Runtime = struct {
         return .{
             .allocator = allocator,
             .font_path = font_path,
+            .first_command = first_command,
             .fonts = fonts,
             .shared_fonts = shared_fonts,
             .owners = owners,
@@ -1790,7 +1930,7 @@ const Runtime = struct {
                 try self.addWithGroup(
                     create.pane,
                     shell,
-                    null,
+                    self.first_command,
                     create.pixels,
                     .{ .pooled = .{
                         .boundary = boundary,
@@ -1801,8 +1941,9 @@ const Runtime = struct {
                         .map = pending.map,
                     },
                 );
-                self.pending_lifecycle_font = null;
                 try boundary.markLive(create.pane);
+                self.first_command = null;
+                self.pending_lifecycle_font = null;
                 return;
             },
             .resize => |resize| {
@@ -2472,13 +2613,305 @@ test "cursor-only mutation routing leaves terminal publication clean" {
     try std.testing.expect(owner.dirty);
 }
 
+test "accepted cursor binding reconstructs cells relative to nonzero origin" {
+    const prior = handoff.CursorTarget{
+        .row = 0,
+        .col = 0,
+        .visible = true,
+        .shape = .none,
+        .blink = false,
+        .blink_fast = false,
+        .cursor_color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
+        .text_color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
+    };
+    const origin = render.canvas.CursorPoint{ .x = 37, .y = 53 };
+    const cell_size = render.canvas.Size{ .width = 11, .height = 19 };
+    var binding = render.canvas.CursorBinding{
+        .pane = 1,
+        .source = @as(render.canvas.SourceId, @fromBackingInt(2)),
+        .terminal_sequence = 17,
+        .cursor_revision = 9,
+        .visible_set_revision = 3,
+        .lifecycle_revision = 4,
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .cell_origin = origin,
+        .cell_size = cell_size,
+        .clip = .{ .x = 0, .y = 0, .width = 400, .height = 300 },
+        .visible = true,
+        .color = .{ .r = 11, .g = 12, .b = 13, .a = 255 },
+        .text_color = .{ .r = 21, .g = 22, .b = 23, .a = 255 },
+    };
+
+    binding.shape = .block;
+    binding.rect = .{ .x = 81, .y = 110, .width = 11, .height = 19 };
+    const block = try Logical.reconstructAcceptedCursorTarget(prior, binding);
+    try std.testing.expectEqual(@as(u16, 4), block.target.col);
+    try std.testing.expectEqual(@as(u16, 3), block.target.row);
+    try std.testing.expectEqual(handoff.CursorShape.block, block.target.shape);
+
+    binding.shape = .bar;
+    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
+    const bar = try Logical.reconstructAcceptedCursorTarget(prior, binding);
+    try std.testing.expectEqual(@as(u16, 4), bar.target.col);
+    try std.testing.expectEqual(@as(u16, 3), bar.target.row);
+    try std.testing.expectEqual(handoff.CursorShape.bar, bar.target.shape);
+
+    binding.shape = .underline;
+    binding.rect = .{ .x = 81, .y = 128, .width = 11, .height = 1 };
+    const underline = try Logical.reconstructAcceptedCursorTarget(prior, binding);
+    try std.testing.expectEqual(@as(u16, 4), underline.target.col);
+    try std.testing.expectEqual(@as(u16, 3), underline.target.row);
+    try std.testing.expectEqual(handoff.CursorShape.underline, underline.target.shape);
+    binding.shape = .block;
+    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
+    try std.testing.expectError(
+        error.InvalidAcceptedCursorBinding,
+        Logical.reconstructAcceptedCursorTarget(prior, binding),
+    );
+    binding.shape = .bar;
+    binding.rect = .{ .x = 81, .y = 110, .width = 11, .height = 19 };
+    try std.testing.expectError(
+        error.InvalidAcceptedCursorBinding,
+        Logical.reconstructAcceptedCursorTarget(prior, binding),
+    );
+    binding.shape = .underline;
+    binding.rect = .{ .x = 81, .y = 128, .width = 11, .height = 19 };
+    try std.testing.expectError(
+        error.InvalidAcceptedCursorBinding,
+        Logical.reconstructAcceptedCursorTarget(prior, binding),
+    );
+    binding.shape = .none;
+    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
+    try std.testing.expectError(
+        error.InvalidAcceptedCursorBinding,
+        Logical.reconstructAcceptedCursorTarget(prior, binding),
+    );
+    try std.testing.expectError(
+        error.InvalidAcceptedCursorBinding,
+        Logical.reconstructAcceptedCursorTarget(prior, .{
+            .pane = 1,
+            .source = @as(render.canvas.SourceId, @fromBackingInt(2)),
+            .terminal_sequence = 17,
+            .cursor_revision = 9,
+            .visible_set_revision = 3,
+            .lifecycle_revision = 4,
+            .rect = .{ .x = 82, .y = 110, .width = 11, .height = 19 },
+            .cell_origin = origin,
+            .cell_size = cell_size,
+            .clip = .{ .x = 0, .y = 0, .width = 400, .height = 300 },
+            .shape = .block,
+            .visible = true,
+            .color = .{ .r = 11, .g = 12, .b = 13, .a = 255 },
+            .text_color = .{ .r = 21, .g = 22, .b = 23, .a = 255 },
+        }),
+    );
+}
+
+test "synchronized output bootstraps before first Composer acceptance" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 1024,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(906);
+    const source = try composer.registerSource();
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(pane, source, pixels);
+    try std.testing.expect(boundary.takeLifecycle() != null);
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = member } },
+    );
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_member_count = 1;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = false;
+    const initial_revision = owner.accepted_cursor_target_revision;
+
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
+    try std.testing.expect(owner.machine.synchronizedOutput());
+    try owner.routeMutation(try owner.machine.feed("\x1b[2Ctext"));
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const bootstrap_binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expectEqual(initial_revision, bootstrap_binding.cursor_revision);
+    try std.testing.expectEqual(@as(u16, 0), owner.accepted_cursor_target.col);
+    try std.testing.expect(owner.cursor_target.col > owner.accepted_cursor_target.col);
+
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
+    try std.testing.expect(!owner.machine.synchronizedOutput());
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const final_binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expectEqual(owner.cursor_target_revision, final_binding.cursor_revision);
+    try std.testing.expectEqual(
+        try cursorRect(owner.cursor_target, owner.geometry),
+        final_binding.rect,
+    );
+}
+
+const FzfSequenceSplit = enum { whole, control_boundaries, every_byte };
+
+fn exerciseFzfSynchronizedSequence(split: FzfSequenceSplit) !void {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 1024,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(907);
+    const source = try composer.registerSource();
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(pane, source, pixels);
+    try std.testing.expect(boundary.takeLifecycle() != null);
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = member } },
+    );
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_member_count = 1;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    const sequence = "\x1b[?1049h\x1b[?2026h\x1b[?25lX\x1b[?25h\x1b[?2026l";
+
+    const feed = struct {
+        fn one(owner_value: *Logical, boundary_value: *handoff.Boundary, composer_value: *render.canvas.Composer, runtime_value: *Runtime, bytes: []const u8) !void {
+            try owner_value.routeMutation(try owner_value.machine.feed(bytes));
+            if (try owner_value.publishIfDirty(&runtime_value.shared_fonts, &runtime_value.work)) {}
+            const drain = try boundary_value.drainReady(composer_value);
+            try std.testing.expect(drain.accepted <= 1);
+        }
+    }.one;
+
+    switch (split) {
+        .whole => try feed(owner, &boundary, &composer, &runtime, sequence),
+        .control_boundaries => {
+            const chunks = [_][]const u8{
+                "\x1b[?1049h",
+                "\x1b[?2026h",
+                "\x1b[?25l",
+                "X",
+                "\x1b[?25h",
+                "\x1b[?2026l",
+            };
+            for (chunks) |chunk| try feed(owner, &boundary, &composer, &runtime, chunk);
+        },
+        .every_byte => for (sequence) |byte| {
+            const chunk = [_]u8{byte};
+            try feed(owner, &boundary, &composer, &runtime, &chunk);
+        },
+    }
+
+    try std.testing.expect(!owner.machine.synchronizedOutput());
+    try std.testing.expect(owner.cursor_target.visible);
+    try std.testing.expect(owner.cursor_target.blink);
+    try std.testing.expect(owner.machine.semanticView(0).cursor_blink);
+    const binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expect(binding.visible);
+    try std.testing.expectEqual(render.canvas.CursorShape.block, binding.shape);
+    try std.testing.expectEqual(owner.cursor_target_revision, binding.cursor_revision);
+    try std.testing.expectEqual(owner.cursor_target_terminal_sequence, binding.terminal_sequence);
+    try std.testing.expectEqual(
+        try cursorRect(owner.cursor_target, owner.geometry),
+        binding.rect,
+    );
+}
+
+test "fzf synchronized cursor survives complete and fragmented transactions" {
+    try exerciseFzfSynchronizedSequence(.whole);
+    try exerciseFzfSynchronizedSequence(.control_boundaries);
+    try exerciseFzfSynchronizedSequence(.every_byte);
+}
+
+test "synchronized output defers cursor binding until one mode-off publication" {
+    var slot = try handoff.PendingSlot.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(903);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        try testPixels(runtime.fonts, 8, 2),
+        .{ .dedicated = &slot },
+    );
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = false;
+    const initial_accepted = owner.accepted_cursor_target;
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
+    try std.testing.expect(owner.machine.synchronizedOutput());
+    try std.testing.expect(owner.dirty);
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[4C"));
+    try std.testing.expect(!owner.dirty);
+    try std.testing.expectEqual(initial_accepted, owner.accepted_cursor_target);
+    try std.testing.expectEqual(@as(u64, 1), owner.cursor_target_revision - owner.accepted_cursor_target_revision);
+    try std.testing.expect(owner.cursor_target.col > owner.accepted_cursor_target.col);
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
+    try std.testing.expect(!owner.machine.synchronizedOutput());
+    try std.testing.expect(owner.dirty);
+    try std.testing.expectEqual(initial_accepted, owner.accepted_cursor_target);
+}
+
 test "pooled cursor route publishes inbox without pool or content work" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 1024,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1024,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
     var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(902);
-    const source: render.canvas.SourceId = @fromBackingInt(1902);
+    const source = try composer.registerSource();
     const pixels = try testPixels(runtime.fonts, 8, 2);
     try boundary.register(pane, source, pixels);
     try std.testing.expectEqual(
@@ -2499,6 +2932,10 @@ test "pooled cursor route publishes inbox without pool or content work" {
     boundary.visible_member_count = 1;
     boundary.visible_members[0] = .{ .pane = pane, .source = source };
     const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = true;
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const initial_binding = boundary.acceptedCursorBinding(pane, source).?;
     owner.dirty = false;
     const before = owner.last_published_revision;
     try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
@@ -2508,6 +2945,62 @@ test "pooled cursor route publishes inbox without pool or content work" {
     try std.testing.expectEqual(pane, cursor.pane);
     try std.testing.expectEqual(source, cursor.source);
     try std.testing.expectEqual(@as(u16, 1), cursor.target.col);
+
+    // Synchronized output keeps semantic movement local until the mode-off
+    // ordinary publication binds the final target; no intermediate inbox
+    // publication is admitted.
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
+    try std.testing.expect(owner.dirty);
+    owner.dirty = false;
+    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
+    try std.testing.expect(!owner.dirty);
+    try std.testing.expect(boundary.takeCursor(pane) == null);
+    // Text changes while synchronized output is active still take the
+    // ordinary Pool/Composer path, but retain the last Composer-accepted
+    // cursor target until the mode-off publication.
+    try owner.routeMutation(try owner.machine.feed("x"));
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    try std.testing.expectEqual(initial_binding, boundary.acceptedCursorBinding(pane, source).?);
+    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(boundary.takeCursor(pane) == null);
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const mode_off_binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expectEqual(owner.cursor_target_revision, mode_off_binding.cursor_revision);
+
+    // A rejected Composer candidate leaves the accepted binding untouched;
+    // retrying the same ready update through the full Composer admits it.
+    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
+    try std.testing.expect(owner.dirty);
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    var narrow = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer narrow.deinit();
+    try std.testing.expectEqual(source, try narrow.registerSource());
+    const narrow_drain = try boundary.drainReady(&narrow);
+    try std.testing.expectEqual(@as(usize, 0), narrow_drain.accepted);
+    try std.testing.expectEqual(error.CommandLimit, narrow_drain.rejected.?);
+    try std.testing.expectEqual(mode_off_binding, boundary.acceptedCursorBinding(pane, source).?);
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const final_binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expectEqual(@as(u64, owner.cursor_target_revision), final_binding.cursor_revision);
+    try std.testing.expectEqual(owner.cursor_target_terminal_sequence, final_binding.terminal_sequence);
+    try std.testing.expectEqual(
+        try cursorRect(owner.cursor_target, owner.geometry),
+        final_binding.rect,
+    );
 
     // A hidden member remains registered but has no cursor presentation.
     boundary.visible_member_count = 0;
@@ -2868,6 +3361,100 @@ test "hostile admitted command pressure remains recoverable and retryable" {
     try std.testing.expect((try owner.machine.feed(transcript)).stateChanged());
     try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
     try std.testing.expect(!owner.dirty);
+}
+
+test "first command follows real lifecycle admission and is consumed once" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    runtime.accepted_scale = .{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    runtime.first_command = "printf cursor-fixture";
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+
+    const first: render.chrome.PaneId = @fromBackingInt(904);
+    const first_source: render.canvas.SourceId = @fromBackingInt(1904);
+    const first_operations = [_]handoff.Lifecycle{.{ .create = .{
+        .pane = first,
+        .pixels = .{ .width = std.math.maxInt(u16), .height = std.math.maxInt(u16) },
+    } }};
+    var rejected = try boundary.prepareLifecycle(
+        &first_operations,
+        &.{},
+        .{ .pane = first, .source = first_source },
+    );
+    const rejected_revision = try rejected.publishAdmission();
+    const rejected_request = boundary.takeLifecycleAdmission().?;
+    const rejected_result = runtime.validateLifecycleAdmission(rejected_request);
+    try std.testing.expectEqual(
+        handoff.AdmissionRejection.terminal_capacity,
+        rejected_result.rejected,
+    );
+    try boundary.completeLifecycleAdmission(rejected_revision, rejected_result);
+    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
+    try std.testing.expectEqualStrings("printf cursor-fixture", runtime.first_command.?);
+    rejected.deinit();
+    runtime.releaseCancelledLifecycleFont(&boundary);
+
+    // A later real admission consumes the still-pending command. There is no
+    // retry of the rejected admitted operation itself.
+    const good_operations = [_]handoff.Lifecycle{.{ .create = .{
+        .pane = first,
+        .pixels = pixels,
+    } }};
+    var first_candidate = try boundary.prepareLifecycle(
+        &good_operations,
+        &.{},
+        .{ .pane = first, .source = first_source },
+    );
+    defer first_candidate.deinit();
+    const first_revision = try first_candidate.publishAdmission();
+    const first_request = boundary.takeLifecycleAdmission().?;
+    const first_result = runtime.validateLifecycleAdmission(first_request);
+    try std.testing.expect(switch (first_result) {
+        .admitted => true,
+        .rejected => false,
+    });
+    try boundary.completeLifecycleAdmission(first_revision, first_result);
+    try first_candidate.commitAdmitted();
+    try runtime.applyLifecycle(
+        &boundary,
+        boundary.takeAdmittedLifecycle().?,
+        "/bin/sh",
+    );
+
+    const first_owner = &runtime.owners[runtime.find(first).?].?;
+    try std.testing.expectEqualStrings("printf cursor-fixture", first_owner.transport.command.?);
+    try std.testing.expect(runtime.first_command == null);
+
+    const second: render.chrome.PaneId = @fromBackingInt(905);
+    const second_source: render.canvas.SourceId = @fromBackingInt(1905);
+    var second_candidate = try boundary.prepareLifecycle(
+        &[_]handoff.Lifecycle{.{ .create = .{ .pane = second, .pixels = pixels } }},
+        &.{},
+        .{ .pane = second, .source = second_source },
+    );
+    defer second_candidate.deinit();
+    const second_revision = try second_candidate.publishAdmission();
+    const second_request = boundary.takeLifecycleAdmission().?;
+    const second_result = runtime.validateLifecycleAdmission(second_request);
+    try std.testing.expect(switch (second_result) {
+        .admitted => true,
+        .rejected => false,
+    });
+    try boundary.completeLifecycleAdmission(second_revision, second_result);
+    try second_candidate.commitAdmitted();
+    try runtime.applyLifecycle(
+        &boundary,
+        boundary.takeAdmittedLifecycle().?,
+        "/bin/sh",
+    );
+    const second_owner = &runtime.owners[runtime.find(second).?].?;
+    try std.testing.expect(second_owner.transport.command == null);
 }
 
 test "close racing an occupied slot retries and retires exactly once" {
@@ -4440,6 +5027,7 @@ test "one runtime thread publishes a real shell through the copied slot" {
         std.testing.allocator,
         facts.font_path,
         "/bin/sh",
+        null,
     });
     var awaiting = std.posix.pollfd{
         .fd = boundary.rendererFd(),
@@ -4513,6 +5101,7 @@ test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
         std.testing.allocator,
         facts.font_path,
         "/bin/sh",
+        null,
     });
     boundary.shutdown();
     try std.testing.expectError(error.Stopping, candidate.commitAdmitted());

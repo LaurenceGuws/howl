@@ -11,6 +11,8 @@ const build_options = @import("dev_config_options");
 pub const max_file_bytes: usize = 4096;
 /// The largest single physical line accepted before comment stripping.
 pub const max_line_bytes: usize = 256;
+/// The largest one-shot shell command accepted by the host launcher.
+pub const max_command_bytes: usize = 4096;
 /// The repository-local configuration used when `--config` is absent.
 pub const default_path: []const u8 = build_options.repository_config_path;
 
@@ -96,6 +98,8 @@ pub const Config = struct {
 pub const ParsedArguments = struct {
     font_path: []const u8,
     config_path: []const u8,
+    /// Optional one-shot command for the first successfully created pane.
+    command: ?[]const u8,
 };
 
 /// Parses the complete bounded startup argument vector without allocation.
@@ -104,6 +108,8 @@ pub fn parseArguments(args: []const []const u8) error{InvalidArguments}!ParsedAr
     var font_path: ?[]const u8 = null;
     var config_path: []const u8 = default_path;
     var config_seen = false;
+    var command: ?[]const u8 = null;
+    var command_seen = false;
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
@@ -118,11 +124,19 @@ pub fn parseArguments(args: []const []const u8) error{InvalidArguments}!ParsedAr
             index += 1;
             config_path = args[index];
             if (config_path.len == 0) return error.InvalidArguments;
+        } else if (std.mem.eql(u8, argument, "--command")) {
+            if (command_seen or index + 1 >= args.len) return error.InvalidArguments;
+            command_seen = true;
+            index += 1;
+            command = args[index];
+            if (command.?.len == 0 or command.?.len > max_command_bytes)
+                return error.InvalidArguments;
         } else return error.InvalidArguments;
     }
     return .{
         .font_path = font_path orelse return error.InvalidArguments,
         .config_path = config_path,
+        .command = command,
     };
 }
 
@@ -358,6 +372,7 @@ test "startup arguments prove explicit selection, ordering, and rejection" {
     });
     try std.testing.expectEqualStrings("/tmp/howl.conf", explicit.config_path);
     try std.testing.expectEqualStrings("font.ttf", explicit.font_path);
+    try std.testing.expect(explicit.command == null);
     const reversed = try parseArguments(&.{
         "howl-host", "--font", "font.ttf", "--config", "/tmp/howl.conf",
     });
@@ -365,6 +380,19 @@ test "startup arguments prove explicit selection, ordering, and rejection" {
     try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--config", "a", "--config", "b", "--font", "f" }));
     try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--config" }));
     try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--font", "f", "--unknown", "x" }));
+}
+
+test "startup command is bounded, optional, and one-shot at the parser boundary" {
+    const parsed = try parseArguments(&.{
+        "howl-host", "--command", "printf fixture", "--font", "font.ttf",
+    });
+    try std.testing.expectEqualStrings("printf fixture", parsed.command.?);
+    var too_long: [max_command_bytes + 1]u8 = undefined;
+    @memset(&too_long, 'x');
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", &too_long, "--font", "f" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "", "--font", "f" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "a", "--command", "b", "--font", "f" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command" }));
 }
 
 test "development config rejects allocation before retaining any configuration bytes" {

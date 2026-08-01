@@ -1095,17 +1095,17 @@ test "fixed pool layout matches checked executable receipt" {
     const block = try calculateBlockLayout();
     const layout = try calculateLayout();
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(Descriptor));
-    try std.testing.expectEqual(@as(usize, 176), @sizeOf(BlockOwner));
+    try std.testing.expectEqual(@as(usize, 184), @sizeOf(BlockOwner));
     try std.testing.expectEqual(@as(usize, 32), @sizeOf(PoolMeta));
-    try std.testing.expectEqual(@as(usize, 176), block.uploads_offset);
-    try std.testing.expectEqual(@as(usize, 57_520), block.removals_offset);
-    try std.testing.expectEqual(@as(usize, 73_904), block.commands_offset);
-    try std.testing.expectEqual(@as(usize, 2_433_200), block.pixels_offset);
-    try std.testing.expectEqual(@as(usize, 6_627_504), block.total);
+    try std.testing.expectEqual(@as(usize, 184), block.uploads_offset);
+    try std.testing.expectEqual(@as(usize, 57_528), block.removals_offset);
+    try std.testing.expectEqual(@as(usize, 73_912), block.commands_offset);
+    try std.testing.expectEqual(@as(usize, 2_433_208), block.pixels_offset);
+    try std.testing.expectEqual(@as(usize, 6_627_512), block.total);
     try std.testing.expectEqual(@as(usize, 0), layout.metadata_offset);
     try std.testing.expectEqual(@as(usize, 32), layout.descriptors_offset);
     try std.testing.expectEqual(@as(usize, 4_128), layout.blocks_offset);
-    try std.testing.expectEqual(@as(usize, 106_044_192), layout.total);
+    try std.testing.expectEqual(@as(usize, 106_044_320), layout.total);
     try std.testing.expectError(
         error.ArithmeticOverflow,
         checkedAdd(std.math.maxInt(usize), 1),

@@ -8,10 +8,18 @@ const vk = @import("abi.zig");
 pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
 /// Selects one of the three generic surface pipelines.
 pub const Kind = enum { solid, alpha_mask, rgba };
+/// Selects one generic pipeline draw and preserves terminal component
+/// eligibility without widening the fixed backend command record.
+pub const CommandKind = enum { solid, alpha_mask, alpha_mask_cursor, rgba };
 /// Caller-owned vertex in surface-pixel coordinates and normalized texture coordinates.
 pub const Vertex = extern struct { position: [2]f32, uv: [2]f32, color: [4]f32 };
 /// Ordered indexed draw with an exact clip rectangle.
-pub const Command = struct { kind: Kind, first_index: u32, index_count: u32, clip: Rect };
+pub const Command = struct {
+    kind: CommandKind,
+    first_index: u32,
+    index_count: u32,
+    clip: Rect,
+};
 /// Bounded caller-owned geometry and upload-change facts consumed synchronously.
 pub const Plan = struct {
     vertices: []const Vertex,
@@ -116,7 +124,7 @@ pub const Removal = struct { resource: ResourceGeneration };
 /// Borrows one ordered generic surface command.
 pub const FrameCommand = union(enum) {
     solid: struct { rect: Rect, clip: Rect, color: [4]f32 },
-    alpha_mask: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null, color: [4]f32 },
+    alpha_mask: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null, color: [4]f32, cursor_component: bool = false },
     rgba: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null },
 };
 /// A complete frame plus sparse resource mutations, independent of Render.
@@ -142,13 +150,42 @@ pub const image_atlas_extent: u16 = 1024;
 /// Byte capacity of the RGBA atlas.
 pub const image_atlas_bytes: usize = @as(usize, image_atlas_extent) * image_atlas_extent * 4;
 /// Maximum quads accepted in one plan.
-pub const max_quads: usize = 32_768;
+pub const max_quads: usize = 65_537;
 /// Maximum vertices accepted in one plan.
 pub const max_vertices: usize = max_quads * 4;
 /// Maximum indices accepted in one plan.
 pub const max_indices: usize = max_quads * 6;
 /// Maximum ordered draw commands accepted in one plan.
 pub const max_commands: usize = max_quads;
+
+/// Selects the backend-neutral cursor overlay shape used by physical replay.
+pub const CursorOverlayShape = enum { block, underline, bar, none };
+
+/// Supplies one complete focused cursor overlay without terminal policy.
+pub const CursorOverlay = struct {
+    /// Rectangle occupied by the accepted cursor shape.
+    rect: Rect,
+    /// Surface clip inherited from the focused pane.
+    clip: Rect,
+    /// Selects the physical cursor shape.
+    shape: CursorOverlayShape,
+    /// Cursor background color.
+    color: [4]f32,
+    /// Recolor used for intersecting marked glyph components.
+    text_color: [4]f32,
+    /// Whether this overlay contributes presentation.
+    visible: bool,
+};
+
+/// Supplies fixed candidate storage for one cursor replay.
+pub const CursorReplayBuffers = struct {
+    /// Candidate vertices copied from the accepted base and overlay.
+    vertices: []Vertex,
+    /// Candidate indices copied from the accepted base and overlay.
+    indices: []u32,
+    /// Candidate draw commands copied from the accepted base and overlay.
+    commands: []Command,
+};
 
 const vertex_shader align(4) = @embedFile("shaders/chrome.vert.spv").*;
 const solid_shader align(4) = @embedFile("shaders/solid.frag.spv").*;
@@ -372,14 +409,19 @@ pub const Context = struct {
         vk.vkCmdBindIndexBuffer(command, self.staging_buffer, index_offset, vk.VK_INDEX_TYPE_UINT32);
         var bound: ?Kind = null;
         for (plan.commands) |item| {
-            if (bound == null or bound.? != item.kind) {
-                vk.vkCmdBindPipeline(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, switch (item.kind) {
+            const pipeline_kind: Kind = switch (item.kind) {
+                .solid => .solid,
+                .alpha_mask, .alpha_mask_cursor => .alpha_mask,
+                .rgba => .rgba,
+            };
+            if (bound == null or bound.? != pipeline_kind) {
+                vk.vkCmdBindPipeline(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, switch (pipeline_kind) {
                     .solid => self.solid_pipeline,
                     .alpha_mask => self.text_pipeline,
                     .rgba => self.image_pipeline,
                 });
-                if (item.kind != .solid) vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
-                bound = item.kind;
+                if (pipeline_kind != .solid) vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
+                bound = pipeline_kind;
             }
             var scissor = physicalScissorValidated(
                 item.clip,
@@ -963,9 +1005,9 @@ pub const FrameBuilder = struct {
         var index_count: usize = 0;
         var command_count: usize = 0;
         for (frame.commands) |item| {
-            const kind: Kind, const rect: Rect, const clip: Rect, const color: [4]f32, const packed_entry = switch (item) {
+            const kind: CommandKind, const rect: Rect, const clip: Rect, const color: [4]f32, const packed_entry = switch (item) {
                 .solid => |v| .{ .solid, v.rect, v.clip, v.color, @as(?Packed, null) },
-                .alpha_mask => |v| .{ .alpha_mask, v.rect, v.clip, v.color, findPacked(self.entries[0..packed_count], v.resource) },
+                .alpha_mask => |v| .{ if (v.cursor_component) .alpha_mask_cursor else .alpha_mask, v.rect, v.clip, v.color, findPacked(self.entries[0..packed_count], v.resource) },
                 .rgba => |v| .{ .rgba, v.rect, v.clip, .{ 1, 1, 1, 1 }, findPacked(self.entries[0..packed_count], v.resource) },
             };
             if (kind != .solid and packed_entry == null) return error.InvalidFrame;
@@ -998,6 +1040,433 @@ pub const FrameBuilder = struct {
 fn findPacked(values: []const FrameBuilder.Packed, resource: ResourceGeneration) ?FrameBuilder.Packed {
     for (values) |value| if (std.meta.eql(value.resource, resource)) return value;
     return null;
+}
+
+/// Replays one accepted physical base and appends exactly one cursor overlay.
+///
+/// The accepted plan and its resource generations are borrowed read-only. All
+/// candidate arithmetic and component traversal completes before the first
+/// candidate byte is written, so rejection leaves both cohorts unchanged.
+pub fn replayCursor(
+    base: Plan,
+    overlay: CursorOverlay,
+    buffers: CursorReplayBuffers,
+) Error!Plan {
+    try validateReplayBase(base);
+    const active = overlay.visible and overlay.shape != .none;
+    var cursor_clip: Rect = undefined;
+    if (active)
+        cursor_clip = intersectRect(overlay.clip, overlay.rect) orelse
+            return error.InvalidPlan;
+    var extra: usize = 0;
+    if (active) {
+        extra = 1;
+        if (overlay.shape == .block) {
+            for (base.commands) |command| {
+                if (command.kind != .alpha_mask_cursor)
+                    continue;
+                const quad = commandRectAssumeValid(base, command);
+                if (intersectRect(quad, overlay.rect) != null and
+                    intersectRect(command.clip, overlay.clip) != null)
+                    extra = std.math.add(usize, extra, 1) catch return error.InvalidPlan;
+            }
+        }
+    }
+    const extra_vertices = std.math.mul(usize, extra, 4) catch
+        return error.InvalidPlan;
+    const extra_indices = std.math.mul(usize, extra, 6) catch
+        return error.InvalidPlan;
+    const vertex_count = std.math.add(usize, base.vertices.len, extra_vertices) catch
+        return error.InvalidPlan;
+    const index_count = std.math.add(usize, base.indices.len, extra_indices) catch
+        return error.InvalidPlan;
+    const command_count = std.math.add(usize, base.commands.len, extra) catch
+        return error.InvalidPlan;
+    if (vertex_count > buffers.vertices.len or
+        index_count > buffers.indices.len or
+        command_count > buffers.commands.len or
+        command_count > max_commands or
+        vertex_count > max_vertices or
+        index_count > max_indices)
+        return error.InvalidPlan;
+
+    @memcpy(buffers.vertices[0..base.vertices.len], base.vertices);
+    @memcpy(buffers.indices[0..base.indices.len], base.indices);
+    @memcpy(buffers.commands[0..base.commands.len], base.commands);
+    var vertices_used = base.vertices.len;
+    var indices_used = base.indices.len;
+    var commands_used = base.commands.len;
+    if (active) {
+        appendQuad(
+            buffers.vertices,
+            buffers.indices,
+            buffers.commands,
+            &vertices_used,
+            &indices_used,
+            &commands_used,
+            overlay.rect,
+            cursor_clip,
+            overlay.color,
+            .solid,
+            false,
+        );
+        if (overlay.shape == .block) {
+            for (base.commands) |command| {
+                if (command.kind != .alpha_mask_cursor)
+                    continue;
+                const quad = commandRectAssumeValid(base, command);
+                const clip = intersectRect(
+                    intersectRect(command.clip, overlay.clip) orelse continue,
+                    overlay.rect,
+                ) orelse continue;
+                if (intersectRect(quad, overlay.rect) == null) continue;
+                const source_vertices = quadVerticesAssumeValid(base, command);
+                const destination = buffers.vertices[vertices_used .. vertices_used + 4];
+                @memcpy(destination, source_vertices);
+                for (destination) |*vertex| vertex.color = overlay.text_color;
+                const base_index = indices_used;
+                const vertex_base: u32 = @intCast(vertices_used);
+                @memcpy(
+                    buffers.indices[indices_used .. indices_used + 6],
+                    &[_]u32{ vertex_base, vertex_base + 1, vertex_base + 2, vertex_base, vertex_base + 2, vertex_base + 3 },
+                );
+                buffers.commands[commands_used] = .{
+                    .kind = .alpha_mask,
+                    .first_index = @intCast(base_index),
+                    .index_count = 6,
+                    .clip = clip,
+                };
+                vertices_used += 4;
+                indices_used += 6;
+                commands_used += 1;
+            }
+        }
+    }
+    return .{
+        .vertices = buffers.vertices[0..vertices_used],
+        .indices = buffers.indices[0..indices_used],
+        .commands = buffers.commands[0..commands_used],
+        // An ordinary replacement may introduce a new atlas. Preserve that
+        // fact through the physical cursor append; cursor-only replay bases
+        // are already accepted and therefore carry false here.
+        .atlas_changed = base.atlas_changed,
+        .image_atlas_changed = base.image_atlas_changed,
+    };
+}
+
+test "cursor replay recolors marked components and rolls back undersized output" {
+    const base_vertices = [_]Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const base_indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
+    const base_commands = [_]Command{.{
+        .kind = .alpha_mask,
+        .first_index = 0,
+        .index_count = 6,
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+    }};
+    const base = Plan{
+        .vertices = &base_vertices,
+        .indices = &base_indices,
+        .commands = &base_commands,
+        .atlas_changed = true,
+        .image_atlas_changed = true,
+    };
+    var vertices: [16]Vertex = undefined;
+    var indices: [24]u32 = undefined;
+    var commands: [4]Command = undefined;
+    const replayed = try replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .shape = .block,
+        .color = .{ 0, 0, 0, 1 },
+        .text_color = .{ 0, 1, 0, 1 },
+        .visible = true,
+    }, .{ .vertices = &vertices, .indices = &indices, .commands = &commands });
+    try std.testing.expectEqual(@as(usize, 3), replayed.commands.len);
+    try std.testing.expectEqual(@as(usize, 12), replayed.vertices.len);
+    try std.testing.expect(replayed.atlas_changed);
+    try std.testing.expect(replayed.image_atlas_changed);
+    try std.testing.expectEqual(@as(f32, 0), replayed.vertices[8].color[0]);
+    try std.testing.expectEqual(@as(f32, 1), replayed.vertices[8].color[1]);
+
+    @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(&indices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(&commands)), 0xa5);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .shape = .block,
+        .color = .{ 0, 0, 0, 1 },
+        .text_color = .{ 0, 1, 0, 1 },
+        .visible = true,
+    }, .{ .vertices = vertices[0..4], .indices = indices[0..6], .commands = commands[0..2] }));
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&vertices[0])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&commands[0])).*);
+}
+
+test "cursor replay rejects malformed geometry before candidate mutation" {
+    const base_vertices = [_]Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const base_indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
+    const base_commands = [_]Command{.{
+        .kind = .alpha_mask_cursor,
+        .first_index = 0,
+        .index_count = 6,
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+    }};
+    var vertices: [16]Vertex = undefined;
+    var indices: [24]u32 = undefined;
+    var commands: [4]Command = undefined;
+    const poison = struct {
+        fn apply(vertex_storage: []Vertex, index_storage: []u32, command_storage: []Command) void {
+            @memset(@as([]u8, @ptrCast(vertex_storage)), 0xa5);
+            @memset(@as([]u8, @ptrCast(index_storage)), 0xa5);
+            @memset(@as([]u8, @ptrCast(command_storage)), 0xa5);
+        }
+        fn expect(vertex_storage: []Vertex, index_storage: []u32, command_storage: []Command) !void {
+            for (std.mem.asBytes(vertex_storage)) |byte|
+                try std.testing.expectEqual(@as(u8, 0xa5), byte);
+            for (std.mem.asBytes(index_storage)) |byte|
+                try std.testing.expectEqual(@as(u8, 0xa5), byte);
+            for (std.mem.asBytes(command_storage)) |byte|
+                try std.testing.expectEqual(@as(u8, 0xa5), byte);
+        }
+    }{};
+    const overlay = CursorOverlay{
+        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 32, .y = 32, .width = 8, .height = 16 },
+        .shape = .block,
+        .color = .{ 0, 0, 0, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = true,
+    };
+    poison.apply(&vertices, &indices, &commands);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = &base_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
+        overlay,
+        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
+    ));
+    try poison.expect(&vertices, &indices, &commands);
+
+    var nan_vertices = base_vertices;
+    nan_vertices[0].position[0] = std.math.nan(f32);
+    poison.apply(&vertices, &indices, &commands);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = &nan_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
+        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
+        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
+    ));
+    try poison.expect(&vertices, &indices, &commands);
+
+    var infinite_vertices = base_vertices;
+    infinite_vertices[1].position[0] = std.math.inf(f32);
+    poison.apply(&vertices, &indices, &commands);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = &infinite_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
+        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
+        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
+    ));
+    try poison.expect(&vertices, &indices, &commands);
+
+    var out_of_range_vertices = base_vertices;
+    out_of_range_vertices[2].position[0] = 3.0e20;
+    poison.apply(&vertices, &indices, &commands);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = &out_of_range_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
+        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
+        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
+    ));
+    try poison.expect(&vertices, &indices, &commands);
+
+    var malformed_indices = base_indices;
+    malformed_indices[1] = 3;
+    poison.apply(&vertices, &indices, &commands);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = &base_vertices, .indices = &malformed_indices, .commands = &base_commands, .atlas_changed = false },
+        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
+        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
+    ));
+    try poison.expect(&vertices, &indices, &commands);
+}
+
+test "cursor replay accepts the complete 32768 base and 65537 candidate" {
+    const base_count = 32_768;
+    const base_vertices = try std.testing.allocator.alloc(Vertex, base_count * 4);
+    defer std.testing.allocator.free(base_vertices);
+    const base_indices = try std.testing.allocator.alloc(u32, base_count * 6);
+    defer std.testing.allocator.free(base_indices);
+    const base_commands = try std.testing.allocator.alloc(Command, base_count);
+    defer std.testing.allocator.free(base_commands);
+    for (0..base_count) |index| {
+        const vertex = index * 4;
+        const first = index * 6;
+        base_vertices[vertex + 0] = .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } };
+        base_vertices[vertex + 1] = .{ .position = .{ 1, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } };
+        base_vertices[vertex + 2] = .{ .position = .{ 1, 1 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } };
+        base_vertices[vertex + 3] = .{ .position = .{ 0, 1 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } };
+        const base_vertex: u32 = @intCast(vertex);
+        @memcpy(base_indices[first .. first + 6], &[_]u32{ base_vertex, base_vertex + 1, base_vertex + 2, base_vertex, base_vertex + 2, base_vertex + 3 });
+        base_commands[index] = .{ .kind = .alpha_mask_cursor, .first_index = @intCast(first), .index_count = 6, .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 } };
+    }
+    const vertices = try std.testing.allocator.alloc(Vertex, max_vertices);
+    defer std.testing.allocator.free(vertices);
+    const indices = try std.testing.allocator.alloc(u32, max_indices);
+    defer std.testing.allocator.free(indices);
+    const commands = try std.testing.allocator.alloc(Command, max_commands);
+    defer std.testing.allocator.free(commands);
+    const replayed = try replayCursor(.{ .vertices = base_vertices, .indices = base_indices, .commands = base_commands, .atlas_changed = false }, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .shape = .block,
+        .color = .{ 0, 0, 0, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = true,
+    }, .{ .vertices = vertices, .indices = indices, .commands = commands });
+    try std.testing.expectEqual(max_commands, replayed.commands.len);
+    try std.testing.expectEqual(max_vertices, replayed.vertices.len);
+    try std.testing.expectEqual(max_indices, replayed.indices.len);
+}
+
+fn validateReplayBase(base: Plan) Error!void {
+    if (base.vertices.len > max_vertices or base.indices.len > max_indices or
+        base.commands.len > max_commands)
+        return error.InvalidPlan;
+    for (base.vertices) |vertex| {
+        if (!validCoordinate(vertex.position[0]) or
+            !validCoordinate(vertex.position[1]))
+            return error.InvalidPlan;
+    }
+    for (base.indices) |index| {
+        if (@as(usize, index) >= base.vertices.len) return error.InvalidPlan;
+    }
+    for (base.commands) |command| {
+        if (command.index_count != 6) return error.InvalidPlan;
+        const end = std.math.add(usize, command.first_index, command.index_count) catch
+            return error.InvalidPlan;
+        if (end > base.indices.len) return error.InvalidPlan;
+        if (command.clip.width == 0 or command.clip.height == 0 or
+            command.clip.x < 0 or command.clip.y < 0)
+            return error.InvalidPlan;
+        const rectangle = try commandRect(base, command);
+        if (rectangle.width == 0 or rectangle.height == 0)
+            return error.InvalidPlan;
+    }
+}
+
+fn quadVertices(base: Plan, command: Command) ?[]const Vertex {
+    const start = @as(usize, command.first_index);
+    const end = std.math.add(usize, start, 6) catch return null;
+    if (end > base.indices.len) return null;
+    const first = base.indices[start];
+    const first_plus_one = std.math.add(u32, first, 1) catch return null;
+    const first_plus_two = std.math.add(u32, first, 2) catch return null;
+    const first_plus_three = std.math.add(u32, first, 3) catch return null;
+    if (base.indices[start + 1] != first_plus_one or
+        base.indices[start + 2] != first_plus_two or
+        base.indices[start + 3] != first or
+        base.indices[start + 4] != first_plus_two or
+        base.indices[start + 5] != first_plus_three)
+        return null;
+    const vertex_start = @as(usize, first);
+    const vertex_end = std.math.add(usize, vertex_start, 4) catch return null;
+    if (vertex_end > base.vertices.len) return null;
+    return base.vertices[vertex_start..vertex_end];
+}
+
+fn quadVerticesAssumeValid(base: Plan, command: Command) []const Vertex {
+    return quadVertices(base, command) orelse unreachable;
+}
+
+fn commandRect(base: Plan, command: Command) Error!Rect {
+    const vertices = quadVertices(base, command) orelse return error.InvalidPlan;
+    var left: f32 = vertices[0].position[0];
+    var right = left;
+    var top: f32 = vertices[0].position[1];
+    var bottom = top;
+    for (vertices[1..]) |vertex| {
+        left = @min(left, vertex.position[0]);
+        right = @max(right, vertex.position[0]);
+        top = @min(top, vertex.position[1]);
+        bottom = @max(bottom, vertex.position[1]);
+    }
+    const x_value = checkedCoordinate(left) orelse return error.InvalidPlan;
+    const y_value = checkedCoordinate(top) orelse return error.InvalidPlan;
+    const right_value = checkedCoordinate(right) orelse return error.InvalidPlan;
+    const bottom_value = checkedCoordinate(bottom) orelse return error.InvalidPlan;
+    const x = std.math.cast(i32, x_value) orelse return error.InvalidPlan;
+    const y = std.math.cast(i32, y_value) orelse return error.InvalidPlan;
+    if (right_value <= x_value or bottom_value <= y_value)
+        return error.InvalidPlan;
+    const width = std.math.cast(u32, std.math.sub(i64, right_value, x_value) catch
+        return error.InvalidPlan) orelse return error.InvalidPlan;
+    const height = std.math.cast(u32, std.math.sub(i64, bottom_value, y_value) catch
+        return error.InvalidPlan) orelse return error.InvalidPlan;
+    return .{ .x = x, .y = y, .width = width, .height = height };
+}
+
+fn validCoordinate(value: f32) bool {
+    return checkedCoordinate(value) != null;
+}
+
+fn checkedCoordinate(value: f32) ?i64 {
+    if (!std.math.isFinite(value)) return null;
+    const as_f64 = @as(f64, @floatCast(value));
+    const max_i64 = @as(f64, @floatFromInt(std.math.maxInt(i64)));
+    if (as_f64 <= -max_i64 or as_f64 >= max_i64) return null;
+    return @intFromFloat(value);
+}
+
+fn commandRectAssumeValid(base: Plan, command: Command) Rect {
+    return commandRect(base, command) catch unreachable;
+}
+
+fn intersectRect(left: Rect, right: Rect) ?Rect {
+    const x = @max(left.x, right.x);
+    const y = @max(left.y, right.y);
+    const right_x = @min(@as(i64, left.x) + left.width, @as(i64, right.x) + right.width);
+    const bottom_y = @min(@as(i64, left.y) + left.height, @as(i64, right.y) + right.height);
+    if (right_x <= x or bottom_y <= y) return null;
+    return .{ .x = x, .y = y, .width = @intCast(right_x - x), .height = @intCast(bottom_y - y) };
+}
+
+fn appendQuad(
+    vertices: []Vertex,
+    indices: []u32,
+    commands: []Command,
+    vertex_count: *usize,
+    index_count: *usize,
+    command_count: *usize,
+    rect: Rect,
+    clip: Rect,
+    color: [4]f32,
+    kind: Kind,
+    cursor_component: bool,
+) void {
+    const vertex_base: u32 = @intCast(vertex_count.*);
+    vertices[vertex_count.* + 0] = .{ .position = .{ @floatFromInt(rect.x), @floatFromInt(rect.y) }, .uv = .{ 0, 0 }, .color = color };
+    vertices[vertex_count.* + 1] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(rect.y) }, .uv = .{ 0, 0 }, .color = color };
+    vertices[vertex_count.* + 2] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ 0, 0 }, .color = color };
+    vertices[vertex_count.* + 3] = .{ .position = .{ @floatFromInt(rect.x), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ 0, 0 }, .color = color };
+    @memcpy(indices[index_count.* .. index_count.* + 6], &[_]u32{ vertex_base, vertex_base + 1, vertex_base + 2, vertex_base, vertex_base + 2, vertex_base + 3 });
+    const command_kind: CommandKind = if (cursor_component)
+        .alpha_mask_cursor
+    else switch (kind) {
+        .solid => .solid,
+        .alpha_mask => .alpha_mask,
+        .rgba => .rgba,
+    };
+    commands[command_count.*] = .{ .kind = command_kind, .first_index = @intCast(index_count.*), .index_count = 6, .clip = clip };
+    vertex_count.* += 4;
+    index_count.* += 6;
+    command_count.* += 1;
 }
 
 fn pixelToNdc(position: [2]f32, width: u32, height: u32) Error![2]f32 {
