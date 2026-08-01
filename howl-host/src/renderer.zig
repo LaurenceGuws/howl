@@ -17,6 +17,7 @@ const replay_command_limit: usize = vk_surface.max_commands;
 const replay_pin_limit: usize = 2_048;
 const input_actions = @import("input_actions");
 const terminal_handoff = @import("terminal_handoff");
+const dev_config = @import("dev_config");
 const chrome_appearance = chrome_state.Appearance{
     .style = .{
         .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
@@ -500,6 +501,9 @@ const CanvasWork = struct {
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
+    /// Startup-retained presentation view; animation and geometry application
+    /// remain unchanged until their dedicated cursor checkpoints.
+    cursor_policy: dev_config.CursorPresentationPolicy,
     terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     font_request_high_water: u64 = 0,
@@ -558,12 +562,14 @@ pub fn run(
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
+    cursor_policy: dev_config.CursorPresentationPolicy,
 ) void {
     runFallible(
         boundary,
         terminals,
         allocator,
         font_path,
+        cursor_policy,
     ) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
@@ -576,6 +582,7 @@ fn runFallible(
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
+    cursor_policy: dev_config.CursorPresentationPolicy,
 ) !void {
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
@@ -656,6 +663,7 @@ fn runFallible(
         .builder = &surface_builder,
         .residency = &surface_residency,
         .terminals = terminals,
+        .cursor_policy = cursor_policy,
         .terminal_font_policy = try terminal_handoff.FontPolicy.init(
             configured_terminal_base_points,
         ),
@@ -3736,6 +3744,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     defer residency.deinit();
     var replay = try ReplayState.init(std.testing.allocator);
     defer replay.deinit();
+    const default_config = dev_config.Config.defaults();
     var work = CanvasWork{
         .composer = &composer,
         .content = &content,
@@ -3752,9 +3761,11 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .builder = &builder,
         .residency = &residency,
         .terminals = &terminals,
+        .cursor_policy = default_config.presentationPolicy(),
         .terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0),
         .replay = &replay,
     };
+    try std.testing.expectEqual(default_config.presentationPolicy(), work.cursor_policy);
     const accepted_topology = try chrome_state.Topology.init(
         .{ .width = 320, .height = 240 },
         chrome_state.default_tab_bar_height,
@@ -4056,6 +4067,14 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     }
     const reused = try terminals.reserveUpdate(member);
     try terminals.cancelUpdate(reused);
+}
+
+test "CanvasWork cursor retention layout receipt" {
+    // d67cb4b baseline: 4096 bytes; the retained presentation view adds 56.
+    const baseline_size: usize = 4096;
+    const retained_delta: usize = 56;
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(CanvasWork));
+    try std.testing.expectEqual(baseline_size + retained_delta, @sizeOf(CanvasWork));
 }
 
 test "compact resource adaptation preserves local and shared namespaces mechanically" {

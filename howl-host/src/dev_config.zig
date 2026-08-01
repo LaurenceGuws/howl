@@ -1,8 +1,8 @@
 //! Owns the bounded repository-local startup configuration for the host.
 //!
 //! The process root reads this file once before constructing any Boundary or
-//! runtime thread. Validation retains no configuration value at this stage;
-//! cursor owners consume narrow typed views in the next checkpoint.
+//! runtime thread. The process root retains one typed value, then copies only
+//! owner-specific cursor views into the Host terminal and Renderer owners.
 
 const std = @import("std");
 const build_options = @import("dev_config_options");
@@ -69,6 +69,44 @@ pub const CursorConfig = struct {
     trail_color: TrailColor,
 };
 
+/// Retains the configured semantic cursor shape for the Host terminal owner.
+pub const CursorSemanticPolicy = struct {
+    /// Configured default semantic cursor shape.
+    shape: CursorShape,
+};
+
+/// Retains all cursor presentation policy for the Host Renderer owner.
+pub const CursorPresentationPolicy = struct {
+    /// Configured focused cursor color.
+    color: Color,
+    /// Configured shape used while the window is unfocused.
+    unfocused_shape: UnfocusedCursorShape,
+    /// Configured beam thickness in points.
+    beam_thickness_points: f64,
+    /// Configured underline thickness in points.
+    underline_thickness_points: f64,
+    /// Configured blink interval policy.
+    blink_interval: BlinkInterval,
+    /// Inactivity duration after which blinking stops.
+    stop_blinking_after_seconds: f64,
+    /// Delay before a cursor trail begins.
+    trail_delay_ms: u32,
+    /// Fast and slow trail decay endpoints.
+    trail_decay_seconds: TrailDecay,
+    /// Number of cells required before trail admission.
+    trail_start_threshold_cells: u16,
+    /// Source used for trail color.
+    trail_color: TrailColor,
+};
+
+/// The only two cursor views that process-root startup may distribute.
+pub const OwnerViews = struct {
+    /// Exact view retained by the Host terminal owner.
+    terminal: CursorSemanticPolicy,
+    /// Exact view retained by the Host Renderer owner.
+    renderer: CursorPresentationPolicy,
+};
+
 /// Represents one complete validated configuration for parser-boundary tests.
 pub const Config = struct {
     /// Complete immutable cursor configuration.
@@ -90,6 +128,35 @@ pub const Config = struct {
                 .trail_start_threshold_cells = 0,
                 .trail_color = .cursor,
             },
+        };
+    }
+
+    /// Copies only the semantic shape for the Host terminal owner.
+    pub fn semanticPolicy(self: *const Config) CursorSemanticPolicy {
+        return .{ .shape = self.cursor.shape };
+    }
+
+    /// Copies all presentation policy for the Host Renderer owner.
+    pub fn presentationPolicy(self: *const Config) CursorPresentationPolicy {
+        return .{
+            .color = self.cursor.color,
+            .unfocused_shape = self.cursor.unfocused_shape,
+            .beam_thickness_points = self.cursor.beam_thickness_points,
+            .underline_thickness_points = self.cursor.underline_thickness_points,
+            .blink_interval = self.cursor.blink_interval,
+            .stop_blinking_after_seconds = self.cursor.stop_blinking_after_seconds,
+            .trail_delay_ms = self.cursor.trail_delay_ms,
+            .trail_decay_seconds = self.cursor.trail_decay_seconds,
+            .trail_start_threshold_cells = self.cursor.trail_start_threshold_cells,
+            .trail_color = self.cursor.trail_color,
+        };
+    }
+
+    /// Derives the exact two owner views used by process-root startup.
+    pub fn ownerViews(self: *const Config) OwnerViews {
+        return .{
+            .terminal = self.semanticPolicy(),
+            .renderer = self.presentationPolicy(),
         };
     }
 };
@@ -215,9 +282,10 @@ fn parseInto(bytes: []const u8, result: *Config) ParseError!void {
     return;
 }
 
-/// Validates one repository-local file without retaining its typed result.
-/// Temporary file bytes are freed on parser failure and allocation failure.
-pub fn validateFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) LoadError!void {
+/// Loads one repository-local file into one complete typed startup value.
+/// The returned value owns no heap bytes; the temporary file buffer is freed
+/// before the value becomes visible to the process root.
+pub fn loadFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) LoadError!Config {
     if (path.len == 0) return error.MalformedValue;
     const bytes = std.Io.Dir.cwd().readFileAlloc(
         io,
@@ -229,8 +297,7 @@ pub fn validateFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) 
         else => return failure,
     };
     defer allocator.free(bytes);
-    var validated = Config.defaults();
-    try parseInto(bytes, &validated);
+    return parse(bytes);
 }
 
 fn trimAscii(value: []const u8) []const u8 {
@@ -327,6 +394,36 @@ test "development config parses the complete accepted typed file" {
             "cursor.trail_color cursor\n",
     );
     try std.testing.expectEqual(Config.defaults(), parsed);
+    try std.testing.expectEqual(
+        CursorSemanticPolicy{ .shape = .beam },
+        parsed.semanticPolicy(),
+    );
+    try std.testing.expectEqual(parsed.cursor.beam_thickness_points, parsed.presentationPolicy().beam_thickness_points);
+    try std.testing.expectEqual(parsed.cursor.trail_delay_ms, parsed.presentationPolicy().trail_delay_ms);
+}
+
+test "typed owner views copy values without retaining the complete config" {
+    var config = Config.defaults();
+    const semantic = config.semanticPolicy();
+    const presentation = config.presentationPolicy();
+    config.cursor.shape = .underline;
+    config.cursor.trail_delay_ms = 99;
+    config.cursor.beam_thickness_points = 7.0;
+    try std.testing.expectEqual(CursorShape.beam, semantic.shape);
+    try std.testing.expectEqual(@as(u32, 1), presentation.trail_delay_ms);
+    try std.testing.expectEqual(@as(f64, 1.5), presentation.beam_thickness_points);
+}
+
+test "typed cursor configuration layout receipt" {
+    // Pinned for the d67cb4b startup-retention boundary.
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(Config));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(Config));
+    try std.testing.expectEqual(@as(usize, 1), @sizeOf(CursorSemanticPolicy));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(CursorSemanticPolicy));
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(CursorPresentationPolicy));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(CursorPresentationPolicy));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(OwnerViews));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(OwnerViews));
 }
 
 test "development config rejects missing, duplicate, unknown, malformed, and oversized records" {
@@ -405,7 +502,7 @@ test "development config rejects allocation before retaining any configuration b
         try writer.interface.writeAll("cursor.shape beam\n");
     }
     defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
-    try std.testing.expectError(error.OutOfMemory, validateFile(std.testing.io, failing.allocator(), path));
+    try std.testing.expectError(error.OutOfMemory, loadFile(std.testing.io, failing.allocator(), path));
 }
 
 test "development config reports a missing explicit file" {
@@ -413,15 +510,20 @@ test "development config reports a missing explicit file" {
     std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
     try std.testing.expectError(
         error.FileNotFound,
-        validateFile(std.testing.io, std.testing.allocator, path),
+        loadFile(std.testing.io, std.testing.allocator, path),
     );
 }
 
 test "repository-local development config validates at its compiled default path" {
-    try validateFile(std.testing.io, std.testing.allocator, default_path);
+    const loaded = try loadFile(std.testing.io, std.testing.allocator, default_path);
+    const owners = loaded.ownerViews();
+    try std.testing.expectEqual(CursorShape.beam, owners.terminal.shape);
+    try std.testing.expectEqual(Color{ .r = 0x73, .g = 0xf9, .b = 0x90 }, owners.renderer.color);
+    try std.testing.expectEqual(UnfocusedCursorShape.hollow, owners.renderer.unfocused_shape);
+    try std.testing.expectEqual(BlinkInterval.system, owners.renderer.blink_interval);
 }
 
-test "explicit config path selects the requested file" {
+test "process-root explicit config reaches the exact terminal and renderer owners" {
     const path = "dev-config-explicit.conf";
     {
         var file = try std.Io.Dir.cwd().createFile(std.testing.io, path, .{ .truncate = true });
@@ -442,5 +544,12 @@ test "explicit config path selects the requested file" {
         );
     }
     defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
-    try validateFile(std.testing.io, std.testing.allocator, path);
+    const loaded = try loadFile(std.testing.io, std.testing.allocator, path);
+    const owners = loaded.ownerViews();
+    try std.testing.expectEqual(CursorSemanticPolicy{ .shape = .underline }, owners.terminal);
+    try std.testing.expectEqual(Color{ .r = 1, .g = 2, .b = 3 }, owners.renderer.color);
+    try std.testing.expectEqual(UnfocusedCursorShape.beam, owners.renderer.unfocused_shape);
+    try std.testing.expectEqual(@as(u32, 7), owners.renderer.trail_delay_ms);
+    try std.testing.expectEqual(@as(f64, 2.0), owners.renderer.beam_thickness_points);
+    try std.testing.expectEqual(@as(f64, 3.0), owners.renderer.underline_thickness_points);
 }

@@ -116,6 +116,7 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
     terminal_runtime.addImport("terminal_pool", terminal_pool);
+    terminal_runtime.addImport("dev_config", dev_config);
     const terminal_runtime_facts = b.addOptions();
     terminal_runtime_facts.addOption(
         []const u8,
@@ -237,6 +238,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
+    renderer_test_module.addImport("dev_config", dev_config);
     renderer_test_module.addImport("chrome_state", chrome_state);
     renderer_test_module.addImport("input_actions", input_actions);
     renderer_test_module.addImport("howl_render", render.module("howl_render"));

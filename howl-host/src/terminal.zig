@@ -11,6 +11,29 @@ const terminal_pool = @import("terminal_pool");
 const font_owner = render.terminal_font_owner;
 const terminal_render = render.terminal;
 const terminal_images = render.terminal_images;
+const dev_config = @import("dev_config");
+
+test "Runtime retains the copied semantic cursor view" {
+    var config = dev_config.Config.defaults();
+    config.cursor.shape = .underline;
+    const policy = config.semanticPolicy();
+    var runtime = try Runtime.initWithCommand(
+        std.testing.allocator,
+        facts.font_path,
+        null,
+        policy,
+    );
+    defer runtime.deinit();
+    try std.testing.expectEqual(policy, runtime.cursor_policy);
+}
+
+test "Runtime cursor retention layout receipt" {
+    // d67cb4b baseline: 13368 bytes; the one-byte view fits existing padding.
+    const baseline_size: usize = 13368;
+    const retained_delta: usize = 0;
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(Runtime));
+    try std.testing.expectEqual(baseline_size + retained_delta, @sizeOf(Runtime));
+}
 
 const PooledTransfer = struct {
     boundary: *handoff.Boundary,
@@ -1169,8 +1192,9 @@ pub fn run(
     font_path: []const u8,
     shell: []const u8,
     first_command: ?[]const u8,
+    cursor_policy: dev_config.CursorSemanticPolicy,
 ) void {
-    runFallible(boundary, allocator, font_path, shell, first_command) catch |failure| {
+    runFallible(boundary, allocator, font_path, shell, first_command, cursor_policy) catch |failure| {
         std.debug.print("Terminal runtime failure: {s}\n", .{@errorName(failure)});
         boundary.markStopped(true);
         return;
@@ -1184,8 +1208,14 @@ fn runFallible(
     font_path: []const u8,
     shell: []const u8,
     first_command: ?[]const u8,
+    cursor_policy: dev_config.CursorSemanticPolicy,
 ) !void {
-    var runtime = try Runtime.initWithCommand(allocator, font_path, first_command);
+    var runtime = try Runtime.initWithCommand(
+        allocator,
+        font_path,
+        first_command,
+        cursor_policy,
+    );
     defer runtime.deinit();
     while (true) {
         var owner_set = try runtime.buildPollSet();
@@ -1275,6 +1305,8 @@ const Runtime = struct {
     allocator: std.mem.Allocator,
     font_path: []const u8,
     first_command: ?[]const u8,
+    /// Immutable startup copy of the Host terminal cursor semantic view.
+    cursor_policy: dev_config.CursorSemanticPolicy,
     fonts: *render.terminal.FontMap,
     shared_fonts: font_owner.Owner,
     owners: []?Logical,
@@ -1297,7 +1329,12 @@ const Runtime = struct {
         allocator: std.mem.Allocator,
         font_path: []const u8,
     ) RuntimeInitError!Runtime {
-        return initWithCommand(allocator, font_path, null);
+        return initWithCommand(
+            allocator,
+            font_path,
+            null,
+            dev_config.Config.defaults().semanticPolicy(),
+        );
     }
 
     /// Constructs the runtime with one bounded command retained until the
@@ -1306,6 +1343,7 @@ const Runtime = struct {
         allocator: std.mem.Allocator,
         font_path: []const u8,
         first_command: ?[]const u8,
+        cursor_policy: dev_config.CursorSemanticPolicy,
     ) RuntimeInitError!Runtime {
         const owners = try allocator.alloc(?Logical, owner_limit);
         errdefer allocator.free(owners);
@@ -1342,6 +1380,7 @@ const Runtime = struct {
             .allocator = allocator,
             .font_path = font_path,
             .first_command = first_command,
+            .cursor_policy = cursor_policy,
             .fonts = fonts,
             .shared_fonts = shared_fonts,
             .owners = owners,
@@ -5028,6 +5067,7 @@ test "one runtime thread publishes a real shell through the copied slot" {
         facts.font_path,
         "/bin/sh",
         null,
+        dev_config.Config.defaults().semanticPolicy(),
     });
     var awaiting = std.posix.pollfd{
         .fd = boundary.rendererFd(),
@@ -5102,6 +5142,7 @@ test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
         facts.font_path,
         "/bin/sh",
         null,
+        dev_config.Config.defaults().semanticPolicy(),
     });
     boundary.shutdown();
     try std.testing.expectError(error.Stopping, candidate.commitAdmitted());

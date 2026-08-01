@@ -27,7 +27,8 @@ pub fn main(init: std.process.Init) MainError!void {
         arg_count += 1;
     }
     const parsed = try dev_config.parseArguments(args[0..arg_count]);
-    try dev_config.validateFile(init.io, init.gpa, parsed.config_path);
+    const config = try dev_config.loadFile(init.io, init.gpa, parsed.config_path);
+    const owner_views = config.ownerViews();
     var boundary = try shared.Boundary.init(init.io);
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
@@ -37,7 +38,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const terminal_thread = std.Thread.spawn(
         .{},
         terminal_runtime.run,
-        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh", parsed.command },
+        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh", parsed.command, owner_views.terminal },
     ) catch |failure| {
         boundary.requestStop(.render);
         window_thread.join();
@@ -48,6 +49,7 @@ pub fn main(init: std.process.Init) MainError!void {
         &terminals,
         init.gpa,
         parsed.font_path,
+        owner_views.renderer,
     }) catch |failure| {
         boundary.requestStop(.render);
         terminals.shutdown();
