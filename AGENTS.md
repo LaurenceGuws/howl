@@ -16,7 +16,8 @@ Read only the authority relevant to the work:
 - `project_rules.yml`: stable product and engineering invariants.
 - `project_source_map.yml`: accepted production source and build ownership.
 - `project_version_scope.yml`: the current development capability cut.
-- `watch_list.yml`: active structural interventions blocking ordinary work.
+- `watch_list.yml`: active structural interventions blocking ordinary work,
+  when the file is present.
 - `CHANGELOG.TXT`: noteworthy accepted foundation changes when history matters.
 
 `README.md` is the project landing page, not mandatory agent onboarding.
@@ -53,6 +54,38 @@ marathon, and delete the marathon when its final gate lands.
 When ordinary work exposes systemic debt, record the concrete offenders in
 `watch_list.yml`, preserve working capability, and finish the intervention
 before resuming feature growth. The watch list is also deleted when resolved.
+
+## Evidence flow: YAML -> JSONL -> Git
+
+Runtime implementation and debugging move through three distinct evidence
+forms. Pure static research or documentation may move directly from reviewed
+YAML evidence to Git when no executable behavior exists to capture.
+
+1. YAML owns the query before execution: accepted policy, exact unknowns,
+   reproduction procedure, event schema, bounds, exclusions, and acceptance
+   gate. It never fabricates runtime facts.
+2. JSONL owns factual runtime captures. Every runtime slice produces temporary
+   structured evidence for review; GUI, CLI, simulation, fuzz, benchmark, and
+   hostile-test runs differ only in who drives them. Use
+   `tools/json_logger.zig`, emit bounded strongly typed events, and query the
+   untouched capture with Nushell. Normal traces never use stdout, stderr, or
+   prose records; stderr remains for genuine failures. JSONL is the default
+   runtime authority, not a prohibition on better evidence shapes. When a
+   matrix, relation, or fixed table is materially clearer as TSV or CSV, stop
+   and define its ownership, schema, derivation, validation, and lifetime in
+   the active YAML before creating it. Nushell may query either form. The
+   operator drives GUI reproductions unless they explicitly authorize
+   automation.
+3. Git owns only reviewed conclusions and implementation. A capture does not
+   authorize a fix, and passing tests do not replace review or an outstanding
+   manual gate. Commit one coherent accepted slice and push it so important
+   state does not exist only in an agent session.
+
+Temporary product instrumentation is removed only after the capture has been
+reviewed and cleanup is authorized. Never move, truncate, rewrite, or delete a
+capture while it is under review. Keep the reusable logger in `tools`; keep
+accepted normalized findings in the active ignored YAML evidence, not in
+permanent product logging or committed raw traces.
 
 Sensitive Zig constructs are reviewed uses, not purity violations. The source
 audit accepts exact justified sites and rejects accidental new sites.
