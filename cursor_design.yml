@@ -63,7 +63,7 @@ development_configuration:
   deferred: [reload, inotify, includes, environment_expansion, scripting, compatibility_aliases]
 
 ownership:
-  process_root: validates the repository-local configuration before thread construction; typed retention and owner-specific distribution begin with the first cursor-owner checkpoint
+  process_root: loads and validates one typed repository-local configuration before thread construction, then copies only owner-specific immutable cursor views into Host terminal and Renderer owners
   vt: owns factual cursor position, visibility, program-selected shape, and blink intent only
   render: owns backend-neutral cursor projection, damage facts, geometry, and visual command facts
   host_renderer: owns monotonic time, animation scheduling, frame demand, and concrete presentation policy
@@ -120,6 +120,7 @@ checkpoints:
   - {id: cursor_mutation_and_publication_boundary, status: accepted, commit: 0a97f7b, product_change: accepted}
   - {id: cursor_free_base_migration, status: accepted, commit: cfea772, product_change: accepted}
   - {id: physical_cursor_replay, status: accepted, commit: ad7c4b1, product_change: accepted}
+  - {id: typed_cursor_config_retention, status: accepted, commit: b15b697, product_change: accepted}
   - {id: cursor_trail_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
   - {id: cursor_blink_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
   - {id: cursor_replay_benchmark_reassessment, status: pending, product_change: blocked_on_prior_checkpoint}
