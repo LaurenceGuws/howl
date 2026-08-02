@@ -3,10 +3,10 @@ sprint:
   id: session_domain_boundary
   marathon: host_input_integration
   status: active
-  active_slice: first_transition_route
+  active_slice: semantic_owner_migration
   objective: >-
-    Route the first maintained session command through the accepted finite
-    session boundary without widening Host input behavior.
+    Extract the complete backend-independent semantic session owner without
+    retaining a parallel accepted topology or changing Host behavior.
 
 accepted_slices:
   ownership_index:
@@ -18,6 +18,13 @@ accepted_slices:
     evidence: .zig/work/host-input-integration/session-domain-boundary/finite_contract.yml
     receipt: .zig/work/host-input-integration/session-domain-boundary/layout_receipt.txt
     conclusion: 11-command/12-route finite contract with no unresolved authority decisions
+  semantic_owner_extraction:
+    status: accepted
+    evidence: .zig/work/host-input-integration/session-domain-boundary/semantic_owner_extraction.yml
+    conclusion: >-
+      SessionState ownership, content-local geometry, Chrome adaptation, and
+      all Host signatures form one atomic single-owner migration before the
+      first command can be routed.
 
 accepted_contract:
   command_variants: 11
@@ -99,16 +106,29 @@ slices:
     status: accepted
     product_change: forbidden
     output: accepted command, state, bound, error, rollback, cleanup, and file-owner contract
-  - id: first_transition_route
+  - id: semantic_owner_migration
     status: active
-    product_change: authorized_narrow_scope
+    product_change: authorized_atomic_scope
+    output: >-
+      One backend-independent SessionState owner with content-local geometry,
+      explicit Chrome projection/hit-test adaptation, migrated Host consumers,
+      and no retained chrome_state.Topology ownership surface.
+    scope: >-
+      Move semantic storage and all semantic methods to session_domain.zig;
+      retain only Chrome Appearance, projection, hit testing, and physical
+      coordinate adaptation in chrome_state.zig; migrate every current Host
+      consumer atomically; preserve all behavior and normalized outputs.
+    implementation: not_started
+  - id: first_transition_route
+    status: pending
+    product_change: blocked_on_prior_slice
     command: SessionCommand.focus_direction
     output: one smallest behavior-preserving transition routed through the accepted boundary
     scope: >-
       Implement only focus_direction adaptation, pure candidate preparation,
       existing lifecycle translation, and accepted transition wiring. Do not
       add bindings, commands, package boundaries, or unrelated input behavior.
-    implementation: not_started
+    implementation: blocked_on_semantic_owner_migration
   - id: complete_transition_route
     status: pending
     product_change: blocked_on_prior_slice
