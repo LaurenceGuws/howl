@@ -1285,8 +1285,8 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
         .image_atlas_changed = false,
     };
     const trail = CursorTrailOverlay{
-        .corner_x = .{ 20, 40, 40, 20 },
-        .corner_y = .{ 30, 30, 60, 60 },
+        .corner_x = .{ 40, 40, 20, 20 },
+        .corner_y = .{ 30, 60, 60, 30 },
         .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
         .opacity = 0.5,
         .color = .{ 0.2, 0.3, 0.4, 1 },
@@ -1310,8 +1310,17 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
         Rect{ .x = 30, .y = 35, .width = 10, .height = 20 },
         replayed.trail_mask.?,
     );
-    try std.testing.expectEqual(@as(f32, 20), replayed.vertices[0].position[0]);
-    try std.testing.expectEqual(@as(f32, 30), replayed.vertices[0].position[1]);
+    try std.testing.expectEqual([4][2]f32{
+        .{ 40, 30 },
+        .{ 40, 60 },
+        .{ 20, 60 },
+        .{ 20, 30 },
+    }, .{
+        replayed.vertices[0].position,
+        replayed.vertices[1].position,
+        replayed.vertices[2].position,
+        replayed.vertices[3].position,
+    });
     try std.testing.expectEqual(@as(f32, 0.5), replayed.vertices[0].color[3]);
 
     @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);

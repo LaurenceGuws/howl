@@ -22,6 +22,48 @@ test "surface contract is analyzed with generic draw storage" {
     try std.testing.expectEqual(@as(usize, 1), plan.commands.len);
 }
 
+test "surface gate preserves Kitty direct trail corner order" {
+    const base = surface.Plan{
+        .vertices = &[_]surface.Vertex{},
+        .indices = &[_]u32{},
+        .commands = &[_]surface.Command{},
+        .atlas_changed = false,
+        .image_atlas_changed = false,
+    };
+    const trail = surface.CursorTrailOverlay{
+        .corner_x = .{ 40, 40, 20, 20 },
+        .corner_y = .{ 30, 60, 60, 30 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .opacity = 0.5,
+        .color = .{ 0.2, 0.3, 0.4, 1 },
+        .cursor_rect = .{ .x = 30, .y = 35, .width = 10, .height = 20 },
+    };
+    var vertices: [4]surface.Vertex = undefined;
+    var indices: [6]u32 = undefined;
+    var commands: [1]surface.Command = undefined;
+    const result = try surface.replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .shape = .none,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = false,
+        .trail = trail,
+    }, .{ .vertices = &vertices, .indices = &indices, .commands = &commands });
+    try std.testing.expectEqual(surface.CommandKind.trail, result.commands[0].kind);
+    try std.testing.expectEqual([4][2]f32{
+        .{ 40, 30 },
+        .{ 40, 60 },
+        .{ 20, 60 },
+        .{ 20, 30 },
+    }, .{
+        result.vertices[0].position,
+        result.vertices[1].position,
+        result.vertices[2].position,
+        result.vertices[3].position,
+    });
+}
+
 test "surface compact namespaces reject malformed source combinations" {
     const local_value = try surface.ResourceGeneration.local(4, 7, 2);
     const shared_value = try surface.ResourceGeneration.shared(7, 2);

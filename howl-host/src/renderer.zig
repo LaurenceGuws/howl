@@ -71,6 +71,8 @@ const TrailSlot = struct {
     initialized: bool = false,
 };
 
+// Kitty's retained vertex order: right-top, right-bottom, left-bottom,
+// left-top.  Initialization and every target update use these same identities.
 const trail_corner_x = [4]usize{ 1, 1, 0, 0 };
 const trail_corner_y = [4]usize{ 0, 1, 1, 0 };
 const trail_frame_interval_ns: u64 = std.time.ns_per_s / 60;
@@ -79,98 +81,6 @@ const CursorTrailEdges = struct {
     x: [2]f32,
     y: [2]f32,
 };
-
-const TrailPathCorners = struct {
-    x: [4]f32,
-    y: [4]f32,
-};
-
-fn trailPathCorners(
-    corner_x: [4]f32,
-    corner_y: [4]f32,
-    target_x: [2]f32,
-    target_y: [2]f32,
-) TrailPathCorners {
-    const target = TrailPathCorners{
-        .x = .{ target_x[0], target_x[1], target_x[1], target_x[0] },
-        .y = .{ target_y[0], target_y[0], target_y[1], target_y[1] },
-    };
-    const current_center_x = (corner_x[0] + corner_x[1] + corner_x[2] + corner_x[3]) * 0.25;
-    const current_center_y = (corner_y[0] + corner_y[1] + corner_y[2] + corner_y[3]) * 0.25;
-    const target_center_x = (target_x[0] + target_x[1]) * 0.5;
-    const target_center_y = (target_y[0] + target_y[1]) * 0.5;
-    const direction_x = target_center_x - current_center_x;
-    const direction_y = target_center_y - current_center_y;
-    if (direction_x == 0 and direction_y == 0)
-        return .{ .x = corner_x, .y = corner_y };
-
-    // Build an oriented ribbon around the center-to-center segment.  The
-    // endpoint extents retain the full old/new cursor rectangles, while the
-    // perpendicular extent retains their visible thickness.  This is one
-    // straight quad, so empty cells between the endpoints cannot become
-    // holes in the trail.
-    const length = std.math.sqrt(direction_x * direction_x + direction_y * direction_y);
-    const unit_x = direction_x / length;
-    const unit_y = direction_y / length;
-    const perpendicular_x = -unit_y;
-    const perpendicular_y = unit_x;
-    var current_along: f32 = 0;
-    var current_across: f32 = 0;
-    var target_along: f32 = 0;
-    var target_across: f32 = 0;
-    for (0..4) |index| {
-        const current_dx = corner_x[index] - current_center_x;
-        const current_dy = corner_y[index] - current_center_y;
-        const target_dx = target.x[index] - target_center_x;
-        const target_dy = target.y[index] - target_center_y;
-        current_along = @max(current_along, @abs(current_dx * unit_x + current_dy * unit_y));
-        current_across = @max(current_across, @abs(current_dx * perpendicular_x + current_dy * perpendicular_y));
-        target_along = @max(target_along, @abs(target_dx * unit_x + target_dy * unit_y));
-        target_across = @max(target_across, @abs(target_dx * perpendicular_x + target_dy * perpendicular_y));
-    }
-    const start_x = current_center_x - unit_x * current_along;
-    const start_y = current_center_y - unit_y * current_along;
-    const stop_x = target_center_x + unit_x * target_along;
-    const stop_y = target_center_y + unit_y * target_along;
-    const half_width = @max(current_across, target_across);
-    var result = TrailPathCorners{
-        .x = .{
-            start_x - perpendicular_x * half_width,
-            stop_x - perpendicular_x * half_width,
-            stop_x + perpendicular_x * half_width,
-            start_x + perpendicular_x * half_width,
-        },
-        .y = .{
-            start_y - perpendicular_y * half_width,
-            stop_y - perpendicular_y * half_width,
-            stop_y + perpendicular_y * half_width,
-            start_y + perpendicular_y * half_width,
-        },
-    };
-    var min_x = corner_x[0];
-    var max_x = corner_x[0];
-    var min_y = corner_y[0];
-    var max_y = corner_y[0];
-    min_x = @min(min_x, target.x[0]);
-    max_x = @max(max_x, target.x[0]);
-    min_y = @min(min_y, target.y[0]);
-    max_y = @max(max_y, target.y[0]);
-    for (1..4) |index| {
-        min_x = @min(min_x, corner_x[index]);
-        max_x = @max(max_x, corner_x[index]);
-        min_y = @min(min_y, corner_y[index]);
-        max_y = @max(max_y, corner_y[index]);
-        min_x = @min(min_x, target.x[index]);
-        max_x = @max(max_x, target.x[index]);
-        min_y = @min(min_y, target.y[index]);
-        max_y = @max(max_y, target.y[index]);
-    }
-    for (0..4) |index| {
-        result.x[index] = @max(min_x, @min(max_x, result.x[index]));
-        result.y[index] = @max(min_y, @min(max_y, result.y[index]));
-    }
-    return result;
-}
 
 fn checkedTrailClipUnion(
     left: vk_surface.Rect,
@@ -244,8 +154,10 @@ fn trailSnap(
 ) void {
     trail.cursor_edge_x = edges.x;
     trail.cursor_edge_y = edges.y;
-    trail.corner_x = .{ edges.x[0], edges.x[1], edges.x[1], edges.x[0] };
-    trail.corner_y = .{ edges.y[0], edges.y[0], edges.y[1], edges.y[1] };
+    for (0..4) |index| {
+        trail.corner_x[index] = edges.x[trail_corner_x[index]];
+        trail.corner_y[index] = edges.y[trail_corner_y[index]];
+    }
     trail.updated_at = now;
     trail.opacity = if (visible) 1.0 else 0.0;
     trail.needs_render = false;
@@ -450,7 +362,7 @@ test "cursor trail state follows Kitty delay, easing, threshold, and visibility"
     try std.testing.expect(initialized);
     try std.testing.expectEqual(@as(f32, 1.0), trail.opacity);
     try std.testing.expect(trail_deadline == null);
-    try std.testing.expectEqual(@as(f32, 20), trail.corner_x[0]);
+    try std.testing.expectEqual(@as(f32, 30), trail.corner_x[0]);
     try std.testing.expectEqual(@as(f32, 40), trail.corner_y[0]);
 
     var moved = base_overlay;
@@ -516,7 +428,7 @@ test "cursor trail state follows Kitty delay, easing, threshold, and visibility"
     hidden.visible = true;
     try trailPrepareTarget(&trail, hidden, cell_size, 2_100_000, policy, &trail_deadline, &initialized);
     try std.testing.expectEqual(@as(f32, 1.0), trail.opacity);
-    try std.testing.expectEqual(@as(f32, 50), trail.corner_x[0]);
+    try std.testing.expectEqual(@as(f32, 60), trail.corner_x[0]);
     try std.testing.expect(trail_deadline == null);
 
     const accepted_before_overflow = trail;
@@ -548,58 +460,98 @@ test "cursor trail state follows Kitty delay, easing, threshold, and visibility"
     var near = base_overlay;
     near.rect.x += 10;
     try trailPrepareTarget(&trail, near, cell_size, 3_100_000, threshold_policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(f32, 30), trail.corner_x[0]);
+    try std.testing.expectEqual(@as(f32, 40), trail.corner_x[0]);
     try std.testing.expect(trail_deadline == null);
 }
 
-test "cursor trail path bridges empty cells with one straight swept quad" {
-    const horizontal = trailPathCorners(
-        .{ 10, 20, 20, 10 },
-        .{ 30, 30, 50, 50 },
-        .{ 70, 80 },
-        .{ 30, 50 },
-    );
-    try std.testing.expectEqual([4]f32{ 10, 80, 80, 10 }, horizontal.x);
-    try std.testing.expectEqual([4]f32{ 30, 30, 50, 50 }, horizontal.y);
+fn trailCornersInsideClip(corner_x: [4]f32, corner_y: [4]f32, clip: vk_surface.Rect) bool {
+    const right = @as(f32, @floatFromInt(clip.x)) + @as(f32, @floatFromInt(clip.width));
+    const bottom = @as(f32, @floatFromInt(clip.y)) + @as(f32, @floatFromInt(clip.height));
+    for (corner_x, corner_y) |x, y| {
+        if (x < @as(f32, @floatFromInt(clip.x)) or x > right or
+            y < @as(f32, @floatFromInt(clip.y)) or y > bottom)
+            return false;
+    }
+    return true;
+}
 
-    const vertical = trailPathCorners(
-        .{ 10, 20, 20, 10 },
-        .{ 30, 30, 50, 50 },
-        .{ 10, 20 },
-        .{ 90, 110 },
-    );
-    try std.testing.expectEqual([4]f32{ 20, 20, 10, 10 }, vertical.x);
-    try std.testing.expectEqual([4]f32{ 30, 110, 110, 30 }, vertical.y);
-
-    const diagonal = trailPathCorners(
-        .{ 10, 20, 20, 10 },
-        .{ 30, 30, 50, 50 },
-        .{ 70, 80 },
-        .{ 90, 110 },
-    );
-    const start_center = .{ @as(f32, 15), @as(f32, 40) };
-    const stop_center = .{ @as(f32, 75), @as(f32, 100) };
-    for (0..9) |step| {
-        const fraction = @as(f32, @floatFromInt(step)) / 8.0;
-        const point = .{
-            start_center[0] + (stop_center[0] - start_center[0]) * fraction,
-            start_center[1] + (stop_center[1] - start_center[1]) * fraction,
+test "cursor trail submits Kitty direct corners for one-cell cursor shapes" {
+    const clip = vk_surface.Rect{ .x = 0, .y = 0, .width = 256, .height = 256 };
+    const canvas_clip = render_api.canvas.Rect{ .x = 0, .y = 0, .width = 256, .height = 256 };
+    const shapes = .{ render_api.canvas.CursorShape.block, .bar, .underline };
+    const expected_x = .{
+        [4]f32{ 20, 20, 10, 10 },
+        [4]f32{ 11, 11, 10, 10 },
+        [4]f32{ 20, 20, 10, 10 },
+    };
+    const expected_y = .{
+        [4]f32{ 30, 50, 50, 30 },
+        [4]f32{ 30, 50, 50, 30 },
+        [4]f32{ 49, 50, 50, 49 },
+    };
+    inline for (shapes, expected_x, expected_y) |shape, want_x, want_y| {
+        const binding = render_api.canvas.CursorBinding{
+            .pane = 1,
+            .source = @fromBackingInt(2),
+            .terminal_sequence = 1,
+            .cursor_revision = 1,
+            .visible_set_revision = 1,
+            .lifecycle_revision = 1,
+            .rect = .{ .x = 10, .y = 30, .width = 10, .height = 20 },
+            .clip = canvas_clip,
+            .shape = shape,
+            .visible = true,
         };
-        try std.testing.expect(pointInConvexTrailQuad(diagonal, point[0], point[1]));
+        const placement = render_api.canvas.Composer.Placement{
+            .source = binding.source,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = canvas_clip,
+        };
+        const overlay = (try cursorOverlayForPlacement(binding, placement)).?;
+        const edges = try trailEdges(overlay);
+        var trail = CursorTrail{};
+        trailSnap(&trail, edges, overlay.clip, 1, true);
+        try std.testing.expectEqual(want_x, trail.corner_x);
+        try std.testing.expectEqual(want_y, trail.corner_y);
+        try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, clip));
+
+        var animated = trail;
+        for (0..4) |index| animated.corner_x[index] -= 20;
+        animated.updated_at = 0;
+        animated.needs_render = true;
+        var animation_deadline: ?u64 = 0;
+        try std.testing.expect(trailAdvance(
+            &animated,
+            16_000_000,
+            dev_config.Config.defaults().presentationPolicy(),
+            &animation_deadline,
+        ));
+        for (0..4) |index| {
+            const target_x = edges.x[trail_corner_x[index]];
+            const target_y = edges.y[trail_corner_y[index]];
+            try std.testing.expect(animated.corner_x[index] >= target_x - 20 and animated.corner_x[index] <= target_x);
+            try std.testing.expectEqual(target_y, animated.corner_y[index]);
+        }
     }
 }
 
-fn pointInConvexTrailQuad(path: TrailPathCorners, x: f32, y: f32) bool {
-    var sign: i8 = 0;
-    for (0..4) |index| {
-        const next = (index + 1) % 4;
-        const cross = (path.x[next] - path.x[index]) * (y - path.y[index]) -
-            (path.y[next] - path.y[index]) * (x - path.x[index]);
-        if (@abs(cross) < 0.0001) continue;
-        const current_sign: i8 = if (cross > 0) 1 else -1;
-        if (sign == 0) sign = current_sign else if (sign != current_sign) return false;
+test "cursor trail direct corners remain inside accumulated split-focus clips" {
+    const start = vk_surface.Rect{ .x = 10, .y = 20, .width = 10, .height = 20 };
+    const horizontal = vk_surface.Rect{ .x = 210, .y = 20, .width = 10, .height = 20 };
+    const vertical = vk_surface.Rect{ .x = 10, .y = 220, .width = 10, .height = 20 };
+    const diagonal = vk_surface.Rect{ .x = 210, .y = 220, .width = 10, .height = 20 };
+    const moves = .{
+        .{ start, horizontal, [4]f32{ 220, 220, 210, 210 }, [4]f32{ 20, 40, 40, 20 } },
+        .{ start, vertical, [4]f32{ 20, 20, 10, 10 }, [4]f32{ 220, 240, 240, 220 } },
+        .{ start, diagonal, [4]f32{ 220, 220, 210, 210 }, [4]f32{ 220, 240, 240, 220 } },
+    };
+    const start_x = [4]f32{ 20, 20, 10, 10 };
+    const start_y = [4]f32{ 20, 40, 40, 20 };
+    inline for (moves) |move| {
+        const accumulated = try checkedTrailClipUnion(move[0], move[1]);
+        try std.testing.expect(trailCornersInsideClip(start_x, start_y, accumulated));
+        try std.testing.expect(trailCornersInsideClip(move[2], move[3], accumulated));
     }
-    return sign != 0;
 }
 
 test "cursor trail Kitty timing and easing numeric receipt" {
@@ -625,6 +577,40 @@ test "cursor trail Kitty timing and easing numeric receipt" {
         try std.testing.expect(@abs(trail.corner_y[index] - expected_y[index]) < 0.0001);
     }
     try std.testing.expectEqual(@as(u64, 16_000_000 + trail_frame_interval_ns), receipt_deadline.?);
+}
+
+test "cursor trail advancement preserves Kitty corner identity" {
+    const policy = dev_config.Config.defaults().presentationPolicy();
+    var trail = CursorTrail{
+        .updated_at = 0,
+        .needs_render = true,
+        .opacity = 1,
+        .corner_x = .{ 20, 20, 10, 10 },
+        .corner_y = .{ 30, 50, 50, 30 },
+        .cursor_edge_x = .{ 70, 80 },
+        .cursor_edge_y = .{ 90, 110 },
+    };
+    const initial_x = trail.corner_x;
+    const initial_y = trail.corner_y;
+    var frame_deadline: ?u64 = 0;
+    var requested_frames: usize = 0;
+    const samples = [_]u64{ 16_000_000, 32_000_000, 48_000_000, 10_000_000_000 };
+    for (samples) |now| {
+        if (trailAdvance(&trail, now, policy, &frame_deadline)) requested_frames += 1;
+        for (0..4) |index| {
+            const target_x = trail.cursor_edge_x[trail_corner_x[index]];
+            const target_y = trail.cursor_edge_y[trail_corner_y[index]];
+            const min_x = @min(initial_x[index], target_x);
+            const max_x = @max(initial_x[index], target_x);
+            const min_y = @min(initial_y[index], target_y);
+            const max_y = @max(initial_y[index], target_y);
+            try std.testing.expect(trail.corner_x[index] >= min_x and trail.corner_x[index] <= max_x);
+            try std.testing.expect(trail.corner_y[index] >= min_y and trail.corner_y[index] <= max_y);
+        }
+    }
+    try std.testing.expect(requested_frames >= 3);
+    try std.testing.expectEqual([4]f32{ 80, 80, 70, 70 }, trail.corner_x);
+    try std.testing.expectEqual([4]f32{ 90, 110, 110, 90 }, trail.corner_y);
 }
 
 test "cursor trail layout retains endpoint clips" {
@@ -741,8 +727,8 @@ test "active retarget accumulates A B C coverage transactionally" {
         .needs_render = true,
         .endpoint_clip = clip_a,
         .target_clip = clip_b,
-        .corner_x = .{ 100, 120, 120, 100 },
-        .corner_y = .{ 100, 100, 120, 120 },
+        .corner_x = .{ 120, 120, 100, 100 },
+        .corner_y = .{ 100, 120, 120, 100 },
         .cursor_edge_x = .{ 100, 120 },
         .cursor_edge_y = .{ 100, 120 },
     };
@@ -750,34 +736,28 @@ test "active retarget accumulates A B C coverage transactionally" {
     try prepareTrailRetargetClip(&trail, clip_a, true);
     trail.target_clip = clip_a;
     const reversal_clip = try checkedTrailClipUnion(trail.endpoint_clip, clip_a);
-    const reversal_path = trailPathCorners(
-        trail.corner_x,
-        trail.corner_y,
-        .{ 0, 20 },
-        .{ 0, 20 },
-    );
-    for (reversal_path.x, reversal_path.y) |x, y| {
-        try std.testing.expect(x >= @as(f32, @floatFromInt(reversal_clip.x)));
-        try std.testing.expect(y >= @as(f32, @floatFromInt(reversal_clip.y)));
-        try std.testing.expect(x <= @as(f32, @floatFromInt(reversal_clip.x + @as(i32, @intCast(reversal_clip.width)))) + 0.001);
-        try std.testing.expect(y <= @as(f32, @floatFromInt(reversal_clip.y + @as(i32, @intCast(reversal_clip.height)))) + 0.001);
-    }
+    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, reversal_clip));
+    trail.cursor_edge_x = .{ 0, 20 };
+    trail.cursor_edge_y = .{ 0, 20 };
+    trail.updated_at = 0;
+    var reversal_deadline: ?u64 = 0;
+    try std.testing.expect(trailAdvance(&trail, 16_000_000, dev_config.Config.defaults().presentationPolicy(), &reversal_deadline));
+    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, reversal_clip));
 
     try prepareTrailRetargetClip(&trail, clip_c, true);
     trail.target_clip = clip_c;
     const abc_clip = try checkedTrailClipUnion(trail.endpoint_clip, clip_c);
-    const abc_path = trailPathCorners(
-        trail.corner_x,
-        trail.corner_y,
-        .{ 200, 220 },
-        .{ 40, 60 },
-    );
-    for (abc_path.x, abc_path.y) |x, y| {
-        try std.testing.expect(x >= @as(f32, @floatFromInt(abc_clip.x)));
-        try std.testing.expect(y >= @as(f32, @floatFromInt(abc_clip.y)));
-        try std.testing.expect(x <= @as(f32, @floatFromInt(abc_clip.x + @as(i32, @intCast(abc_clip.width)))) + 0.001);
-        try std.testing.expect(y <= @as(f32, @floatFromInt(abc_clip.y + @as(i32, @intCast(abc_clip.height)))) + 0.001);
+    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, abc_clip));
+    trail.cursor_edge_x = .{ 200, 220 };
+    trail.cursor_edge_y = .{ 40, 60 };
+    trail.updated_at = 16_000_000;
+    reversal_deadline = 16_000_000;
+    var retarget_frames: usize = 0;
+    for ([_]u64{ 32_000_000, 48_000_000, 64_000_000 }) |now| {
+        if (trailAdvance(&trail, now, dev_config.Config.defaults().presentationPolicy(), &reversal_deadline)) retarget_frames += 1;
+        try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, abc_clip));
     }
+    try std.testing.expect(retarget_frames > 0);
 
     const before_failure = trail;
     try std.testing.expectError(
@@ -798,8 +778,8 @@ test "due trail transitions survive continuous ordinary redraw candidates" {
         .initialized = true,
         .trail = .{
             .updated_at = 0,
-            .corner_x = .{ 0, 10, 10, 0 },
-            .corner_y = .{ 0, 0, 20, 20 },
+            .corner_x = .{ 10, 10, 0, 0 },
+            .corner_y = .{ 0, 20, 20, 0 },
             .cursor_edge_x = .{ 100, 110 },
             .cursor_edge_y = .{ 0, 20 },
             .opacity = 1,
@@ -1576,9 +1556,9 @@ fn syncAcceptedTrail(
     };
     if (candidate_slot.initialized and overlay.visible) {
         // A retarget during an active transition must retain every endpoint
-        // already visible in the current swept path.  Fold the prior target
-        // into endpoint_clip before replacing target_clip; otherwise an
-        // A->B->A reversal would clip corners still near B down to A.
+        // already visible in the current direct corner quad.  Fold the prior
+        // target into endpoint_clip before replacing target_clip; otherwise
+        // an A->B->A reversal would clip corners still near B down to A.
         try prepareTrailRetargetClip(
             &candidate_slot.trail,
             overlay.clip,
@@ -1643,9 +1623,9 @@ fn commitTrailAnimation(work: *CanvasWork) void {
     };
     work.trails[slot_index].trail = work.trail_scratch;
     // Keep the original endpoint clip for every in-flight frame.  The
-    // animated swept quad can still occupy the outgoing pane until its
-    // corners and opacity have physically settled; only then may the target
-    // clip become the new accepted endpoint.
+    // animated direct corner quad can still occupy the outgoing pane until
+    // its corners and opacity have physically settled; only then may the
+    // target clip become the new accepted endpoint.
     if (!work.trail_scratch.needs_render and work.trail_scratch_deadline == null) {
         work.trails[slot_index].trail.endpoint_clip =
             work.trails[slot_index].trail.target_clip;
@@ -3754,15 +3734,9 @@ fn physicalPlanForBase(
             value.endpoint_clip,
             overlay.clip,
         );
-        const path = trailPathCorners(
-            value.corner_x,
-            value.corner_y,
-            value.cursor_edge_x,
-            value.cursor_edge_y,
-        );
         overlay.trail = .{
-            .corner_x = path.x,
-            .corner_y = path.y,
+            .corner_x = value.corner_x,
+            .corner_y = value.corner_y,
             .clip = trail_clip,
             .opacity = value.opacity,
             .color = work.accepted_cursor_color orelse overlay.color,
@@ -5983,15 +5957,9 @@ fn replayCursorFrame(
             work.trail_scratch.endpoint_clip,
             accepted_overlay.clip,
         ) catch return .blocked;
-        const path = trailPathCorners(
-            work.trail_scratch.corner_x,
-            work.trail_scratch.corner_y,
-            work.trail_scratch.cursor_edge_x,
-            work.trail_scratch.cursor_edge_y,
-        );
         accepted_overlay.trail = .{
-            .corner_x = path.x,
-            .corner_y = path.y,
+            .corner_x = work.trail_scratch.corner_x,
+            .corner_y = work.trail_scratch.corner_y,
             .clip = trail_clip,
             .opacity = work.trail_scratch.opacity,
             .color = work.accepted_cursor_color orelse accepted_overlay.color,
