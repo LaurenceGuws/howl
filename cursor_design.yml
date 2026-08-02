@@ -1,5 +1,5 @@
 schema: 1
-status: evidence
+status: accepted_0_1_3_dev
 goal: >-
   Replace Howl's provisional cursor presentation with a small, deterministic
   Kitty-led cursor pipeline whose semantic target, damage, animation, timing,
@@ -68,10 +68,10 @@ ownership:
   render: owns backend-neutral cursor projection, damage facts, geometry, and visual command facts
   host_renderer: owns monotonic time, animation scheduling, frame demand, and concrete presentation policy
   vulkan: consumes generic validated physical cursor geometry without terminal semantics
-  unresolved:
-    - exact owner of retained trail corners and opacity
-    - exact boundary between backend-neutral trail geometry and Vulkan drawing facts
-    - exact cursor-only frame scheduling contract
+  resolved:
+    - Host Renderer owns retained trail corners, opacity, timing, demand, and accepted presentation transfer.
+    - Vulkan consumes one validated generic trail sidecar and has no terminal cursor semantics.
+    - Cursor-only replay uses the existing interruptible Renderer wake and accepted ring lifecycle.
 
 invariants:
   - Semantic cursor movement commits immediately to the exact VT target cell.
@@ -121,9 +121,19 @@ checkpoints:
   - {id: cursor_free_base_migration, status: accepted, commit: cfea772, product_change: accepted}
   - {id: physical_cursor_replay, status: accepted, commit: ad7c4b1, product_change: accepted}
   - {id: typed_cursor_config_retention, status: accepted, commit: b15b697, product_change: accepted}
-  - {id: cursor_trail_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
-  - {id: cursor_blink_state_machine, status: pending, product_change: blocked_on_prior_checkpoint}
-  - {id: cursor_replay_benchmark_reassessment, status: pending, product_change: blocked_on_prior_checkpoint}
+  - {id: cursor_trail_state_machine, status: accepted, commits: [cb39ebb, e32bda3, ef8528e], product_change: accepted}
+  - {id: cursor_blink_state_machine, status: deferred, product_change: future_cursor_scope}
+  - {id: cursor_replay_benchmark_reassessment, status: deferred, product_change: future_performance_scope}
+
+freeze:
+  version: 0.1.3-dev
+  accepted: >-
+    Cursor mutation/publication, cursor-free terminal bases, synchronized-output
+    deferral, physical replay, typed startup policy, Kitty direct-corner trail
+    geometry, split-focus animation, and tab presentation transfer are accepted.
+  operator_gates: [neovim_scrolling_stable, readline_cursor_correct, fzf_cursor_visible, split_focus_trail_pass, tab_switch_trail_pass]
+  deferred: [blink_scheduling, animation_micro_polish, production_numeric_trajectory_parity, replay_performance_optimization]
+  rule: Deferred polish does not reopen the accepted cursor-versus-terminal hot-path separation.
 
 review_boundary:
   - The first owner of excessive Neovim cursor-related redraw is proven rather than inferred.
