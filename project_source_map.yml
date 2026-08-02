@@ -55,7 +55,7 @@ accepted:
   howl-render/LICENSES: render-owned asset and native-library provenance
   howl-host/build.zig: first-party executable build, install, run, proof, and distinct translated native-header ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
-  howl-host/manual-fixtures: bounded compositor-visible color and generated-glyph receipts
+  howl-host/manual-fixtures: bounded compositor-visible terminal, Wayland integration, image, text-sizing, color, and generated-glyph receipts
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
   .howl/config/howl.conf: repository-local development cursor configuration defaults

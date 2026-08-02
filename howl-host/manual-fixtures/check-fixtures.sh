@@ -1,7 +1,7 @@
 #!/bin/sh
 #
-# Verifies that the generated-glyph manual fixtures retain complete coverage
-# of every currently implemented classifier range.
+# Verifies syntax for every manual fixture and complete emitted coverage for
+# every currently implemented generated-glyph classifier range.
 
 set -eu
 
@@ -13,13 +13,21 @@ fi
 fixture_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 classifier=$1
 
+for fixture in "$fixture_dir"/*.sh; do
+    sh -n "$fixture"
+done
+
 python3 - "$fixture_dir" "$classifier" <<'PY'
+import ast
 from pathlib import Path
 import subprocess
 import sys
 
 root = Path(sys.argv[1])
 classifier = sys.argv[2]
+
+for path in sorted(root.glob("*.py")):
+    ast.parse(path.read_text(), filename=str(path))
 
 def output(name):
     return subprocess.run(
@@ -70,5 +78,5 @@ for line in manifest.splitlines():
 if not seen:
     raise SystemExit("classifier emitted no generated glyphs")
 
-print("generated manual fixture coverage passed")
+print("manual fixture validation passed")
 PY

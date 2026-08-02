@@ -4,7 +4,7 @@ These bounded scripts preserve distinct first-party host receipts that owner
 tests cannot observe completely. They run as the existing host child command,
 are not installed, and contain no product policy or reusable fixture framework.
 
-- `basic-live.sh`: PTY bytes through VT, text preparation, GLES, and presentation.
+- `basic-live.sh`: PTY bytes through VT, text preparation, Vulkan, and presentation.
 - `geometry.sh`: DEC line geometry, baseline, decoration, color, and cursor drawing.
 - `cursor-blink.sh`: compositor-visible cursor blink timing.
 - `osc52.sh`: exact OSC 52 reply plus Wayland clipboard ownership.
@@ -19,9 +19,12 @@ are not installed, and contain no product policy or reusable fixture framework.
 From `howl-host`, run a receipt with:
 
 ```text
-../.zig/zig build run -- window FONT ./manual-fixtures/RECEIPT.sh
+../.zig/zig build run -Doptimize=ReleaseFast \
+  -Dfont=/absolute/path/to/font.ttf \
+  -Dcommand='./manual-fixtures/RECEIPT.sh'
 ```
 
-Python receipts use the same command with their `.py` filename.
+Python receipts use the same command with their `.py` filename. The one-shot
+command is applied only to the first successfully created pane.
 
 Each receipt exits on its own. Closing the window early remains valid.

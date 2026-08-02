@@ -109,7 +109,7 @@ def put(row, column, placement, parameters):
     sys.stdout.flush()
 
 
-asset = pathlib.Path(__file__).resolve().parent.parent / "assets/howl_window_icon.png"
+asset = pathlib.Path(__file__).resolve().parents[2] / "assets/howl_window_icon.png"
 source_width, source_height, source_rows = decode_rgb_png(asset)
 print("Kitty placement geometry: full, cropped/scaled, offsets, and layers")
 transmit(scaled_rgba(source_width, source_height, source_rows))

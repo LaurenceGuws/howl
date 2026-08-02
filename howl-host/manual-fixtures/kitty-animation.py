@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove bounded raw Kitty frames, composition, timing, and GLES replacement."""
+"""Prove bounded raw Kitty frames, composition, timing, and Vulkan replacement."""
 
 import base64
 import sys

@@ -170,7 +170,7 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const fixture_check = b.addSystemCommand(
-        &.{ "sh", "manual-fixtures/check-generated.sh" },
+        &.{ "sh", "manual-fixtures/check-fixtures.sh" },
     );
     fixture_check.addArtifactArg(fixture_classifier);
     fixture_check.setCwd(b.path("."));
