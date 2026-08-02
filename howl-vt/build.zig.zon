@@ -1,6 +1,6 @@
 .{
     .name = .howl_vt,
-    .version = "0.1.3-dev",
+    .version = "0.1.4-dev",
     .fingerprint = 0xaf7816cf792bd20c,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
     .dependencies = .{},

@@ -1,554 +1,106 @@
+schema: 1
 marathon:
-  name: host_platform_chrome
-  status: active
+  name: host_input_integration
+  version: 0.1.4-dev
+  status: planned
   approval: operator_approved
-  implementation_authorized: true
-  active_scratch: scratch_host.yml
+  active_sprint: scratch_host.yml
+  playground: .zig/work/host-input-integration
   objective: >-
-    Build small reusable Wayland and Vulkan Zig packages, mature backend-neutral
-    Render text and multiplexing chrome, and prove a first-party Vulkan host for
-    all-day Neovim use whose real-terminal integration uses one bounded terminal
-    runtime to own many PTY, VT, and terminal-projection lifetimes without
-    coupling them to Wayland or Vulkan. Kitty-grade text correctness and the
-    existing Window/Renderer/terminal-runtime ownership model are product
-    requirements; a full-size pane remains inside that multiplexing path.
+    Separate session-domain decisions from first-party Host integration, then
+    make Wayland keyboard and pointer input complete, ordered, bounded, and
+    correct under the xterm-kitty development compatibility profile.
 
-baseline:
-  version: 0.1.3-dev
-  head:
-    hash: 0d8771bda4c9f8925b6187a2d16dc48bf834f6e1
-    subject: Admit terminal geometry before font changes
-  foundation:
-    hash: ee3a497ceb10ed98917c68bd34acab37c79ce97f
-    subject: Establish Vulkan host foundation
-  accepted_dependencies:
-    pty: 3cf8eb029fd19aa30f1408c049427168c6974704
-    vt: 45dfd59f88a50df0223aa0ebd935fedac98be240
-    render_projection: 1f20094ab7181104b90e38e501c6c4043020c46b
-    render_text: 5f4c1e1eacb01c4e67b84e7822db25fe1f9d0a47
-    render_chrome: 4a2c90db3f9d0af81ed031c78f574a9c5538cc31
-    vk: f774e36b8403f388b75a5bf355bd5897f5593521
-    wayland: 63c2d4341f604eff645ab532860dcd1c80b3a2b1
-    render_chrome_ownership: c6bc24e60f4749f7975743d36329a148bdddd6f3
-    interactive_chrome: 5b8ac562ebed6479addd2bc7282fc18fac29a367
-    howl_vk_surface: 39281fde6dc16c2bb3cbbb6c41bb4f9c2084bbdb
-    terminal_contract_receipt: ba5f054308665fc93266f853e781c300136c976f
-    terminal_runtime: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
-  proven_runtime:
-    - one Main lifetime, one Window thread, and one Render thread
-    - compositor-selected DMA-BUF device and format/modifier tuple
-    - three-slot explicit-synchronization ring with same-generation reuse
-    - independent GPU progress and compositor-paced presentation
-    - persistent resize generations and reverse retirement
-    - Vulkan solid and alpha-text chrome pixels
-    - bounded tabs, tiled panes, labels, borders, and scrollbars
-    - one terminal runtime thread fairly polling real PTY and VT owners
-    - transactional terminal lifecycle, resize, consequence, and immutable Render handoff
+outcome:
+  - Existing tab, pane, focus, and lifecycle behavior is preserved behind one typed session-command and transition boundary.
+  - Wayland/XKB key press, repeat, release, modifier, focus, and cancellation facts have explicit ownership and ordering.
+  - Host consumes only explicitly mapped actions; every unconsumed event follows the active terminal keyboard protocol into the focused PTY.
+  - Mouse motion, buttons, axes, modifiers, capture, hit testing, and terminal reporting are complete and transactionally routed.
+  - The input hot path is allocation-free after construction and has measured bounded work and latency.
 
-authorities:
-  wayland:
-    path: /home/home/personal/projects/dev_references/backends/wayland
-    role: client, protocol-object, dispatch, descriptor, and callback mechanics
-  vulkan:
-    paths:
-      - /home/home/personal/projects/dev_references/rendering/vulkan_headers
-      - /home/home/personal/projects/dev_references/rendering/vulkan_docs
-      - /home/home/personal/projects/official_docs/host
-    role: Vulkan ABI, loader, external-memory, synchronization, and device mechanics
-  foot:
-    path: /home/home/personal/projects/dev_references/terminals/foot
-    role: direct terminal, Wayland, input, and rendering implementation lessons
-  kitty:
-    path: /home/home/personal/projects/dev_references/terminals/kitty
-    role: >-
-      behavioral authority for terminal font metrics, fallback, symbol and
-      multicell rendering, generated glyphs, decorations, clipping, cursor,
-      selection, resize quality, process-wide multi-size FontGroup ownership,
-      active-user cache trimming, and sprite residency
-  tigerbeetle:
-    path: /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
-    role: Zig module maturity, exact bounds, transactions, failure, and cleanup
-  zellij:
-    path: /home/home/personal/projects/dev_references/terminals/zellij
-    role: >-
-      familiar multiplexing vocabulary and interaction ideology plus lessons from
-      serialized screen mutation, ordered PTY-byte delivery, tabs, panes, and focus behavior
-  alacritty:
-    path: /home/home/personal/projects/dev_references/terminals/alacritty
-    role: >-
-      compact PTY event-loop and fair-lock mechanics; its shared-terminal mutex is
-      evidence for starvation prevention, not authority to share mutable VT in
-      Howl; eventual per-pane performance comparison does not authorize a
-      single-terminal shortcut or benchmark-specific architecture
-  rule: >-
-    References establish facts and sharpen design. Howl derives its own smallest
-    ownership and API shape; no reference donates architecture wholesale.
+references:
+  foot: /home/home/personal/projects/dev_references/terminals/foot
+  kitty: /home/home/personal/projects/dev_references/terminals/kitty
+  tigerbeetle: /home/home/personal/projects/dev_references/zig_maturity/tigerbeetle
+  zig: /home/home/personal/projects/dev_references/zig_maturity/zig
 
-target_ownership:
-  main:
-    owns:
-      - construction order
-      - Window and Render thread joins
-      - final shared-root retirement
-      - first process failure
-  window:
-    owns:
-      - Wayland connection, registry, surface, and protocol objects
-      - Wayland dispatch and compositor callbacks
-      - copied bounded key, mouse, and window input facts
-      - configured surface facts and compositor-paced wl_buffer commits
-    excludes:
-      - tabs, panes, terminals, chrome actions, Vulkan mutation, and GPU pacing
-  render:
-    owns:
-      - Vulkan mutation and GPU resource lifetime
-      - tab and pane state consumed through backend-neutral Render contracts
-      - input-action interpretation
-      - retained newest-complete immutable visual update for each live pane
-      - independent GPU updates and completed-surface notification
-    excludes:
-      - Wayland dispatch, compositor presentation pacing, PTY polling, and VT mutation
-  terminal_runtime:
-    owns:
-      - one initial OS thread and one caller-managed poll set
-      - up to 64 logical terminal owners without one OS thread or fiber per terminal
-      - one PTY, one VT, one terminal-projection baseline, and one globally non-reused PaneId per live terminal pane
-      - one terminal font base, one retained signed size mutation per terminal pane, and one explicit bounded cache of immutable resolved font configurations
-      - bounded fair PTY reads, VT feeds, replies, writes, resize, child observation, and cleanup
-      - conversion of borrowed VT facts into immutable backend-neutral pane updates
-    excludes:
-      - Wayland objects, chrome topology, Vulkan mutation, GPU resources, and presentation pacing
-  presentation_boundary:
-    owns:
-      - bounded copied Window-to-Render facts
-      - bounded ordered input occurrences
-      - generation-tagged slot offers and completed GPU revisions
-      - directional eventfds and stop/failure state
-    rules:
-      - Window input may wake Render.
-      - Render GPU completion wakes Window.
-      - Window never wakes Render merely to pace presentation.
-      - Render never waits for Window to observe a completed GPU revision.
-  terminal_boundary:
-    owns:
-      - bounded unmatched focused input tagged with the stable globally non-reused PaneId
-      - bounded resize, create, close, and stop facts
-      - newest-complete immutable pane updates with monotonic per-pane revisions
-      - directional wakeups without shared mutable PTY, VT, projection, or GPU state
-    rules:
-      - Renderer forwards only input not captured by Host chrome policy.
-      - Terminal runtime rejects stale or retired PaneId values before mutation.
-      - No borrowed VT view or projection storage crosses the boundary.
-      - Terminal runtime never waits for Renderer to draw or Window to present.
-      - Renderer never locks or borrows a live terminal owner.
+invariants:
+  - Window owns Wayland objects and publishes caller-neutral physical input facts only.
+  - Session topology, identity, focus, and lifecycle decisions have no Wayland or Vulkan dependency.
+  - Host mappings consume only exact declared bindings; there is no allowlist of events permitted to reach the PTY.
+  - VT owns negotiated terminal keyboard and mouse protocol state plus pure bounded encoding.
+  - PTY owns ordered bytes and child lifecycle, never Host shortcut or session policy.
+  - Press, repeat, release, modifier, focus-loss, and cancellation facts remain causally ordered.
+  - Legacy compatibility is isolated at the encoder boundary and does not define the physical input architecture.
+  - Candidate failure preserves accepted session state, held-key state, queues, and PTY bytes.
+  - No runtime trace, compatibility hook, or diagnostic logger enters committed product source.
 
-terminal_scheduling:
-  initial_shape:
-    - one terminal runtime OS thread owns every logical terminal owner
-    - one explicit readiness set covers every borrowed PTY descriptor and the runtime wake descriptor
-    - ready terminals are serviced in stable round-robin order with a bounded byte and operation budget per turn
-    - hidden terminals receive the same progress opportunity as visible terminals
-    - CPU-heavy VT work yields at the explicit per-turn bound rather than at hidden scheduler points
-  growth_rule: >-
-    If measured workload exceeds one runtime thread, shard complete terminal owners
-    across a small fixed number of runtime threads without changing package or pane-update
-    contracts. Do not introduce one OS thread per terminal.
-  lock_rule: >-
-    Prefer exclusive terminal ownership and copied boundary facts over a shared terminal
-    mutex. Alacritty's fair mutex may inform a small proven residual lock only if ownership
-    cannot remove it; it is not the default terminal transport.
-  zig_io_rule: >-
-    The pinned Zig Evented backend is a future implementation candidate, not an accepted
-    architecture dependency. Its Linux stackful fibers currently reserve roughly 60 MiB
-    per fiber, so one fiber per terminal requires separate measured proof before adoption.
-    std.Io remains valuable as an injected I/O and nondeterminism contract.
+bounds_to_measure_before_implementation:
+  - live physical keys
+  - ordered key occurrences
+  - ordered pointer button and axis occurrences
+  - shortcut bindings
+  - encoded bytes per input event
+  - retained session commands and candidate transitions
+  - per-wake input work
 
-enduring_packages:
-  howl_wayland:
-    purpose: small reusable Zig Wayland client and protocol module
-    owns:
-      - reproducible protocol generation and provenance
-      - exact core client and earned extension declarations
-      - typed key, mouse, and window input facts
-      - protocol object, callback, mapping, descriptor, and cleanup contracts
-    excludes:
-      - event-loop policy
-      - tabs, panes, terminal semantics, Vulkan, rendering, and host actions
-  howl_vk:
-    purpose: small reusable Zig Vulkan ABI and dispatch module
-    owns:
-      - exact reachable Vulkan declarations
-      - instance and device dispatch loading
-      - required external-memory, modifier, semaphore, synchronization, and command facts
-      - pinned provenance and ABI verification
-    excludes:
-      - Wayland, DMA-BUF presentation rings, render graphs, allocators, tabs, and terminals
-  howl_render:
-    purpose: backend-neutral visual knowledge and bounded projections
-    owns:
-      - reusable native text shaping and rasterization
-      - terminal text adaptation, cells, images, cursor, and selection projection
-      - caller-neutral tab bar, tiled and floating pane chrome, borders, labels, and scrollbars
-      - exact clipping, hit testing, focus appearance, capacity, and rollback
-    excludes:
-      - Vulkan, Wayland, threads, presentation, PTYs, and VT mutation
-    vocabulary_rule: >-
-      An editor-like frame is a reuse proof, not a new IDE, widget, backend, or
-      application framework. Chrome nouns are retained only for the specified
-      tab, pane, text-selection, border, label, and scrollbar behavior.
-  howl_host:
-    purpose: first-party composition and competitive Linux terminal executable
-    owns:
-      - Wayland and Vulkan runtime policy
-      - DMA-BUF and explicit-synchronization ring
-      - key and pointer action mapping
-      - one bounded terminal runtime owning one PTY and VT lifetime per terminal pane
+compatibility_profile:
+  development_child_environment:
+    TERM: xterm-kitty
+    TERM_PROGRAM: Howl
+    TERM_PROGRAM_VERSION: 0.1.4-dev
+    COLORTERM: truecolor
+  policy: >-
+    The private development Host advertises the modern compatibility target so
+    real TUIs exercise it. Missing support is a typed development defect, not a
+    reason for silent downgrade.
+  remote_fallback: xterm-256color remains an explicit degraded operator choice; no SSH wrapper is in scope.
 
-bounds:
-  tabs: 8
-  visible_panes_per_tab: 16
-  live_terminal_panes: 64
-  labels_per_frame: 24
-  label_bytes: 96
-  surface_pixels:
-    width: 8192
-    height: 8192
-  gpu_bytes: 536870912
-  surface_slots_per_ring: 3
-  simultaneous_resize_rings: 2
-  rule: >-
-    Checkpoints may reduce a bound or assign an additional concrete owner bound.
-    They may not silently widen retained state, descriptors, allocations, queues,
-    generated declarations, or frame work.
+sprints:
+  - id: session_domain_boundary
+    status: next
+    acceptance: Existing tab, pane, focus, topology, and lifecycle behavior routes through a finite backend-independent command and transition owner.
+  - id: development_terminal_identity
+    status: pending
+    acceptance: New local children receive the exact development compatibility environment with deterministic child-boundary proof.
+  - id: physical_keyboard_state
+    status: pending
+    acceptance: Ordered press/release/modifier/focus facts and compositor-provided repeat policy are retained without stuck or cross-key state.
+  - id: keyboard_routing_and_encoding
+    status: pending
+    acceptance: Exact Host bindings consume first; all remaining events encode through negotiated legacy or extended terminal keyboard modes.
+  - id: pointer_and_mouse_protocols
+    status: pending
+    acceptance: Chrome hit testing and terminal mouse reporting share one explicit routing boundary with exact capture and release semantics.
+  - id: modern_tui_hostile_receipts
+    status: pending
+    acceptance: Repository fixtures exercise maintained TUIs under xterm-kitty and retain normalized queryable conclusions.
+  - id: input_hot_path_reassessment
+    status: pending
+    acceptance: Measured latency, work, allocation, queue, and wake behavior satisfy the accepted finite contract.
+  - id: version_freeze
+    status: pending
+    acceptance: Authorities, source map, protocol census, tests, receipts, and operator gates agree with the complete 0.1.4-dev boundary.
 
-scope:
-  whitelist:
-    - small reusable howl-vk package
-    - small reusable howl-wayland package
-    - typed bounded key, mouse, and window input facts
-    - mature reusable Render text module and independent consumer proof
-    - Zellij-familiar tiled and floating panes, tab bar, focus, labels, borders, and scrollbars
-    - caller-owned text selection projected by Render
-    - exact historical Howl tab, split, focus, resize, reorder, close, and quit mappings
-    - multiple backend-neutral pane contents composed into one Vulkan surface
-    - real howl-vt transcript fixtures proving the future terminal-facing seam
-    - one caller-driven terminal runtime polling all live howl-pty descriptors fairly
-    - matched EGL-history behavior and bounded Vulkan performance receipts
-  excluded:
-    - generic UI, widget, event-bus, backend, render-graph, or configuration framework
-    - compatibility aliases for deleted Host, Control, EGL, or GLES shapes
-    - fake permanent terminal, pane-content, RPC, command, or simulator interfaces
-    - VT protocol expansion
-    - PTY child integration before the terminal-facing proof gate
-    - one OS thread or Zig fiber per terminal
-    - remote control, sessions, plugins, and configuration reload
-    - Vulkan swapchains, EGL, GLES, and implicit synchronization
+excluded:
+  - detached or remote sessions
+  - tmux compatibility
+  - public Host compatibility guarantees
+  - configuration hot reload
+  - new experimental terminal protocols
+  - cursor animation polish or blink work
+  - unrelated rendering performance work
+  - generic event bus, UI framework, or callback abstraction
 
-transactions:
-  modules:
-    - A package extraction preserves the current live Host before changing behavior.
-    - Generated and maintained source are visibly separated and have exact provenance.
-    - Public roots expose only curated domain contracts; internal declarations do not leak for tests.
-  input:
-    - Ordered key, mouse button, axis, and device-specific enter/leave facts never coalesce.
-    - Latest configure, pointer position, modifier, and repeat facts may coalesce with cumulative revision.
-    - Compositor close is Window-owned process lifecycle, not an input occurrence.
-    - Capacity failure preserves prior queued facts and first runtime failure.
-  chrome:
-    - Topology mutations validate complete candidate state before publication.
-    - Stable identities are not reused and failed mutations consume no identity.
-    - Hidden tabs remain retained and current.
-    - Backend-neutral projection failure leaves caller output unchanged.
-  gpu:
-    - Every descriptor and Vulkan object has one exact owner.
-    - Slot ownership transfers only after complete offer validation.
-    - Window wrappers retire before Render destroys exported storage.
-    - Context and surface reconstruction preserve first failure and reverse cleanup.
-  future_terminal:
-    - One future pane owns one PTY, one VT, retained projection baseline, viewport, and image identities.
-    - Terminal runtime mutates PTY and VT state; Render alone mutates GPU state; Window borrows neither.
-    - VT dirtiness is consumed only after terminal-runtime admission into an immutable pane update.
-    - No borrowed VT or projection storage crosses from Terminal runtime to Renderer.
-    - Hidden terminals continue consuming bytes and expose newest state when shown.
+evidence:
+  query_authority: tracked sprint and ignored YAML under .zig/work/host-input-integration
+  runtime_capture: bounded typed JSONL through tools/json_logger.zig when executable behavior is under review
+  query_tool: Nushell
+  retention: normalized conclusions move into tracked authorities; raw captures remain temporary and ignored
 
-checkpoints:
-  - id: howl_vk
-    outcome: >-
-      Extract the current proven Vulkan ABI and dispatch facts into an independent
-      small package without changing Host ring mechanics or pixels.
-    commit_boundary: Extract reusable Vulkan module
-    proof:
-      - exact used-symbol closure and zero unused exported declarations
-      - pinned Vulkan 1.4.357 provenance and ABI size/alignment/constant checks
-      - instance/device dispatch failure and cleanup
-      - all optimize modes
-      - existing Debug and ReleaseSafe live ring byte-to-pixels receipt
-  - id: howl_wayland
-    outcome: >-
-      Extract reusable Wayland bindings and typed bounded key, mouse, and window
-      input facts while preserving Window-only protocol ownership.
-    commit_boundary: Extract reusable Wayland module
-    proof:
-      - reproducible protocol generation from exact XML
-      - object, listener, mapping, descriptor, and partial-construction cleanup
-      - ordered occurrence and coalesced-state saturation
-      - all optimize modes and unchanged live ring
-  - id: render_chrome_ownership
-    outcome: >-
-      Reconcile Host chrome state with howl-render so backend-neutral tab, tiled
-      and floating pane, selection, border, label, and scrollbar ownership is
-      reusable and not Vulkan-shaped.
-    commit_boundary: Harden backend-neutral chrome ownership
-    proof:
-      - no Vulkan, Wayland, thread, terminal-mutation, or generic-widget dependency
-      - tiled/floating geometry, hit testing, clipping, ordering, aliases, rollback, and bounds
-      - independent editor-like text/chrome consumer proof
-  - id: interactive_chrome
-    outcome: >-
-      Drive visible Vulkan chrome from typed keyboard and pointer facts using
-      Zellij-familiar behavior and exact accepted Howl mappings.
-    commit_boundary: Control Vulkan chrome from Wayland input
-    proof:
-      - modifier and release capture
-      - tab create/switch/reorder/close
-      - horizontal and vertical split
-      - directional and pointer focus
-      - divider resize, scroll, selection gesture, and quit
-      - unmatched input preserved for the future focused terminal
-  - id: pane_composition
-    outcome: >-
-      Compose multiple independent immutable pane updates, images, and chrome in
-      exact phase order on one Vulkan surface without borrowing their producer state.
-    commit_boundary: Compose bounded pane visuals
-    proof:
-      - tiled and floating clip/order
-      - text, decorations, cursor, selection, images, borders, labels, and scrollbars
-      - hidden-tab retention and newest-state reveal
-      - generation replacement, context reconstruction, and failure isolation
-      - newest-complete per-pane replacement and stale update rejection
-  - id: terminal_contract_receipt
-    status: accepted
-    commit: ba5f054308665fc93266f853e781c300136c976f
-    outcome: >-
-      Feed deterministic transcripts into multiple real howl-vt instances under one
-      terminal-runtime owner and render immutable updates in multiple panes without
-      introducing PTYs or a simulator API.
-    commit_boundary: Prove multi-terminal render contract
-    proof:
-      - two real terminals produce distinct text and image facts through existing Render owners
-      - borrowed consumptive updates cross release/acquire ownership as immutable fixed-capacity canonical Canvas copies
-      - slot admission precedes takeUpdate and shared Content limits make the consumed copy infallible
-      - one occupied pane slot does not prevent another pane from progressing
-      - hidden progress, newest-state reveal, occupied-slot retirement, and fresh identities
-      - qualification preserves colliding pane-local resource identities
-      - empty-residency full recovery and byte-exact saturation/rollback
-  - id: terminal_runtime
-    status: accepted
-    commit: ce7cfe296c0ff5b2bb76b9f701ac2f2876f0bf93
-    outcome: >-
-      Add one OS thread that owns all logical terminal panes, polls every borrowed
-      howl-pty descriptor, mutates each howl-vt instance, and publishes immutable
-      backend-neutral pane updates without changing Window, Render, or package ownership.
-    commit_boundary: Run bounded PTY and VT terminal owners
-    proof:
-      - create, resize, focused input, partial write, replies, child observation, close, and reverse cleanup
-      - one poll set with up to 64 live terminals and no per-terminal OS thread or fiber
-      - bounded stable round-robin service under noisy, quiet, hidden, blocked, and exited terminals
-      - stale or retired PaneId input and update rejection
-      - hidden progress and newest-state reveal
-      - Unicode shaping, DEC and OSC66 geometry, cursor, selection, scrollback, and resize
-      - atomic sparse terminal projection plus optional image transaction with byte-exact rollback
-      - every VT consequence family receives an explicit bounded disposition, exact-identity consumption or typed bounded query reply, and continued PTY progress
-      - dequeued close retries across writing/draining PendingSlot ownership and retires exactly once without terminating the runtime
-      - realistic single-pane admission is bounded coherently with PendingSlot and Composer candidate limits before PTY/VT construction
-      - prepared lifecycle candidates preserve terminal owners, Composer sources, topology, and queues until completion publication succeeds
-      - lifecycle and completion reservations make topology commit precede the final Window-visible completion wake
-      - shutdown remains an out-of-band monotonic wake fact independent of lifecycle-ring capacity
-      - admitted producer pressure is recoverable backpressure and cannot terminate PTY service
-      - pointer motion, button, and axis facts preserve callback-time semantic modifiers independently of later coalesced masks
-      - field-by-field terminal owner memory census and one-, sixteen-, and sixty-four-owner admission alternatives
-      - executable real-Content clean, one-row, recovery, image-only, extraction, and immutable-handoff copy receipts
-      - Content apply and recover retain their signatures; takeUpdate borrows one implemented terminal-thread-exclusive shaping/raster/draw/upload/output Work
-      - Content-retained projection, image, glyph, and mask candidates remain independently owned
-      - real PendingSlot publications and two-PTY scheduler backpressure receipts replace synthetic copy and opportunity loops
-      - no shared mutable PTY, VT, projection, or GPU state
-      - deterministic injected readiness, partial effects, interruption, exit, and allocation failure
-  - id: terminal_pool_storage
-    status: accepted
-    outcome: >-
-      Add the fixed sixteen-block shared immutable-update pool and its descriptor,
-      owner-token, reservation, cancellation, and cleanup mechanics without
-      changing the running dedicated-slot path.
-    commit_boundary: Add bounded terminal handoff pool storage
-    proof:
-      - one checked contiguous allocation with exact offsets and byte accounting
-      - independent descriptor and block state machines
-      - stale identity and revision rejection
-      - all-or-none reservation rollback and reverse cleanup
-      - no runtime, Composer, Render, Vulkan, or public-root integration
-  - id: terminal_pool_handoff
-    status: accepted
-    outcome: >-
-      Move terminal publication and Renderer drainage from dedicated per-pane
-      PendingSlot allocations onto the shared pool while preserving immutable
-      canonical Canvas updates and fair PTY progress.
-    commit_boundary: Share terminal update handoff blocks
-    proof:
-      - reservation precedes consumptive takeUpdate
-      - Renderer rejection republishes the exact immutable block
-      - close, cancellation, Work reuse, and drain races preserve ownership
-      - pool exhaustion does not stop PTY, VT, or another owner's progress
-    current_slice:
-      - production Boundary owns one shared Pool and no per-entry PendingSlot allocation
-      - ordinary terminal publication copies canonical Canvas facts into one reserved block
-      - Renderer alone applies ready blocks to Composer and releases accepted ownership
-      - dedicated PendingSlot remains private parity evidence until terminal_pool_freeze
-      - VisibleSetRequest and group reveal behavior remain excluded
-      - Boundary mutex validation makes entry readiness and pool reservation one transaction
-      - close/retirement stale publication after extraction is recoverable and schedules full producer recovery; malformed canonical output remains fatal after cleanup
-      - Composer rejection retains ready bytes and receives one bounded deferred Renderer retry wake
-      - scoped Renderer drain ownership restores ready on every noncompletion exit
-  - id: terminal_visible_set
-    status: review_ready
-    outcome: >-
-      Add the bounded latest VisibleSetRequest and all-or-none reservation needed
-      to reveal up to sixteen pane sources without partial topology mutation.
-    commit_boundary: Reserve visible terminal updates transactionally
-    proof:
-      - synchronized, current-ready, stale, dirty, and never-published classification
-      - exact candidate revision, PaneId, SourceId, and ProducerRevision checks
-      - cancellation, supersession, closure, and stale-token rollback
-      - final composition switch occurs only after every requested source is accepted
-    current_slice:
-      - Boundary owns one latest bounded request and exact accepted producer revisions
-      - terminal runtime reserves only fresh extraction members as one all-or-none group
-      - Renderer retains candidate placements and preserves prior composition until every source is accepted
-      - successful reveal commits visible membership; hidden ordinary updates remain dirty for later reveal
-      - operator baseline exposed fabricated Unicode modifier input and missing style ownership
-      - correction preserves named modifier identity and terminal-local optional glyph omission while retaining exact malformed-glyph failures
-    current_acceptance_target:
-      - one full-size active terminal tab with stable PTY/VT/Render/Vulkan progress
-      - preserved tab/pane topology, mappings, visible-set ownership, and Window/Renderer/terminal-thread boundaries
-      - u32 indices and 32768-command geometry are approved prerequisites for real TUI playback
-      - the 106042528-byte fixed pool is measured temporary debt, not final memory policy
-      - sixteen simultaneous maximum panes and performance parity remain deferred; font resizing is active in terminal_font_resize
-  - id: terminal_font_resize
-    status: design_reopened_research
-    outcome: >-
-      Replace provisional Host-wide font sizing with one terminal base plus
-      independent pane-local signed mutations, Kitty-derived active font-group
-      sharing, transactional PTY/VT resizing, and coherent source replacement
-      while Chrome retains independent font state.
-    commit_boundary: Review pane-local terminal font ownership
-    proof:
-      - new panes start at zero mutation and hidden panes retain their exact mutation
-      - changing one pane cannot mutate another pane using the same resolved font configuration
-      - changing the terminal base preserves every pane mutation and replaces all affected panes coherently
-      - active equal keys share immutable font and glyph working state; zero-user keys retire after copied-update and GPU-release safety
-      - failed construction or publication preserves each pane's last complete rendering and accepted PTY/VT grid
-    current_slice:
-      - evidence only under .zig/work/terminal-font-research
-      - map Kitty FontGroup, glyph/sprite, generated-glyph, ligature, fallback, DPI, and retirement behavior to exact pinned source
-      - map current Howl FontMap, terminal Content, Canvas source qualification, copied pool, Composer, and Vulkan residency ownership
-      - derive checked memory and lifetime equations for active, candidate, copied-update, and GPU-retiring font configurations
-      - record every UX or product choice as an operator decision; do not infer policy or change product source
-      - return one compact review summary that points to durable artifacts rather than copying the research into chat
-  - id: terminal_text_parity
-    status: research_pending
-    outcome: >-
-      Follow Kitty's proven terminal-font behavior for fallback, Nerd Font
-      symbols, ordinary and wide cells, combining and ligature clusters, DEC
-      and OSC 66 sizing, generated glyphs, decorations, clipping, cursor, and
-      selection while preserving Howl's bounded ownership.
-    commit_boundary: Harden terminal text behavior
-    proof:
-      - each behavior maps to pinned Kitty source and applicable Foot or native-library evidence
-      - deliberate divergences record one explicit architectural or product reason
-      - native, generated, fallback, multicell, cursor, selection, and resize paths have deterministic proofs
-      - operator text-correctness matrix passes through the real multiplexing path
-      - no benchmark-only API, alternate renderer, or single-terminal fast path
-  - id: terminal_pool_freeze
-    status: planned
-    outcome: >-
-      Delete dedicated PendingSlot allocation and compatibility residue after
-      every live terminal owner uses the accepted shared pool.
-    commit_boundary: Freeze shared terminal handoff ownership
-    proof:
-      - obsolete storage, methods, tests, and comments removed
-      - final Host memory census and public-disposition audit
-      - no package-root or allowlist widening
-  - id: surface_admission_design
-    status: planned
-    outcome: >-
-      Measure and later optimize the finite supported visible workload after the
-      multiplexing and terminal-text foundations are stable.
-    commit_boundary: Record bounded surface admission contract
-    proof:
-      - complete command, resource, pixel, and surface-image equations
-      - explicit aggregate CPU/GPU and atlas decision for any future multi-pane widening
-      - separate Alpha8 and RGBA8 extent and packability rules
-      - queried Vulkan requirements remain authoritative under the 512 MiB bound
-      - evidence and authority changes only
-  - id: surface_admission_cpu
-    status: planned
-    outcome: >-
-      Implement the accepted Composer, copied-frame, geometry, and transactional
-      topology admission limits without making Render Vulkan-shaped.
-    commit_boundary: Admit bounded multi-pane Canvas frames
-    proof:
-      - complete CPU candidate succeeds or rejects before topology mutation
-      - recovery, alias, arithmetic, capacity, and allocation rollback
-      - selected index or batch contract is exact and bounded
-  - id: surface_admission_vulkan
-    status: planned
-    outcome: >-
-      Implement queried Vulkan staging, residency, and separate Alpha8/RGBA8
-      atlas admission for the accepted visible workload.
-    commit_boundary: Admit bounded Vulkan terminal surfaces
-    proof:
-      - physical packing and queried allocation requirements
-      - replacement, eviction recovery, resize, and failure rollback
-      - total admitted ownership remains below 512 MiB
-  - id: sixteen_pane_integration
-    status: planned
-    outcome: >-
-      Connect visible-set reservation through Composer and Vulkan so an admitted
-      sixteen-pane tab commits atomically while hidden tabs retain newest state.
-    commit_boundary: Integrate admitted terminal pane sets
-    proof:
-      - transactional topology create, reveal, resize, close, and supersession
-      - hidden progress and newest-state reveal
-      - deterministic gates followed by operator-driven visual validation
-  - id: parity_and_freeze
-    status: planned
-    outcome: >-
-      Freeze the completed PTY, VT, immutable pane-update, Vulkan composition, and
-      interactive chrome path without widening package or thread ownership.
-    commit_boundary: Freeze interactive Vulkan host foundation
-    proof:
-      - exact historical mapping and visible-behavior matrix
-      - tab switching preserves newest terminal state and all terminal visual facts
-      - deterministic geometry receipts and operator-requested visual gates
-      - matched grid/frame CPU, GPU, RSS, draw, upload, and pacing receipts
-      - full root/package all-mode gates, source audit, protocol validation, and clean shutdown
-
-final_acceptance:
-  terminal_integration_shape:
-    - create one logical PTY, VT, and projection owner per terminal pane
-    - poll all borrowed PTY descriptors from one terminal runtime OS thread
-    - feed bytes and publish immutable backend-neutral pane updates
-    - route unmatched focused input to the terminal runtime by globally non-reused PaneId
-    - keep Window, Renderer, and terminal runtime mutation ownership disjoint
-    - resize from pane geometry
-    - drain replies and ordered consequences
-    - retire each pane in reverse ownership order
-  prohibited_redesign:
-    - Wayland package
-    - Vulkan package
-    - Window/Render thread boundary
-    - DMA-BUF ring
-    - Render text, terminal projection, image projection, or chrome contracts
-  completion: >-
-    The marathon closes only when real-terminal integration is mechanically narrow,
-    Vulkan chrome is competitive with the accepted EGL behavior, every package is
-    independently useful, and all tracked planning/scratch debt is retired.
+final_gate:
+  - Every sprint is accepted with exact commits and no unresolved authority question.
+  - Maintained package and workspace checks/tests pass in all required optimization modes.
+  - Source audit, protocol validation, YAML duplicate-key validation, formatting, and git diff checks pass.
+  - Operator keyboard, repeat, chord, mouse, and modern-TUI gates pass.
+  - The disposable ignored playground and tracked active sprint are retired.

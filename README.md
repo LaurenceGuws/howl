@@ -68,7 +68,7 @@ product module.
 
 ## Current state
 
-Howl is currently `0.1.3-dev`.
+Howl is currently `0.1.4-dev`.
 
 The terminal model, Linux PTY owner, native and generated text machinery,
 backend-neutral compositor, reusable Vulkan and Wayland foundations, and a
@@ -76,10 +76,12 @@ multi-pane graphical host are working. Kitty-compatible Unicode occupancy,
 grapheme storage, ligatures, symbols, generated terminal glyphs, factual DPI,
 fractional scaling, and pane-local font sizing have deterministic coverage.
 
-The active milestone is cursor presentation. Cursor mutation, publication,
-cursor-free terminal frames, synchronized-output deferral, and physical replay
-are now separate composable state machines. Trail animation, blink scheduling,
-and a replay benchmark reassessment come next.
+The `0.1.3-dev` milestone separated cursor mutation, publication,
+cursor-free terminal frames, synchronized-output deferral, physical replay,
+and Kitty-led trail presentation into composable state machines. The active
+`0.1.4-dev` milestone separates session-domain decisions from Host integration,
+then completes ordered keyboard, repeat, shortcut, pointer, and terminal mouse
+routing under the `xterm-kitty` development compatibility profile.
 
 Howl is not yet a complete daily terminal. Stable embedding APIs, persistent
 detached sessions, cooperative session control, complete interaction features,

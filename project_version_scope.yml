@@ -1,58 +1,61 @@
 version:
-  current: 0.1.3-dev
-  status: reusable Vulkan and Wayland foundations, multiplexed terminal runtime, and Kitty-compatible text correctness accepted; cursor redesign is active
+  current: 0.1.4-dev
+  prior:
+    version: 0.1.3-dev
+    status: frozen
+    capability: Kitty-led cursor mutation, publication, synchronized deferral, physical replay, trail geometry, and cross-pane/tab presentation
 
 objective: >-
-  Preserve independently useful PTY, VT, and Render packages while establishing
-  one direct first-party Wayland/Vulkan lifetime foundation.
+  Preserve independently useful PTY, VT, Render, Vulkan, and Wayland packages
+  while separating session-domain decisions from the first-party Host and
+  completing ordered keyboard and pointer integration under the xterm-kitty
+  development compatibility profile.
 
 settled_capabilities:
   - name: vt
-    acceptance: caller-neutral terminal emulation, replies, input encoding, and ordered semantic consequences
+    acceptance: caller-neutral terminal emulation, replies, input encoding, ordered semantic consequences, Unicode 17 occupancy, and bounded grapheme ownership
   - name: pty
     acceptance: caller-polled Linux PTY and child-process lifecycle
   - name: render
-    acceptance: reusable text plus backend-neutral terminal, image, and chrome projection
+    acceptance: reusable text plus backend-neutral terminal, generated-glyph, cursor-free, image, and Chrome composition
   - name: executable
-    acceptance: >-
-      compositor-configured generation-tagged three-slot DMA-BUF rings, per-slot
-      DRM release timelines, directional Window/Render eventfds, compositor-paced
-      commits, Renderer-owned tab/pane chrome facts, and reverse cleanup
+    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, multiplexed terminal runtime, and Kitty-led physical cursor presentation
 
 accepted_implementation:
   - The tracked Zig pin drives every workspace and child command.
   - Window alone dispatches Wayland and presents completed copied slot facts.
-  - Render alone mutates Vulkan and observes per-slot DRM release timelines.
-  - Main constructs shared roots, joins both owners, and retires shared lifetime last.
-  - Render progress is independent of Wayland frame callbacks.
-  - The host selects Vulkan by the compositor DMA-BUF device identity and queries the exact format/modifier tuple.
-  - The maintained Vulkan ABI derives from Vulkan-Headers v1.4.357.
-  - Generated Wayland ABIs derive from Wayland-protocols 1.49 using wayland-scanner 1.25.0.
-  - Wayland input preserves bounded ordered key, button, axis, and focus facts plus coalesced pointer, modifier, repeat, and configure state.
-  - Compositor close remains Window-owned lifecycle rather than an input occurrence.
-  - Every accepted family and Host manifest uses version 0.1.3-dev.
+  - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
+  - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
+  - Cursor presentation is independent of terminal text publication and accepted frame replacement.
+  - Every maintained package and Host manifest uses version 0.1.4-dev.
 
 invariants:
-  - bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary
-  - Render owns no runtime threads, Wayland objects, or presentation policy; Host Renderer owns its Vulkan objects
-  - Window never acknowledges Render completion or gates GPU mutation
-  - every exported descriptor has one owner and every ownership transfer is explicit
-  - source audit and protocol catalogue validation pass without diagnostics
+  - Bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary.
+  - Render owns no runtime threads, Wayland objects, PTYs, or presentation policy.
+  - Window never owns session, terminal, or Vulkan mutation.
+  - Session-domain transitions acquire no Wayland or Vulkan dependency.
+  - Every exported descriptor has one owner and every ownership transfer is explicit.
+  - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - retain the validated development configuration and distribute typed cursor policy only to its runtime owners
-  - implement the bounded cursor trail state machine atop accepted physical replay
-  - implement cursor blink scheduling after trail ownership is accepted
-  - benchmark and reassess physical replay before freezing the cursor milestone
+  - Index and separate tab, pane, focus, topology, and lifecycle decisions from Host integration.
+  - Advertise the xterm-kitty development compatibility profile to new local children.
+  - Complete physical key state, compositor-provided repeat, Host shortcut routing, and negotiated terminal encoding.
+  - Complete pointer, button, axis, capture, hit-testing, and terminal mouse protocol routing.
+  - Measure the allocation-free input hot path before freezing the version.
 
 deferred:
-  - asciinema/rain performance parity and CPU/RSS optimization
-  - final terminal parity/freeze receipt
-  - maximum sixteen-pane Composer/Vulkan/atlas admission
-  - floating interaction and scrollbar parity
+  - Cursor blink and animation micro-polish.
+  - Detached, remote, or cooperative multiplexer sessions.
+  - Public Host compatibility guarantees and packaging.
+  - Configuration hot reload and scripting.
+  - New experimental terminal protocols.
+  - General terminal rendering hot-path optimization.
+  - Maximum sixteen-pane Composer/Vulkan/atlas admission.
 
 gates:
-  - permanent authorities parse
-  - root and child all-mode checks and tests pass
-  - bounded Debug and ReleaseSafe live rings reach persistent generation-tagged commits; owner proofs cover retirement
-  - source audit, protocol validation, formatting, and diff checks pass
+  - Tracked marathon and active sprint authorities parse without duplicate keys.
+  - Root and affected child checks/tests pass in every required optimization mode.
+  - Runtime behavior has bounded typed evidence when deterministic source-local proof is insufficient.
+  - Source audit, protocol validation, formatting, and git diff checks pass.
+  - Operator keyboard, repeat, chord, mouse, and modern-TUI gates pass.

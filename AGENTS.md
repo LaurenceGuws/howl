@@ -44,6 +44,13 @@ Long interventions use four explicit lifetimes:
 - The active scratchpad owns current-slice commands, findings, compiler output,
   review corrections, and immediate progress.
 
+The current marathon and active sprint/scratch authorities are tracked so the
+intervention survives agent sessions and compaction. Disposable research,
+runtime captures, generated receipts, and exploratory indexes live under the
+marathon's ignored `.zig/work/` playground. Accepted conclusions move into the
+tracked authorities; raw playground artifacts never become hidden product
+authority.
+
 Only one sprint and one slice are active unless the marathon explicitly proves
 that independent work can proceed. Accepted slice facts and commits move from
 the scratchpad into the sprint; accepted sprint facts and commits move into the
