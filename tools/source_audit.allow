@@ -45,6 +45,8 @@ howl-host/src/window.zig|anyopaque|fn trancheFlags(data: ?*anyopaque, _: ?*c.zwp
 howl-host/src/window.zig|anyopaque|fn trancheFormats(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, indices: ?*c.wl_array) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn trancheTarget(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
 howl-render/src/terminal_text.zig|anytype|classifier: anytype,
+howl-vk/src/abi.zig|anyopaque|pub extern fn vkCmdPushConstants(commandBuffer: VkCommandBuffer, layout: VkPipelineLayout, stageFlags: VkShaderStageFlags, offset: u32, size: u32, pValues: ?*const anyopaque) void;
+howl-vk/src/proofs.zig|anyopaque|try std.testing.expect(info.param_types[5].? == ?*const anyopaque);
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {

@@ -8,9 +8,10 @@ const vk = @import("abi.zig");
 pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
 /// Selects one of the three generic surface pipelines.
 pub const Kind = enum { solid, alpha_mask, rgba };
-/// Selects one generic pipeline draw and preserves terminal component
-/// eligibility without widening the fixed backend command record.
-pub const CommandKind = enum { solid, alpha_mask, alpha_mask_cursor, rgba };
+const PipelineKind = enum { solid, trail, alpha_mask, rgba };
+/// Selects one generic pipeline draw, including the masked cursor-trail
+/// pipeline, while retaining terminal component eligibility.
+pub const CommandKind = enum { solid, trail, alpha_mask, alpha_mask_cursor, rgba };
 /// Caller-owned vertex in surface-pixel coordinates and normalized texture coordinates.
 pub const Vertex = extern struct { position: [2]f32, uv: [2]f32, color: [4]f32 };
 /// Ordered indexed draw with an exact clip rectangle.
@@ -27,6 +28,9 @@ pub const Plan = struct {
     commands: []const Command,
     atlas_changed: bool,
     image_atlas_changed: bool = false,
+    /// One bounded logical cursor mask shared by the single trail command.
+    /// It is absent for ordinary plans and never consumes command capacity.
+    trail_mask: ?Rect = null,
 };
 
 /// Records which atlas transitions were included in one submitted command
@@ -149,8 +153,9 @@ pub const atlas_bytes: usize = @as(usize, atlas_extent) * atlas_extent;
 pub const image_atlas_extent: u16 = 1024;
 /// Byte capacity of the RGBA atlas.
 pub const image_atlas_bytes: usize = @as(usize, image_atlas_extent) * image_atlas_extent * 4;
-/// Maximum quads accepted in one plan.
-pub const max_quads: usize = 65_537;
+/// Maximum quads accepted in one plan, including the one authorized trail
+/// quad beyond the cursor replay candidate bound.
+pub const max_quads: usize = 65_538;
 /// Maximum vertices accepted in one plan.
 pub const max_vertices: usize = max_quads * 4;
 /// Maximum indices accepted in one plan.
@@ -160,6 +165,19 @@ pub const max_commands: usize = max_quads;
 
 /// Selects the backend-neutral cursor overlay shape used by physical replay.
 pub const CursorOverlayShape = enum { block, underline, bar, none };
+
+/// Supplies one backend-neutral cursor-trail quad. Corners are surface-pixel
+/// coordinates in clockwise order; the caller supplies a validated clip and
+/// opacity-qualified color. No terminal policy is retained here.
+pub const CursorTrailOverlay = struct {
+    corner_x: [4]f32,
+    corner_y: [4]f32,
+    clip: Rect,
+    opacity: f32,
+    color: [4]f32,
+    /// Accepted cursor rectangle removed from the trail in the fragment stage.
+    cursor_rect: Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
+};
 
 /// Supplies one complete focused cursor overlay without terminal policy.
 pub const CursorOverlay = struct {
@@ -175,6 +193,8 @@ pub const CursorOverlay = struct {
     text_color: [4]f32,
     /// Whether this overlay contributes presentation.
     visible: bool,
+    /// Optional generic trail quad drawn before the focused cursor overlay.
+    trail: ?CursorTrailOverlay = null,
 };
 
 /// Supplies fixed candidate storage for one cursor replay.
@@ -189,6 +209,7 @@ pub const CursorReplayBuffers = struct {
 
 const vertex_shader align(4) = @embedFile("shaders/chrome.vert.spv").*;
 const solid_shader align(4) = @embedFile("shaders/solid.frag.spv").*;
+const trail_shader align(4) = @embedFile("shaders/trail.frag.spv").*;
 const text_shader align(4) = @embedFile("shaders/text.frag.spv").*;
 const image_shader align(4) = @embedFile("shaders/image.frag.spv").*;
 
@@ -238,6 +259,7 @@ pub const Context = struct {
     descriptor: vk.VkDescriptorSet = null,
     sampler: vk.VkSampler = null,
     solid_pipeline: vk.VkPipeline = null,
+    trail_pipeline: vk.VkPipeline = null,
     text_pipeline: vk.VkPipeline = null,
     image_pipeline: vk.VkPipeline = null,
     atlas_image: vk.VkImage = null,
@@ -276,6 +298,7 @@ pub const Context = struct {
         if (self.text_pipeline != null) vk.vkDestroyPipeline(device, self.text_pipeline, null);
         if (self.image_pipeline != null) vk.vkDestroyPipeline(device, self.image_pipeline, null);
         if (self.solid_pipeline != null) vk.vkDestroyPipeline(device, self.solid_pipeline, null);
+        if (self.trail_pipeline != null) vk.vkDestroyPipeline(device, self.trail_pipeline, null);
         if (self.layout != null) vk.vkDestroyPipelineLayout(device, self.layout, null);
         if (self.descriptor_pool != null) vk.vkDestroyDescriptorPool(device, self.descriptor_pool, null);
         if (self.sampler != null) vk.vkDestroySampler(device, self.sampler, null);
@@ -356,6 +379,16 @@ pub const Context = struct {
             attachment_width,
             attachment_height,
         );
+        // Project the one trail mask before any upload, render-pass, or draw
+        // command.  The loop below consumes only this validated physical
+        // sidecar and cannot fail its mask arithmetic after vkCmd* begins.
+        const trail_mask = try preflightTrailMask(
+            plan,
+            coordinate_width,
+            coordinate_height,
+            attachment_width,
+            attachment_height,
+        );
         if (recording.alpha_initialized) {
             const atlas_range = vk.VkImageSubresourceRange{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
             var atlas_barrier = vk.VkImageMemoryBarrier{
@@ -407,21 +440,33 @@ pub const Context = struct {
         var offsets = [_]vk.VkDeviceSize{0};
         vk.vkCmdBindVertexBuffers(command, 0, 1, &buffers, &offsets);
         vk.vkCmdBindIndexBuffer(command, self.staging_buffer, index_offset, vk.VK_INDEX_TYPE_UINT32);
-        var bound: ?Kind = null;
+        var bound: ?PipelineKind = null;
         for (plan.commands) |item| {
-            const pipeline_kind: Kind = switch (item.kind) {
+            const pipeline_kind: PipelineKind = switch (item.kind) {
                 .solid => .solid,
+                .trail => .trail,
                 .alpha_mask, .alpha_mask_cursor => .alpha_mask,
                 .rgba => .rgba,
             };
             if (bound == null or bound.? != pipeline_kind) {
                 vk.vkCmdBindPipeline(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, switch (pipeline_kind) {
                     .solid => self.solid_pipeline,
+                    .trail => self.trail_pipeline,
                     .alpha_mask => self.text_pipeline,
                     .rgba => self.image_pipeline,
                 });
-                if (pipeline_kind != .solid) vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
+                if (pipeline_kind == .alpha_mask or pipeline_kind == .rgba)
+                    vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
                 bound = pipeline_kind;
+            }
+            if (pipeline_kind == .trail) {
+                const scissor_mask = trail_mask orelse unreachable;
+                const left: f32 = @floatFromInt(scissor_mask.offset.x);
+                const top: f32 = @floatFromInt(scissor_mask.offset.y);
+                const right: f32 = left + @as(f32, @floatFromInt(scissor_mask.extent.width));
+                const bottom: f32 = top + @as(f32, @floatFromInt(scissor_mask.extent.height));
+                const push = [4]f32{ left, top, right, bottom };
+                vk.vkCmdPushConstants(command, self.layout, vk.VK_SHADER_STAGE_FRAGMENT_BIT, 0, @sizeOf(@TypeOf(push)), &push);
             }
             var scissor = physicalScissorValidated(
                 item.clip,
@@ -477,6 +522,23 @@ pub const Context = struct {
         return self.recordingFor(plan);
     }
 
+    fn preflightTrailMask(
+        plan: Plan,
+        coordinate_width: u32,
+        coordinate_height: u32,
+        attachment_width: u32,
+        attachment_height: u32,
+    ) Error!?vk.VkRect2D {
+        const mask = plan.trail_mask orelse return null;
+        return @as(?vk.VkRect2D, try physicalScissor(
+            mask,
+            coordinate_width,
+            coordinate_height,
+            attachment_width,
+            attachment_height,
+        ));
+    }
+
     /// Validates every plan relationship before mapped staging or command
     /// recording. No caller bytes or context facts are touched on failure.
     fn validatePlan(plan: Plan, width: u32, height: u32) Error!void {
@@ -490,6 +552,7 @@ pub const Context = struct {
         for (plan.indices) |index| {
             if (@as(usize, index) >= plan.vertices.len) return error.InvalidPlan;
         }
+        var trail_count: usize = 0;
         for (plan.commands) |item| {
             if (item.index_count == 0) return error.InvalidPlan;
             const end = std.math.add(u64, item.first_index, item.index_count) catch return error.InvalidPlan;
@@ -498,6 +561,17 @@ pub const Context = struct {
             const right = std.math.add(u64, @intCast(item.clip.x), item.clip.width) catch return error.InvalidPlan;
             const bottom = std.math.add(u64, @intCast(item.clip.y), item.clip.height) catch return error.InvalidPlan;
             if (right > width or bottom > height) return error.InvalidPlan;
+            if (item.kind == .trail) trail_count += 1;
+        }
+        if (trail_count > 1) return error.InvalidPlan;
+        if (trail_count == 0) {
+            if (plan.trail_mask != null) return error.InvalidPlan;
+        } else {
+            const mask = plan.trail_mask orelse return error.InvalidPlan;
+            if (mask.x < 0 or mask.y < 0 or mask.width == 0 or mask.height == 0) return error.InvalidPlan;
+            const mask_right = std.math.add(u64, @intCast(mask.x), mask.width) catch return error.InvalidPlan;
+            const mask_bottom = std.math.add(u64, @intCast(mask.y), mask.height) catch return error.InvalidPlan;
+            if (mask_right > width or mask_bottom > height) return error.InvalidPlan;
         }
     }
 
@@ -557,7 +631,16 @@ pub const Context = struct {
         };
         var layout_info = vk.VkDescriptorSetLayoutCreateInfo{ .bindingCount = bindings.len, .pBindings = &bindings };
         if (vk.vkCreateDescriptorSetLayout(device, &layout_info, null, &self.descriptor_layout) != vk.VK_SUCCESS) return error.Descriptor;
-        var pipeline_layout = vk.VkPipelineLayoutCreateInfo{ .setLayoutCount = 1, .pSetLayouts = &self.descriptor_layout };
+        const trail_push_constants = vk.VkPushConstantRange{
+            .stageFlags = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+            .size = 16,
+        };
+        var pipeline_layout = vk.VkPipelineLayoutCreateInfo{
+            .setLayoutCount = 1,
+            .pSetLayouts = &self.descriptor_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &trail_push_constants,
+        };
         if (vk.vkCreatePipelineLayout(device, &pipeline_layout, null, &self.layout) != vk.VK_SUCCESS) return error.Pipeline;
         const pool_size = vk.VkDescriptorPoolSize{ .type = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 2 };
         var pool_info = vk.VkDescriptorPoolCreateInfo{ .maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &pool_size };
@@ -651,11 +734,14 @@ pub const Context = struct {
         defer vk.vkDestroyShaderModule(device, vertex, null);
         const solid = try shader(device, &solid_shader);
         defer vk.vkDestroyShaderModule(device, solid, null);
+        const trail = try shader(device, &trail_shader);
+        defer vk.vkDestroyShaderModule(device, trail, null);
         const text = try shader(device, &text_shader);
         defer vk.vkDestroyShaderModule(device, text, null);
         const image = try shader(device, &image_shader);
         defer vk.vkDestroyShaderModule(device, image, null);
         self.solid_pipeline = try pipeline(device, self.render_pass, self.layout, vertex, solid, false);
+        self.trail_pipeline = try pipeline(device, self.render_pass, self.layout, vertex, trail, true);
         self.text_pipeline = try pipeline(device, self.render_pass, self.layout, vertex, text, true);
         self.image_pipeline = try pipeline(device, self.render_pass, self.layout, vertex, image, true);
     }
@@ -1042,7 +1128,8 @@ fn findPacked(values: []const FrameBuilder.Packed, resource: ResourceGeneration)
     return null;
 }
 
-/// Replays one accepted physical base and appends exactly one cursor overlay.
+/// Replays one accepted physical base and appends the optional trail command
+/// followed by exactly one focused cursor overlay.
 ///
 /// The accepted plan and its resource generations are borrowed read-only. All
 /// candidate arithmetic and component traversal completes before the first
@@ -1054,13 +1141,18 @@ pub fn replayCursor(
 ) Error!Plan {
     try validateReplayBase(base);
     const active = overlay.visible and overlay.shape != .none;
+    const trail_active = if (overlay.trail) |trail| blk: {
+        try validateTrailOverlay(trail);
+        break :blk trail.opacity > 0;
+    } else false;
     var cursor_clip: Rect = undefined;
     if (active)
         cursor_clip = intersectRect(overlay.clip, overlay.rect) orelse
             return error.InvalidPlan;
     var extra: usize = 0;
+    if (trail_active) extra = 1;
     if (active) {
-        extra = 1;
+        extra = std.math.add(usize, extra, 1) catch return error.InvalidPlan;
         if (overlay.shape == .block) {
             for (base.commands) |command| {
                 if (command.kind != .alpha_mask_cursor)
@@ -1097,6 +1189,21 @@ pub fn replayCursor(
     var indices_used = base.indices.len;
     var commands_used = base.commands.len;
     if (active) {
+        if (trail_active) {
+            const trail = overlay.trail.?;
+            var color = trail.color;
+            color[3] *= trail.opacity;
+            appendTrailQuad(
+                buffers.vertices,
+                buffers.indices,
+                buffers.commands,
+                &vertices_used,
+                &indices_used,
+                &commands_used,
+                trail,
+                color,
+            );
+        }
         appendQuad(
             buffers.vertices,
             buffers.indices,
@@ -1141,6 +1248,20 @@ pub fn replayCursor(
                 commands_used += 1;
             }
         }
+    } else if (trail_active) {
+        const trail = overlay.trail.?;
+        var color = trail.color;
+        color[3] *= trail.opacity;
+        appendTrailQuad(
+            buffers.vertices,
+            buffers.indices,
+            buffers.commands,
+            &vertices_used,
+            &indices_used,
+            &commands_used,
+            trail,
+            color,
+        );
     }
     return .{
         .vertices = buffers.vertices[0..vertices_used],
@@ -1151,7 +1272,131 @@ pub fn replayCursor(
         // are already accepted and therefore carry false here.
         .atlas_changed = base.atlas_changed,
         .image_atlas_changed = base.image_atlas_changed,
+        .trail_mask = if (trail_active) overlay.trail.?.cursor_rect else null,
     };
+}
+
+test "cursor replay emits one bounded trail command and rolls back pressure" {
+    const base = Plan{
+        .vertices = &[_]Vertex{},
+        .indices = &[_]u32{},
+        .commands = &[_]Command{},
+        .atlas_changed = false,
+        .image_atlas_changed = false,
+    };
+    const trail = CursorTrailOverlay{
+        .corner_x = .{ 20, 40, 40, 20 },
+        .corner_y = .{ 30, 30, 60, 60 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .opacity = 0.5,
+        .color = .{ 0.2, 0.3, 0.4, 1 },
+        .cursor_rect = .{ .x = 30, .y = 35, .width = 10, .height = 20 },
+    };
+    var vertices: [4]Vertex = undefined;
+    var indices: [6]u32 = undefined;
+    var commands: [1]Command = undefined;
+    const replayed = try replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .shape = .none,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = false,
+        .trail = trail,
+    }, .{ .vertices = &vertices, .indices = &indices, .commands = &commands });
+    try std.testing.expectEqual(@as(usize, 1), replayed.commands.len);
+    try std.testing.expectEqual(CommandKind.trail, replayed.commands[0].kind);
+    try std.testing.expectEqual(
+        Rect{ .x = 30, .y = 35, .width = 10, .height = 20 },
+        replayed.trail_mask.?,
+    );
+    try std.testing.expectEqual(@as(f32, 20), replayed.vertices[0].position[0]);
+    try std.testing.expectEqual(@as(f32, 30), replayed.vertices[0].position[1]);
+    try std.testing.expectEqual(@as(f32, 0.5), replayed.vertices[0].color[3]);
+
+    @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(&indices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(&commands)), 0xa5);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .shape = .none,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = false,
+        .trail = trail,
+    }, .{ .vertices = vertices[0..3], .indices = indices[0..5], .commands = commands[0..0] }));
+    for (std.mem.asBytes(&vertices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&indices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&commands)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+
+    var invalid_color = trail;
+    invalid_color.color[0] = std.math.nan(f32);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .shape = .none,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = false,
+        .trail = invalid_color,
+    }, .{ .vertices = vertices[0..4], .indices = indices[0..6], .commands = commands[0..1] }));
+    for (std.mem.asBytes(&vertices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&indices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&commands)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+
+    var invalid_mask = trail;
+    invalid_mask.cursor_rect.width = 0;
+    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
+        .shape = .none,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 1, 1, 1, 1 },
+        .visible = false,
+        .trail = invalid_mask,
+    }, .{ .vertices = vertices[0..4], .indices = indices[0..6], .commands = commands[0..1] }));
+    for (std.mem.asBytes(&vertices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&indices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&commands)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+
+    const replayed_base_vertices = [_]Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const replayed_base_indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
+    const replayed_trail_command = [_]Command{.{
+        .kind = .trail,
+        .first_index = 0,
+        .index_count = 6,
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+    }};
+    const replayed_candidate_base = Plan{
+        .vertices = &replayed_base_vertices,
+        .indices = &replayed_base_indices,
+        .commands = &replayed_trail_command,
+        .atlas_changed = false,
+        .trail_mask = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+    };
+    try std.testing.expectError(error.InvalidPlan, replayCursor(replayed_candidate_base, .{
+        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
+        .shape = .none,
+        .color = .{ 0, 0, 0, 1 },
+        .text_color = .{ 0, 1, 0, 1 },
+        .visible = false,
+    }, .{ .vertices = vertices[0..4], .indices = indices[0..6], .commands = commands[0..1] }));
+    for (std.mem.asBytes(&vertices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&indices)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+    for (std.mem.asBytes(&commands)) |byte| try std.testing.expectEqual(@as(u8, 0xa5), byte);
+}
+
+test "trail mask sidecar preserves generic command layout" {
+    // The operator-authorized trail quad is one extra command; the mask is a
+    // single Plan sidecar and must not widen every replay command entry.
+    try std.testing.expectEqual(@as(usize, 28), @sizeOf(Command));
 }
 
 test "cursor replay recolors marked components and rolls back undersized output" {
@@ -1297,7 +1542,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
     try poison.expect(&vertices, &indices, &commands);
 }
 
-test "cursor replay accepts the complete 32768 base and 65537 candidate" {
+test "cursor replay accepts the complete 32768 base and 65538 trail candidate" {
     const base_count = 32_768;
     const base_vertices = try std.testing.allocator.alloc(Vertex, base_count * 4);
     defer std.testing.allocator.free(base_vertices);
@@ -1322,23 +1567,50 @@ test "cursor replay accepts the complete 32768 base and 65537 candidate" {
     defer std.testing.allocator.free(indices);
     const commands = try std.testing.allocator.alloc(Command, max_commands);
     defer std.testing.allocator.free(commands);
-    const replayed = try replayCursor(.{ .vertices = base_vertices, .indices = base_indices, .commands = base_commands, .atlas_changed = false }, .{
+    const maximum_overlay = CursorOverlay{
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .shape = .block,
         .color = .{ 0, 0, 0, 1 },
         .text_color = .{ 1, 1, 1, 1 },
         .visible = true,
-    }, .{ .vertices = vertices, .indices = indices, .commands = commands });
+        .trail = .{
+            .corner_x = .{ 0, 1, 1, 0 },
+            .corner_y = .{ 0, 0, 1, 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+            .opacity = 0.5,
+            .color = .{ 0.2, 0.3, 0.4, 1 },
+        },
+    };
+    const replayed = try replayCursor(.{ .vertices = base_vertices, .indices = base_indices, .commands = base_commands, .atlas_changed = false }, maximum_overlay, .{ .vertices = vertices, .indices = indices, .commands = commands });
     try std.testing.expectEqual(max_commands, replayed.commands.len);
     try std.testing.expectEqual(max_vertices, replayed.vertices.len);
     try std.testing.expectEqual(max_indices, replayed.indices.len);
+
+    @memset(@as([]u8, @ptrCast(vertices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(indices)), 0xa5);
+    @memset(@as([]u8, @ptrCast(commands)), 0xa5);
+    try std.testing.expectError(error.InvalidPlan, replayCursor(
+        .{ .vertices = base_vertices, .indices = base_indices, .commands = base_commands, .atlas_changed = false },
+        maximum_overlay,
+        .{ .vertices = vertices, .indices = indices, .commands = commands[0 .. max_commands - 1] },
+    ));
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&vertices[0])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&vertices[max_vertices - 1])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&indices[0])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&indices[max_indices - 1])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&commands[0])).*);
+    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&commands[max_commands - 1])).*);
 }
 
 fn validateReplayBase(base: Plan) Error!void {
     if (base.vertices.len > max_vertices or base.indices.len > max_indices or
         base.commands.len > max_commands)
         return error.InvalidPlan;
+    // Replay always starts from the canonical cursor-free base. A physical
+    // candidate, including its trail sidecar, is never eligible as the next
+    // base or overlays would accumulate across cursor-only frames.
+    if (base.trail_mask != null) return error.InvalidPlan;
     for (base.vertices) |vertex| {
         if (!validCoordinate(vertex.position[0]) or
             !validCoordinate(vertex.position[1]))
@@ -1348,6 +1620,7 @@ fn validateReplayBase(base: Plan) Error!void {
         if (@as(usize, index) >= base.vertices.len) return error.InvalidPlan;
     }
     for (base.commands) |command| {
+        if (command.kind == .trail) return error.InvalidPlan;
         if (command.index_count != 6) return error.InvalidPlan;
         const end = std.math.add(usize, command.first_index, command.index_count) catch
             return error.InvalidPlan;
@@ -1437,6 +1710,36 @@ fn intersectRect(left: Rect, right: Rect) ?Rect {
     return .{ .x = x, .y = y, .width = @intCast(right_x - x), .height = @intCast(bottom_y - y) };
 }
 
+fn validateTrailOverlay(trail: CursorTrailOverlay) Error!void {
+    if (trail.clip.width == 0 or trail.clip.height == 0 or
+        trail.clip.x < 0 or trail.clip.y < 0 or
+        !std.math.isFinite(trail.opacity) or trail.opacity < 0 or trail.opacity > 1)
+        return error.InvalidPlan;
+    if (trail.cursor_rect.width == 0 or trail.cursor_rect.height == 0 or
+        trail.cursor_rect.x < 0 or trail.cursor_rect.y < 0)
+        return error.InvalidPlan;
+    for (trail.color) |component| {
+        if (!validCoordinate(component)) return error.InvalidPlan;
+    }
+    var min_x = trail.corner_x[0];
+    var max_x = min_x;
+    var min_y = trail.corner_y[0];
+    var max_y = min_y;
+    for (1..4) |index| {
+        const x = trail.corner_x[index];
+        const y = trail.corner_y[index];
+        if (!validCoordinate(x) or !validCoordinate(y)) return error.InvalidPlan;
+        min_x = @min(min_x, x);
+        max_x = @max(max_x, x);
+        min_y = @min(min_y, y);
+        max_y = @max(max_y, y);
+    }
+    if (!validCoordinate(min_x) or !validCoordinate(max_x) or
+        !validCoordinate(min_y) or !validCoordinate(max_y) or
+        max_x <= min_x or max_y <= min_y)
+        return error.InvalidPlan;
+}
+
 fn appendQuad(
     vertices: []Vertex,
     indices: []u32,
@@ -1464,6 +1767,39 @@ fn appendQuad(
         .rgba => .rgba,
     };
     commands[command_count.*] = .{ .kind = command_kind, .first_index = @intCast(index_count.*), .index_count = 6, .clip = clip };
+    vertex_count.* += 4;
+    index_count.* += 6;
+    command_count.* += 1;
+}
+
+fn appendTrailQuad(
+    vertices: []Vertex,
+    indices: []u32,
+    commands: []Command,
+    vertex_count: *usize,
+    index_count: *usize,
+    command_count: *usize,
+    trail: CursorTrailOverlay,
+    color: [4]f32,
+) void {
+    const vertex_base: u32 = @intCast(vertex_count.*);
+    for (0..4) |index| {
+        vertices[vertex_count.* + index] = .{
+            .position = .{ trail.corner_x[index], trail.corner_y[index] },
+            .uv = .{ 0, 0 },
+            .color = color,
+        };
+    }
+    @memcpy(
+        indices[index_count.* .. index_count.* + 6],
+        &[_]u32{ vertex_base, vertex_base + 1, vertex_base + 2, vertex_base, vertex_base + 2, vertex_base + 3 },
+    );
+    commands[command_count.*] = .{
+        .kind = .trail,
+        .first_index = @intCast(index_count.*),
+        .index_count = 6,
+        .clip = trail.clip,
+    };
     vertex_count.* += 4;
     index_count.* += 6;
     command_count.* += 1;
@@ -1620,6 +1956,26 @@ test "logical scissors cover exact integer and fractional physical edges" {
             .clip = .{ .x = 33, .y = 0, .width = 67, .height = 80 },
         }},
     }, 100, 80);
+}
+
+test "trail mask projection is complete before recording" {
+    const valid = Plan{
+        .vertices = &.{},
+        .indices = &.{},
+        .commands = &.{.{ .kind = .trail, .first_index = 0, .index_count = 6, .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 } }},
+        .atlas_changed = false,
+        .trail_mask = .{ .x = 30, .y = 35, .width = 10, .height = 20 },
+    };
+    try std.testing.expectEqual(
+        vk.VkRect2D{
+            .offset = .{ .x = 60, .y = 70 },
+            .extent = .{ .width = 20, .height = 40 },
+        },
+        try Context.preflightTrailMask(valid, 80, 80, 160, 160),
+    );
+    var invalid = valid;
+    invalid.trail_mask.?.x = 75;
+    try std.testing.expectError(error.InvalidPlan, Context.preflightTrailMask(invalid, 80, 80, 160, 160));
 }
 
 fn uvRect(value: FrameBuilder.Packed, source: ?Rect) [4]f32 {

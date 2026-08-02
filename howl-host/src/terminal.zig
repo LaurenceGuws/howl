@@ -124,7 +124,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     error{ StaleContainerRequest, ContainerReplyMismatch } ||
     terminal_render.Error || terminal_render.Content.RecoverError ||
     terminal_render.Content.ApplyError || terminal_images.Error ||
-    error{ArithmeticOverflow} ||
+    error{ ArithmeticOverflow, Clock } ||
     font_owner.ResourceError || font_owner.BatchError ||
     handoff.CursorPublishError ||
     handoff.PublishError || terminal_pool.ReserveError ||
@@ -607,7 +607,10 @@ const Logical = struct {
                 },
                 else => return failure,
             };
-            const summary = try self.machine.feed(buffer[0..count]);
+            const summary = try self.machine.feedAt(
+                buffer[0..count],
+                try monotonicNanoseconds(),
+            );
             self.routeMutation(summary) catch |failure| switch (failure) {
                 error.LifecycleStale,
                 error.CursorRevisionStale,
@@ -5412,6 +5415,7 @@ fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
         },
         .blink = view.cursor_blink,
         .blink_fast = false,
+        .movement_timestamp_ns = view.cursor_movement_timestamp_ns,
         .cursor_color = .{
             .r = cursor_color.r,
             .g = cursor_color.g,
@@ -5425,6 +5429,17 @@ fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
             .a = text_color.a,
         },
     };
+}
+
+test "cursor target carries VT absolute-position timestamp through Host projection" {
+    var machine = try vt.Terminal.init(std.testing.allocator, 4, 8);
+    defer machine.deinit();
+    const summary = try machine.feedAt("\x1b[1;1H", 40_000_000);
+    try std.testing.expect(summary.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 40_000_000),
+        cursorTarget(&machine).movement_timestamp_ns,
+    );
 }
 
 fn cursorRect(
@@ -6158,6 +6173,17 @@ fn selectionStyle() terminal_render.SelectionStyle {
         .foreground = .{ .r = 255, .g = 255, .b = 255 },
         .background = .{ .r = 0, .g = 0, .b = 0 },
     };
+}
+
+fn monotonicNanoseconds() error{ Clock, ArithmeticOverflow }!u64 {
+    var value: std.os.linux.timespec = undefined;
+    if (std.os.linux.clock_gettime(.MONOTONIC, &value) != 0) return error.Clock;
+    const seconds: u64 = @intCast(value.sec);
+    const nanoseconds: u64 = @intCast(value.nsec);
+    const whole = std.math.mul(u64, seconds, std.time.ns_per_s) catch
+        return error.ArithmeticOverflow;
+    return std.math.add(u64, whole, nanoseconds) catch
+        return error.ArithmeticOverflow;
 }
 
 fn testPty(command: []const u8) !pty.Owned {

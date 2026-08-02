@@ -2671,6 +2671,13 @@ const ScreenSet = struct {
         self.alternate.setCellPixelSize(width, height);
     }
 
+    /// Supplies the monotonic timestamp available to an absolute-position
+    /// command in the next parser turn on either screen bank.
+    fn setCursorMovementTimestamp(self: *ScreenSet, timestamp_ns: u64) void {
+        self.primary.setCursorMovementTimestamp(timestamp_ns);
+        self.alternate.setCursorMovementTimestamp(timestamp_ns);
+    }
+
     /// Releases both screens through their shared terminal allocator.
     fn deinit(self: *ScreenSet, allocator: std.mem.Allocator) void {
         self.primary.deinit(allocator);
@@ -2699,6 +2706,7 @@ fn visibleView(screen_state: *const ScreenSet, history_offset: u32) Terminal.Sem
         .cursor_visible = cursor_visible,
         .cursor_shape = active.cursor.effective_shape,
         .cursor_blink = active.cursor.blink_intent,
+        .cursor_movement_timestamp_ns = active.cursorMovementTimestamp(),
         .is_alternate_screen = screen_state.alt_active,
         .history_offset = offset,
         .history_count = history_count,
@@ -4467,6 +4475,9 @@ const MutationObservation = struct {
         cursor_color: Screen.Rgb,
         text_color: Screen.Rgb,
         wrap_pending: bool,
+        /// Kitty's client absolute-position timestamp; structural cursor
+        /// movement and printing do not update this owner.
+        position_changed_timestamp_ns: u64,
     };
 
     const ViewportObservation = struct {
@@ -4501,6 +4512,7 @@ const MutationObservation = struct {
                 .cursor_color = active.cursor.cursor_color orelse colors.cursor orelse colors.foreground,
                 .text_color = active.cursor.cursor_text_color orelse colors.cursor_text orelse colors.background,
                 .wrap_pending = active.wrap_pending,
+                .position_changed_timestamp_ns = active.cursor.position_changed_timestamp_ns,
             },
             .viewport = .{
                 .alternate = terminal.screen_state.alt_active,
@@ -6101,6 +6113,8 @@ pub const Terminal = struct {
         cursor_visible: bool,
         cursor_shape: Screen.CursorShape,
         cursor_blink: bool,
+        /// Monotonic timestamp captured when the latest absolute-position command parsed.
+        cursor_movement_timestamp_ns: u64,
         is_alternate_screen: bool,
         history_offset: u32,
         history_count: u32,
@@ -6671,7 +6685,16 @@ pub const Terminal = struct {
 
     /// Applies a borrowed byte slice and reports mutation; failures reset transient parser state.
     pub fn feed(self: *Terminal, bytes: []const u8) FeedError!FeedSummary {
+        return self.feedAt(bytes, 0);
+    }
+
+    /// Applies a borrowed byte slice with the caller's monotonic parse time.
+    /// The timestamp is copied into the semantic cursor only when an
+    /// absolute-position command is accepted; structural movement remains
+    /// untimestamped.
+    pub fn feedAt(self: *Terminal, bytes: []const u8, timestamp_ns: u64) FeedError!FeedSummary {
         self.requireNoPreparedResize();
+        self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
         var stream = TerminalStream.init(self);
         var summary = try stream.nextSliceSummary(bytes);
@@ -8190,6 +8213,89 @@ test "feed mutation facts keep cursor-only and mixed ownership distinct" {
     try std.testing.expect(mixed.mutations.cursor);
     try std.testing.expect(mixed.mutations.text);
     try std.testing.expect(!mixed.mutations.cursorOnly());
+}
+
+test "feedAt retains the monotonic timestamp of absolute cursor positioning" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const first = try terminal.feedAt("\x1b[1;1H", 40_000_000);
+    try std.testing.expect(first.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 40_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+    const second = try terminal.feedAt("\x1b[1;2H", 42_000_000);
+    try std.testing.expect(second.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 42_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+}
+
+test "cursor trail timestamp follows Kitty absolute-position boundaries" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const absolute = try terminal.feedAt("\x1b[1;1H", 10_000_000);
+    try std.testing.expect(absolute.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 10_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+
+    const same_absolute = try terminal.feedAt("\x1b[1;1H", 20_000_000);
+    try std.testing.expect(same_absolute.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 20_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+
+    const relative = try terminal.feedAt("\x1b[1C", 30_000_000);
+    try std.testing.expect(relative.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 20_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+
+    const horizontal_absolute = try terminal.feedAt("\x1b[1G", 35_000_000);
+    try std.testing.expect(horizontal_absolute.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 20_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+
+    const vertical_absolute = try terminal.feedAt("\x1b[3d", 36_000_000);
+    try std.testing.expect(vertical_absolute.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 36_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+
+    const printed = try terminal.feedAt("x", 40_000_000);
+    try std.testing.expect(printed.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 36_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+}
+
+test "fragmented absolute cursor control timestamps only on completion" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 8);
+    defer terminal.deinit();
+
+    const prefix = try terminal.feedAt("\x1b[1;", 50_000_000);
+    try std.testing.expect(!prefix.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 0),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+    const suffix = try terminal.feedAt("1H", 60_000_000);
+    try std.testing.expect(suffix.stateChanged());
+    try std.testing.expectEqual(
+        @as(u64, 60_000_000),
+        terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
 }
 
 test "feed mutation facts derive printing, tabs, regions, scrolling, images, and no-ops" {

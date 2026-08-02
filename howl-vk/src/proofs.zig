@@ -301,7 +301,7 @@ test "consumed ABI sizes, alignments, constants, and signatures" {
 
 test "ABI declaration analysis and layout drift receipt" {
     const declarations = @typeInfo(vk.abi).@"struct".decl_names;
-    try std.testing.expectEqual(@as(usize, 515), declarations.len);
+    try std.testing.expectEqual(@as(usize, 516), declarations.len);
     var layout_receipt: usize = 0;
     inline for (declarations) |name| {
         const value = @field(vk.abi, name);
@@ -314,4 +314,17 @@ test "ABI declaration analysis and layout drift receipt" {
         }
     }
     try std.testing.expectEqual(@as(usize, 12964), layout_receipt);
+}
+
+test "trail push-constant ABI signature receipt" {
+    const info = @typeInfo(@TypeOf(vk.abi.vkCmdPushConstants)).@"fn";
+    try std.testing.expectEqual(@as(usize, 6), info.param_types.len);
+    try std.testing.expectEqual(std.builtin.CallingConvention.c, info.attrs.@"callconv");
+    try std.testing.expect(info.return_type.? == void);
+    try std.testing.expect(info.param_types[0].? == vk.abi.VkCommandBuffer);
+    try std.testing.expect(info.param_types[1].? == vk.abi.VkPipelineLayout);
+    try std.testing.expect(info.param_types[2].? == vk.abi.VkShaderStageFlags);
+    try std.testing.expect(info.param_types[3].? == u32);
+    try std.testing.expect(info.param_types[4].? == u32);
+    try std.testing.expect(info.param_types[5].? == ?*const anyopaque);
 }

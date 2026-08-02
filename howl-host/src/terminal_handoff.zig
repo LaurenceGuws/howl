@@ -56,6 +56,9 @@ pub const CursorTarget = struct {
     shape: CursorShape,
     /// Copies VT blink intent.
     blink: bool,
+    /// Copies the monotonic VT parse timestamp of the latest absolute-position command.
+    /// Zero means the embedding caller did not provide a timestamp.
+    movement_timestamp_ns: u64 = 0,
     /// Retains the Kitty fast-blink distinction when one is available.
     blink_fast: bool,
     /// Copies the effective cursor color.

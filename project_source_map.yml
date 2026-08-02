@@ -67,8 +67,9 @@ accepted:
   howl-host/src/terminal_pool.zig: fixed contiguous immutable-update pool storage, ordinary canonical Canvas publication, terminal-owned descriptors and group admission, atomic Renderer drainage, stale-token rejection, and reverse cleanup
   howl-render/src/terminal_font_owner.zig: Render-defined bounded native font-group and shared font-resource producer behavior instantiated and exclusively owned by the Host terminal runtime
   howl-host/test/terminal_contract_test.zig: deterministic two-VT projection, synchronized copied handoff, producer rollback, occupied retirement, Composer qualification, visibility, and recovery proof
-  howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
+  howl-vk/src/surface.zig: reusable solid, masked trail, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
   howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner
+  howl-vk/tools/verify_shaders.sh: pinned trail source-to-SPIR-V command, hashes, and byte reproducibility gate
   howl-vk/build.zig: independent Vulkan ABI and dispatch package build and proofs
   howl-vk/build.zig.zon: Vulkan package identity and source boundary
   howl-vk/LICENSES: Vulkan-Headers provenance and license facts

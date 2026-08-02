@@ -1671,13 +1671,17 @@ pub const Screen = struct {
             .cursor_horizontal_absolute => |col| self.cursor.setColByClient(
                 @min(self.resolveAbsoluteCol(col), self.lineRightBoundary(self.cursor.row)),
             ),
-            .cursor_vertical_absolute => |row| self.setCursorRowClamped(self.resolveAbsoluteRow(row)),
+            .cursor_vertical_absolute => |row| {
+                self.setCursorRowClamped(self.resolveAbsoluteRow(row));
+                self.cursor.markAbsolutePositionTimestamp();
+            },
             .cursor_position => |pos| {
                 const row = @min(self.resolveAbsoluteRow(pos.row), self.rows -| 1);
                 self.cursor.setPositionByClient(
                     row,
                     @min(self.resolveAbsoluteCol(pos.col), self.lineRightBoundary(row)),
                 );
+                self.cursor.markAbsolutePositionTimestamp();
             },
             else => unreachable,
         }
@@ -1948,6 +1952,17 @@ pub const Screen = struct {
         self.cursor.resetForAltEntry();
         self.wrap_pending = false;
         self.current_attrs = initial_cell_attrs;
+    }
+
+    /// Supplies the monotonic timestamp available to an absolute-position
+    /// command parsed in the next terminal feed.
+    pub fn setCursorMovementTimestamp(self: *Screen, timestamp_ns: u64) void {
+        self.cursor.setMovementTimestamp(timestamp_ns);
+    }
+
+    /// Returns the monotonic timestamp of the latest absolute-position command.
+    pub fn cursorMovementTimestamp(self: *const Screen) u64 {
+        return self.cursor.position_changed_timestamp_ns;
     }
 
     /// Return the active horizontal editing boundary on the left.
@@ -5785,6 +5800,11 @@ const ScreenSemanticCursor = struct {
     cursor_color: ?ScreenRgb,
     cursor_text_color: ?ScreenRgb,
     position_changed_by_client_at: u64,
+    /// Monotonic timestamp captured when the latest absolute-position command parsed.
+    position_changed_timestamp_ns: u64,
+    /// Timestamp supplied for the current parser turn; consumed by an
+    /// absolute-position command and ignored by structural movement.
+    movement_timestamp_ns: u64,
 
     /// Initializes a cursor at the origin with the supplied default style.
     pub fn init(default_style: ScreenCursorStyle) ScreenSemanticCursor {
@@ -5799,13 +5819,17 @@ const ScreenSemanticCursor = struct {
             .cursor_color = null,
             .cursor_text_color = null,
             .position_changed_by_client_at = 0,
+            .position_changed_timestamp_ns = 0,
+            .movement_timestamp_ns = 0,
         };
     }
 
     /// Returns position and style to terminal-reset defaults and advances client identity.
     pub fn reset(self: *ScreenSemanticCursor) void {
         const default_style = self.default_style;
+        const movement_timestamp_ns = self.movement_timestamp_ns;
         self.* = init(default_style);
+        self.movement_timestamp_ns = movement_timestamp_ns;
     }
 
     /// Returns the cursor position and style to the alternate-screen origin;
@@ -5820,6 +5844,7 @@ const ScreenSemanticCursor = struct {
         self.blink_intent = self.default_style.blink;
         self.program_override_style = null;
         self.position_changed_by_client_at = 0;
+        self.position_changed_timestamp_ns = 0;
     }
 
     /// Returns the program override when present, otherwise the configured default.
@@ -5874,6 +5899,18 @@ const ScreenSemanticCursor = struct {
         if (self.row != row or self.col != col) self.position_changed_by_client_at +|= 1;
         self.row = row;
         self.col = col;
+    }
+
+    /// Supplies the monotonic VT parse timestamp available to the next
+    /// absolute-position command. Structural movement never consumes it.
+    pub fn setMovementTimestamp(self: *ScreenSemanticCursor, timestamp_ns: u64) void {
+        self.movement_timestamp_ns = timestamp_ns;
+    }
+
+    /// Records Kitty's absolute-position command timestamp even when the
+    /// resulting coordinates are unchanged.
+    pub fn markAbsolutePositionTimestamp(self: *ScreenSemanticCursor) void {
+        self.position_changed_timestamp_ns = self.movement_timestamp_ns;
     }
 
     /// Moves to exact bounded coordinates without changing client identity.
