@@ -2,11 +2,55 @@ schema: 1
 sprint:
   id: session_domain_boundary
   marathon: host_input_integration
-  status: evidence_only
-  active_slice: ownership_index
+  status: active
+  active_slice: first_transition_route
   objective: >-
-    Identify and separate current session-domain decisions before new input
-    behavior can deepen Host coupling.
+    Route the first maintained session command through the accepted finite
+    session boundary without widening Host input behavior.
+
+accepted_slices:
+  ownership_index:
+    status: accepted
+    evidence: .zig/work/host-input-integration/session-domain-boundary/ownership_index.yml
+    conclusion: 53 ownership records with complete owner, event, and disposition coverage
+  finite_session_contract:
+    status: accepted
+    evidence: .zig/work/host-input-integration/session-domain-boundary/finite_contract.yml
+    receipt: .zig/work/host-input-integration/session-domain-boundary/layout_receipt.txt
+    conclusion: 11-command/12-route finite contract with no unresolved authority decisions
+
+accepted_contract:
+  command_variants: 11
+  maintained_adaptation_routes: 12
+  route_note: switch_tab has one keyboard route and one pointer route
+  domain_owner:
+    accepted_state: SessionState
+    pending_candidate: SessionCandidate, nested once in PendingSessionTransition
+    revision: no separate domain topology revision until a causal consumer exists
+    imports: no Render, Wayland, Vulkan, PTY, or terminal-render packages
+  host_owner:
+    transition: PendingSessionTransition mirrors current PendingTopology
+    lifecycle: PreparedLifecycle and LifecycleRevision
+    source: optional new PaneId/SourceId registration
+    configure: optional SurfaceConfig from the Renderer configure path
+    input_capture: Host-owned and excluded from domain payload totals
+  memory:
+    accepted_domain_state_bytes: 20384
+    pending_domain_candidate_payload_bytes: 20384
+    maximum_domain_owned_payload_bytes: 40768
+    host_adapter_overhead_bytes: 168
+    host_input_capture_bytes: 68
+    maximum_steady_retained_bytes: 41004
+    pending_session_transition_bytes: 20552
+    migration_peak_modeled_bytes: 61388
+    migration_peak_status: modeled legacy chrome_state.Topology term, not a product-type measurement
+  acceptance_order:
+    - commitAdmitted is the last fallible lifecycle step and queues consequences
+    - assign accepted session topology infallibly
+    - commit bootstrap state
+    - commit prepared Window completion infallibly
+    - commit replay state
+    - Runtime consumes queued create/resize/close consequences later
 
 scope:
   include:
@@ -26,21 +70,21 @@ scope:
 
 questions:
   - id: mutation_index
-    status: open
-    question: Which exact symbols currently mutate tab, pane, focus, topology, and lifecycle state?
+    status: answered
+    answer: ownership_index.yml contains 53 ownership records with exact source citations
   - id: owner_classification
-    status: open
-    question: Which retained facts are session-domain, Chrome derivation, Host integration, terminal runtime, or physical presentation facts?
+    status: answered
+    answer: finite_contract.yml separates SessionState/SessionCandidate from PendingSessionTransition and existing physical owners
   - id: transaction_boundary
-    status: open
-    question: What is the smallest finite command and candidate-transition shape that preserves all current behavior and rollback?
+    status: answered
+    answer: 11-command contract; first implementation route is SessionCommand.focus_direction only
   - id: extraction_order
-    status: open
-    question: Which direct mutation can be routed first without creating a second state machine or widening the diff?
+    status: answered
+    answer: focus_direction through input_actions.candidate, Renderer orchestration, and prepareTerminalTopology
 
 required_contract:
   commands: exact closed set derived from current behavior; no speculative remote or agent commands
-  state: fixed bounds, stable identities, lifecycle, focus, and topology revisions
+  state: fixed bounds, stable identities, lifecycle, focus, and owner-specific revisions; no separate domain topology revision
   errors: exact rejection at the owner that can still preserve prior accepted state
   rollback: candidate validation precedes every accepted mutation and consumes no identity on failure
   dependencies: no Wayland, Vulkan, PTY, or terminal-render dependency in the domain transition owner
@@ -48,17 +92,23 @@ required_contract:
 
 slices:
   - id: ownership_index
-    status: active
+    status: accepted
     product_change: forbidden
     output: ignored queryable ownership map and finite source-shape recommendation
   - id: finite_session_contract
-    status: pending
+    status: accepted
     product_change: forbidden
     output: accepted command, state, bound, error, rollback, cleanup, and file-owner contract
   - id: first_transition_route
-    status: pending
-    product_change: blocked_on_contract
+    status: active
+    product_change: authorized_narrow_scope
+    command: SessionCommand.focus_direction
     output: one smallest behavior-preserving transition routed through the accepted boundary
+    scope: >-
+      Implement only focus_direction adaptation, pure candidate preparation,
+      existing lifecycle translation, and accepted transition wiring. Do not
+      add bindings, commands, package boundaries, or unrelated input behavior.
+    implementation: not_started
   - id: complete_transition_route
     status: pending
     product_change: blocked_on_prior_slice
