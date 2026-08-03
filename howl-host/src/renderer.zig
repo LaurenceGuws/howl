@@ -5334,6 +5334,100 @@ test "semantic split candidates retain pane labels through the production Chrome
     }
 }
 
+test "undersized pending topology rejection removes provisional source" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 128,
+            .upload_bytes = 64 * 1024,
+            .cells = 128,
+            .rows = 8,
+            .images = 1,
+            .placements = 8,
+            .image_bytes = 4096,
+            .glyphs = 32,
+            .masks = 8,
+            .resources_per_update = 32,
+            .raster_bytes = 64 * 1024,
+            .decoration_bytes = 4096,
+        },
+    );
+    defer terminals.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 16,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    var accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
+    for (0..6) |_| {
+        accepted = (try input_actions.candidate(
+            &accepted,
+            .split_vertical,
+        )).?.state;
+    }
+    for (0..accepted.paneCount(0)) |index| {
+        const pane = accepted.paneId(0, index).?;
+        const render_pane = try chrome_state.toRenderPaneId(pane);
+        const source = try composer.registerSource();
+        try terminals.register(
+            render_pane,
+            source,
+            try panePixelsLocal(accepted.paneRect(pane).?),
+        );
+        try std.testing.expect(terminals.takeLifecycle() != null);
+        try terminals.markLive(render_pane);
+    }
+    var candidate_state = (try input_actions.candidate(
+        &accepted,
+        .split_vertical,
+    )).?.state;
+    const accepted_bytes = accepted;
+    const new_pane = candidate_state.focusedPaneId();
+    try std.testing.expectEqual(@as(i32, 1), candidate_state.paneRect(new_pane).?.width);
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &terminals;
+    var pending: ?PendingTopology = null;
+    try replacePendingTopology(
+        &work,
+        &accepted,
+        candidate_state,
+        &pending,
+        null,
+    );
+    defer if (pending) |*value| value.deinit();
+    const provisional_source = pending.?.new_source.?;
+    const revision = pending.?.revision;
+    const request = pending.?.lifecycle.boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(revision, request.revision);
+    try terminals.completeLifecycleAdmission(
+        revision,
+        .{ .rejected = .invalid_extent },
+    );
+    try std.testing.expectEqual(
+        .invalid_extent,
+        pending.?.observeAdmission().?,
+    );
+    pending.?.deinit();
+    pending = null;
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+    try std.testing.expect(
+        terminals.sourceFor(try chrome_state.toRenderPaneId(new_pane)) == null,
+    );
+    try std.testing.expect(terminals.takeLifecycle() == null);
+    try std.testing.expectError(
+        error.RetiredSource,
+        composer.removeSource(provisional_source),
+    );
+}
+
 test "one complete terminal and Chrome resource set fits every runtime bank" {
     try std.testing.expect(
         terminal_retained_resource_limit <= 1024,

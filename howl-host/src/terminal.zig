@@ -2068,6 +2068,8 @@ const Runtime = struct {
                         .slot = 0,
                         .style = .normal,
                     }) orelse return .{ .rejected = .font_capacity };
+                    if (!panePixelsContainCell(value.pixels, metrics))
+                        return .{ .rejected = .invalid_extent };
                     const grid = gridForPixels(value.pixels, metrics) catch |failure|
                         return .{ .rejected = switch (failure) {
                             error.InvalidPane => .invalid_extent,
@@ -2089,6 +2091,8 @@ const Runtime = struct {
                         .slot = 0,
                         .style = .normal,
                     }) orelse return .{ .rejected = .font_capacity };
+                    if (!panePixelsContainCell(value.pixels, metrics))
+                        return .{ .rejected = .invalid_extent };
                     const grid = gridForPixels(value.pixels, metrics) catch |failure|
                         return .{ .rejected = switch (failure) {
                             error.InvalidPane => .invalid_extent,
@@ -5414,6 +5418,15 @@ fn contentLimits() render.terminal.Content.Limits {
 
 const Grid = struct { cols: u16, rows: u16 };
 
+/// A live terminal owner must retain at least one complete cell in each axis;
+/// smaller physical candidates cannot preserve a valid cursor/geometry frame.
+fn panePixelsContainCell(
+    pixels: render.canvas.Size,
+    metrics: render.terminal.CellMetrics,
+) bool {
+    return pixels.width >= metrics.width_px and pixels.height >= metrics.height_px;
+}
+
 fn gridForPixels(
     pixels: render.canvas.Size,
     metrics: render.terminal.CellMetrics,
@@ -6303,7 +6316,7 @@ test "tiny and independent pane pixels derive only through current font metrics"
     try std.testing.expectEqual(second_pixels, runtime.owners[runtime.find(second).?].?.pane_pixels);
 }
 
-test "runtime lifecycle admission derives exact grids without owner mutation" {
+test "runtime lifecycle admission rejects sub-cell extents without owner mutation" {
     var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
     defer runtime.deinit();
     runtime.accepted_scale = .{
@@ -6323,14 +6336,12 @@ test "runtime lifecycle admission derives exact grids without owner mutation" {
         .pane = pane,
         .pixels = .{ .width = 1, .height = 1 },
     } };
-    const admitted = runtime.validateLifecycleAdmission(request).admitted;
-    try std.testing.expectEqual(@as(u8, 1), admitted.count);
     try std.testing.expectEqual(
-        handoff.DerivedGrid{ .pane = pane, .rows = 1, .columns = 1 },
-        admitted.grids[0],
+        handoff.AdmissionRejection.invalid_extent,
+        runtime.validateLifecycleAdmission(request).rejected,
     );
     try std.testing.expectEqual(@as(u8, 0), runtime.count);
-    runtime.releaseLifecycleFont(request.revision);
+    try std.testing.expect(runtime.pending_lifecycle_font == null);
 
     request.operations[0].create.pixels = .{ .width = 0, .height = 1 };
     try std.testing.expectEqual(
@@ -6346,6 +6357,85 @@ test "runtime lifecycle admission derives exact grids without owner mutation" {
         runtime.validateLifecycleAdmission(request).rejected,
     );
     try std.testing.expectEqual(@as(u8, 0), runtime.count);
+}
+
+test "undersized lifecycle candidate rejects before terminal owner mutation" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    runtime.accepted_scale = .{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const pane: render.chrome.PaneId = @fromBackingInt(901);
+    const source: render.canvas.SourceId = @fromBackingInt(1901);
+    const operations = [_]handoff.Lifecycle{.{ .create = .{
+        .pane = pane,
+        .pixels = .{ .width = 1, .height = 1 },
+    } }};
+    var candidate = try boundary.prepareLifecycle(
+        &operations,
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
+    const revision = try candidate.publishAdmission();
+    const request = boundary.takeLifecycleAdmission().?;
+    const result = runtime.validateLifecycleAdmission(request);
+    try std.testing.expectEqual(
+        handoff.AdmissionRejection.invalid_extent,
+        result.rejected,
+    );
+    try boundary.completeLifecycleAdmission(revision, result);
+    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
+    candidate.deinit();
+    runtime.releaseCancelledLifecycleFont(&boundary);
+    try std.testing.expectEqual(@as(u8, 0), runtime.count);
+    try std.testing.expect(runtime.pending_lifecycle_font == null);
+    try std.testing.expect(boundary.sourceFor(pane) == null);
+}
+
+test "undersized lifecycle resize rejects without mutating the live owner" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(902);
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        pixels,
+        .{ .dedicated = &slot },
+    );
+    const owner_index = runtime.find(pane).?;
+    const before_pixels = runtime.owners[owner_index].?.pane_pixels;
+    const before_view = runtime.owners[owner_index].?.machine.semanticView(0);
+    var request = handoff.RuntimeAdmissionCopy{
+        .revision = @fromBackingInt(11),
+        .operation_count = 1,
+        .input_count = 0,
+        .registration = null,
+    };
+    request.operations[0] = .{ .resize = .{
+        .pane = pane,
+        .pixels = .{ .width = 1, .height = 1 },
+    } };
+    try std.testing.expectEqual(
+        handoff.AdmissionRejection.invalid_extent,
+        runtime.validateLifecycleAdmission(request).rejected,
+    );
+    try std.testing.expectEqual(@as(u8, 1), runtime.count);
+    try std.testing.expectEqual(before_pixels, runtime.owners[owner_index].?.pane_pixels);
+    const after_view = runtime.owners[owner_index].?.machine.semanticView(0);
+    try std.testing.expectEqual(before_view.rows, after_view.rows);
+    try std.testing.expectEqual(before_view.cols, after_view.cols);
+    try std.testing.expect(runtime.pending_lifecycle_font == null);
 }
 
 test "new-pane admission retains exact resolved metrics until commit or cancellation" {

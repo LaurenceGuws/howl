@@ -1,3 +1,6 @@
+howl-host/src/terminal.zig|discard|_ = owner.refreshCursorTarget();
+howl-host/src/terminal.zig|discard|_ = owner.refreshCursorTarget();
+howl-host/src/terminal.zig|discard|_ = self.refreshCursorTarget();
 howl-host/src/window.zig|anyopaque|fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn fractionalPreferredScale(data: ?*anyopaque, object: ?*c.wp_fractional_scale_v1, scale_120: u32) callconv(.c) void {
