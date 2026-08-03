@@ -524,6 +524,7 @@ const Logical = struct {
         defer prepared.deinit();
         try self.transport.resize(grid.cols, grid.rows);
         prepared.commit();
+        _ = self.refreshCursorTarget();
         self.visual.rows = grid.rows;
         self.visual.cols = grid.cols;
         self.visual.initialized = false;
@@ -1810,6 +1811,7 @@ const Runtime = struct {
             };
             kernel_committed = true;
             prepared[index].?.commit();
+            _ = owner.refreshCursorTarget();
             const metrics = geometries[index].metrics;
             owner.machine.setCellPixelSize(
                 metrics.width_px,
@@ -2406,6 +2408,7 @@ const Runtime = struct {
             };
             kernel_committed = true;
             prepared[index].?.commit();
+            _ = owner.refreshCursorTarget();
             const metrics = new_geometry[index].metrics;
             owner.machine.setCellPixelSize(metrics.width_px, metrics.height_px) catch
                 return error.PostKernelResizeFailure;
@@ -4007,6 +4010,65 @@ test "visible-set preparation publishes hidden newest state through real Content
     try std.testing.expect(
         @backingInt(owner.last_published_revision) > @backingInt(first_revision),
     );
+}
+
+test "hidden reveal refreshes a stale cursor after committed VT resize" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(94);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        try testPixels(runtime.fonts, 8, 2),
+        .{ .dedicated = &slot },
+    );
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    const scale = handoff.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    owner.font_state.scale = scale;
+    owner.font_state.request_revision = 1;
+    owner.font_released_hidden = true;
+    try std.testing.expect((try owner.machine.feed("\x1b[1;4H")).stateChanged());
+    try std.testing.expect(owner.refreshCursorTarget());
+    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
+    const stale_target = owner.cursor_target;
+    const stale_revision = owner.cursor_target_revision;
+    const stale_sequence = owner.cursor_target_terminal_sequence;
+    try std.testing.expect(!std.meta.eql(stale_target, cursorTarget(&owner.machine)));
+    var request = handoff.VisibleSetRequest{
+        .revision = 1,
+        .members = undefined,
+        .count = 1,
+    };
+    request.members[0] = .{
+        .pane = pane,
+        .source = @fromBackingInt(1),
+    };
+    const accepted_target = owner.accepted_cursor_target;
+    const accepted_revision = owner.accepted_cursor_target_revision;
+    const accepted_sequence = owner.accepted_cursor_target_terminal_sequence;
+    try std.testing.expect(try runtime.prepareRevealGroups(request));
+    try std.testing.expect(owner.font_group != null);
+    const committed_target = cursorTarget(&owner.machine);
+    try std.testing.expectEqual(committed_target, owner.cursor_target);
+    try std.testing.expectEqual(accepted_target, owner.accepted_cursor_target);
+    try std.testing.expectEqual(accepted_revision, owner.accepted_cursor_target_revision);
+    try std.testing.expectEqual(accepted_sequence, owner.accepted_cursor_target_terminal_sequence);
+    try std.testing.expectEqual(stale_revision + 1, owner.cursor_target_revision);
+    try std.testing.expectEqual(
+        owner.machine.semanticSequence(),
+        owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expect(owner.cursor_target_terminal_sequence > stale_sequence);
 }
 
 test "two pooled panes with one factual key share canonical glyph residency" {
@@ -5712,6 +5774,12 @@ test "pane point policy reaches each Logical atomically and new panes start at z
         pixels,
         .{ .dedicated = &second_slot },
     );
+    const second_owner = &runtime.owners[runtime.find(second).?].?;
+    try std.testing.expect((try second_owner.machine.feed("\x1b[1;8H")).stateChanged());
+    try std.testing.expect(second_owner.refreshCursorTarget());
+    const before_font_target = second_owner.cursor_target;
+    const before_font_revision = second_owner.cursor_target_revision;
+    const before_font_accepted = second_owner.accepted_cursor_target;
 
     var policy = try handoff.FontPolicy.init(16.0);
     policy.count = 2;
@@ -5729,6 +5797,14 @@ test "pane point policy reaches each Logical atomically and new panes start at z
     };
     try runtime.preflightFontRequest(accepted);
     try std.testing.expect(try runtime.resizePointFonts(&boundary, accepted));
+    try std.testing.expectEqual(cursorTarget(&second_owner.machine), second_owner.cursor_target);
+    try std.testing.expect(!std.meta.eql(before_font_target, second_owner.cursor_target));
+    try std.testing.expectEqual(before_font_revision + 1, second_owner.cursor_target_revision);
+    try std.testing.expectEqual(
+        second_owner.machine.semanticSequence(),
+        second_owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(before_font_accepted, second_owner.accepted_cursor_target);
     const first_state = runtime.owners[runtime.find(first).?].?.font_state;
     const second_state = runtime.owners[runtime.find(second).?].?.font_state;
     try std.testing.expectEqual(@as(f64, -2.0), first_state.offset_points);
@@ -5741,6 +5817,14 @@ test "pane point policy reaches each Logical atomically and new panes start at z
     const first_metrics = runtime.owners[runtime.find(first).?].?.geometry.metrics;
     const second_metrics = runtime.owners[runtime.find(second).?].?.geometry.metrics;
     try std.testing.expect(second_metrics.height_px > first_metrics.height_px);
+    try std.testing.expectEqual(
+        cursorTarget(&runtime.owners[runtime.find(first).?].?.machine),
+        runtime.owners[runtime.find(first).?].?.cursor_target,
+    );
+    try std.testing.expectEqual(
+        cursorTarget(&runtime.owners[runtime.find(second).?].?.machine),
+        runtime.owners[runtime.find(second).?].?.cursor_target,
+    );
 
     var invalid = accepted;
     invalid.revision = 2;
@@ -5765,6 +5849,14 @@ test "pane point policy reaches each Logical atomically and new panes start at z
     mutated.policy.offsets[0].offset_points = -1.0;
     try runtime.preflightFontRequest(mutated);
     try std.testing.expect(try runtime.resizePointFonts(&boundary, mutated));
+    try std.testing.expectEqual(
+        cursorTarget(&runtime.owners[runtime.find(first).?].?.machine),
+        runtime.owners[runtime.find(first).?].?.cursor_target,
+    );
+    try std.testing.expectEqual(
+        cursorTarget(&runtime.owners[runtime.find(second).?].?.machine),
+        runtime.owners[runtime.find(second).?].?.cursor_target,
+    );
     try std.testing.expectEqual(
         @as(f64, -1.0),
         runtime.owners[runtime.find(first).?].?.font_state.offset_points,
@@ -5812,15 +5904,61 @@ test "pane pixels remain authoritative across equal grids and rejected resize" {
         .width = initial.width + 1,
         .height = initial.height + 1,
     };
+    const same_grid_target = owner.cursor_target;
+    const same_grid_terminal_sequence = owner.cursor_target_terminal_sequence;
+    const same_grid_revision = owner.cursor_target_revision;
     try owner.resize(same_grid);
     try std.testing.expectEqual(sequence, owner.machine.semanticSequence());
+    try std.testing.expectEqual(same_grid_target, owner.cursor_target);
+    try std.testing.expectEqual(
+        same_grid_terminal_sequence,
+        owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(same_grid_revision, owner.cursor_target_revision);
     try std.testing.expectEqual(same_grid, owner.pane_pixels);
     try std.testing.expectEqual(same_grid.width, owner.geometry.clip.width);
     try std.testing.expectEqual(same_grid.height, owner.geometry.clip.height);
 
+    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
+    try std.testing.expect(owner.refreshCursorTarget());
+    const before_shrink_target = owner.cursor_target;
+    const before_shrink_revision = owner.cursor_target_revision;
+    const before_shrink_accepted = owner.accepted_cursor_target;
+    const before_shrink_accepted_revision = owner.accepted_cursor_target_revision;
+    const before_shrink_accepted_sequence =
+        owner.accepted_cursor_target_terminal_sequence;
+    const shrink_pixels = try testPixels(owner.fonts, 5, 2);
+    try owner.resize(shrink_pixels);
+    const expected_target = cursorTarget(&owner.machine);
+    try std.testing.expectEqual(expected_target, owner.cursor_target);
+    try std.testing.expectEqual(
+        before_shrink_revision + 1,
+        owner.cursor_target_revision,
+    );
+    try std.testing.expectEqual(
+        owner.machine.semanticSequence(),
+        owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(before_shrink_accepted, owner.accepted_cursor_target);
+    try std.testing.expectEqual(
+        before_shrink_accepted_revision,
+        owner.accepted_cursor_target_revision,
+    );
+    try std.testing.expectEqual(
+        before_shrink_accepted_sequence,
+        owner.accepted_cursor_target_terminal_sequence,
+    );
+    try std.testing.expect(before_shrink_target.col > owner.cursor_target.col);
+
     const retained_pixels = owner.pane_pixels;
     const retained_geometry = owner.geometry;
     const retained_view = owner.machine.semanticView(0);
+    const retained_target = owner.cursor_target;
+    const retained_target_sequence = owner.cursor_target_terminal_sequence;
+    const retained_target_revision = owner.cursor_target_revision;
+    const retained_accepted_target = owner.accepted_cursor_target;
+    const retained_accepted_sequence = owner.accepted_cursor_target_terminal_sequence;
+    const retained_accepted_revision = owner.accepted_cursor_target_revision;
     try std.testing.expectError(
         error.TerminalCapacity,
         owner.resize(.{
@@ -5832,11 +5970,102 @@ test "pane pixels remain authoritative across equal grids and rejected resize" {
     try std.testing.expectEqual(retained_geometry, owner.geometry);
     try std.testing.expectEqual(retained_view.rows, owner.machine.semanticView(0).rows);
     try std.testing.expectEqual(retained_view.cols, owner.machine.semanticView(0).cols);
+    try std.testing.expectEqual(retained_target, owner.cursor_target);
+    try std.testing.expectEqual(
+        retained_target_sequence,
+        owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(retained_target_revision, owner.cursor_target_revision);
+    try std.testing.expectEqual(retained_accepted_target, owner.accepted_cursor_target);
+    try std.testing.expectEqual(
+        retained_accepted_sequence,
+        owner.accepted_cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(
+        retained_accepted_revision,
+        owner.accepted_cursor_target_revision,
+    );
     try std.testing.expectError(
         error.InvalidPane,
         owner.resize(.{ .width = 0, .height = 1 }),
     );
     try std.testing.expectEqual(retained_pixels, owner.pane_pixels);
+}
+
+test "committed resize refreshes clamped cursor before Composer acceptance" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 128,
+        .retained_commands = 4096,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 1,
+        .candidate_resources = 128,
+        .candidate_commands = 4096,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(93);
+    const source = try composer.registerSource();
+    const initial = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(pane, source, initial);
+    try std.testing.expectEqual(
+        handoff.Lifecycle{ .create = .{ .pane = pane, .pixels = initial } },
+        boundary.takeLifecycle().?,
+    );
+    const member = try boundary.activateTransfer(pane);
+    try boundary.markLive(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        initial,
+        .{ .pooled = .{ .boundary = &boundary, .member = member } },
+    );
+    boundary.visible_revision = 1;
+    boundary.visible_initialized = true;
+    boundary.visible_member_count = 1;
+    boundary.visible_members[0] = .{ .pane = pane, .source = source };
+    const owner = &runtime.owners[runtime.find(pane).?].?;
+    owner.dirty = true;
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+
+    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
+    try std.testing.expect(owner.refreshCursorTarget());
+    const before_resize_revision = owner.cursor_target_revision;
+    const before_resize_accepted = owner.accepted_cursor_target;
+    try owner.resize(try testPixels(owner.fonts, 5, 2));
+    try std.testing.expectEqual(cursorTarget(&owner.machine), owner.cursor_target);
+    try std.testing.expectEqual(before_resize_revision + 1, owner.cursor_target_revision);
+    try std.testing.expectEqual(
+        owner.machine.semanticSequence(),
+        owner.cursor_target_terminal_sequence,
+    );
+    try std.testing.expectEqual(before_resize_accepted, owner.accepted_cursor_target);
+
+    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
+    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
+    const binding = boundary.acceptedCursorBinding(pane, source).?;
+    try std.testing.expectEqual(owner.cursor_target_revision, binding.cursor_revision);
+    try std.testing.expectEqual(
+        owner.cursor_target_terminal_sequence,
+        binding.terminal_sequence,
+    );
+    try std.testing.expect(binding.rect.x >= binding.clip.x);
+    try std.testing.expect(binding.rect.y >= binding.clip.y);
+    try std.testing.expect(
+        @as(u32, @intCast(binding.rect.x - binding.clip.x)) + binding.rect.width <=
+            binding.clip.width,
+    );
+    try std.testing.expect(
+        @as(u32, @intCast(binding.rect.y - binding.clip.y)) + binding.rect.height <=
+            binding.clip.height,
+    );
+    try std.testing.expectEqual(binding, composer.cursorBinding(source).?);
 }
 
 test "over-admission point request rolls back before PTY and later request succeeds" {
