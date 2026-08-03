@@ -2091,8 +2091,8 @@ pub const Boundary = struct {
         // until candidate composition proves the source is still present.
         if (candidate_visible_revision == null and self.visible_revision == 0) {
             if (self.visible_request) |state| {
-                if (state.phase == .requested and
-                    binding.visible_set_revision < state.request.revision and
+                if ((state.phase == .requested or state.phase == .prepared) and
+                    binding.visible_set_revision <= state.request.revision and
                     accepted_member)
                 {
                     var requested_member = false;
@@ -2104,8 +2104,10 @@ pub const Boundary = struct {
                             break;
                         }
                     }
-                    if (!requested_member) return error.Stale;
-                    if (!composition_known) return;
+                    if (!composition_known) {
+                        if (requested_member) return;
+                        return error.Stale;
+                    }
                     var candidate_member = false;
                     for (candidate_composition) |placement| {
                         if (placement.source == token.source_id) {
@@ -3968,7 +3970,7 @@ test "provisional bootstrap binding survives requested visible replacement" {
     try std.testing.expect(boundary.entries[0].?.ready == null);
 }
 
-test "provisional bootstrap binding rejects requested set without its member" {
+test "provisional bootstrap drains accepted composition before outgoing removal" {
     var boundary = try Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -4019,9 +4021,21 @@ test "provisional bootstrap binding rejects requested set without its member" {
         .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
-    const token = try boundary.pool.reserve(pool_member);
-    // Stage the old binding directly so the candidate path, rather than
-    // publication validation, proves request-membership rejection.
+    var token = try boundary.pool.reserve(pool_member);
+    // Publication without a candidate composition follows the requested set
+    // and rejects a source that request 26 removes.
+    try std.testing.expectError(error.Stale, boundary.publishUpdate(token, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+        .cursor_binding = binding,
+    }));
+    try boundary.pool.cancel(token);
+
+    // An already-ready update belongs to the still-accepted composition. It
+    // must drain once so its block can be reused to prepare request 26.
+    token = try boundary.pool.reserve(pool_member);
     boundary.entries[0].?.ready = try boundary.pool.publishUpdate(token, .{
         .revision = @fromBackingInt(1),
         .uploads = &.{},
@@ -4037,14 +4051,50 @@ test "provisional bootstrap binding rejects requested set without its member" {
             .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         }},
     };
-    try std.testing.expectError(
-        error.Stale,
-        boundary.applyCandidate(&composer, null, composition, null, .ordinary),
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            null,
+            .ordinary,
+        )).accepted,
     );
     try std.testing.expectEqual(@as(u64, 0), boundary.visible_revision);
     try std.testing.expectEqual(@as(u8, 1), boundary.visible_member_count);
     try std.testing.expectEqual(member, boundary.visible_members[0]);
-    try std.testing.expect(boundary.entries[0].?.ready != null);
+    try std.testing.expect(boundary.entries[0].?.ready == null);
+
+    // Runtime may complete the request while Renderer is still applying the
+    // accepted composition. Prepared is not yet a claim: the exact source in
+    // that composition may drain without advancing visible membership.
+    try boundary.completeVisibleSet(26, &.{}, false);
+    var prepared_binding = binding;
+    prepared_binding.visible_set_revision = 26;
+    prepared_binding.cursor_revision = 2;
+    prepared_binding.terminal_sequence = 2;
+    token = try boundary.pool.reserve(pool_member);
+    boundary.entries[0].?.ready = try boundary.pool.publishUpdate(token, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{command},
+        .cursor_binding = prepared_binding,
+    });
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.applyCandidate(
+            &composer,
+            null,
+            composition,
+            null,
+            .ordinary,
+        )).accepted,
+    );
+    try std.testing.expectEqual(@as(u64, 0), boundary.visible_revision);
+    try std.testing.expectEqual(@as(u8, 1), boundary.visible_member_count);
+    try std.testing.expect(boundary.entries[0].?.ready == null);
 }
 
 test "prepared lifecycle discard is byte-silent and commit publishes once" {
