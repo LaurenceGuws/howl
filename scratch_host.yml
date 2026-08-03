@@ -3,10 +3,10 @@ sprint:
   id: session_domain_boundary
   marathon: host_input_integration
   status: active
-  active_slice: semantic_owner_migration
+  active_slice: rapid_transition_diagnosis
   objective: >-
-    Extract the complete backend-independent semantic session owner without
-    retaining a parallel accepted topology or changing Host behavior.
+    Close the remaining rapid overlapping-topology lock with typed runtime
+    evidence before routing the first explicit session command.
 
 accepted_slices:
   ownership_index:
@@ -25,6 +25,18 @@ accepted_slices:
       SessionState ownership, content-local geometry, Chrome adaptation, and
       all Host signatures form one atomic single-owner migration before the
       first command can be routed.
+  semantic_owner_migration:
+    status: accepted
+    commits:
+      - 0c10521
+      - ce51bfd
+      - 4f16f24
+      - 52eae35
+      - 5797861
+    conclusion: >-
+      SessionState is the sole semantic owner; resize and provisional-visible
+      lifecycle defects found by hostile operation are closed with bounded
+      rollback and production-path proofs.
 
 accepted_contract:
   command_variants: 11
@@ -107,7 +119,7 @@ slices:
     product_change: forbidden
     output: accepted command, state, bound, error, rollback, cleanup, and file-owner contract
   - id: semantic_owner_migration
-    status: active
+    status: accepted
     product_change: authorized_atomic_scope
     output: >-
       One backend-independent SessionState owner with content-local geometry,
@@ -118,7 +130,18 @@ slices:
       retain only Chrome Appearance, projection, hit testing, and physical
       coordinate adaptation in chrome_state.zig; migrate every current Host
       consumer atomically; preserve all behavior and normalized outputs.
-    implementation: not_started
+    implementation: committed
+  - id: rapid_transition_diagnosis
+    status: active
+    product_change: temporary_instrumentation_only
+    output: >-
+      One bounded typed JSONL receipt identifying the first non-progressing
+      owner when overlapping close/split commands replace pending topology.
+    reproduction: rapid repeated session shortcut actions, especially w-backslash
+    exclusions:
+      - no inferred product correction before receipt review
+      - no GUI automation without operator authorization
+      - shutdown pool cleanup panic is downstream until causality proves otherwise
   - id: first_transition_route
     status: pending
     product_change: blocked_on_prior_slice
