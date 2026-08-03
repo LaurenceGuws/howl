@@ -2,6 +2,7 @@ const std = @import("std");
 const c = @import("host_c");
 const shared = @import("shared");
 const chrome_state = @import("chrome_state");
+const session = @import("session_domain");
 const render = @import("howl_render");
 const wayland = @import("howl_wayland");
 
@@ -361,13 +362,13 @@ test "1.6x Boundary offer transaction retains logical Canvas and physical ring f
     try std.testing.expectEqual(@as(u32, 1000), config.logical_width);
     try std.testing.expectEqual(@as(u32, 1600), config.physical_width);
 
-    var topology = try chrome_state.Topology.init(.{
+    var topology = try session.SessionState.init(.{
         .width = @intCast(config.logical_width),
-        .height = @intCast(config.logical_height),
-    }, 24);
+        .height = @intCast(config.logical_height - 24),
+    });
     var primitives: [128]render.chrome.Primitive = undefined;
     var text: [1024]u8 = undefined;
-    const projected = try topology.project(.{
+    const projected = try chrome_state.project(&topology, .{
         .style = .{
             .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
             .background = .{ .r = 20, .g = 24, .b = 32, .a = 255 },
@@ -375,7 +376,7 @@ test "1.6x Boundary offer transaction retains logical Canvas and physical ring f
         },
         .tab_active_background = .{ .r = 48, .g = 72, .b = 112, .a = 255 },
         .tab_inactive_background = .{ .r = 28, .g = 34, .b = 46, .a = 255 },
-    }, &.{}, &primitives, &text);
+    }, .{ .width = 1000, .height = 600 }, .{ .y = 24 }, &.{}, &primitives, &text);
     try std.testing.expectEqual(render.canvas.Size{ .width = 1000, .height = 600 }, projected.surface);
 
     var offers = try realOffers();
@@ -433,8 +434,8 @@ test "replacement readiness cancels queued stale completions" {
     try std.testing.expect(value.takeCompletion() == null);
 }
 
-test "renderer chrome state retains stable identities through pane and tab changes" {
-    var state = try chrome_state.Topology.init(.{ .width = 640, .height = 480 }, 24);
+test "session adapter retains stable identities through pane and tab changes" {
+    var state = try session.SessionState.init(.{ .width = 640, .height = 456 });
     const tab = state.tabId(0).?;
     const pane = state.paneId(0, 0).?;
     const split = try state.split(pane, .vertical);
@@ -443,7 +444,7 @@ test "renderer chrome state retains stable identities through pane and tab chang
     try std.testing.expectEqual(split, state.paneId(0, 1).?);
     var primitives: [128]render.chrome.Primitive = undefined;
     var text: [1024]u8 = undefined;
-    const output = try state.project(.{
+    const output = try chrome_state.project(&state, .{
         .style = .{
             .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
             .background = .{ .r = 20, .g = 24, .b = 32, .a = 255 },
@@ -451,7 +452,7 @@ test "renderer chrome state retains stable identities through pane and tab chang
         },
         .tab_active_background = .{ .r = 48, .g = 72, .b = 112, .a = 255 },
         .tab_inactive_background = .{ .r = 28, .g = 34, .b = 46, .a = 255 },
-    }, &.{}, &primitives, &text);
+    }, .{ .width = 640, .height = 480 }, .{ .y = 24 }, &.{}, &primitives, &text);
     try std.testing.expect(output.primitives.len > 0);
     try std.testing.expectEqualStrings("主", output.text[0.."主".len]);
     try state.closePane(split);

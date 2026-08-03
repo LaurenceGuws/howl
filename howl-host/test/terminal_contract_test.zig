@@ -5,6 +5,7 @@ const vt = @import("howl_vt");
 const render = @import("howl_render");
 const terminal_handoff = @import("terminal_handoff");
 const chrome_state = @import("chrome_state");
+const session = @import("session_domain");
 const facts = @import("terminal_test_facts");
 
 const terminal = render.terminal;
@@ -653,9 +654,8 @@ test "two real terminals cross copied slots into distinct Composer sources" {
         @backingInt(later_source) > @backingInt(second_source),
     );
 
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 128, .height = 64 },
-        chrome_state.default_tab_bar_height,
     );
     const root = topology.focusedPaneId();
     const retired_pane = try topology.split(root, .vertical);

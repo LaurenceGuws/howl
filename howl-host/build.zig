@@ -80,12 +80,19 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     chrome_state.addImport("howl_render", render.module("howl_render"));
+    const session_domain = b.createModule(.{
+        .root_source_file = b.path("src/session_domain.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    chrome_state.addImport("session_domain", session_domain);
     const input_actions = b.createModule(.{
         .root_source_file = b.path("src/input_actions.zig"),
         .target = target,
         .optimize = optimize,
     });
     input_actions.addImport("chrome_state", chrome_state);
+    input_actions.addImport("session_domain", session_domain);
     input_actions.addImport("howl_render", render.module("howl_render"));
     input_actions.addImport("howl_wayland", wayland.module("howl_wayland"));
     const terminal_handoff = b.createModule(.{
@@ -141,6 +148,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("chrome_state", chrome_state);
+    root.addImport("session_domain", session_domain);
     root.addImport("input_actions", input_actions);
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
@@ -203,6 +211,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("shared", test_shared);
     test_module.addImport("host_c", host_c);
     test_module.addImport("chrome_state", chrome_state);
+    test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
     test_module.addImport("terminal_pool", terminal_pool);
@@ -240,6 +249,7 @@ pub fn build(b: *std.Build) void {
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
     renderer_test_module.addImport("dev_config", dev_config);
     renderer_test_module.addImport("chrome_state", chrome_state);
+    renderer_test_module.addImport("session_domain", session_domain);
     renderer_test_module.addImport("input_actions", input_actions);
     renderer_test_module.addImport("howl_render", render.module("howl_render"));
     renderer_test_module.addImport("howl_vk", vk.module("howl_vk"));
@@ -258,6 +268,22 @@ pub fn build(b: *std.Build) void {
     const chrome_tests = b.addTest(.{ .root_module = chrome_state, .use_llvm = false, .use_lld = false });
     const run_chrome_tests = b.addRunArtifact(chrome_tests);
     test_step.dependOn(&run_chrome_tests.step);
+    const chrome_equivalence_module = b.createModule(.{
+        .root_source_file = b.path("test/chrome_state_equivalence_test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    chrome_equivalence_module.addImport("chrome_state", chrome_state);
+    chrome_equivalence_module.addImport("session_domain", session_domain);
+    chrome_equivalence_module.addImport("howl_render", render.module("howl_render"));
+    const chrome_equivalence_tests = b.addTest(.{
+        .root_module = chrome_equivalence_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(chrome_equivalence_tests).step);
+    const session_tests = b.addTest(.{ .root_module = session_domain, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(session_tests).step);
     const input_action_tests = b.addTest(.{ .root_module = input_actions, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(input_action_tests).step);
     const handoff_tests = b.addTest(.{
@@ -290,6 +316,7 @@ pub fn build(b: *std.Build) void {
     terminal_contract.addImport("howl_render", render.module("howl_render"));
     terminal_contract.addImport("howl_vt", vt.module("howl_vt"));
     terminal_contract.addImport("terminal_handoff", terminal_handoff);
+    terminal_contract.addImport("session_domain", session_domain);
     const terminal_test_facts = b.addOptions();
     terminal_test_facts.addOption(
         []const u8,

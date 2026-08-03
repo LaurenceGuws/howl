@@ -12,6 +12,7 @@ const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const render_api = @import("howl_render");
 const chrome_state = @import("chrome_state");
+const session = @import("session_domain");
 const vk_surface = howl_vk.surface;
 const replay_command_limit: usize = vk_surface.max_commands;
 const replay_pin_limit: usize = 2_048;
@@ -66,21 +67,21 @@ const CursorTrail = struct {
 };
 
 const TrailSlot = struct {
-    id: ?render_api.chrome.TabId = null,
+    id: ?session.TabId = null,
     trail: CursorTrail = .{},
     initialized: bool = false,
 };
 
 const TrailTransferCandidate = struct {
-    from: render_api.chrome.TabId,
-    to: render_api.chrome.TabId,
+    from: session.TabId,
+    to: session.TabId,
     trail: CursorTrail = .{},
     initialized: bool = false,
     deadline: ?u64 = null,
 };
 
 const AcceptedTrailSurface = struct {
-    owner: render_api.chrome.TabId,
+    owner: session.TabId,
     trail: CursorTrail,
     initialized: bool,
 };
@@ -660,7 +661,7 @@ test "trail endpoint clip union is checked and bounded" {
 test "cursor trail candidate rejection preserves accepted state" {
     var work: CanvasWork = undefined;
     work.trails = undefined;
-    const tab_id: render_api.chrome.TabId = @fromBackingInt(@intCast(7));
+    const tab_id: session.TabId = @fromBackingInt(@intCast(7));
     work.trails[0] = .{ .id = tab_id };
     work.trail_scratch_tab = tab_id;
     work.trail_deadline = 700;
@@ -692,7 +693,7 @@ test "cursor trail candidate rejection preserves accepted state" {
 test "trail clip lifetime spans accepted frames and settles exactly" {
     var work: CanvasWork = undefined;
     work.trails = undefined;
-    const tab_id: render_api.chrome.TabId = @fromBackingInt(@intCast(8));
+    const tab_id: session.TabId = @fromBackingInt(@intCast(8));
     const old_clip = vk_surface.Rect{ .x = 10, .y = 10, .width = 20, .height = 20 };
     const new_clip = vk_surface.Rect{ .x = 100, .y = 100, .width = 20, .height = 20 };
     const replacement_clip = vk_surface.Rect{ .x = 200, .y = 40, .width = 20, .height = 20 };
@@ -784,7 +785,7 @@ test "active retarget accumulates A B C coverage transactionally" {
 
 test "due trail transitions survive continuous ordinary redraw candidates" {
     const policy = dev_config.Config.defaults().presentationPolicy();
-    const tab_id: render_api.chrome.TabId = @fromBackingInt(31);
+    const tab_id: session.TabId = @fromBackingInt(@intCast(31));
     var work: CanvasWork = undefined;
     resetTrailRecords(&work);
     work.trails[0] = .{
@@ -819,7 +820,7 @@ test "due trail transitions survive continuous ordinary redraw candidates" {
         commitTrailAnimation(&work);
         work.trail_frame_pending = false;
         accepted_frames += 1;
-        try std.testing.expectEqual(@as(?render_api.chrome.TabId, null), work.trail_scratch_tab);
+        try std.testing.expectEqual(@as(?session.TabId, null), work.trail_scratch_tab);
         try std.testing.expect(work.trails[0].trail.corner_x[0] > 0);
     }
     try std.testing.expectEqual(@as(usize, 4), accepted_frames);
@@ -857,12 +858,15 @@ const CandidateOwnershipGuard = struct {
 
 fn focusedSourceForCandidate(
     work: *const CanvasWork,
-    candidate: *const chrome_state.Topology,
+    candidate: *const session.SessionState,
     pending: ?*const PendingTopology,
 ) ?render_api.canvas.SourceId {
-    if (work.terminals.sourceFor(candidate.focusedPaneId())) |source| return source;
+    const render_pane = chrome_state.toRenderPaneId(candidate.focusedPaneId()) catch return null;
+    if (work.terminals.sourceFor(render_pane)) |source| return source;
     if (pending) |value|
-        if (value.new_pane == candidate.focusedPaneId()) return value.new_source.?;
+        if (value.new_pane) |pane|
+            if (@backingInt(pane) == @backingInt(render_pane))
+                return value.new_source.?;
     return null;
 }
 
@@ -877,9 +881,8 @@ test "cursor candidate guard rolls back blocked pane and tab resolution" {
     var work: CanvasWork = undefined;
     work.residency = &residency;
     work.replay = &replay;
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const first_tab = topology.activeTabId();
     const first_pane = topology.focusedPaneId();
@@ -974,11 +977,10 @@ test "bootstrap cursor source resolves before lifecycle activation" {
     defer terminals.deinit();
     var work: CanvasWork = undefined;
     work.terminals = &terminals;
-    const topology = try chrome_state.Topology.init(
+    const topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
-    const pane = topology.focusedPaneId();
+    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
     var pending: PendingTopology = undefined;
     pending.new_pane = pane;
     pending.new_source = @fromBackingInt(7);
@@ -1430,6 +1432,8 @@ const CanvasWork = struct {
     composer: *render_api.canvas.Composer,
     content: *render_api.chrome.Content,
     source: render_api.canvas.SourceId,
+    surface: render_api.canvas.Size = .{ .width = 0, .height = 0 },
+    content_origin: chrome_state.ContentOrigin = .{ .y = 0 },
     producer_revision: u64 = 0,
     frame_uploads: []render_api.canvas.ResourceUploadFact,
     frame_removals: []render_api.canvas.FrameResourceRef,
@@ -1450,7 +1454,7 @@ const CanvasWork = struct {
     /// never the ownership key, so close/reorder/reuse cannot inherit a trail.
     trails: [chrome_state.max_tabs]TrailSlot = undefined,
     trail_scratch: CursorTrail = .{},
-    trail_scratch_tab: ?render_api.chrome.TabId = null,
+    trail_scratch_tab: ?session.TabId = null,
     trail_scratch_deadline: ?u64 = null,
     trail_previous_deadline: ?u64 = null,
     trail_scratch_transfer: bool = false,
@@ -1526,7 +1530,7 @@ fn transferTrailPresentation(
 
 fn prepareTrailTransferCandidate(
     work: *CanvasWork,
-    tab_id: render_api.chrome.TabId,
+    tab_id: session.TabId,
     now: u64,
 ) void {
     const accepted_owner = if (work.accepted_trail_surface) |surface| surface.owner else null;
@@ -1554,21 +1558,21 @@ fn prepareTrailTransferCandidate(
     work.trail_transfer = transfer;
 }
 
-fn findTrailSlot(work: *const CanvasWork, tab_id: render_api.chrome.TabId) ?usize {
+fn findTrailSlot(work: *const CanvasWork, tab_id: session.TabId) ?usize {
     for (work.trails, 0..) |slot, index| {
         if (slot.id) |id| if (id == tab_id) return index;
     }
     return null;
 }
 
-fn topologyHasTrailTab(topology: *const chrome_state.Topology, tab_id: render_api.chrome.TabId) bool {
+fn topologyHasTrailTab(topology: *const session.SessionState, tab_id: session.TabId) bool {
     for (0..topology.tabCount()) |index| {
         if (topology.tabId(index).? == tab_id) return true;
     }
     return false;
 }
 
-fn reconcileTrailTopology(work: *CanvasWork, topology: *const chrome_state.Topology) !void {
+fn reconcileTrailTopology(work: *CanvasWork, topology: *const session.SessionState) !void {
     var candidate = work.trails;
     for (&candidate) |*slot| {
         if (slot.id) |id| {
@@ -1603,7 +1607,7 @@ fn reconcileTrailTopology(work: *CanvasWork, topology: *const chrome_state.Topol
 
 fn syncAcceptedTrail(
     work: *CanvasWork,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     now: u64,
     reset: bool,
 ) !void {
@@ -1617,7 +1621,7 @@ fn syncAcceptedTrail(
         candidate_slot = .{ .id = tab_id };
     }
     const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(pane) orelse {
+    const source = work.terminals.sourceFor(chrome_state.toRenderPaneId(pane) catch return error.InvalidFrame) orelse {
         work.trail_deadline = null;
         work.trail_frame_pending = false;
         if (transfer) |candidate| {
@@ -1717,7 +1721,7 @@ fn syncAcceptedTrail(
 /// Advances the physically accepted trail snapshot after the frame carrying
 /// the corresponding trail/cursor presentation has been accepted. Semantic
 /// synchronization must not call this before replay/ring acceptance.
-fn acceptTrailSurfaceSnapshot(work: *CanvasWork, tab_id: render_api.chrome.TabId) !void {
+fn acceptTrailSurfaceSnapshot(work: *CanvasWork, tab_id: session.TabId) !void {
     const slot_index = findTrailSlot(work, tab_id) orelse return error.InvalidFrame;
     work.accepted_trail_surface = .{
         .owner = tab_id,
@@ -1728,7 +1732,7 @@ fn acceptTrailSurfaceSnapshot(work: *CanvasWork, tab_id: render_api.chrome.TabId
 
 fn prepareTrailAnimation(
     work: *CanvasWork,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     now: u64,
 ) !bool {
     const tab_id = topology.activeTabId();
@@ -1743,7 +1747,7 @@ fn prepareTrailAnimation(
         work.trails[slot_index].initialized;
     if (!initialized) return false;
     const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(pane) orelse return false;
+    const source = work.terminals.sourceFor(chrome_state.toRenderPaneId(pane) catch return false) orelse return false;
     if (work.composer.cursorBinding(source) == null) return false;
     const old_deadline = if (transfer) |value| value.deadline else work.trail_deadline;
     var candidate = if (transfer) |value| value.trail else work.trails[slot_index].trail;
@@ -1886,7 +1890,7 @@ fn runFallible(
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
     try checkGpuBudget(initial_surface.physical_width, initial_surface.physical_height);
-    var chrome = try chrome_state.Topology.init(renderExtent(initial_surface), chrome_state.default_tab_bar_height);
+    var chrome = try session.SessionState.init(contentExtent(renderExtent(initial_surface), try chrome_state.contentOrigin(renderExtent(initial_surface), chrome_state.default_tab_bar_height)));
     var composer = try render_api.canvas.Composer.init(allocator, .{
         .sources = chrome_state.max_live_panes + 1,
         .retained_resources = frame_resource_limit,
@@ -1950,6 +1954,8 @@ fn runFallible(
         .composer = &composer,
         .content = &chrome_content,
         .source = chrome_source,
+        .surface = renderExtent(initial_surface),
+        .content_origin = try chrome_state.contentOrigin(renderExtent(initial_surface), chrome_state.default_tab_bar_height),
         .frame_uploads = frame_uploads,
         .frame_removals = frame_removals,
         .frame_commands = frame_commands,
@@ -2171,7 +2177,9 @@ fn runFallible(
             );
             if (!terminal_topology_committed) {
                 var candidate_chrome = chrome;
-                candidate_chrome.resizeSurface(renderExtent(surface)) catch |failure| switch (failure) {
+                const surface_extent = renderExtent(surface);
+                const origin = chrome_state.contentOrigin(surface_extent, chrome_state.default_tab_bar_height) catch continue;
+                candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
                     error.InvalidGeometry => continue,
                     else => return failure,
                 };
@@ -2194,10 +2202,12 @@ fn runFallible(
                 active_generation;
             if (surface.generation <= pending_generation) continue;
             var candidate_chrome = if (pending_topology) |pending|
-                pending.candidate
+                pending.candidate.state
             else
                 chrome;
-            candidate_chrome.resizeSurface(renderExtent(surface)) catch |failure| switch (failure) {
+            const surface_extent = renderExtent(surface);
+            const origin = chrome_state.contentOrigin(surface_extent, chrome_state.default_tab_bar_height) catch continue;
+            candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
                 error.InvalidGeometry => continue,
                 else => return failure,
             };
@@ -2231,7 +2241,7 @@ fn runFallible(
                     terminal_redraw_pending;
                 reconcileFocusedCursor(
                     terminals,
-                    chrome.focusedPaneId(),
+                    try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
                     &cursor_replay_pending,
                 );
             }
@@ -2257,6 +2267,11 @@ fn runFallible(
             if (pending_topology) |*admitted| {
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
+                    const admitted_surface_extent = renderExtent(surface);
+                    const admitted_origin = try chrome_state.contentOrigin(
+                        admitted_surface_extent,
+                        chrome_state.default_tab_bar_height,
+                    );
                     try checkGpuBudget(surface.physical_width, surface.physical_height);
                     if (!try releaseReplayRetirementIfReady(
                         boundary,
@@ -2270,10 +2285,11 @@ fn runFallible(
                     }
                     var bootstrap_publication: ?PreparedBootstrapPublication =
                         if (admitted.new_source != null)
-                            try prepareBootstrapPublication(
+                            try prepareBootstrapPublicationAt(
                                 &canvas_work,
-                                &admitted.candidate,
+                                &admitted.candidate.state,
                                 admitted.bootstrap(),
+                                admitted_origin,
                             )
                         else
                             null;
@@ -2281,14 +2297,16 @@ fn runFallible(
                         publication.deinit();
                     var local_retry_used = false;
                     const admission_result = retry: while (true) {
-                        const result = try buildCanvasPlan(
+                        const result = try buildCanvasPlanAt(
                             &canvas_work,
-                            &admitted.candidate,
+                            &admitted.candidate.state,
                             admitted.revision,
                             admitted.bootstrap(),
                             chrome_appearance,
                             &chrome_primitives,
                             &chrome_text,
+                            admitted_surface_extent,
+                            admitted_origin,
                         );
                         switch (result) {
                             .retry => {
@@ -2367,14 +2385,14 @@ fn runFallible(
                     const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
                     errdefer surface_residency.discard();
                     errdefer replay.discard();
-                    const resized_cursor_color = if (canvas_work.terminals.sourceFor(admitted.candidate.focusedPaneId())) |source|
+                    const resized_cursor_color = if (canvas_work.terminals.sourceFor(try chrome_state.toRenderPaneId(admitted.candidate.state.focusedPaneId()))) |source|
                         if (try cursorOverlayForBinding(&canvas_work, source)) |overlay| overlay.color else null
                     else
                         null;
                     const physical_resized_plan = try physicalPlanForBase(
                         &canvas_work,
                         resized_plan,
-                        admitted.candidate.focusedPaneId(),
+                        try chrome_state.toRenderPaneId(admitted.candidate.state.focusedPaneId()),
                         null,
                     );
                     for (&rings[replacement], 0..) |*slot, index| {
@@ -2397,7 +2415,12 @@ fn runFallible(
                     var prepared_completions = try boundary.prepareCompletions(&completion_batch);
                     defer prepared_completions.deinit();
                     try admitted.commit();
-                    chrome = admitted.candidate;
+                    chrome = admitted.candidate.state;
+                    canvas_work.surface = renderExtent(surface);
+                    canvas_work.content_origin = try chrome_state.contentOrigin(
+                        canvas_work.surface,
+                        chrome_state.default_tab_bar_height,
+                    );
                     terminal_topology_committed = true;
                     if (bootstrap_publication) |*publication|
                         publication.commit(&canvas_work);
@@ -2417,7 +2440,7 @@ fn runFallible(
                         try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
                     reconcileFocusedCursor(
                         terminals,
-                        chrome.focusedPaneId(),
+                        try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
                         &cursor_replay_pending,
                     );
                     try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
@@ -2480,7 +2503,7 @@ fn runFallible(
                             dropPendingCursor(&cursor_replay_pending);
                             reconcileFocusedCursor(
                                 terminals,
-                                chrome.focusedPaneId(),
+                                try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
                                 &cursor_replay_pending,
                             );
                         },
@@ -2493,7 +2516,7 @@ fn runFallible(
             terminal_topology_committed)
         {
             const focused_pane = chrome.focusedPaneId();
-            const focused_source = canvas_work.terminals.sourceFor(focused_pane);
+            const focused_source = canvas_work.terminals.sourceFor(try chrome_state.toRenderPaneId(focused_pane));
             const trail_only = cursor_replay_pending == null;
             var trail_publication: ?terminal_handoff.CursorPublication =
                 if (trail_only) canvas_work.last_cursor_publication else null;
@@ -2616,6 +2639,12 @@ fn renderExtent(surface: shared.SurfaceConfig) render_api.canvas.Size {
     };
 }
 
+fn contentExtent(surface: render_api.canvas.Size, origin: chrome_state.ContentOrigin) session.Size {
+    std.debug.assert(surface.width != 0 and surface.height != 0);
+    std.debug.assert(origin.y < surface.height);
+    return .{ .width = surface.width, .height = surface.height - origin.y };
+}
+
 fn retainTerminalScale(
     terminals: *terminal_handoff.Boundary,
     policy: terminal_handoff.FontPolicy,
@@ -2712,12 +2741,12 @@ fn setPolicyOffset(
 
 fn pruneFontPolicy(
     policy: *terminal_handoff.FontPolicy,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
 ) void {
     var next = policy.*;
     var retained: u8 = 0;
     for (policy.offsets[0..policy.count]) |offset| {
-        if (!topologyContains(topology, offset.pane)) continue;
+        if (!topologyContainsRender(topology, offset.pane)) continue;
         next.offsets[retained] = offset;
         retained += 1;
     }
@@ -2793,12 +2822,12 @@ fn requestPaneFontAction(
     policy: *terminal_handoff.FontPolicy,
     scale: ?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     action: input_actions.Action,
 ) !void {
     var candidate = policy.*;
     pruneFontPolicy(&candidate, topology);
-    const pane = topology.focusedPaneId();
+    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
     switch (action) {
         .font_increase => try adjustPolicyOffset(
             &candidate,
@@ -2829,7 +2858,7 @@ fn requestBaseFontAction(
     policy: *terminal_handoff.FontPolicy,
     scale: ?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     action: input_actions.Action,
 ) !void {
     var candidate = policy.*;
@@ -3048,11 +3077,11 @@ test "focused pane actions coalesce retained point state through real Boundary" 
         },
     );
     defer terminals.deinit();
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 100, .height = 80 },
-        chrome_state.default_tab_bar_height,
     );
     const pane = topology.focusedPaneId();
+    const render_pane = try chrome_state.toRenderPaneId(pane);
     var policy = try terminal_handoff.FontPolicy.init(10.0);
     const scale = terminal_handoff.ScaleSnapshot{
         .revision = 1,
@@ -3078,7 +3107,7 @@ test "focused pane actions coalesce retained point state through real Boundary" 
     );
     const newest = terminals.takeFontRequest().?;
     try std.testing.expectEqual(@as(u64, 2), newest.revision);
-    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&newest.policy, pane));
+    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&newest.policy, render_pane));
     try requestPaneFontAction(
         &terminals,
         &policy,
@@ -3112,24 +3141,25 @@ test "policy pruning retains hidden panes and removes a full stale table" {
         },
     );
     defer terminals.deinit();
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 640, .height = 480 },
-        chrome_state.default_tab_bar_height,
     );
     const first_tab = topology.tabId(0).?;
     const first = topology.focusedPaneId();
     const closed = try topology.split(first, .horizontal);
+    const render_closed = try chrome_state.toRenderPaneId(closed);
     try topology.closePane(closed);
     const hidden_tab = try topology.createTab("hidden");
     try std.testing.expect(@backingInt(hidden_tab) != 0);
     const hidden = topology.focusedPaneId();
+    const render_hidden = try chrome_state.toRenderPaneId(hidden);
     try topology.switchTab(first_tab);
     try std.testing.expectEqual(first, topology.focusedPaneId());
 
     var policy = try terminal_handoff.FontPolicy.init(16.0);
     policy.count = 64;
-    policy.offsets[0] = .{ .pane = closed, .offset_points = 1.0 };
-    policy.offsets[1] = .{ .pane = hidden, .offset_points = 2.0 };
+    policy.offsets[0] = .{ .pane = render_closed, .offset_points = 1.0 };
+    policy.offsets[1] = .{ .pane = render_hidden, .offset_points = 2.0 };
     for (policy.offsets[2..], 0..) |*offset, index| {
         offset.* = .{
             .pane = @fromBackingInt(@intCast(100 + index)),
@@ -3153,9 +3183,9 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     const request = terminals.takeFontRequest().?;
     try std.testing.expectEqual(@as(u64, 1), request.revision);
     try std.testing.expectEqual(@as(u8, 2), request.policy.count);
-    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, first));
-    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&request.policy, hidden));
-    try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&request.policy, closed));
+    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, try chrome_state.toRenderPaneId(first)));
+    try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&request.policy, render_hidden));
+    try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&request.policy, render_closed));
     try std.testing.expectEqual(request.policy, policy);
 }
 
@@ -3179,17 +3209,18 @@ test "window base actions preserve every pane offset through real Boundary" {
         },
     );
     defer terminals.deinit();
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const first = topology.focusedPaneId();
     const second = try topology.split(first, .horizontal);
+    const render_first = try chrome_state.toRenderPaneId(first);
+    const render_second = try chrome_state.toRenderPaneId(second);
     var policy = try terminal_handoff.FontPolicy.init(
         configured_terminal_base_points,
     );
-    try setPolicyOffset(&policy, first, -2.0);
-    try setPolicyOffset(&policy, second, 3.0);
+    try setPolicyOffset(&policy, render_first, -2.0);
+    try setPolicyOffset(&policy, render_second, 3.0);
     const retained_offsets = policy.offsets;
     const scale = terminal_handoff.ScaleSnapshot{
         .revision = 1,
@@ -3249,12 +3280,36 @@ test "window base actions preserve every pane offset through real Boundary" {
 
 fn buildCanvasPlan(
     work: *CanvasWork,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     topology_revision: ?terminal_handoff.LifecycleRevision,
     bootstrap: ?BootstrapSource,
     appearance: chrome_state.Appearance,
     primitives: []render_api.chrome.Primitive,
     text: []u8,
+) !CanvasPlanResult {
+    return buildCanvasPlanAt(
+        work,
+        topology,
+        topology_revision,
+        bootstrap,
+        appearance,
+        primitives,
+        text,
+        work.surface,
+        work.content_origin,
+    );
+}
+
+fn buildCanvasPlanAt(
+    work: *CanvasWork,
+    topology: *const session.SessionState,
+    topology_revision: ?terminal_handoff.LifecycleRevision,
+    bootstrap: ?BootstrapSource,
+    appearance: chrome_state.Appearance,
+    primitives: []render_api.chrome.Primitive,
+    text: []u8,
+    surface_geometry: render_api.canvas.Size,
+    content_origin: chrome_state.ContentOrigin,
 ) !CanvasPlanResult {
     while (work.terminals.takeRetired()) |retired| {
         if (work.retired_source_count == work.retired_sources.len)
@@ -3289,7 +3344,15 @@ fn buildCanvasPlan(
             retry.terminal_placements[0..desired_count],
         );
     } else {
-        const output = try topology.project(appearance, &.{}, primitives, text);
+        const output = try chrome_state.project(
+            topology,
+            appearance,
+            surface_geometry,
+            content_origin,
+            &.{},
+            primitives,
+            text,
+        );
         try work.content.apply(output);
         const update = try work.content.takeUpdate();
         producer_revision = @backingInt(update.revision);
@@ -3304,9 +3367,10 @@ fn buildCanvasPlan(
         for (0..topology.paneCount(active_tab)) |pane_index| {
             const pane = topology.paneId(active_tab, pane_index) orelse
                 return error.InvalidTopology;
-            const source = work.terminals.sourceFor(pane) orelse
+            const render_pane = try chrome_state.toRenderPaneId(pane);
+            const source = work.terminals.sourceFor(render_pane) orelse
                 if (bootstrap) |value|
-                    if (value.pane == pane) value.source else {
+                    if (value.pane == render_pane) value.source else {
                         desired_complete = false;
                         continue;
                     }
@@ -3317,14 +3381,15 @@ fn buildCanvasPlan(
             if (desired_count == desired.len) return error.InvalidTopology;
             const rect = topology.paneRect(pane) orelse
                 return error.InvalidTopology;
+            const physical_rect = try chrome_state.toRenderRect(rect, content_origin);
             desired[desired_count] = .{
                 .source = source,
-                .origin = .{ .x = rect.x, .y = rect.y },
-                .clip = rect,
+                .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
+                .clip = physical_rect,
             };
             if (bootstrap == null or source != bootstrap.?.source) {
                 desired_members[desired_count] = .{
-                    .pane = pane,
+                    .pane = render_pane,
                     .source = source,
                 };
             }
@@ -3391,10 +3456,11 @@ fn buildCanvasPlan(
     placement_count += 1;
     const focused_source = blk: {
         const focused_pane = topology.focusedPaneId();
-        if (work.terminals.sourceFor(focused_pane)) |source|
+        const render_focused_pane = try chrome_state.toRenderPaneId(focused_pane);
+        if (work.terminals.sourceFor(render_focused_pane)) |source|
             if (placementContainsSource(terminal_placements, source)) break :blk source;
         if (bootstrap) |value| {
-            if (value.pane == focused_pane and
+            if (value.pane == render_focused_pane and
                 placementContainsSource(terminal_placements, value.source))
                 break :blk value.source;
         }
@@ -3545,7 +3611,7 @@ fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
 fn waitCanvasPlan(
     boundary: *shared.Boundary,
     work: *CanvasWork,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     topology_revision: ?terminal_handoff.LifecycleRevision,
     appearance: chrome_state.Appearance,
     primitives: []render_api.chrome.Primitive,
@@ -3614,8 +3680,22 @@ fn updateVisibleComposition(
 
 fn prepareBootstrapPublication(
     work: *CanvasWork,
-    topology: *const chrome_state.Topology,
+    topology: *const session.SessionState,
     bootstrap: ?BootstrapSource,
+) !PreparedBootstrapPublication {
+    return prepareBootstrapPublicationAt(
+        work,
+        topology,
+        bootstrap,
+        work.content_origin,
+    );
+}
+
+fn prepareBootstrapPublicationAt(
+    work: *CanvasWork,
+    topology: *const session.SessionState,
+    bootstrap: ?BootstrapSource,
+    content_origin: chrome_state.ContentOrigin,
 ) !PreparedBootstrapPublication {
     var members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember =
         undefined;
@@ -3626,19 +3706,21 @@ fn prepareBootstrapPublication(
     for (0..topology.paneCount(active_tab)) |pane_index| {
         const pane = topology.paneId(active_tab, pane_index) orelse
             return error.InvalidTopology;
-        const source = work.terminals.sourceFor(pane) orelse
+        const render_pane = try chrome_state.toRenderPaneId(pane);
+        const source = work.terminals.sourceFor(render_pane) orelse
             if (bootstrap) |value|
-                if (value.pane == pane) value.source else return error.InvalidTopology
+                if (value.pane == render_pane) value.source else return error.InvalidTopology
             else
                 return error.InvalidTopology;
         const rect = topology.paneRect(pane) orelse
             return error.InvalidTopology;
+        const physical_rect = try chrome_state.toRenderRect(rect, content_origin);
         if (count == members.len) return error.InvalidTopology;
-        members[count] = .{ .pane = pane, .source = source };
+        members[count] = .{ .pane = render_pane, .source = source };
         placements[count] = .{
             .source = source,
-            .origin = .{ .x = rect.x, .y = rect.y },
-            .clip = rect,
+            .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
+            .clip = physical_rect,
         };
         count += 1;
     }
@@ -4094,16 +4176,16 @@ fn drainInput(
     boundary: *shared.Boundary,
     actions: *input_actions.State,
     canvas_work: *CanvasWork,
-    topology: *chrome_state.Topology,
+    topology: *session.SessionState,
     appearance: chrome_state.Appearance,
     pending: *?PendingTopology,
 ) !void {
     while (boundary.takeInput()) |event| {
         const basis = if (pending.*) |*value|
-            &value.candidate
+            &value.candidate.state
         else
             topology;
-        const candidate: ?chrome_state.Topology = switch (event) {
+        const candidate: ?session.SessionCandidate = switch (event) {
             .key => |key| switch (actions.key(key) catch continue) {
                 .action => |action| switch (action) {
                     .font_increase,
@@ -4145,7 +4227,7 @@ fn drainInput(
                 .consumed => null,
                 .unmatched => unmatched: {
                     try canvas_work.terminals.publishKey(
-                        topology.focusedPaneId(),
+                        try chrome_state.toRenderPaneId(topology.focusedPaneId()),
                         key,
                     );
                     break :unmatched null;
@@ -4153,7 +4235,7 @@ fn drainInput(
             },
             .keyboard_leave => reset: {
                 try canvas_work.terminals.publishFocus(
-                    topology.focusedPaneId(),
+                    try chrome_state.toRenderPaneId(topology.focusedPaneId()),
                     .{ .focus = .out },
                 );
                 actions.clear();
@@ -4167,18 +4249,20 @@ fn drainInput(
                 const accepted = input_actions.pointerCandidate(
                     topology,
                     appearance,
+                    canvas_work.surface,
+                    canvas_work.content_origin,
                     button,
                 ) catch continue;
                 if (accepted == null or pending.* == null) break :blk accepted;
                 break :blk foldPointerCandidate(
-                    &pending.*.?.candidate,
+                    &pending.*.?.candidate.state,
                     topology,
-                    &accepted.?,
+                    &accepted.?.state,
                 ) catch continue;
             },
             .keyboard_enter => enter: {
                 try canvas_work.terminals.publishFocus(
-                    topology.focusedPaneId(),
+                    try chrome_state.toRenderPaneId(topology.focusedPaneId()),
                     .{ .focus = .in },
                 );
                 break :enter null;
@@ -4189,7 +4273,7 @@ fn drainInput(
             replacePendingTopology(
                 canvas_work,
                 topology,
-                next,
+                next.state,
                 pending,
                 null,
             ) catch continue;
@@ -4203,7 +4287,7 @@ const PendingTopologyPhase = enum {
 };
 
 const PendingTopology = struct {
-    candidate: chrome_state.Topology,
+    candidate: session.SessionCandidate,
     composer: *render_api.canvas.Composer,
     lifecycle: terminal_handoff.Boundary.PreparedLifecycle,
     revision: terminal_handoff.LifecycleRevision,
@@ -4245,8 +4329,8 @@ const PendingTopology = struct {
 
 fn prepareTerminalTopology(
     work: *CanvasWork,
-    current: *const chrome_state.Topology,
-    candidate: *const chrome_state.Topology,
+    current: *const session.SessionState,
+    candidate: *const session.SessionState,
     surface: ?shared.SurfaceConfig,
 ) !PendingTopology {
     var operations: [128]terminal_handoff.Lifecycle = undefined;
@@ -4259,24 +4343,25 @@ fn prepareTerminalTopology(
         for (0..candidate.paneCount(tab_index)) |pane_index| {
             const pane = candidate.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
+            const render_pane = try chrome_state.toRenderPaneId(pane);
             const rect = candidate.paneRect(pane) orelse
                 return error.InvalidTopology;
-            const pixels = try panePixels(rect);
-            if (!topologyContains(current, pane)) {
+            const pixels = try panePixelsLocal(rect);
+            if (!topologyContainsSemantic(current, pane)) {
                 operations[operation_count] = .{ .create = .{
-                    .pane = pane,
+                    .pane = render_pane,
                     .pixels = pixels,
                 } };
                 operation_count += 1;
                 new_panes += 1;
-                registration_pane = pane;
+                registration_pane = render_pane;
             } else {
                 const old_rect = current.paneRect(pane) orelse
                     return error.InvalidTopology;
-                const old_pixels = try panePixels(old_rect);
+                const old_pixels = try panePixelsLocal(old_rect);
                 if (!std.meta.eql(old_pixels, pixels)) {
                     operations[operation_count] = .{ .resize = .{
-                        .pane = pane,
+                        .pane = render_pane,
                         .pixels = pixels,
                     } };
                     operation_count += 1;
@@ -4290,13 +4375,13 @@ fn prepareTerminalTopology(
         // Surviving owners still receive the exact focus transition.
         if (shouldPublishFocusOut(current, candidate)) {
             inputs[input_count] = .{ .focus = .{
-                .pane = current.focusedPaneId(),
+                .pane = try chrome_state.toRenderPaneId(current.focusedPaneId()),
                 .event = .{ .focus = .out },
             } };
             input_count += 1;
         }
         inputs[input_count] = .{ .focus = .{
-            .pane = candidate.focusedPaneId(),
+            .pane = try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
             .event = .{ .focus = .in },
         } };
         input_count += 1;
@@ -4305,8 +4390,8 @@ fn prepareTerminalTopology(
         for (0..current.paneCount(tab_index)) |pane_index| {
             const pane = current.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
-            if (!topologyContains(candidate, pane)) {
-                operations[operation_count] = .{ .close = pane };
+            if (!topologyContainsSemantic(candidate, pane)) {
+                operations[operation_count] = .{ .close = try chrome_state.toRenderPaneId(pane) };
                 operation_count += 1;
             }
         }
@@ -4334,7 +4419,7 @@ fn prepareTerminalTopology(
     errdefer lifecycle.deinit();
     const revision = try lifecycle.publishAdmission();
     return .{
-        .candidate = candidate.*,
+        .candidate = .{ .state = candidate.* },
         .composer = work.composer,
         .lifecycle = lifecycle,
         .revision = revision,
@@ -4346,31 +4431,32 @@ fn prepareTerminalTopology(
 
 fn prepareInitialTerminalTopology(
     work: *CanvasWork,
-    candidate: *const chrome_state.Topology,
+    candidate: *const session.SessionState,
     surface: shared.SurfaceConfig,
 ) !PendingTopology {
     const pane = candidate.focusedPaneId();
+    const render_pane = try chrome_state.toRenderPaneId(pane);
     const rect = candidate.paneRect(pane) orelse return error.InvalidTopology;
     const source = try work.composer.registerSource();
     errdefer work.composer.removeSource(source) catch
         @panic("initial terminal source rollback failed");
     const operations = [_]terminal_handoff.Lifecycle{.{ .create = .{
-        .pane = pane,
-        .pixels = try panePixels(rect),
+        .pane = render_pane,
+        .pixels = try panePixelsLocal(rect),
     } }};
     var lifecycle = try work.terminals.prepareLifecycle(
         &operations,
         &.{},
-        .{ .pane = pane, .source = source },
+        .{ .pane = render_pane, .source = source },
     );
     errdefer lifecycle.deinit();
     const revision = try lifecycle.publishAdmission();
     return .{
-        .candidate = candidate.*,
+        .candidate = .{ .state = candidate.* },
         .composer = work.composer,
         .lifecycle = lifecycle,
         .revision = revision,
-        .new_pane = pane,
+        .new_pane = render_pane,
         .new_source = source,
         .surface = surface,
     };
@@ -4383,8 +4469,8 @@ const TerminalTopologyRequirements = struct {
 };
 
 fn preflightTerminalTopology(
-    current: *const chrome_state.Topology,
-    candidate: *const chrome_state.Topology,
+    current: *const session.SessionState,
+    candidate: *const session.SessionState,
 ) !TerminalTopologyRequirements {
     try validateTerminalTopology(candidate);
     var operations: usize = 0;
@@ -4393,13 +4479,13 @@ fn preflightTerminalTopology(
         for (0..candidate.paneCount(tab_index)) |pane_index| {
             const pane = candidate.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
-            if (!topologyContains(current, pane)) new_panes += 1;
+            if (!topologyContainsSemantic(current, pane)) new_panes += 1;
             const rect = candidate.paneRect(pane) orelse
                 return error.InvalidTopology;
-            if (!topologyContains(current, pane) or
+            if (!topologyContainsSemantic(current, pane) or
                 !std.meta.eql(
-                    try panePixels(rect),
-                    try panePixels(current.paneRect(pane) orelse rect),
+                    try panePixelsLocal(rect),
+                    try panePixelsLocal(current.paneRect(pane) orelse rect),
                 ))
                 operations += 1;
         }
@@ -4408,7 +4494,7 @@ fn preflightTerminalTopology(
         for (0..current.paneCount(tab_index)) |pane_index| {
             const pane = current.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
-            if (!topologyContains(candidate, pane)) operations += 1;
+            if (!topologyContainsSemantic(candidate, pane)) operations += 1;
         }
     }
     if (new_panes > 1 or operations > 128) return error.TerminalCapacity;
@@ -4428,8 +4514,8 @@ fn preflightTerminalTopology(
 
 fn replacePendingTopology(
     work: *CanvasWork,
-    accepted: *const chrome_state.Topology,
-    prospective: chrome_state.Topology,
+    accepted: *const session.SessionState,
+    prospective: session.SessionState,
     pending: *?PendingTopology,
     surface: ?shared.SurfaceConfig,
 ) !void {
@@ -4454,10 +4540,10 @@ fn replacePendingTopology(
 }
 
 fn foldPointerCandidate(
-    pending: *const chrome_state.Topology,
-    accepted: *const chrome_state.Topology,
-    pointer: *const chrome_state.Topology,
-) !?chrome_state.Topology {
+    pending: *const session.SessionState,
+    accepted: *const session.SessionState,
+    pointer: *const session.SessionState,
+) !?session.SessionCandidate {
     var result = pending.*;
     var changed = false;
     if (pointer.activeTabId() != accepted.activeTabId()) {
@@ -4472,28 +4558,35 @@ fn foldPointerCandidate(
             try result.focusPane(pane);
         changed = true;
     }
-    return if (changed) result else null;
+    return if (changed) .{ .state = result } else null;
 }
 
-fn topologyContains(
-    topology: *const chrome_state.Topology,
+fn topologyContainsRender(
+    topology: *const session.SessionState,
     pane: render_api.chrome.PaneId,
+) bool {
+    const semantic_pane = chrome_state.fromRenderPaneId(pane) catch return false;
+    return topology.paneRect(semantic_pane) != null;
+}
+
+fn topologyContainsSemantic(
+    topology: *const session.SessionState,
+    pane: session.PaneId,
 ) bool {
     return topology.paneRect(pane) != null;
 }
 
 fn shouldPublishFocusOut(
-    current: *const chrome_state.Topology,
-    candidate: *const chrome_state.Topology,
+    current: *const session.SessionState,
+    candidate: *const session.SessionState,
 ) bool {
     return current.focusedPaneId() != candidate.focusedPaneId() and
-        topologyContains(candidate, current.focusedPaneId());
+        topologyContainsSemantic(candidate, current.focusedPaneId());
 }
 
 test "focused close omits stale focus-out while surviving focus change retains it" {
-    var current = try chrome_state.Topology.init(
+    var current = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const first = current.focusedPaneId();
     const second = try current.split(first, .horizontal);
@@ -4537,6 +4630,204 @@ fn admitPendingForTest(pending: *PendingTopology) !void {
     try std.testing.expectEqual(PendingTopologyPhase.admitted, pending.phase);
 }
 
+const LifecycleShape = struct {
+    operations: [128]terminal_handoff.Lifecycle = undefined,
+    operation_count: u8,
+    inputs: [2]terminal_handoff.TerminalInput = undefined,
+    input_count: u8,
+    registration_pane: ?render_api.chrome.PaneId,
+    registration_source: ?render_api.canvas.SourceId,
+};
+
+fn lifecycleShapeForTest(
+    current: *const session.SessionState,
+    candidate: *const session.SessionState,
+) !LifecycleShape {
+    var boundary = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32_768,
+            .upload_bytes = 4 * 1024 * 1024,
+            .cells = 32_768,
+            .rows = 128,
+            .images = 8,
+            .placements = 8,
+            .image_bytes = 256 * 1024,
+            .glyphs = 512,
+            .masks = 128,
+            .resources_per_update = terminal_retained_resource_limit,
+            .raster_bytes = 4 * 1024 * 1024,
+            .decoration_bytes = 256 * 1024,
+        },
+    );
+    defer boundary.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 4,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    for (0..current.tabCount()) |tab_index| {
+        for (0..current.paneCount(tab_index)) |pane_index| {
+            const current_pane = current.paneId(tab_index, pane_index).?;
+            const render_current_pane = try chrome_state.toRenderPaneId(current_pane);
+            const source = try composer.registerSource();
+            try boundary.register(render_current_pane, source, try panePixelsLocal(current.paneRect(current_pane).?));
+            try std.testing.expect(boundary.takeLifecycle().? == .create);
+            try boundary.markLive(render_current_pane);
+        }
+    }
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &boundary;
+    var prepared = try prepareTerminalTopology(&work, current, candidate, null);
+    defer prepared.deinit();
+    const request = boundary.takeLifecycleAdmission().?;
+    var result = LifecycleShape{
+        .operation_count = request.operation_count,
+        .input_count = request.input_count,
+        .registration_pane = if (request.registration) |registration| registration.pane else null,
+        .registration_source = if (request.registration) |registration| registration.source else null,
+    };
+    @memcpy(result.operations[0..result.operation_count], request.operations[0..result.operation_count]);
+    @memcpy(result.inputs[0..result.input_count], request.inputs[0..result.input_count]);
+    return result;
+}
+
+test "session transitions derive exact Host lifecycle receipts" {
+    var base = try session.SessionState.init(.{ .width = 321, .height = 217 });
+    const base_pane = try chrome_state.toRenderPaneId(base.focusedPaneId());
+    const no_op_shape = try lifecycleShapeForTest(&base, &base);
+    try std.testing.expectEqual(@as(u8, 0), no_op_shape.operation_count);
+    try std.testing.expectEqual(@as(u8, 0), no_op_shape.input_count);
+    try std.testing.expect(no_op_shape.registration_pane == null);
+    try std.testing.expect(no_op_shape.registration_source == null);
+
+    var created = base;
+    const created_tab = try created.createTab("other");
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(created_tab));
+    const created_pane = try chrome_state.toRenderPaneId(created.focusedPaneId());
+    const create_shape = try lifecycleShapeForTest(&base, &created);
+    try std.testing.expectEqual(@as(u8, 1), create_shape.operation_count);
+    try std.testing.expectEqual(@as(u8, 2), create_shape.input_count);
+    try std.testing.expectEqual(created_pane, create_shape.registration_pane.?);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(create_shape.registration_source.?));
+    switch (create_shape.operations[0]) {
+        .create => |operation| {
+            try std.testing.expectEqual(created_pane, operation.pane);
+            try std.testing.expectEqual(render_api.canvas.Size{ .width = 321, .height = 217 }, operation.pixels);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    switch (create_shape.inputs[0]) {
+        .focus => |input| {
+            try std.testing.expectEqual(base_pane, input.pane);
+            switch (input.event) {
+                .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .out), event),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    switch (create_shape.inputs[1]) {
+        .focus => |input| {
+            try std.testing.expectEqual(created_pane, input.pane);
+            switch (input.event) {
+                .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    var resized = base;
+    try resized.resizeSurface(.{ .width = 322, .height = 218 });
+    const resize_shape = try lifecycleShapeForTest(&base, &resized);
+    try std.testing.expectEqual(@as(u8, 1), resize_shape.operation_count);
+    try std.testing.expectEqual(@as(u8, 0), resize_shape.input_count);
+    try std.testing.expect(resize_shape.registration_pane == null);
+    try std.testing.expect(resize_shape.registration_source == null);
+    switch (resize_shape.operations[0]) {
+        .resize => |operation| {
+            try std.testing.expectEqual(base_pane, operation.pane);
+            try std.testing.expectEqual(render_api.canvas.Size{ .width = 322, .height = 218 }, operation.pixels);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    var closed = created;
+    try closed.closeTab(closed.activeTabId());
+    const close_shape = try lifecycleShapeForTest(&created, &closed);
+    try std.testing.expectEqual(@as(u8, 1), close_shape.operation_count);
+    try std.testing.expectEqual(@as(u8, 1), close_shape.input_count);
+    try std.testing.expect(close_shape.registration_pane == null);
+    try std.testing.expect(close_shape.registration_source == null);
+    switch (close_shape.operations[0]) {
+        .close => |pane| try std.testing.expectEqual(created_pane, pane),
+        else => return error.TestUnexpectedResult,
+    }
+    switch (close_shape.inputs[0]) {
+        .focus => |input| {
+            try std.testing.expectEqual(base_pane, input.pane);
+            switch (input.event) {
+                .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    var focused = base;
+    const focused_pane = try focused.split(focused.focusedPaneId(), .vertical);
+    const render_focused_pane = try chrome_state.toRenderPaneId(focused_pane);
+    try focused.focusPane(focused_pane);
+    const focus_shape = try lifecycleShapeForTest(&base, &focused);
+    try std.testing.expectEqual(@as(u8, 2), focus_shape.operation_count);
+    try std.testing.expectEqual(@as(u8, 2), focus_shape.input_count);
+    try std.testing.expectEqual(render_focused_pane, focus_shape.registration_pane.?);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(focus_shape.registration_source.?));
+    switch (focus_shape.operations[0]) {
+        .resize => |operation| {
+            try std.testing.expectEqual(base_pane, operation.pane);
+            try std.testing.expectEqual(render_api.canvas.Size{ .width = 160, .height = 217 }, operation.pixels);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    switch (focus_shape.operations[1]) {
+        .create => |operation| {
+            try std.testing.expectEqual(render_focused_pane, operation.pane);
+            try std.testing.expectEqual(render_api.canvas.Size{ .width = 161, .height = 217 }, operation.pixels);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    switch (focus_shape.inputs[0]) {
+        .focus => |input| {
+            try std.testing.expectEqual(base_pane, input.pane);
+            switch (input.event) {
+                .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .out), event),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+    switch (focus_shape.inputs[1]) {
+        .focus => |input| {
+            try std.testing.expectEqual(render_focused_pane, input.pane);
+            switch (input.event) {
+                .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
+                else => return error.TestUnexpectedResult,
+            }
+        },
+        else => return error.TestUnexpectedResult,
+    }
+}
+
 test "terminal lifecycle copies exact pane pixels even when grid quantization could match" {
     var boundary = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -4568,20 +4859,20 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
         .candidate_pixel_bytes = 1,
     });
     defer composer.deinit();
-    var current = try chrome_state.Topology.init(
+    var current = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const pane = current.focusedPaneId();
     const initial_rect = current.paneRect(pane).?;
+    const render_pane = try chrome_state.toRenderPaneId(pane);
     const source = try composer.registerSource();
-    try boundary.register(pane, source, try panePixels(initial_rect));
+    try boundary.register(render_pane, source, try panePixelsLocal(initial_rect));
     const created = boundary.takeLifecycle().?;
     try std.testing.expectEqual(
-        try panePixels(initial_rect),
+        try panePixelsLocal(initial_rect),
         created.create.pixels,
     );
-    try boundary.markLive(pane);
+    try boundary.markLive(render_pane);
 
     var candidate = current;
     try candidate.resizeSurface(.{ .width = 321, .height = 241 });
@@ -4600,7 +4891,7 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     try prepared.commit();
     const resized = boundary.takeLifecycle().?;
     try std.testing.expectEqual(
-        try panePixels(resized_rect),
+        try panePixelsLocal(resized_rect),
         resized.resize.pixels,
     );
 }
@@ -4636,19 +4927,19 @@ test "second pending pane creation preserves the first admitted candidate" {
         .candidate_pixel_bytes = 1,
     });
     defer composer.deinit();
-    var accepted = try chrome_state.Topology.init(
+    var accepted = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const first = accepted.focusedPaneId();
+    const render_first = try chrome_state.toRenderPaneId(first);
     const first_source = try composer.registerSource();
     try boundary.register(
-        first,
+        render_first,
         first_source,
-        try panePixels(accepted.paneRect(first).?),
+        try panePixelsLocal(accepted.paneRect(first).?),
     );
     try std.testing.expect(boundary.takeLifecycle().? == .create);
-    try boundary.markLive(first);
+    try boundary.markLive(render_first);
     var split = accepted;
     const split_pane = try split.split(first, .horizontal);
     try std.testing.expect(@backingInt(split_pane) != 0);
@@ -4664,11 +4955,11 @@ test "second pending pane creation preserves the first admitted candidate" {
     defer if (pending) |*value| value.deinit();
     const revision = pending.?.revision;
     const source = pending.?.new_source;
-    const pane_count = pending.?.candidate.paneCount(0);
+    const pane_count = pending.?.candidate.state.paneCount(0);
     try std.testing.expectError(error.NotAdmitted, pending.?.commit());
     try std.testing.expectEqual(@as(usize, 1), accepted.paneCount(0));
     try std.testing.expect(boundary.takeLifecycle() == null);
-    var second_split = pending.?.candidate;
+    var second_split = pending.?.candidate.state;
     const second_split_pane = try second_split.split(
         second_split.focusedPaneId(),
         .vertical,
@@ -4686,7 +4977,7 @@ test "second pending pane creation preserves the first admitted candidate" {
     );
     try std.testing.expectEqual(revision, pending.?.revision);
     try std.testing.expectEqual(source, pending.?.new_source);
-    try std.testing.expectEqual(pane_count, pending.?.candidate.paneCount(0));
+    try std.testing.expectEqual(pane_count, pending.?.candidate.state.paneCount(0));
     try std.testing.expect(boundary.takeLifecycle() == null);
 }
 
@@ -4721,19 +5012,19 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         .candidate_pixel_bytes = 1,
     });
     defer composer.deinit();
-    var accepted = try chrome_state.Topology.init(
+    var accepted = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     const first = accepted.focusedPaneId();
+    const render_first = try chrome_state.toRenderPaneId(first);
     const accepted_source = try composer.registerSource();
     try boundary.register(
-        first,
+        render_first,
         accepted_source,
-        try panePixels(accepted.paneRect(first).?),
+        try panePixelsLocal(accepted.paneRect(first).?),
     );
     try std.testing.expect(boundary.takeLifecycle().? == .create);
-    try boundary.markLive(first);
+    try boundary.markLive(render_first);
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &boundary;
@@ -4750,7 +5041,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
     const first_revision = pending.?.revision;
     const first_pending_source = pending.?.new_source.?;
 
-    var focused = pending.?.candidate;
+    var focused = pending.?.candidate.state;
     try focused.focusPane(first);
     try replacePendingTopology(
         &work,
@@ -4766,10 +5057,10 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         @backingInt(pending.?.new_source.?) >
             @backingInt(first_pending_source),
     );
-    try std.testing.expectEqual(first, pending.?.candidate.focusedPaneId());
+    try std.testing.expectEqual(first, pending.?.candidate.state.focusedPaneId());
 
     const focus_revision = pending.?.revision;
-    var resized = pending.?.candidate;
+    var resized = pending.?.candidate.state;
     try resized.resizeSurface(.{ .width = 321, .height = 241 });
     try replacePendingTopology(
         &work,
@@ -4783,7 +5074,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
     );
 
     const resize_revision = pending.?.revision;
-    var closed = pending.?.candidate;
+    var closed = pending.?.candidate.state;
     try closed.closePane(second);
     try replacePendingTopology(
         &work,
@@ -4796,7 +5087,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         @backingInt(pending.?.revision) > @backingInt(resize_revision),
     );
     try std.testing.expect(pending.?.new_source == null);
-    try std.testing.expectEqual(@as(usize, 1), pending.?.candidate.paneCount(0));
+    try std.testing.expectEqual(@as(usize, 1), pending.?.candidate.state.paneCount(0));
 
     pending.?.deinit();
     pending = null;
@@ -4805,7 +5096,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
     try std.testing.expectEqual(@as(usize, 2), new_tab.tabCount());
     pending = try prepareTerminalTopology(&work, &accepted, &new_tab, null);
     const tab_revision = pending.?.revision;
-    var reordered = pending.?.candidate;
+    var reordered = pending.?.candidate.state;
     try reordered.reorderTab(tab, 0);
     try replacePendingTopology(
         &work,
@@ -4817,11 +5108,12 @@ test "pending focus resize close and reorder folds issue fresh identities" {
     try std.testing.expect(
         @backingInt(pending.?.revision) > @backingInt(tab_revision),
     );
-    try std.testing.expectEqual(tab, pending.?.candidate.tabId(0).?);
+    try std.testing.expectEqual(tab, pending.?.candidate.state.tabId(0).?);
 }
 
 test "PendingTopology has one fixed allocation-free value" {
     try std.testing.expectEqual(@as(usize, 20_552), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(PendingTopology));
     try std.testing.expectEqual(
         @as(usize, 544),
         @sizeOf(PreparedBootstrapPublication),
@@ -4880,9 +5172,8 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     try std.testing.expectEqual(@as(usize, 0), provisional.commands.len);
     try std.testing.expect(terminals.takeLifecycle() == null);
 
-    const topology = try chrome_state.Topology.init(
+    const topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
     );
     var work: CanvasWork = undefined;
     work.composer = &composer;
@@ -4906,10 +5197,141 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     const source = pending.new_source.?;
     const request = terminals.takeLifecycleAdmission().?;
     try std.testing.expectEqual(pending.revision, request.revision);
-    try std.testing.expect(terminals.sourceFor(topology.focusedPaneId()) == null);
+    try std.testing.expect(terminals.sourceFor(try chrome_state.toRenderPaneId(topology.focusedPaneId())) == null);
     pending.deinit();
     try std.testing.expect(terminals.takeLifecycle() == null);
     try std.testing.expectError(error.RetiredSource, composer.removeSource(source));
+}
+
+test "semantic tab and split candidates project and shape through the production Chrome owner" {
+    var content = try render_api.chrome.Content.init(
+        std.testing.allocator,
+        .{
+            .primitives = 256,
+            .text_bytes = (chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes,
+            .label_scalars = 256,
+            .shaped_glyphs = 256,
+            .glyphs = 128,
+            .commands = 2048,
+            .resources_per_update = 512,
+            .upload_bytes = 8 * 1024 * 1024,
+            .raster_bytes = 512 * 1024,
+        },
+        .{ .primary = "../howl-render/testdata/primary.ttf", .size = .{ .pixels = 16 } },
+    );
+    defer content.deinit();
+    var primitives: [256]render_api.chrome.Primitive = undefined;
+    var text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
+    const surface = render_api.canvas.Size{ .width = 320, .height = 240 };
+    const origin = chrome_state.ContentOrigin{ .y = chrome_state.default_tab_bar_height };
+    var state = try session.SessionState.init(.{ .width = 320, .height = 216 });
+
+    const projectAndShape = struct {
+        fn run(
+            value: *const session.SessionState,
+            retained: *render_api.chrome.Content,
+            surface_value: render_api.canvas.Size,
+            origin_value: chrome_state.ContentOrigin,
+            primitive_storage: []render_api.chrome.Primitive,
+            text_storage: []u8,
+        ) !void {
+            const output = try chrome_state.project(
+                value,
+                chrome_appearance,
+                surface_value,
+                origin_value,
+                &.{},
+                primitive_storage,
+                text_storage,
+            );
+            const expected_tabs = if (value.tabCount() == 1) "main" else "maintab";
+            try std.testing.expect(std.mem.containsAtLeast(u8, output.text, 1, expected_tabs));
+            try std.testing.expect(!std.mem.containsAtLeast(u8, output.text, 1, &.{0}));
+            const active_tab = value.activeTabIndex();
+            for (0..value.paneCount(active_tab)) |pane_index| {
+                const pane = value.paneId(active_tab, pane_index).?;
+                const local = value.paneRect(pane).?;
+                const physical = try chrome_state.toRenderRect(local, origin_value);
+                try std.testing.expect(physical.y >= origin_value.y);
+                try std.testing.expect(
+                    physical.y + @as(i32, @intCast(physical.height)) <= surface_value.height,
+                );
+            }
+            try retained.apply(output);
+            const update = try retained.takeUpdate();
+            try std.testing.expect(@backingInt(update.revision) != 0);
+        }
+    }.run;
+
+    try projectAndShape(&state, &content, surface, origin, &primitives, &text);
+    const created_tab = try state.createTab("tab");
+    try std.testing.expect(@backingInt(created_tab) != 0);
+    try projectAndShape(&state, &content, surface, origin, &primitives, &text);
+    try state.switchTab(state.tabId(0).?);
+    for (0..3) |_| {
+        const horizontal = try state.split(state.focusedPaneId(), .horizontal);
+        try std.testing.expect(@backingInt(horizontal) != 0);
+        for (0..state.paneCount(state.activeTabIndex())) |pane_index| {
+            try state.renamePane(state.paneId(state.activeTabIndex(), pane_index).?, "pane");
+        }
+        try projectAndShape(&state, &content, surface, origin, &primitives, &text);
+        const vertical = try state.split(state.focusedPaneId(), .vertical);
+        try std.testing.expect(@backingInt(vertical) != 0);
+        for (0..state.paneCount(state.activeTabIndex())) |pane_index| {
+            try state.renamePane(state.paneId(state.activeTabIndex(), pane_index).?, "pane");
+        }
+        try projectAndShape(&state, &content, surface, origin, &primitives, &text);
+    }
+}
+
+test "semantic split candidates retain pane labels through the production Chrome owner" {
+    var content = try render_api.chrome.Content.init(
+        std.testing.allocator,
+        .{
+            .primitives = 256,
+            .text_bytes = chrome_state.max_panes_per_tab * chrome_state.max_label_bytes,
+            .label_scalars = 256,
+            .shaped_glyphs = 256,
+            .glyphs = 128,
+            .commands = 2048,
+            .resources_per_update = 512,
+            .upload_bytes = 8 * 1024 * 1024,
+            .raster_bytes = 512 * 1024,
+        },
+        .{ .primary = "../howl-render/testdata/primary.ttf", .size = .{ .pixels = 16 } },
+    );
+    defer content.deinit();
+    var primitives: [256]render_api.chrome.Primitive = undefined;
+    var text: [chrome_state.max_panes_per_tab * chrome_state.max_label_bytes]u8 = undefined;
+    const surface = render_api.canvas.Size{ .width = 320, .height = 240 };
+    const origin = chrome_state.ContentOrigin{ .y = chrome_state.default_tab_bar_height };
+    var state = try session.SessionState.init(.{ .width = 320, .height = 216 });
+
+    for (0..3) |_| {
+        const horizontal = try state.split(state.focusedPaneId(), .horizontal);
+        try std.testing.expect(@backingInt(horizontal) != 0);
+        for (0..state.paneCount(state.activeTabIndex())) |pane_index| {
+            try state.renamePane(state.paneId(state.activeTabIndex(), pane_index).?, "pane");
+        }
+        const vertical = try state.split(state.focusedPaneId(), .vertical);
+        try std.testing.expect(@backingInt(vertical) != 0);
+        for (0..state.paneCount(state.activeTabIndex())) |pane_index| {
+            try state.renamePane(state.paneId(state.activeTabIndex(), pane_index).?, "pane");
+        }
+        const output = try chrome_state.project(
+            &state,
+            chrome_appearance,
+            surface,
+            origin,
+            &.{},
+            &primitives,
+            &text,
+        );
+        try std.testing.expect(!std.mem.containsAtLeast(u8, output.text, 1, &.{0}));
+        try content.apply(output);
+        const update = try content.takeUpdate();
+        try std.testing.expect(@backingInt(update.revision) != 0);
+    }
 }
 
 test "one complete terminal and Chrome resource set fits every runtime bank" {
@@ -5167,6 +5589,8 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .composer = &composer,
         .content = &content,
         .source = chrome_source,
+        .surface = .{ .width = 320, .height = 240 },
+        .content_origin = .{ .y = chrome_state.default_tab_bar_height },
         .frame_uploads = &frame_uploads,
         .frame_removals = &frame_removals,
         .frame_commands = &frame_commands,
@@ -5184,20 +5608,20 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .replay = &replay,
     };
     try std.testing.expectEqual(default_config.presentationPolicy(), work.cursor_policy);
-    const accepted_topology = try chrome_state.Topology.init(
-        .{ .width = 320, .height = 240 },
-        chrome_state.default_tab_bar_height,
+    const accepted_topology = try session.SessionState.init(
+        .{ .width = 320, .height = 216 },
     );
     const pane = accepted_topology.focusedPaneId();
+    const render_pane = try chrome_state.toRenderPaneId(pane);
     try terminals.register(
-        pane,
+        render_pane,
         terminal_source,
         .{ .width = 320, .height = 216 },
     );
     const lifecycle = terminals.takeLifecycle() orelse
         return error.TestUnexpectedResult;
-    try std.testing.expectEqual(pane, lifecycle.create.pane);
-    const member = try terminals.activateTransfer(pane);
+    try std.testing.expectEqual(render_pane, lifecycle.create.pane);
+    const member = try terminals.activateTransfer(render_pane);
     const terminal_command = render_api.canvas.Input{ .solid = .{
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
@@ -5212,6 +5636,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     });
     var topology_a = accepted_topology;
     const cancelled_pane = try topology_a.split(pane, .horizontal);
+    const render_cancelled_pane = try chrome_state.toRenderPaneId(cancelled_pane);
     var cancelled_pending = try prepareTerminalTopology(
         &work,
         &accepted_topology,
@@ -5231,7 +5656,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         &work,
         &topology_a,
         revision_a,
-        .{ .pane = cancelled_pane, .source = cancelled_source },
+        .{ .pane = render_cancelled_pane, .source = cancelled_source },
         chrome_appearance,
         &primitives,
         &text,
@@ -5248,11 +5673,10 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
 
     try composer.removeSource(blocker);
     cancelled_pending.deinit();
-    try std.testing.expect(terminals.sourceFor(cancelled_pane) == null);
+    try std.testing.expect(terminals.sourceFor(try chrome_state.toRenderPaneId(cancelled_pane)) == null);
     var topology_b = accepted_topology;
     const replacement_pane = try topology_b.split(pane, .horizontal);
     try std.testing.expectEqual(cancelled_pane, replacement_pane);
-    try topology_b.resizeSurface(.{ .width = 321, .height = 241 });
     try topology_b.renameTab(topology_b.activeTabId(), "newer");
     var replacement_pending = try prepareTerminalTopology(
         &work,
@@ -5264,6 +5688,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try admitPendingForTest(&replacement_pending);
     const replacement_source = replacement_pending.new_source orelse
         return error.TestUnexpectedResult;
+    const render_replacement_pane = try chrome_state.toRenderPaneId(replacement_pane);
     try std.testing.expect(
         @backingInt(replacement_source) > @backingInt(cancelled_source),
     );
@@ -5273,7 +5698,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         &work,
         &topology_b,
         revision_b,
-        .{ .pane = replacement_pane, .source = replacement_source },
+        .{ .pane = render_replacement_pane, .source = replacement_source },
         chrome_appearance,
         &primitives,
         &text,
@@ -5365,7 +5790,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         &work,
         &topology_b,
         revision_b,
-        .{ .pane = replacement_pane, .source = replacement_source },
+        .{ .pane = render_replacement_pane, .source = replacement_source },
         chrome_appearance,
         &primitives,
         &text,
@@ -5389,8 +5814,11 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try std.testing.expectEqual(@as(u8, 2), work.visible_count);
     try std.testing.expectEqualStrings(
         "newer",
-        (try retained_topology.project(
+        (try chrome_state.project(
+            &retained_topology,
             chrome_appearance,
+            .{ .width = 320, .height = 240 },
+            .{ .y = 24 },
             &.{},
             &primitives,
             &text,
@@ -5400,7 +5828,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     while (terminals.takeLifecycle()) |replacement_lifecycle| {
         switch (replacement_lifecycle) {
             .create => |create| {
-                try std.testing.expectEqual(replacement_pane, create.pane);
+                try std.testing.expectEqual(render_replacement_pane, create.pane);
                 observed_replacement_create = true;
             },
             .resize, .close => {},
@@ -5408,7 +5836,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     }
     try std.testing.expect(observed_replacement_create);
     const replacement_member = try terminals.activateTransfer(
-        replacement_pane,
+        render_replacement_pane,
     );
     const replacement_request = terminals.visibleSetRequest() orelse
         return error.TestUnexpectedResult;
@@ -5426,12 +5854,12 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         replacement_request.revision,
         &.{
             .{
-                .member = .{ .pane = pane, .source = terminal_source },
+                .member = .{ .pane = try chrome_state.toRenderPaneId(pane), .source = terminal_source },
                 .revision = @fromBackingInt(1),
             },
             .{
                 .member = .{
-                    .pane = replacement_pane,
+                    .pane = try chrome_state.toRenderPaneId(replacement_pane),
                     .source = replacement_source,
                 },
                 .revision = @fromBackingInt(1),
@@ -5504,9 +5932,8 @@ test "CanvasWork cursor retention layout receipt" {
 }
 
 test "active TabId transfers the accepted trail presentation" {
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 640, .height = 480 },
-        chrome_state.default_tab_bar_height,
     );
     var work: CanvasWork = undefined;
     resetTrailRecords(&work);
@@ -5641,9 +6068,8 @@ test "accepted topology tab transition transfers through Composer bindings" {
         },
     );
     defer composer.deinit();
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 640, .height = 480 },
-        chrome_state.default_tab_bar_height,
     );
     const first_tab = topology.activeTabId();
     const second_tab = try topology.createTab("incoming");
@@ -5655,7 +6081,10 @@ test "accepted topology tab transition transfers through Composer bindings" {
 
     const first_source = try composer.registerSource();
     const second_source = try composer.registerSource();
-    const pane_ids = [_]render_api.chrome.PaneId{ first_pane, second_pane };
+    const pane_ids = [_]render_api.chrome.PaneId{
+        try chrome_state.toRenderPaneId(first_pane),
+        try chrome_state.toRenderPaneId(second_pane),
+    };
     const sources = [_]render_api.canvas.SourceId{ first_source, second_source };
     var placements: [2]render_api.canvas.Composer.Placement = undefined;
     const solid = render_api.canvas.Input{ .solid = .{
@@ -5664,7 +6093,8 @@ test "accepted topology tab transition transfers through Composer bindings" {
         .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
     } };
     for (pane_ids, sources, 0..) |pane, source, index| {
-        const rect = topology.paneRect(pane).?;
+        const semantic_pane = if (index == 0) first_pane else second_pane;
+        const rect = topology.paneRect(semantic_pane).?;
         try terminals.register(pane, source, .{ .width = rect.width, .height = rect.height });
         try std.testing.expect(terminals.takeLifecycle() != null);
         const member = try terminals.activateTransfer(pane);
@@ -5696,8 +6126,8 @@ test "accepted topology tab transition transfers through Composer bindings" {
         };
     }
     terminals.visible_members[0..2].* = .{
-        .{ .pane = first_pane, .source = first_source },
-        .{ .pane = second_pane, .source = second_source },
+        .{ .pane = pane_ids[0], .source = first_source },
+        .{ .pane = pane_ids[1], .source = second_source },
     };
     terminals.visible_member_count = 2;
     terminals.visible_revision = 1;
@@ -5834,9 +6264,8 @@ test "accepted topology tab transition transfers through Composer bindings" {
 }
 
 test "cursor trail storage follows exact TabId lifecycle" {
-    var topology = try chrome_state.Topology.init(
+    var topology = try session.SessionState.init(
         .{ .width = 640, .height = 480 },
-        chrome_state.default_tab_bar_height,
     );
     var work: CanvasWork = undefined;
     resetTrailRecords(&work);
@@ -5908,9 +6337,8 @@ test "Host focus directions admit one physical trail quad" {
         );
         defer composer.deinit();
 
-        var accepted = try chrome_state.Topology.init(
+        var accepted = try session.SessionState.init(
             .{ .width = 640, .height = 480 },
-            chrome_state.default_tab_bar_height,
         );
         const root = accepted.focusedPaneId();
         const right = try accepted.split(root, .vertical);
@@ -5922,15 +6350,15 @@ test "Host focus directions admit one physical trail quad" {
             .focus_down => try accepted.focusPane(root),
             else => unreachable,
         }
-        const candidate = (try input_actions.candidate(&accepted, action)).?;
+        const candidate = (try input_actions.candidate(&accepted, action)).?.state;
 
         var panes: [4]render_api.chrome.PaneId = undefined;
         var sources: [4]render_api.canvas.SourceId = undefined;
         var placements: [4]render_api.canvas.Composer.Placement = undefined;
         for (0..4) |index| {
-            panes[index] = accepted.paneId(0, index).?;
+            panes[index] = try chrome_state.toRenderPaneId(accepted.paneId(0, index).?);
             sources[index] = try composer.registerSource();
-            const pane_rect = accepted.paneRect(panes[index]).?;
+            const pane_rect = accepted.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
             try terminals.register(
                 panes[index],
                 sources[index],
@@ -5967,7 +6395,7 @@ test "Host focus directions admit one physical trail quad" {
             .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
         } };
         for (0..4) |index| {
-            const pane_rect = accepted.paneRect(panes[index]).?;
+            const pane_rect = accepted.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
             try composer.apply(sources[index], .{
                 .revision = @fromBackingInt(1),
                 .uploads = &.{},
@@ -6004,13 +6432,13 @@ test "Host focus directions admit one physical trail quad" {
         try reconcileTrailTopology(&work, &accepted);
         try syncAcceptedTrail(&work, &accepted, 1_000_000, true);
         const old_pane = accepted.focusedPaneId();
-        const old_source = terminals.sourceFor(old_pane).?;
+        const old_source = terminals.sourceFor(try chrome_state.toRenderPaneId(old_pane)).?;
         const old_overlay = (try cursorOverlayForBinding(&work, old_source)).?;
         const accepted_before_target = work.trails[findTrailSlot(&work, accepted.activeTabId()).?].trail;
 
         var candidate_placements = placements;
         for (0..4) |index| {
-            const pane_rect = candidate.paneRect(panes[index]).?;
+            const pane_rect = candidate.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
             candidate_placements[index].origin = .{ .x = pane_rect.x, .y = pane_rect.y };
             candidate_placements[index].clip = .{
                 .x = pane_rect.x,
@@ -6022,13 +6450,13 @@ test "Host focus directions admit one physical trail quad" {
         try composer.setComposition(.{
             .surface = .{ .width = 640, .height = 480 },
             .sources = &candidate_placements,
-            .focused_source = terminals.sourceFor(candidate.focusedPaneId()),
+            .focused_source = terminals.sourceFor(try chrome_state.toRenderPaneId(candidate.focusedPaneId())),
         });
         @memcpy(work.visible_placements[0..4], &candidate_placements);
         try reconcileTrailTopology(&work, &candidate);
         try syncAcceptedTrail(&work, &candidate, 2_000_000, false);
         const new_pane = candidate.focusedPaneId();
-        const new_source = terminals.sourceFor(new_pane).?;
+        const new_source = terminals.sourceFor(try chrome_state.toRenderPaneId(new_pane)).?;
         const new_overlay = (try cursorOverlayForBinding(&work, new_source)).?;
         try std.testing.expect(old_pane != new_pane);
         try std.testing.expect(old_source != new_source);
@@ -6049,7 +6477,7 @@ test "Host focus directions admit one physical trail quad" {
         const physical = try physicalPlanForBase(
             &work,
             base,
-            candidate.focusedPaneId(),
+            try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
             &work.trail_scratch,
         );
         const expected_trail_clip = try checkedTrailClipUnion(
@@ -6086,7 +6514,7 @@ test "Host focus directions admit one physical trail quad" {
             physicalPlanForBase(
                 &work,
                 base,
-                candidate.focusedPaneId(),
+                try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
                 &invalid_union_trail,
             ),
         );
@@ -6145,7 +6573,7 @@ test "Host focus directions admit one physical trail quad" {
             const frame = try physicalPlanForBase(
                 &work,
                 base,
-                candidate.focusedPaneId(),
+                try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
                 &work.trail_scratch,
             );
             try std.testing.expectEqual(expected_trail_clip, frame.commands[0].clip);
@@ -6165,7 +6593,7 @@ test "Host focus directions admit one physical trail quad" {
         const collapsed = try physicalPlanForBase(
             &work,
             base,
-            candidate.focusedPaneId(),
+            try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
             &settled_frame,
         );
         try std.testing.expectEqual(new_overlay.clip, collapsed.commands[0].clip);
@@ -6267,14 +6695,14 @@ test "compact resource adaptation preserves local and shared namespaces mechanic
     try std.testing.expectEqual(local_vk, adapted.commands[0].rgba.resource);
 }
 
-fn panePixels(rect: render_api.chrome.Rect) error{InvalidTopology}!render_api.canvas.Size {
+fn panePixelsLocal(rect: session.Rect) error{InvalidTopology}!render_api.canvas.Size {
     if (rect.width == 0 or rect.height == 0) return error.InvalidTopology;
     return .{ .width = rect.width, .height = rect.height };
 }
 
 fn redrawChrome(
     boundary: *shared.Boundary,
-    topology: *chrome_state.Topology,
+    topology: *session.SessionState,
     canvas_work: *CanvasWork,
     appearance: chrome_state.Appearance,
     primitives: *[256]render_api.chrome.Primitive,
@@ -6302,23 +6730,35 @@ fn redrawChrome(
         slots,
         drm_fd,
     )) return .blocked;
-    const candidate = if (pending) |value| value.candidate else topology.*;
+    const candidate = if (pending) |value| value.candidate.state else topology.*;
     const topology_revision = if (pending) |value| value.revision else null;
+    const projection_surface = if (pending) |value|
+        if (value.surface) |surface| renderExtent(surface) else canvas_work.surface
+    else
+        canvas_work.surface;
+    const projection_origin = if (pending) |value|
+        if (value.surface) |surface|
+            try chrome_state.contentOrigin(renderExtent(surface), chrome_state.default_tab_bar_height)
+        else
+            canvas_work.content_origin
+    else
+        canvas_work.content_origin;
     try validateTerminalTopology(&candidate);
     var bootstrap_publication: ?PreparedBootstrapPublication =
         if (pending) |value|
             if (value.new_source != null)
-                try prepareBootstrapPublication(
+                try prepareBootstrapPublicationAt(
                     canvas_work,
                     &candidate,
                     value.bootstrap(),
+                    projection_origin,
                 )
             else
                 null
         else
             null;
     defer if (bootstrap_publication) |*publication| publication.deinit();
-    const plan_result = try buildCanvasPlan(
+    const plan_result = try buildCanvasPlanAt(
         canvas_work,
         &candidate,
         topology_revision,
@@ -6326,6 +6766,8 @@ fn redrawChrome(
         appearance,
         primitives,
         text,
+        projection_surface,
+        projection_origin,
     );
     const composer_plan = switch (plan_result) {
         .blocked => return .blocked,
@@ -6360,7 +6802,7 @@ fn redrawChrome(
     const physical_plan = try physicalPlanForBase(
         canvas_work,
         composer_plan,
-        candidate.focusedPaneId(),
+        try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
         trail_candidate,
     );
     trail_candidate_carried.* = trail_candidate != null;
@@ -6687,7 +7129,7 @@ test "cursor replay supersession transfers the newest inbox target" {
     try std.testing.expect(terminals.takeCursor(pane) == null);
 }
 
-fn validateTerminalTopology(candidate: *const chrome_state.Topology) !void {
+fn validateTerminalTopology(candidate: *const session.SessionState) !void {
     for (0..candidate.tabCount()) |tab_index| {
         for (0..candidate.paneCount(tab_index)) |pane_index| {
             const pane = candidate.paneId(tab_index, pane_index) orelse

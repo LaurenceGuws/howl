@@ -6,6 +6,7 @@ const std = @import("std");
 const wayland = @import("howl_wayland");
 const render = @import("howl_render");
 const chrome_state = @import("chrome_state");
+const session = @import("session_domain");
 
 const capture_limit: usize = 16;
 const primary_button: u32 = 0x110;
@@ -42,7 +43,7 @@ pub const Action = enum {
 pub const Error = error{CaptureFull};
 
 /// Exact topology or hit-projection failures from a primary pointer action.
-pub const PointerError = chrome_state.Error || render.chrome.Error;
+pub const PointerError = session.Error || render.chrome.Error;
 
 /// Describes whether a key remains unmatched, is consumed without mutation, or
 /// selects one action.
@@ -99,7 +100,7 @@ pub const State = struct {
 
 /// Constructs the complete candidate topology for one action. A null result is
 /// a deterministic boundary no-op; failures leave `current` byte-identical.
-pub fn candidate(current: *const chrome_state.Topology, action: Action) chrome_state.Error!?chrome_state.Topology {
+pub fn candidate(current: *const session.SessionState, action: Action) session.Error!?session.SessionCandidate {
     var next = current.*;
     switch (action) {
         .font_increase,
@@ -171,12 +172,12 @@ pub fn candidate(current: *const chrome_state.Topology, action: Action) chrome_s
             try next.reorderTab(next.activeTabId(), destination);
         },
     }
-    return next;
+    return .{ .state = next };
 }
 
 /// Constructs the candidate selected by one primary pointer press. Coordinates
 /// outside the finite signed pixel domain are unmatched.
-pub fn pointerCandidate(current: *const chrome_state.Topology, appearance: chrome_state.Appearance, button: wayland.input.Button) PointerError!?chrome_state.Topology {
+pub fn pointerCandidate(current: *const session.SessionState, appearance: chrome_state.Appearance, surface: chrome_state.SurfaceGeometry, origin: chrome_state.ContentOrigin, button: wayland.input.Button) PointerError!?session.SessionCandidate {
     if (button.state != .pressed or button.button != primary_button) return null;
     if (!std.math.isFinite(button.point.x) or !std.math.isFinite(button.point.y)) return null;
     if (button.point.x < @as(f64, @floatFromInt(std.math.minInt(i32))) or button.point.x > @as(f64, @floatFromInt(std.math.maxInt(i32))) or
@@ -186,24 +187,26 @@ pub fn pointerCandidate(current: *const chrome_state.Topology, appearance: chrom
         .x = @intFromFloat(@floor(button.point.x)),
         .y = @intFromFloat(@floor(button.point.y)),
     };
-    const hit = try current.hitTest(appearance, point) orelse return null;
+    const hit = try chrome_state.hitTest(current, appearance, surface, origin, point) orelse return null;
     var next = current.*;
     switch (hit) {
         .tab => |id| {
-            if (id == next.activeTabId()) return null;
-            try next.switchTab(id);
+            const semantic_id = try chrome_state.fromRenderTabId(id);
+            if (semantic_id == next.activeTabId()) return null;
+            try next.switchTab(semantic_id);
         },
         .pane => |id| {
-            if (next.paneLayer(id) == .floating) {
-                if (id == next.focusedPaneId() and next.floatingPaneIsTopmost(id)) return null;
-                try next.raiseFloatingPane(id);
+            const semantic_id = try chrome_state.fromRenderPaneId(id);
+            if (next.paneLayer(semantic_id) == .floating) {
+                if (semantic_id == next.focusedPaneId() and next.floatingPaneIsTopmost(semantic_id)) return null;
+                try next.raiseFloatingPane(semantic_id);
             } else {
-                if (id == next.focusedPaneId()) return null;
-                try next.focusPane(id);
+                if (semantic_id == next.focusedPaneId()) return null;
+                try next.focusPane(semantic_id);
             }
         },
     }
-    return next;
+    return .{ .state = next };
 }
 
 fn binding(symbol: wayland.input.Keysym, modifiers: wayland.input.SemanticModifiers) ?Action {
@@ -365,55 +368,55 @@ test "physical capture acts once consumes release and clears exactly" {
 }
 
 test "topology candidates cover tabs splits focus resize close and boundaries" {
-    var topology = try chrome_state.Topology.init(.{ .width = 320, .height = 240 }, 24);
-    topology = (try candidate(&topology, .new_tab)).?;
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 216 });
+    topology = (try candidate(&topology, .new_tab)).?.state;
     try std.testing.expectEqual(@as(usize, 2), topology.tabCount());
-    topology = (try candidate(&topology, .previous_tab)).?;
+    topology = (try candidate(&topology, .previous_tab)).?.state;
     try std.testing.expectEqual(@as(usize, 0), topology.activeTabIndex());
-    topology = (try candidate(&topology, .next_tab)).?;
+    topology = (try candidate(&topology, .next_tab)).?.state;
     try std.testing.expectEqual(@as(usize, 1), topology.activeTabIndex());
     try std.testing.expect((try candidate(&topology, .reorder_right)) == null);
-    topology = (try candidate(&topology, .reorder_left)).?;
+    topology = (try candidate(&topology, .reorder_left)).?.state;
     try std.testing.expectEqual(@as(usize, 0), topology.activeTabIndex());
-    topology = (try candidate(&topology, .split_vertical)).?;
+    topology = (try candidate(&topology, .split_vertical)).?.state;
     try std.testing.expectEqual(@as(usize, 2), topology.paneCount(0));
-    topology = (try candidate(&topology, .focus_left)).?;
-    topology = (try candidate(&topology, .resize_right)).?;
-    topology = (try candidate(&topology, .close_pane)).?;
+    topology = (try candidate(&topology, .focus_left)).?.state;
+    topology = (try candidate(&topology, .resize_right)).?.state;
+    topology = (try candidate(&topology, .close_pane)).?.state;
     try std.testing.expectEqual(@as(usize, 1), topology.paneCount(0));
-    topology = (try candidate(&topology, .split_horizontal)).?;
-    topology = (try candidate(&topology, .focus_up)).?;
-    topology = (try candidate(&topology, .resize_down)).?;
+    topology = (try candidate(&topology, .split_horizontal)).?.state;
+    topology = (try candidate(&topology, .focus_up)).?.state;
+    topology = (try candidate(&topology, .resize_down)).?.state;
     try topology.validate();
 }
 
 test "failed action preserves topology and stable identity issuance" {
-    var topology = try chrome_state.Topology.init(.{ .width = 320, .height = 240 }, 24);
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 216 });
     while (topology.tabCount() < chrome_state.max_tabs) {
-        topology = (try candidate(&topology, .new_tab)).?;
+        topology = (try candidate(&topology, .new_tab)).?.state;
     }
     const before = topology;
     try std.testing.expectError(error.Capacity, candidate(&topology, .new_tab));
     try std.testing.expectEqualDeep(before, topology);
-    topology = (try candidate(&topology, .close_tab)).?;
-    const created = (try candidate(&topology, .new_tab)).?;
+    topology = (try candidate(&topology, .close_tab)).?.state;
+    const created = (try candidate(&topology, .new_tab)).?.state;
     try std.testing.expect(created.activeTabId() != before.activeTabId());
     try created.validate();
 }
 
 test "directional resize grows the focused pane toward the requested boundary" {
-    var topology = try chrome_state.Topology.init(.{ .width = 320, .height = 240 }, 24);
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 216 });
     const left = topology.paneId(0, 0).?;
     const right = try topology.split(left, .vertical);
-    topology = (try candidate(&topology, .focus_left)).?;
+    topology = (try candidate(&topology, .focus_left)).?.state;
     const appearance = chrome_state.Appearance{
         .style = .{ .foreground = .{ .r = 1, .g = 2, .b = 3, .a = 255 }, .background = .{ .r = 4, .g = 5, .b = 6, .a = 255 }, .border = .{ .r = 7, .g = 8, .b = 9, .a = 255 } },
         .tab_active_background = .{ .r = 10, .g = 11, .b = 12, .a = 255 },
         .tab_inactive_background = .{ .r = 13, .g = 14, .b = 15, .a = 255 },
     };
-    try std.testing.expectEqual(right, (try topology.hitTest(appearance, .{ .x = 164, .y = 40 })).?.pane);
-    topology = (try candidate(&topology, .resize_right)).?;
-    try std.testing.expectEqual(left, (try topology.hitTest(appearance, .{ .x = 164, .y = 40 })).?.pane);
+    try std.testing.expectEqual(@backingInt(right), @backingInt((try chrome_state.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
+    topology = (try candidate(&topology, .resize_right)).?.state;
+    try std.testing.expectEqual(@backingInt(left), @backingInt((try chrome_state.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
 }
 
 test "directional and pointer no-ops produce no topology candidate" {
@@ -422,23 +425,23 @@ test "directional and pointer no-ops produce no topology candidate" {
         .tab_active_background = .{ .r = 10, .g = 11, .b = 12, .a = 255 },
         .tab_inactive_background = .{ .r = 13, .g = 14, .b = 15, .a = 255 },
     };
-    var topology = try chrome_state.Topology.init(.{ .width = 160, .height = 100 }, 24);
+    var topology = try session.SessionState.init(.{ .width = 160, .height = 76 });
     const before = topology;
     try std.testing.expect((try candidate(&topology, .focus_left)) == null);
     try std.testing.expectEqualDeep(before, topology);
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 80, .y = 60 }, .semantic_modifiers = .{} })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 80, .y = 60 }, .semantic_modifiers = .{} })) == null);
     try std.testing.expectEqualDeep(before, topology);
-    const floating = try topology.createFloatingPane(.{ .x = 20, .y = 30, .width = 80, .height = 50 }, "float");
+    const floating = try topology.createFloatingPane(.{ .x = 20, .y = 20, .width = 80, .height = 50 }, "float");
     const floating_before = topology;
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 50 }, .semantic_modifiers = .{} })) == null);
     try std.testing.expectEqual(floating, topology.focusedPaneId());
     try std.testing.expectEqualDeep(floating_before, topology);
 }
 
 test "primary pointer selects tabs focuses panes and raises floating order" {
-    var topology = try chrome_state.Topology.init(.{ .width = 160, .height = 100 }, 24);
+    var topology = try session.SessionState.init(.{ .width = 160, .height = 76 });
     const tiled = topology.paneId(0, 0).?;
-    const floating = try topology.createFloatingPane(.{ .x = 20, .y = 30, .width = 80, .height = 50 }, "float");
+    const floating = try topology.createFloatingPane(.{ .x = 20, .y = 20, .width = 80, .height = 50 }, "float");
     const second_tab = try topology.createTab("two");
     try std.testing.expect(@backingInt(second_tab) != 0);
     const appearance = chrome_state.Appearance{
@@ -446,12 +449,12 @@ test "primary pointer selects tabs focuses panes and raises floating order" {
         .tab_active_background = .{ .r = 13, .g = 14, .b = 15, .a = 16 },
         .tab_inactive_background = .{ .r = 17, .g = 18, .b = 19, .a = 20 },
     };
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 10, .y = 10 }, .semantic_modifiers = .{} })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 10, .y = 10 }, .semantic_modifiers = .{} })).?.state;
     try std.testing.expectEqual(@as(usize, 0), topology.activeTabIndex());
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 120, .y = 90 }, .semantic_modifiers = .{} })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 120, .y = 90 }, .semantic_modifiers = .{} })).?.state;
     try std.testing.expectEqual(tiled, topology.focusedPaneId());
-    topology = (try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })).?;
+    topology = (try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 50 }, .semantic_modifiers = .{} })).?.state;
     try std.testing.expectEqual(floating, topology.focusedPaneId());
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = 2, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })) == null);
-    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = -1, .y = 40 }, .semantic_modifiers = .{} })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = 2, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = 30, .y = 40 }, .semantic_modifiers = .{} })) == null);
+    try std.testing.expect((try pointerCandidate(&topology, appearance, .{ .width = 160, .height = 100 }, .{ .y = 24 }, .{ .button = primary_button, .time = 1, .state = .pressed, .serial = 2, .point = .{ .x = -1, .y = 40 }, .semantic_modifiers = .{} })) == null);
 }
