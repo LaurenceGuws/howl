@@ -4102,45 +4102,29 @@ fn waitWindowRingRetired(boundary: *shared.Boundary, generation: u64) !void {
 }
 
 fn waitRenderWake(boundary: *shared.Boundary) !void {
-    var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
-    while (true) {
-        const result = c.poll(&descriptor, 1, 2_000);
-        if (result > 0) {
-            try boundary.drainRenderWake();
-            return;
-        }
-        if (result == 0) return error.WakeTimeout;
-        if (std.c.errno(result) != .INTR) return error.Wake;
+    var descriptor = std.posix.pollfd{
+        .fd = boundary.renderFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    const result = try pollWithoutDeadline(TypedPoll, (&descriptor)[0..1], 2_000);
+    if (result > 0) {
+        try boundary.drainRenderWake();
+        return;
     }
+    return error.WakeTimeout;
 }
 
 fn waitRenderWakeUntil(boundary: *shared.Boundary, absolute: u64) !bool {
-    var descriptor = c.pollfd{
+    var descriptor = std.posix.pollfd{
         .fd = boundary.renderFd(),
-        .events = c.POLLIN,
+        .events = std.posix.POLL.IN,
         .revents = 0,
     };
-    while (true) {
-        const now = try monotonicNow();
-        if (now >= absolute) return false;
-        const remaining = absolute - now;
-        const milliseconds = std.math.divCeil(
-            u64,
-            remaining,
-            std.time.ns_per_ms,
-        ) catch return error.Clock;
-        const timeout: i32 = @intCast(@min(
-            milliseconds,
-            @as(u64, std.math.maxInt(i32)),
-        ));
-        const result = c.poll(&descriptor, 1, timeout);
-        if (result > 0) {
-            try boundary.drainRenderWake();
-            return true;
-        }
-        if (result == 0) return false;
-        if (std.c.errno(result) != .INTR) return error.Wake;
-    }
+    const ready = try pollUntil(DeadlinePoll, (&descriptor)[0..1], absolute) orelse return false;
+    if (ready == 0) return error.Wake;
+    try boundary.drainRenderWake();
+    return true;
 }
 
 const RenderWake = struct {
@@ -4160,36 +4144,225 @@ fn waitRenderWakeBlockingUntil(
     terminals: *terminal_handoff.Boundary,
     absolute: ?u64,
 ) !RenderWake {
-    var descriptors = [_]c.pollfd{
-        .{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 },
-        .{ .fd = terminals.rendererFd(), .events = c.POLLIN, .revents = 0 },
+    var descriptors = [_]std.posix.pollfd{
+        .{ .fd = boundary.renderFd(), .events = std.posix.POLL.IN, .revents = 0 },
+        .{ .fd = terminals.rendererFd(), .events = std.posix.POLL.IN, .revents = 0 },
     };
+    const result = if (absolute) |deadline_value|
+        try pollUntil(DeadlinePoll, &descriptors, deadline_value) orelse
+            return .{ .terminal = false, .deadline = true }
+    else
+        try pollWithoutDeadline(TypedPoll, &descriptors, -1);
+    if (result == 0) return .{ .terminal = false, .deadline = true };
+    const boundary_woke = descriptors[0].revents & std.posix.POLL.IN != 0;
+    if (boundary_woke) try boundary.drainRenderWake();
+    const terminal_dirty = descriptors[1].revents & std.posix.POLL.IN != 0;
+    if (terminal_dirty) try terminals.drainRendererWake();
+    return .{ .terminal = terminal_dirty, .deadline = false };
+}
+
+const DeadlinePoll = struct {
+    fn now() !u64 {
+        return monotonicNow();
+    }
+
+    fn poll(descriptors: []std.posix.pollfd, timeout: i32) c_int {
+        return std.posix.system.poll(
+            descriptors.ptr,
+            @intCast(descriptors.len),
+            timeout,
+        );
+    }
+
+    fn errno(result: c_int) std.posix.E {
+        return std.posix.errno(result);
+    }
+};
+
+const TypedPoll = struct {
+    fn poll(descriptors: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
+        return std.posix.poll(descriptors, timeout);
+    }
+};
+
+fn pollWithoutDeadline(
+    comptime Ops: type,
+    descriptors: []std.posix.pollfd,
+    timeout: i32,
+) error{Wake}!usize {
+    for (descriptors) |*descriptor| descriptor.revents = 0;
+    return Ops.poll(descriptors, timeout) catch error.Wake;
+}
+
+fn pollUntil(
+    comptime Ops: type,
+    descriptors: []std.posix.pollfd,
+    absolute: u64,
+) !?usize {
     while (true) {
-        var timeout: i32 = -1;
-        if (absolute) |deadline_value| {
-            const now = try monotonicNow();
-            if (now >= deadline_value) return .{ .terminal = false, .deadline = true };
-            const remaining = deadline_value - now;
-            const milliseconds = std.math.divCeil(
-                u64,
-                remaining,
-                std.time.ns_per_ms,
-            ) catch return error.Clock;
-            timeout = @intCast(@min(milliseconds, @as(u64, std.math.maxInt(i32))));
-        }
-        const result = c.poll(&descriptors, descriptors.len, timeout);
-        if (result == 0) return .{ .terminal = false, .deadline = true };
-        if (result > 0) {
-            const boundary_woke = descriptors[0].revents & c.POLLIN != 0;
-            if (boundary_woke)
-                try boundary.drainRenderWake();
-            const terminal_dirty = descriptors[1].revents & c.POLLIN != 0;
-            if (terminal_dirty) try terminals.drainRendererWake();
-            return .{ .terminal = terminal_dirty, .deadline = false };
-        }
-        if (result < 0 and std.c.errno(result) == .INTR) continue;
+        const now = try Ops.now();
+        if (now >= absolute) return null;
+        const remaining = absolute - now;
+        const milliseconds = std.math.divCeil(
+            u64,
+            remaining,
+            std.time.ns_per_ms,
+        ) catch return error.Clock;
+        const timeout: i32 = @intCast(@min(
+            milliseconds,
+            @as(u64, std.math.maxInt(i32)),
+        ));
+        for (descriptors) |*descriptor| descriptor.revents = 0;
+        const result = Ops.poll(descriptors, timeout);
+        if (result > 0) return std.math.cast(usize, result) orelse return error.Wake;
+        if (result == 0) return null;
+        if (Ops.errno(result) == .INTR) continue;
         return error.Wake;
     }
+}
+
+test "Renderer poll preserves timeout ownership EINTR deadlines and wake classification" {
+    const NonDeadline = struct {
+        var call_count: u8 = 0;
+        var timeouts: [2]i32 = .{ 0, 0 };
+        var revents_clean: [2]bool = .{ false, false };
+
+        fn poll(descriptors: []std.posix.pollfd, timeout: i32) std.posix.PollError!usize {
+            timeouts[call_count] = timeout;
+            revents_clean[call_count] = descriptors[0].revents == 0;
+            call_count += 1;
+            return 0;
+        }
+    };
+    NonDeadline.call_count = 0;
+    var descriptor = std.posix.pollfd{
+        .fd = 7,
+        .events = std.posix.POLL.IN,
+        .revents = std.posix.POLL.HUP,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try pollWithoutDeadline(NonDeadline, (&descriptor)[0..1], 2_000),
+    );
+    descriptor.revents = std.posix.POLL.ERR;
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try pollWithoutDeadline(NonDeadline, (&descriptor)[0..1], 0),
+    );
+    try std.testing.expectEqual([2]i32{ 2_000, 0 }, NonDeadline.timeouts);
+    try std.testing.expectEqual([2]bool{ true, true }, NonDeadline.revents_clean);
+
+    const NonDeadlineFailure = struct {
+        fn poll(_: []std.posix.pollfd, _: i32) std.posix.PollError!usize {
+            return error.SystemResources;
+        }
+    };
+    try std.testing.expectError(
+        error.Wake,
+        pollWithoutDeadline(NonDeadlineFailure, (&descriptor)[0..1], 2_000),
+    );
+
+    const InterruptedDeadline = struct {
+        var now_count: u8 = 0;
+        var poll_count: u8 = 0;
+        var timeouts: [2]i32 = .{ 0, 0 };
+        var revents_clean: [2]bool = .{ false, false };
+
+        fn now() !u64 {
+            const values = [2]u64{ 5 * std.time.ns_per_ms, 7 * std.time.ns_per_ms };
+            const value = values[now_count];
+            now_count += 1;
+            return value;
+        }
+
+        fn poll(descriptors: []std.posix.pollfd, timeout: i32) c_int {
+            timeouts[poll_count] = timeout;
+            revents_clean[poll_count] = descriptors[0].revents == 0;
+            if (poll_count == 0) descriptors[0].revents = std.posix.POLL.IN;
+            poll_count += 1;
+            return if (poll_count == 1) -1 else 0;
+        }
+
+        fn errno(_: c_int) std.posix.E {
+            return .INTR;
+        }
+    };
+    InterruptedDeadline.now_count = 0;
+    InterruptedDeadline.poll_count = 0;
+    descriptor.revents = std.posix.POLL.HUP;
+    try std.testing.expect((try pollUntil(
+        InterruptedDeadline,
+        (&descriptor)[0..1],
+        10 * std.time.ns_per_ms,
+    )) == null);
+    try std.testing.expectEqual([2]i32{ 5, 3 }, InterruptedDeadline.timeouts);
+    try std.testing.expectEqual([2]bool{ true, true }, InterruptedDeadline.revents_clean);
+
+    const DeadlineFailure = struct {
+        fn now() !u64 {
+            return 1;
+        }
+
+        fn poll(_: []std.posix.pollfd, _: i32) c_int {
+            return -1;
+        }
+
+        fn errno(_: c_int) std.posix.E {
+            return .BADF;
+        }
+    };
+    try std.testing.expectError(
+        error.Wake,
+        pollUntil(DeadlineFailure, (&descriptor)[0..1], std.time.ns_per_ms),
+    );
+
+    const limits: render_api.terminal.Content.Limits = .{
+        .commands = 32,
+        .upload_bytes = 4096,
+        .cells = 32,
+        .rows = 4,
+        .images = 1,
+        .placements = 2,
+        .image_bytes = 4096,
+        .glyphs = 8,
+        .masks = 2,
+        .resources_per_update = 8,
+        .raster_bytes = 4096,
+        .decoration_bytes = 1024,
+    };
+    var boundary_only = try shared.Boundary.init(std.testing.io);
+    defer boundary_only.deinit();
+    var quiet_terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        limits,
+    );
+    defer quiet_terminals.deinit();
+    boundary_only.requestStop(null);
+    const boundary_wake = try waitRenderWakeBlockingUntil(
+        &boundary_only,
+        &quiet_terminals,
+        null,
+    );
+    try std.testing.expect(!boundary_wake.terminal);
+    try std.testing.expect(!boundary_wake.deadline);
+
+    var quiet_boundary = try shared.Boundary.init(std.testing.io);
+    defer quiet_boundary.deinit();
+    var terminal_only = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        limits,
+    );
+    defer terminal_only.deinit();
+    terminal_only.shutdown();
+    const terminal_wake = try waitRenderWakeBlockingUntil(
+        &quiet_boundary,
+        &terminal_only,
+        null,
+    );
+    try std.testing.expect(terminal_wake.terminal);
+    try std.testing.expect(!terminal_wake.deadline);
 }
 
 const InputErrorDisposition = enum { reject, fatal };

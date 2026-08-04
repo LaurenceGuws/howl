@@ -460,9 +460,16 @@ test "session adapter retains stable identities through pane and tab changes" {
 }
 
 fn expectReadable(descriptor: i32) !void {
-    var poll_descriptor = c.pollfd{ .fd = descriptor, .events = c.POLLIN, .revents = 0 };
-    try std.testing.expectEqual(@as(c_int, 1), c.poll(&poll_descriptor, 1, 0));
-    try std.testing.expect((poll_descriptor.revents & c.POLLIN) != 0);
+    var poll_descriptor = std.posix.pollfd{
+        .fd = descriptor,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try std.posix.poll((&poll_descriptor)[0..1], 0),
+    );
+    try std.testing.expect((poll_descriptor.revents & std.posix.POLL.IN) != 0);
 }
 
 fn eventDescriptor() !i32 {

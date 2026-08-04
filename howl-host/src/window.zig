@@ -330,14 +330,15 @@ fn runFallible(boundary: *shared.Boundary) !void {
         }
         if (c.wl_display_dispatch_pending(display) < 0) return error.Dispatch;
         if (c.wl_display_flush(display) < 0) return error.Dispatch;
-        var descriptors = [_]posix.pollfd{
-            .{ .fd = display_fd, .events = posix.POLLIN, .revents = 0 },
-            .{ .fd = boundary.windowFd(), .events = posix.POLLIN, .revents = 0 },
+        var descriptors = [_]std.posix.pollfd{
+            .{ .fd = display_fd, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = boundary.windowFd(), .events = std.posix.POLL.IN, .revents = 0 },
         };
-        const ready = posix.poll(&descriptors, descriptors.len, -1);
-        if (ready < 0 and std.posix.errno(ready) != .INTR) return error.Dispatch;
-        if (ready > 0 and (descriptors[1].revents & posix.POLLIN) != 0) try boundary.drainWindowWake();
-        if (ready > 0 and (descriptors[0].revents & posix.POLLIN) != 0 and c.wl_display_dispatch(display) < 0) return error.Dispatch;
+        const poll_result = try waitWindowEvents(WindowPoll, &descriptors);
+        const actions = classifyWindowPoll(poll_result, &descriptors);
+        if (actions.drain_boundary) try boundary.drainWindowWake();
+        if (actions.dispatch_display and c.wl_display_dispatch(display) < 0)
+            return error.Dispatch;
         if (c.wl_display_get_error(display) != 0) return error.Protocol;
     }
     if (state.surface) |surface| {
@@ -345,6 +346,142 @@ fn runFallible(boundary: *shared.Boundary) !void {
         c.wl_surface_commit(surface);
         if (c.wl_display_flush(display) < 0) return error.Dispatch;
     }
+}
+
+const WindowPoll = struct {
+    fn poll(descriptors: []std.posix.pollfd, timeout: i32) c_int {
+        return std.posix.system.poll(
+            descriptors.ptr,
+            @intCast(descriptors.len),
+            timeout,
+        );
+    }
+
+    fn errno(result: c_int) std.posix.E {
+        return std.posix.errno(result);
+    }
+};
+
+const WindowPollResult = union(enum) {
+    interrupted,
+    ready: usize,
+};
+
+const WindowPollActions = struct {
+    drain_boundary: bool,
+    dispatch_display: bool,
+};
+
+fn classifyWindowPoll(
+    result: WindowPollResult,
+    descriptors: *const [2]std.posix.pollfd,
+) WindowPollActions {
+    return switch (result) {
+        .interrupted => .{ .drain_boundary = false, .dispatch_display = false },
+        .ready => |ready| .{
+            .drain_boundary = ready > 0 and descriptors[1].revents & std.posix.POLL.IN != 0,
+            .dispatch_display = ready > 0 and descriptors[0].revents & std.posix.POLL.IN != 0,
+        },
+    };
+}
+
+fn waitWindowEvents(
+    comptime Ops: type,
+    descriptors: []std.posix.pollfd,
+) error{Dispatch}!WindowPollResult {
+    for (descriptors) |*descriptor| descriptor.revents = 0;
+    const result = Ops.poll(descriptors, -1);
+    if (result >= 0) return .{ .ready = std.math.cast(usize, result) orelse return error.Dispatch };
+    if (Ops.errno(result) == .INTR) return .interrupted;
+    return error.Dispatch;
+}
+
+test "Window poll preserves indefinite ownership failure and clean readiness facts" {
+    const Ready = struct {
+        var timeout: i32 = 0;
+        var revents_clean: bool = false;
+
+        fn poll(descriptors: []std.posix.pollfd, value: i32) c_int {
+            timeout = value;
+            revents_clean = descriptors[0].revents == 0 and descriptors[1].revents == 0;
+            descriptors[1].revents = std.posix.POLL.IN;
+            return 1;
+        }
+
+        fn errno(_: c_int) std.posix.E {
+            return .SUCCESS;
+        }
+    };
+    var descriptors = [_]std.posix.pollfd{
+        .{ .fd = 11, .events = std.posix.POLL.IN, .revents = std.posix.POLL.HUP },
+        .{ .fd = 12, .events = std.posix.POLL.IN, .revents = std.posix.POLL.ERR },
+    };
+    const ready = try waitWindowEvents(Ready, &descriptors);
+    try std.testing.expectEqual(@as(usize, 1), ready.ready);
+    try std.testing.expectEqual(@as(i32, -1), Ready.timeout);
+    try std.testing.expect(Ready.revents_clean);
+    try std.testing.expectEqual(@as(i16, 0), descriptors[0].revents);
+    try std.testing.expect(descriptors[1].revents & std.posix.POLL.IN != 0);
+
+    const Failure = struct {
+        fn poll(_: []std.posix.pollfd, _: i32) c_int {
+            return -1;
+        }
+
+        fn errno(_: c_int) std.posix.E {
+            return .NOMEM;
+        }
+    };
+    try std.testing.expectError(error.Dispatch, waitWindowEvents(Failure, &descriptors));
+
+    const Interrupted = struct {
+        var revents_clean: bool = false;
+
+        fn poll(values: []std.posix.pollfd, timeout: i32) c_int {
+            revents_clean = timeout == -1 and values[0].revents == 0 and values[1].revents == 0;
+            values[0].revents = std.posix.POLL.IN;
+            values[1].revents = std.posix.POLL.IN;
+            return -1;
+        }
+
+        fn errno(_: c_int) std.posix.E {
+            return .INTR;
+        }
+    };
+    descriptors[0].revents = std.posix.POLL.HUP;
+    descriptors[1].revents = std.posix.POLL.ERR;
+    const interrupted = try waitWindowEvents(Interrupted, &descriptors);
+    try std.testing.expect(interrupted == .interrupted);
+    try std.testing.expect(Interrupted.revents_clean);
+
+    try std.testing.expectEqual(
+        WindowPollActions{ .drain_boundary = false, .dispatch_display = false },
+        classifyWindowPoll(interrupted, &descriptors),
+    );
+    descriptors[0].revents = std.posix.POLL.IN;
+    descriptors[1].revents = 0;
+    try std.testing.expectEqual(
+        WindowPollActions{ .drain_boundary = false, .dispatch_display = true },
+        classifyWindowPoll(.{ .ready = 1 }, &descriptors),
+    );
+    descriptors[0].revents = 0;
+    descriptors[1].revents = std.posix.POLL.IN;
+    try std.testing.expectEqual(
+        WindowPollActions{ .drain_boundary = true, .dispatch_display = false },
+        classifyWindowPoll(.{ .ready = 1 }, &descriptors),
+    );
+    descriptors[0].revents = std.posix.POLL.IN;
+    descriptors[1].revents = std.posix.POLL.IN;
+    try std.testing.expectEqual(
+        WindowPollActions{ .drain_boundary = true, .dispatch_display = true },
+        classifyWindowPoll(.{ .ready = 2 }, &descriptors),
+    );
+    descriptors[0].revents = std.posix.POLL.HUP;
+    descriptors[1].revents = std.posix.POLL.ERR;
+    try std.testing.expectEqual(
+        WindowPollActions{ .drain_boundary = false, .dispatch_display = false },
+        classifyWindowPoll(.{ .ready = 1 }, &descriptors),
+    );
 }
 
 fn constructRing(state: *State, offered: shared.OfferedRing) !void {

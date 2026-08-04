@@ -3,11 +3,11 @@ sprint:
   id: stdlib_boundary
   branch: feature/debt_payoff/stdlib_boundary
   status: active
-  active_slice: poll_and_errno
+  active_slice: mapping_lifetime
 
 objective: >-
-  Replace translated-C polling while preserving each owner's exact timeout,
-  interruption, readiness, and progress semantics.
+  Replace only Window mapping ownership with pinned typed std.posix mmap and
+  munmap while preserving read-only/private flags, failure, and cleanup.
 
 questions:
   - id: eventfd
@@ -18,10 +18,10 @@ questions:
     answer: typed std.posix.read plus std.posix.system.write and close with owner-controlled errno handling
   - id: poll
     status: resolved
-    answer: deadline owners use std.posix.system.poll and recompute monotonic remaining time after EINTR; indefinite and fixed non-deadline waits may use std.posix.poll
+    answer: deadline owners use raw poll while owner-equivalent waits use typed poll
   - id: mapping
-    status: deferred
-    question: Which std.posix mmap/munmap signatures preserve pointer, flags, failure, and cleanup semantics?
+    status: resolved
+    answer: typed std.posix.mmap and munmap with packed PROT READ and MAP TYPE PRIVATE facts
   - id: build
     status: deferred
     question: Which host_c imports and Translate-C wiring become unreachable after migration?
@@ -32,21 +32,21 @@ accepted_evidence:
   tracked: false
 
 accepted_slice:
-  id: eventfd_and_descriptor_io
+  id: poll_and_errno
   state: accepted
-  product:
-    - howl-host/src/shared.zig
-    - howl-host/src/terminal_handoff.zig
-  validation: all_modes_and_source_gates_pass
-
-active_scope:
   product:
     - howl-host/src/renderer.zig
     - howl-host/src/window.zig
     - howl-host/test/test.zig
+  validation: all_modes_and_source_gates_pass
+
+active_scope:
+  product:
+    - howl-host/src/window.zig
   excluded:
     - eventfd owners
-    - Window mappings
+    - Renderer polling
+    - Host polling fixtures
     - host_c generation and build imports
     - renderer_c
 
