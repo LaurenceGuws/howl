@@ -1,0 +1,47 @@
+schema: 1
+sprint:
+  id: ownership_names
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/ownership_names
+  status: active
+  objective: >-
+    Replace dishonest umbrella ownership names with exact domain names while
+    preserving cohesive files, behavior, storage, and package boundaries.
+
+scope:
+  owned:
+    - maintained Zig filenames and private module aliases whose names conceal their actual owner
+    - build imports, source-map entries, comments, and tests coupled to an accepted rename
+    - howl-host/src/shared.zig as the first explicit ownership question
+  excluded:
+    - file splitting, package extraction, and new interfaces
+    - behavior, capacity, allocation, layout, scheduling, and protocol changes
+    - cosmetic renames whose current name already identifies one coherent owner
+
+invariants:
+  - Every rename follows a complete symbol, import, build, test, documentation, and authority census.
+  - A file remains cohesive unless a separate reviewed structural intervention proves otherwise.
+  - Public vocabulary changes only when the old public name is dishonest and all consumers migrate atomically.
+  - Renames preserve byte layout, errors, bounds, ownership transfer, cleanup, and runtime behavior.
+  - No compatibility alias or parallel old/new vocabulary survives an accepted rename.
+
+slices:
+  - id: ownership_inventory
+    status: active
+    product_change: none
+    output: complete classification of suspected umbrella names and exact consumer census
+  - id: rename_contract
+    status: pending
+    product_change: none
+    output: finite accepted rename set with owner definitions and atomic migration order
+  - id: accepted_renames
+    status: pending
+    output: only contract-approved names migrated with no compatibility vocabulary
+
+acceptance:
+  - Every maintained candidate is classified as honest, dishonest, or deferred with exact source evidence.
+  - Accepted names identify one concrete owner and preserve cohesive source locality.
+  - No old vocabulary, compatibility alias, or stale authority survives.
+  - Affected package and workspace checks/tests pass in every optimization mode.
+  - Strict YAML, source audit, protocol validation, formatting, and git diff checks pass.

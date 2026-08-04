@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: null
+  active_sprint: ownership_names
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -40,7 +40,7 @@ debt_candidates:
       required Host Translate-C boundary.
     implementation_commits: [9afc414, 3c7b9f2, 20ee97d, 5ef1bf2]
   - id: ownership_names
-    status: pending
+    status: active
     scope: rename dishonest umbrella ownership without splitting cohesive state
   - id: mixed_ownership_audit
     scope: audit large files and preserve fewer cohesive files where that is the clearer owner shape
