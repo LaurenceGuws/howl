@@ -5564,6 +5564,56 @@ test "drainInput candidate dispositions are exhaustive" {
     }
 }
 
+test "drainInput propagates fatal session candidate invariants" {
+    var input_boundary = try shared.Boundary.init(std.testing.io);
+    defer input_boundary.deinit();
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32_768,
+            .upload_bytes = 4 * 1024 * 1024,
+            .cells = 32_768,
+            .rows = 128,
+            .images = 8,
+            .placements = 8,
+            .image_bytes = 256 * 1024,
+            .glyphs = 512,
+            .masks = 128,
+            .resources_per_update = terminal_retained_resource_limit,
+            .raster_bytes = 4 * 1024 * 1024,
+            .decoration_bytes = 256 * 1024,
+        },
+    );
+    defer terminals.deinit();
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
+    topology.next_tab_id = std.math.maxInt(u64);
+    var key: wayland.input.Key = std.mem.zeroes(wayland.input.Key);
+    key.keycode = 1;
+    key.state = .pressed;
+    key.keysym = .w;
+    key.semantic_modifiers = .{ .control = true, .shift = true };
+    try input_boundary.publishInput(.{ .key = key });
+    var actions = input_actions.State{};
+    var work: CanvasWork = undefined;
+    work.terminals = &terminals;
+    var pending: ?PendingTopology = null;
+    var deferred: ?DeferredTopologyInput = null;
+    try std.testing.expectError(
+        error.Capacity,
+        drainInput(
+            &input_boundary,
+            &actions,
+            &work,
+            &topology,
+            chrome_appearance,
+            &pending,
+            &deferred,
+        ),
+    );
+    try std.testing.expect(pending == null and deferred == null);
+}
+
 test "provisional startup frame exposes no terminal lifecycle or topology" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
