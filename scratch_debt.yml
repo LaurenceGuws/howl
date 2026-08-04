@@ -3,11 +3,11 @@ sprint:
   id: ownership_names
   branch: feature/debt_payoff/ownership_names
   status: active
-  active_slice: rename_contract
+  active_slice: window_render_boundary
 
 objective: >-
-  Define the finite atomic contract for the two accepted dishonest ownership
-  groups without changing product source.
+  Atomically rename only the accepted Window/Render boundary owner and all
+  exact module vocabulary without changing behavior or public declarations.
 
 questions:
   - id: shared_owner
@@ -21,20 +21,30 @@ questions:
     answer: ownership_inventory.yml records two complete atomic path sets and every old private alias
 
 accepted_slice:
-  id: ownership_inventory
+  id: rename_contract
   state: accepted
-  evidence: .zig/work/debt-payoff/ownership-names/ownership_inventory.yml
-  records: 26
-  atomic_groups: [window_render_boundary, session_chrome_adapter]
+  evidence: .zig/work/debt-payoff/ownership-names/rename_contract.yml
+  ordered_groups: [window_render_boundary, session_chrome_adapter]
 
 active_scope:
-  evidence: .zig/work/debt-payoff/ownership-names/rename_contract.yml
-  product_change: forbidden
+  implementation: window_render_boundary
+  product_change: authorized_atomic_rename
+  tracked_paths:
+    - howl-host/src/shared.zig
+    - howl-host/src/main.zig
+    - howl-host/src/window.zig
+    - howl-host/src/renderer.zig
+    - howl-host/test/test.zig
+    - howl-host/build.zig
+    - project_source_map.yml
+    - sprint_ownership_names.yml
+    - scratch_debt.yml
   excluded:
-    - source renames
     - file splitting
     - package extraction
     - behavior or API changes
+    - session_chrome_adapter implementation
+    - compatibility aliases or parallel modules
 
 progress:
   state: not_started
