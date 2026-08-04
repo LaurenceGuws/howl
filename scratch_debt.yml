@@ -1,0 +1,32 @@
+schema: 1
+sprint:
+  id: stdlib_boundary
+  branch: feature/debt_payoff/stdlib_boundary
+  status: active
+  active_slice: stdlib_inventory
+
+objective: >-
+  Prove the exact pinned Zig replacement for every host_c use before changing
+  product source or build wiring.
+
+questions:
+  - id: eventfd
+    status: open
+    question: Which std.os.linux eventfd interface and flags preserve exact creation and descriptor ownership?
+  - id: descriptor_io
+    status: open
+    question: Which stdlib read, write, close, and errno surfaces preserve EINTR/EAGAIN behavior?
+  - id: poll
+    status: open
+    question: Which std.posix poll facts preserve timeout, wake, and interruption semantics?
+  - id: mapping
+    status: open
+    question: Which std.posix mmap/munmap signatures preserve pointer, flags, failure, and cleanup semantics?
+  - id: build
+    status: open
+    question: Which host_c imports and Translate-C wiring become unreachable after migration?
+
+output:
+  path: .zig/work/debt-payoff/stdlib-boundary/stdlib_inventory.yml
+  tracked: false
+  product_change: blocked_until_review

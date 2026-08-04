@@ -8,6 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
+  active_sprint: stdlib_boundary
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -30,6 +31,7 @@ delivered_boundary:
 
 debt_candidates:
   - id: stdlib_boundary
+    status: active
     scope: remove redundant host_c ownership where pinned Zig stdlib is sufficient
   - id: ownership_names
     scope: rename dishonest umbrella ownership without splitting cohesive state

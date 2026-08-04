@@ -1,0 +1,53 @@
+schema: 1
+sprint:
+  id: stdlib_boundary
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/stdlib_boundary
+  status: active
+  objective: >-
+    Remove the redundant Host translate-C boundary only where pinned Zig stdlib
+    interfaces preserve exact Linux behavior, ownership, errors, and cleanup.
+
+scope:
+  owned:
+    - howl-host/build.zig host-native.h translation and host_c module wiring
+    - howl-host/src/shared.zig eventfd, descriptor IO, errno, and poll use
+    - howl-host/src/terminal_handoff.zig eventfd and descriptor IO use
+    - howl-host/src/window.zig mmap, munmap, poll, and errno use
+    - howl-host/src/renderer.zig poll and errno use
+  excluded:
+    - renderer_c and DRM/native ABI ownership
+    - product behavior, input capability, performance policy, and file splitting
+
+invariants:
+  - Eventfds remain nonblocking and close-on-exec with identical directional ownership.
+  - Wake writes and drains retain exact EINTR and EAGAIN treatment.
+  - Poll wake, timeout, and interruption behavior remains unchanged.
+  - Every mapping retains exact read-only/private flags, failure handling, and unmapping lifetime.
+  - No ambient Zig API substitutes for the repository pin.
+
+slices:
+  - id: stdlib_inventory
+    status: active
+    product_change: none
+    output: complete use-to-pinned-stdlib mapping with exact semantic differences
+  - id: eventfd_and_descriptor_io
+    status: pending
+    output: shared and terminal handoff use pinned stdlib Linux/POSIX ownership
+  - id: poll_and_errno
+    status: pending
+    output: Renderer and Window polling use pinned stdlib facts
+  - id: mapping_lifetime
+    status: pending
+    output: Window mappings use pinned stdlib mmap and munmap contracts
+  - id: build_boundary_removal
+    status: pending
+    output: host_c translation and imports removed after all consumers migrate
+
+acceptance:
+  - Exact source inventory and behavioral comparison are reviewed before implementation.
+  - Each implementation slice has owner-local rollback and failure proofs.
+  - Host and workspace check/test pass in every optimization mode.
+  - Source audit, protocol validation, formatting, and git diff checks pass.
+  - No host_c symbol or generated host-native header remains.
