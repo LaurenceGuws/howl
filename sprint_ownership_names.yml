@@ -4,7 +4,7 @@ sprint:
   marathon: debt_payoff
   version: 0.1.5-dev
   branch: feature/debt_payoff/ownership_names
-  status: active
+  status: review_ready
   objective: >-
     Replace dishonest umbrella ownership names with exact domain names while
     preserving cohesive files, behavior, storage, and package boundaries.
@@ -36,7 +36,7 @@ slices:
       - The explicit discovery rule scanned 115 maintained Zig files and 269 private import aliases.
       - Twenty-six candidates have complete classification, source, vocabulary, and migration reverse indexes.
       - window_render_boundary.zig is one cohesive Window/Render boundary with exact owner vocabulary.
-      - chrome_state.zig retains no Chrome state and is one cohesive Session-to-Chrome adapter.
+      - session_chrome_adapter.zig is one cohesive Session-to-Chrome adapter.
       - Conventional package roots, selected implementation aliases, and honest owner-local facts remain unchanged.
   - id: rename_contract
     status: accepted
@@ -45,14 +45,14 @@ slices:
     evidence: .zig/work/debt-payoff/ownership-names/rename_contract.yml
     accepted_facts:
       - window_render_boundary.zig is already the accepted boundary name without changing its 55-symbol public surface.
-      - chrome_state.zig migrates separately to session_chrome_adapter.zig without changing its 19-symbol public surface.
+      - session_chrome_adapter.zig is the separately accepted adapter owner without changing its 19-symbol public surface.
       - Each rename has a complete source, build, test, comment, and authority path set plus scoped old-vocabulary rejection.
       - chrome_state_equivalence_test.zig remains the honest name of the legacy-state oracle.
   - id: accepted_renames
-    status: active
+    status: accepted
     output: only contract-approved names migrated with no compatibility vocabulary
-    accepted_groups: [window_render_boundary]
-    active_group: session_chrome_adapter
+    accepted_groups: [window_render_boundary, session_chrome_adapter]
+    active_group: null
 
 acceptance:
   - Every maintained candidate is classified as honest, dishonest, or deferred with exact source evidence.

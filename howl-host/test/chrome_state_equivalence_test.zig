@@ -3,17 +3,17 @@
 const std = @import("std");
 const render = @import("howl_render");
 const session = @import("session_domain");
-const chrome_state = @import("chrome_state");
+const session_chrome_adapter = @import("session_chrome_adapter");
 const chrome = render.chrome;
 
-const Appearance = chrome_state.Appearance;
-const default_tab_bar_height = chrome_state.default_tab_bar_height;
-const max_tabs = chrome_state.max_tabs;
-const max_panes_per_tab = chrome_state.max_panes_per_tab;
-const max_live_panes = chrome_state.max_live_panes;
-const max_label_bytes = chrome_state.max_label_bytes;
-const scrollbar_width = chrome_state.scrollbar_width;
-const scrollbar_min_thumb = chrome_state.scrollbar_min_thumb;
+const Appearance = session_chrome_adapter.Appearance;
+const default_tab_bar_height = session_chrome_adapter.default_tab_bar_height;
+const max_tabs = session_chrome_adapter.max_tabs;
+const max_panes_per_tab = session_chrome_adapter.max_panes_per_tab;
+const max_live_panes = session_chrome_adapter.max_live_panes;
+const max_label_bytes = session_chrome_adapter.max_label_bytes;
+const scrollbar_width = session_chrome_adapter.scrollbar_width;
+const scrollbar_min_thumb = session_chrome_adapter.scrollbar_min_thumb;
 
 fn testAppearance() Appearance {
     return .{
@@ -200,7 +200,7 @@ const LegacyTopology = struct {
         result.content_size = content;
         result.basis_content_size = .{ .width = self.basis_surface.width, .height = self.basis_surface.height - self.tab_bar_height };
         for (self.tabs[0..self.tab_count], 0..) |legacy_tab, tab_index| {
-            var tab = session.Tab{ .id = try chrome_state.fromRenderTabId(legacy_tab.id), .pane_count = legacy_tab.pane_count };
+            var tab = session.Tab{ .id = try session_chrome_adapter.fromRenderTabId(legacy_tab.id), .pane_count = legacy_tab.pane_count };
             @memcpy(tab.label[0..legacy_tab.label_len], legacy_tab.label[0..legacy_tab.label_len]);
             tab.label_len = legacy_tab.label_len;
             for (legacy_tab.panes[0..legacy_tab.pane_count], 0..) |legacy_pane, pane_index| {
@@ -217,7 +217,7 @@ const LegacyTopology = struct {
                     .height = legacy_pane.basis_rect.height,
                 };
                 var pane = session.Pane{
-                    .id = try chrome_state.fromRenderPaneId(legacy_pane.id),
+                    .id = try session_chrome_adapter.fromRenderPaneId(legacy_pane.id),
                     .rect = rect,
                     .basis_rect = basis_rect,
                     .focused = legacy_pane.focused,
@@ -309,11 +309,11 @@ fn expectHitEquivalent(left: ?chrome.Hit, right: ?chrome.Hit) !void {
     if (left) |left_hit| {
         const right_hit = right.?;
         switch (left_hit) {
-            .tab => |id| try std.testing.expectEqual(id, try chrome_state.toRenderTabId(try chrome_state.fromRenderTabId(switch (right_hit) {
+            .tab => |id| try std.testing.expectEqual(id, try session_chrome_adapter.toRenderTabId(try session_chrome_adapter.fromRenderTabId(switch (right_hit) {
                 .tab => |right_id| right_id,
                 .pane => return error.TestUnexpectedResult,
             }))),
-            .pane => |id| try std.testing.expectEqual(id, try chrome_state.toRenderPaneId(try chrome_state.fromRenderPaneId(switch (right_hit) {
+            .pane => |id| try std.testing.expectEqual(id, try session_chrome_adapter.toRenderPaneId(try session_chrome_adapter.fromRenderPaneId(switch (right_hit) {
                 .pane => |right_id| right_id,
                 .tab => return error.TestUnexpectedResult,
             }))),
@@ -338,15 +338,15 @@ test "normalized legacy and content-local topology remain equivalent" {
     var modern_primitives: [256]chrome.Primitive = undefined;
     var modern_text: [4096]u8 = undefined;
     const old_output = try legacy.project(appearance, &.{}, &old_primitives, &old_text);
-    const modern_output = try chrome_state.project(&modern, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, &.{}, &modern_primitives, &modern_text);
+    const modern_output = try session_chrome_adapter.project(&modern, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, &.{}, &modern_primitives, &modern_text);
     try expectProjectedEquivalent(old_output, modern_output);
     for ([_]chrome.Point{ .{ .x = 1, .y = 1 }, .{ .x = 1, .y = 25 }, .{ .x = 319, .y = 239 }, .{ .x = -1, .y = -1 } }) |point| {
-        try expectHitEquivalent(try legacy.hitTest(point), try chrome_state.hitTest(&modern, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, point));
+        try expectHitEquivalent(try legacy.hitTest(point), try session_chrome_adapter.hitTest(&modern, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, point));
     }
 
     const old_tab = try legacy.createTab("other");
     const modern_tab = try modern.createTab("other");
-    try std.testing.expectEqual(old_tab, try chrome_state.toRenderTabId(modern_tab));
+    try std.testing.expectEqual(old_tab, try session_chrome_adapter.toRenderTabId(modern_tab));
     try expectSemanticEqual(&modern, &(try legacy.normalized()));
     try legacy.resizeSurface(.{ .width = 400, .height = 300 });
     try modern.resizeSurface(.{ .width = 400, .height = 276 });
@@ -357,15 +357,15 @@ test "normalized legacy and content-local topology remain equivalent" {
 
     const old_new_pane = try legacy.splitVertical(0);
     const modern_new_pane = try modern.split(modern.focusedPaneId(), .vertical);
-    try std.testing.expectEqual(old_new_pane, try chrome_state.toRenderPaneId(modern_new_pane));
+    try std.testing.expectEqual(old_new_pane, try session_chrome_adapter.toRenderPaneId(modern_new_pane));
     try legacy.focusPane(old_new_pane);
     try modern.focusPane(modern_new_pane);
     try expectSemanticEqual(&modern, &(try legacy.normalized()));
     const old_after = try legacy.project(appearance, &.{}, &old_primitives, &old_text);
-    const modern_after = try chrome_state.project(&modern, appearance, .{ .width = 400, .height = 300 }, .{ .y = 24 }, &.{}, &modern_primitives, &modern_text);
+    const modern_after = try session_chrome_adapter.project(&modern, appearance, .{ .width = 400, .height = 300 }, .{ .y = 24 }, &.{}, &modern_primitives, &modern_text);
     try expectProjectedEquivalent(old_after, modern_after);
     for ([_]chrome.Point{ .{ .x = 1, .y = 25 }, .{ .x = 250, .y = 25 }, .{ .x = 399, .y = 299 } }) |point| {
-        try expectHitEquivalent(try legacy.hitTest(point), try chrome_state.hitTest(&modern, appearance, .{ .width = 400, .height = 300 }, .{ .y = 24 }, point));
+        try expectHitEquivalent(try legacy.hitTest(point), try session_chrome_adapter.hitTest(&modern, appearance, .{ .width = 400, .height = 300 }, .{ .y = 24 }, point));
     }
 
     const before_invalid = modern;

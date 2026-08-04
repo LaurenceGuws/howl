@@ -4,7 +4,7 @@ const std = @import("std");
 const vt = @import("howl_vt");
 const render = @import("howl_render");
 const terminal_handoff = @import("terminal_handoff");
-const chrome_state = @import("chrome_state");
+const session_chrome_adapter = @import("session_chrome_adapter");
 const session = @import("session_domain");
 const facts = @import("terminal_test_facts");
 

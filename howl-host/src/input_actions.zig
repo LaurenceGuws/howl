@@ -5,7 +5,7 @@
 const std = @import("std");
 const wayland = @import("howl_wayland");
 const render = @import("howl_render");
-const chrome_state = @import("chrome_state");
+const session_chrome_adapter = @import("session_chrome_adapter");
 const session = @import("session_domain");
 
 const capture_limit: usize = 16;
@@ -177,7 +177,7 @@ pub fn candidate(current: *const session.SessionState, action: Action) session.E
 
 /// Constructs the candidate selected by one primary pointer press. Coordinates
 /// outside the finite signed pixel domain are unmatched.
-pub fn pointerCandidate(current: *const session.SessionState, appearance: chrome_state.Appearance, surface: chrome_state.SurfaceGeometry, origin: chrome_state.ContentOrigin, button: wayland.input.Button) PointerError!?session.SessionCandidate {
+pub fn pointerCandidate(current: *const session.SessionState, appearance: session_chrome_adapter.Appearance, surface: session_chrome_adapter.SurfaceGeometry, origin: session_chrome_adapter.ContentOrigin, button: wayland.input.Button) PointerError!?session.SessionCandidate {
     if (button.state != .pressed or button.button != primary_button) return null;
     if (!std.math.isFinite(button.point.x) or !std.math.isFinite(button.point.y)) return null;
     if (button.point.x < @as(f64, @floatFromInt(std.math.minInt(i32))) or button.point.x > @as(f64, @floatFromInt(std.math.maxInt(i32))) or
@@ -187,16 +187,16 @@ pub fn pointerCandidate(current: *const session.SessionState, appearance: chrome
         .x = @intFromFloat(@floor(button.point.x)),
         .y = @intFromFloat(@floor(button.point.y)),
     };
-    const hit = try chrome_state.hitTest(current, appearance, surface, origin, point) orelse return null;
+    const hit = try session_chrome_adapter.hitTest(current, appearance, surface, origin, point) orelse return null;
     var next = current.*;
     switch (hit) {
         .tab => |id| {
-            const semantic_id = try chrome_state.fromRenderTabId(id);
+            const semantic_id = try session_chrome_adapter.fromRenderTabId(id);
             if (semantic_id == next.activeTabId()) return null;
             try next.switchTab(semantic_id);
         },
         .pane => |id| {
-            const semantic_id = try chrome_state.fromRenderPaneId(id);
+            const semantic_id = try session_chrome_adapter.fromRenderPaneId(id);
             if (next.paneLayer(semantic_id) == .floating) {
                 if (semantic_id == next.focusedPaneId() and next.floatingPaneIsTopmost(semantic_id)) return null;
                 try next.raiseFloatingPane(semantic_id);
@@ -392,7 +392,7 @@ test "topology candidates cover tabs splits focus resize close and boundaries" {
 
 test "failed action preserves topology and stable identity issuance" {
     var topology = try session.SessionState.init(.{ .width = 320, .height = 216 });
-    while (topology.tabCount() < chrome_state.max_tabs) {
+    while (topology.tabCount() < session_chrome_adapter.max_tabs) {
         topology = (try candidate(&topology, .new_tab)).?.state;
     }
     const before = topology;
@@ -409,18 +409,18 @@ test "directional resize grows the focused pane toward the requested boundary" {
     const left = topology.paneId(0, 0).?;
     const right = try topology.split(left, .vertical);
     topology = (try candidate(&topology, .focus_left)).?.state;
-    const appearance = chrome_state.Appearance{
+    const appearance = session_chrome_adapter.Appearance{
         .style = .{ .foreground = .{ .r = 1, .g = 2, .b = 3, .a = 255 }, .background = .{ .r = 4, .g = 5, .b = 6, .a = 255 }, .border = .{ .r = 7, .g = 8, .b = 9, .a = 255 } },
         .tab_active_background = .{ .r = 10, .g = 11, .b = 12, .a = 255 },
         .tab_inactive_background = .{ .r = 13, .g = 14, .b = 15, .a = 255 },
     };
-    try std.testing.expectEqual(@backingInt(right), @backingInt((try chrome_state.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
+    try std.testing.expectEqual(@backingInt(right), @backingInt((try session_chrome_adapter.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
     topology = (try candidate(&topology, .resize_right)).?.state;
-    try std.testing.expectEqual(@backingInt(left), @backingInt((try chrome_state.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
+    try std.testing.expectEqual(@backingInt(left), @backingInt((try session_chrome_adapter.hitTest(&topology, appearance, .{ .width = 320, .height = 240 }, .{ .y = 24 }, .{ .x = 164, .y = 40 })).?.pane));
 }
 
 test "directional and pointer no-ops produce no topology candidate" {
-    const appearance = chrome_state.Appearance{
+    const appearance = session_chrome_adapter.Appearance{
         .style = .{ .foreground = .{ .r = 1, .g = 2, .b = 3, .a = 255 }, .background = .{ .r = 4, .g = 5, .b = 6, .a = 255 }, .border = .{ .r = 7, .g = 8, .b = 9, .a = 255 } },
         .tab_active_background = .{ .r = 10, .g = 11, .b = 12, .a = 255 },
         .tab_inactive_background = .{ .r = 13, .g = 14, .b = 15, .a = 255 },
@@ -444,7 +444,7 @@ test "primary pointer selects tabs focuses panes and raises floating order" {
     const floating = try topology.createFloatingPane(.{ .x = 20, .y = 20, .width = 80, .height = 50 }, "float");
     const second_tab = try topology.createTab("two");
     try std.testing.expect(@backingInt(second_tab) != 0);
-    const appearance = chrome_state.Appearance{
+    const appearance = session_chrome_adapter.Appearance{
         .style = .{ .foreground = .{ .r = 1, .g = 2, .b = 3, .a = 4 }, .background = .{ .r = 5, .g = 6, .b = 7, .a = 8 }, .border = .{ .r = 9, .g = 10, .b = 11, .a = 12 } },
         .tab_active_background = .{ .r = 13, .g = 14, .b = 15, .a = 16 },
         .tab_inactive_background = .{ .r = 17, .g = 18, .b = 19, .a = 20 },

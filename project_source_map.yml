@@ -64,7 +64,7 @@ accepted:
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
   howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs
-  howl-host/src/chrome_state.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
+  howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection
   howl-host/src/terminal_handoff.zig: bounded lifecycle and input facts plus shared-pool release/acquire terminal Content transfer into canonical Canvas facts and exact Composer drainage
   howl-host/src/terminal.zig: one caller-driven poll owner for bounded logical PTY, VT, terminal projection, child-write, and cleanup lifetimes

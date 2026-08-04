@@ -11,7 +11,7 @@ const frame_command_limit: usize = 32_768;
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const render_api = @import("howl_render");
-const chrome_state = @import("chrome_state");
+const session_chrome_adapter = @import("session_chrome_adapter");
 const session = @import("session_domain");
 const vk_surface = howl_vk.surface;
 const replay_command_limit: usize = vk_surface.max_commands;
@@ -20,7 +20,7 @@ const input_actions = @import("input_actions");
 const wayland = @import("howl_wayland");
 const terminal_handoff = @import("terminal_handoff");
 const dev_config = @import("dev_config");
-const chrome_appearance = chrome_state.Appearance{
+const chrome_appearance = session_chrome_adapter.Appearance{
     .style = .{
         .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
         .background = .{ .r = 20, .g = 24, .b = 32, .a = 255 },
@@ -862,7 +862,7 @@ fn focusedSourceForCandidate(
     candidate: *const session.SessionState,
     pending: ?*const PendingTopology,
 ) ?render_api.canvas.SourceId {
-    const render_pane = chrome_state.toRenderPaneId(candidate.focusedPaneId()) catch return null;
+    const render_pane = session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()) catch return null;
     if (work.terminals.sourceFor(render_pane)) |source| return source;
     if (pending) |value|
         if (value.new_pane) |pane|
@@ -981,7 +981,7 @@ test "bootstrap cursor source resolves before lifecycle activation" {
     const topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
     );
-    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
+    const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
     var pending: PendingTopology = undefined;
     pending.new_pane = pane;
     pending.new_source = @fromBackingInt(7);
@@ -1434,7 +1434,7 @@ const CanvasWork = struct {
     content: *render_api.chrome.Content,
     source: render_api.canvas.SourceId,
     surface: render_api.canvas.Size = .{ .width = 0, .height = 0 },
-    content_origin: chrome_state.ContentOrigin = .{ .y = 0 },
+    content_origin: session_chrome_adapter.ContentOrigin = .{ .y = 0 },
     producer_revision: u64 = 0,
     frame_uploads: []render_api.canvas.ResourceUploadFact,
     frame_removals: []render_api.canvas.FrameResourceRef,
@@ -1453,7 +1453,7 @@ const CanvasWork = struct {
     cursor_policy: dev_config.CursorPresentationPolicy,
     /// One fixed trail record per exact bounded TabId. Ordered tab slots are
     /// never the ownership key, so close/reorder/reuse cannot inherit a trail.
-    trails: [chrome_state.max_tabs]TrailSlot = undefined,
+    trails: [session_chrome_adapter.max_tabs]TrailSlot = undefined,
     trail_scratch: CursorTrail = .{},
     trail_scratch_tab: ?session.TabId = null,
     trail_scratch_deadline: ?u64 = null,
@@ -1622,7 +1622,7 @@ fn syncAcceptedTrail(
         candidate_slot = .{ .id = tab_id };
     }
     const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(chrome_state.toRenderPaneId(pane) catch return error.InvalidFrame) orelse {
+    const source = work.terminals.sourceFor(session_chrome_adapter.toRenderPaneId(pane) catch return error.InvalidFrame) orelse {
         work.trail_deadline = null;
         work.trail_frame_pending = false;
         if (transfer) |candidate| {
@@ -1748,7 +1748,7 @@ fn prepareTrailAnimation(
         work.trails[slot_index].initialized;
     if (!initialized) return false;
     const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(chrome_state.toRenderPaneId(pane) catch return false) orelse return false;
+    const source = work.terminals.sourceFor(session_chrome_adapter.toRenderPaneId(pane) catch return false) orelse return false;
     if (work.composer.cursorBinding(source) == null) return false;
     const old_deadline = if (transfer) |value| value.deadline else work.trail_deadline;
     var candidate = if (transfer) |value| value.trail else work.trails[slot_index].trail;
@@ -1891,13 +1891,13 @@ fn runFallible(
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
     try checkGpuBudget(initial_surface.physical_width, initial_surface.physical_height);
-    var chrome = try session.SessionState.init(contentExtent(renderExtent(initial_surface), try chrome_state.contentOrigin(renderExtent(initial_surface), chrome_state.default_tab_bar_height)));
+    var chrome = try session.SessionState.init(contentExtent(renderExtent(initial_surface), try session_chrome_adapter.contentOrigin(renderExtent(initial_surface), session_chrome_adapter.default_tab_bar_height)));
     var composer = try render_api.canvas.Composer.init(allocator, .{
-        .sources = chrome_state.max_live_panes + 1,
+        .sources = session_chrome_adapter.max_live_panes + 1,
         .retained_resources = frame_resource_limit,
         .retained_commands = frame_command_limit,
         .retained_pixel_bytes = 16 * 1024 * 1024,
-        .composition_sources = chrome_state.max_live_panes + 1,
+        .composition_sources = session_chrome_adapter.max_live_panes + 1,
         .candidate_resources = 1024,
         .candidate_commands = frame_command_limit,
         .candidate_pixel_bytes = 4 * 1024 * 1024,
@@ -1906,7 +1906,7 @@ fn runFallible(
     const chrome_source = try composer.registerSource();
     var chrome_content = try render_api.chrome.Content.init(allocator, .{
         .primitives = 256,
-        .text_bytes = (chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes,
+        .text_bytes = (session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) * session_chrome_adapter.max_label_bytes,
         .label_scalars = 4096,
         .shaped_glyphs = 4096,
         .glyphs = 512,
@@ -1956,7 +1956,7 @@ fn runFallible(
         .content = &chrome_content,
         .source = chrome_source,
         .surface = renderExtent(initial_surface),
-        .content_origin = try chrome_state.contentOrigin(renderExtent(initial_surface), chrome_state.default_tab_bar_height),
+        .content_origin = try session_chrome_adapter.contentOrigin(renderExtent(initial_surface), session_chrome_adapter.default_tab_bar_height),
         .frame_uploads = frame_uploads,
         .frame_removals = frame_removals,
         .frame_commands = frame_commands,
@@ -1985,7 +1985,7 @@ fn runFallible(
         initial_surface,
     );
     var chrome_primitives: [256]render_api.chrome.Primitive = undefined;
-    var chrome_text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
+    var chrome_text: [(session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) * session_chrome_adapter.max_label_bytes]u8 = undefined;
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
     var application = std.mem.zeroes(vk.VkApplicationInfo);
@@ -2180,7 +2180,7 @@ fn runFallible(
             if (!terminal_topology_committed) {
                 var candidate_chrome = chrome;
                 const surface_extent = renderExtent(surface);
-                const origin = chrome_state.contentOrigin(surface_extent, chrome_state.default_tab_bar_height) catch continue;
+                const origin = session_chrome_adapter.contentOrigin(surface_extent, session_chrome_adapter.default_tab_bar_height) catch continue;
                 candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
                     error.InvalidGeometry => continue,
                     else => return failure,
@@ -2208,7 +2208,7 @@ fn runFallible(
             else
                 chrome;
             const surface_extent = renderExtent(surface);
-            const origin = chrome_state.contentOrigin(surface_extent, chrome_state.default_tab_bar_height) catch continue;
+            const origin = session_chrome_adapter.contentOrigin(surface_extent, session_chrome_adapter.default_tab_bar_height) catch continue;
             candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
                 error.InvalidGeometry => continue,
                 else => return failure,
@@ -2244,7 +2244,7 @@ fn runFallible(
                     terminal_redraw_pending;
                 reconcileFocusedCursor(
                     terminals,
-                    try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
+                    try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
                     &cursor_replay_pending,
                 );
                 if (deferred_topology_input != null) {
@@ -2286,9 +2286,9 @@ fn runFallible(
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
                     const admitted_surface_extent = renderExtent(surface);
-                    const admitted_origin = try chrome_state.contentOrigin(
+                    const admitted_origin = try session_chrome_adapter.contentOrigin(
                         admitted_surface_extent,
-                        chrome_state.default_tab_bar_height,
+                        session_chrome_adapter.default_tab_bar_height,
                     );
                     try checkGpuBudget(surface.physical_width, surface.physical_height);
                     if (!try releaseReplayRetirementIfReady(
@@ -2403,14 +2403,14 @@ fn runFallible(
                     const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
                     errdefer surface_residency.discard();
                     errdefer replay.discard();
-                    const resized_cursor_color = if (canvas_work.terminals.sourceFor(try chrome_state.toRenderPaneId(admitted.candidate.state.focusedPaneId()))) |source|
+                    const resized_cursor_color = if (canvas_work.terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(admitted.candidate.state.focusedPaneId()))) |source|
                         if (try cursorOverlayForBinding(&canvas_work, source)) |overlay| overlay.color else null
                     else
                         null;
                     const physical_resized_plan = try physicalPlanForBase(
                         &canvas_work,
                         resized_plan,
-                        try chrome_state.toRenderPaneId(admitted.candidate.state.focusedPaneId()),
+                        try session_chrome_adapter.toRenderPaneId(admitted.candidate.state.focusedPaneId()),
                         null,
                     );
                     for (&rings[replacement], 0..) |*slot, index| {
@@ -2435,9 +2435,9 @@ fn runFallible(
                     try admitted.commit();
                     chrome = admitted.candidate.state;
                     canvas_work.surface = renderExtent(surface);
-                    canvas_work.content_origin = try chrome_state.contentOrigin(
+                    canvas_work.content_origin = try session_chrome_adapter.contentOrigin(
                         canvas_work.surface,
-                        chrome_state.default_tab_bar_height,
+                        session_chrome_adapter.default_tab_bar_height,
                     );
                     terminal_topology_committed = true;
                     if (bootstrap_publication) |*publication|
@@ -2458,7 +2458,7 @@ fn runFallible(
                         try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
                     reconcileFocusedCursor(
                         terminals,
-                        try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
+                        try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
                         &cursor_replay_pending,
                     );
                     try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
@@ -2523,7 +2523,7 @@ fn runFallible(
                             dropPendingCursor(&cursor_replay_pending);
                             reconcileFocusedCursor(
                                 terminals,
-                                try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
+                                try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
                                 &cursor_replay_pending,
                             );
                         },
@@ -2536,7 +2536,7 @@ fn runFallible(
             terminal_topology_committed)
         {
             const focused_pane = chrome.focusedPaneId();
-            const focused_source = canvas_work.terminals.sourceFor(try chrome_state.toRenderPaneId(focused_pane));
+            const focused_source = canvas_work.terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(focused_pane));
             const trail_only = cursor_replay_pending == null;
             var trail_publication: ?terminal_handoff.CursorPublication =
                 if (trail_only) canvas_work.last_cursor_publication else null;
@@ -2659,7 +2659,7 @@ fn renderExtent(surface: window_render_boundary.SurfaceConfig) render_api.canvas
     };
 }
 
-fn contentExtent(surface: render_api.canvas.Size, origin: chrome_state.ContentOrigin) session.Size {
+fn contentExtent(surface: render_api.canvas.Size, origin: session_chrome_adapter.ContentOrigin) session.Size {
     std.debug.assert(surface.width != 0 and surface.height != 0);
     std.debug.assert(origin.y < surface.height);
     return .{ .width = surface.width, .height = surface.height - origin.y };
@@ -2847,7 +2847,7 @@ fn requestPaneFontAction(
 ) !void {
     var candidate = policy.*;
     pruneFontPolicy(&candidate, topology);
-    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
+    const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
     switch (action) {
         .font_increase => try adjustPolicyOffset(
             &candidate,
@@ -3101,7 +3101,7 @@ test "focused pane actions coalesce retained point state through real Boundary" 
         .{ .width = 100, .height = 80 },
     );
     const pane = topology.focusedPaneId();
-    const render_pane = try chrome_state.toRenderPaneId(pane);
+    const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     var policy = try terminal_handoff.FontPolicy.init(10.0);
     const scale = terminal_handoff.ScaleSnapshot{
         .revision = 1,
@@ -3167,12 +3167,12 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     const first_tab = topology.tabId(0).?;
     const first = topology.focusedPaneId();
     const closed = try topology.split(first, .horizontal);
-    const render_closed = try chrome_state.toRenderPaneId(closed);
+    const render_closed = try session_chrome_adapter.toRenderPaneId(closed);
     try topology.closePane(closed);
     const hidden_tab = try topology.createTab("hidden");
     try std.testing.expect(@backingInt(hidden_tab) != 0);
     const hidden = topology.focusedPaneId();
-    const render_hidden = try chrome_state.toRenderPaneId(hidden);
+    const render_hidden = try session_chrome_adapter.toRenderPaneId(hidden);
     try topology.switchTab(first_tab);
     try std.testing.expectEqual(first, topology.focusedPaneId());
 
@@ -3203,7 +3203,7 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     const request = terminals.takeFontRequest().?;
     try std.testing.expectEqual(@as(u64, 1), request.revision);
     try std.testing.expectEqual(@as(u8, 2), request.policy.count);
-    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, try chrome_state.toRenderPaneId(first)));
+    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, try session_chrome_adapter.toRenderPaneId(first)));
     try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&request.policy, render_hidden));
     try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&request.policy, render_closed));
     try std.testing.expectEqual(request.policy, policy);
@@ -3234,8 +3234,8 @@ test "window base actions preserve every pane offset through real Boundary" {
     );
     const first = topology.focusedPaneId();
     const second = try topology.split(first, .horizontal);
-    const render_first = try chrome_state.toRenderPaneId(first);
-    const render_second = try chrome_state.toRenderPaneId(second);
+    const render_first = try session_chrome_adapter.toRenderPaneId(first);
+    const render_second = try session_chrome_adapter.toRenderPaneId(second);
     var policy = try terminal_handoff.FontPolicy.init(
         configured_terminal_base_points,
     );
@@ -3303,7 +3303,7 @@ fn buildCanvasPlan(
     topology: *const session.SessionState,
     topology_revision: ?terminal_handoff.LifecycleRevision,
     bootstrap: ?BootstrapSource,
-    appearance: chrome_state.Appearance,
+    appearance: session_chrome_adapter.Appearance,
     primitives: []render_api.chrome.Primitive,
     text: []u8,
 ) !CanvasPlanResult {
@@ -3325,11 +3325,11 @@ fn buildCanvasPlanAt(
     topology: *const session.SessionState,
     topology_revision: ?terminal_handoff.LifecycleRevision,
     bootstrap: ?BootstrapSource,
-    appearance: chrome_state.Appearance,
+    appearance: session_chrome_adapter.Appearance,
     primitives: []render_api.chrome.Primitive,
     text: []u8,
     surface_geometry: render_api.canvas.Size,
-    content_origin: chrome_state.ContentOrigin,
+    content_origin: session_chrome_adapter.ContentOrigin,
 ) !CanvasPlanResult {
     while (work.terminals.takeRetired()) |retired| {
         if (work.retired_source_count == work.retired_sources.len)
@@ -3364,7 +3364,7 @@ fn buildCanvasPlanAt(
             retry.terminal_placements[0..desired_count],
         );
     } else {
-        const output = try chrome_state.project(
+        const output = try session_chrome_adapter.project(
             topology,
             appearance,
             surface_geometry,
@@ -3387,7 +3387,7 @@ fn buildCanvasPlanAt(
         for (0..topology.paneCount(active_tab)) |pane_index| {
             const pane = topology.paneId(active_tab, pane_index) orelse
                 return error.InvalidTopology;
-            const render_pane = try chrome_state.toRenderPaneId(pane);
+            const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
             const source = work.terminals.sourceFor(render_pane) orelse
                 if (bootstrap) |value|
                     if (value.pane == render_pane) value.source else {
@@ -3401,7 +3401,7 @@ fn buildCanvasPlanAt(
             if (desired_count == desired.len) return error.InvalidTopology;
             const rect = topology.paneRect(pane) orelse
                 return error.InvalidTopology;
-            const physical_rect = try chrome_state.toRenderRect(rect, content_origin);
+            const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
             desired[desired_count] = .{
                 .source = source,
                 .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
@@ -3476,7 +3476,7 @@ fn buildCanvasPlanAt(
     placement_count += 1;
     const focused_source = blk: {
         const focused_pane = topology.focusedPaneId();
-        const render_focused_pane = try chrome_state.toRenderPaneId(focused_pane);
+        const render_focused_pane = try session_chrome_adapter.toRenderPaneId(focused_pane);
         if (work.terminals.sourceFor(render_focused_pane)) |source|
             if (placementContainsSource(terminal_placements, source)) break :blk source;
         if (bootstrap) |value| {
@@ -3535,7 +3535,7 @@ fn buildCanvasPlanAt(
                 else => return failure,
             };
     if (candidate_result) |result| {
-        if (result.accepted > chrome_state.max_live_panes)
+        if (result.accepted > session_chrome_adapter.max_live_panes)
             return error.InvalidFrame;
         if (chrome_change != null) {
             work.producer_revision = producer_revision;
@@ -3633,7 +3633,7 @@ fn waitCanvasPlan(
     work: *CanvasWork,
     topology: *const session.SessionState,
     topology_revision: ?terminal_handoff.LifecycleRevision,
-    appearance: chrome_state.Appearance,
+    appearance: session_chrome_adapter.Appearance,
     primitives: []render_api.chrome.Primitive,
     text: []u8,
 ) !vk_surface.Plan {
@@ -3715,7 +3715,7 @@ fn prepareBootstrapPublicationAt(
     work: *CanvasWork,
     topology: *const session.SessionState,
     bootstrap: ?BootstrapSource,
-    content_origin: chrome_state.ContentOrigin,
+    content_origin: session_chrome_adapter.ContentOrigin,
 ) !PreparedBootstrapPublication {
     var members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember =
         undefined;
@@ -3726,7 +3726,7 @@ fn prepareBootstrapPublicationAt(
     for (0..topology.paneCount(active_tab)) |pane_index| {
         const pane = topology.paneId(active_tab, pane_index) orelse
             return error.InvalidTopology;
-        const render_pane = try chrome_state.toRenderPaneId(pane);
+        const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
         const source = work.terminals.sourceFor(render_pane) orelse
             if (bootstrap) |value|
                 if (value.pane == render_pane) value.source else return error.InvalidTopology
@@ -3734,7 +3734,7 @@ fn prepareBootstrapPublicationAt(
                 return error.InvalidTopology;
         const rect = topology.paneRect(pane) orelse
             return error.InvalidTopology;
-        const physical_rect = try chrome_state.toRenderRect(rect, content_origin);
+        const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
         if (count == members.len) return error.InvalidTopology;
         members[count] = .{ .pane = render_pane, .source = source };
         placements[count] = .{
@@ -4427,7 +4427,7 @@ fn drainInput(
     actions: *input_actions.State,
     canvas_work: *CanvasWork,
     topology: *session.SessionState,
-    appearance: chrome_state.Appearance,
+    appearance: session_chrome_adapter.Appearance,
     pending: *?PendingTopology,
     deferred: *?DeferredTopologyInput,
 ) !void {
@@ -4445,7 +4445,7 @@ fn drainInput(
                         // unmatched press and its later release both follow the
                         // ordinary terminal-input path instead of being lost.
                         try canvas_work.terminals.publishKey(
-                            try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                            try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
                             key,
                         );
                         continue;
@@ -4531,7 +4531,7 @@ fn drainInput(
                     .consumed => null,
                     .unmatched => unmatched: {
                         try canvas_work.terminals.publishKey(
-                            try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                            try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
                             key,
                         );
                         break :unmatched null;
@@ -4540,7 +4540,7 @@ fn drainInput(
             },
             .keyboard_leave => reset: {
                 try canvas_work.terminals.publishFocus(
-                    try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                    try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
                     .{ .focus = .out },
                 );
                 actions.clear();
@@ -4574,7 +4574,7 @@ fn drainInput(
             },
             .keyboard_enter => enter: {
                 try canvas_work.terminals.publishFocus(
-                    try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                    try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
                     .{ .focus = .in },
                 );
                 break :enter null;
@@ -4666,7 +4666,7 @@ fn prepareTerminalTopology(
         for (0..candidate.paneCount(tab_index)) |pane_index| {
             const pane = candidate.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
-            const render_pane = try chrome_state.toRenderPaneId(pane);
+            const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
             const rect = candidate.paneRect(pane) orelse
                 return error.InvalidTopology;
             const pixels = try panePixelsLocal(rect);
@@ -4698,13 +4698,13 @@ fn prepareTerminalTopology(
         // Surviving owners still receive the exact focus transition.
         if (shouldPublishFocusOut(current, candidate)) {
             inputs[input_count] = .{ .focus = .{
-                .pane = try chrome_state.toRenderPaneId(current.focusedPaneId()),
+                .pane = try session_chrome_adapter.toRenderPaneId(current.focusedPaneId()),
                 .event = .{ .focus = .out },
             } };
             input_count += 1;
         }
         inputs[input_count] = .{ .focus = .{
-            .pane = try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+            .pane = try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
             .event = .{ .focus = .in },
         } };
         input_count += 1;
@@ -4714,7 +4714,7 @@ fn prepareTerminalTopology(
             const pane = current.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
             if (!topologyContainsSemantic(candidate, pane)) {
-                operations[operation_count] = .{ .close = try chrome_state.toRenderPaneId(pane) };
+                operations[operation_count] = .{ .close = try session_chrome_adapter.toRenderPaneId(pane) };
                 operation_count += 1;
             }
         }
@@ -4758,7 +4758,7 @@ fn prepareInitialTerminalTopology(
     surface: window_render_boundary.SurfaceConfig,
 ) !PendingTopology {
     const pane = candidate.focusedPaneId();
-    const render_pane = try chrome_state.toRenderPaneId(pane);
+    const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     const rect = candidate.paneRect(pane) orelse return error.InvalidTopology;
     const source = try work.composer.registerSource();
     errdefer work.composer.removeSource(source) catch
@@ -4835,9 +4835,9 @@ fn candidateForDeferredTopologyInput(
     deferred: DeferredTopologyInput,
     accepted: *const session.SessionState,
     pending: ?*const PendingTopology,
-    appearance: chrome_state.Appearance,
-    surface: chrome_state.SurfaceGeometry,
-    origin: chrome_state.ContentOrigin,
+    appearance: session_chrome_adapter.Appearance,
+    surface: session_chrome_adapter.SurfaceGeometry,
+    origin: session_chrome_adapter.ContentOrigin,
 ) !?session.SessionCandidate {
     return switch (deferred) {
         .action => |action| input_actions.candidate(
@@ -4869,9 +4869,9 @@ fn retryDeferredTopologyInput(
     accepted: *const session.SessionState,
     pending: *?PendingTopology,
     deferred: *?DeferredTopologyInput,
-    appearance: chrome_state.Appearance,
-    surface: chrome_state.SurfaceGeometry,
-    origin: chrome_state.ContentOrigin,
+    appearance: session_chrome_adapter.Appearance,
+    surface: session_chrome_adapter.SurfaceGeometry,
+    origin: session_chrome_adapter.ContentOrigin,
 ) !TopologyReplacementDisposition {
     const retained = deferred.* orelse return .rejected;
     const candidate = try candidateForDeferredTopologyInput(
@@ -4997,7 +4997,7 @@ fn topologyContainsRender(
     topology: *const session.SessionState,
     pane: render_api.chrome.PaneId,
 ) bool {
-    const semantic_pane = chrome_state.fromRenderPaneId(pane) catch return false;
+    const semantic_pane = session_chrome_adapter.fromRenderPaneId(pane) catch return false;
     return topology.paneRect(semantic_pane) != null;
 }
 
@@ -5108,7 +5108,7 @@ fn lifecycleShapeForTest(
     for (0..current.tabCount()) |tab_index| {
         for (0..current.paneCount(tab_index)) |pane_index| {
             const current_pane = current.paneId(tab_index, pane_index).?;
-            const render_current_pane = try chrome_state.toRenderPaneId(current_pane);
+            const render_current_pane = try session_chrome_adapter.toRenderPaneId(current_pane);
             const source = try composer.registerSource();
             try boundary.register(render_current_pane, source, try panePixelsLocal(current.paneRect(current_pane).?));
             try std.testing.expect(boundary.takeLifecycle().? == .create);
@@ -5134,7 +5134,7 @@ fn lifecycleShapeForTest(
 
 test "session transitions derive exact Host lifecycle receipts" {
     var base = try session.SessionState.init(.{ .width = 321, .height = 217 });
-    const base_pane = try chrome_state.toRenderPaneId(base.focusedPaneId());
+    const base_pane = try session_chrome_adapter.toRenderPaneId(base.focusedPaneId());
     const no_op_shape = try lifecycleShapeForTest(&base, &base);
     try std.testing.expectEqual(@as(u8, 0), no_op_shape.operation_count);
     try std.testing.expectEqual(@as(u8, 0), no_op_shape.input_count);
@@ -5144,7 +5144,7 @@ test "session transitions derive exact Host lifecycle receipts" {
     var created = base;
     const created_tab = try created.createTab("other");
     try std.testing.expectEqual(@as(u64, 2), @backingInt(created_tab));
-    const created_pane = try chrome_state.toRenderPaneId(created.focusedPaneId());
+    const created_pane = try session_chrome_adapter.toRenderPaneId(created.focusedPaneId());
     const create_shape = try lifecycleShapeForTest(&base, &created);
     try std.testing.expectEqual(@as(u8, 1), create_shape.operation_count);
     try std.testing.expectEqual(@as(u8, 2), create_shape.input_count);
@@ -5217,7 +5217,7 @@ test "session transitions derive exact Host lifecycle receipts" {
 
     var focused = base;
     const focused_pane = try focused.split(focused.focusedPaneId(), .vertical);
-    const render_focused_pane = try chrome_state.toRenderPaneId(focused_pane);
+    const render_focused_pane = try session_chrome_adapter.toRenderPaneId(focused_pane);
     try focused.focusPane(focused_pane);
     const focus_shape = try lifecycleShapeForTest(&base, &focused);
     try std.testing.expectEqual(@as(u8, 2), focus_shape.operation_count);
@@ -5296,7 +5296,7 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     );
     const pane = current.focusedPaneId();
     const initial_rect = current.paneRect(pane).?;
-    const render_pane = try chrome_state.toRenderPaneId(pane);
+    const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     const source = try composer.registerSource();
     try boundary.register(render_pane, source, try panePixelsLocal(initial_rect));
     const created = boundary.takeLifecycle().?;
@@ -5363,7 +5363,7 @@ test "second pending pane creation preserves the first admitted candidate" {
         .{ .width = 320, .height = 240 },
     );
     const first = accepted.focusedPaneId();
-    const render_first = try chrome_state.toRenderPaneId(first);
+    const render_first = try session_chrome_adapter.toRenderPaneId(first);
     const first_source = try composer.registerSource();
     try boundary.register(
         render_first,
@@ -5448,7 +5448,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         .{ .width = 320, .height = 240 },
     );
     const first = accepted.focusedPaneId();
-    const render_first = try chrome_state.toRenderPaneId(first);
+    const render_first = try session_chrome_adapter.toRenderPaneId(first);
     const accepted_source = try composer.registerSource();
     try boundary.register(
         render_first,
@@ -5582,7 +5582,7 @@ test "drainInput forwards capture overflow press and release explicitly" {
     );
     defer terminals.deinit();
     var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
-    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
+    const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
     try terminals.register(pane, @fromBackingInt(@intCast(1)), .{ .width = 320, .height = 240 });
     try std.testing.expect(terminals.takeLifecycle() != null);
     try terminals.markLive(pane);
@@ -5864,7 +5864,7 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     const source = pending.new_source.?;
     const request = terminals.takeLifecycleAdmission().?;
     try std.testing.expectEqual(pending.revision, request.revision);
-    try std.testing.expect(terminals.sourceFor(try chrome_state.toRenderPaneId(topology.focusedPaneId())) == null);
+    try std.testing.expect(terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())) == null);
     pending.deinit();
     try std.testing.expect(terminals.takeLifecycle() == null);
     try std.testing.expectError(error.RetiredSource, composer.removeSource(source));
@@ -5875,7 +5875,7 @@ test "semantic tab and split candidates project and shape through the production
         std.testing.allocator,
         .{
             .primitives = 256,
-            .text_bytes = (chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes,
+            .text_bytes = (session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) * session_chrome_adapter.max_label_bytes,
             .label_scalars = 256,
             .shaped_glyphs = 256,
             .glyphs = 128,
@@ -5888,9 +5888,9 @@ test "semantic tab and split candidates project and shape through the production
     );
     defer content.deinit();
     var primitives: [256]render_api.chrome.Primitive = undefined;
-    var text: [(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8 = undefined;
+    var text: [(session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) * session_chrome_adapter.max_label_bytes]u8 = undefined;
     const surface = render_api.canvas.Size{ .width = 320, .height = 240 };
-    const origin = chrome_state.ContentOrigin{ .y = chrome_state.default_tab_bar_height };
+    const origin = session_chrome_adapter.ContentOrigin{ .y = session_chrome_adapter.default_tab_bar_height };
     var state = try session.SessionState.init(.{ .width = 320, .height = 216 });
 
     const projectAndShape = struct {
@@ -5898,11 +5898,11 @@ test "semantic tab and split candidates project and shape through the production
             value: *const session.SessionState,
             retained: *render_api.chrome.Content,
             surface_value: render_api.canvas.Size,
-            origin_value: chrome_state.ContentOrigin,
+            origin_value: session_chrome_adapter.ContentOrigin,
             primitive_storage: []render_api.chrome.Primitive,
             text_storage: []u8,
         ) !void {
-            const output = try chrome_state.project(
+            const output = try session_chrome_adapter.project(
                 value,
                 chrome_appearance,
                 surface_value,
@@ -5918,7 +5918,7 @@ test "semantic tab and split candidates project and shape through the production
             for (0..value.paneCount(active_tab)) |pane_index| {
                 const pane = value.paneId(active_tab, pane_index).?;
                 const local = value.paneRect(pane).?;
-                const physical = try chrome_state.toRenderRect(local, origin_value);
+                const physical = try session_chrome_adapter.toRenderRect(local, origin_value);
                 try std.testing.expect(physical.y >= origin_value.y);
                 try std.testing.expect(
                     physical.y + @as(i32, @intCast(physical.height)) <= surface_value.height,
@@ -5956,7 +5956,7 @@ test "semantic split candidates retain pane labels through the production Chrome
         std.testing.allocator,
         .{
             .primitives = 256,
-            .text_bytes = chrome_state.max_panes_per_tab * chrome_state.max_label_bytes,
+            .text_bytes = session_chrome_adapter.max_panes_per_tab * session_chrome_adapter.max_label_bytes,
             .label_scalars = 256,
             .shaped_glyphs = 256,
             .glyphs = 128,
@@ -5969,9 +5969,9 @@ test "semantic split candidates retain pane labels through the production Chrome
     );
     defer content.deinit();
     var primitives: [256]render_api.chrome.Primitive = undefined;
-    var text: [chrome_state.max_panes_per_tab * chrome_state.max_label_bytes]u8 = undefined;
+    var text: [session_chrome_adapter.max_panes_per_tab * session_chrome_adapter.max_label_bytes]u8 = undefined;
     const surface = render_api.canvas.Size{ .width = 320, .height = 240 };
-    const origin = chrome_state.ContentOrigin{ .y = chrome_state.default_tab_bar_height };
+    const origin = session_chrome_adapter.ContentOrigin{ .y = session_chrome_adapter.default_tab_bar_height };
     var state = try session.SessionState.init(.{ .width = 320, .height = 216 });
 
     for (0..3) |_| {
@@ -5985,7 +5985,7 @@ test "semantic split candidates retain pane labels through the production Chrome
         for (0..state.paneCount(state.activeTabIndex())) |pane_index| {
             try state.renamePane(state.paneId(state.activeTabIndex(), pane_index).?, "pane");
         }
-        const output = try chrome_state.project(
+        const output = try session_chrome_adapter.project(
             &state,
             chrome_appearance,
             surface,
@@ -6041,7 +6041,7 @@ test "undersized pending topology rejection removes provisional source" {
     }
     for (0..accepted.paneCount(0)) |index| {
         const pane = accepted.paneId(0, index).?;
-        const render_pane = try chrome_state.toRenderPaneId(pane);
+        const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
         const source = try composer.registerSource();
         try terminals.register(
             render_pane,
@@ -6086,7 +6086,7 @@ test "undersized pending topology rejection removes provisional source" {
     pending = null;
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
     try std.testing.expect(
-        terminals.sourceFor(try chrome_state.toRenderPaneId(new_pane)) == null,
+        terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(new_pane)) == null,
     );
     try std.testing.expect(terminals.takeLifecycle() == null);
     try std.testing.expectError(
@@ -6128,7 +6128,7 @@ test "cancelled topology replacements reuse Composer storage and retain accepted
     defer composer.deinit();
     const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
     const accepted_bytes = accepted;
-    const pane = try chrome_state.toRenderPaneId(accepted.focusedPaneId());
+    const pane = try session_chrome_adapter.toRenderPaneId(accepted.focusedPaneId());
     const accepted_source = try composer.registerSource();
     try terminals.register(
         pane,
@@ -6209,7 +6209,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     defer composer.deinit();
     const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
     const accepted_bytes = accepted;
-    const pane = try chrome_state.toRenderPaneId(accepted.focusedPaneId());
+    const pane = try session_chrome_adapter.toRenderPaneId(accepted.focusedPaneId());
     const accepted_source = try composer.registerSource();
     try terminals.register(
         pane,
@@ -6701,7 +6701,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .content = &content,
         .source = chrome_source,
         .surface = .{ .width = 320, .height = 240 },
-        .content_origin = .{ .y = chrome_state.default_tab_bar_height },
+        .content_origin = .{ .y = session_chrome_adapter.default_tab_bar_height },
         .frame_uploads = &frame_uploads,
         .frame_removals = &frame_removals,
         .frame_commands = &frame_commands,
@@ -6723,7 +6723,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .{ .width = 320, .height = 216 },
     );
     const pane = accepted_topology.focusedPaneId();
-    const render_pane = try chrome_state.toRenderPaneId(pane);
+    const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     try terminals.register(
         render_pane,
         terminal_source,
@@ -6747,7 +6747,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     });
     var topology_a = accepted_topology;
     const cancelled_pane = try topology_a.split(pane, .horizontal);
-    const render_cancelled_pane = try chrome_state.toRenderPaneId(cancelled_pane);
+    const render_cancelled_pane = try session_chrome_adapter.toRenderPaneId(cancelled_pane);
     var cancelled_pending = try prepareTerminalTopology(
         &work,
         &accepted_topology,
@@ -6760,8 +6760,8 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     const revision_a = cancelled_pending.revision;
     var primitives: [256]render_api.chrome.Primitive = undefined;
     var text: [
-        (chrome_state.max_tabs + chrome_state.max_panes_per_tab) *
-            chrome_state.max_label_bytes
+        (session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) *
+            session_chrome_adapter.max_label_bytes
     ]u8 = undefined;
     switch (try buildCanvasPlan(
         &work,
@@ -6784,7 +6784,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
 
     try composer.removeSource(blocker);
     cancelled_pending.deinit();
-    try std.testing.expect(terminals.sourceFor(try chrome_state.toRenderPaneId(cancelled_pane)) == null);
+    try std.testing.expect(terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(cancelled_pane)) == null);
     var topology_b = accepted_topology;
     const replacement_pane = try topology_b.split(pane, .horizontal);
     try std.testing.expectEqual(cancelled_pane, replacement_pane);
@@ -6799,7 +6799,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try admitPendingForTest(&replacement_pending);
     const replacement_source = replacement_pending.new_source orelse
         return error.TestUnexpectedResult;
-    const render_replacement_pane = try chrome_state.toRenderPaneId(replacement_pane);
+    const render_replacement_pane = try session_chrome_adapter.toRenderPaneId(replacement_pane);
     try std.testing.expect(
         @backingInt(replacement_source) > @backingInt(cancelled_source),
     );
@@ -6925,7 +6925,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try std.testing.expectEqual(@as(u8, 2), work.visible_count);
     try std.testing.expectEqualStrings(
         "newer",
-        (try chrome_state.project(
+        (try session_chrome_adapter.project(
             &retained_topology,
             chrome_appearance,
             .{ .width = 320, .height = 240 },
@@ -6965,12 +6965,12 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         replacement_request.revision,
         &.{
             .{
-                .member = .{ .pane = try chrome_state.toRenderPaneId(pane), .source = terminal_source },
+                .member = .{ .pane = try session_chrome_adapter.toRenderPaneId(pane), .source = terminal_source },
                 .revision = @fromBackingInt(1),
             },
             .{
                 .member = .{
-                    .pane = try chrome_state.toRenderPaneId(replacement_pane),
+                    .pane = try session_chrome_adapter.toRenderPaneId(replacement_pane),
                     .source = replacement_source,
                 },
                 .revision = @fromBackingInt(1),
@@ -7193,8 +7193,8 @@ test "accepted topology tab transition transfers through Composer bindings" {
     const first_source = try composer.registerSource();
     const second_source = try composer.registerSource();
     const pane_ids = [_]render_api.chrome.PaneId{
-        try chrome_state.toRenderPaneId(first_pane),
-        try chrome_state.toRenderPaneId(second_pane),
+        try session_chrome_adapter.toRenderPaneId(first_pane),
+        try session_chrome_adapter.toRenderPaneId(second_pane),
     };
     const sources = [_]render_api.canvas.SourceId{ first_source, second_source };
     var placements: [2]render_api.canvas.Composer.Placement = undefined;
@@ -7467,9 +7467,9 @@ test "Host focus directions admit one physical trail quad" {
         var sources: [4]render_api.canvas.SourceId = undefined;
         var placements: [4]render_api.canvas.Composer.Placement = undefined;
         for (0..4) |index| {
-            panes[index] = try chrome_state.toRenderPaneId(accepted.paneId(0, index).?);
+            panes[index] = try session_chrome_adapter.toRenderPaneId(accepted.paneId(0, index).?);
             sources[index] = try composer.registerSource();
-            const pane_rect = accepted.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
+            const pane_rect = accepted.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
             try terminals.register(
                 panes[index],
                 sources[index],
@@ -7506,7 +7506,7 @@ test "Host focus directions admit one physical trail quad" {
             .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
         } };
         for (0..4) |index| {
-            const pane_rect = accepted.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
+            const pane_rect = accepted.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
             try composer.apply(sources[index], .{
                 .revision = @fromBackingInt(1),
                 .uploads = &.{},
@@ -7543,13 +7543,13 @@ test "Host focus directions admit one physical trail quad" {
         try reconcileTrailTopology(&work, &accepted);
         try syncAcceptedTrail(&work, &accepted, 1_000_000, true);
         const old_pane = accepted.focusedPaneId();
-        const old_source = terminals.sourceFor(try chrome_state.toRenderPaneId(old_pane)).?;
+        const old_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(old_pane)).?;
         const old_overlay = (try cursorOverlayForBinding(&work, old_source)).?;
         const accepted_before_target = work.trails[findTrailSlot(&work, accepted.activeTabId()).?].trail;
 
         var candidate_placements = placements;
         for (0..4) |index| {
-            const pane_rect = candidate.paneRect(try chrome_state.fromRenderPaneId(panes[index])).?;
+            const pane_rect = candidate.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
             candidate_placements[index].origin = .{ .x = pane_rect.x, .y = pane_rect.y };
             candidate_placements[index].clip = .{
                 .x = pane_rect.x,
@@ -7561,13 +7561,13 @@ test "Host focus directions admit one physical trail quad" {
         try composer.setComposition(.{
             .surface = .{ .width = 640, .height = 480 },
             .sources = &candidate_placements,
-            .focused_source = terminals.sourceFor(try chrome_state.toRenderPaneId(candidate.focusedPaneId())),
+            .focused_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId())),
         });
         @memcpy(work.visible_placements[0..4], &candidate_placements);
         try reconcileTrailTopology(&work, &candidate);
         try syncAcceptedTrail(&work, &candidate, 2_000_000, false);
         const new_pane = candidate.focusedPaneId();
-        const new_source = terminals.sourceFor(try chrome_state.toRenderPaneId(new_pane)).?;
+        const new_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(new_pane)).?;
         const new_overlay = (try cursorOverlayForBinding(&work, new_source)).?;
         try std.testing.expect(old_pane != new_pane);
         try std.testing.expect(old_source != new_source);
@@ -7588,7 +7588,7 @@ test "Host focus directions admit one physical trail quad" {
         const physical = try physicalPlanForBase(
             &work,
             base,
-            try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+            try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
             &work.trail_scratch,
         );
         const expected_trail_clip = try checkedTrailClipUnion(
@@ -7625,7 +7625,7 @@ test "Host focus directions admit one physical trail quad" {
             physicalPlanForBase(
                 &work,
                 base,
-                try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+                try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
                 &invalid_union_trail,
             ),
         );
@@ -7684,7 +7684,7 @@ test "Host focus directions admit one physical trail quad" {
             const frame = try physicalPlanForBase(
                 &work,
                 base,
-                try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+                try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
                 &work.trail_scratch,
             );
             try std.testing.expectEqual(expected_trail_clip, frame.commands[0].clip);
@@ -7704,7 +7704,7 @@ test "Host focus directions admit one physical trail quad" {
         const collapsed = try physicalPlanForBase(
             &work,
             base,
-            try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+            try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
             &settled_frame,
         );
         try std.testing.expectEqual(new_overlay.clip, collapsed.commands[0].clip);
@@ -7815,9 +7815,9 @@ fn redrawChrome(
     boundary: *window_render_boundary.Boundary,
     topology: *session.SessionState,
     canvas_work: *CanvasWork,
-    appearance: chrome_state.Appearance,
+    appearance: session_chrome_adapter.Appearance,
     primitives: *[256]render_api.chrome.Primitive,
-    text: *[(chrome_state.max_tabs + chrome_state.max_panes_per_tab) * chrome_state.max_label_bytes]u8,
+    text: *[(session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) * session_chrome_adapter.max_label_bytes]u8,
     graphics: *vk_surface.Context,
     device: vk.VkDevice,
     queue: vk.VkQueue,
@@ -7849,7 +7849,7 @@ fn redrawChrome(
         canvas_work.surface;
     const projection_origin = if (pending) |value|
         if (value.surface) |surface|
-            try chrome_state.contentOrigin(renderExtent(surface), chrome_state.default_tab_bar_height)
+            try session_chrome_adapter.contentOrigin(renderExtent(surface), session_chrome_adapter.default_tab_bar_height)
         else
             canvas_work.content_origin
     else
@@ -7913,7 +7913,7 @@ fn redrawChrome(
     const physical_plan = try physicalPlanForBase(
         canvas_work,
         composer_plan,
-        try chrome_state.toRenderPaneId(candidate.focusedPaneId()),
+        try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
         trail_candidate,
     );
     trail_candidate_carried.* = trail_candidate != null;

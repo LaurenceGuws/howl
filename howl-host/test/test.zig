@@ -1,7 +1,7 @@
 const std = @import("std");
 const linux = std.os.linux;
 const window_render_boundary = @import("window_render_boundary");
-const chrome_state = @import("chrome_state");
+const session_chrome_adapter = @import("session_chrome_adapter");
 const session = @import("session_domain");
 const render = @import("howl_render");
 const wayland = @import("howl_wayland");
@@ -372,7 +372,7 @@ test "1.6x Boundary offer transaction retains logical Canvas and physical ring f
     });
     var primitives: [128]render.chrome.Primitive = undefined;
     var text: [1024]u8 = undefined;
-    const projected = try chrome_state.project(&topology, .{
+    const projected = try session_chrome_adapter.project(&topology, .{
         .style = .{
             .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
             .background = .{ .r = 20, .g = 24, .b = 32, .a = 255 },
@@ -448,7 +448,7 @@ test "session adapter retains stable identities through pane and tab changes" {
     try std.testing.expectEqual(split, state.paneId(0, 1).?);
     var primitives: [128]render.chrome.Primitive = undefined;
     var text: [1024]u8 = undefined;
-    const output = try chrome_state.project(&state, .{
+    const output = try session_chrome_adapter.project(&state, .{
         .style = .{
             .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
             .background = .{ .r = 20, .g = 24, .b = 32, .a = 255 },

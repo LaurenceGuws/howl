@@ -61,24 +61,24 @@ pub fn build(b: *std.Build) void {
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
     root.addImport("dev_config", dev_config);
-    const chrome_state = b.createModule(.{
-        .root_source_file = b.path("src/chrome_state.zig"),
+    const session_chrome_adapter = b.createModule(.{
+        .root_source_file = b.path("src/session_chrome_adapter.zig"),
         .target = target,
         .optimize = optimize,
     });
-    chrome_state.addImport("howl_render", render.module("howl_render"));
+    session_chrome_adapter.addImport("howl_render", render.module("howl_render"));
     const session_domain = b.createModule(.{
         .root_source_file = b.path("src/session_domain.zig"),
         .target = target,
         .optimize = optimize,
     });
-    chrome_state.addImport("session_domain", session_domain);
+    session_chrome_adapter.addImport("session_domain", session_domain);
     const input_actions = b.createModule(.{
         .root_source_file = b.path("src/input_actions.zig"),
         .target = target,
         .optimize = optimize,
     });
-    input_actions.addImport("chrome_state", chrome_state);
+    input_actions.addImport("session_chrome_adapter", session_chrome_adapter);
     input_actions.addImport("session_domain", session_domain);
     input_actions.addImport("howl_render", render.module("howl_render"));
     input_actions.addImport("howl_wayland", wayland.module("howl_wayland"));
@@ -133,7 +133,7 @@ pub fn build(b: *std.Build) void {
     );
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_runtime", terminal_runtime);
-    root.addImport("chrome_state", chrome_state);
+    root.addImport("session_chrome_adapter", session_chrome_adapter);
     root.addImport("session_domain", session_domain);
     root.addImport("input_actions", input_actions);
     root.addImport("howl_vk", vk.module("howl_vk"));
@@ -193,7 +193,7 @@ pub fn build(b: *std.Build) void {
     });
     test_window_render_boundary.addImport("howl_wayland", wayland.module("howl_wayland"));
     test_module.addImport("window_render_boundary", test_window_render_boundary);
-    test_module.addImport("chrome_state", chrome_state);
+    test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
@@ -230,7 +230,7 @@ pub fn build(b: *std.Build) void {
     });
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
     renderer_test_module.addImport("dev_config", dev_config);
-    renderer_test_module.addImport("chrome_state", chrome_state);
+    renderer_test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     renderer_test_module.addImport("session_domain", session_domain);
     renderer_test_module.addImport("input_actions", input_actions);
     renderer_test_module.addImport("howl_render", render.module("howl_render"));
@@ -246,15 +246,15 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     test_step.dependOn(&b.addRunArtifact(renderer_tests).step);
-    const chrome_tests = b.addTest(.{ .root_module = chrome_state, .use_llvm = false, .use_lld = false });
-    const run_chrome_tests = b.addRunArtifact(chrome_tests);
-    test_step.dependOn(&run_chrome_tests.step);
+    const session_chrome_adapter_tests = b.addTest(.{ .root_module = session_chrome_adapter, .use_llvm = false, .use_lld = false });
+    const run_session_chrome_adapter_tests = b.addRunArtifact(session_chrome_adapter_tests);
+    test_step.dependOn(&run_session_chrome_adapter_tests.step);
     const chrome_equivalence_module = b.createModule(.{
         .root_source_file = b.path("test/chrome_state_equivalence_test.zig"),
         .target = target,
         .optimize = optimize,
     });
-    chrome_equivalence_module.addImport("chrome_state", chrome_state);
+    chrome_equivalence_module.addImport("session_chrome_adapter", session_chrome_adapter);
     chrome_equivalence_module.addImport("session_domain", session_domain);
     chrome_equivalence_module.addImport("howl_render", render.module("howl_render"));
     const chrome_equivalence_tests = b.addTest(.{
@@ -293,7 +293,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    terminal_contract.addImport("chrome_state", chrome_state);
+    terminal_contract.addImport("session_chrome_adapter", session_chrome_adapter);
     terminal_contract.addImport("howl_render", render.module("howl_render"));
     terminal_contract.addImport("howl_vt", vt.module("howl_vt"));
     terminal_contract.addImport("terminal_handoff", terminal_handoff);
