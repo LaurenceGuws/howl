@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: stdlib_boundary
+  active_sprint: null
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -31,9 +31,16 @@ delivered_boundary:
 
 debt_candidates:
   - id: stdlib_boundary
-    status: active
+    status: accepted
     scope: remove redundant host_c ownership where pinned Zig stdlib is sufficient
+    outcome: >-
+      Pinned Zig Linux/POSIX ownership replaces the complete redundant
+      fourteen-symbol host_c boundary while preserving eventfd, descriptor,
+      polling, and mapped-lifetime semantics; renderer_c remains the sole
+      required Host Translate-C boundary.
+    implementation_commits: [9afc414, 3c7b9f2, 20ee97d, 5ef1bf2]
   - id: ownership_names
+    status: pending
     scope: rename dishonest umbrella ownership without splitting cohesive state
   - id: mixed_ownership_audit
     scope: audit large files and preserve fewer cohesive files where that is the clearer owner shape
