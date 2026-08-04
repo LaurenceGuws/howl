@@ -3,26 +3,32 @@ sprint:
   id: ownership_names
   branch: feature/debt_payoff/ownership_names
   status: active
-  active_slice: ownership_inventory
+  active_slice: rename_contract
 
 objective: >-
-  Inventory names that may conceal ownership before authorizing any rename,
-  beginning with howl-host/src/shared.zig and expanding only through exact
-  maintained source and build references.
+  Define the finite atomic contract for the two accepted dishonest ownership
+  groups without changing product source.
 
 questions:
   - id: shared_owner
-    status: open
-    question: Which exact retained facts, transitions, descriptors, and consumers does howl-host/src/shared.zig own?
+    status: answered
+    answer: one cohesive bidirectional Window/Render boundary owning copied facts, descriptors, wakes, failure, and retirement
   - id: candidate_census
-    status: open
-    question: Which other maintained filenames or module aliases are genuine umbrella names rather than concise cohesive owners?
+    status: answered
+    answer: chrome_state.zig is the only other dishonest maintained owner group found by the explicit discovery rule
   - id: migration_surface
-    status: open
-    question: What complete import, build, test, comment, and authority surface would each justified rename require?
+    status: answered
+    answer: ownership_inventory.yml records two complete atomic path sets and every old private alias
+
+accepted_slice:
+  id: ownership_inventory
+  state: accepted
+  evidence: .zig/work/debt-payoff/ownership-names/ownership_inventory.yml
+  records: 26
+  atomic_groups: [window_render_boundary, session_chrome_adapter]
 
 active_scope:
-  evidence: .zig/work/debt-payoff/ownership-names/ownership_inventory.yml
+  evidence: .zig/work/debt-payoff/ownership-names/rename_contract.yml
   product_change: forbidden
   excluded:
     - source renames

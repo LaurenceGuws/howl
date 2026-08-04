@@ -28,11 +28,18 @@ invariants:
 
 slices:
   - id: ownership_inventory
-    status: active
+    status: accepted
     product_change: none
     output: complete classification of suspected umbrella names and exact consumer census
+    evidence: .zig/work/debt-payoff/ownership-names/ownership_inventory.yml
+    accepted_facts:
+      - The explicit discovery rule scanned 115 maintained Zig files and 269 private import aliases.
+      - Twenty-six candidates have complete classification, source, vocabulary, and migration reverse indexes.
+      - shared.zig is one cohesive Window/Render boundary hidden by relationship vocabulary.
+      - chrome_state.zig retains no Chrome state and is one cohesive Session-to-Chrome adapter.
+      - Conventional package roots, selected implementation aliases, and honest owner-local facts remain unchanged.
   - id: rename_contract
-    status: pending
+    status: active
     product_change: none
     output: finite accepted rename set with owner definitions and atomic migration order
   - id: accepted_renames
