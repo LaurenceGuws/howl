@@ -8,6 +8,58 @@ const shared = @import("shared.zig");
 
 const format_limit: usize = 64;
 const output_limit: usize = 16;
+const keymap_size_limit: usize = 1024 * 1024;
+const format_record_size: usize = 16;
+// Feedback indices are u16 entry indexes into fixed-size records.
+const format_table_size_limit: usize = (@as(usize, std.math.maxInt(u16)) + 1) * format_record_size;
+
+const MappedBytes = []align(std.heap.page_size_min) const u8;
+const empty_mapped_bytes: [0]u8 align(std.heap.page_size_min) = .{};
+
+const MappingError = error{
+    InvalidDescriptor,
+    InvalidSize,
+    MappingFailed,
+};
+
+const NativeMapping = struct {
+    fn map(ptr: ?[*]align(std.heap.page_size_min) u8, size: usize, protection: std.posix.PROT, flags: std.posix.MAP, fd: i32, offset: u64) !MappedBytes {
+        return std.posix.mmap(ptr, size, protection, flags, fd, offset);
+    }
+
+    fn unmap(bytes: MappedBytes) void {
+        std.posix.munmap(bytes);
+    }
+
+    fn close(fd: i32) void {
+        closeDescriptor(fd);
+    }
+};
+
+fn mapReadOnlyPrivate(comptime Mapping: type, fd: i32, size: u32, size_limit: usize) MappingError!MappedBytes {
+    if (fd < 0) return error.InvalidDescriptor;
+    if (size == 0 or size > size_limit) return error.InvalidSize;
+    return Mapping.map(
+        null,
+        size,
+        std.posix.PROT{ .READ = true },
+        std.posix.MAP{ .TYPE = .PRIVATE },
+        fd,
+        0,
+    ) catch error.MappingFailed;
+}
+
+const FeedbackMapping = struct {
+    fd: i32 = -1,
+    bytes: MappedBytes = empty_mapped_bytes[0..],
+
+    fn deinit(self: *FeedbackMapping, comptime Mapping: type) void {
+        if (self.fd < 0) return;
+        Mapping.unmap(self.bytes);
+        Mapping.close(self.fd);
+        self.* = .{};
+    }
+};
 
 const ScaleError = error{
     InvalidScale,
@@ -198,9 +250,7 @@ const State = struct {
     feedback_complete: bool = false,
     feedback_device: u64 = 0,
     tranche_device: u64 = 0,
-    table_fd: i32 = -1,
-    table_size: usize = 0,
-    table_map: ?[*]const u8 = null,
+    format_table: FeedbackMapping = .{},
     formats: [format_limit]struct { fourcc: u32, modifier: u64, device: u64 } = undefined,
     format_count: u8 = 0,
     ring: Ring = .{},
@@ -251,10 +301,7 @@ const State = struct {
         if (self.dmabuf) |value| c.zwp_linux_dmabuf_v1_destroy(value);
         if (self.xdg) |value| c.xdg_wm_base_destroy(value);
         if (self.compositor) |value| c.wl_compositor_destroy(value);
-        if (self.table_map) |value| {
-            if (posix.munmap(@ptrCast(@constCast(value)), self.table_size) != 0) @panic("feedback mapping cleanup failed");
-        }
-        if (self.table_fd >= 0) closeDescriptor(self.table_fd);
+        self.format_table.deinit(NativeMapping);
     }
 };
 
@@ -1044,25 +1091,29 @@ const seat_listener = c.wl_seat_listener{ .capabilities = seatCapabilities, .nam
 
 fn keyboardKeymap(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (keyboard != state.keyboard) return state.boundary.requestStop(.window);
     if (fd < 0) return state.boundary.requestStop(.window);
     defer if (posix.close(fd) != 0) @panic("keyboard keymap descriptor cleanup failed");
-    if (format != 1 or size == 0 or size > 1024 * 1024) return state.boundary.requestStop(.window);
-    const mapped = posix.mmap(null, size, posix.PROT_READ, posix.MAP_PRIVATE, fd, 0);
-    if (mapped == posix.MAP_FAILED) return state.boundary.requestStop(.window);
-    defer if (posix.munmap(mapped, size) != 0) @panic("keyboard keymap mapping cleanup failed");
-    const bytes: []const u8 = @as([*]const u8, @ptrCast(mapped))[0..size];
-    var keymap = if (state.xkb_context) |*context| wayland.xkb.Keymap.fromBuffer(context, bytes) catch return state.boundary.requestStop(.window) else return state.boundary.requestStop(.window);
-    const keyboard_state = wayland.xkb.State.init(&keymap) catch {
-        keymap.deinit();
-        return state.boundary.requestStop(.window);
-    };
+    if (keyboard != state.keyboard) return state.boundary.requestStop(.window);
+    if (format != 1) return state.boundary.requestStop(.window);
+    installMappedKeyboardState(NativeMapping, state, fd, size) catch return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .keyboard_reset = {} }) catch inputFailure(state);
+}
+
+fn installMappedKeyboardState(comptime Mapping: type, state: *State, fd: i32, size: u32) (MappingError || wayland.xkb.Error)!void {
+    const mapped = try mapReadOnlyPrivate(Mapping, fd, size, keymap_size_limit);
+    defer Mapping.unmap(mapped);
+    try replaceKeyboardState(state, mapped);
+}
+
+fn replaceKeyboardState(state: *State, bytes: []const u8) wayland.xkb.Error!void {
+    var keymap = if (state.xkb_context) |*context| try wayland.xkb.Keymap.fromBuffer(context, bytes) else return error.ContextUnavailable;
+    errdefer keymap.deinit();
+    const keyboard_state = try wayland.xkb.State.init(&keymap);
     if (state.xkb_state) |*old| old.deinit();
     if (state.xkb_keymap) |*old| old.deinit();
     state.xkb_keymap = keymap;
     state.xkb_state = keyboard_state;
     state.keyboard_semantic_modifiers = .{};
-    state.boundary.publishInput(.{ .keyboard_reset = {} }) catch inputFailure(state);
 }
 
 fn keyboardEnter(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface, keys: [*c]c.wl_array) callconv(.c) void {
@@ -1572,18 +1623,269 @@ test "Wayland widened DPI reduction succeeds before storage bounds" {
     try std.testing.expectError(error.ArithmeticOverflow, unrepresentable.dpi());
 }
 
+test "Window mapping preflights external facts and passes exact typed flags" {
+    const FakeMapping = struct {
+        var calls: usize = 0;
+        var fail: bool = false;
+        var ptr: ?[*]align(std.heap.page_size_min) u8 = undefined;
+        var size: usize = 0;
+        var protection: std.posix.PROT = .{};
+        var flags: std.posix.MAP = .{ .TYPE = .PRIVATE };
+        var fd: i32 = -1;
+        var offset: u64 = 1;
+        var storage: [32]u8 align(std.heap.page_size_min) = @splat(0);
+
+        fn reset() void {
+            calls = 0;
+            fail = false;
+            ptr = undefined;
+            size = 0;
+            protection = .{};
+            flags = .{ .TYPE = .PRIVATE };
+            fd = -1;
+            offset = 1;
+        }
+
+        fn map(candidate_ptr: ?[*]align(std.heap.page_size_min) u8, candidate_size: usize, candidate_protection: std.posix.PROT, candidate_flags: std.posix.MAP, candidate_fd: i32, candidate_offset: u64) error{Injected}!MappedBytes {
+            calls += 1;
+            ptr = candidate_ptr;
+            size = candidate_size;
+            protection = candidate_protection;
+            flags = candidate_flags;
+            fd = candidate_fd;
+            offset = candidate_offset;
+            if (fail) return error.Injected;
+            return storage[0..candidate_size];
+        }
+    };
+
+    FakeMapping.reset();
+    try std.testing.expectError(error.InvalidDescriptor, mapReadOnlyPrivate(FakeMapping, -1, 16, 32));
+    try std.testing.expectError(error.InvalidSize, mapReadOnlyPrivate(FakeMapping, 7, 0, 32));
+    try std.testing.expectError(error.InvalidSize, mapReadOnlyPrivate(FakeMapping, 7, 33, 32));
+    try std.testing.expectEqual(@as(usize, 0), FakeMapping.calls);
+
+    FakeMapping.fail = true;
+    try std.testing.expectError(error.MappingFailed, mapReadOnlyPrivate(FakeMapping, 7, 16, 32));
+    try std.testing.expectEqual(@as(usize, 1), FakeMapping.calls);
+
+    FakeMapping.fail = false;
+    const mapped = try mapReadOnlyPrivate(FakeMapping, 9, 16, 32);
+    try std.testing.expectEqual(@as(usize, 16), mapped.len);
+    try std.testing.expect(FakeMapping.ptr == null);
+    try std.testing.expectEqual(@as(usize, 16), FakeMapping.size);
+    try std.testing.expectEqual(std.posix.PROT{ .READ = true }, FakeMapping.protection);
+    try std.testing.expectEqual(std.posix.MAP{ .TYPE = .PRIVATE }, FakeMapping.flags);
+    try std.testing.expectEqual(@as(i32, 9), FakeMapping.fd);
+    try std.testing.expectEqual(@as(u64, 0), FakeMapping.offset);
+}
+
+test "Window retained feedback mapping ownership group remains 24 bytes" {
+    const PreviousFeedbackFacts = struct {
+        fd: i32 = -1,
+        size: usize = 0,
+        pointer: ?[*]const u8 = null,
+    };
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(MappedBytes));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(MappedBytes));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(FeedbackMapping));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(FeedbackMapping));
+    try std.testing.expectEqual(@sizeOf(PreviousFeedbackFacts), @sizeOf(FeedbackMapping));
+    try std.testing.expectEqual(@alignOf(PreviousFeedbackFacts), @alignOf(FeedbackMapping));
+}
+
+test "Window feedback mapping owns one slice and tears down in reverse order" {
+    const FakeMapping = struct {
+        const Event = enum { unmap, close };
+        var fail: bool = false;
+        var map_calls: usize = 0;
+        var events: [4]Event = undefined;
+        var event_count: usize = 0;
+        var closed_fd: i32 = -1;
+        var unmapped_len: usize = 0;
+        var even_storage: [32]u8 align(std.heap.page_size_min) = @splat(0);
+        var odd_storage: [32]u8 align(std.heap.page_size_min) = @splat(0);
+
+        fn reset() void {
+            fail = false;
+            map_calls = 0;
+            event_count = 0;
+            closed_fd = -1;
+            unmapped_len = 0;
+        }
+
+        fn map(_: ?[*]align(std.heap.page_size_min) u8, size: usize, _: std.posix.PROT, _: std.posix.MAP, fd: i32, _: u64) error{Injected}!MappedBytes {
+            map_calls += 1;
+            if (fail) return error.Injected;
+            return if (@mod(fd, 2) == 0) even_storage[0..size] else odd_storage[0..size];
+        }
+
+        fn unmap(bytes: MappedBytes) void {
+            events[event_count] = .unmap;
+            event_count += 1;
+            unmapped_len = bytes.len;
+        }
+
+        fn close(fd: i32) void {
+            events[event_count] = .close;
+            event_count += 1;
+            closed_fd = fd;
+        }
+    };
+
+    var state: State = .{ .boundary = undefined };
+    FakeMapping.reset();
+    try std.testing.expectError(error.InvalidDescriptor, installFormatTable(FakeMapping, &state, -1, 16));
+    try std.testing.expectEqual(@as(usize, 0), FakeMapping.event_count);
+    try std.testing.expectError(error.InvalidSize, installFormatTable(FakeMapping, &state, 3, 0));
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(i32, 3), FakeMapping.closed_fd);
+
+    FakeMapping.reset();
+    try std.testing.expectError(error.InvalidSize, installFormatTable(FakeMapping, &state, 4, 17));
+    try std.testing.expectEqual(@as(usize, 0), FakeMapping.map_calls);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+
+    FakeMapping.reset();
+    try std.testing.expectError(error.InvalidSize, installFormatTable(FakeMapping, &state, 4, format_table_size_limit + 1));
+    try std.testing.expectEqual(@as(usize, 0), FakeMapping.map_calls);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+
+    FakeMapping.reset();
+    FakeMapping.fail = true;
+    try std.testing.expectError(error.MappingFailed, installFormatTable(FakeMapping, &state, 5, 16));
+    try std.testing.expectEqual(@as(usize, 1), FakeMapping.map_calls);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+
+    FakeMapping.reset();
+    try installFormatTable(FakeMapping, &state, 6, 16);
+    try std.testing.expectEqual(@as(usize, 0), FakeMapping.event_count);
+    try std.testing.expectEqual(@as(i32, 6), state.format_table.fd);
+    try std.testing.expectEqual(@as(usize, 16), state.format_table.bytes.len);
+    const retained = state.format_table;
+
+    FakeMapping.reset();
+    try std.testing.expectError(error.InvalidSize, installFormatTable(FakeMapping, &state, 9, 17));
+    try std.testing.expectEqual(retained.fd, state.format_table.fd);
+    try std.testing.expectEqual(retained.bytes.ptr, state.format_table.bytes.ptr);
+    try std.testing.expectEqual(retained.bytes.len, state.format_table.bytes.len);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(i32, 9), FakeMapping.closed_fd);
+
+    FakeMapping.reset();
+    FakeMapping.fail = true;
+    try std.testing.expectError(error.MappingFailed, installFormatTable(FakeMapping, &state, 7, 16));
+    try std.testing.expectEqual(retained.fd, state.format_table.fd);
+    try std.testing.expectEqual(retained.bytes.ptr, state.format_table.bytes.ptr);
+    try std.testing.expectEqual(retained.bytes.len, state.format_table.bytes.len);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{.close}, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(i32, 7), FakeMapping.closed_fd);
+
+    FakeMapping.reset();
+    try installFormatTable(FakeMapping, &state, 7, 16);
+    try std.testing.expectEqual(@as(i32, 7), state.format_table.fd);
+    try std.testing.expect(state.format_table.bytes.ptr != retained.bytes.ptr);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{ .unmap, .close }, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(i32, 6), FakeMapping.closed_fd);
+
+    FakeMapping.reset();
+    try installFormatTable(FakeMapping, &state, 8, 16);
+    try std.testing.expectEqual(@as(i32, 8), state.format_table.fd);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{ .unmap, .close }, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(i32, 7), FakeMapping.closed_fd);
+
+    FakeMapping.reset();
+    state.format_table.deinit(FakeMapping);
+    try std.testing.expectEqualSlices(FakeMapping.Event, &.{ .unmap, .close }, FakeMapping.events[0..FakeMapping.event_count]);
+    try std.testing.expectEqual(@as(usize, 16), FakeMapping.unmapped_len);
+    try std.testing.expectEqual(@as(i32, 8), FakeMapping.closed_fd);
+}
+
+test "Window feedback parsing is bounded by the retained mapped slice" {
+    var table_bytes: [32]u8 align(std.heap.page_size_min) = @splat(0);
+    std.mem.writeInt(u32, table_bytes[0..4], 0x34325258, .native);
+    std.mem.writeInt(u64, table_bytes[8..16], 0x0102030405060708, .native);
+    std.mem.writeInt(u32, table_bytes[16..20], 0x34325241, .native);
+    std.mem.writeInt(u64, table_bytes[24..32], 0x1112131415161718, .native);
+    var state: State = .{
+        .boundary = undefined,
+        .format_table = .{ .fd = 4, .bytes = table_bytes[0..16] },
+        .tranche_device = 99,
+    };
+    var indices = [_]u8{ 0, 0, 1, 0 };
+    retainTrancheFormats(&state, &indices);
+    try std.testing.expectEqual(@as(u8, 1), state.format_count);
+    try std.testing.expectEqual(@as(u32, 0x34325258), state.formats[0].fourcc);
+    try std.testing.expectEqual(@as(u64, 0x0102030405060708), state.formats[0].modifier);
+    try std.testing.expectEqual(@as(u64, 99), state.formats[0].device);
+
+    const before = state.formats[0];
+    retainTrancheFormats(&state, &.{0});
+    try std.testing.expectEqual(@as(u8, 1), state.format_count);
+    try std.testing.expectEqual(before, state.formats[0]);
+}
+
+test "Window mapped keymap failure unmaps and preserves accepted XKB ownership" {
+    const fixture =
+        "xkb_keymap {" ++
+        " xkb_keycodes \"minimal\" { minimum = 8; maximum = 255; <ESC> = 9; };" ++
+        " xkb_types \"minimal\" { virtual_modifiers None; type \"ONE_LEVEL\" { modifiers = none; map[None] = Level1; level_name[Level1] = \"Any\"; }; };" ++
+        " xkb_compatibility \"minimal\" { interpret Any+Any { action = NoAction(); }; };" ++
+        " xkb_symbols \"minimal\" { key <ESC> { [ Escape ] }; };" ++
+        " xkb_geometry \"minimal\" { }; };";
+    const FakeMapping = struct {
+        var unmap_count: usize = 0;
+        var storage: [32]u8 align(std.heap.page_size_min) = @splat(0);
+
+        fn map(_: ?[*]align(std.heap.page_size_min) u8, size: usize, _: std.posix.PROT, _: std.posix.MAP, _: i32, _: u64) !MappedBytes {
+            return storage[0..size];
+        }
+
+        fn unmap(_: MappedBytes) void {
+            unmap_count += 1;
+        }
+    };
+
+    var context = try wayland.xkb.Context.init();
+    var state: State = .{ .boundary = undefined, .xkb_context = context };
+    context = undefined;
+    defer {
+        if (state.xkb_state) |*value| value.deinit();
+        if (state.xkb_keymap) |*value| value.deinit();
+        if (state.xkb_context) |*value| value.deinit();
+    }
+    try replaceKeyboardState(&state, fixture);
+    var keymap_before: [@sizeOf(?wayland.xkb.Keymap)]u8 = undefined;
+    @memcpy(&keymap_before, std.mem.asBytes(&state.xkb_keymap));
+    var state_before: [@sizeOf(?wayland.xkb.State)]u8 = undefined;
+    @memcpy(&state_before, std.mem.asBytes(&state.xkb_state));
+    @memcpy(FakeMapping.storage[0..16], "not a keymap!!!!");
+    FakeMapping.unmap_count = 0;
+    try std.testing.expectError(error.InvalidKeymap, installMappedKeyboardState(FakeMapping, &state, 8, 16));
+    try std.testing.expectEqual(@as(usize, 1), FakeMapping.unmap_count);
+    try std.testing.expectEqualSlices(u8, &keymap_before, std.mem.asBytes(&state.xkb_keymap));
+    try std.testing.expectEqualSlices(u8, &state_before, std.mem.asBytes(&state.xkb_state));
+}
+
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     state.feedback_complete = true;
 }
 fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    state.table_fd = fd;
-    state.table_size = size;
-    if (size != 0) {
-        const mapped = posix.mmap(null, size, posix.PROT_READ, posix.MAP_PRIVATE, fd, 0);
-        if (mapped != posix.MAP_FAILED) state.table_map = @ptrCast(mapped);
-    }
+    installFormatTable(NativeMapping, state, fd, size) catch state.boundary.requestStop(.window);
+}
+
+fn installFormatTable(comptime Mapping: type, state: *State, fd: i32, size: u32) MappingError!void {
+    if (fd < 0) return error.InvalidDescriptor;
+    var descriptor_owned = true;
+    defer if (descriptor_owned) Mapping.close(fd);
+    if (size == 0 or size % format_record_size != 0 or size > format_table_size_limit) return error.InvalidSize;
+    const bytes = try mapReadOnlyPrivate(Mapping, fd, size, format_table_size_limit);
+    var retiring = state.format_table;
+    state.format_table = .{ .fd = fd, .bytes = bytes };
+    descriptor_owned = false;
+    retiring.deinit(Mapping);
 }
 fn copyDevice(array: ?*c.wl_array) u64 {
     const value = array orelse return 0;
@@ -1606,20 +1908,26 @@ fn trancheTarget(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device:
 }
 fn trancheFormats(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, indices: ?*c.wl_array) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    const table = state.table_map orelse return;
     const array = indices orelse return;
-    if (array.size % 2 != 0) return;
-    const bytes: [*]const u8 = @ptrCast(array.data);
-    for (0..array.size / 2) |index| {
+    if (array.size != 0 and array.data == null) return;
+    const bytes: []const u8 = if (array.size == 0) &.{} else @as([*]const u8, @ptrCast(array.data))[0..array.size];
+    retainTrancheFormats(state, bytes);
+}
+
+fn retainTrancheFormats(state: *State, indices: []const u8) void {
+    const table = state.format_table;
+    if (table.fd < 0) return;
+    if (indices.len % 2 != 0) return;
+    for (0..indices.len / 2) |index| {
         if (state.format_count == format_limit) return;
         var encoded: [2]u8 = undefined;
-        @memcpy(&encoded, bytes[index * 2 ..][0..2]);
+        @memcpy(&encoded, indices[index * 2 ..][0..2]);
         const table_index = std.mem.bytesToValue(u16, &encoded);
         const offset = @as(usize, table_index) * 16;
-        if (offset + 16 > state.table_size) continue;
+        if (offset > table.bytes.len or table.bytes.len - offset < 16) continue;
         state.formats[state.format_count] = .{
-            .fourcc = std.mem.bytesToValue(u32, table[offset..][0..4]),
-            .modifier = std.mem.bytesToValue(u64, table[offset + 8 ..][0..8]),
+            .fourcc = std.mem.bytesToValue(u32, table.bytes[offset..][0..4]),
+            .modifier = std.mem.bytesToValue(u64, table.bytes[offset + 8 ..][0..8]),
             .device = state.tranche_device,
         };
         state.format_count += 1;

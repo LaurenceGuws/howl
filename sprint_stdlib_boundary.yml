@@ -54,10 +54,16 @@ slices:
       - Window display and Boundary readiness remain independently classified before protocol-error observation.
       - Direct Host fixtures use pinned pollfd and POLL.IN facts.
   - id: mapping_lifetime
-    status: active
+    status: accepted
     output: Window mappings use pinned stdlib mmap and munmap contracts
+    accepted_facts:
+      - Keyboard keymap bytes remain callback-local and unmap before callback return.
+      - DMA-BUF feedback retains one typed aligned mapped slice with exact descriptor ownership.
+      - Feedback-table replacement maps the candidate before retiring the accepted mapping in unmap-then-close order.
+      - Invalid facts and mapping failure close only the incoming descriptor and preserve accepted ownership.
+      - The retained feedback ownership group remains 24 bytes at alignment 8.
   - id: build_boundary_removal
-    status: pending
+    status: active
     output: host_c translation and imports removed after all consumers migrate
 
 acceptance:

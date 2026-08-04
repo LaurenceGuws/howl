@@ -3,11 +3,11 @@ sprint:
   id: stdlib_boundary
   branch: feature/debt_payoff/stdlib_boundary
   status: active
-  active_slice: mapping_lifetime
+  active_slice: build_boundary_removal
 
 objective: >-
-  Replace only Window mapping ownership with pinned typed std.posix mmap and
-  munmap while preserving read-only/private flags, failure, and cleanup.
+  Remove the now-unneeded host_c Translate-C boundary, generated header
+  ownership, and final imports without changing product behavior.
 
 questions:
   - id: eventfd
@@ -23,7 +23,7 @@ questions:
     status: resolved
     answer: typed std.posix.mmap and munmap with packed PROT READ and MAP TYPE PRIVATE facts
   - id: build
-    status: deferred
+    status: active
     question: Which host_c imports and Translate-C wiring become unreachable after migration?
 
 accepted_evidence:
@@ -32,23 +32,21 @@ accepted_evidence:
   tracked: false
 
 accepted_slice:
-  id: poll_and_errno
+  id: mapping_lifetime
   state: accepted
   product:
-    - howl-host/src/renderer.zig
     - howl-host/src/window.zig
-    - howl-host/test/test.zig
   validation: all_modes_and_source_gates_pass
 
 active_scope:
   product:
-    - howl-host/src/window.zig
+    - howl-host/build.zig
+    - howl-host/host-native.h
+    - remaining host_c import sites
   excluded:
-    - eventfd owners
-    - Renderer polling
-    - Host polling fixtures
-    - host_c generation and build imports
     - renderer_c
+    - product behavior
+    - unrelated generated-C boundaries
 
 progress:
   state: not_started
