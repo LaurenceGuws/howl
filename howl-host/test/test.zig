@@ -1,5 +1,5 @@
 const std = @import("std");
-const c = @import("host_c");
+const linux = std.os.linux;
 const shared = @import("shared");
 const chrome_state = @import("chrome_state");
 const session = @import("session_domain");
@@ -8,6 +8,10 @@ const wayland = @import("howl_wayland");
 
 fn boundary() !shared.Boundary {
     return shared.Boundary.init(std.testing.io);
+}
+
+fn closeDescriptor(descriptor: i32) std.posix.E {
+    return std.posix.errno(std.posix.system.close(descriptor));
 }
 
 test "feedback and ring offers transfer complete copied ownership" {
@@ -21,9 +25,9 @@ test "feedback and ring offers transfer complete copied ownership" {
     const taken = value.takeOffers().?;
     for (taken.slots) |offer| {
         try std.testing.expect(offer.dma_fd >= 0);
-        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.dma_fd));
-        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.acquire_timeline_fd));
-        try std.testing.expectEqual(@as(c_int, 0), c.close(offer.release_timeline_fd));
+        try std.testing.expectEqual(std.posix.E.SUCCESS, closeDescriptor(offer.dma_fd));
+        try std.testing.expectEqual(std.posix.E.SUCCESS, closeDescriptor(offer.acquire_timeline_fd));
+        try std.testing.expectEqual(std.posix.E.SUCCESS, closeDescriptor(offer.release_timeline_fd));
     }
     try std.testing.expect(value.takeOffers() == null);
 }
@@ -45,7 +49,7 @@ test "malformed offers preserve Boundary and caller descriptor ownership" {
     try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
     try std.testing.expectEqual(@as(u8, 0), value.offer_count);
     try std.testing.expect(value.takeOffers() == null);
-    try std.testing.expectEqual(@as(c_int, 0), c.close(displaced));
+    try std.testing.expectEqual(std.posix.E.SUCCESS, closeDescriptor(displaced));
     offers[2].dma_fd = -1;
     closeOffers(offers);
 
@@ -102,9 +106,9 @@ test "Boundary cleanup closes every retained offered descriptor" {
     try value.publishOffers(offers);
     value.deinit();
     for (offers) |offer| {
-        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.dma_fd));
-        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.acquire_timeline_fd));
-        try std.testing.expectEqual(@as(c_int, -1), c.close(offer.release_timeline_fd));
+        try std.testing.expectEqual(std.posix.E.BADF, closeDescriptor(offer.dma_fd));
+        try std.testing.expectEqual(std.posix.E.BADF, closeDescriptor(offer.acquire_timeline_fd));
+        try std.testing.expectEqual(std.posix.E.BADF, closeDescriptor(offer.release_timeline_fd));
     }
 }
 
@@ -473,9 +477,9 @@ fn expectReadable(descriptor: i32) !void {
 }
 
 fn eventDescriptor() !i32 {
-    const value = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-    if (value < 0) return error.Descriptor;
-    return value;
+    const value = linux.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
+    if (linux.errno(value) != .SUCCESS) return error.Descriptor;
+    return std.math.cast(i32, value) orelse return error.Descriptor;
 }
 
 fn realOffers() ![shared.slot_count]shared.SlotOffer {
@@ -506,8 +510,8 @@ fn realOffers() ![shared.slot_count]shared.SlotOffer {
 
 fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
     for (offers) |offer| {
-        if (offer.dma_fd >= 0) std.debug.assert(c.close(offer.dma_fd) == 0);
-        if (offer.acquire_timeline_fd >= 0) std.debug.assert(c.close(offer.acquire_timeline_fd) == 0);
-        if (offer.release_timeline_fd >= 0) std.debug.assert(c.close(offer.release_timeline_fd) == 0);
+        if (offer.dma_fd >= 0) std.debug.assert(closeDescriptor(offer.dma_fd) == .SUCCESS);
+        if (offer.acquire_timeline_fd >= 0) std.debug.assert(closeDescriptor(offer.acquire_timeline_fd) == .SUCCESS);
+        if (offer.release_timeline_fd >= 0) std.debug.assert(closeDescriptor(offer.release_timeline_fd) == .SUCCESS);
     }
 }

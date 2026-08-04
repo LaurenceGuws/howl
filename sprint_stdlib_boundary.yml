@@ -63,8 +63,12 @@ slices:
       - Invalid facts and mapping failure close only the incoming descriptor and preserve accepted ownership.
       - The retained feedback ownership group remains 24 bytes at alignment 8.
   - id: build_boundary_removal
-    status: active
+    status: accepted
     output: host_c translation and imports removed after all consumers migrate
+    accepted_facts:
+      - No maintained howl-host source or build owner imports host_c or names the generated Host header.
+      - Window and Host fixtures use the approved pinned stdlib descriptor interfaces.
+      - renderer_c remains the sole required howl-host Translate-C boundary.
 
 acceptance:
   - Exact source inventory and behavioral comparison are reviewed before implementation.

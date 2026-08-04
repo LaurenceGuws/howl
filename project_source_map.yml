@@ -54,7 +54,7 @@ accepted:
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
   howl-render/LICENSES: render-owned asset and native-library provenance
-  howl-host/build.zig: first-party executable build, install, run, proof, and distinct translated native-header ownership
+  howl-host/build.zig: first-party executable build, install, run, proof, and required renderer_c native-header ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/manual-fixtures: bounded compositor-visible terminal, Wayland integration, image, text-sizing, color, and generated-glyph receipts
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure

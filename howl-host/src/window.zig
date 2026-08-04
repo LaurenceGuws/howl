@@ -3,7 +3,6 @@
 const std = @import("std");
 const c = @import("howl_wayland").c;
 const wayland = @import("howl_wayland");
-const posix = @import("host_c");
 const shared = @import("shared.zig");
 
 const format_limit: usize = 64;
@@ -1092,7 +1091,7 @@ const seat_listener = c.wl_seat_listener{ .capabilities = seatCapabilities, .nam
 fn keyboardKeymap(data: ?*anyopaque, keyboard: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (fd < 0) return state.boundary.requestStop(.window);
-    defer if (posix.close(fd) != 0) @panic("keyboard keymap descriptor cleanup failed");
+    defer if (std.posix.system.close(fd) != 0) @panic("keyboard keymap descriptor cleanup failed");
     if (keyboard != state.keyboard) return state.boundary.requestStop(.window);
     if (format != 1) return state.boundary.requestStop(.window);
     installMappedKeyboardState(NativeMapping, state, fd, size) catch return state.boundary.requestStop(.window);
@@ -1948,5 +1947,5 @@ const feedback_listener = c.zwp_linux_dmabuf_feedback_v1_listener{
 };
 
 fn closeDescriptor(descriptor: i32) void {
-    if (posix.close(descriptor) != 0) @panic("Window descriptor cleanup failed");
+    if (std.posix.system.close(descriptor) != 0) @panic("Window descriptor cleanup failed");
 }

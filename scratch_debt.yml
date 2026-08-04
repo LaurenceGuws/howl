@@ -23,8 +23,12 @@ questions:
     status: resolved
     answer: typed std.posix.mmap and munmap with packed PROT READ and MAP TYPE PRIVATE facts
   - id: build
-    status: active
+    status: resolved
     question: Which host_c imports and Translate-C wiring become unreachable after migration?
+    answer: >-
+      Two residual consumers and six stale module imports remained; all use
+      approved pinned stdlib ownership, so the inline header, Translate-C
+      step, module, and imports are removable together while renderer_c stays.
 
 accepted_evidence:
   path: .zig/work/debt-payoff/stdlib-boundary/stdlib_inventory.yml
@@ -32,10 +36,12 @@ accepted_evidence:
   tracked: false
 
 accepted_slice:
-  id: mapping_lifetime
+  id: build_boundary_removal
   state: accepted
   product:
+    - howl-host/build.zig
     - howl-host/src/window.zig
+    - howl-host/test/test.zig
   validation: all_modes_and_source_gates_pass
 
 active_scope:
@@ -49,4 +55,36 @@ active_scope:
     - unrelated generated-C boundaries
 
 progress:
-  state: not_started
+  state: accepted
+  census:
+    residual_consumers:
+      - howl-host/src/window.zig descriptor close
+      - howl-host/test/test.zig descriptor close and eventfd fixtures
+    stale_build_imports: 6
+    removable_build_facts:
+      - generated host-native.h contents
+      - host Translate-C step
+      - host_c module construction
+  changed_paths:
+    - howl-host/build.zig
+    - howl-host/src/window.zig
+    - howl-host/test/test.zig
+    - project_source_map.yml
+  proofs:
+    - Window descriptor cleanup uses std.posix.system.close without changing once-only ownership.
+    - Host fixtures use checked std.os.linux.eventfd and raw stdlib close errno facts.
+    - No product or test source imports host_c.
+    - No Host build step creates host-native.h or a host_c module.
+    - renderer_c generation and imports remain unchanged.
+  validation:
+    host_check_test: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+    workspace_check_test: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+    host_c_references: 0
+    maintained_howl_host_generated_header_references: 0
+    translate_c_steps: 1
+    renderer_c_imports: 2
+    strict_yaml: pass
+    source_audit: pass
+    protocol: pass
+    formatting: pass
+    diff_check: pass

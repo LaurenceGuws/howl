@@ -20,21 +20,8 @@ pub fn build(b: *std.Build) void {
         \\#include <sys/stat.h>
         \\#include <sys/sysmacros.h>
     );
-    const host_header = headers.add("host-native.h",
-        \\#ifdef _FORTIFY_SOURCE
-        \\#undef _FORTIFY_SOURCE
-        \\#endif
-        \\#define _FORTIFY_SOURCE 0
-        \\#include <sys/eventfd.h>
-        \\#include <sys/mman.h>
-        \\#include <unistd.h>
-        \\#include <errno.h>
-        \\#include <poll.h>
-    );
     const renderer_translate = b.addTranslateC(.{ .root_source_file = renderer_header, .target = target, .optimize = optimize });
     renderer_translate.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
-    const host_translate = b.addTranslateC(.{ .root_source_file = host_header, .target = target, .optimize = optimize });
-    const host_c = host_translate.createModule();
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -104,7 +91,6 @@ pub fn build(b: *std.Build) void {
     terminal_handoff.addImport("howl_render", render.module("howl_render"));
     terminal_handoff.addImport("howl_vt", vt.module("howl_vt"));
     terminal_handoff.addImport("howl_wayland", wayland.module("howl_wayland"));
-    terminal_handoff.addImport("host_c", host_c);
     const terminal_pool = b.createModule(.{
         .root_source_file = b.path("src/terminal_pool.zig"),
         .target = target,
@@ -153,7 +139,6 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_vk", vk.module("howl_vk"));
     root.addImport("howl_wayland", wayland.module("howl_wayland"));
     root.addImport("renderer_c", renderer_translate.createModule());
-    root.addImport("host_c", host_c);
     root.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
     root.linkSystemLibrary("vulkan", .{});
     root.linkSystemLibrary("drm", .{});
@@ -206,10 +191,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    test_shared.addImport("host_c", host_c);
     test_shared.addImport("howl_wayland", wayland.module("howl_wayland"));
     test_module.addImport("shared", test_shared);
-    test_module.addImport("host_c", host_c);
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);
@@ -233,7 +216,6 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     window_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
-    window_test_module.addImport("host_c", host_c);
     const window_tests = b.addTest(.{
         .root_module = window_test_module,
         .use_llvm = false,
@@ -255,7 +237,6 @@ pub fn build(b: *std.Build) void {
     renderer_test_module.addImport("howl_vk", vk.module("howl_vk"));
     renderer_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     renderer_test_module.addImport("renderer_c", renderer_translate.createModule());
-    renderer_test_module.addImport("host_c", host_c);
     renderer_test_module.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
     renderer_test_module.linkSystemLibrary("vulkan", .{});
     renderer_test_module.linkSystemLibrary("drm", .{});
