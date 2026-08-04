@@ -3,29 +3,33 @@ sprint:
   id: generated_c_boundary
   branch: feature/debt_payoff/generated_c_boundary
   status: active
-  active_slice: boundary_inventory
+  active_slice: pty_stdlib_syscalls
 
 objective: >-
-  Build a queryable census of every maintained Translate-C module and tracked
-  Wayland generated-C cohort before selecting any preservation or correction.
+  Implement and prove the accepted PTY syscall migration while preserving
+  openpty, generated wiring, public behavior, and exact owner error semantics.
 
 questions:
   - id: translated_symbols
-    status: open
+    status: answered
     question: Which exact declarations and constants does each translated module expose and which source symbols consume them?
+    answer: Constants/types records r001-r018, r034, and r035 are accepted; the active slice migrates r020-r028, r030-r033, r036, r037, r039, and r040 while retaining r029/openpty.
   - id: build_ownership
-    status: open
+    status: answered
     question: Which target macros, include paths, libraries, module imports, and proof gates define each native boundary?
+    answer: Existing pty_c generated header/build wiring and openpty ownership remain unchanged in this slice.
   - id: generated_protocols
-    status: open
+    status: answered
     question: Does each tracked Wayland XML/header/C cohort reproduce byte-for-byte and enter the build exactly once?
+    answer: Accepted Wayland cohort receipt remains unchanged and passes reproducibility validation.
   - id: disposition
-    status: open
+    status: answered
     question: Which boundaries are required, redundant, or uncertain under the pinned Zig and system ABI?
+    answer: The finite contract selects explicit Linux syscall surfaces plus libc-shaped fork and sigaction; openpty remains outside this slice.
 
 active_scope:
-  evidence: .zig/work/debt-payoff/generated-c-boundary/boundary_inventory.yml
-  product_change: forbidden
+  evidence: .zig/work/debt-payoff/generated-c-boundary/finite_boundary_contract.yml
+  product_change: limited to howl-pty/src/howl_pty.zig and owner-local proofs for the accepted syscall slice
   translated_module_count: 5
   generated_protocol_cohort_count: 5
   excluded:
@@ -35,3 +39,9 @@ active_scope:
 
 progress:
   state: not_started
+  accepted_checkpoint:
+    slice: pty_stdlib_constants_types
+    migrated_records: r001-r018, r034, r035
+    retained_record: r029/openpty
+    validation: owning and workspace four-mode gates, audit, protocol, Wayland reproducibility, strict YAML, formatting, and diff checks pass
+  active_records: r020-r028, r030-r033, r036, r037, r039, r040

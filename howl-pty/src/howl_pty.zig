@@ -3,8 +3,45 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const posix = std.posix;
+const linux = std.os.linux;
 
 const c = @import("pty_c");
+
+const linux_nonblock_flag: c_int = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
+const control_character_disabled: posix.cc_t = 0;
+const CWinSize = @typeInfo(@typeInfo(@TypeOf(c.openpty)).@"fn".param_types[4].?).pointer.child;
+const CTermios = @typeInfo(@typeInfo(@TypeOf(c.tcgetattr)).@"fn".param_types[1].?).pointer.child;
+const CTermiosInputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_0);
+const CTermiosOutputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_1);
+const CTermiosInputSpeedValue = @TypeOf(@as(CTermiosInputSpeed, undefined).c_ispeed);
+const CTermiosOutputSpeedValue = @TypeOf(@as(CTermiosOutputSpeed, undefined).c_ospeed);
+
+comptime {
+    if (@sizeOf(posix.winsize) != @sizeOf(CWinSize) or
+        @alignOf(posix.winsize) != @alignOf(CWinSize) or
+        @offsetOf(posix.winsize, "row") != @offsetOf(CWinSize, "ws_row") or
+        @offsetOf(posix.winsize, "col") != @offsetOf(CWinSize, "ws_col") or
+        @offsetOf(posix.winsize, "xpixel") != @offsetOf(CWinSize, "ws_xpixel") or
+        @offsetOf(posix.winsize, "ypixel") != @offsetOf(CWinSize, "ws_ypixel"))
+        @compileError("posix.winsize/openpty layout mismatch");
+    if (@sizeOf(posix.termios) != @sizeOf(CTermios) or
+        @alignOf(posix.termios) != @alignOf(CTermios) or
+        @offsetOf(posix.termios, "iflag") != @offsetOf(CTermios, "c_iflag") or
+        @offsetOf(posix.termios, "oflag") != @offsetOf(CTermios, "c_oflag") or
+        @offsetOf(posix.termios, "cflag") != @offsetOf(CTermios, "c_cflag") or
+        @offsetOf(posix.termios, "lflag") != @offsetOf(CTermios, "c_lflag") or
+        @offsetOf(posix.termios, "line") != @offsetOf(CTermios, "c_line") or
+        @offsetOf(posix.termios, "cc") != @offsetOf(CTermios, "c_cc") or
+        @offsetOf(posix.termios, "ispeed") != @offsetOf(CTermios, "unnamed_0") or
+        @offsetOf(posix.termios, "ospeed") != @offsetOf(CTermios, "unnamed_1") or
+        @sizeOf(CTermiosInputSpeedValue) != @sizeOf(posix.speed_t) or
+        @sizeOf(CTermiosOutputSpeedValue) != @sizeOf(posix.speed_t) or
+        @alignOf(CTermiosInputSpeedValue) != @alignOf(posix.speed_t) or
+        @alignOf(CTermiosOutputSpeedValue) != @alignOf(posix.speed_t) or
+        !@hasField(CTermiosInputSpeed, "c_ispeed") or
+        !@hasField(CTermiosOutputSpeed, "c_ospeed"))
+        @compileError("posix.termios/tcgetattr layout mismatch");
+}
 
 // Public lifecycle failures, signals, and nonblocking write outcomes.
 
@@ -247,13 +284,13 @@ fn childLaunchError(value: u8) StartError {
 fn openTransport(cols: u16, rows: u16) StartError!Open {
     var master_fd: c_int = -1;
     var slave_fd: c_int = -1;
-    var winsize = c.struct_winsize{
-        .ws_row = rows,
-        .ws_col = cols,
-        .ws_xpixel = 0,
-        .ws_ypixel = 0,
+    var winsize = posix.winsize{
+        .row = rows,
+        .col = cols,
+        .xpixel = 0,
+        .ypixel = 0,
     };
-    if (c.openpty(&master_fd, &slave_fd, null, null, &winsize) != 0) {
+    if (c.openpty(&master_fd, &slave_fd, null, null, @ptrCast(&winsize)) != 0) {
         return error.OpenPtyFailed;
     }
     return .{ .master_fd = @intCast(master_fd), .slave_fd = @intCast(slave_fd) };
@@ -483,7 +520,7 @@ pub const Owned = struct {
         const pid = self.childPid() orelse return error.ObserveFailed;
         var status: c_int = 0;
         const result = while (true) {
-            const waited = c.waitpid(pid, &status, c.WNOHANG);
+            const waited = c.waitpid(pid, &status, linux.W.NOHANG);
             if (waited < 0 and posix.errno(waited) == .INTR) continue;
             break waited;
         };
@@ -603,13 +640,13 @@ pub const Owned = struct {
         if (self.master_fd == null) return error.NotStarted;
         if (cols == 0 or rows == 0) return error.InvalidDimensions;
 
-        var winsize = c.struct_winsize{
-            .ws_row = rows,
-            .ws_col = cols,
-            .ws_xpixel = 0,
-            .ws_ypixel = 0,
+        var winsize = posix.winsize{
+            .row = rows,
+            .col = cols,
+            .xpixel = 0,
+            .ypixel = 0,
         };
-        if (c.ioctl(@intCast(self.master_fd.?), c.TIOCSWINSZ, &winsize) != 0) {
+        if (c.ioctl(@intCast(self.master_fd.?), linux.T.IOCSWINSZ, &winsize) != 0) {
             return error.ResizeFailed;
         }
         self.last_cols = cols;
@@ -622,19 +659,19 @@ pub const Owned = struct {
     /// assignment, or the byte is not VINTR, VQUIT, or VSUSP.
     pub fn handleTermiosSignal(self: *Self, byte: u8) TermiosSignalError!bool {
         const master = self.master_fd orelse return error.NotStarted;
-        var attributes: c.struct_termios = undefined;
-        if (c.tcgetattr(@intCast(master), &attributes) != 0)
+        var attributes: posix.termios = undefined;
+        if (c.tcgetattr(@intCast(master), @ptrCast(&attributes)) != 0)
             return error.TermiosQueryFailed;
-        if (attributes.c_lflag & c.ISIG == 0) return false;
+        if (!attributes.lflag.ISIG) return false;
         const signal_value: c_int = signal: {
             const controls = [_]struct { index: usize, signal: c_int }{
-                .{ .index = c.VINTR, .signal = c.SIGINT },
-                .{ .index = c.VQUIT, .signal = c.SIGQUIT },
-                .{ .index = c.VSUSP, .signal = c.SIGTSTP },
+                .{ .index = @backingInt(posix.V.INTR), .signal = @backingInt(posix.SIG.INT) },
+                .{ .index = @backingInt(posix.V.QUIT), .signal = @backingInt(posix.SIG.QUIT) },
+                .{ .index = @backingInt(posix.V.SUSP), .signal = @backingInt(posix.SIG.TSTP) },
             };
             for (controls) |entry| {
-                const assigned: u8 = attributes.c_cc[entry.index];
-                if (assigned != c._POSIX_VDISABLE and assigned == byte)
+                const assigned: u8 = attributes.cc[entry.index];
+                if (assigned != control_character_disabled and assigned == byte)
                     break :signal entry.signal;
             }
             return false;
@@ -717,19 +754,19 @@ fn closeLaunchStatusPipe(pipe: LaunchStatus) void {
 }
 
 fn setNonBlocking(fd: posix.fd_t) StartError!void {
-    const flags = c.fcntl(fd, c.F_GETFL, @as(c_int, 0));
+    const flags = c.fcntl(fd, linux.F.GETFL, @as(c_int, 0));
     if (flags < 0) return error.OpenPtyFailed;
-    if (c.fcntl(fd, c.F_SETFL, flags | c.O_NONBLOCK) != 0) return error.OpenPtyFailed;
+    if (c.fcntl(fd, linux.F.SETFL, flags | linux_nonblock_flag) != 0) return error.OpenPtyFailed;
 }
 
 fn setCloseOnExec(fd: posix.fd_t) StartError!void {
-    const flags = c.fcntl(fd, c.F_GETFD, @as(c_int, 0));
+    const flags = c.fcntl(fd, linux.F.GETFD, @as(c_int, 0));
     if (flags < 0) return error.OpenPtyFailed;
-    if (c.fcntl(fd, c.F_SETFD, flags | c.FD_CLOEXEC) != 0) return error.OpenPtyFailed;
+    if (c.fcntl(fd, linux.F.SETFD, flags | linux.FD_CLOEXEC) != 0) return error.OpenPtyFailed;
 }
 
 fn requireExecutable(path: [:0]const u8) StartError!void {
-    if (c.access(path.ptr, c.X_OK) != 0) return error.ShellUnavailable;
+    if (c.access(path.ptr, linux.X_OK) != 0) return error.ShellUnavailable;
 }
 
 fn cArg(path: [*:0]const u8) [*c]u8 {
@@ -768,7 +805,7 @@ fn closeChildFdIfNeeded(fd: posix.fd_t) bool {
 
 fn setupChildProcessFds(fds: ChildProcessFds, status_fd: posix.fd_t) void {
     if (!resetChildSignalDispositions() or c.setsid() < 0) childLaunchExit(status_fd, .session);
-    if (c.ioctl(@intCast(fds.slave_fd), c.TIOCSCTTY, @as(c_ulong, 0)) != 0 or
+    if (c.ioctl(@intCast(fds.slave_fd), linux.T.IOCSCTTY, @as(c_ulong, 0)) != 0 or
         c.dup2(fds.slave_fd, 0) < 0 or c.dup2(fds.slave_fd, 1) < 0 or
         c.dup2(fds.slave_fd, 2) < 0 or !closeChildFdIfNeeded(fds.master_fd) or
         !closeChildFdIfNeeded(fds.slave_fd))
@@ -824,7 +861,7 @@ fn waitChildNoHang(pid: posix.pid_t) enum { alive, reaped, failed } {
     std.debug.assert(pid > 0);
     var status: c_int = 0;
     while (true) {
-        const res = c.waitpid(pid, &status, c.WNOHANG);
+        const res = c.waitpid(pid, &status, linux.W.NOHANG);
         if (res == 0) return .alive;
         if (res == pid) return .reaped;
         switch (posix.errno(res)) {
@@ -1197,6 +1234,62 @@ test "foreground termios assignments route exact bytes to process-group signals"
     try disabled.start(test_cols, test_rows);
     try expectOutput(&disabled, "ready");
     try std.testing.expect(!(try disabled.handleTermiosSignal(0x18)));
+}
+
+test "failed termios query preserves owner state and delivers no signal" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "trap 'printf trapped' INT; printf ready; sleep 30", null, test_environment);
+    defer owned.deinit();
+    try owned.start(test_cols, test_rows);
+    try expectOutput(&owned, "ready");
+
+    const master = owned.master_fd.?;
+    const child = owned.child;
+    var configured_termios: posix.termios = undefined;
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        c.tcgetattr(@intCast(master), @ptrCast(&configured_termios)),
+    );
+    const configured_interrupt = configured_termios.cc[@backingInt(posix.V.INTR)];
+    try std.testing.expect(configured_interrupt != control_character_disabled);
+    var pipe_fds = [_]c_int{ -1, -1 };
+    try std.testing.expectEqual(@as(c_int, 0), c.pipe(&pipe_fds));
+    defer {
+        closeOwned(@intCast(pipe_fds[0]));
+        closeOwned(@intCast(pipe_fds[1]));
+    }
+    {
+        owned.master_fd = @intCast(pipe_fds[0]);
+        defer owned.master_fd = master;
+        try std.testing.expectError(error.TermiosQueryFailed, owned.handleTermiosSignal(configured_interrupt));
+    }
+    try std.testing.expectEqual(child, owned.child);
+    var descriptor = [1]posix.pollfd{.{ .fd = master, .events = posix.POLL.IN, .revents = 0 }};
+    for (0..8) |_| {
+        descriptor[0].revents = 0;
+        try std.testing.expectEqual(@as(usize, 0), try posix.poll(&descriptor, 25));
+        try std.testing.expectEqual(ChildObservation.running, try owned.observeChild());
+    }
+}
+
+test "constants census is migrated while openpty remains" {
+    var input_speed: CTermiosInputSpeed = undefined;
+    var output_speed: CTermiosOutputSpeed = undefined;
+    try std.testing.expectEqual(@intFromPtr(&input_speed), @intFromPtr(&input_speed.c_ispeed));
+    try std.testing.expectEqual(@intFromPtr(&output_speed), @intFromPtr(&output_speed.c_ospeed));
+    const source = @embedFile("howl_pty.zig");
+    inline for (.{
+        "FD_CLOEXEC", "F_GETFD",    "F_GETFL",         "F_SETFD",        "F_SETFL",        "WNOHANG", "X_OK",
+        "TIOCSCTTY",  "TIOCSWINSZ", "ISIG",            "SIGINT",         "SIGQUIT",        "SIGTSTP", "VINTR",
+        "VQUIT",      "VSUSP",      "_POSIX_VDISABLE", "struct_termios", "struct_winsize",
+    }) |name| {
+        var token: [64]u8 = undefined;
+        const rendered = try std.fmt.bufPrint(&token, "c.{s}", .{name});
+        try std.testing.expect(std.mem.indexOf(u8, source, rendered) == null);
+    }
+    var openpty_token: [32]u8 = undefined;
+    const rendered_openpty = try std.fmt.bufPrint(&openpty_token, "c.{s}", .{"openpty("});
+    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, source, rendered_openpty));
 }
 
 test "multiple owners interleave output through one caller poll set" {

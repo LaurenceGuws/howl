@@ -41,16 +41,24 @@ invariants:
 
 slices:
   - id: boundary_inventory
-    status: active
+    status: accepted
     product_change: none
     output: complete translated-symbol and generated-protocol ownership census
   - id: finite_boundary_contract
-    status: pending
+    status: accepted
     product_change: none
     output: accepted preservation findings plus finite contracts for any proven redundant boundary
   - id: accepted_corrections
     status: pending
     output: only contract-approved build or source corrections, if any
+  - id: pty_stdlib_constants_types
+    status: accepted
+    product_change: howl-pty source only; preserve openpty, syscalls, generated wiring, and public behavior
+    output: migrate records r001-r018, r034, and r035 with owner-level proofs
+  - id: pty_stdlib_syscalls
+    status: active
+    product_change: howl-pty source only; preserve openpty, generated wiring, and public behavior
+    output: migrate records r020-r028, r030-r033, r036, r037, r039, and r040 with owner-level proofs
 
 acceptance:
   - All five Translate-C modules and five generated Wayland protocol cohorts are indexed exactly once.
