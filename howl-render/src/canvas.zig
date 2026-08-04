@@ -763,17 +763,21 @@ pub const Composer = struct {
     ///
     /// Registration alone does not alter the visible frame revision.
     pub fn registerSource(self: *Composer) Composer.Error!SourceId {
-        if (self.source_count >= self.sources.len) return error.SourceLimit;
         if (self.next_source_id == 0 or self.next_source_id == std.math.maxInt(u64))
             return error.IdentityExhausted;
+        var index: usize = 0;
+        while (index < self.source_count and self.sources[index].live) : (index += 1) {}
+        if (index == self.source_count) {
+            if (self.source_count == self.sources.len) return error.SourceLimit;
+            self.source_count += 1;
+        }
         const id: SourceId = @fromBackingInt(@intCast(self.next_source_id));
-        self.sources[self.source_count] = .{
+        self.sources[index] = .{
             .id = id,
             .resource_start = self.resource_count,
             .command_start = self.command_count,
             .pixel_start = self.pixel_count,
         };
-        self.source_count += 1;
         self.next_source_id += 1;
         return id;
     }
@@ -1193,9 +1197,7 @@ pub const Composer = struct {
         if (!include_cursor) {
             var cursor_commands: usize = 0;
             for (self.composition[0..self.composition_count]) |placement| {
-                const source = self.sources[
-                    @intCast(@backingInt(placement.source) - 1)
-                ];
+                const source = self.sources[try self.sourceIndex(placement.source)];
                 cursor_commands = std.math.add(
                     usize,
                     cursor_commands,
@@ -1235,10 +1237,10 @@ pub const Composer = struct {
     fn sourceIndex(self: *const Composer, source: SourceId) Composer.Error!usize {
         const value = @backingInt(source);
         if (value == 0 or value >= self.next_source_id) return error.InvalidSource;
-        const index: usize = @intCast(value - 1);
-        if (index >= self.source_count) return error.InvalidSource;
-        if (!self.sources[index].live) return error.RetiredSource;
-        return index;
+        for (self.sources[0..self.source_count], 0..) |retained, index|
+            if (retained.id == source)
+                return if (retained.live) index else error.RetiredSource;
+        return error.RetiredSource;
     }
 
     fn validateFocusedSource(self: *const Composer, composition: Composition) Composer.Error!void {
@@ -2253,9 +2255,7 @@ pub const Composer = struct {
         pixels_needed: *usize,
     ) Composer.Error!void {
         for (self.composition[0..self.composition_count]) |placement| {
-            const source = self.sources[
-                @intCast(@backingInt(placement.source) - 1)
-            ];
+            const source = self.sources[try self.sourceIndex(placement.source)];
             for (self.sourceCommands(source)) |command| {
                 if (try self.frameCommand(placement, command) != null)
                     commands_needed.* = std.math.add(usize, commands_needed.*, 1) catch
@@ -2312,9 +2312,7 @@ pub const Composer = struct {
         include_cursor: bool,
     ) Composer.Error!void {
         for (self.composition[0..self.composition_count]) |placement| {
-            const source = self.sources[
-                @intCast(@backingInt(placement.source) - 1)
-            ];
+            const source = self.sources[try self.sourceIndex(placement.source)];
             for (self.sourceCommands(source)) |command| {
                 const output = (try self.frameCommand(placement, command)) orelse
                     continue;
@@ -2558,7 +2556,9 @@ pub const Composer = struct {
         const placement_index = self.placementIndex(residency.resource.source) orelse
             return false;
         const source = self.sources[
-            @intCast(@backingInt(self.composition[placement_index].source) - 1)
+            try self.sourceIndex(
+                self.composition[placement_index].source,
+            )
         ];
         const resource = findResource(
             self.resources[source.resource_start .. source.resource_start + source.resource_count],
@@ -2576,9 +2576,7 @@ pub const Composer = struct {
         shared: ResourceRef,
     ) Composer.Error!bool {
         for (self.composition[0..self.composition_count]) |placement| {
-            const source = self.sources[
-                @intCast(@backingInt(placement.source) - 1)
-            ];
+            const source = self.sources[try self.sourceIndex(placement.source)];
             for (self.commands[source.command_start .. source.command_start +
                 source.command_count]) |command|
             {

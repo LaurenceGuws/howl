@@ -59,7 +59,8 @@ accepted_contract:
     maximum_domain_owned_payload_bytes: 40768
     host_adapter_overhead_bytes: 168
     host_input_capture_bytes: 68
-    maximum_steady_retained_bytes: 41004
+    host_deferred_topology_input_bytes: 48
+    maximum_steady_retained_bytes: 41052
     pending_session_transition_bytes: 20552
     migration_peak_modeled_bytes: 61388
     migration_peak_status: modeled legacy chrome_state.Topology term, not a product-type measurement

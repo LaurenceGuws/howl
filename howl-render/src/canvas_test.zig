@@ -1067,6 +1067,33 @@ test "composer initialization releases every staged allocation" {
     );
 }
 
+test "composer reuses retired physical source slots with fresh identities" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 2,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+
+    const retained = try composer.registerSource();
+    var previous: ?canvas.SourceId = null;
+    for (0..130) |_| {
+        const candidate = try composer.registerSource();
+        try std.testing.expect(candidate != retained);
+        if (previous) |retired|
+            try std.testing.expectError(error.RetiredSource, composer.removeSource(retired));
+        try composer.removeSource(candidate);
+        previous = candidate;
+    }
+    try composer.removeSource(retained);
+    try std.testing.expectError(error.RetiredSource, composer.removeSource(previous.?));
+}
+
 test "composer atomic candidate commits seventeen sources once" {
     var composer = try canvas.Composer.init(std.testing.allocator, .{
         .sources = 17,

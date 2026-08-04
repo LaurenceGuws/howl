@@ -684,6 +684,23 @@ pub const Pool = struct {
         descriptor.state.store(@backingInt(DescriptorState.retired), .release);
     }
 
+    /// Releases one fully retired physical descriptor for a fresh identity.
+    pub fn releaseRetired(
+        self: *Pool,
+        descriptor_index: u8,
+        pane_id: PaneId,
+        source_id: canvas.SourceId,
+    ) error{ InvalidDescriptor, Stale }!void {
+        const descriptor = self.descriptorAt(descriptor_index) orelse
+            return error.InvalidDescriptor;
+        if (descriptorState(descriptor) != .retired or
+            descriptor.pane_id != pane_id or
+            descriptor.source_id != source_id or
+            descriptor.block_index != null)
+            return error.Stale;
+        descriptor.state.store(@backingInt(DescriptorState.inactive), .release);
+    }
+
     fn initializeRecords(self: *Pool) void {
         const meta = self.metaPtr();
         meta.group_phase = .init(@backingInt(GroupPhase.idle));
