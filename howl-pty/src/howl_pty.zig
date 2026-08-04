@@ -10,7 +10,7 @@ const c = @import("pty_c");
 const linux_nonblock_flag: c_int = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
 const control_character_disabled: posix.cc_t = 0;
 const CWinSize = @typeInfo(@typeInfo(@TypeOf(c.openpty)).@"fn".param_types[4].?).pointer.child;
-const CTermios = @typeInfo(@typeInfo(@TypeOf(c.tcgetattr)).@"fn".param_types[1].?).pointer.child;
+const CTermios = @typeInfo(@typeInfo(@TypeOf(c.openpty)).@"fn".param_types[3].?).pointer.child;
 const CTermiosInputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_0);
 const CTermiosOutputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_1);
 const CTermiosInputSpeedValue = @TypeOf(@as(CTermiosInputSpeed, undefined).c_ispeed);
@@ -41,6 +41,79 @@ comptime {
         !@hasField(CTermiosInputSpeed, "c_ispeed") or
         !@hasField(CTermiosOutputSpeed, "c_ospeed"))
         @compileError("posix.termios/tcgetattr layout mismatch");
+}
+
+const RawIoResult = union(enum) {
+    success: usize,
+    zero,
+    oversized: usize,
+    would_block,
+    interrupted,
+    fatal: linux.E,
+};
+
+fn classifyRawIo(result: usize, requested: usize) RawIoResult {
+    return switch (linux.errno(result)) {
+        .SUCCESS => if (result == 0) .zero else if (result > requested) .{ .oversized = result } else .{ .success = result },
+        .AGAIN => .would_block,
+        .INTR => .interrupted,
+        else => |err| .{ .fatal = err },
+    };
+}
+
+const FcntlResult = union(enum) {
+    success: c_int,
+    errno: linux.E,
+    out_of_range: usize,
+};
+
+fn classifyFcntl(result: usize) FcntlResult {
+    if (linux.errno(result) != .SUCCESS) return .{ .errno = linux.errno(result) };
+    return .{ .success = std.math.cast(c_int, result) orelse return .{ .out_of_range = result } };
+}
+
+fn requireFcntl(result: usize) error{OpenPtyFailed}!c_int {
+    return switch (classifyFcntl(result)) {
+        .success => |value| value,
+        .errno, .out_of_range => error.OpenPtyFailed,
+    };
+}
+
+fn ensureFcntl(result: usize) error{OpenPtyFailed}!void {
+    switch (classifyFcntl(result)) {
+        .success => {},
+        .errno, .out_of_range => return error.OpenPtyFailed,
+    }
+}
+
+fn checkedFcntlArgument(value: c_int) ?usize {
+    return std.math.cast(usize, value);
+}
+
+fn ioctlSucceeded(result: usize) bool {
+    return linux.errno(result) == .SUCCESS;
+}
+
+const WaitPidResult = enum { zero, expected, interrupted, child, unexpected_success, unexpected_error };
+
+fn classifyWaitPid(result: usize, expected_pid: posix.pid_t) WaitPidResult {
+    if (result == 0) return .zero;
+    return switch (linux.errno(result)) {
+        .SUCCESS => if (result == @as(usize, @intCast(expected_pid))) .expected else .unexpected_success,
+        .INTR => .interrupted,
+        .CHILD => .child,
+        else => .unexpected_error,
+    };
+}
+
+fn syntheticErrno(err: linux.E) usize {
+    const code: isize = -@as(isize, @intCast(@backingInt(err)));
+    return @as(usize, @bitCast(code));
+}
+
+fn checkedLinuxSignal(value: c_int) ?linux.SIG {
+    if (value < 0 or value > 64) return null;
+    return @fromBackingInt(@intCast(@as(u32, @intCast(value))));
 }
 
 // Public lifecycle failures, signals, and nonblocking write outcomes.
@@ -106,6 +179,34 @@ pub const TermiosSignalError = error{
 
 /// Reports one nonblocking PTY write failure.
 pub const WriteError = error{ ChildClosed, Interrupted, NotStarted, WouldBlock, WriteFailed };
+
+fn mapReadResult(result: usize, requested: usize) ReadError!usize {
+    return switch (classifyRawIo(result, requested)) {
+        .success => |count| count,
+        .zero => error.EndOfStream,
+        .oversized => error.ReadFailed,
+        .would_block => error.WouldBlock,
+        .interrupted => error.Interrupted,
+        .fatal => |err| switch (err) {
+            .IO => error.EndOfStream,
+            else => error.ReadFailed,
+        },
+    };
+}
+
+fn mapWriteResult(result: usize, requested: usize) WriteError!usize {
+    return switch (classifyRawIo(result, requested)) {
+        .success => |count| count,
+        .zero => error.ChildClosed,
+        .oversized => error.WriteFailed,
+        .would_block => error.WouldBlock,
+        .interrupted => error.Interrupted,
+        .fatal => |err| switch (err) {
+            .IO, .PIPE => error.ChildClosed,
+            else => error.WriteFailed,
+        },
+    };
+}
 
 /// Reports the exact normal or signal termination fact returned by waitpid.
 pub const ChildExit = union(enum) {
@@ -443,7 +544,7 @@ pub const Owned = struct {
     }
 
     fn forkChild(self: *Self, transport: Open, pipes: StartPipes) StartError!posix.pid_t {
-        const pid = c.fork();
+        const pid = posix.system.fork();
         if (pid < 0) return error.ForkFailed;
         if (pid == 0) {
             if (!closeChildFdIfNeeded(pipes.launch_status.read_fd)) {
@@ -520,31 +621,32 @@ pub const Owned = struct {
         const pid = self.childPid() orelse return error.ObserveFailed;
         var status: c_int = 0;
         const result = while (true) {
-            const waited = c.waitpid(pid, &status, linux.W.NOHANG);
-            if (waited < 0 and posix.errno(waited) == .INTR) continue;
+            const waited = linux.waitpid(pid, &status, linux.W.NOHANG);
+            if (classifyWaitPid(waited, pid) == .interrupted) continue;
             break waited;
         };
-        if (result == 0) return .running;
-        if (result == pid) {
-            const exit = childObservation(status);
-            self.child = .{ .reaped = .{ .pid = pid, .exit = exit.exited } };
-            return exit;
-        }
-        if (posix.errno(result) == .CHILD) return error.ObserveFailed;
-        return error.ObserveFailed;
+        return switch (classifyWaitPid(result, pid)) {
+            .zero => .running,
+            .expected => blk: {
+                const exit = childObservation(status);
+                self.child = .{ .reaped = .{ .pid = pid, .exit = exit.exited } };
+                break :blk exit;
+            },
+            .child, .interrupted, .unexpected_success, .unexpected_error => error.ObserveFailed,
+        };
     }
 
     fn awaitChildLaunch(status_fd: posix.fd_t) StartError!void {
         defer closeOwned(status_fd);
         var status: [1]u8 = undefined;
         while (true) {
-            const n = c.read(status_fd, &status, status.len);
-            // CLOEXEC closes the child writer atomically with successful exec.
-            if (n == 0) return;
-            if (n == 1) return childLaunchError(status[0]);
-            switch (posix.errno(n)) {
-                .INTR => continue,
-                else => return error.LaunchStatusFailed,
+            const n = linux.read(status_fd, &status, status.len);
+            switch (classifyRawIo(n, status.len)) {
+                // CLOEXEC closes the child writer atomically with successful exec.
+                .zero => return,
+                .success => |count| if (count == 1) return childLaunchError(status[0]) else return error.LaunchStatusFailed,
+                .interrupted => continue,
+                .oversized, .would_block, .fatal => return error.LaunchStatusFailed,
             }
         }
     }
@@ -599,19 +701,7 @@ pub const Owned = struct {
     pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
         const master = self.master_fd orelse return error.NotStarted;
         if (bytes.len == 0) return 0;
-        const result = c.write(master, bytes.ptr, bytes.len);
-        if (result > 0) {
-            const count: usize = @intCast(result);
-            if (count > bytes.len) return error.WriteFailed;
-            return count;
-        }
-        if (result == 0) return error.ChildClosed;
-        return switch (posix.errno(result)) {
-            .AGAIN => error.WouldBlock,
-            .INTR => error.Interrupted,
-            .IO, .PIPE => error.ChildClosed,
-            else => error.WriteFailed,
-        };
+        return mapWriteResult(linux.write(master, bytes.ptr, bytes.len), bytes.len);
     }
 
     /// Reads available transport bytes into caller-owned storage.
@@ -620,19 +710,7 @@ pub const Owned = struct {
         const master_fd = self.master_fd orelse return error.NotStarted;
         if (buf.len == 0) return 0;
 
-        const n = c.read(master_fd, buf.ptr, buf.len);
-        if (n < 0) {
-            return switch (posix.errno(n)) {
-                .AGAIN => error.WouldBlock,
-                .IO => error.EndOfStream,
-                .INTR => error.Interrupted,
-                else => error.ReadFailed,
-            };
-        }
-        if (n == 0) {
-            return error.EndOfStream;
-        }
-        return @intCast(n);
+        return mapReadResult(linux.read(master_fd, buf.ptr, buf.len), buf.len);
     }
 
     /// Applies nonzero terminal dimensions to the active PTY.
@@ -646,7 +724,8 @@ pub const Owned = struct {
             .xpixel = 0,
             .ypixel = 0,
         };
-        if (c.ioctl(@intCast(self.master_fd.?), linux.T.IOCSWINSZ, &winsize) != 0) {
+        const result = linux.ioctl(@intCast(self.master_fd.?), linux.T.IOCSWINSZ, @intFromPtr(&winsize));
+        if (!ioctlSucceeded(result)) {
             return error.ResizeFailed;
         }
         self.last_cols = cols;
@@ -660,7 +739,8 @@ pub const Owned = struct {
     pub fn handleTermiosSignal(self: *Self, byte: u8) TermiosSignalError!bool {
         const master = self.master_fd orelse return error.NotStarted;
         var attributes: posix.termios = undefined;
-        if (c.tcgetattr(@intCast(master), @ptrCast(&attributes)) != 0)
+        const termios_result = linux.tcgetattr(@intCast(master), @ptrCast(&attributes));
+        if (linux.errno(termios_result) != .SUCCESS)
             return error.TermiosQueryFailed;
         if (!attributes.lflag.ISIG) return false;
         const signal_value: c_int = signal: {
@@ -676,9 +756,12 @@ pub const Owned = struct {
             }
             return false;
         };
-        const foreground = c.tcgetpgrp(@intCast(master));
-        if (foreground <= 0) return error.ForegroundGroupFailed;
-        if (c.kill(-foreground, signal_value) != 0) return error.SignalFailed;
+        var foreground: posix.pid_t = undefined;
+        const foreground_result = linux.tcgetpgrp(@intCast(master), &foreground);
+        if (linux.errno(foreground_result) != .SUCCESS or foreground <= 0) return error.ForegroundGroupFailed;
+        const linux_signal = checkedLinuxSignal(signal_value) orelse return error.SignalFailed;
+        const signal_result = linux.kill(-foreground, linux_signal);
+        if (linux.errno(signal_result) != .SUCCESS) return error.SignalFailed;
         return true;
     }
 
@@ -713,9 +796,9 @@ fn optionalZPtr(bytes: ?[:0]u8) ?[*:0]u8 {
 // Linux releases the descriptor even when close reports EINTR; retrying could
 // close a reused descriptor. Every other error denotes an ownership invariant.
 fn closeOwned(fd: posix.fd_t) void {
-    const result = c.close(@intCast(fd));
-    if (result == 0) return;
-    switch (posix.errno(result)) {
+    const result = linux.close(@intCast(fd));
+    if (linux.errno(result) == .SUCCESS) return;
+    switch (linux.errno(result)) {
         .INTR => {},
         .BADF => @panic("PTY descriptor closed twice"),
         else => @panic("PTY descriptor close failed"),
@@ -737,7 +820,7 @@ fn closeTransport(transport: Open) void {
 
 fn openLaunchStatusPipe() StartError!LaunchStatus {
     var fds = [_]c_int{ -1, -1 };
-    if (c.pipe(&fds) != 0) return error.LaunchStatusPipeFailed;
+    if (linux.errno(linux.pipe(&fds)) != .SUCCESS) return error.LaunchStatusPipeFailed;
     errdefer {
         if (fds[0] >= 0) closeOwned(@intCast(fds[0]));
         if (fds[1] >= 0) closeOwned(@intCast(fds[1]));
@@ -754,19 +837,23 @@ fn closeLaunchStatusPipe(pipe: LaunchStatus) void {
 }
 
 fn setNonBlocking(fd: posix.fd_t) StartError!void {
-    const flags = c.fcntl(fd, linux.F.GETFL, @as(c_int, 0));
-    if (flags < 0) return error.OpenPtyFailed;
-    if (c.fcntl(fd, linux.F.SETFL, flags | linux_nonblock_flag) != 0) return error.OpenPtyFailed;
+    const flags_result = linux.fcntl(fd, linux.F.GETFL, 0);
+    const flags = requireFcntl(flags_result) catch return error.OpenPtyFailed;
+    const argument = checkedFcntlArgument(flags | linux_nonblock_flag) orelse return error.OpenPtyFailed;
+    const set_result = linux.fcntl(fd, linux.F.SETFL, argument);
+    ensureFcntl(set_result) catch return error.OpenPtyFailed;
 }
 
 fn setCloseOnExec(fd: posix.fd_t) StartError!void {
-    const flags = c.fcntl(fd, linux.F.GETFD, @as(c_int, 0));
-    if (flags < 0) return error.OpenPtyFailed;
-    if (c.fcntl(fd, linux.F.SETFD, flags | linux.FD_CLOEXEC) != 0) return error.OpenPtyFailed;
+    const flags_result = linux.fcntl(fd, linux.F.GETFD, 0);
+    const flags = requireFcntl(flags_result) catch return error.OpenPtyFailed;
+    const argument = checkedFcntlArgument(flags | linux.FD_CLOEXEC) orelse return error.OpenPtyFailed;
+    const set_result = linux.fcntl(fd, linux.F.SETFD, argument);
+    ensureFcntl(set_result) catch return error.OpenPtyFailed;
 }
 
 fn requireExecutable(path: [:0]const u8) StartError!void {
-    if (c.access(path.ptr, linux.X_OK) != 0) return error.ShellUnavailable;
+    if (linux.errno(linux.access(path.ptr, linux.X_OK)) != .SUCCESS) return error.ShellUnavailable;
 }
 
 fn cArg(path: [*:0]const u8) [*c]u8 {
@@ -790,24 +877,24 @@ fn resetChildSignalDispositions() bool {
         posix.SIG.PIPE, posix.SIG.QUIT, posix.SIG.SEGV, posix.SIG.TERM,
         posix.SIG.TRAP,
     }) |signal| {
-        if (c.sigaction(@backingInt(signal), @ptrCast(&sa), null) != 0) return false;
+        if (posix.system.sigaction(signal, @ptrCast(&sa), null) != 0) return false;
     }
     return true;
 }
 
 fn closeChildFdIfNeeded(fd: posix.fd_t) bool {
     if (fd <= 2) return true;
-    const result = c.close(@intCast(fd));
-    if (result == 0) return true;
+    const result = linux.close(@intCast(fd));
+    if (linux.errno(result) == .SUCCESS) return true;
     // Linux has consumed the descriptor even when close reports EINTR.
-    return posix.errno(result) == .INTR;
+    return linux.errno(result) == .INTR;
 }
 
 fn setupChildProcessFds(fds: ChildProcessFds, status_fd: posix.fd_t) void {
-    if (!resetChildSignalDispositions() or c.setsid() < 0) childLaunchExit(status_fd, .session);
-    if (c.ioctl(@intCast(fds.slave_fd), linux.T.IOCSCTTY, @as(c_ulong, 0)) != 0 or
-        c.dup2(fds.slave_fd, 0) < 0 or c.dup2(fds.slave_fd, 1) < 0 or
-        c.dup2(fds.slave_fd, 2) < 0 or !closeChildFdIfNeeded(fds.master_fd) or
+    if (!resetChildSignalDispositions() or linux.errno(linux.setsid()) != .SUCCESS) childLaunchExit(status_fd, .session);
+    if (linux.errno(linux.ioctl(@intCast(fds.slave_fd), linux.T.IOCSCTTY, 0)) != .SUCCESS or
+        linux.errno(linux.dup2(fds.slave_fd, 0)) != .SUCCESS or linux.errno(linux.dup2(fds.slave_fd, 1)) != .SUCCESS or
+        linux.errno(linux.dup2(fds.slave_fd, 2)) != .SUCCESS or !closeChildFdIfNeeded(fds.master_fd) or
         !closeChildFdIfNeeded(fds.slave_fd))
     {
         childLaunchExit(status_fd, .stdio);
@@ -817,9 +904,9 @@ fn setupChildProcessFds(fds: ChildProcessFds, status_fd: posix.fd_t) void {
 fn childLaunchExit(status_fd: posix.fd_t, failure: ChildLaunchFailure) noreturn {
     var byte: [1]u8 = .{@backingInt(failure)};
     while (true) {
-        const n = c.write(status_fd, &byte, byte.len);
-        if (n == 1) c._exit(127);
-        switch (posix.errno(n)) {
+        const n = linux.write(status_fd, &byte, byte.len);
+        if (linux.errno(n) == .SUCCESS and n == 1) c._exit(127);
+        switch (linux.errno(n)) {
             .INTR => continue,
             else => c._exit(127),
         }
@@ -841,19 +928,19 @@ fn childProcess(
     }, status_fd);
 
     if (cwd) |dir| {
-        if (c.chdir(dir) != 0) childLaunchExit(status_fd, .cwd);
+        if (linux.errno(linux.chdir(dir)) != .SUCCESS) childLaunchExit(status_fd, .cwd);
     }
 
     if (command) |cmd| {
         const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-c"), cArg(cmd) };
         const envp: [*c]const [*c]u8 = @ptrCast(environment);
-        if (c.execve(shell_path.ptr, argv[0..].ptr, envp) != 0) childLaunchExit(status_fd, .exec);
+        if (linux.errno(linux.execve(shell_path.ptr, @ptrCast(argv[0..].ptr), @ptrCast(envp))) != .SUCCESS) childLaunchExit(status_fd, .exec);
         childLaunchExit(status_fd, .exec);
     }
 
     const argv = [_:null][*c]u8{ cArg(shell_path.ptr), cArg("-i") };
     const envp: [*c]const [*c]u8 = @ptrCast(environment);
-    if (c.execve(shell_path.ptr, argv[0..].ptr, envp) != 0) childLaunchExit(status_fd, .exec);
+    if (linux.errno(linux.execve(shell_path.ptr, @ptrCast(argv[0..].ptr), @ptrCast(envp))) != .SUCCESS) childLaunchExit(status_fd, .exec);
     childLaunchExit(status_fd, .exec);
 }
 
@@ -861,13 +948,13 @@ fn waitChildNoHang(pid: posix.pid_t) enum { alive, reaped, failed } {
     std.debug.assert(pid > 0);
     var status: c_int = 0;
     while (true) {
-        const res = c.waitpid(pid, &status, linux.W.NOHANG);
-        if (res == 0) return .alive;
-        if (res == pid) return .reaped;
-        switch (posix.errno(res)) {
-            .INTR => continue,
-            .CHILD => return .reaped,
-            else => return .failed,
+        const res = linux.waitpid(pid, &status, linux.W.NOHANG);
+        switch (classifyWaitPid(res, pid)) {
+            .zero => return .alive,
+            .expected => return .reaped,
+            .interrupted => continue,
+            .child => return .reaped,
+            .unexpected_success, .unexpected_error => return .failed,
         }
     }
 }
@@ -895,12 +982,11 @@ fn waitChildBlocking(pid: posix.pid_t) void {
     std.debug.assert(pid > 0);
     var status: c_int = 0;
     while (true) {
-        const res = c.waitpid(pid, &status, 0);
-        if (res == pid) return;
-        switch (posix.errno(res)) {
-            .INTR => continue,
-            .CHILD => return,
-            else => @panic("PTY child wait failed"),
+        const res = linux.waitpid(pid, &status, 0);
+        switch (classifyWaitPid(res, pid)) {
+            .expected, .child => return,
+            .interrupted => continue,
+            .zero, .unexpected_success, .unexpected_error => @panic("PTY child wait failed"),
         }
     }
 }
@@ -922,9 +1008,10 @@ fn waitSignalTargetMissing(target: posix.pid_t, timeout_ns: u64) bool {
 
 fn signalTargetExists(target: posix.pid_t) bool {
     while (true) {
-        const res = c.kill(target, 0);
-        if (res == 0) return true;
-        switch (posix.errno(res)) {
+        const signal = checkedLinuxSignal(0) orelse return true;
+        const res = linux.kill(target, signal);
+        if (linux.errno(res) == .SUCCESS) return true;
+        switch (linux.errno(res)) {
             .INTR => continue,
             .SRCH => return false,
             else => return true,
@@ -943,9 +1030,10 @@ fn sendGroupSignal(pid: posix.pid_t, signal: Signal) SignalResult {
 
 fn sendSignalTarget(target: posix.pid_t, signal: Signal) SignalResult {
     while (true) {
-        const res = c.kill(target, signal.native());
-        if (res == 0) return .delivered;
-        switch (posix.errno(res)) {
+        const linux_signal = checkedLinuxSignal(signal.native()) orelse return .native_signal_failed;
+        const res = linux.kill(target, linux_signal);
+        if (linux.errno(res) == .SUCCESS) return .delivered;
+        switch (linux.errno(res)) {
             .INTR => continue,
             .SRCH => return .target_missing,
             .PERM => return .permission_denied,
@@ -1247,13 +1335,13 @@ test "failed termios query preserves owner state and delivers no signal" {
     const child = owned.child;
     var configured_termios: posix.termios = undefined;
     try std.testing.expectEqual(
-        @as(c_int, 0),
-        c.tcgetattr(@intCast(master), @ptrCast(&configured_termios)),
+        linux.E.SUCCESS,
+        linux.errno(linux.tcgetattr(@intCast(master), @ptrCast(&configured_termios))),
     );
     const configured_interrupt = configured_termios.cc[@backingInt(posix.V.INTR)];
     try std.testing.expect(configured_interrupt != control_character_disabled);
     var pipe_fds = [_]c_int{ -1, -1 };
-    try std.testing.expectEqual(@as(c_int, 0), c.pipe(&pipe_fds));
+    try std.testing.expectEqual(std.os.linux.E.SUCCESS, linux.errno(linux.pipe(&pipe_fds)));
     defer {
         closeOwned(@intCast(pipe_fds[0]));
         closeOwned(@intCast(pipe_fds[1]));
@@ -1272,16 +1360,19 @@ test "failed termios query preserves owner state and delivers no signal" {
     }
 }
 
-test "constants census is migrated while openpty remains" {
+test "translated syscall census is migrated while openpty remains" {
     var input_speed: CTermiosInputSpeed = undefined;
     var output_speed: CTermiosOutputSpeed = undefined;
     try std.testing.expectEqual(@intFromPtr(&input_speed), @intFromPtr(&input_speed.c_ispeed));
     try std.testing.expectEqual(@intFromPtr(&output_speed), @intFromPtr(&output_speed.c_ospeed));
     const source = @embedFile("howl_pty.zig");
     inline for (.{
-        "FD_CLOEXEC", "F_GETFD",    "F_GETFL",         "F_SETFD",        "F_SETFL",        "WNOHANG", "X_OK",
-        "TIOCSCTTY",  "TIOCSWINSZ", "ISIG",            "SIGINT",         "SIGQUIT",        "SIGTSTP", "VINTR",
-        "VQUIT",      "VSUSP",      "_POSIX_VDISABLE", "struct_termios", "struct_winsize",
+        "FD_CLOEXEC", "F_GETFD",    "F_GETFL",         "F_SETFD",        "F_SETFL",        "WNOHANG",   "X_OK",
+        "TIOCSCTTY",  "TIOCSWINSZ", "ISIG",            "SIGINT",         "SIGQUIT",        "SIGTSTP",   "VINTR",
+        "VQUIT",      "VSUSP",      "_POSIX_VDISABLE", "struct_termios", "struct_winsize", "access",    "chdir",
+        "close",      "dup2",       "execve",          "fcntl",          "fork",           "ioctl",     "kill",
+        "pipe",       "read",       "setsid",          "sigaction",      "tcgetattr",      "tcgetpgrp", "waitpid",
+        "write",
     }) |name| {
         var token: [64]u8 = undefined;
         const rendered = try std.fmt.bufPrint(&token, "c.{s}", .{name});
@@ -1290,6 +1381,78 @@ test "constants census is migrated while openpty remains" {
     var openpty_token: [32]u8 = undefined;
     const rendered_openpty = try std.fmt.bufPrint(&openpty_token, "c.{s}", .{"openpty("});
     try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, source, rendered_openpty));
+}
+
+test "raw syscall classifiers preserve bounded owner dispositions" {
+    const LibcFork = *const fn () callconv(.c) c_int;
+    const LibcSigaction = *const fn (
+        posix.SIG,
+        noalias ?*const posix.Sigaction,
+        noalias ?*posix.Sigaction,
+    ) callconv(.c) c_int;
+    const libc_fork_surface: LibcFork = posix.system.fork;
+    const libc_sigaction_surface: LibcSigaction = posix.system.sigaction;
+    try std.testing.expectEqual(@intFromPtr(&posix.system.fork), @intFromPtr(libc_fork_surface));
+    try std.testing.expectEqual(@intFromPtr(&posix.system.sigaction), @intFromPtr(libc_sigaction_surface));
+
+    try std.testing.expectEqual(@as(usize, 4), try mapReadResult(4, 8));
+    try std.testing.expectError(error.EndOfStream, mapReadResult(0, 8));
+    try std.testing.expectError(error.ReadFailed, mapReadResult(9, 8));
+    try std.testing.expectError(error.WouldBlock, mapReadResult(syntheticErrno(.AGAIN), 8));
+    try std.testing.expectError(error.Interrupted, mapReadResult(syntheticErrno(.INTR), 8));
+    try std.testing.expectError(error.EndOfStream, mapReadResult(syntheticErrno(.IO), 8));
+    try std.testing.expectError(error.ReadFailed, mapReadResult(syntheticErrno(.BADF), 8));
+
+    try std.testing.expectEqual(@as(usize, 4), try mapWriteResult(4, 8));
+    try std.testing.expectError(error.ChildClosed, mapWriteResult(0, 8));
+    try std.testing.expectError(error.WriteFailed, mapWriteResult(9, 8));
+    try std.testing.expectError(error.WouldBlock, mapWriteResult(syntheticErrno(.AGAIN), 8));
+    try std.testing.expectError(error.Interrupted, mapWriteResult(syntheticErrno(.INTR), 8));
+    try std.testing.expectError(error.ChildClosed, mapWriteResult(syntheticErrno(.IO), 8));
+    try std.testing.expectError(error.ChildClosed, mapWriteResult(syntheticErrno(.PIPE), 8));
+    try std.testing.expectError(error.WriteFailed, mapWriteResult(syntheticErrno(.BADF), 8));
+
+    try std.testing.expectEqual(RawIoResult{ .success = 4 }, classifyRawIo(4, 8));
+    try std.testing.expectEqual(RawIoResult.zero, classifyRawIo(0, 8));
+    try std.testing.expectEqual(RawIoResult{ .oversized = 9 }, classifyRawIo(9, 8));
+
+    try std.testing.expectEqual(FcntlResult{ .success = 7 }, classifyFcntl(7));
+    try std.testing.expectEqual(FcntlResult{ .errno = .BADF }, classifyFcntl(syntheticErrno(.BADF)));
+    try std.testing.expectEqual(FcntlResult{ .out_of_range = @as(usize, std.math.maxInt(c_int)) + 1 }, classifyFcntl(@as(usize, std.math.maxInt(c_int)) + 1));
+    try std.testing.expectError(error.OpenPtyFailed, requireFcntl(syntheticErrno(.BADF)));
+    try std.testing.expectError(error.OpenPtyFailed, requireFcntl(@as(usize, std.math.maxInt(c_int)) + 1));
+    try std.testing.expectEqual(@as(c_int, 7), try requireFcntl(7));
+    try ensureFcntl(7);
+    try std.testing.expectEqual(@as(?usize, 7), checkedFcntlArgument(7));
+    try std.testing.expectEqual(@as(?usize, null), checkedFcntlArgument(-1));
+    try std.testing.expectError(error.OpenPtyFailed, ensureFcntl(syntheticErrno(.BADF)));
+    try std.testing.expectError(error.OpenPtyFailed, ensureFcntl(@as(usize, std.math.maxInt(c_int)) + 1));
+
+    try std.testing.expect(ioctlSucceeded(0));
+    try std.testing.expect(!ioctlSucceeded(syntheticErrno(.BADF)));
+
+    try std.testing.expectEqual(WaitPidResult.zero, classifyWaitPid(0, 42));
+    try std.testing.expectEqual(WaitPidResult.expected, classifyWaitPid(42, 42));
+    try std.testing.expectEqual(WaitPidResult.interrupted, classifyWaitPid(syntheticErrno(.INTR), 42));
+    try std.testing.expectEqual(WaitPidResult.child, classifyWaitPid(syntheticErrno(.CHILD), 42));
+    try std.testing.expectEqual(WaitPidResult.unexpected_success, classifyWaitPid(43, 42));
+    try std.testing.expectEqual(WaitPidResult.unexpected_error, classifyWaitPid(syntheticErrno(.BADF), 42));
+
+    try std.testing.expectEqual(@as(?linux.SIG, @fromBackingInt(@intCast(0))), checkedLinuxSignal(0));
+    try std.testing.expectEqual(@as(?linux.SIG, .INT), checkedLinuxSignal(2));
+    try std.testing.expectEqual(@as(?linux.SIG, null), checkedLinuxSignal(-1));
+    try std.testing.expectEqual(@as(?linux.SIG, null), checkedLinuxSignal(65));
+}
+
+test "failed ioctl preserves accepted dimensions" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var owned = try Owned.init(std.testing.allocator, "/bin/sh", null, null, test_environment);
+    defer owned.deinit();
+    owned.master_fd = -1;
+    defer owned.master_fd = null;
+    try std.testing.expectError(error.ResizeFailed, owned.resize(test_cols, test_rows));
+    try std.testing.expectEqual(@as(u16, 0), owned.last_cols);
+    try std.testing.expectEqual(@as(u16, 0), owned.last_rows);
 }
 
 test "multiple owners interleave output through one caller poll set" {

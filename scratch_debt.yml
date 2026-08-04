@@ -3,17 +3,17 @@ sprint:
   id: generated_c_boundary
   branch: feature/debt_payoff/generated_c_boundary
   status: active
-  active_slice: pty_stdlib_syscalls
+  active_slice: pty_child_exit_sleep
 
 objective: >-
-  Implement and prove the accepted PTY syscall migration while preserving
-  openpty, generated wiring, public behavior, and exact owner error semantics.
+  Implement and prove the accepted child-only exit and bounded parent sleep
+  migration while preserving launch-status and cleanup ownership.
 
 questions:
   - id: translated_symbols
     status: answered
     question: Which exact declarations and constants does each translated module expose and which source symbols consume them?
-    answer: Constants/types records r001-r018, r034, and r035 are accepted; the active slice migrates r020-r028, r030-r033, r036, r037, r039, and r040 while retaining r029/openpty.
+    answer: Constants/types and syscall records are accepted; the active slice migrates only r019/_exit and r038/usleep while retaining r029/openpty.
   - id: build_ownership
     status: answered
     question: Which target macros, include paths, libraries, module imports, and proof gates define each native boundary?
@@ -25,11 +25,11 @@ questions:
   - id: disposition
     status: answered
     question: Which boundaries are required, redundant, or uncertain under the pinned Zig and system ABI?
-    answer: The finite contract selects explicit Linux syscall surfaces plus libc-shaped fork and sigaction; openpty remains outside this slice.
+    answer: The finite contract selects child-only linux.exit and checked linux.nanosleep adaptation; openpty remains outside this slice.
 
 active_scope:
   evidence: .zig/work/debt-payoff/generated-c-boundary/finite_boundary_contract.yml
-  product_change: limited to howl-pty/src/howl_pty.zig and owner-local proofs for the accepted syscall slice
+  product_change: limited to howl-pty/src/howl_pty.zig and owner-local proofs for the accepted child exit/sleep slice
   translated_module_count: 5
   generated_protocol_cohort_count: 5
   excluded:
@@ -40,8 +40,8 @@ active_scope:
 progress:
   state: not_started
   accepted_checkpoint:
-    slice: pty_stdlib_constants_types
-    migrated_records: r001-r018, r034, r035
+    slice: pty_stdlib_syscalls
+    migrated_records: r020-r028, r030-r033, r036, r037, r039, r040
     retained_record: r029/openpty
     validation: owning and workspace four-mode gates, audit, protocol, Wayland reproducibility, strict YAML, formatting, and diff checks pass
-  active_records: r020-r028, r030-r033, r036, r037, r039, r040
+  active_records: r019, r038

@@ -56,9 +56,13 @@ slices:
     product_change: howl-pty source only; preserve openpty, syscalls, generated wiring, and public behavior
     output: migrate records r001-r018, r034, and r035 with owner-level proofs
   - id: pty_stdlib_syscalls
-    status: active
+    status: accepted
     product_change: howl-pty source only; preserve openpty, generated wiring, and public behavior
     output: migrate records r020-r028, r030-r033, r036, r037, r039, and r040 with owner-level proofs
+  - id: pty_child_exit_sleep
+    status: active
+    product_change: howl-pty source only; preserve openpty, generated wiring, and public behavior
+    output: migrate records r019 and r038 with child-only exit and bounded sleep proofs
 
 acceptance:
   - All five Translate-C modules and five generated Wayland protocol cohorts are indexed exactly once.
