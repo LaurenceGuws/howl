@@ -4194,6 +4194,33 @@ fn waitRenderWakeBlockingUntil(
 
 const InputErrorDisposition = enum { reject, fatal };
 
+fn sessionCandidateDisposition(_: session.Error) InputErrorDisposition {
+    return .reject;
+}
+
+fn pointerCandidateDisposition(failure: input_actions.PointerError) InputErrorDisposition {
+    return switch (failure) {
+        error.Capacity,
+        error.InvalidId,
+        error.InvalidGeometry,
+        => .reject,
+        error.InvalidSurface,
+        error.InvalidRectangle,
+        error.InvalidTabBar,
+        error.InvalidScrollbar,
+        => .reject,
+        error.InvalidText,
+        error.InvalidScroll,
+        error.InvalidIdentity,
+        error.ArithmeticOverflow,
+        error.InvalidOrder,
+        error.InsufficientOutput,
+        error.InsufficientText,
+        error.AliasedStorage,
+        => .fatal,
+    };
+}
+
 fn drainInput(
     boundary: *shared.Boundary,
     actions: *input_actions.State,
@@ -4211,8 +4238,17 @@ fn drainInput(
         var retry_input: ?DeferredTopologyInput = null;
         const candidate: ?session.SessionCandidate = switch (event) {
             .key => |key| key_result: {
-                const decision = actions.key(key) catch {
-                    continue;
+                const decision = actions.key(key) catch |failure| switch (failure) {
+                    error.CaptureFull => {
+                        // The bounded host-capture table remains unchanged. The
+                        // unmatched press and its later release both follow the
+                        // ordinary terminal-input path instead of being lost.
+                        try canvas_work.terminals.publishKey(
+                            try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                            key,
+                        );
+                        continue;
+                    },
                 };
                 break :key_result switch (decision) {
                     .action => |action| action_result: {
@@ -4284,8 +4320,9 @@ fn drainInput(
                                 break :candidate input_actions.candidate(
                                     basis,
                                     action,
-                                ) catch {
-                                    continue;
+                                ) catch |failure| switch (sessionCandidateDisposition(failure)) {
+                                    .reject => continue,
+                                    .fatal => return failure,
                                 };
                             },
                         };
@@ -4320,16 +4357,18 @@ fn drainInput(
                     canvas_work.surface,
                     canvas_work.content_origin,
                     button,
-                ) catch {
-                    continue;
+                ) catch |failure| switch (pointerCandidateDisposition(failure)) {
+                    .reject => continue,
+                    .fatal => return failure,
                 };
                 if (accepted == null or pending.* == null) break :blk accepted;
                 break :blk foldPointerCandidate(
                     &pending.*.?.candidate.state,
                     topology,
                     &accepted.?.state,
-                ) catch {
-                    continue;
+                ) catch |failure| switch (sessionCandidateDisposition(failure)) {
+                    .reject => continue,
+                    .fatal => return failure,
                 };
             },
             .keyboard_enter => enter: {
@@ -5317,6 +5356,135 @@ test "deferred topology retry has one fixed allocation-free value" {
     try std.testing.expectEqual(@as(usize, 8), @alignOf(DeferredTopologyInput));
     try std.testing.expectEqual(@as(usize, 48), @sizeOf(?DeferredTopologyInput));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(?DeferredTopologyInput));
+}
+
+test "drainInput forwards capture overflow press and release explicitly" {
+    var input_boundary = try shared.Boundary.init(std.testing.io);
+    defer input_boundary.deinit();
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32_768,
+            .upload_bytes = 4 * 1024 * 1024,
+            .cells = 32_768,
+            .rows = 128,
+            .images = 8,
+            .placements = 8,
+            .image_bytes = 256 * 1024,
+            .glyphs = 512,
+            .masks = 128,
+            .resources_per_update = terminal_retained_resource_limit,
+            .raster_bytes = 4 * 1024 * 1024,
+            .decoration_bytes = 256 * 1024,
+        },
+    );
+    defer terminals.deinit();
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
+    const pane = try chrome_state.toRenderPaneId(topology.focusedPaneId());
+    try terminals.register(pane, @fromBackingInt(@intCast(1)), .{ .width = 320, .height = 240 });
+    try std.testing.expect(terminals.takeLifecycle() != null);
+    try terminals.markLive(pane);
+
+    var actions = input_actions.State{};
+    var captured: wayland.input.Key = std.mem.zeroes(wayland.input.Key);
+    captured.state = .pressed;
+    captured.keysym = .t;
+    captured.semantic_modifiers = .{ .control = true, .shift = true };
+    for (0..16) |index| {
+        captured.keycode = @intCast(index + 1);
+        try std.testing.expect((try actions.key(captured)).action == .new_tab);
+    }
+    captured.keycode = 100;
+    try input_boundary.publishInput(.{ .key = captured });
+    var work: CanvasWork = undefined;
+    work.terminals = &terminals;
+    var pending: ?PendingTopology = null;
+    var deferred: ?DeferredTopologyInput = null;
+    try drainInput(
+        &input_boundary,
+        &actions,
+        &work,
+        &topology,
+        chrome_appearance,
+        &pending,
+        &deferred,
+    );
+    const forwarded_press = terminals.takeInput() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(captured, forwarded_press.key.key);
+
+    captured.state = .released;
+    try input_boundary.publishInput(.{ .key = captured });
+    try drainInput(
+        &input_boundary,
+        &actions,
+        &work,
+        &topology,
+        chrome_appearance,
+        &pending,
+        &deferred,
+    );
+    const forwarded_release = terminals.takeInput() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(captured, forwarded_release.key.key);
+    try std.testing.expectEqual(@as(u8, 16), actions.capturedCount());
+
+    actions.clear();
+    topology = try session.SessionState.init(.{ .width = 1, .height = 1 });
+    var rejected_action = captured;
+    rejected_action.keycode = 200;
+    rejected_action.state = .pressed;
+    rejected_action.keysym = .enter;
+    rejected_action.semantic_modifiers = .{ .control = true, .shift = true };
+    try input_boundary.publishInput(.{ .key = rejected_action });
+    try drainInput(
+        &input_boundary,
+        &actions,
+        &work,
+        &topology,
+        chrome_appearance,
+        &pending,
+        &deferred,
+    );
+    try std.testing.expectEqual(@as(u8, 1), actions.capturedCount());
+    try std.testing.expect(pending == null and deferred == null);
+    try std.testing.expect(terminals.takeInput() == null);
+}
+
+test "drainInput candidate dispositions are exhaustive" {
+    inline for ([_]session.Error{
+        error.Capacity,
+        error.InvalidText,
+        error.InvalidId,
+        error.InvalidIdentity,
+        error.InvalidGeometry,
+        error.InvalidScroll,
+        error.ArithmeticOverflow,
+    }) |failure| {
+        try std.testing.expectEqual(.reject, sessionCandidateDisposition(failure));
+    }
+    inline for ([_]input_actions.PointerError{
+        error.Capacity,
+        error.InvalidId,
+        error.InvalidGeometry,
+        error.InvalidSurface,
+        error.InvalidRectangle,
+        error.InvalidTabBar,
+        error.InvalidScrollbar,
+    }) |failure| {
+        try std.testing.expectEqual(.reject, pointerCandidateDisposition(failure));
+    }
+    inline for ([_]input_actions.PointerError{
+        error.InvalidText,
+        error.InvalidScroll,
+        error.InvalidIdentity,
+        error.ArithmeticOverflow,
+        error.InvalidOrder,
+        error.InsufficientOutput,
+        error.InsufficientText,
+        error.AliasedStorage,
+    }) |failure| {
+        try std.testing.expectEqual(.fatal, pointerCandidateDisposition(failure));
+    }
 }
 
 test "provisional startup frame exposes no terminal lifecycle or topology" {
