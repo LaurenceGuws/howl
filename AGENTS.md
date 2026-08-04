@@ -101,6 +101,23 @@ Commit coherent reviewed capability in small checkpoints. Experiments earn
 permanence through evidence and are otherwise deleted. References sharpen
 judgment; they do not choose Howl's architecture.
 
+## Git lifecycle
+
+Git retains three branch roles only:
+
+- `main` is the accepted integration line. It contains reviewed release
+  transitions and closed sprint work; unfinished work never lands there.
+- `release/$VERSION` is an immutable historical snapshot cut from an accepted
+  `main` state. Never develop on, rebase, or force-update a release branch.
+- `feature/<marathon>/<sprint>` owns one sprint in the active marathon. Push it
+  when the sprint begins so its state is remote-accounted, commit only reviewed
+  slices, merge it into `main` after the sprint gate passes, then delete it.
+
+Only one feature branch is active unless the marathon explicitly proves that
+independent sprints may proceed. Before changing branches, record the branch,
+HEAD, dirty paths, and push state. A local-only commit or unaccounted dirty tree
+is not a durable handover.
+
 ## Source bars
 
 1. Direct, small source code; use Foot as the reference.

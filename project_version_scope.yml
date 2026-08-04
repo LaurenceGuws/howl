@@ -1,5 +1,7 @@
 version:
   current: 0.1.5-dev
+  release_branch: release/0.1.5-dev
+  release_base: 24d5f05308c01f764828494fdef8648d99e46463
   prior:
     version: 0.1.4-dev
     status: frozen
