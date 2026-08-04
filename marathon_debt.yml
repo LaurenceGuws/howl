@@ -11,7 +11,8 @@ marathon:
 delivered_boundary:
   version: 0.1.4-dev
   status: frozen
-  commits:
+  closing_commits:
+    - 7d31e3b
     - 0f5d4c8
     - d055a36
     - 5eee688

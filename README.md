@@ -99,7 +99,7 @@ work.
 | --- | --- |
 | Bounded terminal semantics and Linux process transport | Accepted |
 | Native text, terminal glyphs, composition, Vulkan, and Wayland foundations | Accepted |
-| First-party multiplexed graphical host boundary | Accepted |
+| First-party multi-pane graphical host boundary | Accepted |
 | Cursor correctness, animation, blink, and presentation boundary | Accepted for 0.1.4-dev |
 | Structural debt payoff | Active in 0.1.5-dev |
 | Performance and maximum multi-pane pressure | Planned |
