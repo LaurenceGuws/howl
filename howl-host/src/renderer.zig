@@ -4194,8 +4194,32 @@ fn waitRenderWakeBlockingUntil(
 
 const InputErrorDisposition = enum { reject, fatal };
 
-fn sessionCandidateDisposition(_: session.Error) InputErrorDisposition {
-    return .reject;
+fn sessionCandidateDisposition(action: input_actions.Action, failure: session.Error) InputErrorDisposition {
+    return switch (failure) {
+        error.Capacity => switch (action) {
+            .new_tab,
+            .split_horizontal,
+            .split_vertical,
+            => .reject,
+            else => .fatal,
+        },
+        error.InvalidGeometry => switch (action) {
+            .split_horizontal,
+            .split_vertical,
+            .resize_left,
+            .resize_right,
+            .resize_up,
+            .resize_down,
+            => .reject,
+            else => .fatal,
+        },
+        error.InvalidText,
+        error.InvalidId,
+        error.InvalidIdentity,
+        error.InvalidScroll,
+        error.ArithmeticOverflow,
+        => .fatal,
+    };
 }
 
 fn pointerCandidateDisposition(failure: input_actions.PointerError) InputErrorDisposition {
@@ -4219,6 +4243,10 @@ fn pointerCandidateDisposition(failure: input_actions.PointerError) InputErrorDi
         error.AliasedStorage,
         => .fatal,
     };
+}
+
+fn pointerFoldDisposition(_: session.Error) InputErrorDisposition {
+    return .fatal;
 }
 
 fn drainInput(
@@ -4320,7 +4348,7 @@ fn drainInput(
                                 break :candidate input_actions.candidate(
                                     basis,
                                     action,
-                                ) catch |failure| switch (sessionCandidateDisposition(failure)) {
+                                ) catch |failure| switch (sessionCandidateDisposition(action, failure)) {
                                     .reject => continue,
                                     .fatal => return failure,
                                 };
@@ -4366,7 +4394,7 @@ fn drainInput(
                     &pending.*.?.candidate.state,
                     topology,
                     &accepted.?.state,
-                ) catch |failure| switch (sessionCandidateDisposition(failure)) {
+                ) catch |failure| switch (pointerFoldDisposition(failure)) {
                     .reject => continue,
                     .fatal => return failure,
                 };
@@ -5448,19 +5476,57 @@ test "drainInput forwards capture overflow press and release explicitly" {
     try std.testing.expectEqual(@as(u8, 1), actions.capturedCount());
     try std.testing.expect(pending == null and deferred == null);
     try std.testing.expect(terminals.takeInput() == null);
+
+    actions.clear();
+    for (0..16) |index| {
+        captured.keycode = @intCast(index + 1);
+        captured.state = .pressed;
+        captured.keysym = .t;
+        captured.semantic_modifiers = .{ .control = true, .shift = true };
+        try std.testing.expect((try actions.key(captured)).action == .new_tab);
+    }
+    captured.keycode = 201;
+    const unregistered = try topology.createTab("unregistered");
+    try std.testing.expect(@backingInt(unregistered) != 0);
+    try input_boundary.publishInput(.{ .key = captured });
+    try std.testing.expectError(
+        error.UnknownPane,
+        drainInput(
+            &input_boundary,
+            &actions,
+            &work,
+            &topology,
+            chrome_appearance,
+            &pending,
+            &deferred,
+        ),
+    );
 }
 
 test "drainInput candidate dispositions are exhaustive" {
+    inline for ([_]session.Error{error.Capacity}) |failure| {
+        inline for ([_]input_actions.Action{ .new_tab, .split_horizontal, .split_vertical }) |action|
+            try std.testing.expectEqual(.reject, sessionCandidateDisposition(action, failure));
+    }
+    inline for ([_]session.Error{error.InvalidGeometry}) |failure| {
+        inline for ([_]input_actions.Action{
+            .split_horizontal,
+            .split_vertical,
+            .resize_left,
+            .resize_right,
+            .resize_up,
+            .resize_down,
+        }) |action|
+            try std.testing.expectEqual(.reject, sessionCandidateDisposition(action, failure));
+    }
     inline for ([_]session.Error{
-        error.Capacity,
         error.InvalidText,
         error.InvalidId,
         error.InvalidIdentity,
-        error.InvalidGeometry,
         error.InvalidScroll,
         error.ArithmeticOverflow,
     }) |failure| {
-        try std.testing.expectEqual(.reject, sessionCandidateDisposition(failure));
+        try std.testing.expectEqual(.fatal, sessionCandidateDisposition(.new_tab, failure));
     }
     inline for ([_]input_actions.PointerError{
         error.Capacity,
@@ -5484,6 +5550,17 @@ test "drainInput candidate dispositions are exhaustive" {
         error.AliasedStorage,
     }) |failure| {
         try std.testing.expectEqual(.fatal, pointerCandidateDisposition(failure));
+    }
+    inline for ([_]session.Error{
+        error.Capacity,
+        error.InvalidText,
+        error.InvalidId,
+        error.InvalidIdentity,
+        error.InvalidGeometry,
+        error.InvalidScroll,
+        error.ArithmeticOverflow,
+    }) |failure| {
+        try std.testing.expectEqual(.fatal, pointerFoldDisposition(failure));
     }
 }
 
