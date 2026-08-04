@@ -68,7 +68,7 @@ product module.
 
 ## Current state
 
-Howl is currently `0.1.4-dev`.
+Howl is currently `0.1.5-dev`.
 
 The terminal model, Linux PTY owner, native and generated text machinery,
 backend-neutral compositor, reusable Vulkan and Wayland foundations, and a
@@ -78,10 +78,12 @@ fractional scaling, and pane-local font sizing have deterministic coverage.
 
 The `0.1.3-dev` milestone separated cursor mutation, publication,
 cursor-free terminal frames, synchronized-output deferral, physical replay,
-and Kitty-led trail presentation into composable state machines. The active
-`0.1.4-dev` milestone separates session-domain decisions from Host integration,
-then completes ordered keyboard, repeat, shortcut, pointer, and terminal mouse
-routing under the `xterm-kitty` development compatibility profile.
+and Kitty-led trail presentation into composable state machines. The frozen
+`0.1.4-dev` milestone separated session-domain decisions from Host integration
+and completed the reviewed cursor/presentation and topology ownership boundary.
+Ordered keyboard, repeat, mouse, terminal identity, and input hot-path work
+remains deferred. The active `0.1.5-dev` milestone pays down structural debt
+without adding terminal capability.
 
 Howl is not yet a complete daily terminal. Stable embedding APIs, persistent
 detached sessions, cooperative session control, complete interaction features,
@@ -97,8 +99,9 @@ work.
 | --- | --- |
 | Bounded terminal semantics and Linux process transport | Accepted |
 | Native text, terminal glyphs, composition, Vulkan, and Wayland foundations | Accepted |
-| First-party multiplexed graphical host | In progress |
-| Cursor correctness, animation, blink, and presentation reassessment | Active |
+| First-party multiplexed graphical host boundary | Accepted |
+| Cursor correctness, animation, blink, and presentation boundary | Accepted for 0.1.4-dev |
+| Structural debt payoff | Active in 0.1.5-dev |
 | Performance and maximum multi-pane pressure | Planned |
 | Stable embedding surfaces | Planned |
 | Persistent cooperative sessions for human and AI teams | Planned |

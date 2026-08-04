@@ -1,0 +1,49 @@
+schema: 1
+marathon:
+  name: debt_payoff
+  version: 0.1.5-dev
+  status: active
+  approval: operator_approved
+  objective: >-
+    Pay down structural debt in small reviewable slices while preserving the
+    frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
+
+delivered_boundary:
+  version: 0.1.4-dev
+  status: frozen
+  commits:
+    - 0f5d4c8
+    - d055a36
+    - 5eee688
+    - 7db8e1a
+  deferred_capability:
+    - ordered keyboard protocol expansion
+    - compositor-provided repeat policy
+    - mouse and terminal mouse protocol routing
+    - terminal identity and child-environment negotiation
+    - input hot-path measurement and optimization
+
+debt_candidates:
+  - id: stdlib_boundary
+    scope: remove redundant host_c ownership where pinned Zig stdlib is sufficient
+  - id: ownership_names
+    scope: rename dishonest umbrella ownership without splitting cohesive state
+  - id: mixed_ownership_audit
+    scope: audit large files and preserve fewer cohesive files where that is the clearer owner shape
+  - id: generated_c_boundary
+    scope: audit generated-C boundaries and build wiring
+  - id: error_and_authority_hygiene
+    scope: audit silent error disposal, stale source-audit admissions, comments, and tracked authority
+  - id: obsolete_interfaces
+    scope: remove obsolete interfaces and fossil compatibility code
+
+exclusions:
+  - no mouse, repeat, keyboard protocol expansion, terminal identity, or new feature work
+  - no broad file splitting or package extraction
+  - no GUI-only diagnosis as a substitute for deterministic proof
+
+validation:
+  - strict duplicate-key YAML parsing
+  - source audit and protocol validation
+  - all maintained package checks/tests in every required optimization mode
+  - formatting and git diff checks

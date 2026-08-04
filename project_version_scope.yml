@@ -1,15 +1,24 @@
 version:
-  current: 0.1.4-dev
+  current: 0.1.5-dev
   prior:
-    version: 0.1.3-dev
+    version: 0.1.4-dev
     status: frozen
-    capability: Kitty-led cursor mutation, publication, synchronized deferral, physical replay, trail geometry, and cross-pane/tab presentation
+    capability: >-
+      Session-domain ownership migration, bounded Host topology retry,
+      physical cursor replay and trail presentation, synchronized-output
+      correctness, startup cursor configuration retention, and explicit input
+      rejection/pressure ownership.
+    deferred_capability:
+      - ordered keyboard protocol expansion and repeat policy
+      - mouse and terminal mouse protocol routing
+      - terminal identity and child-environment negotiation
+      - input hot-path measurement and optimization
 
 objective: >-
-  Preserve independently useful PTY, VT, Render, Vulkan, and Wayland packages
-  while separating session-domain decisions from the first-party Host and
-  completing ordered keyboard and pointer integration under the xterm-kitty
-  development compatibility profile.
+  Pay down accepted structural debt without adding terminal features:
+  preserve independently useful PTY, VT, Render, Vulkan, Wayland, and Host
+  behavior while removing redundant ownership, obsolete interfaces, silent
+  error disposal, stale source-audit admissions, and dishonest authority.
 
 settled_capabilities:
   - name: vt
@@ -27,7 +36,10 @@ accepted_implementation:
   - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
   - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
   - Cursor presentation is independent of terminal text publication and accepted frame replacement.
-  - Every maintained package and Host manifest uses version 0.1.4-dev.
+  - Every maintained package and Host manifest uses version 0.1.5-dev.
+
+historical_manifests:
+  - howl-vt/examples/0.1.4-dev/build.zig.zon remains a versioned example fixture and is not a maintained package manifest.
 
 invariants:
   - Bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary.
@@ -38,14 +50,16 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Index and separate tab, pane, focus, topology, and lifecycle decisions from Host integration.
-  - Advertise the xterm-kitty development compatibility profile to new local children.
-  - Complete physical key state, compositor-provided repeat, Host shortcut routing, and negotiated terminal encoding.
-  - Complete pointer, button, axis, capture, hit-testing, and terminal mouse protocol routing.
-  - Measure the allocation-free input hot path before freezing the version.
+  - Remove redundant host_c ownership in favor of the pinned Zig stdlib where source evidence permits.
+  - Rename dishonest umbrella ownership without splitting cohesive state files.
+  - Audit mixed ownership, generated-C boundaries, build wiring, silent errors, source-audit admissions, comments, and obsolete interfaces.
+  - Preserve cohesive files and current product behavior while each debt slice earns a bounded proof.
 
 deferred:
-  - Cursor blink and animation micro-polish.
+  - Ordered keyboard protocol expansion and repeat policy.
+  - Mouse, pointer protocol, and terminal mouse routing expansion.
+  - Terminal identity and child-environment negotiation.
+  - Input hot-path measurement and optimization.
   - Detached, remote, or cooperative multiplexer sessions.
   - Public Host compatibility guarantees and packaging.
   - Configuration hot reload and scripting.
@@ -54,8 +68,9 @@ deferred:
   - Maximum sixteen-pane Composer/Vulkan/atlas admission.
 
 gates:
-  - Tracked marathon and active sprint authorities parse without duplicate keys.
+  - Tracked authorities parse without duplicate keys.
   - Root and affected child checks/tests pass in every required optimization mode.
-  - Runtime behavior has bounded typed evidence when deterministic source-local proof is insufficient.
   - Source audit, protocol validation, formatting, and git diff checks pass.
-  - Operator keyboard, repeat, chord, mouse, and modern-TUI gates pass.
+  - Each debt slice preserves existing product behavior and has bounded evidence.
+
+schema: 1

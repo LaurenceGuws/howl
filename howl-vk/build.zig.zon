@@ -1,6 +1,6 @@
 .{
     .name = .howl_vk,
-    .version = "0.1.4-dev",
+    .version = "0.1.5-dev",
     .fingerprint = 0x22701b3a48d82e22,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
     .paths = .{
