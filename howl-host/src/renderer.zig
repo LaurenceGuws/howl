@@ -17,6 +17,7 @@ const vk_surface = howl_vk.surface;
 const replay_command_limit: usize = vk_surface.max_commands;
 const replay_pin_limit: usize = 2_048;
 const input_actions = @import("input_actions");
+const wayland = @import("howl_wayland");
 const terminal_handoff = @import("terminal_handoff");
 const dev_config = @import("dev_config");
 const chrome_appearance = chrome_state.Appearance{
@@ -2156,6 +2157,7 @@ fn runFallible(
     var cursor_replay_pending: ?terminal_handoff.CursorPublication = null;
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
+    var deferred_topology_input: ?DeferredTopologyInput = null;
     var pending_topology: ?PendingTopology =
         if (canvas_work.terminal_scale != null)
             try prepareInitialTerminalTopology(
@@ -2219,7 +2221,7 @@ fn runFallible(
                 surface,
             ) catch continue;
         }
-        if (terminal_topology_committed)
+        if (terminal_topology_committed and deferred_topology_input == null)
             try drainInput(
                 boundary,
                 &actions,
@@ -2227,6 +2229,7 @@ fn runFallible(
                 &chrome,
                 chrome_appearance,
                 &pending_topology,
+                &deferred_topology_input,
             );
         const local_redraw_retry_turn = local_redraw_retry_pending;
         local_redraw_retry_pending = false;
@@ -2244,6 +2247,21 @@ fn runFallible(
                     try chrome_state.toRenderPaneId(chrome.focusedPaneId()),
                     &cursor_replay_pending,
                 );
+                if (deferred_topology_input != null) {
+                    switch (try retryDeferredTopologyInput(
+                        &canvas_work,
+                        &chrome,
+                        &pending_topology,
+                        &deferred_topology_input,
+                        chrome_appearance,
+                        canvas_work.surface,
+                        canvas_work.content_origin,
+                    )) {
+                        .accepted => {},
+                        .rejected => {},
+                        .retry => {},
+                    }
+                }
             }
             if (wake.deadline and pending_topology == null and terminal_topology_committed) {
                 const now = try monotonicNow();
@@ -2478,7 +2496,9 @@ fn runFallible(
                         redraw_result,
                         local_redraw_retry_turn,
                     )) {
-                        .wait => terminal_redraw_pending = true,
+                        .wait => {
+                            terminal_redraw_pending = true;
+                        },
                         .retry => {
                             local_redraw_retry_pending = true;
                             terminal_redraw_pending = true;
@@ -4172,6 +4192,8 @@ fn waitRenderWakeBlockingUntil(
     }
 }
 
+const InputErrorDisposition = enum { reject, fatal };
+
 fn drainInput(
     boundary: *shared.Boundary,
     actions: *input_actions.State,
@@ -4179,59 +4201,104 @@ fn drainInput(
     topology: *session.SessionState,
     appearance: chrome_state.Appearance,
     pending: *?PendingTopology,
+    deferred: *?DeferredTopologyInput,
 ) !void {
     while (boundary.takeInput()) |event| {
         const basis = if (pending.*) |*value|
             &value.candidate.state
         else
             topology;
+        var retry_input: ?DeferredTopologyInput = null;
         const candidate: ?session.SessionCandidate = switch (event) {
-            .key => |key| switch (actions.key(key) catch continue) {
-                .action => |action| switch (action) {
-                    .font_increase,
-                    .font_decrease,
-                    .font_reset,
-                    .font_base_increase,
-                    .font_base_decrease,
-                    .font_base_reset,
-                    => blk: {
-                        switch (action) {
+            .key => |key| key_result: {
+                const decision = actions.key(key) catch {
+                    continue;
+                };
+                break :key_result switch (decision) {
+                    .action => |action| action_result: {
+                        break :action_result switch (action) {
                             .font_increase,
                             .font_decrease,
                             .font_reset,
-                            => requestPaneFontAction(
-                                canvas_work.terminals,
-                                &canvas_work.terminal_font_policy,
-                                canvas_work.terminal_scale,
-                                &canvas_work.font_request_high_water,
-                                topology,
-                                action,
-                            ) catch continue,
                             .font_base_increase,
                             .font_base_decrease,
                             .font_base_reset,
-                            => requestBaseFontAction(
-                                canvas_work.terminals,
-                                &canvas_work.terminal_font_policy,
-                                canvas_work.terminal_scale,
-                                &canvas_work.font_request_high_water,
-                                topology,
-                                action,
-                            ) catch continue,
-                            else => unreachable,
-                        }
-                        break :blk null;
+                            => blk: {
+                                switch (action) {
+                                    .font_increase,
+                                    .font_decrease,
+                                    .font_reset,
+                                    => requestPaneFontAction(
+                                        canvas_work.terminals,
+                                        &canvas_work.terminal_font_policy,
+                                        canvas_work.terminal_scale,
+                                        &canvas_work.font_request_high_water,
+                                        topology,
+                                        action,
+                                    ) catch |failure| {
+                                        const disposition: InputErrorDisposition = switch (failure) {
+                                            error.Stopping,
+                                            error.InvalidFontAction,
+                                            error.ArithmeticOverflow,
+                                            error.InvalidText,
+                                            error.InvalidIdentity,
+                                            error.InvalidScroll,
+                                            error.InvalidSurface,
+                                            error.InvalidRectangle,
+                                            error.InvalidTabBar,
+                                            error.InvalidScrollbar,
+                                            error.InvalidOrder,
+                                            error.InsufficientOutput,
+                                            error.InsufficientText,
+                                            error.AliasedStorage,
+                                            => .fatal,
+                                            else => .reject,
+                                        };
+                                        if (disposition == .fatal) return failure;
+                                        continue;
+                                    },
+                                    .font_base_increase,
+                                    .font_base_decrease,
+                                    .font_base_reset,
+                                    => requestBaseFontAction(
+                                        canvas_work.terminals,
+                                        &canvas_work.terminal_font_policy,
+                                        canvas_work.terminal_scale,
+                                        &canvas_work.font_request_high_water,
+                                        topology,
+                                        action,
+                                    ) catch |failure| {
+                                        const disposition: InputErrorDisposition = switch (failure) {
+                                            error.Stopping, error.InvalidFontAction => .fatal,
+                                            else => .reject,
+                                        };
+                                        if (disposition == .fatal) return failure;
+                                        continue;
+                                    },
+                                    else => unreachable,
+                                }
+                                break :blk null;
+                            },
+                            else => candidate: {
+                                retry_input = .{ .action = action };
+                                break :candidate input_actions.candidate(
+                                    basis,
+                                    action,
+                                ) catch {
+                                    continue;
+                                };
+                            },
+                        };
                     },
-                    else => input_actions.candidate(basis, action) catch continue,
-                },
-                .consumed => null,
-                .unmatched => unmatched: {
-                    try canvas_work.terminals.publishKey(
-                        try chrome_state.toRenderPaneId(topology.focusedPaneId()),
-                        key,
-                    );
-                    break :unmatched null;
-                },
+                    .consumed => null,
+                    .unmatched => unmatched: {
+                        try canvas_work.terminals.publishKey(
+                            try chrome_state.toRenderPaneId(topology.focusedPaneId()),
+                            key,
+                        );
+                        break :unmatched null;
+                    },
+                };
             },
             .keyboard_leave => reset: {
                 try canvas_work.terminals.publishFocus(
@@ -4246,19 +4313,24 @@ fn drainInput(
                 break :reset null;
             },
             .button => |button| blk: {
+                retry_input = .{ .button = button };
                 const accepted = input_actions.pointerCandidate(
                     topology,
                     appearance,
                     canvas_work.surface,
                     canvas_work.content_origin,
                     button,
-                ) catch continue;
+                ) catch {
+                    continue;
+                };
                 if (accepted == null or pending.* == null) break :blk accepted;
                 break :blk foldPointerCandidate(
                     &pending.*.?.candidate.state,
                     topology,
                     &accepted.?.state,
-                ) catch continue;
+                ) catch {
+                    continue;
+                };
             },
             .keyboard_enter => enter: {
                 try canvas_work.terminals.publishFocus(
@@ -4270,13 +4342,20 @@ fn drainInput(
             .axis, .pointer_enter, .pointer_leave => null,
         };
         if (candidate) |next| {
-            replacePendingTopology(
+            switch (try attemptTopologyReplacement(
                 canvas_work,
                 topology,
                 next.state,
                 pending,
                 null,
-            ) catch continue;
+            )) {
+                .accepted => {},
+                .rejected => {},
+                .retry => {
+                    deferred.* = retry_input.?;
+                    return;
+                },
+            }
         }
     }
 }
@@ -4300,8 +4379,12 @@ const PendingTopology = struct {
     fn observeAdmission(self: *PendingTopology) ?terminal_handoff.AdmissionRejection {
         const result = self.lifecycle.admissionResult() orelse return null;
         switch (result) {
-            .admitted => self.phase = .admitted,
-            .rejected => |rejection| return rejection,
+            .admitted => {
+                self.phase = .admitted;
+            },
+            .rejected => |rejection| {
+                return rejection;
+            },
         }
         return null;
     }
@@ -4468,6 +4551,111 @@ const TerminalTopologyRequirements = struct {
     new_panes: usize,
 };
 
+const TopologyReplacementDisposition = enum {
+    accepted,
+    rejected,
+    retry,
+};
+
+const DeferredTopologyInput = union(enum) {
+    action: input_actions.Action,
+    button: wayland.input.Button,
+};
+
+fn attemptTopologyReplacement(
+    work: *CanvasWork,
+    accepted: *const session.SessionState,
+    prospective: session.SessionState,
+    pending: *?PendingTopology,
+    surface: ?shared.SurfaceConfig,
+) !TopologyReplacementDisposition {
+    replacePendingTopology(
+        work,
+        accepted,
+        prospective,
+        pending,
+        surface,
+    ) catch |failure| switch (failure) {
+        error.InvalidTopology,
+        error.TerminalCapacity,
+        error.InvalidPane,
+        error.DuplicatePane,
+        error.UnknownPane,
+        => return .rejected,
+        error.OwnerLimit,
+        error.OperationLimit,
+        error.CandidatePending,
+        => return .retry,
+        else => return failure,
+    };
+    return .accepted;
+}
+
+fn candidateForDeferredTopologyInput(
+    deferred: DeferredTopologyInput,
+    accepted: *const session.SessionState,
+    pending: ?*const PendingTopology,
+    appearance: chrome_state.Appearance,
+    surface: chrome_state.SurfaceGeometry,
+    origin: chrome_state.ContentOrigin,
+) !?session.SessionCandidate {
+    return switch (deferred) {
+        .action => |action| input_actions.candidate(
+            if (pending) |value| &value.candidate.state else accepted,
+            action,
+        ),
+        .button => |button| blk: {
+            const pointer = try input_actions.pointerCandidate(
+                accepted,
+                appearance,
+                surface,
+                origin,
+                button,
+            ) orelse break :blk null;
+            break :blk if (pending) |value|
+                try foldPointerCandidate(
+                    &value.candidate.state,
+                    accepted,
+                    &pointer.state,
+                )
+            else
+                pointer;
+        },
+    };
+}
+
+fn retryDeferredTopologyInput(
+    work: *CanvasWork,
+    accepted: *const session.SessionState,
+    pending: *?PendingTopology,
+    deferred: *?DeferredTopologyInput,
+    appearance: chrome_state.Appearance,
+    surface: chrome_state.SurfaceGeometry,
+    origin: chrome_state.ContentOrigin,
+) !TopologyReplacementDisposition {
+    const retained = deferred.* orelse return .rejected;
+    const candidate = try candidateForDeferredTopologyInput(
+        retained,
+        accepted,
+        if (pending.*) |*value| value else null,
+        appearance,
+        surface,
+        origin,
+    ) orelse {
+        deferred.* = null;
+        return .rejected;
+    };
+    const disposition = try attemptTopologyReplacement(
+        work,
+        accepted,
+        candidate.state,
+        pending,
+        null,
+    );
+    if (disposition != .retry) deferred.* = null;
+    return disposition;
+}
+
 fn preflightTerminalTopology(
     current: *const session.SessionState,
     candidate: *const session.SessionState,
@@ -4519,24 +4707,28 @@ fn replacePendingTopology(
     pending: *?PendingTopology,
     surface: ?shared.SurfaceConfig,
 ) !void {
-    const requirements = try preflightTerminalTopology(accepted, &prospective);
-    try work.terminals.preflightLifecycleReplacement(
+    const requirements = preflightTerminalTopology(accepted, &prospective) catch |failure| {
+        return failure;
+    };
+    work.terminals.preflightLifecycleReplacement(
         requirements.operations,
         requirements.inputs,
         requirements.new_panes != 0,
-    );
+    ) catch |failure| return failure;
     var retained_surface = surface;
     if (pending.*) |*old| {
         if (retained_surface == null) retained_surface = old.surface;
         old.deinit();
         pending.* = null;
     }
-    pending.* = try prepareTerminalTopology(
+    pending.* = prepareTerminalTopology(
         work,
         accepted,
         &prospective,
         retained_surface,
-    );
+    ) catch |failure| {
+        return failure;
+    };
 }
 
 fn foldPointerCandidate(
@@ -5120,6 +5312,13 @@ test "PendingTopology has one fixed allocation-free value" {
     );
 }
 
+test "deferred topology retry has one fixed allocation-free value" {
+    try std.testing.expectEqual(@as(usize, 40), @sizeOf(DeferredTopologyInput));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(DeferredTopologyInput));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(?DeferredTopologyInput));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(?DeferredTopologyInput));
+}
+
 test "provisional startup frame exposes no terminal lifecycle or topology" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -5426,6 +5625,356 @@ test "undersized pending topology rejection removes provisional source" {
         error.RetiredSource,
         composer.removeSource(provisional_source),
     );
+}
+
+test "cancelled topology replacements reuse Composer storage and retain accepted state" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32,
+            .upload_bytes = 4096,
+            .cells = 32,
+            .rows = 4,
+            .images = 1,
+            .placements = 2,
+            .image_bytes = 4096,
+            .glyphs = 8,
+            .masks = 2,
+            .resources_per_update = 8,
+            .raster_bytes = 4096,
+            .decoration_bytes = 1024,
+        },
+    );
+    defer terminals.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 2,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
+    const accepted_bytes = accepted;
+    const pane = try chrome_state.toRenderPaneId(accepted.focusedPaneId());
+    const accepted_source = try composer.registerSource();
+    try terminals.register(
+        pane,
+        accepted_source,
+        try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?),
+    );
+    try std.testing.expect(terminals.takeLifecycle() != null);
+    try terminals.markLive(pane);
+
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &terminals;
+    var pending: ?PendingTopology = null;
+    for (0..130) |_| {
+        const candidate = (try input_actions.candidate(
+            &accepted,
+            .split_vertical,
+        )).?.state;
+        try replacePendingTopology(
+            &work,
+            &accepted,
+            candidate,
+            &pending,
+            null,
+        );
+        try std.testing.expect(pending != null);
+        pending.?.deinit();
+        pending = null;
+        try std.testing.expectEqualDeep(accepted_bytes, accepted);
+        try std.testing.expect(terminals.takeLifecycle() == null);
+    }
+    const final_candidate = (try input_actions.candidate(
+        &accepted,
+        .split_vertical,
+    )).?.state;
+    try replacePendingTopology(
+        &work,
+        &accepted,
+        final_candidate,
+        &pending,
+        null,
+    );
+    defer if (pending) |*value| value.deinit();
+    try std.testing.expect(pending != null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+}
+
+test "topology replacement distinguishes rejection retry progress and fatal failure" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32,
+            .upload_bytes = 4096,
+            .cells = 32,
+            .rows = 4,
+            .images = 1,
+            .placements = 2,
+            .image_bytes = 4096,
+            .glyphs = 8,
+            .masks = 2,
+            .resources_per_update = 8,
+            .raster_bytes = 4096,
+            .decoration_bytes = 1024,
+        },
+    );
+    defer terminals.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 2,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
+    const accepted_bytes = accepted;
+    const pane = try chrome_state.toRenderPaneId(accepted.focusedPaneId());
+    const accepted_source = try composer.registerSource();
+    try terminals.register(
+        pane,
+        accepted_source,
+        try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?),
+    );
+    try terminals.markLive(pane);
+    for (0..127) |index|
+        try terminals.resize(pane, .{
+            .width = @intCast(80 + index),
+            .height = 24,
+        });
+
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &terminals;
+    work.surface = .{ .width = 80, .height = 48 };
+    work.content_origin = .{ .y = 24 };
+    var pending: ?PendingTopology = null;
+    var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.retry,
+        try retryDeferredTopologyInput(
+            &work,
+            &accepted,
+            &pending,
+            &deferred,
+            chrome_appearance,
+            work.surface,
+            work.content_origin,
+        ),
+    );
+    try std.testing.expect(deferred != null);
+    try std.testing.expect(pending == null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+    try terminals.drainRendererWake();
+    while (terminals.takeLifecycle() != null) {}
+    var renderer_wake = std.posix.pollfd{
+        .fd = terminals.rendererFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try std.posix.poll((&renderer_wake)[0..1], 0),
+    );
+    try terminals.drainRendererWake();
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.accepted,
+        try retryDeferredTopologyInput(
+            &work,
+            &accepted,
+            &pending,
+            &deferred,
+            chrome_appearance,
+            work.surface,
+            work.content_origin,
+        ),
+    );
+    try std.testing.expect(deferred == null);
+    try std.testing.expect(pending != null);
+    pending.?.deinit();
+    pending = null;
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+
+    var rejected_state = accepted;
+    const second_tab = try rejected_state.createTab("second");
+    try std.testing.expect(@backingInt(second_tab) != 0);
+    const second_pane = try rejected_state.split(
+        rejected_state.focusedPaneId(),
+        .vertical,
+    );
+    try std.testing.expect(@backingInt(second_pane) != 0);
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.rejected,
+        try attemptTopologyReplacement(
+            &work,
+            &accepted,
+            rejected_state,
+            &pending,
+            null,
+        ),
+    );
+    try std.testing.expect(pending == null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+
+    var one_source_composer = try render_api.canvas.Composer.init(
+        std.testing.allocator,
+        .{
+            .sources = 1,
+            .retained_resources = 1,
+            .retained_commands = 1,
+            .retained_pixel_bytes = 1,
+            .composition_sources = 1,
+            .candidate_resources = 1,
+            .candidate_commands = 1,
+            .candidate_pixel_bytes = 1,
+        },
+    );
+    defer one_source_composer.deinit();
+    const full_source = try one_source_composer.registerSource();
+    try std.testing.expect(@backingInt(full_source) != 0);
+    work.composer = &one_source_composer;
+    deferred = .{ .action = .split_vertical };
+    try std.testing.expectError(
+        error.SourceLimit,
+        retryDeferredTopologyInput(
+            &work,
+            &accepted,
+            &pending,
+            &deferred,
+            chrome_appearance,
+            work.surface,
+            work.content_origin,
+        ),
+    );
+    try std.testing.expect(pending == null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+}
+
+test "owner retirement wakes and progresses one retained topology input" {
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32,
+            .upload_bytes = 4096,
+            .cells = 32,
+            .rows = 4,
+            .images = 1,
+            .placements = 2,
+            .image_bytes = 4096,
+            .glyphs = 8,
+            .masks = 2,
+            .resources_per_update = 8,
+            .raster_bytes = 4096,
+            .decoration_bytes = 1024,
+        },
+    );
+    defer terminals.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 65,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 65,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    var panes: [64]render_api.chrome.PaneId = undefined;
+    var sources: [64]render_api.canvas.SourceId = undefined;
+    for (&panes, &sources, 0..) |*pane, *source, index| {
+        pane.* = @fromBackingInt(@intCast(if (index == 0) 1 else 1_000 + index));
+        source.* = try composer.registerSource();
+        try terminals.register(
+            pane.*,
+            source.*,
+            .{ .width = 80, .height = 24 },
+        );
+        const member = try terminals.activateTransfer(pane.*);
+        try std.testing.expectEqual(pane.*, member.pane_id);
+        try std.testing.expectEqual(source.*, member.source_id);
+        try terminals.markLive(pane.*);
+    }
+    while (terminals.takeLifecycle() != null) {}
+    try terminals.drainRendererWake();
+
+    const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
+    const accepted_bytes = accepted;
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &terminals;
+    work.surface = .{ .width = 80, .height = 48 };
+    work.content_origin = .{ .y = 24 };
+    var pending: ?PendingTopology = null;
+    var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.retry,
+        try retryDeferredTopologyInput(
+            &work,
+            &accepted,
+            &pending,
+            &deferred,
+            chrome_appearance,
+            work.surface,
+            work.content_origin,
+        ),
+    );
+    try std.testing.expect(deferred != null);
+    try std.testing.expect(pending == null);
+
+    const retiring_pane = panes[panes.len - 1];
+    try terminals.close(retiring_pane);
+    const close = terminals.takeLifecycle().?;
+    try std.testing.expectEqual(retiring_pane, close.close);
+    try terminals.drainRendererWake();
+    try std.testing.expect(try terminals.retireTransfer(retiring_pane));
+    try terminals.markRetired(retiring_pane);
+    const retired = terminals.takeRetired().?;
+    try std.testing.expectEqual(retiring_pane, retired.pane);
+    try std.testing.expectEqual(sources[sources.len - 1], retired.source);
+    try terminals.drainRendererWake();
+    try composer.removeSource(retired.source);
+    try terminals.finishRetired(retired.pane);
+    var renderer_wake = std.posix.pollfd{
+        .fd = terminals.rendererFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        try std.posix.poll((&renderer_wake)[0..1], 0),
+    );
+    try terminals.drainRendererWake();
+
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.accepted,
+        try retryDeferredTopologyInput(
+            &work,
+            &accepted,
+            &pending,
+            &deferred,
+            chrome_appearance,
+            work.surface,
+            work.content_origin,
+        ),
+    );
+    defer if (pending) |*value| value.deinit();
+    try std.testing.expect(deferred == null);
+    try std.testing.expect(pending != null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
 }
 
 test "one complete terminal and Chrome resource set fits every runtime bank" {

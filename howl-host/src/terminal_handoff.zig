@@ -1216,11 +1216,14 @@ pub const Boundary = struct {
         input_count: usize,
         needs_registration: bool,
     ) error{ Stopping, OwnerLimit, OperationLimit }!void {
-        if (operation_count > lifecycle_batch_limit or input_count > 2)
+        if (operation_count > lifecycle_batch_limit or input_count > 2) {
             return error.OperationLimit;
+        }
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        if (self.stopping) return error.Stopping;
+        if (self.stopping) {
+            return error.Stopping;
+        }
         if (!self.lifecycle_candidate_active) {
             if (operation_count >
                 self.operations.len - self.operation_count -
@@ -1228,9 +1231,12 @@ pub const Boundary = struct {
                 input_count >
                     self.inputs.len - self.input_count -
                         self.reserved_input_count)
+            {
                 return error.OperationLimit;
-            if (needs_registration and self.freeUnreservedIndex() == null)
+            }
+            if (needs_registration and self.freeUnreservedIndex() == null) {
                 return error.OwnerLimit;
+            }
             return;
         }
         std.debug.assert(
@@ -1239,10 +1245,14 @@ pub const Boundary = struct {
         std.debug.assert(self.reserved_input_count <= self.inputs.len);
         if (operation_count > self.operations.len - self.operation_count or
             input_count > self.inputs.len - self.input_count)
+        {
             return error.OperationLimit;
+        }
         if (needs_registration and self.reserved_entry_index == null and
             self.freeUnreservedIndex() == null)
+        {
             return error.OwnerLimit;
+        }
     }
 
     /// Queues one exact nonzero pane geometry in caller order.
@@ -1366,6 +1376,7 @@ pub const Boundary = struct {
         self.operation_count -= 1;
         if (held_font)
             self.font_stable_operations -= 1;
+        signal(self.renderer_fd);
         return result;
     }
 
@@ -1954,6 +1965,7 @@ pub const Boundary = struct {
                 error.Busy, error.Stale => continue,
                 else => return failure,
             };
+
             self.mutex.lockUncancelable(self.io);
             if (self.find(token.pane_id)) |index| self.entries[index].?.draining = true;
             self.mutex.unlock(self.io);
@@ -1966,6 +1978,7 @@ pub const Boundary = struct {
                 self.mutex.unlock(self.io);
                 if (valid) |_| {} else |_| {
                     claim.reject();
+
                     self.mutex.lockUncancelable(self.io);
                     if (self.find(token.pane_id)) |index| {
                         const entry = &self.entries[index].?;
@@ -1981,6 +1994,7 @@ pub const Boundary = struct {
             }
             composer.apply(token.source_id, update) catch |failure| {
                 claim.reject();
+
                 self.mutex.lockUncancelable(self.io);
                 if (self.find(token.pane_id)) |index| {
                     const entry = &self.entries[index].?;
@@ -1998,6 +2012,7 @@ pub const Boundary = struct {
                 continue;
             };
             claim.complete();
+
             self.mutex.lockUncancelable(self.io);
             if (self.find(token.pane_id)) |index| {
                 const entry = &self.entries[index].?;
@@ -2325,7 +2340,6 @@ pub const Boundary = struct {
             token_count += 1;
         }
         self.mutex.unlock(self.io);
-
         var claimed: usize = 0;
         errdefer self.restoreCandidateClaims(tokens[0..claimed]);
         for (tokens[0..token_count]) |token| {
@@ -2703,13 +2717,20 @@ pub const Boundary = struct {
     pub fn finishRetired(
         self: *Boundary,
         pane: PaneId,
-    ) error{UnknownPane}!void {
+    ) error{ UnknownPane, InvalidDescriptor, Stale }!void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const index = self.find(pane) orelse return error.UnknownPane;
         const entry = &self.entries[index].?;
         if (entry.state != .removing) return error.UnknownPane;
+        if (entry.pool_active) try self.pool.releaseRetired(
+            entry.descriptor_index,
+            entry.pane,
+            entry.source,
+        );
         self.entries[index] = null;
+        self.descriptor_issued[index] = false;
+        signal(self.renderer_fd);
     }
 
     /// Wakes Renderer after a slot transitions to ready.
@@ -5231,7 +5252,9 @@ test "retirement releases reserved and ready boundaries without stranded state" 
         std.meta.activeTag(boundary.takeLifecycle().?) == .close,
     );
     try std.testing.expect(try boundary.retireTransfer(ready_pane));
-    try std.testing.expect(boundary.entries[1].?.ready == null);
+    try std.testing.expect(
+        boundary.entries[boundary.find(ready_pane).?].?.ready == null,
+    );
     try boundary.markRetired(ready_pane);
     try std.testing.expectEqual(ready_pane, boundary.takeRetired().?.pane);
     try boundary.finishRetired(ready_pane);
