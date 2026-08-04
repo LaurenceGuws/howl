@@ -29,14 +29,23 @@ invariants:
 
 slices:
   - id: stdlib_inventory
-    status: active
+    status: accepted
     product_change: none
     output: complete use-to-pinned-stdlib mapping with exact semantic differences
+    evidence: .zig/work/debt-payoff/stdlib-boundary/stdlib_inventory.yml
+    accepted_facts:
+      - Fourteen individually indexed host_c symbols cover every maintained use.
+      - errno is already Zig-stdlib-owned adaptation context, not a host_c symbol.
+      - renderer_c remains an excluded native boundary.
   - id: eventfd_and_descriptor_io
-    status: pending
+    status: accepted
     output: shared and terminal handoff use pinned stdlib Linux/POSIX ownership
+    accepted_facts:
+      - Both wake owners use checked raw eventfd creation with exact nonblocking close-on-exec flags.
+      - Typed reads and owner-controlled writes preserve EINTR, EAGAIN, saturation, and fatal failure behavior.
+      - Second-create and later Pool allocation failures close exact descriptor ownership in reverse order.
   - id: poll_and_errno
-    status: pending
+    status: active
     output: Renderer and Window polling use pinned stdlib facts
   - id: mapping_lifetime
     status: pending

@@ -3,30 +3,52 @@ sprint:
   id: stdlib_boundary
   branch: feature/debt_payoff/stdlib_boundary
   status: active
-  active_slice: stdlib_inventory
+  active_slice: poll_and_errno
 
 objective: >-
-  Prove the exact pinned Zig replacement for every host_c use before changing
-  product source or build wiring.
+  Replace translated-C polling while preserving each owner's exact timeout,
+  interruption, readiness, and progress semantics.
 
 questions:
   - id: eventfd
-    status: open
-    question: Which std.os.linux eventfd interface and flags preserve exact creation and descriptor ownership?
+    status: resolved
+    answer: std.os.linux.eventfd with EFD.CLOEXEC | EFD.NONBLOCK and std.os.linux.errno
   - id: descriptor_io
-    status: open
-    question: Which stdlib read, write, close, and errno surfaces preserve EINTR/EAGAIN behavior?
+    status: resolved
+    answer: typed std.posix.read plus std.posix.system.write and close with owner-controlled errno handling
   - id: poll
-    status: open
-    question: Which std.posix poll facts preserve timeout, wake, and interruption semantics?
+    status: resolved
+    answer: deadline owners use std.posix.system.poll and recompute monotonic remaining time after EINTR; indefinite and fixed non-deadline waits may use std.posix.poll
   - id: mapping
-    status: open
+    status: deferred
     question: Which std.posix mmap/munmap signatures preserve pointer, flags, failure, and cleanup semantics?
   - id: build
-    status: open
+    status: deferred
     question: Which host_c imports and Translate-C wiring become unreachable after migration?
 
-output:
+accepted_evidence:
   path: .zig/work/debt-payoff/stdlib-boundary/stdlib_inventory.yml
+  symbols: 14
   tracked: false
-  product_change: blocked_until_review
+
+accepted_slice:
+  id: eventfd_and_descriptor_io
+  state: accepted
+  product:
+    - howl-host/src/shared.zig
+    - howl-host/src/terminal_handoff.zig
+  validation: all_modes_and_source_gates_pass
+
+active_scope:
+  product:
+    - howl-host/src/renderer.zig
+    - howl-host/src/window.zig
+    - howl-host/test/test.zig
+  excluded:
+    - eventfd owners
+    - Window mappings
+    - host_c generation and build imports
+    - renderer_c
+
+progress:
+  state: not_started

@@ -4,7 +4,6 @@ const std = @import("std");
 const render = @import("howl_render");
 const wayland = @import("howl_wayland");
 const vt = @import("howl_vt");
-const c = @import("host_c");
 const pool_storage = @import("terminal_pool");
 const canvas = render.canvas;
 const terminal = render.terminal;
@@ -13,6 +12,8 @@ const owner_limit: usize = 64;
 const operation_limit: usize = 128;
 const input_limit: usize = 256;
 const lifecycle_batch_limit: usize = 128;
+const linux = std.os.linux;
+const eventfd_flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
 /// Maximum terminal sources admitted by one visible-set transaction.
 pub const visible_member_limit: usize = 16;
 
@@ -781,19 +782,25 @@ pub const Boundary = struct {
         allocator: std.mem.Allocator,
         limits: terminal.Content.Limits,
     ) BoundaryInitError!Boundary {
-        const terminal_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (terminal_fd < 0) return error.Signal;
-        errdefer closeDescriptor(terminal_fd);
-        const renderer_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (renderer_fd < 0) return error.Signal;
-        errdefer closeDescriptor(renderer_fd);
+        return initWithEventfd(NativeEventfd, io, allocator, limits);
+    }
+
+    fn initWithEventfd(
+        comptime Ops: type,
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        limits: terminal.Content.Limits,
+    ) BoundaryInitError!Boundary {
+        const pair = try createWakePair(Ops);
+        errdefer Ops.close(pair.first);
+        errdefer Ops.close(pair.second);
         const pool = try pool_storage.Pool.init(allocator);
         return .{
             .io = io,
             .limits = limits,
             .pool = pool,
-            .terminal_fd = terminal_fd,
-            .renderer_fd = renderer_fd,
+            .terminal_fd = pair.first,
+            .renderer_fd = pair.second,
         };
     }
 
@@ -2873,7 +2880,32 @@ pub const Boundary = struct {
 };
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("terminal boundary descriptor cleanup failed");
+    if (std.posix.system.close(descriptor) != 0)
+        @panic("terminal boundary descriptor cleanup failed");
+}
+
+const WakePair = struct { first: i32, second: i32 };
+
+const NativeEventfd = struct {
+    fn create(flags: u32) usize {
+        return linux.eventfd(0, flags);
+    }
+
+    fn close(descriptor: i32) void {
+        closeDescriptor(descriptor);
+    }
+};
+
+fn createEventfd(comptime Ops: type) error{Signal}!i32 {
+    const result = Ops.create(eventfd_flags);
+    if (linux.errno(result) != .SUCCESS) return error.Signal;
+    return std.math.cast(i32, result) orelse return error.Signal;
+}
+
+fn createWakePair(comptime Ops: type) error{Signal}!WakePair {
+    const first = try createEventfd(Ops);
+    errdefer Ops.close(first);
+    return .{ .first = first, .second = try createEventfd(Ops) };
 }
 
 fn validRational(value: ExactRational) bool {
@@ -2910,10 +2942,14 @@ fn validFontPolicy(policy: FontPolicy) bool {
 fn signal(descriptor: i32) void {
     var value: u64 = 1;
     while (true) {
-        const result = c.write(descriptor, &value, @sizeOf(u64));
+        const result = std.posix.system.write(
+            descriptor,
+            std.mem.asBytes(&value).ptr,
+            @sizeOf(u64),
+        );
         if (result == @sizeOf(u64)) return;
-        if (result < 0 and std.c.errno(result) == .INTR) continue;
-        if (result < 0 and std.c.errno(result) == .AGAIN) return;
+        if (result < 0 and std.posix.errno(result) == .INTR) continue;
+        if (result < 0 and std.posix.errno(result) == .AGAIN) return;
         @panic("eventfd write violated the live terminal Boundary invariant");
     }
 }
@@ -2921,12 +2957,106 @@ fn signal(descriptor: i32) void {
 fn drainWake(descriptor: i32) error{Signal}!void {
     var value: u64 = 0;
     while (true) {
-        const result = c.read(descriptor, &value, @sizeOf(u64));
+        const result = std.posix.read(descriptor, std.mem.asBytes(&value)) catch |failure| switch (failure) {
+            error.WouldBlock => return,
+            else => return error.Signal,
+        };
         if (result == @sizeOf(u64)) continue;
-        if (result < 0 and std.c.errno(result) == .INTR) continue;
-        if (result < 0 and std.c.errno(result) == .AGAIN) return;
         return error.Signal;
     }
+}
+
+test "terminal eventfd pair preserves flags rollback and nonblocking wake ownership" {
+    const FailingOps = struct {
+        var create_count: u8 = 0;
+        var close_count: u8 = 0;
+        var observed_flags: [2]u32 = .{ 0, 0 };
+        var closed_descriptor: i32 = -1;
+
+        fn create(flags: u32) usize {
+            observed_flags[create_count] = flags;
+            create_count += 1;
+            return if (create_count == 1) 53 else std.math.maxInt(usize);
+        }
+
+        fn close(descriptor: i32) void {
+            close_count += 1;
+            closed_descriptor = descriptor;
+        }
+    };
+    FailingOps.create_count = 0;
+    FailingOps.close_count = 0;
+    FailingOps.observed_flags = .{ 0, 0 };
+    FailingOps.closed_descriptor = -1;
+
+    try std.testing.expectError(error.Signal, createWakePair(FailingOps));
+    try std.testing.expectEqual(@as(u8, 2), FailingOps.create_count);
+    try std.testing.expectEqual(@as(u8, 1), FailingOps.close_count);
+    try std.testing.expectEqual(@as(i32, 53), FailingOps.closed_descriptor);
+    try std.testing.expectEqual(eventfd_flags, FailingOps.observed_flags[0]);
+    try std.testing.expectEqual(eventfd_flags, FailingOps.observed_flags[1]);
+
+    const WideOps = struct {
+        fn create(_: u32) usize {
+            return @as(usize, std.math.maxInt(i32)) + 1;
+        }
+    };
+    try std.testing.expectError(error.Signal, createEventfd(WideOps));
+
+    const pair = try createWakePair(NativeEventfd);
+    defer closeDescriptor(pair.second);
+    defer closeDescriptor(pair.first);
+
+    var value: u64 = 0;
+    value = std.math.maxInt(u64) - 1;
+    try std.testing.expectEqual(
+        @as(isize, @sizeOf(u64)),
+        std.posix.system.write(
+            pair.first,
+            std.mem.asBytes(&value).ptr,
+            @sizeOf(u64),
+        ),
+    );
+    signal(pair.first);
+    try drainWake(pair.first);
+    try std.testing.expectError(
+        error.WouldBlock,
+        std.posix.read(pair.first, std.mem.asBytes(&value)),
+    );
+    try std.testing.expectError(error.Signal, drainWake(-1));
+
+    const PoolFailureOps = struct {
+        var create_count: u8 = 0;
+        var close_count: u8 = 0;
+        var closed: [2]i32 = .{ -1, -1 };
+
+        fn create(_: u32) usize {
+            const descriptor: usize = 61 + create_count;
+            create_count += 1;
+            return descriptor;
+        }
+
+        fn close(descriptor: i32) void {
+            closed[close_count] = descriptor;
+            close_count += 1;
+        }
+    };
+    PoolFailureOps.create_count = 0;
+    PoolFailureOps.close_count = 0;
+    PoolFailureOps.closed = .{ -1, -1 };
+    var failing = std.testing.FailingAllocator.init(
+        std.testing.allocator,
+        .{ .fail_index = 0 },
+    );
+    try std.testing.expectError(error.OutOfMemory, Boundary.initWithEventfd(
+        PoolFailureOps,
+        std.testing.io,
+        failing.allocator(),
+        testLimits(1, 1, 4),
+    ));
+    try std.testing.expectEqual(@as(u8, 2), PoolFailureOps.create_count);
+    try std.testing.expectEqual(@as(u8, 2), PoolFailureOps.close_count);
+    try std.testing.expectEqual([2]i32{ 62, 61 }, PoolFailureOps.closed);
 }
 
 test "terminal boundary admits typed lifecycle and directional wakes" {

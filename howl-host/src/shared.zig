@@ -1,8 +1,10 @@
 //! Owns the bounded copied facts exchanged by Window and Render.
 
 const std = @import("std");
-const c = @import("host_c");
 const wayland = @import("howl_wayland");
+
+const linux = std.os.linux;
+const eventfd_flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
@@ -174,12 +176,8 @@ pub const Boundary = struct {
     /// Creates both directional nonblocking eventfds.
     /// On failure, no descriptor remains owned by the caller.
     pub fn init(io: std.Io) error{Signal}!Boundary {
-        const render_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (render_fd < 0) return error.Signal;
-        errdefer closeDescriptor(render_fd);
-        const window_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
-        if (window_fd < 0) return error.Signal;
-        return .{ .io = io, .render_fd = render_fd, .window_fd = window_fd };
+        const pair = try createWakePair(NativeEventfd);
+        return .{ .io = io, .render_fd = pair.first, .window_fd = pair.second };
     }
 
     /// Closes retained offers and both eventfds after Window and Render join.
@@ -773,7 +771,32 @@ pub const Boundary = struct {
 };
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("shared descriptor cleanup failed");
+    if (std.posix.system.close(descriptor) != 0)
+        @panic("shared descriptor cleanup failed");
+}
+
+const WakePair = struct { first: i32, second: i32 };
+
+const NativeEventfd = struct {
+    fn create(flags: u32) usize {
+        return linux.eventfd(0, flags);
+    }
+
+    fn close(descriptor: i32) void {
+        closeDescriptor(descriptor);
+    }
+};
+
+fn createEventfd(comptime Ops: type) error{Signal}!i32 {
+    const result = Ops.create(eventfd_flags);
+    if (linux.errno(result) != .SUCCESS) return error.Signal;
+    return std.math.cast(i32, result) orelse return error.Signal;
+}
+
+fn createWakePair(comptime Ops: type) error{Signal}!WakePair {
+    const first = try createEventfd(Ops);
+    errdefer Ops.close(first);
+    return .{ .first = first, .second = try createEventfd(Ops) };
 }
 
 fn validRational(value: ExactRational) bool {
@@ -791,10 +814,14 @@ fn validRational(value: ExactRational) bool {
 fn signal(descriptor: i32) void {
     var value: u64 = 1;
     while (true) {
-        const result = c.write(descriptor, &value, @sizeOf(u64));
+        const result = std.posix.system.write(
+            descriptor,
+            std.mem.asBytes(&value).ptr,
+            @sizeOf(u64),
+        );
         if (result == @sizeOf(u64)) return;
-        if (result < 0 and std.c.errno(result) == .INTR) continue;
-        if (result < 0 and std.c.errno(result) == .AGAIN) return;
+        if (result < 0 and std.posix.errno(result) == .INTR) continue;
+        if (result < 0 and std.posix.errno(result) == .AGAIN) return;
         @panic("eventfd write violated the live Boundary invariant");
     }
 }
@@ -802,10 +829,71 @@ fn signal(descriptor: i32) void {
 fn drain(descriptor: i32) error{Signal}!void {
     var value: u64 = 0;
     while (true) {
-        const result = c.read(descriptor, &value, @sizeOf(u64));
+        const result = std.posix.read(descriptor, std.mem.asBytes(&value)) catch |failure| switch (failure) {
+            error.WouldBlock => return,
+            else => return error.Signal,
+        };
         if (result == @sizeOf(u64)) continue;
-        if (result < 0 and std.c.errno(result) == .INTR) continue;
-        if (result < 0 and std.c.errno(result) == .AGAIN) return;
         return error.Signal;
     }
+}
+
+test "shared eventfd pair preserves flags rollback and nonblocking wake ownership" {
+    const FailingOps = struct {
+        var create_count: u8 = 0;
+        var close_count: u8 = 0;
+        var observed_flags: [2]u32 = .{ 0, 0 };
+        var closed_descriptor: i32 = -1;
+
+        fn create(flags: u32) usize {
+            observed_flags[create_count] = flags;
+            create_count += 1;
+            return if (create_count == 1) 41 else std.math.maxInt(usize);
+        }
+
+        fn close(descriptor: i32) void {
+            close_count += 1;
+            closed_descriptor = descriptor;
+        }
+    };
+    FailingOps.create_count = 0;
+    FailingOps.close_count = 0;
+    FailingOps.observed_flags = .{ 0, 0 };
+    FailingOps.closed_descriptor = -1;
+
+    try std.testing.expectError(error.Signal, createWakePair(FailingOps));
+    try std.testing.expectEqual(@as(u8, 2), FailingOps.create_count);
+    try std.testing.expectEqual(@as(u8, 1), FailingOps.close_count);
+    try std.testing.expectEqual(@as(i32, 41), FailingOps.closed_descriptor);
+    try std.testing.expectEqual(eventfd_flags, FailingOps.observed_flags[0]);
+    try std.testing.expectEqual(eventfd_flags, FailingOps.observed_flags[1]);
+
+    const WideOps = struct {
+        fn create(_: u32) usize {
+            return @as(usize, std.math.maxInt(i32)) + 1;
+        }
+    };
+    try std.testing.expectError(error.Signal, createEventfd(WideOps));
+
+    const pair = try createWakePair(NativeEventfd);
+    defer closeDescriptor(pair.second);
+    defer closeDescriptor(pair.first);
+
+    var value: u64 = 0;
+    value = std.math.maxInt(u64) - 1;
+    try std.testing.expectEqual(
+        @as(isize, @sizeOf(u64)),
+        std.posix.system.write(
+            pair.first,
+            std.mem.asBytes(&value).ptr,
+            @sizeOf(u64),
+        ),
+    );
+    signal(pair.first);
+    try drain(pair.first);
+    try std.testing.expectError(
+        error.WouldBlock,
+        std.posix.read(pair.first, std.mem.asBytes(&value)),
+    );
+    try std.testing.expectError(error.Signal, drain(-1));
 }
