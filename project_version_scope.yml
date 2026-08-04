@@ -1,10 +1,10 @@
 version:
   current: 0.1.5-dev
-  release_branch: release/0.1.5-dev
-  release_base: 24d5f05308c01f764828494fdef8648d99e46463
   prior:
     version: 0.1.4-dev
     status: frozen
+    release_branch: release/0.1.4-dev
+    release_base: 7db8e1ab2bc7bb7b526d67a359744008360a317c
     capability: >-
       Session-domain ownership migration, bounded Host topology retry,
       physical cursor replay and trail presentation, synchronized-output

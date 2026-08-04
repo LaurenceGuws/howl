@@ -6,7 +6,7 @@ marathon:
   approval: operator_approved
   branch_policy:
     integration: main
-    release_snapshot: release/0.1.5-dev
+    prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
