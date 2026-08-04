@@ -1,0 +1,53 @@
+schema: 1
+sprint:
+  id: mixed_ownership_audit
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/mixed_ownership_audit
+  status: active
+  objective: >-
+    Determine whether large maintained Zig files contain one cohesive owner or
+    multiple independent owners, preserving locality unless exact lifetime and
+    mutation evidence justifies structural intervention.
+
+scope:
+  population:
+    rule: maintained production Zig files under howl-*/src with at least 1500 physical lines in pinned scc output
+    count: 16
+    excluded_from_population:
+      - test-only files, which are mapped to the production owners they prove
+      - generated binary assets and shader sources
+  owned:
+    - file-level contracts, retained state, mutations, lifetimes, errors, imports, consumers, and proof ownership
+    - exact evidence for cohesion or independently mutable owner boundaries
+  excluded:
+    - implementation, file movement, splitting, package extraction, and new interfaces during the census
+    - line count, complexity, or aesthetic preference as sufficient evidence for a split
+    - feature, behavior, capacity, allocation, scheduling, protocol, or public API changes
+
+invariants:
+  - Large cohesive files are accepted as local ownership rather than treated as debt by size alone.
+  - A mixed-owner finding requires independently retained state or lifecycle, distinct mutation authority, and a useful typed boundary.
+  - Mechanical ABI declarations, parser tables, and source-local proofs do not create a second runtime owner by themselves.
+  - Every candidate maps its complete production consumers, build owner, tests, and source-map authority.
+  - Any proposed intervention is finite, atomic, and separately reviewable; uncertain boundaries are deferred rather than invented.
+
+slices:
+  - id: large_file_ownership_census
+    status: active
+    product_change: none
+    output: complete sixteen-file owner classification and reverse-indexed evidence
+  - id: intervention_contract
+    status: pending
+    product_change: none
+    output: accepted no-change findings plus finite contracts for any proven mixed owners
+  - id: accepted_interventions
+    status: pending
+    output: only contract-approved structural corrections, if any
+
+acceptance:
+  - All sixteen population files are classified exactly once with complete consumer and proof coverage.
+  - Cohesive files remain unchanged and have an explicit ownership explanation.
+  - Every mixed-owner claim proves separate retained state, mutation, lifecycle, errors, and consumer value.
+  - No broad splitting or package extraction enters by default.
+  - Strict YAML, source audit, protocol validation, formatting, and git diff checks pass.

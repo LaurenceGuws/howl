@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: null
+  active_sprint: mixed_ownership_audit
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -49,6 +49,7 @@ debt_candidates:
       55- and 19-symbol public surfaces.
     implementation_commits: [cb87e1b, 165211e]
   - id: mixed_ownership_audit
+    status: active
     scope: audit large files and preserve fewer cohesive files where that is the clearer owner shape
   - id: generated_c_boundary
     scope: audit generated-C boundaries and build wiring
