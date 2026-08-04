@@ -3,10 +3,10 @@ sprint:
   id: ownership_names
   branch: feature/debt_payoff/ownership_names
   status: active
-  active_slice: window_render_boundary
+  active_slice: session_chrome_adapter
 
 objective: >-
-  Atomically rename only the accepted Window/Render boundary owner and all
+  Atomically rename only the accepted Session-to-Chrome adapter owner and all
   exact module vocabulary without changing behavior or public declarations.
 
 questions:
@@ -21,20 +21,23 @@ questions:
     answer: ownership_inventory.yml records two complete atomic path sets and every old private alias
 
 accepted_slice:
-  id: rename_contract
+  id: window_render_boundary
   state: accepted
-  evidence: .zig/work/debt-payoff/ownership-names/rename_contract.yml
-  ordered_groups: [window_render_boundary, session_chrome_adapter]
+  old_path: howl-host/src/shared.zig
+  new_path: howl-host/src/window_render_boundary.zig
+  public_symbols_preserved: 55
+  compatibility_vocabulary_remaining: 0
 
 active_scope:
-  implementation: window_render_boundary
+  implementation: session_chrome_adapter
   product_change: authorized_atomic_rename
   tracked_paths:
-    - howl-host/src/shared.zig
-    - howl-host/src/main.zig
-    - howl-host/src/window.zig
+    - howl-host/src/chrome_state.zig
     - howl-host/src/renderer.zig
+    - howl-host/src/input_actions.zig
     - howl-host/test/test.zig
+    - howl-host/test/chrome_state_equivalence_test.zig
+    - howl-host/test/terminal_contract_test.zig
     - howl-host/build.zig
     - project_source_map.yml
     - sprint_ownership_names.yml
@@ -43,7 +46,7 @@ active_scope:
     - file splitting
     - package extraction
     - behavior or API changes
-    - session_chrome_adapter implementation
+    - window_render_boundary changes
     - compatibility aliases or parallel modules
 
 progress:

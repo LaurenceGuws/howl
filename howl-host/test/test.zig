@@ -1,13 +1,13 @@
 const std = @import("std");
 const linux = std.os.linux;
-const shared = @import("shared");
+const window_render_boundary = @import("window_render_boundary");
 const chrome_state = @import("chrome_state");
 const session = @import("session_domain");
 const render = @import("howl_render");
 const wayland = @import("howl_wayland");
 
-fn boundary() !shared.Boundary {
-    return shared.Boundary.init(std.testing.io);
+fn boundary() !window_render_boundary.Boundary {
+    return window_render_boundary.Boundary.init(std.testing.io);
 }
 
 fn closeDescriptor(descriptor: i32) std.posix.E {
@@ -37,7 +37,7 @@ test "malformed offers preserve Boundary and caller descriptor ownership" {
     defer value.deinit();
     try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     var offers = try realOffers();
-    offers[1].plane_count = shared.plane_limit + 1;
+    offers[1].plane_count = window_render_boundary.plane_limit + 1;
     try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
     try std.testing.expectEqual(@as(u8, 0), value.offer_count);
     try std.testing.expect(value.takeOffers() == null);
@@ -80,13 +80,13 @@ test "pending offers remain exact and reject a second ownership transfer" {
 
 test "Boundary cleanup closes every retained offered descriptor" {
     var value = try boundary();
-    const planes = [shared.plane_limit]shared.Plane{
+    const planes = [window_render_boundary.plane_limit]window_render_boundary.Plane{
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
     };
-    var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+    var offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = @splat(.{
         .generation = 1,
         .width = 64,
         .height = 64,
@@ -153,7 +153,7 @@ test "completion batch validates fully before publishing any member" {
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
-    const valid = [_]shared.Completion{
+    const valid = [_]window_render_boundary.Completion{
         .{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 },
         .{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 },
         .{ .generation = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 },
@@ -180,7 +180,7 @@ test "stop is monotonic and preserves the first runtime failure" {
     value.requestStop(.window);
     value.requestStop(.render);
     try std.testing.expect(value.shouldStop());
-    try std.testing.expectEqual(shared.Failure.window, value.failure.?);
+    try std.testing.expectEqual(window_render_boundary.Failure.window, value.failure.?);
     try std.testing.expectError(error.Stopping, value.publishFeedback(.{ .device = 1, .fourcc = 1, .modifier = 1 }));
     value.markStopped(.window);
     value.markStopped(.render);
@@ -213,7 +213,7 @@ test "directional wakes follow fact ownership" {
     try value.drainWindowWake();
 }
 
-test "Window input facts cross the shared boundary without policy" {
+test "Window input facts cross the Window/Render boundary without policy" {
     var value = try boundary();
     defer value.deinit();
     try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
@@ -295,7 +295,7 @@ test "SurfaceConfig transports factual DPI without fabricating provisional facts
     try std.testing.expect(provisional.dpi_x == null);
     try std.testing.expect(provisional.dpi_y == null);
 
-    const dpi = shared.ExactRational{
+    const dpi = window_render_boundary.ExactRational{
         .numerator = 768,
         .denominator = 5,
     };
@@ -482,14 +482,14 @@ fn eventDescriptor() !i32 {
     return std.math.cast(i32, value) orelse return error.Descriptor;
 }
 
-fn realOffers() ![shared.slot_count]shared.SlotOffer {
-    const planes = [shared.plane_limit]shared.Plane{
+fn realOffers() ![window_render_boundary.slot_count]window_render_boundary.SlotOffer {
+    const planes = [window_render_boundary.plane_limit]window_render_boundary.Plane{
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
     };
-    var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+    var offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = @splat(.{
         .generation = 1,
         .width = 64,
         .height = 64,
@@ -508,7 +508,7 @@ fn realOffers() ![shared.slot_count]shared.SlotOffer {
     return offers;
 }
 
-fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
+fn closeOffers(offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer) void {
     for (offers) |offer| {
         if (offer.dma_fd >= 0) std.debug.assert(closeDescriptor(offer.dma_fd) == .SUCCESS);
         if (offer.acquire_timeline_fd >= 0) std.debug.assert(closeDescriptor(offer.acquire_timeline_fd) == .SUCCESS);

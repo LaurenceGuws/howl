@@ -3,7 +3,7 @@
 const std = @import("std");
 const c = @import("howl_wayland").c;
 const wayland = @import("howl_wayland");
-const shared = @import("shared.zig");
+const window_render_boundary = @import("window_render_boundary.zig");
 
 const format_limit: usize = 64;
 const output_limit: usize = 16;
@@ -196,14 +196,14 @@ const Ring = struct {
     logical_height: u32 = 0,
     buffer_scale: u32 = 1,
     use_viewport: bool = false,
-    buffers: [shared.slot_count]?*c.wl_buffer = .{ null, null, null },
-    acquire_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
-    release_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    buffers: [window_render_boundary.slot_count]?*c.wl_buffer = .{ null, null, null },
+    acquire_timelines: [window_render_boundary.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    release_timelines: [window_render_boundary.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
     presented_mask: u8 = 0,
-    release_points: [shared.slot_count]u64 = .{ 0, 0, 0 },
+    release_points: [window_render_boundary.slot_count]u64 = .{ 0, 0, 0 },
 
     fn deinit(self: *Ring) void {
-        var index = shared.slot_count;
+        var index = window_render_boundary.slot_count;
         while (index > 0) {
             index -= 1;
             if (self.buffers[index]) |value| c.wl_buffer_destroy(value);
@@ -215,7 +215,7 @@ const Ring = struct {
 };
 
 const State = struct {
-    boundary: *shared.Boundary,
+    boundary: *window_render_boundary.Boundary,
     compositor: ?*c.wl_compositor = null,
     xdg: ?*c.xdg_wm_base = null,
     dmabuf: ?*c.zwp_linux_dmabuf_v1 = null,
@@ -276,7 +276,7 @@ const State = struct {
         for (self.outputs[0..self.output_count]) |output| if (output.object) |value| c.wl_output_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
-        const retired = if (self.ring.generation == 0) null else shared.RetiredRing{
+        const retired = if (self.ring.generation == 0) null else window_render_boundary.RetiredRing{
             .generation = self.ring.generation,
             .presented_mask = self.ring.presented_mask,
             .release_points = self.ring.release_points,
@@ -284,7 +284,7 @@ const State = struct {
         self.ring.deinit();
         if (retired) |fact| self.boundary.markWindowRingRetired(fact);
         if (self.retiring) |*old| {
-            const fact = shared.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const fact = window_render_boundary.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
             self.boundary.markWindowRingRetired(fact);
             self.retiring = null;
@@ -304,9 +304,9 @@ const State = struct {
     }
 };
 
-/// Runs the sole Wayland owner until the shared Boundary requests retirement.
+/// Runs the sole Wayland owner until the window/render Boundary requests retirement.
 /// All operational failures are recorded as the first Window runtime failure.
-pub fn run(boundary: *shared.Boundary) void {
+pub fn run(boundary: *window_render_boundary.Boundary) void {
     runFallible(boundary) catch |failure| {
         std.debug.print("Window failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.window);
@@ -314,7 +314,7 @@ pub fn run(boundary: *shared.Boundary) void {
     boundary.markStopped(.window);
 }
 
-fn runFallible(boundary: *shared.Boundary) !void {
+fn runFallible(boundary: *window_render_boundary.Boundary) !void {
     var state = State{ .boundary = boundary };
     state.xkb_context = wayland.xkb.Context.init() catch return error.Xkb;
     const display = c.wl_display_connect(null) orelse return error.WaylandConnect;
@@ -346,7 +346,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
     if (c.xdg_toplevel_add_listener(state.toplevel.?, &toplevel_listener, &state) != 0) return error.Listener;
     c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan ring");
-    c.xdg_toplevel_set_min_size(state.toplevel.?, shared.surface_min, shared.surface_min);
+    c.xdg_toplevel_set_min_size(state.toplevel.?, window_render_boundary.surface_min, window_render_boundary.surface_min);
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
     if (state.configured_width == 0) state.configured_width = 640;
@@ -358,7 +358,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     if (display_fd < 0) return error.Dispatch;
     while (!boundary.shouldStop()) {
         if (state.retiring) |*old| if (boundary.takeWindowRingRetirementRequest(old.generation)) {
-            const fact = shared.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const fact = window_render_boundary.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
             state.boundary.markWindowRingRetired(fact);
             state.retiring = null;
@@ -530,7 +530,7 @@ test "Window poll preserves indefinite ownership failure and clean readiness fac
     );
 }
 
-fn constructRing(state: *State, offered: shared.OfferedRing) !void {
+fn constructRing(state: *State, offered: window_render_boundary.OfferedRing) !void {
     const config = offered.config;
     var offers = offered.slots;
     defer for (&offers) |*offer| {
@@ -554,7 +554,7 @@ fn constructRing(state: *State, offered: shared.OfferedRing) !void {
     errdefer next.deinit();
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
-        if (offer.plane_count == 0 or offer.plane_count > shared.plane_limit) return error.InvalidPlane;
+        if (offer.plane_count == 0 or offer.plane_count > window_render_boundary.plane_limit) return error.InvalidPlane;
         const params = c.zwp_linux_dmabuf_v1_create_params(state.dmabuf.?) orelse return error.Buffer;
         defer c.zwp_linux_buffer_params_v1_destroy(params);
         for (0..offer.plane_count) |plane| {
@@ -578,8 +578,8 @@ fn constructRing(state: *State, offered: shared.OfferedRing) !void {
     if (old.generation != 0) state.retiring = old;
 }
 
-fn present(state: *State, completion: shared.Completion) !void {
-    if (completion.slot >= shared.slot_count or completion.revision <= state.presented) {
+fn present(state: *State, completion: window_render_boundary.Completion) !void {
+    if (completion.slot >= window_render_boundary.slot_count or completion.revision <= state.presented) {
         return error.InvalidCompletion;
     }
     if (state.frame_callback != null) return error.PresentationPaced;
@@ -628,7 +628,7 @@ fn present(state: *State, completion: shared.Completion) !void {
         try prepareFractionalSurface(state);
 }
 
-fn selectFeedback(state: *const State) ?shared.Feedback {
+fn selectFeedback(state: *const State) ?window_render_boundary.Feedback {
     for (state.formats[0..state.format_count]) |format| {
         if (format.device == state.feedback_device and format.fourcc == 0x34324241) return .{
             .device = state.feedback_device,
@@ -773,7 +773,7 @@ fn physicalExtent(logical: u32, scale_120: u32) ScaleError!u32 {
     const product = std.math.mul(u128, @as(u128, logical), @as(u128, scale_120)) catch return error.ArithmeticOverflow;
     const rounded = std.math.add(u128, product, 60) catch return error.ArithmeticOverflow;
     const value = rounded / 120;
-    if (value == 0 or value > shared.surface_dimension_limit) return error.ArithmeticOverflow;
+    if (value == 0 or value > window_render_boundary.surface_dimension_limit) return error.ArithmeticOverflow;
     return @intCast(value);
 }
 
@@ -1364,7 +1364,7 @@ test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
     try std.testing.expectEqual(@as(u32, 125), try physicalExtent(100, 150));
     try std.testing.expectEqual(@as(u32, 667), try physicalExtent(640, 125));
     try std.testing.expectError(error.InvalidScale, physicalExtent(0, 120));
-    try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(shared.surface_dimension_limit, 240));
+    try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(window_render_boundary.surface_dimension_limit, 240));
 
     var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true, .configure_ready = true, .fractional_capable = true };
     facts.preferred_integer = try Rational.init(2, 1);
@@ -1399,7 +1399,7 @@ test "fractional capability removal retains a pair required by active or offered
 }
 
 test "Window publishes integer and fractional logical/physical ring facts" {
-    var boundary = try shared.Boundary.init(std.testing.io);
+    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
     defer boundary.deinit();
     var state = State{
         .boundary = &boundary,
@@ -1571,7 +1571,7 @@ test "Wayland output removal is harmless, recomputes membership, and reuses slot
 }
 
 test "final output removal publishes absent DPI while retaining accepted scale" {
-    var boundary = try shared.Boundary.init(std.testing.io);
+    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
     defer boundary.deinit();
     var state = State{
         .boundary = &boundary,

@@ -60,7 +60,7 @@ accepted:
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
   .howl/config/howl.conf: repository-local development cursor configuration defaults
-  howl-host/src/shared.zig: bounded copied cross-thread facts and directional eventfd ownership
+  howl-host/src/window_render_boundary.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
   howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs

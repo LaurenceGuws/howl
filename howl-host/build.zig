@@ -186,13 +186,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const test_shared = b.createModule(.{
-        .root_source_file = b.path("src/shared.zig"),
+    const test_window_render_boundary = b.createModule(.{
+        .root_source_file = b.path("src/window_render_boundary.zig"),
         .target = target,
         .optimize = optimize,
     });
-    test_shared.addImport("howl_wayland", wayland.module("howl_wayland"));
-    test_module.addImport("shared", test_shared);
+    test_window_render_boundary.addImport("howl_wayland", wayland.module("howl_wayland"));
+    test_module.addImport("window_render_boundary", test_window_render_boundary);
     test_module.addImport("chrome_state", chrome_state);
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);

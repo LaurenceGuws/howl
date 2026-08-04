@@ -772,7 +772,7 @@ pub const Boundary = struct {
 
 fn closeDescriptor(descriptor: i32) void {
     if (std.posix.system.close(descriptor) != 0)
-        @panic("shared descriptor cleanup failed");
+        @panic("window/render boundary descriptor cleanup failed");
 }
 
 const WakePair = struct { first: i32, second: i32 };
@@ -838,7 +838,7 @@ fn drain(descriptor: i32) error{Signal}!void {
     }
 }
 
-test "shared eventfd pair preserves flags rollback and nonblocking wake ownership" {
+test "Window/Render eventfd pair preserves flags rollback and nonblocking wake ownership" {
     const FailingOps = struct {
         var create_count: u8 = 0;
         var close_count: u8 = 0;
