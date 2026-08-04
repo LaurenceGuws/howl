@@ -259,6 +259,32 @@ const stop_wait_slice_ns = std.time.ns_per_ms;
 const environment_max_entries: usize = 1024;
 const environment_max_bytes: usize = 1024 * 1024;
 
+fn timespecFromMicroseconds(microseconds: u128) ?linux.timespec {
+    const seconds = microseconds / std.time.us_per_s;
+    const remainder = (microseconds % std.time.us_per_s) * std.time.ns_per_us;
+    return .{
+        .sec = std.math.cast(isize, seconds) orelse return null,
+        .nsec = std.math.cast(isize, remainder) orelse return null,
+    };
+}
+
+const SleepResult = enum { success, interrupted, failure };
+
+fn classifySleepResult(result: usize) SleepResult {
+    return switch (linux.errno(result)) {
+        .SUCCESS => .success,
+        .INTR => .interrupted,
+        else => .failure,
+    };
+}
+
+fn consumeSleepResult(result: usize) void {
+    switch (classifySleepResult(result)) {
+        .success, .interrupted => return,
+        .failure => @panic("PTY cleanup clock wait failed"),
+    }
+}
+
 const LaunchEnvironment = struct {
     allocator: std.mem.Allocator,
     bytes: []u8,
@@ -905,10 +931,10 @@ fn childLaunchExit(status_fd: posix.fd_t, failure: ChildLaunchFailure) noreturn 
     var byte: [1]u8 = .{@backingInt(failure)};
     while (true) {
         const n = linux.write(status_fd, &byte, byte.len);
-        if (linux.errno(n) == .SUCCESS and n == 1) c._exit(127);
+        if (linux.errno(n) == .SUCCESS and n == 1) linux.exit(127);
         switch (linux.errno(n)) {
             .INTR => continue,
-            else => c._exit(127),
+            else => linux.exit(127),
         }
     }
 }
@@ -1043,12 +1069,11 @@ fn sendSignalTarget(target: posix.pid_t, signal: Signal) SignalResult {
 }
 
 fn sleepStopSlice() void {
-    const result = c.usleep(@intCast(stop_wait_slice_ns / std.time.ns_per_us));
-    if (result == 0) return;
-    switch (posix.errno(result)) {
-        .INTR => {},
-        else => @panic("PTY cleanup clock wait failed"),
-    }
+    const microseconds = @as(u128, stop_wait_slice_ns / std.time.ns_per_us);
+    const request = timespecFromMicroseconds(microseconds) orelse @panic("PTY cleanup clock duration overflow");
+    // Preserve the prior one-shot usleep owner: interruption completes this
+    // cleanup slice early instead of extending the stop deadline.
+    consumeSleepResult(linux.nanosleep(&request, null));
 }
 
 const test_cols: u16 = 80;
@@ -1392,8 +1417,14 @@ test "raw syscall classifiers preserve bounded owner dispositions" {
     ) callconv(.c) c_int;
     const libc_fork_surface: LibcFork = posix.system.fork;
     const libc_sigaction_surface: LibcSigaction = posix.system.sigaction;
+    const LinuxExit = *const fn (i32) noreturn;
+    const LinuxNanosleep = *const fn (*const linux.timespec, ?*linux.timespec) usize;
+    const linux_exit_surface: LinuxExit = linux.exit;
+    const linux_nanosleep_surface: LinuxNanosleep = linux.nanosleep;
     try std.testing.expectEqual(@intFromPtr(&posix.system.fork), @intFromPtr(libc_fork_surface));
     try std.testing.expectEqual(@intFromPtr(&posix.system.sigaction), @intFromPtr(libc_sigaction_surface));
+    try std.testing.expectEqual(@intFromPtr(&linux.exit), @intFromPtr(linux_exit_surface));
+    try std.testing.expectEqual(@intFromPtr(&linux.nanosleep), @intFromPtr(linux_nanosleep_surface));
 
     try std.testing.expectEqual(@as(usize, 4), try mapReadResult(4, 8));
     try std.testing.expectError(error.EndOfStream, mapReadResult(0, 8));
@@ -1442,6 +1473,25 @@ test "raw syscall classifiers preserve bounded owner dispositions" {
     try std.testing.expectEqual(@as(?linux.SIG, .INT), checkedLinuxSignal(2));
     try std.testing.expectEqual(@as(?linux.SIG, null), checkedLinuxSignal(-1));
     try std.testing.expectEqual(@as(?linux.SIG, null), checkedLinuxSignal(65));
+}
+
+test "child exit and cleanup sleep retain bounded conversion semantics" {
+    try std.testing.expectEqual(SleepResult.success, classifySleepResult(0));
+    try std.testing.expectEqual(SleepResult.interrupted, classifySleepResult(syntheticErrno(.INTR)));
+    try std.testing.expectEqual(SleepResult.failure, classifySleepResult(syntheticErrno(.BADF)));
+    consumeSleepResult(0);
+    consumeSleepResult(syntheticErrno(.INTR));
+    try std.testing.expectEqual(linux.timespec{ .sec = 0, .nsec = 0 }, timespecFromMicroseconds(0).?);
+    try std.testing.expectEqual(linux.timespec{ .sec = 1, .nsec = 500_000_000 }, timespecFromMicroseconds(1_500_000).?);
+    const overflowing_seconds = @as(u128, @intCast(std.math.maxInt(isize))) + 1;
+    try std.testing.expect(timespecFromMicroseconds(overflowing_seconds * std.time.us_per_s) == null);
+    const source = @embedFile("howl_pty.zig");
+    var exit_token: [32]u8 = undefined;
+    var sleep_token: [32]u8 = undefined;
+    const rendered_exit = try std.fmt.bufPrint(&exit_token, "c.{s}", .{"_exit"});
+    const rendered_sleep = try std.fmt.bufPrint(&sleep_token, "c.{s}", .{"usleep"});
+    try std.testing.expect(std.mem.indexOf(u8, source, rendered_exit) == null);
+    try std.testing.expect(std.mem.indexOf(u8, source, rendered_sleep) == null);
 }
 
 test "failed ioctl preserves accepted dimensions" {
