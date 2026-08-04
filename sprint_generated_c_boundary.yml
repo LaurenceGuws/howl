@@ -1,0 +1,60 @@
+schema: 1
+sprint:
+  id: generated_c_boundary
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/generated_c_boundary
+  status: active
+  objective: >-
+    Account for every maintained translated or generated C boundary, its exact
+    ABI source, build wiring, consumers, reproducibility, and necessity before
+    authorizing any structural correction.
+
+scope:
+  translated_boundaries:
+    - howl-pty generated howl-pty.h translated as pty_c
+    - howl-render generated howl-render-native.h translated as native_c
+    - howl-host generated renderer-native.h translated as renderer_c
+    - howl-wayland/src/wayland-native.h translated as wayland_c
+    - howl-wayland/src/xkb-native.h translated as xkb_c
+  generated_c_artifacts:
+    - five tracked Wayland protocol XML, client-header, and private-code cohorts
+    - howl-wayland/tools/verify_generated.sh reproducibility ownership
+  owned:
+    - exact declarations and constants consumed from each translated module
+    - header provenance, target/configuration facts, include paths, libraries, and build consumers
+    - generated C/header provenance, checked-in lifetime, compilation, and reproducibility gates
+    - finite replacement or preservation evidence for every boundary
+  excluded:
+    - generated Zig, Unicode binary tables, SPIR-V, glyph rasterizers, and manual fixtures
+    - handwritten ABI replacement without exhaustive symbol, layout, target, and error proof
+    - feature, protocol, dependency, allocation, scheduling, or runtime behavior changes
+    - compatibility aliases or parallel native boundaries
+
+invariants:
+  - Existing C boundaries remain authoritative until exact evidence proves a smaller maintained owner.
+  - A system header or generated protocol artifact is not debt merely because it is C.
+  - Every translated symbol maps to one consumer and one preserve, replace, or remove disposition.
+  - Every generated protocol cohort maps XML input to exact header/C output, compilation owner, and reproducibility proof.
+  - Target macros, include paths, linked libraries, ABI widths, error conventions, and cleanup semantics remain explicit.
+  - Corrections are finite and independently reviewable; uncertain boundaries are preserved.
+
+slices:
+  - id: boundary_inventory
+    status: active
+    product_change: none
+    output: complete translated-symbol and generated-protocol ownership census
+  - id: finite_boundary_contract
+    status: pending
+    product_change: none
+    output: accepted preservation findings plus finite contracts for any proven redundant boundary
+  - id: accepted_corrections
+    status: pending
+    output: only contract-approved build or source corrections, if any
+
+acceptance:
+  - All five Translate-C modules and five generated Wayland protocol cohorts are indexed exactly once.
+  - Every consumed translated symbol has exact source, build, consumer, and disposition evidence.
+  - Every generated C/header byte cohort has exact XML provenance and reproducibility ownership.
+  - No native boundary is removed or rewritten from preference alone.
+  - Strict YAML, source audit, protocol validation, formatting, and git diff checks pass.

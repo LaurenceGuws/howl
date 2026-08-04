@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: null
+  active_sprint: generated_c_boundary
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -58,6 +58,7 @@ debt_candidates:
       mixed owner or structural intervention is proven; Renderer module-comment
       vocabulary debt is routed to error_and_authority_hygiene.
   - id: generated_c_boundary
+    status: active
     scope: audit generated-C boundaries and build wiring
   - id: error_and_authority_hygiene
     scope: audit silent error disposal, stale source-audit admissions, comments, and tracked authority

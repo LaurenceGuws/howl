@@ -1,0 +1,37 @@
+schema: 1
+sprint:
+  id: generated_c_boundary
+  branch: feature/debt_payoff/generated_c_boundary
+  status: active
+  active_slice: boundary_inventory
+
+objective: >-
+  Build a queryable census of every maintained Translate-C module and tracked
+  Wayland generated-C cohort before selecting any preservation or correction.
+
+questions:
+  - id: translated_symbols
+    status: open
+    question: Which exact declarations and constants does each translated module expose and which source symbols consume them?
+  - id: build_ownership
+    status: open
+    question: Which target macros, include paths, libraries, module imports, and proof gates define each native boundary?
+  - id: generated_protocols
+    status: open
+    question: Does each tracked Wayland XML/header/C cohort reproduce byte-for-byte and enter the build exactly once?
+  - id: disposition
+    status: open
+    question: Which boundaries are required, redundant, or uncertain under the pinned Zig and system ABI?
+
+active_scope:
+  evidence: .zig/work/debt-payoff/generated-c-boundary/boundary_inventory.yml
+  product_change: forbidden
+  translated_module_count: 5
+  generated_protocol_cohort_count: 5
+  excluded:
+    - tracked edits beyond accepted sprint authority
+    - native declaration replacement or generated artifact regeneration
+    - build, dependency, runtime, protocol, or public API changes
+
+progress:
+  state: not_started
