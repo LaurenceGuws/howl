@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: accepted_corrections
   active_cohort: runtime_corrections
-  active_subcohort: configure_replacement_disposition
+  active_subcohort: cursor_replay_error_disposition
 
 objective: >-
-  Preserve exact configure progress across topology replacement rejection,
-  retryable pressure, and fatal failure without diverging terminal scale from
-  accepted or pending topology.
+  Classify cursor replay preparation, render submission, and completion
+  failures at their exact pre-submit or post-submit owner without collapsing
+  fatal failure into retryable blocked work.
 
 questions:
   - id: population
@@ -37,17 +37,17 @@ active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-host/src/renderer.zig runFallible configure-consumption path
-    - retainTerminalScale and replacePendingTopology disposition ownership
-    - expected rejection, retryable pressure, and fatal propagation
+    - howl-host/src/renderer.zig replayCursorFrame
+    - replay preparation, render submission, and completion preparation
+    - exact blocked, rejected, and fatal propagation ownership
   excluded:
-    - cursor replay, Composer, and deadline corrections until their ordered slices
-    - session, terminal, Window, or rendering behavior beyond configure retention
+    - Composer, visible cursor binding, and deadline corrections until their ordered slices
+    - session, terminal, Window, or rendering behavior beyond cursor replay disposition
     - source-audit, comment, and unrelated authority corrections
     - Git operations
 
 progress:
-  state: configure_replacement_disposition_not_started
+  state: cursor_replay_error_disposition_not_started
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]
@@ -56,6 +56,14 @@ progress:
         in reverse order, completed cohorts retain reverse cohort teardown, and
         all eight production allocation positions have deterministic failure
         coverage without capacity, layout, API, or successful-behavior change.
+    configure_replacement_disposition:
+      paths: [howl-host/src/renderer.zig]
+      conclusion: >-
+        Renderer retains one newest consumed configure across OwnerLimit and
+        OperationLimit, retries on terminal progress without a new configure,
+        preserves idempotent font publication, clears accepted or rejected
+        work, and propagates fatal replacement failure with deterministic
+        owner-level disposition and wake-scheduling proofs.
   accepted_syntax_inventory:
     files: 62
     records: 2887

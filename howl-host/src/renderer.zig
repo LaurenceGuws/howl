@@ -2203,6 +2203,8 @@ fn runFallible(
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
     var deferred_topology_input: ?DeferredTopologyInput = null;
+    var retained_configure: ?window_render_boundary.SurfaceConfig = null;
+    var configure_work_pending = false;
     var pending_topology: ?PendingTopology =
         if (canvas_work.terminal_scale != null)
             try prepareInitialTerminalTopology(
@@ -2215,6 +2217,12 @@ fn runFallible(
     defer if (pending_topology) |*pending| pending.deinit();
     while (!boundary.shouldStop()) {
         if (boundary.takeConfigure()) |surface| {
+            retainNewestConfigure(&retained_configure, surface);
+            configure_work_pending = true;
+        }
+        if (configure_work_pending) {
+            configure_work_pending = false;
+            const surface = retained_configure.?;
             try retainTerminalScale(
                 canvas_work.terminals,
                 canvas_work.terminal_font_policy,
@@ -2225,9 +2233,15 @@ fn runFallible(
             if (!terminal_topology_committed) {
                 var candidate_chrome = chrome;
                 const surface_extent = renderExtent(surface);
-                const origin = session_chrome_adapter.contentOrigin(surface_extent, session_chrome_adapter.default_tab_bar_height) catch continue;
+                const origin = session_chrome_adapter.contentOrigin(surface_extent, session_chrome_adapter.default_tab_bar_height) catch {
+                    clearRetainedConfigure(&retained_configure);
+                    continue;
+                };
                 candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
-                    error.InvalidGeometry => continue,
+                    error.InvalidGeometry => {
+                        clearRetainedConfigure(&retained_configure);
+                        continue;
+                    },
                     else => return failure,
                 };
                 if (pending_topology) |*pending| {
@@ -2241,30 +2255,24 @@ fn runFallible(
                         &chrome,
                         surface,
                     );
+                clearRetainedConfigure(&retained_configure);
                 continue;
             }
             const pending_generation = if (pending_topology) |pending|
                 if (pending.surface) |value| value.generation else active_generation
             else
                 active_generation;
-            if (surface.generation <= pending_generation) continue;
-            var candidate_chrome = if (pending_topology) |pending|
-                pending.candidate.state
-            else
-                chrome;
-            const surface_extent = renderExtent(surface);
-            const origin = session_chrome_adapter.contentOrigin(surface_extent, session_chrome_adapter.default_tab_bar_height) catch continue;
-            candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
-                error.InvalidGeometry => continue,
-                else => return failure,
-            };
-            replacePendingTopology(
+            if (surface.generation <= pending_generation) {
+                clearRetainedConfigure(&retained_configure);
+                continue;
+            }
+            const configure_disposition = try attemptConfigureReplacement(
                 &canvas_work,
                 &chrome,
-                candidate_chrome,
                 &pending_topology,
                 surface,
-            ) catch continue;
+            );
+            applyConfigureDisposition(&retained_configure, configure_disposition);
         }
         if (terminal_topology_committed and deferred_topology_input == null)
             try drainInput(
@@ -2307,6 +2315,10 @@ fn runFallible(
                         .retry => {},
                     }
                 }
+                configure_work_pending = shouldRetryConfigureAfterWake(
+                    retained_configure,
+                    wake.terminal,
+                );
             }
             if (wake.deadline and pending_topology == null and terminal_topology_committed) {
                 const now = try monotonicNow();
@@ -2730,6 +2742,37 @@ fn retainTerminalScale(
     retained.* = snapshot;
 }
 
+fn retainNewestConfigure(
+    retained: *?window_render_boundary.SurfaceConfig,
+    incoming: window_render_boundary.SurfaceConfig,
+) void {
+    if (retained.* == null or incoming.generation > retained.*.?.generation)
+        retained.* = incoming;
+}
+
+fn clearRetainedConfigure(
+    retained: *?window_render_boundary.SurfaceConfig,
+) void {
+    retained.* = null;
+}
+
+fn applyConfigureDisposition(
+    retained: *?window_render_boundary.SurfaceConfig,
+    disposition: TopologyReplacementDisposition,
+) void {
+    switch (disposition) {
+        .accepted, .rejected => clearRetainedConfigure(retained),
+        .retry => {},
+    }
+}
+
+fn shouldRetryConfigureAfterWake(
+    retained: ?window_render_boundary.SurfaceConfig,
+    terminal_wake: bool,
+) bool {
+    return terminal_wake and retained != null;
+}
+
 fn terminalScaleSnapshot(
     surface: window_render_boundary.SurfaceConfig,
 ) !?terminal_handoff.ScaleSnapshot {
@@ -2748,6 +2791,42 @@ fn terminalScaleSnapshot(
             .denominator = dpi_y.denominator,
         },
     };
+}
+
+test "configure retention keeps only the newest generation" {
+    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    defer boundary.deinit();
+    const base = window_render_boundary.SurfaceConfig{
+        .generation = 1,
+        .logical_width = 800,
+        .logical_height = 600,
+        .physical_width = 800,
+        .physical_height = 600,
+        .scale_revision = 0,
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+    try boundary.publishConfigure(800, 600, 800, 600, 0, null, null, 1, false);
+    var retained: ?window_render_boundary.SurfaceConfig = boundary.takeConfigure();
+    try std.testing.expectEqual(@as(u64, 1), retained.?.generation);
+    var newer = base;
+    newer.logical_width = 1024;
+    try boundary.publishConfigure(1024, 600, 1024, 600, 0, null, null, 1, false);
+    retainNewestConfigure(&retained, boundary.takeConfigure().?);
+    try std.testing.expectEqual(@as(u64, 2), retained.?.generation);
+    retainNewestConfigure(&retained, base);
+    try std.testing.expectEqual(@as(u64, 2), retained.?.generation);
+    applyConfigureDisposition(&retained, .retry);
+    try std.testing.expect(retained != null);
+    applyConfigureDisposition(&retained, .accepted);
+    try std.testing.expect(retained == null);
+    retained = base;
+    applyConfigureDisposition(&retained, .rejected);
+    try std.testing.expect(retained == null);
+    retained = base;
+    try std.testing.expect(shouldRetryConfigureAfterWake(retained, true));
+    try std.testing.expect(!shouldRetryConfigureAfterWake(retained, false));
+    try std.testing.expect(!shouldRetryConfigureAfterWake(null, true));
 }
 
 fn policyOffsetIndex(
@@ -4876,6 +4955,37 @@ fn attemptTopologyReplacement(
     return .accepted;
 }
 
+fn attemptConfigureReplacement(
+    work: *CanvasWork,
+    accepted: *const session.SessionState,
+    pending: *?PendingTopology,
+    surface: window_render_boundary.SurfaceConfig,
+) !TopologyReplacementDisposition {
+    var candidate_chrome = if (pending.*) |value|
+        value.candidate.state
+    else
+        accepted.*;
+    const surface_extent = renderExtent(surface);
+    const origin = session_chrome_adapter.contentOrigin(
+        surface_extent,
+        session_chrome_adapter.default_tab_bar_height,
+    ) catch |failure| switch (failure) {
+        error.InvalidSurface => return .rejected,
+        else => return failure,
+    };
+    candidate_chrome.resizeSurface(contentExtent(surface_extent, origin)) catch |failure| switch (failure) {
+        error.InvalidGeometry => return .rejected,
+        else => return failure,
+    };
+    return attemptTopologyReplacement(
+        work,
+        accepted,
+        candidate_chrome,
+        pending,
+        surface,
+    );
+}
+
 fn candidateForDeferredTopologyInput(
     deferred: DeferredTopologyInput,
     accepted: *const session.SessionState,
@@ -6274,6 +6384,49 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
+    var window_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    defer window_boundary.deinit();
+    try window_boundary.publishConfigure(
+        96,
+        48,
+        96,
+        48,
+        1,
+        .{ .numerator = 96, .denominator = 1 },
+        .{ .numerator = 96, .denominator = 1 },
+        1,
+        false,
+    );
+    var retained_configure: ?window_render_boundary.SurfaceConfig = window_boundary.takeConfigure();
+    work.terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0);
+    work.terminal_scale = null;
+    work.font_request_high_water = 0;
+    try retainTerminalScale(
+        work.terminals,
+        work.terminal_font_policy,
+        &work.terminal_scale,
+        &work.font_request_high_water,
+        retained_configure.?,
+    );
+    try std.testing.expect(work.terminals.takeFontRequest() != null);
+    try retainTerminalScale(
+        work.terminals,
+        work.terminal_font_policy,
+        &work.terminal_scale,
+        &work.font_request_high_water,
+        retained_configure.?,
+    );
+    try std.testing.expect(work.terminals.takeFontRequest() == null);
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.retry,
+        try attemptConfigureReplacement(
+            &work,
+            &accepted,
+            &pending,
+            retained_configure.?,
+        ),
+    );
+    try std.testing.expect(retained_configure != null);
     var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
     try std.testing.expectEqual(
         TopologyReplacementDisposition.retry,
@@ -6304,6 +6457,18 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     try terminals.drainRendererWake();
     try std.testing.expectEqual(
         TopologyReplacementDisposition.accepted,
+        try attemptConfigureReplacement(
+            &work,
+            &accepted,
+            &pending,
+            retained_configure.?,
+        ),
+    );
+    clearRetainedConfigure(&retained_configure);
+    pending.?.deinit();
+    pending = null;
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.accepted,
         try retryDeferredTopologyInput(
             &work,
             &accepted,
@@ -6318,6 +6483,28 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     try std.testing.expect(pending != null);
     pending.?.deinit();
     pending = null;
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+
+    const invalid_surface = window_render_boundary.SurfaceConfig{
+        .generation = 3,
+        .logical_width = 0,
+        .logical_height = 0,
+        .physical_width = 0,
+        .physical_height = 0,
+        .scale_revision = 0,
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.rejected,
+        try attemptConfigureReplacement(
+            &work,
+            &accepted,
+            &pending,
+            invalid_surface,
+        ),
+    );
+    try std.testing.expect(pending == null);
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
 
     var rejected_state = accepted;
@@ -6369,6 +6556,29 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
             chrome_appearance,
             work.surface,
             work.content_origin,
+        ),
+    );
+    try std.testing.expect(pending == null);
+    try std.testing.expectEqualDeep(accepted_bytes, accepted);
+
+    terminals.shutdown();
+    const fatal_surface = window_render_boundary.SurfaceConfig{
+        .generation = 4,
+        .logical_width = 96,
+        .logical_height = 48,
+        .physical_width = 96,
+        .physical_height = 48,
+        .scale_revision = 0,
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+    try std.testing.expectError(
+        error.Stopping,
+        attemptConfigureReplacement(
+            &work,
+            &accepted,
+            &pending,
+            fatal_surface,
         ),
     );
     try std.testing.expect(pending == null);
@@ -6432,6 +6642,21 @@ test "owner retirement wakes and progresses one retained topology input" {
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
+    var window_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    defer window_boundary.deinit();
+    try window_boundary.publishConfigure(
+        80,
+        48,
+        80,
+        48,
+        0,
+        null,
+        null,
+        1,
+        false,
+    );
+    var retained_configure: ?window_render_boundary.SurfaceConfig =
+        window_boundary.takeConfigure();
     var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
     try std.testing.expectEqual(
         TopologyReplacementDisposition.retry,
@@ -6447,6 +6672,7 @@ test "owner retirement wakes and progresses one retained topology input" {
     );
     try std.testing.expect(deferred != null);
     try std.testing.expect(pending == null);
+    try std.testing.expect(retained_configure != null);
 
     const retiring_pane = panes[panes.len - 1];
     try terminals.close(retiring_pane);
@@ -6487,6 +6713,18 @@ test "owner retirement wakes and progresses one retained topology input" {
     defer if (pending) |*value| value.deinit();
     try std.testing.expect(deferred == null);
     try std.testing.expect(pending != null);
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.accepted,
+        try attemptConfigureReplacement(
+            &work,
+            &accepted,
+            &pending,
+            retained_configure.?,
+        ),
+    );
+    clearRetainedConfigure(&retained_configure);
+    pending.?.deinit();
+    pending = null;
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
 }
 
