@@ -5,10 +5,10 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_runtime
+  active_subcohort: terminal_proof_helpers
 
 objective: >-
-  Resolve the one hundred and seventeen terminal Runtime syntax records into
+  Resolve the forty-six maintained terminal proof-helper syntax records into
   exact owner, mutation, cleanup, and proof semantics without changing product
   code.
 
@@ -25,22 +25,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_runtime.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_proof_helpers.yml
   product_change: forbidden
   population:
-    - records r00528 through r00644 from howl-host/src/terminal.zig
-    - Runtime, lifecycle, font, resize, polling, and consequence-routing symbols
+    - records r00645 through r00690 from howl-host/src/terminal.zig
+    - maintained file-level helpers used only by deterministic proofs
     - exact source-local proof owners for those records
   excluded:
     - accepted records r00444 through r00527
-    - records r00645 through r00690 until the proof-helper subcohort
+    - accepted records r00528 through r00644
     - terminal_handoff.zig and terminal_pool.zig until their file-owned subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_runtime_not_started
+  state: host_terminal_proof_helpers_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -104,6 +104,17 @@ progress:
       conclusion: >-
         Logical, transfer, queue, and poll-owner errors have branch-specific
         ownership; eight dispositions have exact executable evidence.
+    terminal_runtime:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_runtime.yml
+      records: 117
+      deterministic: 7
+      source_contract: 110
+      accepted: 7
+      debt_candidates: 110
+      conclusion: >-
+        Runtime lifecycle, font, resize, polling, and shutdown errors have
+        branch-specific ownership; seven dispositions have exact executable
+        evidence, including irreversible PTY-first boundaries.
   cohort_order:
     - host_process_root
     - host_window_boundary
