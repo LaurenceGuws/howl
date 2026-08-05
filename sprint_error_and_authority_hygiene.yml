@@ -1,0 +1,60 @@
+schema: 1
+sprint:
+  id: error_and_authority_hygiene
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/error_and_authority_hygiene
+  status: active
+  objective: >-
+    Make every maintained error disposition and sensitive-source admission
+    explicit, and remove stale comments or tracked authority without changing
+    product capability or inventing structural work.
+
+scope:
+  owned:
+    - production error propagation, expected rejection, retry, cleanup, panic, and deliberate discard
+    - every tools/source_audit.allow admission and its exact surviving source construct
+    - file and public-symbol comments whose ownership or behavior claims disagree with maintained source
+    - tracked authority entries that describe removed, renamed, completed, or unowned work
+  excluded:
+    - terminal features, protocol expansion, performance policy, and GUI behavior
+    - package extraction, broad file splitting, or ownership redesign
+    - error-policy changes inferred from style alone
+    - compatibility aliases or speculative documentation
+
+invariants:
+  - Every discarded error has one named owner, exact expected condition, and deterministic disposition.
+  - Unexpected runtime, invariant, capacity, identity, and cleanup failures are not silently converted into progress.
+  - Source-audit admissions survive only while the exact justified construct exists at the recorded owner.
+  - Comments and tracked authority describe current accepted source, not intended or historical behavior.
+  - Evidence distinguishes stale vocabulary from a real ownership or behavior defect.
+  - Corrections are finite, behavior-preserving unless an exact error contract proves otherwise, and independently reviewable.
+
+slices:
+  - id: error_disposition_inventory
+    status: active
+    product_change: none
+    output: complete reverse-indexed census of maintained production error dispositions and exact silent-disposal candidates
+  - id: source_audit_admission_review
+    status: pending
+    product_change: none
+    output: every allow-list admission matched to one current construct, owner, and justification
+  - id: comment_and_authority_review
+    status: pending
+    product_change: none
+    output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
+  - id: finite_hygiene_contract
+    status: pending
+    product_change: none
+    output: accepted no-change findings plus bounded correction groups for proven debt
+  - id: accepted_corrections
+    status: pending
+    output: only contract-approved error, admission, comment, or authority corrections
+
+acceptance:
+  - Every maintained production error disposition is classified with exact owner and behavior evidence.
+  - Every source-audit admission is retained, narrowed, or removed with exact source proof.
+  - Stale comments and authorities are corrected without donating new architecture.
+  - Expected errors remain transactional and fatal errors remain observable at their owner boundary.
+  - Affected package and workspace checks/tests pass in every optimization mode.
+  - Strict YAML, source audit, protocol validation, formatting, and git diff checks pass.

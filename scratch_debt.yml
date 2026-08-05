@@ -1,0 +1,37 @@
+schema: 1
+sprint:
+  id: error_and_authority_hygiene
+  branch: feature/debt_payoff/error_and_authority_hygiene
+  status: active
+  active_slice: error_disposition_inventory
+
+objective: >-
+  Build a queryable evidence index of every maintained production error
+  disposition before authorizing any error-policy or source change.
+
+questions:
+  - id: population
+    status: open
+    question: Which exact maintained production symbols propagate, classify, retry, panic on, or deliberately discard errors?
+  - id: silent_disposal
+    status: open
+    question: Which syntactic non-propagating sites lack an exact expected-error contract or accidentally hide fatal failure?
+  - id: owner_boundary
+    status: open
+    question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
+
+active_scope:
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/error_disposition_inventory.yml
+  product_change: forbidden
+  population:
+    - maintained production Zig under howl-*/src
+    - package and workspace build owners where they dispose of fallible results
+    - maintained first-party tools where failure affects an acceptance gate
+  excluded:
+    - test-only injected failures and assertion helpers except as proof owners
+    - generated Zig, generated C, generated protocol files, and vendored reference source
+    - source-audit, comment, and authority corrections until their later slices
+    - Git operations
+
+progress:
+  state: not_started
