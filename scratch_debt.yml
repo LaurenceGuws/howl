@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_redraw_chrome
+  active_subcohort: renderer_cursor_replay
 
 objective: >-
-  Resolve the sixteen Renderer Chrome-redraw syntax records into exact
-  retirement, planning, submission, completion, rollback, and proof semantics
-  without changing product code.
+  Resolve the fifteen Renderer cursor-replay syntax records into exact
+  overlay, retirement, slot, submission, completion, rollback, and proof
+  semantics without changing product code.
 
 questions:
   - id: population
@@ -25,11 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_redraw_chrome.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_cursor_replay.yml
   product_change: forbidden
   population:
-    - records r00340 through r00355 from howl-host/src/renderer.zig
-    - Renderer redrawChrome physical frame transaction
+    - records r00356 through r00370 from howl-host/src/renderer.zig
+    - Renderer replayCursorFrame physical cursor transaction
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
@@ -41,13 +41,14 @@ active_scope:
     - accepted Renderer input-drain records r00276 through r00290
     - accepted Renderer topology records r00291 through r00330
     - accepted Renderer lifecycle-shape helper records r00331 through r00339
-    - Renderer records r00356 through r00392 until their owner subcohorts
+    - accepted Renderer Chrome-redraw records r00340 through r00355
+    - Renderer records r00371 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_redraw_chrome_not_started
+  state: host_renderer_cursor_replay_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -277,6 +278,17 @@ progress:
         The lifecycle-shape receipt helper has exact fixture and cleanup source
         contracts, but its success-only callers inject none of the nine failure
         branches; no deterministic error evidence is claimed.
+    renderer_redraw_chrome:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_redraw_chrome.yml
+      records: 16
+      production_runtime: 16
+      source_contract: 16
+      debt_candidates: 16
+      conclusion: >-
+        Chrome redraw retirement, planning, submission, completion, and
+        rollback have exact source contracts. Adjacent helper tests do not
+        inject these redrawChrome failure branches, so none is promoted to
+        deterministic evidence.
   cohort_order:
     - host_process_root
     - host_window_boundary
