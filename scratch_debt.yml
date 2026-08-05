@@ -5,11 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
+  active_subcohort: terminal_runtime
 
 objective: >-
-  Resolve the three hundred and ninety-three terminal runtime, handoff, and
-  pool syntax records into exact owner, mutation, cleanup, and proof semantics
-  without changing product code.
+  Resolve the two hundred and forty-seven terminal runtime syntax records into
+  exact owner, mutation, cleanup, and proof semantics without changing product
+  code.
 
 questions:
   - id: population
@@ -24,20 +25,19 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_runtime.yml
   product_change: forbidden
   population:
     - accepted syntax records from howl-host/src/terminal.zig
-    - accepted syntax records from howl-host/src/terminal_handoff.zig
-    - accepted syntax records from howl-host/src/terminal_pool.zig
     - exact source-local proof owners for those records
   excluded:
+    - terminal_handoff.zig and terminal_pool.zig until their file-owned subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_not_started
+  state: host_terminal_runtime_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -84,6 +84,10 @@ progress:
         Session-domain, Chrome-adapter, and input-adaptation error ownership is
         fully indexed; six dispositions have exact executable evidence and the
         focused-pane invariant panic remains explicitly unproved.
+  host_terminal_subcohort_order:
+    - terminal_runtime
+    - terminal_handoff
+    - terminal_pool
   cohort_order:
     - host_process_root
     - host_window_boundary
