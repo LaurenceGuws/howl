@@ -62,7 +62,7 @@ accepted:
   .howl/config/howl.conf: repository-local development cursor configuration defaults
   howl-host/src/window_render_boundary.zig: bounded copied cross-thread facts and directional eventfd ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: runtime Composer ownership, canvas-to-Vulkan adaptation, DMA-BUF ring orchestration, and release observation
+  howl-host/src/renderer.zig: Host input, session, terminal, Composer, physical-replay, and deadline orchestration plus canvas-to-Vulkan adaptation, DMA-BUF ring ownership, and release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs
   howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection

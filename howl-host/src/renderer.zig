@@ -1,4 +1,6 @@
-//! Exclusively owns Vulkan mutation and DRM release observation.
+//! Owns Host render orchestration from input, session, terminal, and Composer
+//! coordination through physical replay, deadlines, sole Vulkan mutation, and
+//! DRM release observation.
 
 const std = @import("std");
 const c = @import("renderer_c");

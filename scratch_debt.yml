@@ -3,14 +3,14 @@ sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
-  active_slice: comment_and_authority_review
-  active_cohort: maintained_comments_and_authorities
-  active_subcohort: exact_stale_claim_census
+  active_slice: sprint_acceptance
+  active_cohort: clean_feature_range
+  active_subcohort: final_gate
 
 objective: >-
-  Identify exact file, symbol-comment, and tracked-authority claims that no
-  longer describe maintained ownership or behavior, including the deferred
-  Renderer module-comment mismatch, without inventing replacement architecture.
+  Audit the complete error-and-authority-hygiene feature range from its main
+  merge base, verify every accepted slice and correction, and return the sprint
+  for closure only if the clean range satisfies every acceptance gate.
 
 questions:
   - id: population
@@ -34,19 +34,35 @@ questions:
     answer: Each selected correction names its exact product owner and required disposition.
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/comment_and_authority_index.yml
-  product_change: evidence_only
+  evidence: complete tracked feature range plus retained ignored slice evidence
+  product_change: forbidden
   population:
-    - maintained file and public-symbol comments
-    - tracked design, rule, source-map, version-scope, marathon, sprint, and scratch authority
-    - deferred Renderer module-comment mismatch from the accepted mixed-ownership audit
+    - every commit and tracked diff from the main merge base through the review-ready feature HEAD
+    - all sprint slices, accepted facts, corrections, bounds, and exclusions
+    - clean four-mode package/workspace and authority validation
   excluded:
-    - product behavior or ownership redesign during evidence census
-    - speculative documentation and historical prose outside maintained authority
+    - new corrections before a concrete acceptance blocker is identified
+    - sprint closure, main merge, branch deletion, or evidence cleanup before reviewer acceptance
     - Git operations by the worker
 
 progress:
-  state: source_audit_admissions_accepted_comment_authority_review_not_started
+  state: all_slices_accepted_sprint_review_ready
+  accepted_comment_and_authority_review:
+    findings: 10
+    stale_vocabulary: 10
+    ownership_defects: 0
+    corrected_paths:
+      - howl-host/src/renderer.zig
+      - project_design.yml
+      - project_source_map.yml
+      - project_version_scope.yml
+    evidence: .zig/work/debt-payoff/error-and-authority-hygiene/comment_and_authority_index.yml
+    evidence_sha256: b6dc89cc758a3d93ad0f3e37f3751f49bcc3731f5d083afe48fe6a555a8c2684
+    conclusion: >-
+      Renderer orchestration, accepted cursor capability, local multi-pane
+      scope, deferred multiplexer scope, and remaining debt work now use exact
+      current vocabulary. No product ownership or behavior correction was
+      required.
   accepted_source_audit_admissions:
     allow_rows: 73
     unique_source_texts: 72

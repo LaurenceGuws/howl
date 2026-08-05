@@ -4,7 +4,7 @@ sprint:
   marathon: debt_payoff
   version: 0.1.5-dev
   branch: feature/debt_payoff/error_and_authority_hygiene
-  status: active
+  status: review_ready
   objective: >-
     Make every maintained error disposition and sensitive-source admission
     explicit, and remove stale comments or tracked authority without changing
@@ -60,9 +60,15 @@ slices:
       - VT test-root imports deliberately trigger sixteen test cohorts, while the ligature classifier and JSONL writer use compile-time generic values without runtime type erasure.
       - No allow row is stale, redundant, widened, or removable without changing its maintained owner boundary.
   - id: comment_and_authority_review
-    status: active
+    status: accepted
     product_change: none
     output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
+    accepted_facts:
+      - Ten stale vocabulary claims were corrected across the Renderer file contract and three tracked authorities; no conflicting retained owner or behavior defect was found.
+      - Renderer documentation now names its Host input, session, terminal, Composer, replay, deadline, Vulkan, and DRM orchestration boundary.
+      - Local bounded tabs and panes are described as a multi-pane runtime; detached, remote, or cooperative multiplexer sessions remain deferred.
+      - Cursor replay and trail presentation are accepted capability rather than active redesign work.
+      - Completed stdlib, ownership-name, mixed-ownership, generated-C, build-wiring, error-disposition, and source-audit work no longer appears as current active scope.
   - id: finite_hygiene_contract
     status: accepted
     product_change: none
