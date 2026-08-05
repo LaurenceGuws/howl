@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_font_policy
+  active_subcohort: renderer_canvas_plan
 
 objective: >-
-  Resolve the sixteen Renderer font-policy syntax records into exact scale,
-  offset, publication, rollback, and proof semantics without changing product
-  code.
+  Resolve the fifty-five Renderer Canvas-plan syntax records into exact
+  candidate, composition, adaptation, replay, rollback, and proof semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -25,23 +25,24 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_font_policy.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_canvas_plan.yml
   product_change: forbidden
   population:
-    - records r00185 through r00200 from howl-host/src/renderer.zig
-    - Renderer terminal-scale and font-policy helpers
+    - records r00201 through r00255 from howl-host/src/renderer.zig
+    - Renderer Canvas planning, composition, adaptation, and physical-plan helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
     - accepted Renderer trail/replay records r00050 through r00075
     - accepted Renderer runtime-root records r00076 through r00184
-    - Renderer records r00201 through r00392 until their owner subcohorts
+    - accepted Renderer GPU-budget/font-policy records r00185 through r00200
+    - Renderer records r00256 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_font_policy_not_started
+  state: host_renderer_canvas_plan_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -160,7 +161,8 @@ progress:
     - renderer_trail_replay_state
     - renderer_runtime_root
     - renderer_font_policy
-    - renderer_canvas_plan_and_waits
+    - renderer_canvas_plan
+    - renderer_waits
     - renderer_input_and_topology
     - renderer_physical_backend
   accepted_host_renderer_subcohorts:
@@ -190,6 +192,19 @@ progress:
         and topology acceptance, while replacePendingTopology catch continue
         consumes the configure across its inferred error set; both remain
         finite product-correction debt.
+    renderer_font_policy:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_font_policy.yml
+      records: 16
+      production_runtime: 16
+      deterministic: 1
+      source_contract: 15
+      accepted: 1
+      debt_candidates: 15
+      conclusion: >-
+        GPU-budget, terminal-scale, and font-policy errors have exact source
+        dispositions. Revision-zero factual DPI rejection has direct
+        executable rollback evidence; the remaining dispositions stay finite
+        proof debt.
   cohort_order:
     - host_process_root
     - host_window_boundary
