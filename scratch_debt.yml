@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_render
-  active_subcohort: canvas_candidate_composition
+  active_subcohort: canvas_frame_validation
 
 objective: >-
-  Resolve the seventy-five Canvas candidate and composition syntax records
-  into exact preparation, rollback, resource, binding, publication, and proof
-  semantics without changing product code.
+  Resolve the eighty-seven Canvas frame validation and projection syntax
+  records into exact alias, measurement, output, visibility, geometry, and
+  proof semantics without changing product code.
 
 questions:
   - id: population
@@ -25,15 +25,15 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_candidate_composition.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_frame_validation.yml
   product_change: forbidden
   population:
-    - records r01038 through r01112 from howl-render/src/canvas.zig
-    - Canvas candidate preparation, composition, cursor binding, shared-resource planning, and publication
+    - records r01113 through r01199 from howl-render/src/canvas.zig
+    - Canvas alias validation, frame measurement/writing, visibility, geometry, and checked helper arithmetic
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host, PTY, and Canvas records r00001 through r01037
-    - Canvas records r01113 through r01268 until their owner subcohorts
+    - accepted Host, PTY, and Canvas records r00001 through r01112
+    - Canvas records r01200 through r01268 until their owner subcohort
     - other howl-render files until their file-owner cohorts
     - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
@@ -41,7 +41,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: howl_render_canvas_candidate_composition_not_started
+  state: howl_render_canvas_frame_validation_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -381,6 +381,20 @@ progress:
         have deterministic evidence. Reviewer correction removed copied
         Composer-init semantics from ResourceId validation and both
         removeSource records before acceptance.
+    canvas_candidate_composition:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_candidate_composition.yml
+      records: 75
+      production_runtime: 75
+      source_contract: 75
+      debt_candidates: 75
+      conclusion: >-
+        Canvas candidate, composition, cursor-binding, shared-resource, and
+        frame-entry errors have exact source dispositions but no causal
+        branch evidence. Reviewer correction removed false transactional
+        scratch-rollback claims, corrected focused-source and residency error
+        mapping, and retained refreshVisibleCursorBindings catch continue as
+        mandatory product-correction debt because it suppresses an accepted
+        identity invariant and can preserve an older frame revision.
   cohort_order:
     - host_process_root
     - host_window_boundary
