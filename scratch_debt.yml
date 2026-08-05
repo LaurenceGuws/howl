@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_proof_helpers
+  active_subcohort: terminal_late_helpers
 
 objective: >-
-  Resolve the forty-six maintained terminal proof-helper syntax records into
-  exact owner, mutation, cleanup, and proof semantics without changing product
-  code.
+  Resolve the forty-six late file-level terminal helper records, including nine
+  production helpers and thirty-seven proof-only helpers, without changing
+  product code.
 
 questions:
   - id: population
@@ -25,10 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_proof_helpers.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_late_helpers.yml
   product_change: forbidden
   population:
     - records r00645 through r00690 from howl-host/src/terminal.zig
+    - production grid, cursor, input-admission, and monotonic-time helpers
     - maintained file-level helpers used only by deterministic proofs
     - exact source-local proof owners for those records
   excluded:
@@ -40,7 +41,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: host_terminal_proof_helpers_not_started
+  state: host_terminal_late_helpers_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -90,7 +91,7 @@ progress:
   host_terminal_subcohort_order:
     - terminal_logical_and_poll
     - terminal_runtime
-    - terminal_proof_helpers
+    - terminal_late_helpers
     - terminal_handoff
     - terminal_pool
   accepted_host_terminal_subcohorts:
