@@ -54,6 +54,9 @@ slices:
       - id: renderer_wait_canvas_orphan
         commit: e783ce1
         result: waitCanvasPlan and its solely owned waitRenderWakeBlocking wrapper removed with zero surviving occurrences or transitive orphan
+      - id: vt_screen_advance_identity_orphan
+        commit: c2bf258
+        result: unused Screen-local advanceIdentity removed while the distinct Terminal helper and eleven calls remain unchanged
 
 acceptance:
   - Every removed symbol or wiring edge is absent from all maintained consumers and generated boundaries.

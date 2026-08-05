@@ -4,13 +4,13 @@ sprint:
   branch: feature/debt_payoff/obsolete_interfaces
   status: active
   active_slice: accepted_removals
-  active_cohort: vt_screen_advance_identity_orphan
+  active_cohort: vt_screen_line_cursor_wraps_orphan
   active_subcohort: one_declaration_deletion
 
 objective: >-
-  Delete only the unused Screen-local advanceIdentity declaration, preserve
-  terminal.zig's distinct live helper, prove zero owning-file occurrences and
-  no transitive orphan, then return the unstaged slice for hostile review.
+  Delete only the unused Screen-local lineCursorWraps declaration, prove zero
+  maintained occurrences and no transitive orphan, then return the unstaged
+  slice for hostile review.
 
 questions:
   - id: population
@@ -30,29 +30,33 @@ active_scope:
   evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-vt/src/screen.zig advanceIdentity
-    - distinct retained howl-vt/src/terminal.zig advanceIdentity ownership
+    - howl-vt/src/screen.zig lineCursorWraps
     - exact post-deletion negative and transitive-orphan censuses
   excluded:
-    - lineCursorWraps and grapheme_value_count removal groups
+    - grapheme_value_count removal group
+    - all other Screen declarations
     - all Renderer source
     - all eight retained inventory cohorts
     - replacement helpers, aliases, or unrelated cleanup
     - Git operations by the worker
 
 progress:
-  state: renderer_removal_accepted_screen_identity_removal_not_started
+  state: screen_identity_removal_accepted_line_wrap_removal_not_started
   accepted_removal_contract:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
     sha256: e2822cfbf44bed129d113654ad4c452d8f0dcc6f64578507695b3245892e91ff
     groups: 4
     declarations: 5
-    active_group: vt_screen_advance_identity_orphan
+    active_group: vt_screen_line_cursor_wraps_orphan
   accepted_removals:
     renderer_wait_canvas_orphan:
       commit: e783ce1
       declarations: [waitCanvasPlan, waitRenderWakeBlocking]
       result: zero surviving occurrences and no transitive orphan
+    vt_screen_advance_identity_orphan:
+      commit: c2bf258
+      declarations: [advanceIdentity]
+      result: zero Screen occurrences; distinct Terminal helper remains owned and unchanged
   accepted_inventory:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
     sha256: db949c38a93d6f76eca8bd805ad367e37f6bd84aa694ce33339c5caf7c3565ef
