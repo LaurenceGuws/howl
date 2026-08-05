@@ -6685,10 +6685,6 @@ fn boundedCursorOffset(line: LogicalLine, has_cursor: bool, cursor_offset: u32) 
     return @min(cursor_offset, @as(u32, @intCast(line.cells.items.len)));
 }
 
-fn lineCursorWraps(line_cursor_offset: u32, cols: u16) bool {
-    return line_cursor_offset > 0 and line_cursor_offset % cols == 0;
-}
-
 fn flatRowSlice(flat_rows: []const ScreenCell, row: RewrappedRow, cols: u16) []const ScreenCell {
     const start = row.start;
     std.debug.assert(start + screenResizeColCount(cols) <= screenCount32(flat_rows.len));
