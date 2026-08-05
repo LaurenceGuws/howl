@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_logical_and_poll
+  active_subcohort: terminal_runtime
 
 objective: >-
-  Resolve the eighty-four Logical, transfer, queue, and poll-owner syntax
-  records into exact owner, mutation, cleanup, and proof semantics without
-  changing product code.
+  Resolve the one hundred and seventeen terminal Runtime syntax records into
+  exact owner, mutation, cleanup, and proof semantics without changing product
+  code.
 
 questions:
   - id: population
@@ -25,21 +25,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_logical_and_poll.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_runtime.yml
   product_change: forbidden
   population:
-    - records r00444 through r00527 from howl-host/src/terminal.zig
-    - PooledTransfer, PoolReservation, WriteQueue, Logical, and poll-owner symbols
+    - records r00528 through r00644 from howl-host/src/terminal.zig
+    - Runtime, lifecycle, font, resize, polling, and consequence-routing symbols
     - exact source-local proof owners for those records
   excluded:
-    - records r00528 through r00690 until their Runtime and proof-helper subcohorts
+    - accepted records r00444 through r00527
+    - records r00645 through r00690 until the proof-helper subcohort
     - terminal_handoff.zig and terminal_pool.zig until their file-owned subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_logical_and_poll_not_started
+  state: host_terminal_runtime_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -92,6 +93,17 @@ progress:
     - terminal_proof_helpers
     - terminal_handoff
     - terminal_pool
+  accepted_host_terminal_subcohorts:
+    terminal_logical_and_poll:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_logical_and_poll.yml
+      records: 84
+      deterministic: 8
+      source_contract: 76
+      accepted: 8
+      debt_candidates: 76
+      conclusion: >-
+        Logical, transfer, queue, and poll-owner errors have branch-specific
+        ownership; eight dispositions have exact executable evidence.
   cohort_order:
     - host_process_root
     - host_window_boundary
