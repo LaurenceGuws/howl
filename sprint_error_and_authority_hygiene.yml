@@ -41,7 +41,7 @@ slices:
       - Explicit test declarations, historical examples, test/proof files, generated sources, optional orelse, and catch-owned panic tokens are excluded.
       - JSONL and YAML reproduce byte-for-byte through the retained ignored Zig extractor and Nushell summarizer.
   - id: error_owner_review
-    status: active
+    status: accepted
     product_change: none
     output: >-
       Complete mechanical identity coverage plus exact owner-group review of
@@ -57,7 +57,7 @@ slices:
     product_change: none
     output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
   - id: finite_hygiene_contract
-    status: pending
+    status: active
     product_change: none
     output: accepted no-change findings plus bounded correction groups for proven debt
   - id: accepted_corrections

@@ -3,12 +3,13 @@ sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
-  active_slice: error_owner_review
-  active_cohort: remaining_semantic_danger
+  active_slice: finite_hygiene_contract
+  active_cohort: runtime_corrections
+  active_subcohort: replay_state_partial_allocation_rollback
 
 objective: >-
-  Classify the remaining 162 non-return catches and 44 direct panics by exact
-  owner disposition without reproducing per-record source-contract prose.
+  Correct partial current-cohort allocation rollback in ReplayState.init
+  without changing replay capacities, layout, or successful behavior.
 
 questions:
   - id: population
@@ -20,31 +21,32 @@ questions:
       stays mechanically complete while manual review narrows to semantic
       disposition and owner-transaction boundaries.
   - id: silent_disposal
-    status: open
+    status: answered
     question: Which syntactic non-propagating sites lack an exact expected-error contract or accidentally hide fatal failure?
+    answer: >-
+      The finite contract selects five source-verified runtime defects: replay
+      allocation rollback, configure disposition, cursor replay disposition,
+      visible cursor binding invariant suppression, and deadline narrowing.
   - id: owner_boundary
-    status: open
+    status: answered
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
+    answer: Each selected correction names its exact product owner and required disposition.
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/nonreturn_disposition_groups.yml
-  product_change: forbidden
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
+  product_change: authorized_narrow_scope
   population:
-    - 162 non-return catches from records r01380 through r02887
-    - 44 direct panics from records r01380 through r02887
-    - exact grouping by path and owning declaration
+    - howl-host/src/renderer.zig ReplayState.init only
+    - eight fixed allocations across two equal replay cohorts
+    - exact rollback at every allocation failure position
   excluded:
-    - accepted owner reviews r00001 through r01379
-    - 859 unchanged transparent try records
-    - 319 catch-return records
-    - 124 errdefer records
-    - per-record ownership prose
-    - package completion as an end in itself
-    - source-audit, comment, and authority corrections until their later slices
+    - configure, cursor replay, Composer, and deadline corrections until their ordered slices
+    - allocation capacity, retained layout, replay behavior, or API changes
+    - source-audit, comment, and unrelated authority corrections
     - Git operations
 
 progress:
-  state: nonreturn_disposition_groups_not_started
+  state: replay_state_partial_allocation_rollback_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
