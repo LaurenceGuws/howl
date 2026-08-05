@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_render
-  active_subcohort: chrome
+  active_subcohort: chrome_native
 
 objective: >-
-  Resolve the twenty-six Chrome projection and hit-test syntax records into
-  exact identity, geometry, text, scroll, capacity, arithmetic, output, and
-  proof semantics without changing product code.
+  Resolve the seventy-seven native Chrome syntax records into exact
+  initialization, allocation, shaping, resource, update, geometry, rollback,
+  cleanup, and proof semantics without changing product code.
 
 questions:
   - id: population
@@ -25,14 +25,14 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_chrome.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_chrome_native.yml
   product_change: forbidden
   population:
-    - records r01277 through r01302 from howl-render/src/chrome.zig
-    - Chrome projection, hit testing, identity/order, geometry, UTF-8, scroll, capacity, and arithmetic
+    - records r01303 through r01379 from howl-render/src/chrome_native.zig
+    - native Chrome initialization, apply/update, labels, decode, glyphs, resources, borders, output, and geometry
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host, PTY, Canvas, and canvas_validation records r00001 through r01276
+    - accepted Host, PTY, Canvas, canvas_validation, and Chrome records r00001 through r01302
     - other howl-render files until their file-owner cohorts
     - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
@@ -40,7 +40,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: howl_render_chrome_not_started
+  state: howl_render_chrome_native_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -432,6 +432,17 @@ progress:
         arithmetic failure separate from adjacent extent and pixel invariants.
         All eight dispositions are exact source contracts with no unsupported
         deterministic evidence.
+    chrome:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_chrome.yml
+      records: 26
+      production_runtime: 26
+      source_contract: 26
+      debt_candidates: 26
+      conclusion: >-
+        Chrome projection and hit-test identity, order, geometry, UTF-8,
+        scroll, scrollbar, capacity, and arithmetic errors have exact
+        syntax-site dispositions. Every inventoried project failure occurs
+        before output writes, while hit testing is stateless and read-only.
   cohort_order:
     - host_process_root
     - host_window_boundary
