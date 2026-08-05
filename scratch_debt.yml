@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_runtime_root
+  active_subcohort: renderer_font_policy
 
 objective: >-
-  Resolve the one hundred nine Renderer process/runtime-root syntax records
-  into exact startup, loop, rollback, shutdown, and proof semantics without
-  changing product code.
+  Resolve the sixteen Renderer font-policy syntax records into exact scale,
+  offset, publication, rollback, and proof semantics without changing product
+  code.
 
 questions:
   - id: population
@@ -25,22 +25,23 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_runtime_root.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_font_policy.yml
   product_change: forbidden
   population:
-    - records r00076 through r00184 from howl-host/src/renderer.zig
-    - run and runFallible process/runtime-root orchestration
+    - records r00185 through r00200 from howl-host/src/renderer.zig
+    - Renderer terminal-scale and font-policy helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
     - accepted Renderer trail/replay records r00050 through r00075
-    - Renderer records r00185 through r00392 until their owner subcohorts
+    - accepted Renderer runtime-root records r00076 through r00184
+    - Renderer records r00201 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_runtime_root_not_started
+  state: host_renderer_font_policy_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -176,6 +177,19 @@ progress:
         dispositions; two rollback branches have executable evidence. Partial
         current-cohort allocation cleanup in ReplayState.init remains a finite
         product-debt candidate for indices, commands, and pins failures.
+    renderer_runtime_root:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_runtime_root.yml
+      records: 109
+      production_runtime: 109
+      source_contract: 109
+      debt_candidates: 109
+      conclusion: >-
+        Renderer startup, runtime-loop, candidate, and shutdown errors have
+        exact source dispositions but no direct deterministic root-owner
+        evidence. Configure handling retains terminal scale before geometry
+        and topology acceptance, while replacePendingTopology catch continue
+        consumes the configure across its inferred error set; both remain
+        finite product-correction debt.
   cohort_order:
     - host_process_root
     - host_window_boundary
