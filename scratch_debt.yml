@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_render
-  active_subcohort: canvas_projection_validation
+  active_subcohort: canvas_validation
 
 objective: >-
-  Resolve the sixty-nine remaining Canvas projection and fact-validation
-  syntax records into exact geometry, identity, pixel, producer, arithmetic,
-  reachability, and proof semantics without changing product code.
+  Resolve the eight canvas_validation syntax records into exact extent,
+  pixel-plane, arithmetic, propagation, and proof semantics without changing
+  product code.
 
 questions:
   - id: population
@@ -25,15 +25,14 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_projection_validation.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_validation.yml
   product_change: forbidden
   population:
-    - records r01200 through r01268 from howl-render/src/canvas.zig
-    - 68 production projection, geometry, identity, pixel, producer, and arithmetic records
-    - one proof-only expectComposerRetained helper at r01268
+    - records r01269 through r01276 from howl-render/src/canvas_validation.zig
+    - extent and pixel-plane checked arithmetic and propagation
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host, PTY, and Canvas records r00001 through r01199
+    - accepted Host, PTY, and Canvas records r00001 through r01268
     - other howl-render files until their file-owner cohorts
     - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
@@ -41,7 +40,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: howl_render_canvas_projection_validation_not_started
+  state: howl_render_canvas_validation_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -409,6 +408,19 @@ progress:
         caller must discard. Reviewer correction removed cursor measurement
         output-mutation claims and separated allocation-limit failures from
         cursor-binding geometry failures.
+    canvas_projection_validation:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_projection_validation.yml
+      records: 69
+      production_runtime: 68
+      proof_only_helpers: 1
+      source_contract: 69
+      debt_candidates: 69
+      conclusion: >-
+        Remaining canvas.zig projection, fact-validation, producer, geometry,
+        identity, pixel, and arithmetic errors have syntax-site-specific
+        dispositions with no unsupported deterministic claims. The second
+        projection loop may leave an initialized caller-command prefix if its
+        repeated validation unexpectedly fails; no output rollback is claimed.
   cohort_order:
     - host_process_root
     - host_window_boundary
