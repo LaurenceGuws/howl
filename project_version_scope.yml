@@ -52,8 +52,7 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Complete clean-range acceptance and closure of the 0.1.5-dev debt-payoff marathon.
-  - Preserve cohesive files and current product behavior through the version-freeze gate.
+  - Cut the accepted 0.1.5-dev state as an immutable release snapshot.
 
 deferred:
   - Ordered keyboard protocol expansion and repeat policy.

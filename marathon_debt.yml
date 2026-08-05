@@ -2,7 +2,7 @@ schema: 1
 marathon:
   name: debt_payoff
   version: 0.1.5-dev
-  status: review_ready
+  status: accepted
   approval: operator_approved
   branch_policy:
     integration: main
