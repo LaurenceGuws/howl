@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_late_helpers
+  active_subcohort: terminal_handoff
 
 objective: >-
-  Resolve the forty-six late file-level terminal helper records, including nine
-  production helpers and thirty-seven proof-only helpers, without changing
-  product code.
+  Resolve the eighty-three terminal handoff syntax records into exact
+  cross-thread owner, mutation, cleanup, wake, and proof semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -25,23 +25,21 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_late_helpers.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_handoff.yml
   product_change: forbidden
   population:
-    - records r00645 through r00690 from howl-host/src/terminal.zig
-    - production grid, cursor, input-admission, and monotonic-time helpers
-    - maintained file-level helpers used only by deterministic proofs
+    - records r00691 through r00773 from howl-host/src/terminal_handoff.zig
+    - lifecycle, cursor, visible-set, update, and retirement transactions
     - exact source-local proof owners for those records
   excluded:
-    - accepted records r00444 through r00527
-    - accepted records r00528 through r00644
-    - terminal_handoff.zig and terminal_pool.zig until their file-owned subcohorts
+    - accepted terminal.zig records r00444 through r00690
+    - terminal_pool.zig until its file-owned subcohort
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_late_helpers_not_started
+  state: host_terminal_handoff_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -116,6 +114,16 @@ progress:
         Runtime lifecycle, font, resize, polling, and shutdown errors have
         branch-specific ownership; seven dispositions have exact executable
         evidence, including irreversible PTY-first boundaries.
+    terminal_late_helpers:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_late_helpers.yml
+      records: 46
+      production_runtime: 9
+      proof_only_helpers: 37
+      source_contract: 46
+      debt_candidates: 46
+      conclusion: >-
+        Late file-level helper errors have exact source contracts and correctly
+        distinguish production reachability from proof-only support.
   cohort_order:
     - host_process_root
     - host_window_boundary
