@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_trail_replay_state
+  active_subcohort: renderer_runtime_root
 
 objective: >-
-  Resolve the twenty-six Renderer trail, replay, and retained-state syntax
-  records into exact candidate, rollback, retirement, and proof semantics
-  without changing product code.
+  Resolve the one hundred nine Renderer process/runtime-root syntax records
+  into exact startup, loop, rollback, shutdown, and proof semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -25,21 +25,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_trail_replay_state.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_runtime_root.yml
   product_change: forbidden
   population:
-    - records r00050 through r00075 from howl-host/src/renderer.zig
-    - cursor trail, replay cohorts, CanvasWork preparation, and retained state
+    - records r00076 through r00184 from howl-host/src/renderer.zig
+    - run and runFallible process/runtime-root orchestration
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
-    - Renderer records r00076 through r00392 until their owner subcohorts
+    - accepted Renderer trail/replay records r00050 through r00075
+    - Renderer records r00185 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_trail_replay_state_not_started
+  state: host_renderer_runtime_root_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -156,10 +157,25 @@ progress:
     debt_candidates: 368
   host_renderer_subcohort_order:
     - renderer_trail_replay_state
-    - renderer_runtime_and_font_policy
+    - renderer_runtime_root
+    - renderer_font_policy
     - renderer_canvas_plan_and_waits
     - renderer_input_and_topology
     - renderer_physical_backend
+  accepted_host_renderer_subcohorts:
+    renderer_trail_replay_state:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_trail_replay_state.yml
+      records: 26
+      production_runtime: 26
+      deterministic: 2
+      source_contract: 24
+      accepted: 2
+      debt_candidates: 24
+      conclusion: >-
+        Trail, replay, candidate, and retained-state errors have exact owner
+        dispositions; two rollback branches have executable evidence. Partial
+        current-cohort allocation cleanup in ReplayState.init remains a finite
+        product-debt candidate for indices, commands, and pins failures.
   cohort_order:
     - host_process_root
     - host_window_boundary
