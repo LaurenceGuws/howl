@@ -2,13 +2,13 @@ schema: 1
 marathon:
   name: debt_payoff
   version: 0.1.5-dev
-  status: active
+  status: review_ready
   approval: operator_approved
   branch_policy:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: obsolete_interfaces
+  active_sprint: none
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -77,8 +77,13 @@ debt_candidates:
       allocation, capacity, or ownership.
     implementation_commits: [f6dfd5b, 1498055, 00cc697, c44c9d1, 5ab2266]
   - id: obsolete_interfaces
-    status: pending
+    status: accepted
     scope: remove obsolete interfaces and fossil compatibility code
+    outcome: >-
+      Finite source, consumer, and transitive-orphan evidence preserved eight
+      owned package, ABI, and build cohorts while removing five unreachable
+      private declarations across one Renderer cohort and three VT cohorts.
+    implementation_commits: [e783ce1, c2bf258, a64523f, dbe1205]
 
 exclusions:
   - no mouse, repeat, keyboard protocol expansion, terminal identity, or new feature work
