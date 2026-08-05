@@ -4,11 +4,12 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: howl-host
+  active_cohort: host_process_root
 
 objective: >-
-  Resolve the accepted mechanical syntax records into exact Host owner,
-  mutation, retry, cleanup, and proof semantics without changing product code.
+  Resolve the thirty-two process-root, startup-config, and Host-build syntax
+  records into exact owner, mutation, cleanup, and proof semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -23,10 +24,12 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_process_root.yml
   product_change: forbidden
   population:
-    - accepted syntax records from howl-host/src and howl-host/build.zig
+    - accepted syntax records from howl-host/build.zig
+    - accepted syntax records from howl-host/src/dev_config.zig
+    - accepted syntax records from howl-host/src/main.zig
     - exact source-local proof owners for those records
   excluded:
     - non-Host package, root-build, and tool records
@@ -34,7 +37,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: host_cohort_not_started
+  state: host_process_root_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -42,4 +45,15 @@ progress:
     errdefer: 224
     transparent_try: 1711
     direct_panic: 69
-  cohort_order: [howl-host, howl-pty, howl-render, howl-vk, howl-vt, howl-wayland, build_and_tools]
+  cohort_order:
+    - host_process_root
+    - host_window_boundary
+    - host_session
+    - host_terminal
+    - host_renderer
+    - howl-pty
+    - howl-render
+    - howl-vk
+    - howl-vt
+    - howl-wayland
+    - root_build_and_tools
