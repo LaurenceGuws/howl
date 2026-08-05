@@ -1,0 +1,39 @@
+schema: 1
+sprint:
+  id: obsolete_interfaces
+  branch: feature/debt_payoff/obsolete_interfaces
+  status: active
+  active_slice: interface_inventory
+  active_cohort: maintained_interfaces
+  active_subcohort: exact_declaration_and_consumer_census
+
+objective: >-
+  Build an evidence-only inventory of interfaces that may be obsolete, then
+  distinguish genuinely unowned surfaces from small but intentional owner
+  boundaries before authorizing any source deletion.
+
+questions:
+  - id: population
+    status: open
+    question: Which maintained declarations, aliases, wrappers, and build edges appear to have no surviving owner or consumer?
+  - id: consumer_closure
+    status: open
+    question: Which product, test, fixture, example, generated, and QAgent boundaries consume each candidate directly or indirectly?
+  - id: removal_groups
+    status: open
+    question: What is the smallest independently reviewable set of proven removals without replacement machinery?
+
+active_scope:
+  evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
+  product_change: evidence_only
+  population:
+    - maintained howl package sources, roots, builds, tests, fixtures, and examples
+    - root workspace build and tracked authorities
+    - read-only QAgent imports and package use as accepted embedder evidence
+  excluded:
+    - source, build, comment, or authority changes during inventory
+    - speculative cleanup based on names or grep absence without import/caller closure
+    - Git operations by the worker
+
+progress:
+  state: inventory_not_started

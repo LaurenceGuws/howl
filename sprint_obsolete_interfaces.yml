@@ -1,0 +1,47 @@
+schema: 1
+sprint:
+  id: obsolete_interfaces
+  marathon: debt_payoff
+  version: 0.1.5-dev
+  branch: feature/debt_payoff/obsolete_interfaces
+  status: active
+  objective: >-
+    Remove only interfaces and compatibility surfaces proven unowned and unused
+    by maintained product, build, test, fixture, and embedder boundaries.
+
+scope:
+  owned:
+    - maintained public and private interfaces with no surviving caller or owner
+    - compatibility aliases, wrappers, forwarding layers, and fossil build wiring
+    - exact negative caller and source censuses for every proposed removal
+  excluded:
+    - feature, protocol, performance, or behavior changes
+    - package extraction, file splitting, or ownership redesign
+    - removal inferred from naming, age, style, or local call count alone
+    - QAgent or external embedder changes
+
+invariants:
+  - Every removed interface has no maintained product, build, proof, fixture, or accepted embedder consumer.
+  - A private interface with a real owner remains even when current call count is small.
+  - Public package surfaces require explicit package-root, example, and QAgent consumer review.
+  - Removal does not change retained layout, capacity, allocation, scheduling, protocol, or error behavior.
+  - No compatibility replacement or parallel interface is introduced.
+
+slices:
+  - id: interface_inventory
+    status: active
+    product_change: none
+    output: exact owner, declaration, importer, caller, proof, fixture, and embedder census
+  - id: finite_removal_contract
+    status: pending
+    product_change: none
+    output: independently reviewable removal groups with negative censuses and rollback boundaries
+  - id: accepted_removals
+    status: pending
+    output: only contract-approved interface and wiring deletion
+
+acceptance:
+  - Every removed symbol or wiring edge is absent from all maintained consumers and generated boundaries.
+  - Every retained candidate has a named current owner and reason.
+  - Package and workspace checks/tests pass in every optimization mode.
+  - Strict YAML, source audit, protocol validation, formatting, and git diff checks pass.
