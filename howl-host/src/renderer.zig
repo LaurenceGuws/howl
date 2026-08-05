@@ -3995,42 +3995,6 @@ fn buildAcceptedCanvasPlan(work: *CanvasWork) !vk_surface.Plan {
     return base_plan;
 }
 
-fn waitCanvasPlan(
-    boundary: *window_render_boundary.Boundary,
-    work: *CanvasWork,
-    topology: *const session.SessionState,
-    topology_revision: ?terminal_handoff.LifecycleRevision,
-    appearance: session_chrome_adapter.Appearance,
-    primitives: []render_api.chrome.Primitive,
-    text: []u8,
-) !vk_surface.Plan {
-    while (true) {
-        switch (try buildCanvasPlan(
-            work,
-            topology,
-            topology_revision,
-            null,
-            appearance,
-            primitives,
-            text,
-        )) {
-            .accepted => |plan| return plan,
-            .retry => continue,
-            .blocked => {},
-        }
-        switch (try waitRenderWakeBlocking(boundary, work.terminals)) {
-            true, false => {},
-        }
-        if (boundary.shouldStop()) return error.Stopping;
-        const status = work.terminals.status();
-        if (status.stopped)
-            return if (status.failed)
-                error.TerminalRuntime
-            else
-                error.TerminalStopped;
-    }
-}
-
 fn updateVisibleComposition(
     work: *CanvasWork,
     desired: []const render_api.canvas.Composer.Placement,
@@ -4592,13 +4556,6 @@ const RenderWake = struct {
     terminal: bool,
     deadline: bool,
 };
-
-fn waitRenderWakeBlocking(
-    boundary: *window_render_boundary.Boundary,
-    terminals: *terminal_handoff.Boundary,
-) !bool {
-    return (try waitRenderWakeBlockingUntil(boundary, terminals, null)).terminal;
-}
 
 fn waitRenderWakeBlockingUntil(
     boundary: *window_render_boundary.Boundary,
