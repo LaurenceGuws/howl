@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: generated_c_boundary
+  active_sprint: null
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -58,8 +58,15 @@ debt_candidates:
       mixed owner or structural intervention is proven; Renderer module-comment
       vocabulary debt is routed to error_and_authority_hygiene.
   - id: generated_c_boundary
-    status: active
+    status: accepted
     scope: audit generated-C boundaries and build wiring
+    outcome: >-
+      Exact declaration and generated-protocol evidence replaced redundant PTY
+      and Renderer translated constants, syscalls, time, and device-identity
+      ownership with pinned Zig/Linux facts. The surviving generated boundaries
+      are narrowed to openpty and ten DRM sync-object declarations; native_c,
+      wayland_c, and xkb_c remain unchanged.
+    implementation_commits: [4204e21, 775b962, ebb8de9, b88725a, eb44ce5, f0cdb9e]
   - id: error_and_authority_hygiene
     scope: audit silent error disposal, stale source-audit admissions, comments, and tracked authority
   - id: obsolete_interfaces
