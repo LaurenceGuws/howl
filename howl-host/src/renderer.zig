@@ -1030,15 +1030,42 @@ const ReplayState = struct {
             allocator.free(cohorts[initialized].vertices);
         };
         for (&cohorts) |*cohort| {
+            var allocated: usize = 0;
+            errdefer freePartialCohort(allocator, cohort, &allocated);
             cohort.* = .{
-                .vertices = try allocator.alloc(vk_surface.Vertex, replay_command_limit * 4),
-                .indices = try allocator.alloc(u32, replay_command_limit * 6),
-                .commands = try allocator.alloc(vk_surface.Command, replay_command_limit),
-                .pins = try allocator.alloc(vk_surface.ResourceGeneration, replay_pin_limit),
+                .vertices = undefined,
+                .indices = undefined,
+                .commands = undefined,
+                .pins = undefined,
             };
+            cohort.vertices = try allocator.alloc(vk_surface.Vertex, replay_command_limit * 4);
+            allocated = 1;
+            cohort.indices = try allocator.alloc(u32, replay_command_limit * 6);
+            allocated = 2;
+            cohort.commands = try allocator.alloc(vk_surface.Command, replay_command_limit);
+            allocated = 3;
+            cohort.pins = try allocator.alloc(vk_surface.ResourceGeneration, replay_pin_limit);
+            allocated = 4;
             initialized += 1;
         }
         return .{ .allocator = allocator, .cohorts = cohorts };
+    }
+
+    fn freePartialCohort(
+        allocator: std.mem.Allocator,
+        cohort: *ReplayCohort,
+        allocated: *usize,
+    ) void {
+        while (allocated.* > 0) {
+            allocated.* -= 1;
+            switch (allocated.*) {
+                0 => allocator.free(cohort.vertices),
+                1 => allocator.free(cohort.indices),
+                2 => allocator.free(cohort.commands),
+                3 => allocator.free(cohort.pins),
+                else => unreachable,
+            }
+        }
     }
 
     fn deinit(self: *ReplayState) void {
@@ -1175,6 +1202,21 @@ const ReplayState = struct {
         self.pending = false;
     }
 };
+
+test "ReplayState.init rolls back every allocation position" {
+    for (0..8) |fail_index| {
+        var failing = std.testing.FailingAllocator.init(
+            std.testing.allocator,
+            .{ .fail_index = fail_index },
+        );
+        try std.testing.expectError(
+            error.OutOfMemory,
+            ReplayState.init(failing.allocator()),
+        );
+    }
+    var replay = try ReplayState.init(std.testing.allocator);
+    replay.deinit();
+}
 
 test "cursor replay cohorts role-swap and reject pressure transactionally" {
     var replay = try ReplayState.init(std.testing.allocator);

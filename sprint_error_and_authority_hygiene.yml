@@ -57,11 +57,11 @@ slices:
     product_change: none
     output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
   - id: finite_hygiene_contract
-    status: active
+    status: accepted
     product_change: none
     output: accepted no-change findings plus bounded correction groups for proven debt
   - id: accepted_corrections
-    status: pending
+    status: active
     output: only contract-approved error, admission, comment, or authority corrections
 
 acceptance:

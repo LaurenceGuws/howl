@@ -3,13 +3,14 @@ sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
-  active_slice: finite_hygiene_contract
+  active_slice: accepted_corrections
   active_cohort: runtime_corrections
-  active_subcohort: replay_state_partial_allocation_rollback
+  active_subcohort: configure_replacement_disposition
 
 objective: >-
-  Correct partial current-cohort allocation rollback in ReplayState.init
-  without changing replay capacities, layout, or successful behavior.
+  Preserve exact configure progress across topology replacement rejection,
+  retryable pressure, and fatal failure without diverging terminal scale from
+  accepted or pending topology.
 
 questions:
   - id: population
@@ -36,17 +37,25 @@ active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-host/src/renderer.zig ReplayState.init only
-    - eight fixed allocations across two equal replay cohorts
-    - exact rollback at every allocation failure position
+    - howl-host/src/renderer.zig runFallible configure-consumption path
+    - retainTerminalScale and replacePendingTopology disposition ownership
+    - expected rejection, retryable pressure, and fatal propagation
   excluded:
-    - configure, cursor replay, Composer, and deadline corrections until their ordered slices
-    - allocation capacity, retained layout, replay behavior, or API changes
+    - cursor replay, Composer, and deadline corrections until their ordered slices
+    - session, terminal, Window, or rendering behavior beyond configure retention
     - source-audit, comment, and unrelated authority corrections
     - Git operations
 
 progress:
-  state: replay_state_partial_allocation_rollback_not_started
+  state: configure_replacement_disposition_not_started
+  accepted_corrections:
+    replay_state_partial_allocation_rollback:
+      paths: [howl-host/src/renderer.zig]
+      conclusion: >-
+        Each partial current replay cohort now unwinds its acquired allocations
+        in reverse order, completed cohorts retain reverse cohort teardown, and
+        all eight production allocation positions have deterministic failure
+        coverage without capacity, layout, API, or successful-behavior change.
   accepted_syntax_inventory:
     files: 62
     records: 2887
