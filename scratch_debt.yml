@@ -3,14 +3,14 @@ sprint:
   id: obsolete_interfaces
   branch: feature/debt_payoff/obsolete_interfaces
   status: active
-  active_slice: finite_removal_contract
-  active_cohort: four_obsolete_cohorts
-  active_subcohort: exact_deletion_and_rollback_boundaries
+  active_slice: accepted_removals
+  active_cohort: renderer_wait_canvas_orphan
+  active_subcohort: two_declaration_atomic_deletion
 
 objective: >-
-  Define four independently reviewable deletion groups for the five proven
-  obsolete declarations, with exact negative censuses, transitive orphan
-  closure, validation, and rollback boundaries before product edits begin.
+  Delete only Renderer waitCanvasPlan and its solely owned
+  waitRenderWakeBlocking wrapper, prove zero surviving occurrences and no
+  transitive orphan, then return the unstaged slice for hostile review.
 
 questions:
   - id: population
@@ -28,20 +28,24 @@ questions:
 
 active_scope:
   evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
-  product_change: evidence_only
+  product_change: authorized_narrow_scope
   population:
     - howl-host/src/renderer.zig waitCanvasPlan and waitRenderWakeBlocking
-    - howl-vt/src/screen.zig advanceIdentity and lineCursorWraps
-    - howl-vt/src/unicode_17.zig grapheme_value_count
     - exact post-deletion negative and transitive-orphan censuses
   excluded:
-    - product, build, comment, or authority changes during contract construction
+    - VT Screen and Unicode removal groups
     - all eight retained inventory cohorts
     - replacement helpers, aliases, or unrelated cleanup
     - Git operations by the worker
 
 progress:
-  state: interface_inventory_accepted_removal_contract_not_started
+  state: inventory_and_contract_accepted_renderer_removal_not_started
+  accepted_removal_contract:
+    evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
+    sha256: e2822cfbf44bed129d113654ad4c452d8f0dcc6f64578507695b3245892e91ff
+    groups: 4
+    declarations: 5
+    active_group: renderer_wait_canvas_orphan
   accepted_inventory:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
     sha256: db949c38a93d6f76eca8bd805ad367e37f6bd84aa694ce33339c5caf7c3565ef

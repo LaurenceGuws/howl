@@ -39,11 +39,16 @@ slices:
       - grapheme_value_count duplicates generator-owned entry and complete-byte extents without participating in runtime offsets or validation.
       - Retained package roots, native/generated ABI boundaries, and standalone JSONL logger acceptance all have current product, build, proof, fixture, example, or QAgent ownership.
   - id: finite_removal_contract
-    status: active
+    status: accepted
     product_change: none
     output: independently reviewable removal groups with negative censuses and rollback boundaries
+    accepted_facts:
+      - Four independently reviewable groups delete exactly five private declarations across Renderer, VT Screen, and VT Unicode.
+      - The Renderer group atomically deletes waitCanvasPlan and its solely owned waitRenderWakeBlocking wrapper.
+      - Each group pins pre/post symbol counts, transitive orphan closure, preserved owner invariants, all-mode gates, and isolated rollback.
+      - Replacement helpers, aliases, adjacent cleanup, and retained inventory-cohort changes remain forbidden.
   - id: accepted_removals
-    status: pending
+    status: active
     output: only contract-approved interface and wiring deletion
 
 acceptance:
