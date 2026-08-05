@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_canvas_plan
+  active_subcohort: renderer_waits
 
 objective: >-
-  Resolve the fifty-five Renderer Canvas-plan syntax records into exact
-  candidate, composition, adaptation, replay, rollback, and proof semantics
-  without changing product code.
+  Resolve the twenty Renderer wait and poll syntax records into exact wake,
+  deadline, interruption, retry, and proof semantics without changing product
+  code.
 
 questions:
   - id: population
@@ -25,24 +25,25 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_canvas_plan.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_waits.yml
   product_change: forbidden
   population:
-    - records r00201 through r00255 from howl-host/src/renderer.zig
-    - Renderer Canvas planning, composition, adaptation, and physical-plan helpers
+    - records r00256 through r00275 from howl-host/src/renderer.zig
+    - Renderer Canvas, Window-ring, terminal, deadline, and poll wait helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
     - accepted Renderer trail/replay records r00050 through r00075
     - accepted Renderer runtime-root records r00076 through r00184
     - accepted Renderer GPU-budget/font-policy records r00185 through r00200
-    - Renderer records r00256 through r00392 until their owner subcohorts
+    - accepted Renderer Canvas-plan records r00201 through r00255
+    - Renderer records r00276 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_canvas_plan_not_started
+  state: host_renderer_waits_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -205,6 +206,19 @@ progress:
         dispositions. Revision-zero factual DPI rejection has direct
         executable rollback evidence; the remaining dispositions stay finite
         proof debt.
+    renderer_canvas_plan:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_canvas_plan.yml
+      records: 55
+      production_runtime: 55
+      deterministic: 2
+      source_contract: 53
+      accepted: 2
+      debt_candidates: 53
+      conclusion: >-
+        Canvas planning, composition, adaptation, replay preparation, and
+        physical-plan errors have exact source dispositions. Bootstrap
+        revision exhaustion and invalid accumulated trail-clip rollback have
+        direct owner-level executable evidence.
   cohort_order:
     - host_process_root
     - host_window_boundary
