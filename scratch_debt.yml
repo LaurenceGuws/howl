@@ -3,14 +3,14 @@ sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
-  active_slice: source_audit_admission_review
-  active_cohort: maintained_allow_list
-  active_subcohort: exact_site_census
+  active_slice: comment_and_authority_review
+  active_cohort: maintained_comments_and_authorities
+  active_subcohort: exact_stale_claim_census
 
 objective: >-
-  Match every tools/source_audit.allow admission to one current source
-  construct, owner, and exact surviving justification before any admission is
-  retained, narrowed, or removed.
+  Identify exact file, symbol-comment, and tracked-authority claims that no
+  longer describe maintained ownership or behavior, including the deferred
+  Renderer module-comment mismatch, without inventing replacement architecture.
 
 questions:
   - id: population
@@ -34,19 +34,32 @@ questions:
     answer: Each selected correction names its exact product owner and required disposition.
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/comment_and_authority_index.yml
   product_change: evidence_only
   population:
-    - tools/source_audit.allow
-    - every maintained source construct admitted by that allow list
-    - exact owner, sensitive syntax, and surviving justification
+    - maintained file and public-symbol comments
+    - tracked design, rule, source-map, version-scope, marathon, sprint, and scratch authority
+    - deferred Renderer module-comment mismatch from the accepted mixed-ownership audit
   excluded:
-    - product, comment, and source changes during evidence census
-    - comment_and_authority_review until the allow-list slice is accepted
+    - product behavior or ownership redesign during evidence census
+    - speculative documentation and historical prose outside maintained authority
     - Git operations by the worker
 
 progress:
-  state: accepted_corrections_complete_source_audit_review_not_started
+  state: source_audit_admissions_accepted_comment_authority_review_not_started
+  accepted_source_audit_admissions:
+    allow_rows: 73
+    unique_source_texts: 72
+    anyopaque: 52
+    discard: 19
+    anytype: 2
+    disposition: retain
+    conclusion: >-
+      Reviewer inspection confirms every admission still matches one exact
+      maintained owner boundary. Cursor refresh ignores only a change-reporting
+      boolean after retaining the target; ABI/context erasure is externally
+      shaped; test-root imports intentionally trigger cohorts; and both
+      compile-time generics avoid runtime erasure. No allow-list edit is needed.
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]

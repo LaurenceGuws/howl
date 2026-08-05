@@ -49,11 +49,18 @@ slices:
       mutation, and post-acceptance semantics. Unchanged transparent
       propagation remains indexed without duplicated per-site prose.
   - id: source_audit_admission_review
-    status: active
+    status: accepted
     product_change: none
     output: every allow-list admission matched to one current construct, owner, and justification
+    accepted_facts:
+      - All 73 allow rows match exact maintained source occurrences; 72 source texts are unique because one cursor-refresh admission intentionally covers two distinct owner sites.
+      - The retained population is 52 anyopaque ABI/context sites, 19 deliberate discards, and 2 compile-time anytype generics.
+      - The three cursor-refresh discards retain the refreshed target after committed resize and unconditionally dirty the owner; only the change-reporting boolean is discarded.
+      - Wayland callbacks, Vulkan push constants, and allocator callbacks preserve exact foreign or standard-library ABI context types.
+      - VT test-root imports deliberately trigger sixteen test cohorts, while the ligature classifier and JSONL writer use compile-time generic values without runtime type erasure.
+      - No allow row is stale, redundant, widened, or removable without changing its maintained owner boundary.
   - id: comment_and_authority_review
-    status: pending
+    status: active
     product_change: none
     output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
   - id: finite_hygiene_contract
