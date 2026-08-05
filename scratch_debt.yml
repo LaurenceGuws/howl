@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_drain_input
+  active_subcohort: renderer_topology
 
 objective: >-
-  Resolve the fifteen Renderer input-drain syntax records into exact action,
-  capture, rejection, pressure, propagation, and proof semantics without
-  changing product code.
+  Resolve the forty Renderer topology-transition syntax records into exact
+  admission, replacement, rollback, retry, lifecycle, and proof semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -25,11 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_drain_input.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_topology.yml
   product_change: forbidden
   population:
-    - records r00276 through r00290 from howl-host/src/renderer.zig
-    - Renderer drainInput action and pointer routing
+    - records r00291 through r00330 from howl-host/src/renderer.zig
+    - Renderer PendingTopology and topology preparation/replacement helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
@@ -38,13 +38,14 @@ active_scope:
     - accepted Renderer GPU-budget/font-policy records r00185 through r00200
     - accepted Renderer Canvas-plan records r00201 through r00255
     - accepted Renderer wait records r00256 through r00275
-    - Renderer records r00291 through r00392 until their owner subcohorts
+    - accepted Renderer input-drain records r00276 through r00290
+    - Renderer records r00331 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_drain_input_not_started
+  state: host_renderer_topology_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -233,6 +234,19 @@ progress:
         Renderer Canvas, Window-ring, terminal, deadline, and poll waits have
         exact source dispositions. The production non-deadline poll helper has
         direct stale-revents and typed failure-translation evidence.
+    renderer_drain_input:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_drain_input.yml
+      records: 15
+      production_runtime: 15
+      deterministic: 3
+      source_contract: 12
+      accepted: 3
+      debt_candidates: 12
+      conclusion: >-
+        Input capture overflow forwarding, terminal publication failure, and
+        fatal session-candidate propagation have direct drainInput evidence.
+        Broad font and pointer classifications remain finite proof and policy
+        debt.
   cohort_order:
     - host_process_root
     - host_window_boundary
