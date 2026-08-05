@@ -34,7 +34,11 @@ slices:
   - id: error_disposition_inventory
     status: active
     product_change: none
-    output: complete reverse-indexed census of maintained production error dispositions and exact silent-disposal candidates
+    output: complete mechanical census of maintained production error-handling syntax with exact production/test declaration boundaries
+  - id: error_owner_review
+    status: pending
+    product_change: none
+    output: package-sized source review cohorts resolving every non-transparent site into exact owner semantics
   - id: source_audit_admission_review
     status: pending
     product_change: none

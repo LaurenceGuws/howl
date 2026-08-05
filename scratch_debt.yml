@@ -6,8 +6,8 @@ sprint:
   active_slice: error_disposition_inventory
 
 objective: >-
-  Build a queryable evidence index of every maintained production error
-  disposition before authorizing any error-policy or source change.
+  Prove the complete production syntax population without inferring error
+  semantics; owner-level classification follows in separate review cohorts.
 
 questions:
   - id: population
@@ -17,7 +17,7 @@ questions:
     status: open
     question: Which syntactic non-propagating sites lack an exact expected-error contract or accidentally hide fatal failure?
   - id: owner_boundary
-    status: open
+    status: deferred_to_error_owner_review
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
