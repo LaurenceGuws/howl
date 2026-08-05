@@ -236,6 +236,14 @@ pub const Error = error{
     StagingMap,
 };
 
+/// Distinguishes canonical accepted-state corruption from rejectable cursor
+/// facts and from fixed replay-capacity invariants.
+pub const ReplayError = error{
+    InvalidReplayBase,
+    InvalidCursorOverlay,
+    ReplayCapacity,
+};
+
 /// Owns one exported slot's image view and compatible framebuffer.
 pub const Attachment = struct {
     view: vk.VkImageView = null,
@@ -1138,7 +1146,24 @@ pub fn replayCursor(
     base: Plan,
     overlay: CursorOverlay,
     buffers: CursorReplayBuffers,
-) Error!Plan {
+) ReplayError!Plan {
+    return replayCursorWithCopier(ReplayBaseCopier, base, overlay, buffers);
+}
+
+const ReplayBaseCopier = struct {
+    fn copy(base: Plan, buffers: CursorReplayBuffers) void {
+        @memcpy(buffers.vertices[0..base.vertices.len], base.vertices);
+        @memcpy(buffers.indices[0..base.indices.len], base.indices);
+        @memcpy(buffers.commands[0..base.commands.len], base.commands);
+    }
+};
+
+fn replayCursorWithCopier(
+    comptime Copier: type,
+    base: Plan,
+    overlay: CursorOverlay,
+    buffers: CursorReplayBuffers,
+) ReplayError!Plan {
     try validateReplayBase(base);
     const active = overlay.visible and overlay.shape != .none;
     const trail_active = if (overlay.trail) |trail| blk: {
@@ -1148,11 +1173,11 @@ pub fn replayCursor(
     var cursor_clip: Rect = undefined;
     if (active)
         cursor_clip = intersectRect(overlay.clip, overlay.rect) orelse
-            return error.InvalidPlan;
+            return error.InvalidCursorOverlay;
     var extra: usize = 0;
     if (trail_active) extra = 1;
     if (active) {
-        extra = std.math.add(usize, extra, 1) catch return error.InvalidPlan;
+        extra = std.math.add(usize, extra, 1) catch return error.ReplayCapacity;
         if (overlay.shape == .block) {
             for (base.commands) |command| {
                 if (command.kind != .alpha_mask_cursor)
@@ -1160,31 +1185,29 @@ pub fn replayCursor(
                 const quad = commandRectAssumeValid(base, command);
                 if (intersectRect(quad, overlay.rect) != null and
                     intersectRect(command.clip, overlay.clip) != null)
-                    extra = std.math.add(usize, extra, 1) catch return error.InvalidPlan;
+                    extra = std.math.add(usize, extra, 1) catch return error.ReplayCapacity;
             }
         }
     }
     const extra_vertices = std.math.mul(usize, extra, 4) catch
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
     const extra_indices = std.math.mul(usize, extra, 6) catch
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
     const vertex_count = std.math.add(usize, base.vertices.len, extra_vertices) catch
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
     const index_count = std.math.add(usize, base.indices.len, extra_indices) catch
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
     const command_count = std.math.add(usize, base.commands.len, extra) catch
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
     if (vertex_count > buffers.vertices.len or
         index_count > buffers.indices.len or
         command_count > buffers.commands.len or
         command_count > max_commands or
         vertex_count > max_vertices or
         index_count > max_indices)
-        return error.InvalidPlan;
+        return error.ReplayCapacity;
 
-    @memcpy(buffers.vertices[0..base.vertices.len], base.vertices);
-    @memcpy(buffers.indices[0..base.indices.len], base.indices);
-    @memcpy(buffers.commands[0..base.commands.len], base.commands);
+    Copier.copy(base, buffers);
     var vertices_used = base.vertices.len;
     var indices_used = base.indices.len;
     var commands_used = base.commands.len;
@@ -1326,7 +1349,7 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
     @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);
     @memset(@as([]u8, @ptrCast(&indices)), 0xa5);
     @memset(@as([]u8, @ptrCast(&commands)), 0xa5);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+    try std.testing.expectError(error.ReplayCapacity, replayCursor(base, .{
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
         .shape = .none,
@@ -1341,7 +1364,7 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
 
     var invalid_color = trail;
     invalid_color.color[0] = std.math.nan(f32);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+    try std.testing.expectError(error.InvalidCursorOverlay, replayCursor(base, .{
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
         .shape = .none,
@@ -1356,7 +1379,7 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
 
     var invalid_mask = trail;
     invalid_mask.cursor_rect.width = 0;
-    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+    try std.testing.expectError(error.InvalidCursorOverlay, replayCursor(base, .{
         .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
         .clip = .{ .x = 0, .y = 0, .width = 80, .height = 80 },
         .shape = .none,
@@ -1389,7 +1412,7 @@ test "cursor replay emits one bounded trail command and rolls back pressure" {
         .atlas_changed = false,
         .trail_mask = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
     };
-    try std.testing.expectError(error.InvalidPlan, replayCursor(replayed_candidate_base, .{
+    try std.testing.expectError(error.InvalidReplayBase, replayCursor(replayed_candidate_base, .{
         .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
         .shape = .none,
@@ -1406,6 +1429,57 @@ test "trail mask sidecar preserves generic command layout" {
     // The operator-authorized trail quad is one extra command; the mask is a
     // single Plan sidecar and must not widen every replay command entry.
     try std.testing.expectEqual(@as(usize, 28), @sizeOf(Command));
+}
+
+test "cursor replay copies the accepted base exactly once after preflight" {
+    const CountingCopier = struct {
+        var calls: usize = 0;
+
+        fn copy(base: Plan, buffers: CursorReplayBuffers) void {
+            calls += 1;
+            ReplayBaseCopier.copy(base, buffers);
+        }
+    };
+    const base = Plan{
+        .vertices = &.{},
+        .indices = &.{},
+        .commands = &.{},
+        .atlas_changed = false,
+    };
+    var vertices: [4]Vertex = undefined;
+    var indices: [6]u32 = undefined;
+    var commands: [1]Command = undefined;
+    const buffers = CursorReplayBuffers{
+        .vertices = &vertices,
+        .indices = &indices,
+        .commands = &commands,
+    };
+    const valid = CursorOverlay{
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .shape = .block,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 0, 0, 0, 1 },
+        .visible = true,
+    };
+    CountingCopier.calls = 0;
+    const replayed = try replayCursorWithCopier(
+        CountingCopier,
+        base,
+        valid,
+        buffers,
+    );
+    try std.testing.expectEqual(@as(usize, 1), CountingCopier.calls);
+    try std.testing.expectEqual(@as(usize, 1), replayed.commands.len);
+
+    var invalid = valid;
+    invalid.rect.width = 0;
+    CountingCopier.calls = 0;
+    try std.testing.expectError(
+        error.InvalidCursorOverlay,
+        replayCursorWithCopier(CountingCopier, base, invalid, buffers),
+    );
+    try std.testing.expectEqual(@as(usize, 0), CountingCopier.calls);
 }
 
 test "cursor replay recolors marked components and rolls back undersized output" {
@@ -1450,7 +1524,7 @@ test "cursor replay recolors marked components and rolls back undersized output"
     @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);
     @memset(@as([]u8, @ptrCast(&indices)), 0xa5);
     @memset(@as([]u8, @ptrCast(&commands)), 0xa5);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(base, .{
+    try std.testing.expectError(error.ReplayCapacity, replayCursor(base, .{
         .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
         .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
         .shape = .block,
@@ -1503,7 +1577,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
         .visible = true,
     };
     poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.InvalidCursorOverlay, replayCursor(
         .{ .vertices = &base_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
         overlay,
         .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
@@ -1513,7 +1587,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
     var nan_vertices = base_vertices;
     nan_vertices[0].position[0] = std.math.nan(f32);
     poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
         .{ .vertices = &nan_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
         .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
         .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
@@ -1523,7 +1597,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
     var infinite_vertices = base_vertices;
     infinite_vertices[1].position[0] = std.math.inf(f32);
     poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
         .{ .vertices = &infinite_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
         .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
         .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
@@ -1533,7 +1607,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
     var out_of_range_vertices = base_vertices;
     out_of_range_vertices[2].position[0] = 3.0e20;
     poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
         .{ .vertices = &out_of_range_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
         .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
         .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
@@ -1543,7 +1617,7 @@ test "cursor replay rejects malformed geometry before candidate mutation" {
     var malformed_indices = base_indices;
     malformed_indices[1] = 3;
     poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
         .{ .vertices = &base_vertices, .indices = &malformed_indices, .commands = &base_commands, .atlas_changed = false },
         .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
         .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
@@ -1599,7 +1673,7 @@ test "cursor replay accepts the complete 32768 base and 65538 trail candidate" {
     @memset(@as([]u8, @ptrCast(vertices)), 0xa5);
     @memset(@as([]u8, @ptrCast(indices)), 0xa5);
     @memset(@as([]u8, @ptrCast(commands)), 0xa5);
-    try std.testing.expectError(error.InvalidPlan, replayCursor(
+    try std.testing.expectError(error.ReplayCapacity, replayCursor(
         .{ .vertices = base_vertices, .indices = base_indices, .commands = base_commands, .atlas_changed = false },
         maximum_overlay,
         .{ .vertices = vertices, .indices = indices, .commands = commands[0 .. max_commands - 1] },
@@ -1612,34 +1686,35 @@ test "cursor replay accepts the complete 32768 base and 65538 trail candidate" {
     try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&commands[max_commands - 1])).*);
 }
 
-fn validateReplayBase(base: Plan) Error!void {
+fn validateReplayBase(base: Plan) ReplayError!void {
     if (base.vertices.len > max_vertices or base.indices.len > max_indices or
         base.commands.len > max_commands)
-        return error.InvalidPlan;
+        return error.InvalidReplayBase;
     // Replay always starts from the canonical cursor-free base. A physical
     // candidate, including its trail sidecar, is never eligible as the next
     // base or overlays would accumulate across cursor-only frames.
-    if (base.trail_mask != null) return error.InvalidPlan;
+    if (base.trail_mask != null) return error.InvalidReplayBase;
     for (base.vertices) |vertex| {
         if (!validCoordinate(vertex.position[0]) or
             !validCoordinate(vertex.position[1]))
-            return error.InvalidPlan;
+            return error.InvalidReplayBase;
     }
     for (base.indices) |index| {
-        if (@as(usize, index) >= base.vertices.len) return error.InvalidPlan;
+        if (@as(usize, index) >= base.vertices.len) return error.InvalidReplayBase;
     }
     for (base.commands) |command| {
-        if (command.kind == .trail) return error.InvalidPlan;
-        if (command.index_count != 6) return error.InvalidPlan;
+        if (command.kind == .trail) return error.InvalidReplayBase;
+        if (command.index_count != 6) return error.InvalidReplayBase;
         const end = std.math.add(usize, command.first_index, command.index_count) catch
-            return error.InvalidPlan;
-        if (end > base.indices.len) return error.InvalidPlan;
+            return error.InvalidReplayBase;
+        if (end > base.indices.len) return error.InvalidReplayBase;
         if (command.clip.width == 0 or command.clip.height == 0 or
             command.clip.x < 0 or command.clip.y < 0)
-            return error.InvalidPlan;
-        const rectangle = try commandRect(base, command);
+            return error.InvalidReplayBase;
+        const rectangle = commandRect(base, command) catch
+            return error.InvalidReplayBase;
         if (rectangle.width == 0 or rectangle.height == 0)
-            return error.InvalidPlan;
+            return error.InvalidReplayBase;
     }
 }
 
@@ -1719,16 +1794,16 @@ fn intersectRect(left: Rect, right: Rect) ?Rect {
     return .{ .x = x, .y = y, .width = @intCast(right_x - x), .height = @intCast(bottom_y - y) };
 }
 
-fn validateTrailOverlay(trail: CursorTrailOverlay) Error!void {
+fn validateTrailOverlay(trail: CursorTrailOverlay) ReplayError!void {
     if (trail.clip.width == 0 or trail.clip.height == 0 or
         trail.clip.x < 0 or trail.clip.y < 0 or
         !std.math.isFinite(trail.opacity) or trail.opacity < 0 or trail.opacity > 1)
-        return error.InvalidPlan;
+        return error.InvalidCursorOverlay;
     if (trail.cursor_rect.width == 0 or trail.cursor_rect.height == 0 or
         trail.cursor_rect.x < 0 or trail.cursor_rect.y < 0)
-        return error.InvalidPlan;
+        return error.InvalidCursorOverlay;
     for (trail.color) |component| {
-        if (!validCoordinate(component)) return error.InvalidPlan;
+        if (!validCoordinate(component)) return error.InvalidCursorOverlay;
     }
     var min_x = trail.corner_x[0];
     var max_x = min_x;
@@ -1737,7 +1812,8 @@ fn validateTrailOverlay(trail: CursorTrailOverlay) Error!void {
     for (1..4) |index| {
         const x = trail.corner_x[index];
         const y = trail.corner_y[index];
-        if (!validCoordinate(x) or !validCoordinate(y)) return error.InvalidPlan;
+        if (!validCoordinate(x) or !validCoordinate(y))
+            return error.InvalidCursorOverlay;
         min_x = @min(min_x, x);
         max_x = @max(max_x, x);
         min_y = @min(min_y, y);
@@ -1746,7 +1822,7 @@ fn validateTrailOverlay(trail: CursorTrailOverlay) Error!void {
     if (!validCoordinate(min_x) or !validCoordinate(max_x) or
         !validCoordinate(min_y) or !validCoordinate(max_y) or
         max_x <= min_x or max_y <= min_y)
-        return error.InvalidPlan;
+        return error.InvalidCursorOverlay;
 }
 
 fn appendQuad(

@@ -5,12 +5,11 @@ sprint:
   status: active
   active_slice: accepted_corrections
   active_cohort: runtime_corrections
-  active_subcohort: cursor_replay_error_disposition
+  active_subcohort: visible_cursor_binding_invariant
 
 objective: >-
-  Classify cursor replay preparation, render submission, and completion
-  failures at their exact pre-submit or post-submit owner without collapsing
-  fatal failure into retryable blocked work.
+  Keep accepted-composition identity mismatch observable and prevent partial
+  cursor-binding refresh from becoming accepted.
 
 questions:
   - id: population
@@ -37,17 +36,17 @@ active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-host/src/renderer.zig replayCursorFrame
-    - replay preparation, render submission, and completion preparation
-    - exact blocked, rejected, and fatal propagation ownership
+    - howl-render/src/canvas.zig refreshVisibleCursorBindings
+    - accepted composition source identity and cursor frame revision
+    - apply, applyCandidate, and setComposition transactional behavior
   excluded:
-    - Composer, visible cursor binding, and deadline corrections until their ordered slices
-    - session, terminal, Window, or rendering behavior beyond cursor replay disposition
+    - physical deadline correction until its ordered slice
+    - Host, VT, Window, Vulkan, and rendering behavior beyond Composer binding refresh
     - source-audit, comment, and unrelated authority corrections
     - Git operations
 
 progress:
-  state: cursor_replay_error_disposition_not_started
+  state: visible_cursor_binding_invariant_not_started
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]
@@ -64,6 +63,14 @@ progress:
         preserves idempotent font publication, clears accepted or rejected
         work, and propagates fatal replacement failure with deterministic
         owner-level disposition and wake-scheduling proofs.
+    cursor_replay_error_disposition:
+      paths: [howl-host/src/renderer.zig, howl-vk/src/surface.zig]
+      conclusion: >-
+        Cursor replay now distinguishes rejectable overlay facts from fatal
+        accepted-base and fixed-capacity corruption, reserves blocked solely
+        for externally satisfiable ownership, propagates backend and
+        post-submit failures, and performs one write-free-preflight base copy
+        with exact rejection and acceptance ownership proofs.
   accepted_syntax_inventory:
     files: 62
     records: 2887

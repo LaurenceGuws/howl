@@ -1422,6 +1422,240 @@ const RedrawResult = enum {
     published,
 };
 
+const CursorReplayResult = enum {
+    blocked,
+    rejected,
+    retry,
+    published,
+};
+
+const ReplayCompletionError = error{
+    Stopping,
+    CompletionLimit,
+    InvalidRevision,
+};
+
+const PostSubmitDisposition = enum { fatal };
+
+const CursorReplayPreparation = union(enum) {
+    rejected,
+    prepared: vk_surface.Plan,
+};
+
+const CursorOverlayPreparation = union(enum) {
+    blocked,
+    rejected,
+    prepared: vk_surface.CursorOverlay,
+};
+
+fn prepareCursorReplayCandidate(
+    base: vk_surface.Plan,
+    overlay: vk_surface.CursorOverlay,
+    buffers: vk_surface.CursorReplayBuffers,
+) !CursorReplayPreparation {
+    if (base.commands.len > frame_command_limit or
+        base.vertices.len > frame_command_limit * 4 or
+        base.indices.len > frame_command_limit * 6)
+        return error.InvalidReplayBase;
+    if (buffers.vertices.len != vk_surface.max_vertices or
+        buffers.indices.len != vk_surface.max_indices or
+        buffers.commands.len != vk_surface.max_commands)
+        return error.ReplayCapacity;
+    const candidate = vk_surface.replayCursor(
+        base,
+        overlay,
+        buffers,
+    ) catch |failure| switch (failure) {
+        error.InvalidCursorOverlay => return .rejected,
+        error.InvalidReplayBase,
+        error.ReplayCapacity,
+        => return failure,
+    };
+    return .{ .prepared = candidate };
+}
+
+fn classifyReplayCompletionFailure(
+    _: ReplayCompletionError,
+) PostSubmitDisposition {
+    return .fatal;
+}
+
+fn discardRejectedCursorReplay(
+    work: *CanvasWork,
+    pending: *?terminal_handoff.CursorPublication,
+    trail_only: bool,
+) void {
+    if (trail_only) {
+        discardTrailAnimation(work, false);
+        work.trail_frame_pending = false;
+    } else {
+        dropPendingCursor(pending);
+    }
+}
+
+fn commitCursorReplayAcceptance(
+    work: *CanvasWork,
+    publication: ?terminal_handoff.CursorPublication,
+    accepted_overlay: vk_surface.CursorOverlay,
+    trail_only: bool,
+    slot_index: usize,
+    slot: *Slot,
+    release_point: u64,
+    next_acquire_point: *u64,
+    following_acquire_point: u64,
+) void {
+    work.replay.commitCursor(slot_index);
+    if (!trail_only) if (publication) |value| {
+        work.last_cursor_publication = value;
+        work.accepted_cursor_color = accepted_overlay.color;
+    };
+    slot.release_point = release_point;
+    next_acquire_point.* = following_acquire_point;
+}
+
+test "cursor replay preparation rejects candidate facts and preserves accepted ownership" {
+    try std.testing.expectEqual(
+        frame_command_limit * 2 + 2,
+        vk_surface.max_commands,
+    );
+    try std.testing.expectEqual(vk_surface.max_commands * 4, vk_surface.max_vertices);
+    try std.testing.expectEqual(vk_surface.max_commands * 6, vk_surface.max_indices);
+    var replay = try ReplayState.init(std.testing.allocator);
+    defer replay.deinit();
+    const base = replay.acceptedPlan();
+    const candidate = replay.candidate();
+    const buffers = vk_surface.CursorReplayBuffers{
+        .vertices = candidate.vertices,
+        .indices = candidate.indices,
+        .commands = candidate.commands,
+    };
+    const invalid_overlay = vk_surface.CursorOverlay{
+        .rect = .{ .x = 0, .y = 0, .width = 0, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .shape = .block,
+        .color = .{ 1, 1, 1, 1 },
+        .text_color = .{ 0, 0, 0, 1 },
+        .visible = true,
+    };
+    try std.testing.expectEqual(
+        CursorReplayPreparation.rejected,
+        try prepareCursorReplayCandidate(base, invalid_overlay, buffers),
+    );
+    try std.testing.expect(!replay.pending);
+    try std.testing.expect(replay.acceptedSlot() == null);
+    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().vertices.len);
+    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().indices.len);
+    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().commands.len);
+    try std.testing.expectEqual(@as(usize, 0), candidate.vertex_count);
+    try std.testing.expectEqual(@as(usize, 0), candidate.index_count);
+    try std.testing.expectEqual(@as(usize, 0), candidate.command_count);
+
+    var valid_overlay = invalid_overlay;
+    valid_overlay.rect.width = 1;
+    const prepared = try prepareCursorReplayCandidate(
+        base,
+        valid_overlay,
+        buffers,
+    );
+    try std.testing.expectEqual(@as(usize, 1), prepared.prepared.commands.len);
+
+    const publication = terminal_handoff.CursorPublication{
+        .pane = @fromBackingInt(41),
+        .source = @fromBackingInt(42),
+        .terminal_sequence = 7,
+        .cursor_revision = 8,
+        .visible_set_revision = 9,
+        .lifecycle_revision = @fromBackingInt(10),
+        .target = .{
+            .row = 0,
+            .col = 0,
+            .visible = true,
+            .shape = .block,
+            .blink = false,
+            .blink_fast = false,
+            .cursor_color = .{},
+            .text_color = .{},
+        },
+    };
+    var work: CanvasWork = undefined;
+    work.replay = &replay;
+    work.last_cursor_publication = null;
+    work.accepted_cursor_color = null;
+    var pending: ?terminal_handoff.CursorPublication = publication;
+    var slot = Slot{};
+    var next_acquire_point: u64 = 11;
+    discardRejectedCursorReplay(&work, &pending, false);
+    try std.testing.expect(pending == null);
+    try std.testing.expect(replay.acceptedSlot() == null);
+    try std.testing.expectEqual(@as(u64, 0), slot.release_point);
+    try std.testing.expectEqual(@as(u64, 11), next_acquire_point);
+    try std.testing.expect(work.last_cursor_publication == null);
+
+    work.trail_scratch_tab = @fromBackingInt(1);
+    work.trail_scratch_transfer = false;
+    work.trail_previous_deadline = 14;
+    work.trail_scratch_deadline = 15;
+    work.trail_deadline = 16;
+    work.trail_frame_pending = true;
+    discardRejectedCursorReplay(&work, &pending, true);
+    try std.testing.expect(work.trail_scratch_tab == null);
+    try std.testing.expect(!work.trail_frame_pending);
+    try std.testing.expectEqual(@as(?u64, 14), work.trail_deadline);
+
+    replay.pending = true;
+    replay.restoreCandidateBase(base);
+    commitCursorReplayAcceptance(
+        &work,
+        publication,
+        valid_overlay,
+        false,
+        1,
+        &slot,
+        12,
+        &next_acquire_point,
+        13,
+    );
+    try std.testing.expectEqual(@as(?usize, 1), replay.acceptedSlot());
+    try std.testing.expectEqual(publication, work.last_cursor_publication.?);
+    try std.testing.expectEqual(valid_overlay.color, work.accepted_cursor_color.?);
+    try std.testing.expectEqual(@as(u64, 12), slot.release_point);
+    try std.testing.expectEqual(@as(u64, 13), next_acquire_point);
+
+    var malformed_base = base;
+    malformed_base.trail_mask = .{ .x = 0, .y = 0, .width = 1, .height = 1 };
+    try std.testing.expectError(
+        error.InvalidReplayBase,
+        prepareCursorReplayCandidate(malformed_base, valid_overlay, buffers),
+    );
+    var oversized_base = base;
+    oversized_base.commands = candidate.commands[0 .. frame_command_limit + 1];
+    try std.testing.expectError(
+        error.InvalidReplayBase,
+        prepareCursorReplayCandidate(oversized_base, valid_overlay, buffers),
+    );
+    const short_buffers = vk_surface.CursorReplayBuffers{
+        .vertices = candidate.vertices[0 .. candidate.vertices.len - 1],
+        .indices = candidate.indices,
+        .commands = candidate.commands,
+    };
+    try std.testing.expectError(
+        error.ReplayCapacity,
+        prepareCursorReplayCandidate(base, valid_overlay, short_buffers),
+    );
+    try std.testing.expectEqual(
+        PostSubmitDisposition.fatal,
+        classifyReplayCompletionFailure(error.CompletionLimit),
+    );
+    try std.testing.expectEqual(
+        PostSubmitDisposition.fatal,
+        classifyReplayCompletionFailure(error.Stopping),
+    );
+    try std.testing.expectEqual(
+        PostSubmitDisposition.fatal,
+        classifyReplayCompletionFailure(error.InvalidRevision),
+    );
+}
+
 const RedrawSchedule = enum {
     wait,
     retry,
@@ -2632,6 +2866,13 @@ fn runFallible(
                 .retry => {
                     if (trail_only) discardTrailAnimation(&canvas_work, false);
                     local_redraw_retry_pending = true;
+                },
+                .rejected => {
+                    discardRejectedCursorReplay(
+                        &canvas_work,
+                        &cursor_replay_pending,
+                        trail_only,
+                    );
                 },
                 .blocked => if (trail_only) discardTrailAnimation(&canvas_work, true),
             }
@@ -4127,6 +4368,100 @@ fn cursorOverlayForBinding(
     const binding = work.composer.cursorBinding(source) orelse return null;
     const placement = placementForSource(work, source) orelse return null;
     return cursorOverlayForPlacement(binding, placement);
+}
+
+fn acceptedCursorOverlay(
+    work: *const CanvasWork,
+    source: render_api.canvas.SourceId,
+) !CursorOverlayPreparation {
+    return .{ .prepared = (try cursorOverlayForBinding(work, source)) orelse
+        return .blocked };
+}
+
+fn publicationCursorOverlay(
+    work: *const CanvasWork,
+    publication: terminal_handoff.CursorPublication,
+    require_newer: bool,
+) !CursorOverlayPreparation {
+    // Validate accepted Composer binding and placement facts independently.
+    // Any error here is accepted-state corruption and must remain observable.
+    if ((try cursorOverlayForBinding(work, publication.source)) == null)
+        return .blocked;
+    const overlay = cursorOverlayFor(
+        work,
+        publication,
+        require_newer,
+    ) catch return .rejected;
+    return .{ .prepared = overlay orelse return .rejected };
+}
+
+test "accepted cursor geometry is fatal while publication mismatch rejects" {
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const source = try composer.registerSource();
+    try composer.apply(source, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .cursor_binding = .{
+            .pane = 1,
+            .source = source,
+            .terminal_sequence = 1,
+            .cursor_revision = 1,
+            .visible_set_revision = 1,
+            .lifecycle_revision = 1,
+            .rect = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+            .cell_size = .{ .width = 1, .height = 1 },
+            .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+            .visible = true,
+        },
+    });
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.visible_count = 1;
+    work.visible_placements[0] = .{
+        .source = source,
+        .origin = .{ .x = std.math.maxInt(i32), .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+    };
+    try std.testing.expectError(
+        error.InvalidFrame,
+        acceptedCursorOverlay(&work, source),
+    );
+
+    work.visible_placements[0].origin.x = 0;
+    const publication = terminal_handoff.CursorPublication{
+        .pane = @fromBackingInt(1),
+        .source = source,
+        .terminal_sequence = 1,
+        .cursor_revision = 2,
+        .visible_set_revision = 2,
+        .lifecycle_revision = @fromBackingInt(1),
+        .target = .{
+            .row = 0,
+            .col = 0,
+            .visible = true,
+            .shape = .block,
+            .blink = false,
+            .blink_fast = false,
+            .cursor_color = .{},
+            .text_color = .{},
+        },
+    };
+    try std.testing.expectEqual(
+        CursorOverlayPreparation.rejected,
+        try publicationCursorOverlay(&work, publication, true),
+    );
 }
 
 fn physicalPlanForBase(
@@ -7936,7 +8271,7 @@ test "Host focus directions admit one physical trail quad" {
         var rejected_indices: [6]u32 = undefined;
         var rejected_commands: [1]vk_surface.Command = undefined;
         try std.testing.expectError(
-            error.InvalidPlan,
+            error.ReplayCapacity,
             vk_surface.replayCursor(
                 base,
                 rejected_overlay,
@@ -8283,29 +8618,33 @@ fn replayCursorFrame(
     drm_fd: i32,
     acquire_handle: u32,
     next_acquire_point: *u64,
-) !RedrawResult {
+) !CursorReplayResult {
     const publication = pending.*;
     if (!trail_only and publication == null) return .blocked;
     if (focused_source == null) return .blocked;
     if (publication) |value| {
-        if (focused_source.? != value.source and !trail_only) return .blocked;
+        if (focused_source.? != value.source and !trail_only) return .rejected;
     }
-    const overlay: ?vk_surface.CursorOverlay = if (trail_only)
+    const overlay_preparation: CursorOverlayPreparation = if (trail_only)
         if (publication) |value|
             if (value.source == focused_source.?)
-                (trailOverlayForPublication(work, value) catch return .blocked)
+                try trailOverlayForPublication(work, value)
             else
-                (cursorOverlayForBinding(work, focused_source.?) catch return .blocked)
+                try acceptedCursorOverlay(work, focused_source.?)
         else
-            (cursorOverlayForBinding(work, focused_source.?) catch return .blocked)
+            try acceptedCursorOverlay(work, focused_source.?)
     else
-        (cursorOverlayFor(work, publication.?, true) catch return .blocked);
-    var accepted_overlay = overlay orelse return .blocked;
+        try publicationCursorOverlay(work, publication.?, true);
+    var accepted_overlay = switch (overlay_preparation) {
+        .blocked => return .blocked,
+        .rejected => return .rejected,
+        .prepared => |value| value,
+    };
     if (trail_only) {
         const trail_clip = checkedTrailClipUnion(
             work.trail_scratch.endpoint_clip,
             accepted_overlay.clip,
-        ) catch return .blocked;
+        ) catch return .rejected;
         accepted_overlay.trail = .{
             .corner_x = work.trail_scratch.corner_x,
             .corner_y = work.trail_scratch.corner_y,
@@ -8337,9 +8676,8 @@ fn replayCursorFrame(
     };
     if (!work.replay.canCapture()) return .blocked;
     const base = work.replay.acceptedPlan();
-    if (base.commands.len > frame_command_limit) return .blocked;
     const candidate_cohort = work.replay.candidate();
-    const candidate = vk_surface.replayCursor(
+    const preparation = try prepareCursorReplayCandidate(
         base,
         accepted_overlay,
         .{
@@ -8347,7 +8685,11 @@ fn replayCursorFrame(
             .indices = candidate_cohort.indices,
             .commands = candidate_cohort.commands,
         },
-    ) catch return .blocked;
+    );
+    const candidate = switch (preparation) {
+        .rejected => return .rejected,
+        .prepared => |value| value,
+    };
     candidate_cohort.vertex_count = candidate.vertices.len;
     candidate_cohort.index_count = candidate.indices.len;
     candidate_cohort.command_count = candidate.commands.len;
@@ -8361,16 +8703,17 @@ fn replayCursorFrame(
     if (!boundary.canPublishCompletion(generation)) return .blocked;
     const slot = &slots[slot_index];
     const acquire_point = next_acquire_point.*;
-    const following_acquire_point = std.math.add(u64, acquire_point, 1) catch
-        return .blocked;
-    const release_point = std.math.add(u64, slot.release_point, 1) catch
-        return .blocked;
+    const following_acquire_point = try std.math.add(u64, acquire_point, 1);
+    const release_point = try std.math.add(u64, slot.release_point, 1);
     var release_sync_fd: i32 = -1;
     if (c.drmSyncobjExportSyncFile(drm_fd, slot.release_handle, &release_sync_fd) != 0)
-        return .blocked;
+        return error.Syncobj;
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
-    const release_wait = importReleaseSemaphore(device, dispatch, &release_sync_fd) catch
-        return .blocked;
+    const release_wait = try importReleaseSemaphore(
+        device,
+        dispatch,
+        &release_sync_fd,
+    );
     defer vk.vkDestroySemaphore(device, release_wait, null);
     // A preview-driven cursor burst can publish another target while this
     // candidate is being prepared.  Revalidate at the last point before
@@ -8403,7 +8746,7 @@ fn replayCursorFrame(
         drm_fd,
         acquire_handle,
         acquire_point,
-    ) catch return .blocked;
+    ) catch |failure| return failure;
     // Restore the canonical cursor-free bytes before the physical slot is
     // accepted.  The presented candidate remains owned by the ring slot; the
     // replay cohort stays a stable base for the next cursor-only update.
@@ -8415,19 +8758,28 @@ fn replayCursorFrame(
         .acquire_point = acquire_point,
         .release_point = release_point,
     };
-    var prepared = boundary.prepareCompletions(&.{completion}) catch return .blocked;
+    // Submission has already occurred.  A completion reservation failure is
+    // therefore a non-retryable owner failure; retrying would submit the same
+    // physical slot twice without a tracked completion.
+    var prepared = boundary.prepareCompletions(&.{completion}) catch |failure| {
+        std.debug.assert(
+            classifyReplayCompletionFailure(failure) == .fatal,
+        );
+        return failure;
+    };
     defer prepared.deinit();
     prepared.commit();
-    work.replay.commitCursor(slot_index);
-    if (trail_only) {
-        // The trail state is committed by the caller only after this exact
-        // cursor-free base replay reaches the completion boundary.
-    } else if (publication) |value| {
-        work.last_cursor_publication = value;
-        work.accepted_cursor_color = accepted_overlay.color;
-    }
-    slot.release_point = release_point;
-    next_acquire_point.* = following_acquire_point;
+    commitCursorReplayAcceptance(
+        work,
+        publication,
+        accepted_overlay,
+        trail_only,
+        slot_index,
+        slot,
+        release_point,
+        next_acquire_point,
+        following_acquire_point,
+    );
     return .published;
 }
 
@@ -8437,11 +8789,12 @@ fn replayCursorFrame(
 fn trailOverlayForPublication(
     work: *const CanvasWork,
     publication: terminal_handoff.CursorPublication,
-) !?vk_surface.CursorOverlay {
-    const binding = work.composer.cursorBinding(publication.source) orelse return null;
-    if (publication.cursor_revision < binding.cursor_revision)
-        return cursorOverlayForBinding(work, publication.source);
-    return cursorOverlayFor(work, publication, false);
+) !CursorOverlayPreparation {
+    const binding = work.composer.cursorBinding(publication.source) orelse
+        return .blocked;
+    const accepted = try acceptedCursorOverlay(work, publication.source);
+    if (publication.cursor_revision < binding.cursor_revision) return accepted;
+    return publicationCursorOverlay(work, publication, false);
 }
 
 fn takeNewerCursorReplay(
