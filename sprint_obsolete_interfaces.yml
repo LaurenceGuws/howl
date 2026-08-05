@@ -4,7 +4,7 @@ sprint:
   marathon: debt_payoff
   version: 0.1.5-dev
   branch: feature/debt_payoff/obsolete_interfaces
-  status: active
+  status: review_ready
   objective: >-
     Remove only interfaces and compatibility surfaces proven unowned and unused
     by maintained product, build, test, fixture, and embedder boundaries.
@@ -48,7 +48,7 @@ slices:
       - Each group pins pre/post symbol counts, transitive orphan closure, preserved owner invariants, all-mode gates, and isolated rollback.
       - Replacement helpers, aliases, adjacent cleanup, and retained inventory-cohort changes remain forbidden.
   - id: accepted_removals
-    status: active
+    status: accepted
     output: only contract-approved interface and wiring deletion
     accepted_groups:
       - id: renderer_wait_canvas_orphan
@@ -60,6 +60,9 @@ slices:
       - id: vt_screen_line_cursor_wraps_orphan
         commit: a64523f
         result: unused lineCursorWraps removed with neighboring reflow and cursor helpers unchanged
+      - id: vt_unicode_grapheme_value_count_orphan
+        commit: dbe1205
+        result: duplicate unused grapheme_value_count removed while generator entry and byte extents plus runtime byte extent remain enforced
 
 acceptance:
   - Every removed symbol or wiring edge is absent from all maintained consumers and generated boundaries.

@@ -3,14 +3,14 @@ sprint:
   id: obsolete_interfaces
   branch: feature/debt_payoff/obsolete_interfaces
   status: active
-  active_slice: accepted_removals
-  active_cohort: vt_unicode_grapheme_value_count_orphan
-  active_subcohort: one_declaration_deletion
+  active_slice: sprint_acceptance
+  active_cohort: clean_feature_range
+  active_subcohort: final_gate
 
 objective: >-
-  Delete only the duplicate unused grapheme_value_count metadata constant,
-  preserve generator entry and byte-extent checks plus runtime byte-extent
-  validation, then return the unstaged slice for hostile review.
+  Audit the complete obsolete-interface feature range, verify all four removal
+  cohorts and eight retained cohorts against the accepted contract, and return
+  the sprint for closure only if every clean-range gate passes.
 
 questions:
   - id: population
@@ -28,28 +28,24 @@ questions:
 
 active_scope:
   evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
-  product_change: authorized_narrow_scope
+  product_change: forbidden
   population:
-    - howl-vt/src/unicode_17.zig grapheme_value_count
-    - generator 2880-entry and 61224-byte checks
-    - runtime 61224-byte compile-time check
-    - exact post-deletion negative and transitive-orphan censuses
+    - every tracked commit and diff from main merge base through review-ready HEAD
+    - four accepted removal cohorts and eight retained inventory cohorts
+    - package/workspace all-mode and authority gates
   excluded:
-    - all Screen declarations
-    - generator, generated binary, digest, offsets, and Unicode behavior
-    - all Renderer source
-    - all eight retained inventory cohorts
-    - replacement helpers, aliases, or unrelated cleanup
+    - new product or authority correction without a concrete acceptance blocker
+    - sprint closure, main merge, branch deletion, or evidence cleanup before reviewer acceptance
     - Git operations by the worker
 
 progress:
-  state: line_wrap_removal_accepted_unicode_metadata_removal_not_started
+  state: all_removals_accepted_sprint_review_ready
   accepted_removal_contract:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
     sha256: e2822cfbf44bed129d113654ad4c452d8f0dcc6f64578507695b3245892e91ff
     groups: 4
     declarations: 5
-    active_group: vt_unicode_grapheme_value_count_orphan
+    active_group: none
   accepted_removals:
     renderer_wait_canvas_orphan:
       commit: e783ce1
@@ -63,6 +59,10 @@ progress:
       commit: a64523f
       declarations: [lineCursorWraps]
       result: zero maintained occurrences and no transitive orphan
+    vt_unicode_grapheme_value_count_orphan:
+      commit: dbe1205
+      declarations: [grapheme_value_count]
+      result: zero Zig-source occurrences; generator and runtime extent checks remain unchanged
   accepted_inventory:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
     sha256: db949c38a93d6f76eca8bd805ad367e37f6bd84aa694ce33339c5caf7c3565ef
