@@ -52,7 +52,6 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Finish exact comment and tracked-authority hygiene for the accepted error-disposition and source-audit work.
   - Audit and remove obsolete interfaces only where current source proves them unowned and unused.
   - Preserve cohesive files and current product behavior while each debt slice earns a bounded proof.
 

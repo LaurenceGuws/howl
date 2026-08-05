@@ -4,8 +4,6 @@ accepted:
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
   marathon_debt.yml: active 0.1.5-dev structural debt-payoff marathon and exclusions
-  sprint_error_and_authority_hygiene.yml: active error disposition, audit admission, comment, and authority hygiene contract
-  scratch_debt.yml: active hygiene questions and ignored evidence destination
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   tools/json_logger.zig: reusable QAgent-derived bounded structured JSONL logger, disconnected from product package/runtime dependencies

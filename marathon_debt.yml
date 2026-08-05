@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.4-dev
     sprint_pattern: feature/debt_payoff/<sprint>
-  active_sprint: error_and_authority_hygiene
+  active_sprint: obsolete_interfaces
   objective: >-
     Pay down structural debt in small reviewable slices while preserving the
     frozen 0.1.4-dev product boundary. No new terminal capability is in scope.
@@ -68,9 +68,16 @@ debt_candidates:
       wayland_c, and xkb_c remain unchanged.
     implementation_commits: [4204e21, 775b962, ebb8de9, b88725a, eb44ce5, f0cdb9e]
   - id: error_and_authority_hygiene
-    status: active
+    status: accepted
     scope: audit silent error disposal, stale source-audit admissions, comments, and tracked authority
+    outcome: >-
+      Complete syntax and owner review retained exact propagation and source
+      admissions, corrected five finite runtime defects, and retired fifteen
+      stale comment or authority claims without widening product capability,
+      allocation, capacity, or ownership.
+    implementation_commits: [f6dfd5b, 1498055, 00cc697, c44c9d1, 5ab2266]
   - id: obsolete_interfaces
+    status: pending
     scope: remove obsolete interfaces and fossil compatibility code
 
 exclusions:
