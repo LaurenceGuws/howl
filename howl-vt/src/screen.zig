@@ -5935,10 +5935,6 @@ const ScreenSemanticCursor = struct {
     }
 };
 
-fn advanceIdentity(value: *u64) void {
-    value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
-}
-
 /// Erase extent selected by CSI display and line erase controls.
 pub const ScreenEraseMode = enum(u2) {
     cursor_to_end = 0,
