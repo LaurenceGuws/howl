@@ -1,15 +1,15 @@
 version:
-  current: 0.1.5-dev
+  current: 0.1.6-dev
   prior:
-    version: 0.1.4-dev
+    version: 0.1.5-dev
     status: frozen
-    release_branch: release/0.1.4-dev
-    release_base: 7db8e1ab2bc7bb7b526d67a359744008360a317c
+    release_branch: release/0.1.5-dev
+    release_base: b5057fbfbb927f5d0bb3ad2b5683513d2002415a
     capability: >-
-      Session-domain ownership migration, bounded Host topology retry,
-      physical cursor replay and trail presentation, synchronized-output
-      correctness, startup cursor configuration retention, and explicit input
-      rejection/pressure ownership.
+      Structural debt payoff removed redundant native boundaries, narrowed
+      generated-C ownership, corrected ownership vocabulary and five finite
+      error dispositions, preserved cohesive large-file owners, and removed
+      five obsolete private declarations.
     deferred_capability:
       - ordered keyboard protocol expansion and repeat policy
       - mouse and terminal mouse protocol routing
@@ -17,10 +17,8 @@ version:
       - input hot-path measurement and optimization
 
 objective: >-
-  Pay down accepted structural debt without adding terminal features:
-  preserve independently useful PTY, VT, Render, Vulkan, Wayland, and Host
-  behavior while removing redundant ownership, obsolete interfaces, silent
-  error disposal, stale source-audit admissions, and dishonest authority.
+  Select and contract the next version-scoped marathon before changing product
+  behavior. Preserve the accepted 0.1.5-dev capability boundary meanwhile.
 
 settled_capabilities:
   - name: vt
@@ -38,7 +36,7 @@ accepted_implementation:
   - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
   - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
   - Cursor presentation is independent of terminal text publication and accepted frame replacement.
-  - Every maintained package and Host manifest uses version 0.1.5-dev.
+  - Every maintained package and Host manifest uses version 0.1.6-dev.
 
 historical_manifests:
   - howl-vt/examples/0.1.4-dev/build.zig.zon remains a versioned example fixture and is not a maintained package manifest.
@@ -52,7 +50,7 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Cut the accepted 0.1.5-dev state as an immutable release snapshot.
+  - Define and approve the 0.1.6-dev marathon before product work begins.
 
 deferred:
   - Ordered keyboard protocol expansion and repeat policy.

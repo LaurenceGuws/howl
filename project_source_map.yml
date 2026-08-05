@@ -3,7 +3,6 @@ accepted:
   protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
-  marathon_debt.yml: accepted 0.1.5-dev structural debt-payoff marathon and exclusions
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   tools/json_logger.zig: reusable QAgent-derived bounded structured JSONL logger, disconnected from product package/runtime dependencies

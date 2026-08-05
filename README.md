@@ -68,7 +68,7 @@ product module.
 
 ## Current state
 
-Howl is currently `0.1.5-dev`.
+Howl is currently `0.1.6-dev`.
 
 The terminal model, Linux PTY owner, native and generated text machinery,
 backend-neutral compositor, reusable Vulkan and Wayland foundations, and a
@@ -83,7 +83,7 @@ and Kitty-led trail presentation into composable state machines. The frozen
 and completed the reviewed cursor/presentation and topology ownership boundary.
 Ordered keyboard, repeat, mouse, terminal identity, and input hot-path work
 remains deferred. The accepted `0.1.5-dev` milestone paid down structural debt
-without adding terminal capability.
+without adding terminal capability. No `0.1.6-dev` marathon is active yet.
 
 Howl is not yet a complete daily terminal. Stable embedding APIs, persistent
 detached sessions, cooperative session control, complete interaction features,
