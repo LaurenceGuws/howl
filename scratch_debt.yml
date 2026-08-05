@@ -5,11 +5,11 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_render
-  active_subcohort: canvas_identity_init_source
+  active_subcohort: canvas_candidate_composition
 
 objective: >-
-  Resolve the forty Canvas identity, initialization, and source-lifecycle
-  syntax records into exact allocation, rollback, identity, removal, and proof
+  Resolve the seventy-five Canvas candidate and composition syntax records
+  into exact preparation, rollback, resource, binding, publication, and proof
   semantics without changing product code.
 
 questions:
@@ -25,15 +25,15 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_identity_init_source.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_candidate_composition.yml
   product_change: forbidden
   population:
-    - records r00998 through r01037 from howl-render/src/canvas.zig
-    - Canvas resource identities, Composer initialization, and source removal
+    - records r01038 through r01112 from howl-render/src/canvas.zig
+    - Canvas candidate preparation, composition, cursor binding, shared-resource planning, and publication
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host and PTY records r00001 through r00997
-    - Canvas records r01038 through r01268 until their owner subcohorts
+    - accepted Host, PTY, and Canvas records r00001 through r01037
+    - Canvas records r01113 through r01268 until their owner subcohorts
     - other howl-render files until their file-owner cohorts
     - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
@@ -41,7 +41,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: howl_render_canvas_identity_init_source_not_started
+  state: howl_render_canvas_candidate_composition_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -366,6 +366,21 @@ progress:
     - terminal_projection
     - terminal_text
     - build
+  accepted_howl_render_subcohorts:
+    canvas_identity_init_source:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_identity_init_source.yml
+      records: 40
+      production_runtime: 40
+      deterministic: 2
+      source_contract: 38
+      accepted: 2
+      debt_candidates: 38
+      conclusion: >-
+        Canvas resource identities, Composer initialization, and source removal
+        errors have exact owner dispositions. Two identity-validation branches
+        have deterministic evidence. Reviewer correction removed copied
+        Composer-init semantics from ResourceId validation and both
+        removeSource records before acceptance.
   cohort_order:
     - host_process_root
     - host_window_boundary
