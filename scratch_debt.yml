@@ -4,12 +4,12 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: host_window_boundary
+  active_cohort: host_session
 
 objective: >-
-  Resolve the one hundred and two Window and Window/Render boundary syntax
-  records into exact owner, mutation, cleanup, and proof semantics without
-  changing product code.
+  Resolve the seventy-two session-domain, Chrome-adapter, and input-adaptation
+  syntax records into exact owner, mutation, cleanup, and proof semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -24,11 +24,12 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_window_boundary.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_session.yml
   product_change: forbidden
   population:
-    - accepted syntax records from howl-host/src/window.zig
-    - accepted syntax records from howl-host/src/window_render_boundary.zig
+    - accepted syntax records from howl-host/src/session_domain.zig
+    - accepted syntax records from howl-host/src/session_chrome_adapter.zig
+    - accepted syntax records from howl-host/src/input_actions.zig
     - exact source-local proof owners for those records
   excluded:
     - non-Host package, root-build, and tool records
@@ -36,7 +37,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: host_window_boundary_not_started
+  state: host_session_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -57,6 +58,19 @@ progress:
       conclusion: >-
         Startup and build error ownership is explicit; deterministic process-root
         thread spawn-failure rollback proofs remain finite debt candidates.
+    host_window_boundary:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_window_boundary.yml
+      verifier: .zig/work/debt-payoff/error-and-authority-hygiene/verify_owner_review.py
+      records: 102
+      deterministic: 9
+      source_contract: 81
+      missing: 12
+      accepted: 9
+      debt_candidates: 93
+      conclusion: >-
+        Window and Window/Render error ownership is fully indexed; only nine
+        dispositions have exact executable evidence and all remaining proof
+        debt stays explicit for the finite hygiene contract.
   cohort_order:
     - host_process_root
     - host_window_boundary
