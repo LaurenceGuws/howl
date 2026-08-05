@@ -15,7 +15,6 @@ const char_page_count = 4352;
 const char_value_count = 46592;
 const char_property_count = 106;
 const grapheme_page_count = 4096;
-const grapheme_value_count = 2880;
 const char_page_offset = 0;
 const char_value_offset = char_page_offset + char_page_count;
 const char_property_offset = char_value_offset + char_value_count;
