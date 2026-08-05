@@ -1,7 +1,7 @@
 schema: 1
 sprint: measurement_baseline
-active_slice: child_exit_lifecycle
-status: review_accepted_pending_operator_gate
+active_slice: external_measurement_runner
+status: evidence_only_not_started
 
 operator_observation:
   command: >-
@@ -36,7 +36,15 @@ implementation:
   retained_memory_bytes: 3072
   finite_contract: .zig/work/runtime-hot-path/measurement-baseline/finite_child_exit_completion_contract.yml
   finite_contract_sha256: 90d28bbd92143db653bc480ba789a5a78bb9af998a5c1a708146cf280746a982
-  review: accepted_pending_operator_gate
+  review: accepted
+  operator_gate: passed; fixture playback completed and Howl exited naturally
+
+next_slice:
+  objective: >-
+    Build once in ReleaseFast, then collect comparable external Howl and Kitty
+    process, thread, memory, wakeup, and GPU facts for the exact Neovim cast.
+  product_instrumentation: forbidden_until_external_attribution_is_exhausted
+  implementation: not_started
 
 review_gate:
   - completion cannot overtake trailing PTY output

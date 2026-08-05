@@ -4,7 +4,7 @@ sprint:
   marathon: runtime_hot_paths
   version: 0.1.6-dev
   status: active
-  active_slice: child_exit_lifecycle
+  active_slice: external_measurement_runner
   objective: >-
     Establish exact workload completion and external measurement boundaries
     before attributing or changing runtime cost.
@@ -26,7 +26,7 @@ accepted_fixture:
 
 slices:
   - id: child_exit_lifecycle
-    status: review_accepted_pending_operator_gate
+    status: accepted
     observed_gap: >-
       PTY reaps the child and Terminal retains Logical.child_exit, but no
       terminal-completion fact reaches Renderer; the pane and final Host
@@ -59,9 +59,9 @@ slices:
         - howl-host/src/terminal_handoff.zig
         - howl-host/src/renderer.zig
       retained_completion_bytes: 3072
-      operator_gate: replay the accepted Neovim cast and observe natural final-Host exit
+      operator_gate: passed; accepted Neovim cast completed and Howl exited naturally
   - id: external_measurement_runner
-    status: pending
+    status: active
     outcome: one prebuilt ReleaseFast runner with bounded Howl and Kitty CPU/GPU receipts
   - id: rain_fixture
     status: pending_operator_capture
