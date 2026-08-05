@@ -5,11 +5,11 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_handoff
+  active_subcohort: terminal_pool
 
 objective: >-
-  Resolve the eighty-three terminal handoff syntax records into exact
-  cross-thread owner, mutation, cleanup, wake, and proof semantics without
+  Resolve the sixty-three terminal Pool syntax records into exact cross-thread
+  block, descriptor, transition, cleanup, wake, and proof semantics without
   changing product code.
 
 questions:
@@ -25,21 +25,21 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_handoff.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_pool.yml
   product_change: forbidden
   population:
-    - records r00691 through r00773 from howl-host/src/terminal_handoff.zig
-    - lifecycle, cursor, visible-set, update, and retirement transactions
+    - records r00774 through r00836 from howl-host/src/terminal_pool.zig
+    - block, descriptor, transition, group, retirement, and wake ownership
     - exact source-local proof owners for those records
   excluded:
     - accepted terminal.zig records r00444 through r00690
-    - terminal_pool.zig until its file-owned subcohort
+    - accepted terminal_handoff.zig records r00691 through r00773
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_handoff_not_started
+  state: host_terminal_pool_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -124,6 +124,18 @@ progress:
       conclusion: >-
         Late file-level helper errors have exact source contracts and correctly
         distinguish production reachability from proof-only support.
+    terminal_handoff:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_handoff.yml
+      records: 83
+      production_runtime: 76
+      proof_only_helpers: 7
+      deterministic: 3
+      source_contract: 80
+      accepted: 3
+      debt_candidates: 80
+      conclusion: >-
+        Handoff transaction errors preserve exact rejection, pressure, stale,
+        rollback, wake, retirement, and post-acceptance cleanup ownership.
   cohort_order:
     - host_process_root
     - host_window_boundary
