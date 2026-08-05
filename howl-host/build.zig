@@ -12,13 +12,6 @@ pub fn build(b: *std.Build) void {
         \\#endif
         \\#define _FORTIFY_SOURCE 0
         \\#include <xf86drm.h>
-        \\#include <fcntl.h>
-        \\#include <unistd.h>
-        \\#include <errno.h>
-        \\#include <poll.h>
-        \\#include <time.h>
-        \\#include <sys/stat.h>
-        \\#include <sys/sysmacros.h>
     );
     const renderer_translate = b.addTranslateC(.{ .root_source_file = renderer_header, .target = target, .optimize = optimize });
     renderer_translate.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });

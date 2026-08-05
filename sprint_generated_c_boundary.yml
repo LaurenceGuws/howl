@@ -4,7 +4,7 @@ sprint:
   marathon: debt_payoff
   version: 0.1.5-dev
   branch: feature/debt_payoff/generated_c_boundary
-  status: active
+  status: review_ready
   objective: >-
     Account for every maintained translated or generated C boundary, its exact
     ABI source, build wiring, consumers, reproducibility, and necessity before
@@ -49,7 +49,7 @@ slices:
     product_change: none
     output: accepted preservation findings plus finite contracts for any proven redundant boundary
   - id: accepted_corrections
-    status: pending
+    status: accepted
     output: only contract-approved build or source corrections, if any
   - id: pty_stdlib_constants_types
     status: accepted
@@ -72,9 +72,13 @@ slices:
     product_change: howl-host Renderer source only; preserve DRM declarations, generated wiring, and public behavior
     output: migrate records r114, r115, r117, and r118 with statx/device identity proofs
   - id: final_generated_boundary_narrowing
-    status: active
+    status: accepted
     product_change: howl-pty and howl-host generated native-header build ownership only
     output: narrow pty_c to openpty ownership and renderer_c to retained DRM ownership
+    accepted_facts:
+      - pty_c is generated from pty.h and retains openpty with its translated termios and winsize pointees.
+      - renderer_c is generated from xf86drm.h and retains the ten consumed DRM sync-object declarations and constants.
+      - Translate-C, libc and libdrm linkage, native_c, wayland_c, and xkb_c remain unchanged.
 
 acceptance:
   - All five Translate-C modules and five generated Wayland protocol cohorts are indexed exactly once.

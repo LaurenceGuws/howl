@@ -5,16 +5,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
     const headers = b.addWriteFiles();
     const header = headers.add("howl-pty.h",
-        \\#define _Nonnull
-        \\#define _Nullable
-        \\#define _Null_unspecified
-        \\#define BIONIC_IOCTL_NO_SIGNEDNESS_OVERLOAD 1
-        \\#include <unistd.h>
-        \\#include <fcntl.h>
         \\#include <pty.h>
-        \\#include <signal.h>
-        \\#include <termios.h>
-        \\#include <sys/wait.h>
         \\
     );
     const translate = b.addTranslateC(.{

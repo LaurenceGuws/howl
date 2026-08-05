@@ -2,8 +2,8 @@ schema: 1
 sprint:
   id: generated_c_boundary
   branch: feature/debt_payoff/generated_c_boundary
-  status: active
-  active_slice: final_generated_boundary_narrowing
+  status: review_ready
+  active_slice: sprint_acceptance
 
 objective: >-
   Narrow the generated PTY and Renderer C boundaries to their retained
@@ -38,7 +38,7 @@ active_scope:
     - build, dependency, runtime, protocol, or public API changes
 
 progress:
-  state: not_started
+  state: implementation_accepted
   accepted_checkpoint:
     slice: renderer_stat_device
     migrated_records: r114, r115, r117, r118
@@ -47,3 +47,12 @@ progress:
   retained_records:
     pty_c: r029/openpty
     renderer_c: r099, r100, r106-r113
+  final_narrowing:
+    generated_headers:
+      pty_c: pty.h only
+      renderer_c: xf86drm.h only
+    preserved:
+      - Translate-C and libc ownership
+      - renderer libdrm include and linkage ownership
+      - native_c, wayland_c, and xkb_c
+    validation: owning and workspace four-mode gates, generated symbol census, audit, protocol, Wayland reproducibility, formatting, and diff checks pass
