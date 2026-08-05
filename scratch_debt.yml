@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_cursor_replay
+  active_subcohort: renderer_physical_backend
 
 objective: >-
-  Resolve the fifteen Renderer cursor-replay syntax records into exact
-  overlay, retirement, slot, submission, completion, rollback, and proof
-  semantics without changing product code.
+  Resolve the twenty-two Renderer physical-backend syntax records into exact
+  slot, DRM, Vulkan, timeline, descriptor, cleanup, and proof semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -25,11 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_cursor_replay.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_physical_backend.yml
   product_change: forbidden
   population:
-    - records r00356 through r00370 from howl-host/src/renderer.zig
-    - Renderer replayCursorFrame physical cursor transaction
+    - records r00371 through r00392 from howl-host/src/renderer.zig
+    - Renderer slot, DRM, Vulkan, timeline, clock, and cleanup helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
@@ -42,13 +42,13 @@ active_scope:
     - accepted Renderer topology records r00291 through r00330
     - accepted Renderer lifecycle-shape helper records r00331 through r00339
     - accepted Renderer Chrome-redraw records r00340 through r00355
-    - Renderer records r00371 through r00392 until their owner subcohorts
+    - accepted Renderer cursor-replay records r00356 through r00370
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_cursor_replay_not_started
+  state: host_renderer_physical_backend_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -289,6 +289,18 @@ progress:
         rollback have exact source contracts. Adjacent helper tests do not
         inject these redrawChrome failure branches, so none is promoted to
         deterministic evidence.
+    renderer_cursor_replay:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_cursor_replay.yml
+      records: 15
+      production_runtime: 15
+      source_contract: 15
+      debt_candidates: 15
+      conclusion: >-
+        Cursor replay overlay, retirement, slot, submission, completion, and
+        rollback branches have exact source contracts but no direct owner-level
+        failure evidence. render and post-submit completion-preparation errors
+        are currently collapsed to blocked, erasing fatal and monotonic-effect
+        distinctions; this is mandatory finite product-correction debt.
   cohort_order:
     - host_process_root
     - host_window_boundary
