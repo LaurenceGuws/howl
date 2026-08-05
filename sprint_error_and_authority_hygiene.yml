@@ -43,7 +43,11 @@ slices:
   - id: error_owner_review
     status: active
     product_change: none
-    output: package-sized source review cohorts resolving every non-transparent site into exact owner semantics
+    output: >-
+      Complete mechanical identity coverage plus exact owner-group review of
+      discarded, translated, retried, substituted, panic, cleanup, partial-
+      mutation, and post-acceptance semantics. Unchanged transparent
+      propagation remains indexed without duplicated per-site prose.
   - id: source_audit_admission_review
     status: pending
     product_change: none
@@ -61,7 +65,7 @@ slices:
     output: only contract-approved error, admission, comment, or authority corrections
 
 acceptance:
-  - Every maintained production error disposition is classified with exact owner and behavior evidence.
+  - Every maintained semantic error disposition is classified with exact owner and behavior evidence; unchanged transparent propagation remains mechanically indexed.
   - Every source-audit admission is retained, narrowed, or removed with exact source proof.
   - Stale comments and authorities are corrected without donating new architecture.
   - Expected errors remain transactional and fatal errors remain observable at their owner boundary.

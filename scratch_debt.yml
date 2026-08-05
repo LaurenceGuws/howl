@@ -4,19 +4,21 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: howl_render
-  active_subcohort: chrome_native
+  active_cohort: remaining_semantic_danger
 
 objective: >-
-  Resolve the seventy-seven native Chrome syntax records into exact
-  initialization, allocation, shaping, resource, update, geometry, rollback,
-  cleanup, and proof semantics without changing product code.
+  Resolve the remaining semantic error dispositions without reproducing
+  source-contract prose for mechanically indexed transparent propagation.
 
 questions:
   - id: population
     status: answered
     question: Which exact maintained production symbols propagate, classify, retry, panic on, or deliberately discard errors?
-    answer: The accepted AST census records 2887 unique syntax identities; the active semantic cohort is howl-host only.
+    answer: >-
+      The accepted AST census records 2887 unique syntax identities. Records
+      r00001 through r01379 have completed owner review; the remaining census
+      stays mechanically complete while manual review narrows to semantic
+      disposition and owner-transaction boundaries.
   - id: silent_disposal
     status: open
     question: Which syntactic non-propagating sites lack an exact expected-error contract or accidentally hide fatal failure?
@@ -25,22 +27,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_chrome_native.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/remaining_semantic_danger_index.yml
   product_change: forbidden
   population:
-    - records r01303 through r01379 from howl-render/src/chrome_native.zig
-    - native Chrome initialization, apply/update, labels, decode, glyphs, resources, borders, output, and geometry
-    - exact source-local proof owners for those records
+    - records r01380 through r02887 remain in the complete syntax census
+    - catches that discard, translate, retry, substitute, continue, panic, or cross an accepted-state boundary
+    - direct panics and owner-grouped errdefer cleanup windows
+    - transparent try sites only when partial mutation, cleanup, post-acceptance effects, or error-set collapse makes propagation semantic
   excluded:
-    - accepted Host, PTY, Canvas, canvas_validation, and Chrome records r00001 through r01302
-    - other howl-render files until their file-owner cohorts
-    - non-Render package, root-build, and tool records
-    - non-Host package, root-build, and tool records
+    - accepted owner reviews r00001 through r01379
+    - per-site prose for unchanged transparent propagation
+    - package completion as an end in itself
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: howl_render_chrome_native_not_started
+  state: remaining_semantic_danger_index_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -351,7 +353,7 @@ progress:
     source_contract: 50
     accepted: 9
     debt_candidates: 50
-  howl_render_subcohort_order:
+  reviewed_howl_render_subcohort_order:
     - canvas_identity_init_source
     - canvas_candidate_composition
     - canvas_frame_validation
@@ -359,12 +361,6 @@ progress:
     - canvas_validation
     - chrome
     - chrome_native
-    - native_text
-    - terminal_canvas
-    - terminal_font_owner
-    - terminal_projection
-    - terminal_text
-    - build
   accepted_howl_render_subcohorts:
     canvas_identity_init_source:
       evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_identity_init_source.yml
@@ -443,6 +439,19 @@ progress:
         scroll, scrollbar, capacity, and arithmetic errors have exact
         syntax-site dispositions. Every inventoried project failure occurs
         before output writes, while hit testing is stateless and read-only.
+    chrome_native:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_chrome_native.yml
+      records: 77
+      production_runtime: 77
+      source_contract: 77
+      debt_candidates: 77
+      conclusion: >-
+        Native Chrome initialization, apply, update, shaping, glyph, resource,
+        geometry, and validation failures have syntax-specific ownership.
+        Initialization cleanup is resource- and failure-window-specific;
+        failed apply may overwrite only the inactive bank; failed takeUpdate
+        restores transaction facts while candidate bytes remain hidden rather
+        than restored.
   cohort_order:
     - host_process_root
     - host_window_boundary
