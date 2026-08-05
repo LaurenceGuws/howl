@@ -127,6 +127,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     error{ ArithmeticOverflow, Clock } ||
     font_owner.ResourceError || font_owner.BatchError ||
     handoff.CursorPublishError ||
+    handoff.CompletionPublishError ||
     handoff.PublishError || terminal_pool.ReserveError ||
     terminal_pool.TransitionError || terminal_pool.PublishError;
 /// Reports a fallible VT candidate or PTY kernel resize before VT commit.
@@ -414,6 +415,7 @@ const Logical = struct {
     consequence: ?vt.Terminal.Consequence = null,
     child_exit: ?pty.ChildExit = null,
     stream_closed: bool = false,
+    completion_published: bool = false,
     dirty: bool = true,
     last_published_revision: render.canvas.ProducerRevision = @fromBackingInt(0),
     last_published_geometry: ?terminal_render.Content.Geometry = null,
@@ -582,6 +584,7 @@ const Logical = struct {
             error.WriteQueueFull => {
                 result.published_update = try self.publishIfDirty(shared_fonts, work);
                 try self.observe();
+                try self.publishCompletionIfReady();
                 return result;
             },
             else => return failure,
@@ -591,6 +594,7 @@ const Logical = struct {
         if (!readable) {
             result.published_update = try self.publishIfDirty(shared_fonts, work);
             try self.observe();
+            try self.publishCompletionIfReady();
             return result;
         }
         var buffer: [read_bytes_per_turn / read_calls_per_turn]u8 = undefined;
@@ -631,7 +635,43 @@ const Logical = struct {
         }
         result.published_update = try self.publishIfDirty(shared_fonts, work);
         try self.observe();
+        try self.publishCompletionIfReady();
         return result;
+    }
+
+    fn publishCompletionIfReady(self: *Logical) handoff.CompletionPublishError!void {
+        if (self.completion_published or !self.stream_closed or self.dirty) return;
+        const child_exit = self.child_exit orelse return;
+        const pooled = switch (self.transfer) {
+            .pooled => |value| value,
+            .dedicated => return,
+        };
+        const termination = terminalTermination(child_exit);
+        pooled.boundary.publishCompletion(
+            self.pane,
+            pooled.member.source_id,
+            self.last_published_revision,
+            termination,
+        ) catch |failure| switch (failure) {
+            error.Stopping,
+            error.UnknownPane,
+            error.RetiredPane,
+            error.SourceStale,
+            error.DuplicateCompletion,
+            => {
+                self.completion_published = true;
+                return;
+            },
+            error.InvalidCompletion => return failure,
+        };
+        self.completion_published = true;
+    }
+
+    fn terminalTermination(child_exit: pty.ChildExit) handoff.TerminalTermination {
+        return switch (child_exit) {
+            .code => |code| .{ .code = code },
+            .signal => |signal_number| .{ .signal = signal_number },
+        };
     }
 
     fn routeMutation(self: *Logical, summary: vt.Terminal.FeedSummary) handoff.CursorPublishError!void {
@@ -5186,6 +5226,93 @@ test "one runtime thread publishes a real shell through the copied slot" {
     try std.testing.expect(!status.failed);
 }
 
+test "real child output crosses Pool and Composer before one completion" {
+    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 128,
+        .retained_commands = 4096,
+        .retained_pixel_bytes = 4 * 1024 * 1024,
+        .composition_sources = 2,
+        .candidate_resources = 128,
+        .candidate_commands = 4096,
+        .candidate_pixel_bytes = 4 * 1024 * 1024,
+    });
+    defer composer.deinit();
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
+    const source = try composer.registerSource();
+    const pixels = try testPixels(runtime.fonts, 8, 2);
+    try boundary.register(pane, source, pixels);
+    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
+    const member = try boundary.activateTransfer(pane);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "printf final",
+        pixels,
+        .{ .pooled = .{ .boundary = &boundary, .member = member } },
+    );
+    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
+    try boundary.publishVisibleSet(1, &.{visible});
+    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        (try boundary.drainReady(&composer)).accepted,
+    );
+    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
+    try boundary.claimVisibleSet(1);
+    try boundary.commitVisibleSet(1);
+    try boundary.markLive(pane);
+    var drained: usize = 0;
+    var completion: ?handoff.TerminalCompletion = null;
+    for (0..256) |_| {
+        const owner = &runtime.owners[runtime.find(pane).?].?;
+        var descriptor = std.posix.pollfd{
+            .fd = try owner.masterFd(),
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
+            .revents = 0,
+        };
+        const ready = try std.posix.poll((&descriptor)[0..1], 20);
+        try std.testing.expect(ready <= 1);
+        const turn = try owner.service(
+            &runtime.shared_fonts,
+            &runtime.work,
+            ready != 0,
+            false,
+        );
+        if (turn.published_update)
+            drained += (try boundary.drainReady(&composer)).accepted;
+        if (boundary.takeCompletion()) |value| completion = value;
+        if (drained != 0 and completion != null) break;
+    }
+    try std.testing.expect(drained >= 1);
+    try std.testing.expectEqual(pane, completion.?.pane);
+    try std.testing.expectEqual(source, completion.?.source);
+    try std.testing.expectEqual(
+        handoff.TerminalTermination{ .code = 0 },
+        completion.?.termination,
+    );
+    try std.testing.expectEqual(
+        completion.?.producer_revision,
+        try boundary.acceptedTransferRevision(pane, source),
+    );
+    const accepted_view = runtime.owners[runtime.find(pane).?].?.machine.semanticView(0);
+    for ("final", 0..) |scalar, column|
+        try std.testing.expectEqual(@as(u21, scalar), accepted_view.cellAt(0, @intCast(column)));
+    try std.testing.expectError(
+        error.DuplicateCompletion,
+        boundary.publishCompletion(
+            pane,
+            source,
+            completion.?.producer_revision,
+            .{ .signal = 15 },
+        ),
+    );
+}
+
 test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
@@ -5333,6 +5460,83 @@ test "reaped child final output remains drainable without a busy HUP loop" {
     const view = owner.machine.semanticView(0);
     try std.testing.expectEqual(@as(u21, 'f'), view.cellAt(0, 0));
     try std.testing.expectEqual(@as(u21, 'l'), view.cellAt(0, 4));
+}
+
+test "child exit conversion preserves normal and signal termination" {
+    try std.testing.expectEqual(
+        handoff.TerminalTermination{ .code = 7 },
+        Logical.terminalTermination(.{ .code = 7 }),
+    );
+    try std.testing.expectEqual(
+        handoff.TerminalTermination{ .signal = 15 },
+        Logical.terminalTermination(.{ .signal = 15 }),
+    );
+}
+
+test "logical observes signal termination only after PTY EOF" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var fonts = try render.terminal.FontMap.init(
+        std.testing.allocator,
+        &.{.{
+            .key = .{ .slot = 0, .style = .normal },
+            .native = .{ .primary = facts.font_path, .size = .{ .points = .{
+                .points = 12.0,
+                .dpi_x = .{ .numerator = 96, .denominator = 1 },
+                .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            } } },
+        }},
+    );
+    defer fonts.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(91);
+    var owner = try Logical.init(
+        std.testing.allocator,
+        pane,
+        "/bin/sh",
+        "kill -TERM $$",
+        try testPixels(&fonts, 8, 2),
+        &fonts,
+        null,
+        .{
+            .request_revision = 0,
+            .base_point_size = 16.0,
+            .offset_points = 0.0,
+            .scale = null,
+        },
+        .{ .dedicated = &slot },
+    );
+    defer owner.deinit();
+    var work = try render.terminal.Content.Work.init(
+        std.testing.allocator,
+        contentLimits(),
+    );
+    defer work.deinit();
+    var shared_fonts = try font_owner.Owner.init(std.testing.allocator);
+    defer shared_fonts.deinit();
+    for (0..256) |_| {
+        var descriptor = std.posix.pollfd{
+            .fd = try owner.masterFd(),
+            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
+            .revents = 0,
+        };
+        const ready = try std.posix.poll((&descriptor)[0..1], 10);
+        try std.testing.expect(ready <= 1);
+        const turn = try owner.service(&shared_fonts, &work, true, false);
+        try std.testing.expect(turn.read_calls <= read_calls_per_turn);
+        if (owner.stream_closed and owner.child_exit != null) break;
+    }
+    try std.testing.expect(owner.stream_closed);
+    try std.testing.expectEqual(
+        pty.ChildExit{ .signal = 15 },
+        owner.child_exit.?,
+    );
+    try std.testing.expectEqual(
+        handoff.TerminalTermination{ .signal = 15 },
+        Logical.terminalTermination(owner.child_exit.?),
+    );
 }
 
 test "typed lifecycle creates resizes retires and never reuses pane sources" {
@@ -6394,6 +6598,40 @@ test "undersized lifecycle candidate rejects before terminal owner mutation" {
     try std.testing.expectEqual(@as(u8, 0), runtime.count);
     try std.testing.expect(runtime.pending_lifecycle_font == null);
     try std.testing.expect(boundary.sourceFor(pane) == null);
+}
+
+test "close admission rejects only an identity absent from Runtime" {
+    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
+    defer {
+        retireTestSlot(&slot);
+        slot.deinit();
+    }
+    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    defer runtime.deinit();
+    const pane: render.chrome.PaneId = @fromBackingInt(911);
+    try runtime.add(
+        pane,
+        "/bin/sh",
+        "sleep 1",
+        try testPixels(runtime.fonts, 8, 2),
+        .{ .dedicated = &slot },
+    );
+    var request = handoff.RuntimeAdmissionCopy{
+        .revision = @fromBackingInt(21),
+        .operation_count = 1,
+        .input_count = 0,
+        .registration = null,
+    };
+    request.operations[0] = .{ .close = pane };
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        runtime.validateLifecycleAdmission(request).admitted.count,
+    );
+    request.operations[0] = .{ .close = @fromBackingInt(912) };
+    try std.testing.expectEqual(
+        handoff.AdmissionRejection.unknown_pane,
+        runtime.validateLifecycleAdmission(request).rejected,
+    );
 }
 
 test "undersized lifecycle resize rejects without mutating the live owner" {

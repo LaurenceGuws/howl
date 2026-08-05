@@ -194,6 +194,33 @@ pub const LifecycleRevision = enum(u64) {
     _,
 };
 
+/// Copies one exact child termination fact without retaining PTY ownership.
+pub const TerminalTermination = union(enum) {
+    /// Child exited normally with this status.
+    code: u8,
+    /// Child terminated from this signal number.
+    signal: u8,
+};
+
+/// Carries one terminal completion only after its final producer update exists.
+pub const TerminalCompletion = struct {
+    pane: PaneId,
+    source: canvas.SourceId,
+    lifecycle_revision: LifecycleRevision,
+    producer_revision: canvas.ProducerRevision,
+    termination: TerminalTermination,
+};
+
+/// Reports exact completion identity or at-most-once admission failure.
+pub const CompletionPublishError = error{
+    Stopping,
+    InvalidCompletion,
+    UnknownPane,
+    RetiredPane,
+    SourceStale,
+    DuplicateCompletion,
+};
+
 /// Copies one runtime-derived terminal grid for an exact pane.
 pub const DerivedGrid = struct {
     /// Identifies the pane whose pixel extent produced this grid.
@@ -654,6 +681,12 @@ const Entry = struct {
     state: EntryState = .registered,
 };
 
+const CompletionState = union(enum) {
+    empty,
+    pending: TerminalCompletion,
+    consumed,
+};
+
 const VisiblePhase = enum {
     requested,
     prepared,
@@ -774,6 +807,7 @@ pub const Boundary = struct {
     font_request: ?FontRequest = null,
     font_request_high_water: u64 = 0,
     cursor_slots: [owner_limit]CursorSlot = @splat(.{}),
+    completions: [owner_limit]CompletionState = @splat(.empty),
     cursor_lifecycle_high_water: u64 = 0,
 
     /// Creates directional nonblocking eventfds without allocating pane storage.
@@ -2679,6 +2713,108 @@ pub const Boundary = struct {
         return false;
     }
 
+    /// Retains one exact completion for a live pane and wakes Renderer.
+    ///
+    /// Lifecycle identity is captured under the same lock as pane/source
+    /// validation, so a retired or replacement owner cannot publish through a
+    /// stale producer-side handle.
+    pub fn publishCompletion(
+        self: *Boundary,
+        pane: PaneId,
+        source: canvas.SourceId,
+        producer_revision: canvas.ProducerRevision,
+        termination: TerminalTermination,
+    ) CompletionPublishError!void {
+        if (@backingInt(pane) == 0 or @backingInt(source) == 0 or
+            @backingInt(producer_revision) == 0)
+            return error.InvalidCompletion;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.stopping) return error.Stopping;
+        const index = self.find(pane) orelse return error.UnknownPane;
+        const entry = self.entries[index].?;
+        if (entry.source != source) return error.SourceStale;
+        if (entry.state != .live) return error.RetiredPane;
+        const slot = self.cursor_slots[index];
+        if (!slot.live or slot.pane != pane or slot.source != source)
+            return error.SourceStale;
+        if (self.completions[index] != .empty) return error.DuplicateCompletion;
+        self.completions[index] = .{ .pending = .{
+            .pane = pane,
+            .source = source,
+            .lifecycle_revision = slot.lifecycle_revision,
+            .producer_revision = producer_revision,
+            .termination = termination,
+        } };
+        signal(self.renderer_fd);
+    }
+
+    /// Takes one completion only after Composer accepted its final update.
+    pub fn takeCompletion(self: *Boundary) ?TerminalCompletion {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (&self.completions, 0..) |*completion_state, index| {
+            const completion = switch (completion_state.*) {
+                .pending => |value| value,
+                .empty, .consumed => continue,
+            };
+            const entry = self.entries[index] orelse {
+                completion_state.* = .empty;
+                continue;
+            };
+            if (entry.pane != completion.pane or
+                entry.source != completion.source or
+                entry.state != .live or
+                self.cursor_slots[index].lifecycle_revision != completion.lifecycle_revision)
+            {
+                completion_state.* = .empty;
+                continue;
+            }
+            if (@backingInt(entry.accepted_revision) <
+                @backingInt(completion.producer_revision))
+                continue;
+            completion_state.* = .consumed;
+            return completion;
+        }
+        return null;
+    }
+
+    /// Reports whether one exact completion has crossed its Composer high-water.
+    pub fn hasReadyCompletion(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (self.completions, 0..) |completion_state, index| {
+            const completion = switch (completion_state) {
+                .pending => |value| value,
+                .empty, .consumed => continue,
+            };
+            const entry = self.entries[index] orelse continue;
+            if (entry.pane == completion.pane and
+                entry.source == completion.source and
+                entry.state == .live and
+                self.cursor_slots[index].lifecycle_revision == completion.lifecycle_revision and
+                @backingInt(entry.accepted_revision) >=
+                    @backingInt(completion.producer_revision))
+                return true;
+        }
+        return false;
+    }
+
+    /// Proves a retained Renderer completion still names the same live owner.
+    pub fn completionIsCurrent(
+        self: *Boundary,
+        completion: TerminalCompletion,
+    ) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const index = self.find(completion.pane) orelse return false;
+        const entry = self.entries[index].?;
+        const slot = self.cursor_slots[index];
+        return entry.source == completion.source and entry.state == .live and
+            slot.live and slot.source == completion.source and
+            slot.lifecycle_revision == completion.lifecycle_revision;
+    }
+
     /// Cancels one still-pending cursor revision without touching its high-water.
     pub fn cancelCursor(
         self: *Boundary,
@@ -2701,6 +2837,7 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return error.UnknownPane;
         if (self.entries[index].?.state != .closing) return error.UnknownPane;
         self.entries[index].?.state = .retired;
+        self.completions[index] = .empty;
         self.cursor_slots[index].live = false;
         self.cursor_slots[index].pending = false;
         self.cursor_slots[index].accepted_binding = null;
@@ -2736,6 +2873,7 @@ pub const Boundary = struct {
             entry.source,
         );
         self.entries[index] = null;
+        self.completions[index] = .empty;
         self.descriptor_issued[index] = false;
         signal(self.renderer_fd);
     }
@@ -3311,6 +3449,76 @@ test "cursor inbox rejects source and stale revisions without changing pending b
     const copied = boundary.takeCursor(pane).?;
     try std.testing.expectEqual(@as(u64, 8), copied.cursor_revision);
     try std.testing.expectEqual(@as(u64, 8), copied.terminal_sequence);
+}
+
+test "terminal completion waits for accepted trailing revision and rejects stale ownership" {
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(CompletionState));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(CompletionState));
+    try std.testing.expectEqual(@as(usize, 3_072), @sizeOf([owner_limit]CompletionState));
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(71);
+    const source: canvas.SourceId = @fromBackingInt(72);
+    const revision: canvas.ProducerRevision = @fromBackingInt(9);
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 8, .height = 8 } } },
+        boundary.takeLifecycle().?,
+    );
+    try boundary.markLive(pane);
+
+    try boundary.publishCompletion(pane, source, revision, .{ .code = 23 });
+    try std.testing.expect(!boundary.hasReadyCompletion());
+    try std.testing.expect(boundary.takeCompletion() == null);
+    try std.testing.expectError(
+        error.DuplicateCompletion,
+        boundary.publishCompletion(pane, source, revision, .{ .signal = 9 }),
+    );
+    try std.testing.expectError(
+        error.SourceStale,
+        boundary.publishCompletion(
+            pane,
+            @fromBackingInt(73),
+            revision,
+            .{ .code = 0 },
+        ),
+    );
+    try std.testing.expectError(
+        error.DuplicateCompletion,
+        boundary.publishCompletion(pane, source, revision, .{ .signal = 15 }),
+    );
+    try std.testing.expect(boundary.takeCompletion() == null);
+}
+
+test "retirement discards completion and rejects retired publication" {
+    var boundary = try Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        testLimits(1, 1, 4),
+    );
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(81);
+    const source: canvas.SourceId = @fromBackingInt(82);
+    const revision: canvas.ProducerRevision = @fromBackingInt(1);
+    try boundary.register(pane, source, .{ .width = 8, .height = 8 });
+    try std.testing.expectEqual(
+        Lifecycle{ .create = .{ .pane = pane, .pixels = .{ .width = 8, .height = 8 } } },
+        boundary.takeLifecycle().?,
+    );
+    try boundary.markLive(pane);
+    try boundary.publishCompletion(pane, source, revision, .{ .code = 0 });
+    try boundary.close(pane);
+    try std.testing.expectEqual(Lifecycle{ .close = pane }, boundary.takeLifecycle().?);
+    try boundary.markRetired(pane);
+    try std.testing.expect(boundary.takeCompletion() == null);
+    try std.testing.expectError(
+        error.RetiredPane,
+        boundary.publishCompletion(pane, source, revision, .{ .code = 0 }),
+    );
 }
 
 test "cursor cancellation and shutdown preserve high-water without pending ownership" {

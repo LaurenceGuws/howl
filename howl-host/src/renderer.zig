@@ -2439,6 +2439,7 @@ fn runFallible(
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
     var deferred_topology_input: ?DeferredTopologyInput = null;
+    var terminal_completion: ?terminal_handoff.TerminalCompletion = null;
     var retained_configure: ?window_render_boundary.SurfaceConfig = null;
     var configure_work_pending = false;
     var pending_topology: ?PendingTopology =
@@ -2510,7 +2511,8 @@ fn runFallible(
             );
             applyConfigureDisposition(&retained_configure, configure_disposition);
         }
-        if (terminal_topology_committed and deferred_topology_input == null)
+        if (terminal_topology_committed and deferred_topology_input == null and
+            terminal_completion == null)
             try drainInput(
                 boundary,
                 &actions,
@@ -2568,14 +2570,59 @@ fn runFallible(
                 error.TerminalRuntime
             else
                 error.TerminalStopped;
+        if (terminal_completion == null and !terminal_redraw_pending and
+            pending_topology == null and terminal_topology_committed)
+            terminal_completion = terminals.takeCompletion();
+        if (terminal_completion) |completion| {
+            if (pending_topology == null) {
+                switch (try terminalCompletionTransition(
+                    &chrome,
+                    completion,
+                    terminals.completionIsCurrent(completion),
+                )) {
+                    .stale => {
+                        terminal_completion = null;
+                        continue;
+                    },
+                    .final => return,
+                    .candidate => |candidate| switch (try attemptTopologyReplacement(
+                        &canvas_work,
+                        &chrome,
+                        candidate.state,
+                        &pending_topology,
+                        null,
+                    )) {
+                        .accepted => {},
+                        .retry => try applyTerminalCompletionDisposition(
+                            &terminal_completion,
+                            .retry,
+                        ),
+                        .rejected => try applyTerminalCompletionDisposition(
+                            &terminal_completion,
+                            .rejected,
+                        ),
+                    },
+                }
+            }
+        }
         if (pending_topology) |*pending| {
             if (pending.phase == .awaiting_admission) {
                 if (pending.observeAdmission()) |_| {
+                    if (terminal_completion != null)
+                        try applyTerminalCompletionDisposition(
+                            &terminal_completion,
+                            .rejected,
+                        );
                     pending.deinit();
                     pending_topology = null;
                 }
             }
             if (pending_topology) |*admitted| {
+                if (admitted.phase == .admitted and terminal_completion != null)
+                    try applyTerminalCompletionDisposition(
+                        &terminal_completion,
+                        .admitted,
+                    );
                 if (admitted.phase == .admitted and admitted.surface != null) {
                     const surface = admitted.surface.?;
                     const admitted_surface_extent = renderExtent(surface);
@@ -2725,8 +2772,7 @@ fn runFallible(
                     replay.restoreCandidateBase(resized_plan);
                     var prepared_completions = try boundary.prepareCompletions(&completion_batch);
                     defer prepared_completions.deinit();
-                    try admitted.commit();
-                    chrome = admitted.candidate.state;
+                    try commitPendingTopology(&chrome, admitted);
                     canvas_work.surface = renderExtent(surface);
                     canvas_work.content_origin = try session_chrome_adapter.contentOrigin(
                         canvas_work.surface,
@@ -2799,6 +2845,10 @@ fn runFallible(
                         },
                         .published => {
                             pending_topology = null;
+                            try applyTerminalCompletionDisposition(
+                                &terminal_completion,
+                                .published,
+                            );
                             if (cursor_replay_pending) |publication|
                                 canvas_work.last_cursor_publication = publication;
                             canvas_work.trail_frame_pending = false;
@@ -2918,6 +2968,8 @@ fn runFallible(
                 },
                 .published => {
                     terminal_redraw_pending = false;
+                    if (terminals.hasReadyCompletion())
+                        local_redraw_retry_pending = true;
                     if (cursor_replay_pending) |publication|
                         canvas_work.last_cursor_publication = publication;
                     if (trail_candidate_carried) {
@@ -2963,6 +3015,59 @@ fn contentExtent(surface: render_api.canvas.Size, origin: session_chrome_adapter
     std.debug.assert(surface.width != 0 and surface.height != 0);
     std.debug.assert(origin.y < surface.height);
     return .{ .width = surface.width, .height = surface.height - origin.y };
+}
+
+fn sessionPaneCount(state: *const session.SessionState) usize {
+    var count: usize = 0;
+    for (0..state.tabCount()) |tab_index| count += state.paneCount(tab_index);
+    return count;
+}
+
+const TerminalCompletionTransition = union(enum) {
+    stale,
+    final,
+    candidate: session.SessionCandidate,
+};
+
+const TerminalCompletionDisposition = enum {
+    retry,
+    admitted,
+    rejected,
+    published,
+};
+
+fn applyTerminalCompletionDisposition(
+    retained: *?terminal_handoff.TerminalCompletion,
+    disposition: TerminalCompletionDisposition,
+) !void {
+    switch (disposition) {
+        .retry, .admitted => {},
+        .rejected => if (retained.* != null) return error.InvalidTopology,
+        .published => retained.* = null,
+    }
+}
+
+fn commitPendingTopology(
+    accepted: *session.SessionState,
+    pending: *PendingTopology,
+) !void {
+    try pending.commit();
+    accepted.* = pending.candidate.state;
+}
+
+fn terminalCompletionTransition(
+    accepted: *const session.SessionState,
+    completion: terminal_handoff.TerminalCompletion,
+    identity_current: bool,
+) !TerminalCompletionTransition {
+    if (!identity_current) return .stale;
+    const pane = session_chrome_adapter.fromRenderPaneId(completion.pane) catch
+        return .stale;
+    if (accepted.paneRect(pane) == null) return .stale;
+    if (sessionPaneCount(accepted) == 1) return .final;
+    var candidate = accepted.*;
+    try candidate.closePane(pane);
+    return .{ .candidate = .{ .state = candidate } };
 }
 
 fn retainTerminalScale(
@@ -8543,8 +8648,7 @@ fn redrawChrome(
     var prepared_completion = try boundary.prepareCompletions(&.{completion});
     defer prepared_completion.deinit();
     if (pending) |value| {
-        try value.commit();
-        topology.* = candidate;
+        try commitPendingTopology(topology, value);
         if (bootstrap_publication) |*publication|
             publication.commit(canvas_work);
     }
@@ -9480,4 +9584,152 @@ test "renderer statx and device extraction receipts" {
     try std.testing.expectEqual(@as(u32, 0xffff_ffff), directMajor(std.math.maxInt(u64)).?);
     try std.testing.expectEqual(@as(u32, 0xffff_ffff), directMinor(std.math.maxInt(u64)).?);
     try std.testing.expectEqual(@as(u32, 0xffffff00), directMinor(0x00000ffffff00000).?);
+}
+
+test "terminal completion closes a non-final pane and completes only the final pane" {
+    var accepted = try session.SessionState.init(.{ .width = 320, .height = 200 });
+    const first = accepted.focusedPaneId();
+    const second = try accepted.split(first, .vertical);
+    const completion = terminal_handoff.TerminalCompletion{
+        .pane = try session_chrome_adapter.toRenderPaneId(second),
+        .source = @fromBackingInt(17),
+        .lifecycle_revision = @fromBackingInt(3),
+        .producer_revision = @fromBackingInt(5),
+        .termination = .{ .code = 0 },
+    };
+    const before = accepted;
+    const transition = try terminalCompletionTransition(&accepted, completion, true);
+    try std.testing.expectEqual(@as(usize, 2), sessionPaneCount(&accepted));
+    try std.testing.expect(std.meta.eql(before, accepted));
+    try std.testing.expect(transition == .candidate);
+    try std.testing.expectEqual(@as(usize, 1), sessionPaneCount(&transition.candidate.state));
+    try std.testing.expect(transition.candidate.state.paneRect(second) == null);
+    try std.testing.expect(transition.candidate.state.paneRect(first) != null);
+
+    var terminals = try terminal_handoff.Boundary.init(
+        std.testing.io,
+        std.testing.allocator,
+        .{
+            .commands = 32,
+            .upload_bytes = 4096,
+            .cells = 32,
+            .rows = 4,
+            .images = 1,
+            .placements = 2,
+            .image_bytes = 4096,
+            .glyphs = 8,
+            .masks = 2,
+            .resources_per_update = 8,
+            .raster_bytes = 4096,
+            .decoration_bytes = 1024,
+        },
+    );
+    defer terminals.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 4,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 4,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    for ([_]session.PaneId{ first, second }) |semantic_pane| {
+        const render_pane = try session_chrome_adapter.toRenderPaneId(semantic_pane);
+        const source = try composer.registerSource();
+        try terminals.register(
+            render_pane,
+            source,
+            try panePixelsLocal(accepted.paneRect(semantic_pane).?),
+        );
+        try std.testing.expect(terminals.takeLifecycle() != null);
+        try terminals.markLive(render_pane);
+    }
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &terminals;
+    var pending: ?PendingTopology = null;
+    defer if (pending) |*value| value.deinit();
+    try std.testing.expectEqual(
+        TopologyReplacementDisposition.accepted,
+        try attemptTopologyReplacement(
+            &work,
+            &accepted,
+            transition.candidate.state,
+            &pending,
+            null,
+        ),
+    );
+    const admission = terminals.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(@as(u8, 2), admission.operation_count);
+    var close_count: usize = 0;
+    var resize_pane: render_api.chrome.PaneId = undefined;
+    for (admission.operations[0..admission.operation_count]) |operation| switch (operation) {
+        .close => |pane| {
+            try std.testing.expectEqual(completion.pane, pane);
+            close_count += 1;
+        },
+        .resize => |resize| resize_pane = resize.pane,
+        .create => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(usize, 1), close_count);
+    try terminals.completeLifecycleAdmission(
+        admission.revision,
+        .{ .admitted = .{
+            .grids = blk: {
+                var grids: [128]terminal_handoff.DerivedGrid = undefined;
+                grids[0] = .{ .pane = resize_pane, .rows = 1, .columns = 1 };
+                break :blk grids;
+            },
+            .count = 1,
+        } },
+    );
+    try std.testing.expect(pending.?.observeAdmission() == null);
+    try std.testing.expectEqual(PendingTopologyPhase.admitted, pending.?.phase);
+    try std.testing.expect(std.meta.eql(before, accepted));
+    var retained: ?terminal_handoff.TerminalCompletion = completion;
+    try applyTerminalCompletionDisposition(&retained, .retry);
+    try std.testing.expectEqual(completion, retained.?);
+    try applyTerminalCompletionDisposition(&retained, .admitted);
+    try std.testing.expectEqual(completion, retained.?);
+    try std.testing.expect(std.meta.eql(before, accepted));
+    try commitPendingTopology(&accepted, &pending.?);
+    try std.testing.expect(std.meta.eql(
+        transition.candidate.state,
+        accepted,
+    ));
+    try applyTerminalCompletionDisposition(&retained, .published);
+    try std.testing.expect(retained == null);
+    var rejected: ?terminal_handoff.TerminalCompletion = completion;
+    try std.testing.expectError(
+        error.InvalidTopology,
+        applyTerminalCompletionDisposition(&rejected, .rejected),
+    );
+    try std.testing.expectEqual(completion, rejected.?);
+
+    try std.testing.expect((try terminalCompletionTransition(
+        &transition.candidate.state,
+        .{
+            .pane = try session_chrome_adapter.toRenderPaneId(first),
+            .source = @fromBackingInt(18),
+            .lifecycle_revision = @fromBackingInt(4),
+            .producer_revision = @fromBackingInt(6),
+            .termination = .{ .signal = 15 },
+        },
+        true,
+    )) == .final);
+    try std.testing.expect((try terminalCompletionTransition(
+        &accepted,
+        completion,
+        false,
+    )) == .stale);
+    var wrong = completion;
+    wrong.pane = @fromBackingInt(999);
+    try std.testing.expect((try terminalCompletionTransition(
+        &accepted,
+        wrong,
+        true,
+    )) == .stale);
 }

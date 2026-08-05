@@ -1,7 +1,7 @@
 schema: 1
 sprint: measurement_baseline
 active_slice: child_exit_lifecycle
-status: implementation_not_started
+status: review_accepted_pending_operator_gate
 
 operator_observation:
   command: >-
@@ -22,6 +22,21 @@ worker_flow:
   - write the ignored finite completion contract before product mutation
   - continue directly to implementation when no authority contradiction remains
   - stop only for a genuine unresolved ownership decision
+
+implementation:
+  outcome: >-
+    Terminal publishes one EOF- and final-update-gated completion, Boundary
+    retains exact at-most-once identity through Composer acceptance and owner
+    retirement, and Renderer closes non-final panes transactionally or returns
+    normally for the final pane.
+  product_paths:
+    - howl-host/src/terminal.zig
+    - howl-host/src/terminal_handoff.zig
+    - howl-host/src/renderer.zig
+  retained_memory_bytes: 3072
+  finite_contract: .zig/work/runtime-hot-path/measurement-baseline/finite_child_exit_completion_contract.yml
+  finite_contract_sha256: 90d28bbd92143db653bc480ba789a5a78bb9af998a5c1a708146cf280746a982
+  review: accepted_pending_operator_gate
 
 review_gate:
   - completion cannot overtake trailing PTY output
