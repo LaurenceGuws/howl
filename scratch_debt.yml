@@ -7,8 +7,8 @@ sprint:
   active_cohort: remaining_semantic_danger
 
 objective: >-
-  Resolve the remaining semantic error dispositions without reproducing
-  source-contract prose for mechanically indexed transparent propagation.
+  Classify the remaining 162 non-return catches and 44 direct panics by exact
+  owner disposition without reproducing per-record source-contract prose.
 
 questions:
   - id: population
@@ -27,22 +27,24 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/remaining_semantic_danger_index.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/nonreturn_disposition_groups.yml
   product_change: forbidden
   population:
-    - records r01380 through r02887 remain in the complete syntax census
-    - catches that discard, translate, retry, substitute, continue, panic, or cross an accepted-state boundary
-    - direct panics and owner-grouped errdefer cleanup windows
-    - transparent try sites only when partial mutation, cleanup, post-acceptance effects, or error-set collapse makes propagation semantic
+    - 162 non-return catches from records r01380 through r02887
+    - 44 direct panics from records r01380 through r02887
+    - exact grouping by path and owning declaration
   excluded:
     - accepted owner reviews r00001 through r01379
-    - per-site prose for unchanged transparent propagation
+    - 859 unchanged transparent try records
+    - 319 catch-return records
+    - 124 errdefer records
+    - per-record ownership prose
     - package completion as an end in itself
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: remaining_semantic_danger_index_not_started
+  state: nonreturn_disposition_groups_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -50,6 +52,20 @@ progress:
     errdefer: 224
     transparent_try: 1711
     direct_panic: 69
+  accepted_remaining_mechanical_index:
+    evidence: .zig/work/debt-payoff/error-and-authority-hygiene/remaining_semantic_danger_index.yml
+    records: 1508
+    paths: 20
+    owners: 422
+    transparent_try: 859
+    catch_return: 319
+    nonreturn_catch: 162
+    errdefer: 124
+    direct_panic: 44
+    conclusion: >-
+      Exact identity and syntax closure is retained without semantic claims or
+      duplicated ownership prose. Manual review proceeds only through bounded
+      disposition groups.
   accepted_cohorts:
     host_process_root:
       evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_process_root.yml
