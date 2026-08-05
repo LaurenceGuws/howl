@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_terminal
-  active_subcohort: terminal_runtime
+  active_subcohort: terminal_logical_and_poll
 
 objective: >-
-  Resolve the two hundred and forty-seven terminal runtime syntax records into
-  exact owner, mutation, cleanup, and proof semantics without changing product
-  code.
+  Resolve the eighty-four Logical, transfer, queue, and poll-owner syntax
+  records into exact owner, mutation, cleanup, and proof semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -25,19 +25,21 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_runtime.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_logical_and_poll.yml
   product_change: forbidden
   population:
-    - accepted syntax records from howl-host/src/terminal.zig
+    - records r00444 through r00527 from howl-host/src/terminal.zig
+    - PooledTransfer, PoolReservation, WriteQueue, Logical, and poll-owner symbols
     - exact source-local proof owners for those records
   excluded:
+    - records r00528 through r00690 until their Runtime and proof-helper subcohorts
     - terminal_handoff.zig and terminal_pool.zig until their file-owned subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_runtime_not_started
+  state: host_terminal_logical_and_poll_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -85,7 +87,9 @@ progress:
         fully indexed; six dispositions have exact executable evidence and the
         focused-pane invariant panic remains explicitly unproved.
   host_terminal_subcohort_order:
+    - terminal_logical_and_poll
     - terminal_runtime
+    - terminal_proof_helpers
     - terminal_handoff
     - terminal_pool
   cohort_order:
