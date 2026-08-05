@@ -2,14 +2,15 @@ schema: 1
 sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
-  status: acceptance_audit
-  active_slice: sprint_acceptance
-  active_cohort: clean_head_validation
-  active_subcohort: complete_range
+  status: active
+  active_slice: source_audit_admission_review
+  active_cohort: maintained_allow_list
+  active_subcohort: exact_site_census
 
 objective: >-
-  Verify the complete error-and-authority hygiene range from a clean pushed
-  feature HEAD before sprint closure and integration.
+  Match every tools/source_audit.allow admission to one current source
+  construct, owner, and exact surviving justification before any admission is
+  retained, narrowed, or removed.
 
 questions:
   - id: population
@@ -34,18 +35,18 @@ questions:
 
 active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
-  product_change: forbidden_during_acceptance
+  product_change: evidence_only
   population:
-    - all accepted sprint commits and tracked authority
-    - all package and workspace check/test gates in four optimization modes
-    - audit, protocol, YAML, formatting, range diff, and remote accounting
+    - tools/source_audit.allow
+    - every maintained source construct admitted by that allow list
+    - exact owner, sensitive syntax, and surviving justification
   excluded:
-    - new product corrections or evidence expansion
-    - unrelated authority or version changes
-    - merge, branch deletion, and disposable-evidence cleanup until acceptance
+    - product, comment, and source changes during evidence census
+    - comment_and_authority_review until the allow-list slice is accepted
+    - Git operations by the worker
 
 progress:
-  state: accepted_corrections_complete_clean_head_audit_pending
+  state: accepted_corrections_complete_source_audit_review_not_started
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]

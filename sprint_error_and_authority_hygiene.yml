@@ -49,7 +49,7 @@ slices:
       mutation, and post-acceptance semantics. Unchanged transparent
       propagation remains indexed without duplicated per-site prose.
   - id: source_audit_admission_review
-    status: pending
+    status: active
     product_change: none
     output: every allow-list admission matched to one current construct, owner, and justification
   - id: comment_and_authority_review
@@ -61,8 +61,14 @@ slices:
     product_change: none
     output: accepted no-change findings plus bounded correction groups for proven debt
   - id: accepted_corrections
-    status: active
+    status: accepted
     output: only contract-approved error, admission, comment, or authority corrections
+    accepted_facts:
+      - ReplayState partial allocation failure unwinds every acquired cohort resource in reverse order.
+      - Consumed configure replacement survives retryable lifecycle pressure without duplicate font publication.
+      - Cursor replay distinguishes rejectable overlay facts from fatal accepted-base, capacity, backend, and post-submit failures.
+      - Visible cursor binding refresh rejects accepted composition identity mismatch before mutation.
+      - Physical deadline addition and narrowing map overflow to error.Clock without changing representable values.
 
 acceptance:
   - Every maintained semantic error disposition is classified with exact owner and behavior evidence; unchanged transparent propagation remains mechanically indexed.
