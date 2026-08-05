@@ -5,11 +5,11 @@ sprint:
   status: active
   active_slice: accepted_corrections
   active_cohort: runtime_corrections
-  active_subcohort: visible_cursor_binding_invariant
+  active_subcohort: physical_deadline_narrowing
 
 objective: >-
-  Keep accepted-composition identity mismatch observable and prevent partial
-  cursor-binding refresh from becoming accepted.
+  Check physical monotonic-deadline narrowing and map overflow to the exact
+  clock/deadline error without changing ordinary deadline bytes.
 
 questions:
   - id: population
@@ -36,17 +36,16 @@ active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-render/src/canvas.zig refreshVisibleCursorBindings
-    - accepted composition source identity and cursor frame revision
-    - apply, applyCandidate, and setComposition transactional behavior
+    - howl-host/src/renderer.zig deadline
+    - checked monotonic nanosecond addition and i64 narrowing
+    - exact physical clock/deadline error ownership
   excluded:
-    - physical deadline correction until its ordered slice
-    - Host, VT, Window, Vulkan, and rendering behavior beyond Composer binding refresh
+    - further Host, VT, Window, Vulkan, or rendering behavior
     - source-audit, comment, and unrelated authority corrections
     - Git operations
 
 progress:
-  state: visible_cursor_binding_invariant_not_started
+  state: physical_deadline_narrowing_not_started
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]
@@ -71,6 +70,13 @@ progress:
         for externally satisfiable ownership, propagates backend and
         post-submit failures, and performs one write-free-preflight base copy
         with exact rejection and acceptance ownership proofs.
+    visible_cursor_binding_invariant:
+      paths: [howl-render/src/canvas.zig]
+      conclusion: >-
+        Composer now validates every accepted visible source identity before
+        apply, applyCandidate, or setComposition mutation; mismatch remains an
+        observable error, refresh is infallible only after that preflight, and
+        rejection preserves sources, bindings, composition, and frame revision.
   accepted_syntax_inventory:
     files: 62
     records: 2887

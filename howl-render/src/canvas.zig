@@ -834,6 +834,7 @@ pub const Composer = struct {
         source: SourceId,
         update: ProducerUpdate,
     ) Composer.Error!void {
+        try self.validateVisibleCursorBindingSources();
         if (updateContainsShared(update)) return error.InvalidIdentity;
         if (update.cursor_binding) |binding| {
             if (binding.source != source) return error.InvalidIdentity;
@@ -898,6 +899,7 @@ pub const Composer = struct {
         self: *Composer,
         candidate: Candidate,
     ) Composer.Error!void {
+        try self.validateVisibleCursorBindingSources();
         if (candidate.changes.len > candidate_source_limit)
             return error.SourceLimit;
         if (candidate.hidden_source_clears.len > hidden_source_clear_limit)
@@ -1095,6 +1097,7 @@ pub const Composer = struct {
         self: *Composer,
         value: Composition,
     ) Composer.Error!void {
+        try self.validateVisibleCursorBindingSources();
         if (value.surface.width == 0 or value.surface.height == 0)
             return error.InvalidGeometry;
         if (value.sources.len > self.composition.len)
@@ -1259,9 +1262,17 @@ pub const Composer = struct {
             return error.InvalidSource;
     }
 
+    fn validateVisibleCursorBindingSources(self: *const Composer) Composer.Error!void {
+        for (self.composition[0..self.composition_count]) |placement| {
+            const index = try self.sourceIndex(placement.source);
+            if (self.sources[index].id != placement.source)
+                return error.InvalidSource;
+        }
+    }
+
     fn refreshVisibleCursorBindings(self: *Composer) void {
         for (self.composition[0..self.composition_count]) |placement| {
-            const index = self.sourceIndex(placement.source) catch continue;
+            const index = self.sourceIndex(placement.source) catch unreachable;
             if (self.sources[index].cursor_binding) |*binding|
                 binding.frame_revision = self.frame_revision;
         }
@@ -3730,6 +3741,166 @@ fn expectComposerRetained(
     composer: *const Composer,
 ) !void {
     try std.testing.expectEqualDeep(expected, composerRetainedSnapshot(composer));
+}
+
+test "visible cursor binding identity failure is observable and transactional" {
+    var composer = try Composer.init(std.testing.allocator, .{
+        .sources = 2,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 2,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const first = try composer.registerSource();
+    const second = try composer.registerSource();
+    const binding = CursorBinding{
+        .pane = 1,
+        .source = first,
+        .terminal_sequence = 1,
+        .cursor_revision = 1,
+        .visible_set_revision = 1,
+        .lifecycle_revision = 1,
+        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        .visible = true,
+    };
+    var second_binding = binding;
+    second_binding.pane = 2;
+    second_binding.source = second;
+    try composer.apply(first, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .cursor_binding = binding,
+    });
+    try composer.apply(second, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .cursor_binding = second_binding,
+    });
+    const placements = [_]Composer.Placement{
+        .{
+            .source = first,
+            .origin = .{ .x = 0, .y = 0 },
+            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
+        },
+        .{
+            .source = second,
+            .origin = .{ .x = 1, .y = 0 },
+            .clip = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
+        },
+    };
+    try composer.setComposition(.{
+        .surface = .{ .width = 2, .height = 1 },
+        .sources = &placements,
+    });
+
+    composer.sources[0].cursor_binding.?.frame_revision = 77;
+    composer.composition[1].source = @fromBackingInt(99);
+    const before_sources = [_]Composer.Source{ composer.sources[0], composer.sources[1] };
+    const before_composition = [_]Composer.Placement{
+        composer.composition[0],
+        composer.composition[1],
+    };
+    const before_frame_revision = composer.frame_revision;
+    var next_binding = binding;
+    next_binding.cursor_revision = 2;
+    try std.testing.expectError(error.InvalidSource, composer.apply(first, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .cursor_binding = next_binding,
+    }));
+    try std.testing.expectEqualDeep(before_sources, composer.sources[0..2].*);
+    try std.testing.expectEqualDeep(before_composition, composer.composition[0..2].*);
+    try std.testing.expectEqual(before_frame_revision, composer.frame_revision);
+
+    try std.testing.expectError(error.InvalidSource, composer.applyCandidate(.{
+        .changes = &.{.{ .source = first, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+            .cursor_binding = next_binding,
+        } }},
+        .composition = .{
+            .surface = .{ .width = 2, .height = 1 },
+            .sources = &placements,
+        },
+    }));
+    try std.testing.expectEqualDeep(before_sources, composer.sources[0..2].*);
+    try std.testing.expectEqualDeep(before_composition, composer.composition[0..2].*);
+    try std.testing.expectEqual(before_frame_revision, composer.frame_revision);
+
+    try std.testing.expectError(error.InvalidSource, composer.setComposition(.{
+        .surface = .{ .width = 2, .height = 1 },
+        .sources = &placements,
+    }));
+    try std.testing.expectEqualDeep(before_sources, composer.sources[0..2].*);
+    try std.testing.expectEqualDeep(before_composition, composer.composition[0..2].*);
+    try std.testing.expectEqual(before_frame_revision, composer.frame_revision);
+
+    composer.composition[1] = placements[1];
+    try composer.apply(first, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .removals = &.{},
+        .commands = &.{},
+        .cursor_binding = next_binding,
+    });
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[0].cursor_binding.?.frame_revision,
+    );
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[1].cursor_binding.?.frame_revision,
+    );
+
+    second_binding.cursor_revision = 2;
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = second, .update = .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{},
+            .removals = &.{},
+            .commands = &.{},
+            .cursor_binding = second_binding,
+        } }},
+        .composition = .{
+            .surface = .{ .width = 2, .height = 1 },
+            .sources = &placements,
+        },
+    });
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[0].cursor_binding.?.frame_revision,
+    );
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[1].cursor_binding.?.frame_revision,
+    );
+
+    const reversed = [_]Composer.Placement{ placements[1], placements[0] };
+    try composer.setComposition(.{
+        .surface = .{ .width = 2, .height = 1 },
+        .sources = &reversed,
+    });
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[0].cursor_binding.?.frame_revision,
+    );
+    try std.testing.expectEqual(
+        composer.frame_revision,
+        composer.sources[1].cursor_binding.?.frame_revision,
+    );
 }
 
 test "composer rejects shared producer facts without retained mutation" {
