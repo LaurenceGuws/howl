@@ -4,13 +4,13 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: host_terminal
-  active_subcohort: terminal_pool
+  active_cohort: host_renderer
+  active_subcohort: renderer_trail_replay_state
 
 objective: >-
-  Resolve the sixty-three terminal Pool syntax records into exact cross-thread
-  block, descriptor, transition, cleanup, wake, and proof semantics without
-  changing product code.
+  Resolve the twenty-six Renderer trail, replay, and retained-state syntax
+  records into exact candidate, rollback, retirement, and proof semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -25,21 +25,21 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_pool.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_trail_replay_state.yml
   product_change: forbidden
   population:
-    - records r00774 through r00836 from howl-host/src/terminal_pool.zig
-    - block, descriptor, transition, group, retirement, and wake ownership
+    - records r00050 through r00075 from howl-host/src/renderer.zig
+    - cursor trail, replay cohorts, CanvasWork preparation, and retained state
     - exact source-local proof owners for those records
   excluded:
-    - accepted terminal.zig records r00444 through r00690
-    - accepted terminal_handoff.zig records r00691 through r00773
+    - accepted Host terminal cohort records r00444 through r00836
+    - Renderer records r00076 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_terminal_pool_not_started
+  state: host_renderer_trail_replay_state_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -136,6 +136,30 @@ progress:
       conclusion: >-
         Handoff transaction errors preserve exact rejection, pressure, stale,
         rollback, wake, retirement, and post-acceptance cleanup ownership.
+    terminal_pool:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_terminal_pool.yml
+      records: 63
+      production_runtime: 51
+      proof_only_helpers: 12
+      deterministic: 7
+      source_contract: 56
+      accepted: 7
+      debt_candidates: 56
+      conclusion: >-
+        Pool block, descriptor, transition, group, retirement, and wake errors
+        preserve exact stale, pressure, rollback, reuse, and cleanup ownership.
+  accepted_host_terminal_summary:
+    records: 393
+    deterministic: 25
+    source_contract: 368
+    accepted: 25
+    debt_candidates: 368
+  host_renderer_subcohort_order:
+    - renderer_trail_replay_state
+    - renderer_runtime_and_font_policy
+    - renderer_canvas_plan_and_waits
+    - renderer_input_and_topology
+    - renderer_physical_backend
   cohort_order:
     - host_process_root
     - host_window_boundary
