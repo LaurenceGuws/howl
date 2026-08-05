@@ -4,13 +4,13 @@ sprint:
   branch: feature/debt_payoff/obsolete_interfaces
   status: active
   active_slice: accepted_removals
-  active_cohort: renderer_wait_canvas_orphan
-  active_subcohort: two_declaration_atomic_deletion
+  active_cohort: vt_screen_advance_identity_orphan
+  active_subcohort: one_declaration_deletion
 
 objective: >-
-  Delete only Renderer waitCanvasPlan and its solely owned
-  waitRenderWakeBlocking wrapper, prove zero surviving occurrences and no
-  transitive orphan, then return the unstaged slice for hostile review.
+  Delete only the unused Screen-local advanceIdentity declaration, preserve
+  terminal.zig's distinct live helper, prove zero owning-file occurrences and
+  no transitive orphan, then return the unstaged slice for hostile review.
 
 questions:
   - id: population
@@ -30,22 +30,29 @@ active_scope:
   evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
   product_change: authorized_narrow_scope
   population:
-    - howl-host/src/renderer.zig waitCanvasPlan and waitRenderWakeBlocking
+    - howl-vt/src/screen.zig advanceIdentity
+    - distinct retained howl-vt/src/terminal.zig advanceIdentity ownership
     - exact post-deletion negative and transitive-orphan censuses
   excluded:
-    - VT Screen and Unicode removal groups
+    - lineCursorWraps and grapheme_value_count removal groups
+    - all Renderer source
     - all eight retained inventory cohorts
     - replacement helpers, aliases, or unrelated cleanup
     - Git operations by the worker
 
 progress:
-  state: inventory_and_contract_accepted_renderer_removal_not_started
+  state: renderer_removal_accepted_screen_identity_removal_not_started
   accepted_removal_contract:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
     sha256: e2822cfbf44bed129d113654ad4c452d8f0dcc6f64578507695b3245892e91ff
     groups: 4
     declarations: 5
-    active_group: renderer_wait_canvas_orphan
+    active_group: vt_screen_advance_identity_orphan
+  accepted_removals:
+    renderer_wait_canvas_orphan:
+      commit: e783ce1
+      declarations: [waitCanvasPlan, waitRenderWakeBlocking]
+      result: zero surviving occurrences and no transitive orphan
   accepted_inventory:
     evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
     sha256: db949c38a93d6f76eca8bd805ad367e37f6bd84aa694ce33339c5caf7c3565ef

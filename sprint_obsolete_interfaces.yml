@@ -50,6 +50,10 @@ slices:
   - id: accepted_removals
     status: active
     output: only contract-approved interface and wiring deletion
+    accepted_groups:
+      - id: renderer_wait_canvas_orphan
+        commit: e783ce1
+        result: waitCanvasPlan and its solely owned waitRenderWakeBlocking wrapper removed with zero surviving occurrences or transitive orphan
 
 acceptance:
   - Every removed symbol or wiring edge is absent from all maintained consumers and generated boundaries.
