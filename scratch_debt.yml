@@ -4,10 +4,10 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: host_process_root
+  active_cohort: host_window_boundary
 
 objective: >-
-  Resolve the thirty-two process-root, startup-config, and Host-build syntax
+  Resolve the one hundred and two Window and Window/Render boundary syntax
   records into exact owner, mutation, cleanup, and proof semantics without
   changing product code.
 
@@ -24,12 +24,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_process_root.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_window_boundary.yml
   product_change: forbidden
   population:
-    - accepted syntax records from howl-host/build.zig
-    - accepted syntax records from howl-host/src/dev_config.zig
-    - accepted syntax records from howl-host/src/main.zig
+    - accepted syntax records from howl-host/src/window.zig
+    - accepted syntax records from howl-host/src/window_render_boundary.zig
     - exact source-local proof owners for those records
   excluded:
     - non-Host package, root-build, and tool records
@@ -37,7 +36,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: host_process_root_not_started
+  state: host_window_boundary_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -45,6 +44,19 @@ progress:
     errdefer: 224
     transparent_try: 1711
     direct_panic: 69
+  accepted_cohorts:
+    host_process_root:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_process_root.yml
+      records: 32
+      accepted: 29
+      debt_candidates: 3
+      debt_record_ids:
+        - r00047
+        - r00048
+        - r00049
+      conclusion: >-
+        Startup and build error ownership is explicit; deterministic process-root
+        thread spawn-failure rollback proofs remain finite debt candidates.
   cohort_order:
     - host_process_root
     - host_window_boundary
