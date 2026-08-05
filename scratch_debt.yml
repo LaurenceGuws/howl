@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_pty
-  active_subcohort: howl_pty_runtime
+  active_subcohort: howl_pty_proof_helpers
 
 objective: >-
-  Resolve the fifty-one PTY runtime syntax records into exact initialization,
-  launch, child, descriptor, signal, wait, cleanup, and proof semantics without
-  changing product code.
+  Resolve the eight PTY proof-helper syntax records into exact fixture,
+  allocation, descriptor, output, environment, and reachability semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -25,22 +25,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_runtime.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_proof_helpers.yml
   product_change: forbidden
   population:
-    - records r00939 through r00989 from howl-pty/src/howl_pty.zig
-    - PTY initialization, launch, child, descriptor, signal, wait, and cleanup owners
+    - records r00990 through r00997 from howl-pty/src/howl_pty.zig
+    - PTY proof-only output, descriptor, allocation, and environment helpers
     - exact source-local proof owners for those records
   excluded:
     - accepted Host records r00001 through r00938
-    - PTY proof-helper records r00990 through r00997 until their subcohort
+    - accepted PTY runtime records r00939 through r00989
     - non-PTY package, root-build, and tool records
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: howl_pty_runtime_not_started
+  state: howl_pty_proof_helpers_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -317,6 +317,20 @@ progress:
   howl_pty_subcohort_order:
     - howl_pty_runtime
     - howl_pty_proof_helpers
+  accepted_howl_pty_subcohorts:
+    howl_pty_runtime:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_runtime.yml
+      records: 51
+      production_runtime: 51
+      deterministic: 7
+      source_contract: 44
+      accepted: 7
+      debt_candidates: 44
+      conclusion: >-
+        PTY initialization, launch, child, descriptor, signal, wait, and cleanup
+        errors have exact source dispositions. The entries errdefer has no later
+        fallible branch, and child-launch failures occur after transport
+        transfer; both overstated cleanup proofs were downgraded.
   cohort_order:
     - host_process_root
     - host_window_boundary
