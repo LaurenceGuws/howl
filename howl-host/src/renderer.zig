@@ -34,7 +34,7 @@ const chrome_appearance = session_chrome_adapter.Appearance{
 };
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
-const configured_terminal_base_points: f64 = 10.0;
+const configured_terminal_base_points: f64 = 6.0;
 const render_open_flags = linux.O{ .ACCMODE = .RDWR, .CLOEXEC = true };
 const render_etime: c_int = -@as(c_int, @intCast(@backingInt(std.posix.E.TIME)));
 
@@ -3623,7 +3623,7 @@ test "window base actions preserve every pane offset through real Boundary" {
         &topology,
         .font_base_increase,
     );
-    try std.testing.expectEqual(@as(f64, 11.0), policy.base_point_size);
+    try std.testing.expectEqual(@as(f64, 7.0), policy.base_point_size);
     try std.testing.expectEqual(retained_offsets, policy.offsets);
     try requestBaseFontAction(
         &terminals,
