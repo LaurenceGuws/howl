@@ -4,13 +4,13 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: howl_pty
-  active_subcohort: howl_pty_proof_helpers
+  active_cohort: howl_render
+  active_subcohort: canvas_identity_init_source
 
 objective: >-
-  Resolve the eight PTY proof-helper syntax records into exact fixture,
-  allocation, descriptor, output, environment, and reachability semantics
-  without changing product code.
+  Resolve the forty Canvas identity, initialization, and source-lifecycle
+  syntax records into exact allocation, rollback, identity, removal, and proof
+  semantics without changing product code.
 
 questions:
   - id: population
@@ -25,22 +25,23 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_proof_helpers.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_identity_init_source.yml
   product_change: forbidden
   population:
-    - records r00990 through r00997 from howl-pty/src/howl_pty.zig
-    - PTY proof-only output, descriptor, allocation, and environment helpers
+    - records r00998 through r01037 from howl-render/src/canvas.zig
+    - Canvas resource identities, Composer initialization, and source removal
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host records r00001 through r00938
-    - accepted PTY runtime records r00939 through r00989
-    - non-PTY package, root-build, and tool records
+    - accepted Host and PTY records r00001 through r00997
+    - Canvas records r01038 through r01268 until their owner subcohorts
+    - other howl-render files until their file-owner cohorts
+    - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: howl_pty_proof_helpers_not_started
+  state: howl_render_canvas_identity_init_source_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -331,6 +332,40 @@ progress:
         errors have exact source dispositions. The entries errdefer has no later
         fallible branch, and child-launch failures occur after transport
         transfer; both overstated cleanup proofs were downgraded.
+    howl_pty_proof_helpers:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_proof_helpers.yml
+      records: 8
+      proof_only_helpers: 8
+      deterministic: 2
+      source_contract: 6
+      accepted: 2
+      debt_candidates: 6
+      conclusion: >-
+        Allocation-failure harness entry points have direct deterministic
+        evidence; output, descriptor-count, and environment assertion helpers
+        retain source-contract-only failure semantics.
+  accepted_howl_pty_summary:
+    records: 59
+    production_runtime: 51
+    proof_only_helpers: 8
+    deterministic: 9
+    source_contract: 50
+    accepted: 9
+    debt_candidates: 50
+  howl_render_subcohort_order:
+    - canvas_identity_init_source
+    - canvas_candidate_composition
+    - canvas_frame_validation
+    - canvas_projection_validation
+    - canvas_validation
+    - chrome
+    - chrome_native
+    - native_text
+    - terminal_canvas
+    - terminal_font_owner
+    - terminal_projection
+    - terminal_text
+    - build
   cohort_order:
     - host_process_root
     - host_window_boundary
