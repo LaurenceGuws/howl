@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: howl_render
-  active_subcohort: canvas_frame_validation
+  active_subcohort: canvas_projection_validation
 
 objective: >-
-  Resolve the eighty-seven Canvas frame validation and projection syntax
-  records into exact alias, measurement, output, visibility, geometry, and
-  proof semantics without changing product code.
+  Resolve the sixty-nine remaining Canvas projection and fact-validation
+  syntax records into exact geometry, identity, pixel, producer, arithmetic,
+  reachability, and proof semantics without changing product code.
 
 questions:
   - id: population
@@ -25,15 +25,15 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_frame_validation.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_projection_validation.yml
   product_change: forbidden
   population:
-    - records r01113 through r01199 from howl-render/src/canvas.zig
-    - Canvas alias validation, frame measurement/writing, visibility, geometry, and checked helper arithmetic
+    - records r01200 through r01268 from howl-render/src/canvas.zig
+    - 68 production projection, geometry, identity, pixel, producer, and arithmetic records
+    - one proof-only expectComposerRetained helper at r01268
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host, PTY, and Canvas records r00001 through r01112
-    - Canvas records r01200 through r01268 until their owner subcohort
+    - accepted Host, PTY, and Canvas records r00001 through r01199
     - other howl-render files until their file-owner cohorts
     - non-Render package, root-build, and tool records
     - non-Host package, root-build, and tool records
@@ -41,7 +41,7 @@ active_scope:
     - Git operations
 
 progress:
-  state: howl_render_canvas_frame_validation_not_started
+  state: howl_render_canvas_projection_validation_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -395,6 +395,20 @@ progress:
         mapping, and retained refreshVisibleCursorBindings catch continue as
         mandatory product-correction debt because it suppresses an accepted
         identity invariant and can preserve an older frame revision.
+    canvas_frame_validation:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_render_canvas_frame_validation.yml
+      records: 87
+      production_runtime: 87
+      source_contract: 87
+      debt_candidates: 87
+      conclusion: >-
+        Canvas alias, measurement, writing, visibility, geometry, and checked
+        helper errors have exact source dispositions but no causal branch
+        evidence. Measurement leaves caller buffers untouched; writeFrame and
+        writeCursorOverlay may leave a partial initialized prefix that the
+        caller must discard. Reviewer correction removed cursor measurement
+        output-mutation claims and separated allocation-limit failures from
+        cursor-binding geometry failures.
   cohort_order:
     - host_process_root
     - host_window_boundary
