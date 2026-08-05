@@ -34,7 +34,7 @@ slices:
   - id: error_disposition_inventory
     status: active
     product_change: none
-    output: complete mechanical census of maintained production error-handling syntax with exact production/test declaration boundaries
+    output: complete mechanical census of maintained error-handling syntax excluding explicit test declarations; proof-only helper reachability is resolved by owner review
   - id: error_owner_review
     status: pending
     product_change: none

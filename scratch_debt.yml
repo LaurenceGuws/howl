@@ -6,8 +6,9 @@ sprint:
   active_slice: error_disposition_inventory
 
 objective: >-
-  Prove the complete production syntax population without inferring error
-  semantics; owner-level classification follows in separate review cohorts.
+  Prove the complete maintained syntax population outside explicit test
+  declarations without inferring error semantics or helper reachability;
+  owner-level classification follows in separate review cohorts.
 
 questions:
   - id: population
@@ -28,7 +29,8 @@ active_scope:
     - package and workspace build owners where they dispose of fallible results
     - maintained first-party tools where failure affects an acceptance gate
   excluded:
-    - test-only injected failures and assertion helpers except as proof owners
+    - syntax inside explicit test declarations
+    - production versus proof-only helper reachability, deferred to error_owner_review
     - generated Zig, generated C, generated protocol files, and vendored reference source
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
