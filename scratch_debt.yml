@@ -3,37 +3,49 @@ sprint:
   id: obsolete_interfaces
   branch: feature/debt_payoff/obsolete_interfaces
   status: active
-  active_slice: interface_inventory
-  active_cohort: maintained_interfaces
-  active_subcohort: exact_declaration_and_consumer_census
+  active_slice: finite_removal_contract
+  active_cohort: four_obsolete_cohorts
+  active_subcohort: exact_deletion_and_rollback_boundaries
 
 objective: >-
-  Build an evidence-only inventory of interfaces that may be obsolete, then
-  distinguish genuinely unowned surfaces from small but intentional owner
-  boundaries before authorizing any source deletion.
+  Define four independently reviewable deletion groups for the five proven
+  obsolete declarations, with exact negative censuses, transitive orphan
+  closure, validation, and rollback boundaries before product edits begin.
 
 questions:
   - id: population
-    status: open
+    status: answered
     question: Which maintained declarations, aliases, wrappers, and build edges appear to have no surviving owner or consumer?
+    answer: Four obsolete cohorts cover five private declarations; eight reviewed package, ABI, and build cohorts remain owned.
   - id: consumer_closure
-    status: open
+    status: answered
     question: Which product, test, fixture, example, generated, and QAgent boundaries consume each candidate directly or indirectly?
+    answer: The accepted interface inventory records every surviving consumer category and exact no-consumer closure for the four obsolete cohorts.
   - id: removal_groups
-    status: open
+    status: answered
     question: What is the smallest independently reviewable set of proven removals without replacement machinery?
+    answer: One two-declaration Renderer group plus three one-declaration VT groups; no compatibility or replacement surface is required.
 
 active_scope:
-  evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
+  evidence: .zig/work/debt-payoff/obsolete-interfaces/finite_removal_contract.yml
   product_change: evidence_only
   population:
-    - maintained howl package sources, roots, builds, tests, fixtures, and examples
-    - root workspace build and tracked authorities
-    - read-only QAgent imports and package use as accepted embedder evidence
+    - howl-host/src/renderer.zig waitCanvasPlan and waitRenderWakeBlocking
+    - howl-vt/src/screen.zig advanceIdentity and lineCursorWraps
+    - howl-vt/src/unicode_17.zig grapheme_value_count
+    - exact post-deletion negative and transitive-orphan censuses
   excluded:
-    - source, build, comment, or authority changes during inventory
-    - speculative cleanup based on names or grep absence without import/caller closure
+    - product, build, comment, or authority changes during contract construction
+    - all eight retained inventory cohorts
+    - replacement helpers, aliases, or unrelated cleanup
     - Git operations by the worker
 
 progress:
-  state: inventory_not_started
+  state: interface_inventory_accepted_removal_contract_not_started
+  accepted_inventory:
+    evidence: .zig/work/debt-payoff/obsolete-interfaces/interface_inventory.yml
+    sha256: db949c38a93d6f76eca8bd805ad367e37f6bd84aa694ce33339c5caf7c3565ef
+    cohorts: 12
+    retained_owned: 8
+    proven_obsolete_cohorts: 4
+    proven_obsolete_declarations: 5

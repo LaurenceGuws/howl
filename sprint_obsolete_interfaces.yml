@@ -29,11 +29,17 @@ invariants:
 
 slices:
   - id: interface_inventory
-    status: active
+    status: accepted
     product_change: none
     output: exact owner, declaration, importer, caller, proof, fixture, and embedder census
+    accepted_facts:
+      - The finite discovery boundary contains twelve cohorts: eight retained owners and four obsolete cohorts covering five private declarations.
+      - waitCanvasPlan and its solely owned waitRenderWakeBlocking wrapper form one atomic Renderer orphan cohort.
+      - Screen advanceIdentity and lineCursorWraps have declaration-only ownership and no retained caller or transitive orphan.
+      - grapheme_value_count duplicates generator-owned entry and complete-byte extents without participating in runtime offsets or validation.
+      - Retained package roots, native/generated ABI boundaries, and standalone JSONL logger acceptance all have current product, build, proof, fixture, example, or QAgent ownership.
   - id: finite_removal_contract
-    status: pending
+    status: active
     product_change: none
     output: independently reviewable removal groups with negative censuses and rollback boundaries
   - id: accepted_removals
