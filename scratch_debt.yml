@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_topology
+  active_subcohort: renderer_lifecycle_shape_helper
 
 objective: >-
-  Resolve the forty Renderer topology-transition syntax records into exact
-  admission, replacement, rollback, retry, lifecycle, and proof semantics
-  without changing product code.
+  Resolve the nine Renderer lifecycle-shape proof-helper syntax records into
+  exact fixture ownership, cleanup, failure, and reachability semantics without
+  changing product code.
 
 questions:
   - id: population
@@ -25,11 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_topology.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_lifecycle_shape_helper.yml
   product_change: forbidden
   population:
-    - records r00291 through r00330 from howl-host/src/renderer.zig
-    - Renderer PendingTopology and topology preparation/replacement helpers
+    - records r00331 through r00339 from howl-host/src/renderer.zig
+    - Renderer lifecycleShapeForTest proof-only helper
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
@@ -39,13 +39,14 @@ active_scope:
     - accepted Renderer Canvas-plan records r00201 through r00255
     - accepted Renderer wait records r00256 through r00275
     - accepted Renderer input-drain records r00276 through r00290
-    - Renderer records r00331 through r00392 until their owner subcohorts
+    - accepted Renderer topology records r00291 through r00330
+    - Renderer records r00340 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_topology_not_started
+  state: host_renderer_lifecycle_shape_helper_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -168,6 +169,9 @@ progress:
     - renderer_waits
     - renderer_drain_input
     - renderer_topology
+    - renderer_lifecycle_shape_helper
+    - renderer_redraw_chrome
+    - renderer_cursor_replay
     - renderer_physical_backend
   accepted_host_renderer_subcohorts:
     renderer_trail_replay_state:
@@ -247,6 +251,21 @@ progress:
         fatal session-candidate propagation have direct drainInput evidence.
         Broad font and pointer classifications remain finite proof and policy
         debt.
+    renderer_topology:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_topology.yml
+      records: 40
+      production_runtime: 37
+      proof_only_helpers: 3
+      deterministic: 4
+      source_contract: 36
+      accepted: 4
+      debt_candidates: 36
+      conclusion: >-
+        PendingTopology preparation, admission, replacement, retry, lifecycle,
+        and rollback errors have exact source dispositions. Four owner-level
+        branches have deterministic evidence. Failure after cancelling an
+        existing pending candidate remains unproved: the cited SourceLimit
+        fixture began with no pending candidate and was downgraded.
   cohort_order:
     - host_process_root
     - host_window_boundary
