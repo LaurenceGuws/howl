@@ -17,8 +17,9 @@ version:
       - input hot-path measurement and optimization
 
 objective: >-
-  Select and contract the next version-scoped marathon before changing product
-  behavior. Preserve the accepted 0.1.5-dev capability boundary meanwhile.
+  Measure and correct the first unnecessary amplification between exact
+  terminal output, semantic mutation, rendering work, GPU submission, and
+  presentation while preserving the accepted 0.1.5-dev correctness boundary.
 
 settled_capabilities:
   - name: vt
@@ -50,7 +51,10 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Define and approve the 0.1.6-dev marathon before product work begins.
+  - Make child exit an exact pane lifecycle fact and final-Host completion boundary.
+  - Establish reproducible Neovim-scroll and rain workloads.
+  - Measure external CPU/GPU cost before adding bounded owner instrumentation.
+  - Correct only the first causally proven update-amplification owner.
 
 deferred:
   - Ordered keyboard protocol expansion and repeat policy.
@@ -61,7 +65,6 @@ deferred:
   - Public Host compatibility guarantees and packaging.
   - Configuration hot reload and scripting.
   - New experimental terminal protocols.
-  - General terminal rendering hot-path optimization.
   - Maximum sixteen-pane Composer/Vulkan/atlas admission.
 
 gates:

@@ -83,7 +83,8 @@ and Kitty-led trail presentation into composable state machines. The frozen
 and completed the reviewed cursor/presentation and topology ownership boundary.
 Ordered keyboard, repeat, mouse, terminal identity, and input hot-path work
 remains deferred. The accepted `0.1.5-dev` milestone paid down structural debt
-without adding terminal capability. No `0.1.6-dev` marathon is active yet.
+without adding terminal capability. The active `0.1.6-dev` milestone measures
+runtime update amplification and corrects only causally proven hot-path work.
 
 Howl is not yet a complete daily terminal. Stable embedding APIs, persistent
 detached sessions, cooperative session control, complete interaction features,
@@ -102,7 +103,8 @@ work.
 | First-party multi-pane graphical host boundary | Accepted |
 | Cursor correctness, animation, blink, and presentation boundary | Accepted for 0.1.4-dev |
 | Structural debt payoff | Accepted for 0.1.5-dev |
-| Performance and maximum multi-pane pressure | Planned |
+| Runtime hot-path measurement and first-owner correction | Active in 0.1.6-dev |
+| Maximum multi-pane pressure | Planned |
 | Stable embedding surfaces | Planned |
 | Persistent cooperative sessions for human and AI teams | Planned |
 

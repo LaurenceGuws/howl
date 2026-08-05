@@ -1,0 +1,67 @@
+schema: 1
+marathon:
+  name: runtime_hot_paths
+  version: 0.1.6-dev
+  status: active
+  approval: operator_approved
+  branch_policy:
+    integration: main
+    prior_release_snapshot: release/0.1.5-dev
+    sprint_pattern: feature/runtime_hot_paths/<sprint>
+  active_sprint: measurement_baseline
+  objective: >-
+    Measure and correct the first unnecessary amplification between exact
+    terminal output, semantic mutation, rendering work, GPU submission, and
+    presentation without weakening accepted correctness or ownership.
+
+accepted_baseline:
+  version: 0.1.5-dev
+  release_branch: release/0.1.5-dev
+  release_base: b5057fbfbb927f5d0bb3ad2b5683513d2002415a
+
+workloads:
+  - id: nvim_scroll
+    status: captured
+    purpose: exact timed alternate-screen redraw and scrolling pressure
+    fixture: .zig/work/runtime-hot-path/measurement-baseline/nvim-scroll-input-20260805-215127.cast
+    fixture_lifetime: ignored sprint evidence until a reviewed minimal fixture is promoted
+  - id: rain_large_font
+    status: pending_operator_capture
+    purpose: sustained large-glyph raster, atlas, composition, and presentation pressure
+
+sprints:
+  - id: measurement_baseline
+    status: active
+    outcome: reproducible workloads, owned process completion, and comparable external CPU/GPU receipts
+  - id: update_amplification
+    status: pending
+    outcome: exact bytes-to-presentation amplification receipt locating the first disproportionate owner
+  - id: first_owner_correction
+    status: pending
+    outcome: one causally proven owner correction with unchanged correctness and capacity contracts
+  - id: comparison_and_cleanup
+    status: pending
+    outcome: before/after receipts, operator gate, and removal of temporary instrumentation
+
+invariants:
+  - PTY, VT, Render, Vulkan, Window, Terminal, and Renderer ownership remains unchanged unless exact evidence proves a boundary defect.
+  - Measurement excludes Zig compilation and uses one prebuilt ReleaseFast executable.
+  - External process, thread, and GPU facts are preferred before product instrumentation.
+  - Temporary runtime events are bounded, typed, auto-rotated, and removed only after their reviewed capture is closed.
+  - One semantic workload and one physical configuration identify every comparison receipt.
+  - A performance correction never converts a fatal invariant into rejection, retry, or silent disposal.
+
+exclusions:
+  - no keyboard, repeat, mouse, terminal identity, or multiplexer capability
+  - no cursor animation polish
+  - no broad renderer rewrite or package extraction
+  - no capacity widening to conceal pressure
+  - no generic profiler framework
+  - no optimization justified only by source appearance
+
+final_gate:
+  - both workloads have reproducible baseline and comparison receipts
+  - the first corrected owner has causal executable proof
+  - operator visual behavior is accepted
+  - temporary instrumentation and raw tracked evidence are absent
+  - all package and workspace gates pass in every required optimization mode

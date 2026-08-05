@@ -1,0 +1,32 @@
+schema: 1
+sprint: measurement_baseline
+active_slice: child_exit_lifecycle
+status: implementation_not_started
+
+operator_observation:
+  command: >-
+    ../.zig/zig build run -Doptimize=ReleaseFast
+    -Dfont=/usr/share/fonts/TTF/IosevkaTermNerdFont-Regular.ttf
+    -Dcommand='asciinema play ../.zig/work/runtime-hot-path/measurement-baseline/nvim-scroll-input-20260805-215127.cast'
+  result: fixture playback completes but the final pane and Howl remain open
+
+review_finding:
+  first_retained_owner: howl-host/src/terminal.zig Logical.observe
+  fact: Logical.child_exit retains the exact pty.ChildExit
+  missing_progress: no bounded terminal-to-Renderer completion transport exists
+  domain_constraint: SessionState.closeTab preserves its nonempty invariant by creating a replacement main pane
+  conclusion: final Host completion is Renderer policy, not a fabricated empty SessionState
+
+worker_flow:
+  - index the exact child-observation, EOF, publication, lifecycle, and shutdown path
+  - write the ignored finite completion contract before product mutation
+  - continue directly to implementation when no authority contradiction remains
+  - stop only for a genuine unresolved ownership decision
+
+review_gate:
+  - completion cannot overtake trailing PTY output
+  - one child produces at most one completion fact
+  - a stale completion cannot close a reused physical owner slot or fresh identity
+  - pane closure uses existing topology and lifecycle transactions
+  - final-pane completion exits normally rather than reporting HostFailure
+  - no measurement workaround or unrelated runtime optimization enters the diff

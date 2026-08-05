@@ -3,6 +3,9 @@ accepted:
   protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
+  marathon_runtime.yml: active 0.1.6-dev runtime hot-path intervention, workloads, sprint order, invariants, and exclusions
+  sprint_runtime_measurement.yml: active workload completion and external baseline-measurement contract
+  scratch_runtime.yml: active child-exit lifecycle findings, worker flow, and review gate
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   tools/json_logger.zig: reusable QAgent-derived bounded structured JSONL logger, disconnected from product package/runtime dependencies
