@@ -9391,7 +9391,13 @@ fn importReleaseSemaphore(device: vk.VkDevice, dispatch: *const howl_vk.dispatch
 }
 
 fn deadline() !i64 {
-    return @intCast(try std.math.add(u64, try monotonicNow(), 2_000_000_000));
+    return deadlineFromMonotonic(try monotonicNow());
+}
+
+fn deadlineFromMonotonic(now: u64) !i64 {
+    const absolute = std.math.add(u64, now, 2_000_000_000) catch
+        return error.Clock;
+    return std.math.cast(i64, absolute) orelse return error.Clock;
 }
 
 fn monotonicNow() !u64 {
@@ -9450,6 +9456,28 @@ test "renderer fd and monotonic boundary receipts" {
     try std.testing.expectError(error.Clock, monotonicTimestamp(-1, 0));
     try std.testing.expectError(error.Clock, monotonicTimestamp(0, 1_000_000_000));
     try std.testing.expectError(error.Clock, monotonicTimestamp(std.math.maxInt(i64), 0));
+
+    const ordinary_now: u64 = 7_654_321_000;
+    const expected_deadline: i64 = 9_654_321_000;
+    const ordinary_deadline = try deadlineFromMonotonic(ordinary_now);
+    try std.testing.expectEqualSlices(
+        u8,
+        std.mem.asBytes(&expected_deadline),
+        std.mem.asBytes(&ordinary_deadline),
+    );
+    const last_representable_now: u64 = @intCast(std.math.maxInt(i64) - 2_000_000_000);
+    try std.testing.expectEqual(
+        std.math.maxInt(i64),
+        try deadlineFromMonotonic(last_representable_now),
+    );
+    try std.testing.expectError(
+        error.Clock,
+        deadlineFromMonotonic(last_representable_now + 1),
+    );
+    try std.testing.expectError(
+        error.Clock,
+        deadlineFromMonotonic(std.math.maxInt(u64)),
+    );
 
     try std.testing.expect(closeSucceeded(0));
     try std.testing.expect(!closeSucceeded(std.math.maxInt(usize)));

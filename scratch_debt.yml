@@ -2,14 +2,14 @@ schema: 1
 sprint:
   id: error_and_authority_hygiene
   branch: feature/debt_payoff/error_and_authority_hygiene
-  status: active
-  active_slice: accepted_corrections
-  active_cohort: runtime_corrections
-  active_subcohort: physical_deadline_narrowing
+  status: acceptance_audit
+  active_slice: sprint_acceptance
+  active_cohort: clean_head_validation
+  active_subcohort: complete_range
 
 objective: >-
-  Check physical monotonic-deadline narrowing and map overflow to the exact
-  clock/deadline error without changing ordinary deadline bytes.
+  Verify the complete error-and-authority hygiene range from a clean pushed
+  feature HEAD before sprint closure and integration.
 
 questions:
   - id: population
@@ -34,18 +34,18 @@ questions:
 
 active_scope:
   evidence: .zig/work/debt-payoff/error-and-authority-hygiene/finite_hygiene_contract.yml
-  product_change: authorized_narrow_scope
+  product_change: forbidden_during_acceptance
   population:
-    - howl-host/src/renderer.zig deadline
-    - checked monotonic nanosecond addition and i64 narrowing
-    - exact physical clock/deadline error ownership
+    - all accepted sprint commits and tracked authority
+    - all package and workspace check/test gates in four optimization modes
+    - audit, protocol, YAML, formatting, range diff, and remote accounting
   excluded:
-    - further Host, VT, Window, Vulkan, or rendering behavior
-    - source-audit, comment, and unrelated authority corrections
-    - Git operations
+    - new product corrections or evidence expansion
+    - unrelated authority or version changes
+    - merge, branch deletion, and disposable-evidence cleanup until acceptance
 
 progress:
-  state: physical_deadline_narrowing_not_started
+  state: accepted_corrections_complete_clean_head_audit_pending
   accepted_corrections:
     replay_state_partial_allocation_rollback:
       paths: [howl-host/src/renderer.zig]
@@ -77,6 +77,12 @@ progress:
         apply, applyCandidate, or setComposition mutation; mismatch remains an
         observable error, refresh is infallible only after that preflight, and
         rejection preserves sources, bindings, composition, and frame revision.
+    physical_deadline_narrowing:
+      paths: [howl-host/src/renderer.zig]
+      conclusion: >-
+        Physical deadlines now check both monotonic nanosecond addition and
+        u64-to-i64 narrowing, map both overflow boundaries to error.Clock, and
+        preserve ordinary representable deadline bytes exactly.
   accepted_syntax_inventory:
     files: 62
     records: 2887
