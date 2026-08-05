@@ -4,12 +4,12 @@ sprint:
   branch: feature/debt_payoff/error_and_authority_hygiene
   status: active
   active_slice: error_owner_review
-  active_cohort: host_renderer
-  active_subcohort: renderer_physical_backend
+  active_cohort: howl_pty
+  active_subcohort: howl_pty_runtime
 
 objective: >-
-  Resolve the twenty-two Renderer physical-backend syntax records into exact
-  slot, DRM, Vulkan, timeline, descriptor, cleanup, and proof semantics without
+  Resolve the fifty-one PTY runtime syntax records into exact initialization,
+  launch, child, descriptor, signal, wait, cleanup, and proof semantics without
   changing product code.
 
 questions:
@@ -25,30 +25,22 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_physical_backend.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_howl_pty_runtime.yml
   product_change: forbidden
   population:
-    - records r00371 through r00392 from howl-host/src/renderer.zig
-    - Renderer slot, DRM, Vulkan, timeline, clock, and cleanup helpers
+    - records r00939 through r00989 from howl-pty/src/howl_pty.zig
+    - PTY initialization, launch, child, descriptor, signal, wait, and cleanup owners
     - exact source-local proof owners for those records
   excluded:
-    - accepted Host terminal cohort records r00444 through r00836
-    - accepted Renderer trail/replay records r00050 through r00075
-    - accepted Renderer runtime-root records r00076 through r00184
-    - accepted Renderer GPU-budget/font-policy records r00185 through r00200
-    - accepted Renderer Canvas-plan records r00201 through r00255
-    - accepted Renderer wait records r00256 through r00275
-    - accepted Renderer input-drain records r00276 through r00290
-    - accepted Renderer topology records r00291 through r00330
-    - accepted Renderer lifecycle-shape helper records r00331 through r00339
-    - accepted Renderer Chrome-redraw records r00340 through r00355
-    - accepted Renderer cursor-replay records r00356 through r00370
+    - accepted Host records r00001 through r00938
+    - PTY proof-helper records r00990 through r00997 until their subcohort
+    - non-PTY package, root-build, and tool records
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_physical_backend_not_started
+  state: howl_pty_runtime_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -301,6 +293,30 @@ progress:
         failure evidence. render and post-submit completion-preparation errors
         are currently collapsed to blocked, erasing fatal and monotonic-effect
         distinctions; this is mandatory finite product-correction debt.
+    renderer_physical_backend:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_physical_backend.yml
+      records: 22
+      production_runtime: 22
+      deterministic: 1
+      source_contract: 21
+      accepted: 1
+      debt_candidates: 21
+      conclusion: >-
+        Slot, DRM, Vulkan, timeline, descriptor, and cleanup errors have exact
+        source dispositions. Whole-second timestamp overflow has deterministic
+        evidence; the unchecked final u64-to-i64 deadline cast remains adjacent
+        non-inventoried representability debt.
+  accepted_host_renderer_summary:
+    records: 343
+    production_runtime: 331
+    proof_only_helpers: 12
+    deterministic: 14
+    source_contract: 329
+    accepted: 14
+    debt_candidates: 329
+  howl_pty_subcohort_order:
+    - howl_pty_runtime
+    - howl_pty_proof_helpers
   cohort_order:
     - host_process_root
     - host_window_boundary
