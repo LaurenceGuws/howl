@@ -64,7 +64,7 @@ slices:
     product_change: none
     output: exact stale comment and tracked-authority findings, including the deferred Renderer module-comment mismatch
     accepted_facts:
-      - Ten stale vocabulary claims were corrected across the Renderer file contract and three tracked authorities; no conflicting retained owner or behavior defect was found.
+      - Fifteen stale vocabulary claims were corrected across the Renderer file contract and four tracked authorities; no conflicting retained owner or behavior defect was found.
       - Renderer documentation now names its Host input, session, terminal, Composer, replay, deadline, Vulkan, and DRM orchestration boundary.
       - Local bounded tabs and panes are described as a multi-pane runtime; detached, remote, or cooperative multiplexer sessions remain deferred.
       - Cursor replay and trail presentation are accepted capability rather than active redesign work.
