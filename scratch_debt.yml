@@ -3,17 +3,17 @@ sprint:
   id: generated_c_boundary
   branch: feature/debt_payoff/generated_c_boundary
   status: active
-  active_slice: renderer_fd_time
+  active_slice: renderer_stat_device
 
 objective: >-
-  Implement and prove the accepted Renderer fd/time migration while preserving
-  DRM declarations, generated wiring, and existing failure ownership.
+  Implement and prove the accepted Renderer stat/device migration while
+  preserving candidate-skipping behavior and DRM ownership.
 
 questions:
   - id: translated_symbols
     status: answered
     question: Which exact declarations and constants does each translated module expose and which source symbols consume them?
-    answer: All contracted PTY migrations are accepted; the active slice migrates Renderer records r098, r101-r105, r116, and r119 while retaining every DRM declaration.
+    answer: PTY and Renderer fd/time migrations are accepted; the active slice migrates only Renderer records r114, r115, r117, and r118 while retaining every DRM declaration.
   - id: build_ownership
     status: answered
     question: Which target macros, include paths, libraries, module imports, and proof gates define each native boundary?
@@ -25,11 +25,11 @@ questions:
   - id: disposition
     status: answered
     question: Which boundaries are required, redundant, or uncertain under the pinned Zig and system ABI?
-    answer: The finite contract selects typed monotonic time, packed Linux open flags, raw fd operations, and exact TIME mapping; DRM remains outside this slice.
+    answer: The finite contract selects statx rdev fields plus checked glibc-compatible device formulas; DRM remains outside this slice.
 
 active_scope:
   evidence: .zig/work/debt-payoff/generated-c-boundary/finite_boundary_contract.yml
-  product_change: limited to howl-host/src/renderer.zig and owner-local proofs for the accepted Renderer fd/time slice
+  product_change: limited to howl-host/src/renderer.zig and owner-local proofs for the accepted Renderer stat/device slice
   translated_module_count: 5
   generated_protocol_cohort_count: 5
   excluded:
@@ -40,8 +40,8 @@ active_scope:
 progress:
   state: not_started
   accepted_checkpoint:
-    slice: pty_child_exit_sleep
-    migrated_records: r019, r038
-    retained_boundary: r029/openpty
+    slice: renderer_fd_time
+    migrated_records: r098, r101-r105, r116, r119
+    retained_boundary: Renderer DRM declarations
     validation: owning and workspace four-mode gates, audit, protocol, Wayland reproducibility, strict YAML, formatting, and diff checks pass
-  active_records: r098, r101-r105, r116, r119
+  active_records: r114, r115, r117, r118

@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = @import("renderer_c");
+const linux = std.os.linux;
 const window_render_boundary = @import("window_render_boundary.zig");
 
 const terminal_retained_resource_limit: usize = 512 + 128 + 8;
@@ -32,6 +33,8 @@ const chrome_appearance = session_chrome_adapter.Appearance{
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
 const configured_terminal_base_points: f64 = 16.0;
+const render_open_flags = linux.O{ .ACCMODE = .RDWR, .CLOEXEC = true };
+const render_etime: c_int = -@as(c_int, @intCast(@backingInt(std.posix.E.TIME)));
 
 const RetiredTerminalSource = struct {
     pane: render_api.chrome.PaneId,
@@ -8430,11 +8433,18 @@ fn openRenderNode(major: i64, minor: i64) !i32 {
         var status: c.struct_stat = undefined;
         if (c.stat(name, &status) != 0) continue;
         if (c.major(status.st_rdev) != major or c.minor(status.st_rdev) != minor) continue;
-        const descriptor = c.open(name, c.O_RDWR | c.O_CLOEXEC);
-        if (descriptor >= 0) return descriptor;
-        return error.DrmOpen;
+        return mapRenderOpenResult(linux.open(name, render_open_flags, 0));
     }
     return error.DrmOpen;
+}
+
+fn mapRenderOpenResult(result: usize) !i32 {
+    if (linux.errno(result) != .SUCCESS) return error.DrmOpen;
+    return std.math.cast(i32, result) orelse error.DrmOpen;
+}
+
+fn isRenderTimeout(result: c_int) bool {
+    return result == render_etime;
 }
 
 fn requireExtensions(physical: vk.VkPhysicalDevice) !void {
@@ -8694,10 +8704,10 @@ fn timelineReady(drm_fd: i32, handle: u32, point: u64) !bool {
     const timeout = std.math.cast(i64, try monotonicNow()) orelse return error.Clock;
     const flags = c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT | c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
     const available = c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, timeout, flags, null);
-    if (available == -c.ETIME) return false;
+    if (isRenderTimeout(available)) return false;
     if (available != 0) return error.ReleaseAvailability;
     const complete = c.drmSyncobjTimelineWait(drm_fd, &handles, &points, 1, timeout, 0, null);
-    if (complete == -c.ETIME) return false;
+    if (isRenderTimeout(complete)) return false;
     if (complete != 0) return error.ReleaseCompletion;
     return true;
 }
@@ -8727,16 +8737,73 @@ fn deadline() !i64 {
 }
 
 fn monotonicNow() !u64 {
-    var now: c.timespec = undefined;
-    if (c.clock_gettime(c.CLOCK_MONOTONIC, &now) != 0) return error.Clock;
-    const seconds = try std.math.mul(u64, @intCast(now.tv_sec), 1_000_000_000);
-    return try std.math.add(u64, seconds, @intCast(now.tv_nsec));
+    var now: std.posix.timespec = undefined;
+    return mapMonotonicResult(linux.clock_gettime(std.posix.CLOCK.MONOTONIC, &now), &now);
+}
+
+fn mapMonotonicResult(result: usize, timestamp: *const std.posix.timespec) !u64 {
+    if (linux.errno(result) != .SUCCESS) return error.Clock;
+    return monotonicTimestamp(timestamp.sec, timestamp.nsec);
+}
+
+fn monotonicTimestamp(seconds: i64, nanoseconds: i64) !u64 {
+    const seconds_u64 = std.math.cast(u64, seconds) orelse return error.Clock;
+    const nanoseconds_u64 = std.math.cast(u64, nanoseconds) orelse return error.Clock;
+    if (nanoseconds_u64 >= 1_000_000_000) return error.Clock;
+    const whole = std.math.mul(u64, seconds_u64, 1_000_000_000) catch return error.Clock;
+    return std.math.add(u64, whole, nanoseconds_u64) catch return error.Clock;
+}
+
+fn closeSucceeded(result: usize) bool {
+    return linux.errno(result) == .SUCCESS;
 }
 
 fn closeDescriptor(descriptor: i32) void {
-    if (c.close(descriptor) != 0) @panic("Render descriptor cleanup failed");
+    if (!closeSucceeded(linux.close(descriptor))) @panic("Render descriptor cleanup failed");
 }
 
 fn destroySyncobj(drm_fd: i32, handle: u32) void {
     if (c.drmSyncobjDestroy(drm_fd, handle) != 0) @panic("Render syncobj cleanup failed");
+}
+
+test "renderer fd and monotonic boundary receipts" {
+    try std.testing.expect(render_open_flags.ACCMODE == .RDWR);
+    try std.testing.expect(render_open_flags.CLOEXEC);
+    const flags_bits: u32 = @bitCast(render_open_flags);
+    try std.testing.expectEqual(@as(u32, 0x0008_0002), flags_bits);
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(std.posix.timespec));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(std.posix.timespec));
+    try std.testing.expectEqual(@as(usize, 0), @offsetOf(std.posix.timespec, "sec"));
+    try std.testing.expectEqual(@as(usize, 8), @offsetOf(std.posix.timespec, "nsec"));
+
+    try std.testing.expectEqual(@as(i32, 7), try mapRenderOpenResult(7));
+    try std.testing.expectError(error.DrmOpen, mapRenderOpenResult(std.math.maxInt(i32) + 1));
+    try std.testing.expectError(error.DrmOpen, mapRenderOpenResult(std.math.maxInt(usize)));
+
+    try std.testing.expect(isRenderTimeout(render_etime));
+    try std.testing.expect(!isRenderTimeout(0));
+    try std.testing.expect(!isRenderTimeout(render_etime + 1));
+
+    try std.testing.expectEqual(@as(u64, 1_500_000_000), try monotonicTimestamp(1, 500_000_000));
+    try std.testing.expectEqual(@as(u64, 999_999_999), try monotonicTimestamp(0, 999_999_999));
+    const valid_timestamp = std.posix.timespec{ .sec = 1, .nsec = 500_000_000 };
+    try std.testing.expectEqual(@as(u64, 1_500_000_000), try mapMonotonicResult(0, &valid_timestamp));
+    try std.testing.expectError(error.Clock, mapMonotonicResult(std.math.maxInt(usize), &valid_timestamp));
+    try std.testing.expectError(error.Clock, monotonicTimestamp(-1, 0));
+    try std.testing.expectError(error.Clock, monotonicTimestamp(0, 1_000_000_000));
+    try std.testing.expectError(error.Clock, monotonicTimestamp(std.math.maxInt(i64), 0));
+
+    try std.testing.expect(closeSucceeded(0));
+    try std.testing.expect(!closeSucceeded(std.math.maxInt(usize)));
+}
+
+test "renderer translated fd and time census is migrated while DRM remains" {
+    const source = @embedFile("renderer.zig");
+    inline for (.{
+        "CLOCK_MONOTONIC", "ETIME", "O_CLOEXEC", "O_RDWR", "clock_gettime", "close", "open", "timespec",
+    }) |name| {
+        var token: [64]u8 = undefined;
+        const rendered = try std.fmt.bufPrint(&token, "c.{s}", .{name});
+        try std.testing.expect(std.mem.indexOf(u8, source, rendered) == null);
+    }
 }
