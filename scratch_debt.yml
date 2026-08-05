@@ -3,21 +3,21 @@ sprint:
   id: generated_c_boundary
   branch: feature/debt_payoff/generated_c_boundary
   status: active
-  active_slice: renderer_stat_device
+  active_slice: final_generated_boundary_narrowing
 
 objective: >-
-  Implement and prove the accepted Renderer stat/device migration while
-  preserving candidate-skipping behavior and DRM ownership.
+  Narrow the generated PTY and Renderer C boundaries to their retained
+  openpty and DRM owners after every source migration is accepted.
 
 questions:
   - id: translated_symbols
     status: answered
     question: Which exact declarations and constants does each translated module expose and which source symbols consume them?
-    answer: PTY and Renderer fd/time migrations are accepted; the active slice migrates only Renderer records r114, r115, r117, and r118 while retaining every DRM declaration.
+    answer: Every contracted source migration is accepted; maintained consumers now retain only openpty and the ten Renderer DRM declarations.
   - id: build_ownership
     status: answered
     question: Which target macros, include paths, libraries, module imports, and proof gates define each native boundary?
-    answer: Existing renderer_c generated header/build wiring and DRM ownership remain unchanged in this slice.
+    answer: The active slice narrows generated headers and build ownership while preserving libc, libdrm, Translate-C, and retained consumer wiring.
   - id: generated_protocols
     status: answered
     question: Does each tracked Wayland XML/header/C cohort reproduce byte-for-byte and enter the build exactly once?
@@ -25,11 +25,11 @@ questions:
   - id: disposition
     status: answered
     question: Which boundaries are required, redundant, or uncertain under the pinned Zig and system ABI?
-    answer: The finite contract selects statx rdev fields plus checked glibc-compatible device formulas; DRM remains outside this slice.
+    answer: The finite contract retains pty_c for openpty and renderer_c for ten DRM declarations; native_c, wayland_c, and xkb_c remain unchanged.
 
 active_scope:
   evidence: .zig/work/debt-payoff/generated-c-boundary/finite_boundary_contract.yml
-  product_change: limited to howl-host/src/renderer.zig and owner-local proofs for the accepted Renderer stat/device slice
+  product_change: limited to howl-pty and howl-host generated native-header/build ownership for the accepted final narrowing slice
   translated_module_count: 5
   generated_protocol_cohort_count: 5
   excluded:
@@ -40,8 +40,10 @@ active_scope:
 progress:
   state: not_started
   accepted_checkpoint:
-    slice: renderer_fd_time
-    migrated_records: r098, r101-r105, r116, r119
+    slice: renderer_stat_device
+    migrated_records: r114, r115, r117, r118
     retained_boundary: Renderer DRM declarations
     validation: owning and workspace four-mode gates, audit, protocol, Wayland reproducibility, strict YAML, formatting, and diff checks pass
-  active_records: r114, r115, r117, r118
+  retained_records:
+    pty_c: r029/openpty
+    renderer_c: r099, r100, r106-r113

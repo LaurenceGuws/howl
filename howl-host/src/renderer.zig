@@ -8401,8 +8401,8 @@ const Physical = struct {
 };
 
 fn selectPhysical(instance: vk.VkInstance, feedback_device: u64) !Physical {
-    const feedback_major = c.major(feedback_device);
-    const feedback_minor = c.minor(feedback_device);
+    const feedback_major = directMajor(feedback_device) orelse return error.PhysicalDevice;
+    const feedback_minor = directMinor(feedback_device) orelse return error.PhysicalDevice;
     var count: u32 = 0;
     if (vk.vkEnumeratePhysicalDevices(instance, &count, null) != vk.VK_SUCCESS or count == 0 or count > 8) return error.PhysicalDevice;
     var devices: [8]vk.VkPhysicalDevice = undefined;
@@ -8430,12 +8430,37 @@ fn openRenderNode(major: i64, minor: i64) !i32 {
         const name_bytes = std.fmt.bufPrint(path[0 .. path.len - 1], "/dev/dri/renderD{d}", .{index}) catch return error.DrmOpen;
         path[name_bytes.len] = 0;
         const name: [*:0]const u8 = @ptrCast(&path);
-        var status: c.struct_stat = undefined;
-        if (c.stat(name, &status) != 0) continue;
-        if (c.major(status.st_rdev) != major or c.minor(status.st_rdev) != minor) continue;
+        var status = std.mem.zeroes(linux.Statx);
+        const stat_result = linux.statx(linux.AT.FDCWD, name, 0, linux.STATX.BASIC_STATS, &status);
+        if (statxDevice(stat_result, &status)) |device| {
+            if (device.major != major or device.minor != minor) continue;
+        } else continue;
         return mapRenderOpenResult(linux.open(name, render_open_flags, 0));
     }
     return error.DrmOpen;
+}
+
+const StatxDevice = struct { major: i64, minor: i64 };
+
+fn statxDevice(result: usize, status: *const linux.Statx) ?StatxDevice {
+    if (linux.errno(result) != .SUCCESS) return null;
+    if (!status.mask.TYPE or !status.mask.MODE) return null;
+    return .{
+        .major = status.rdev_major,
+        .minor = status.rdev_minor,
+    };
+}
+
+fn directMajor(device: u64) ?u32 {
+    const value = ((device & 0x0000_0000_000f_ff00) >> 8) |
+        ((device & 0xffff_f000_0000_0000) >> 32);
+    return std.math.cast(u32, value);
+}
+
+fn directMinor(device: u64) ?u32 {
+    const value = ((device & 0x0000_0000_0000_00ff) >> 0) |
+        ((device & 0x00000ffffff00000) >> 12);
+    return std.math.cast(u32, value);
 }
 
 fn mapRenderOpenResult(result: usize) !i32 {
@@ -8797,13 +8822,42 @@ test "renderer fd and monotonic boundary receipts" {
     try std.testing.expect(!closeSucceeded(std.math.maxInt(usize)));
 }
 
-test "renderer translated fd and time census is migrated while DRM remains" {
+test "renderer translated boundary census is migrated while DRM remains" {
     const source = @embedFile("renderer.zig");
     inline for (.{
-        "CLOCK_MONOTONIC", "ETIME", "O_CLOEXEC", "O_RDWR", "clock_gettime", "close", "open", "timespec",
+        "CLOCK_MONOTONIC", "ETIME",       "O_CLOEXEC", "O_RDWR", "clock_gettime", "close", "open", "timespec",
+        "stat",            "struct_stat", "major",     "minor",
     }) |name| {
         var token: [64]u8 = undefined;
         const rendered = try std.fmt.bufPrint(&token, "c.{s}", .{name});
         try std.testing.expect(std.mem.indexOf(u8, source, rendered) == null);
     }
+}
+
+test "renderer statx and device extraction receipts" {
+    var status = std.mem.zeroes(linux.Statx);
+    status.mask = .{ .TYPE = true, .MODE = true };
+    status.rdev_major = 0x1ffff;
+    status.rdev_minor = 0x1fffff;
+    const device = statxDevice(0, &status).?;
+    try std.testing.expectEqual(@as(i64, 0x1ffff), device.major);
+    try std.testing.expectEqual(@as(i64, 0x1fffff), device.minor);
+    status.mask = .{};
+    try std.testing.expect(statxDevice(0, &status) == null);
+    status.mask = .{ .TYPE = true };
+    try std.testing.expect(statxDevice(0, &status) == null);
+    status.mask = .{ .MODE = true };
+    try std.testing.expect(statxDevice(0, &status) == null);
+    status.mask = .{ .TYPE = true, .MODE = true };
+    try std.testing.expect(statxDevice(std.math.maxInt(usize), &status) == null);
+
+    try std.testing.expectEqual(@as(u32, 0), directMajor(0).?);
+    try std.testing.expectEqual(@as(u32, 0), directMinor(0).?);
+    try std.testing.expectEqual(@as(u32, 0), directMajor(0xff).?);
+    try std.testing.expectEqual(@as(u32, 0xff), directMinor(0xff).?);
+    try std.testing.expectEqual(@as(u32, 0xfff), directMajor(0x0000_0000_000f_ff00).?);
+    try std.testing.expectEqual(@as(u32, 0xffff_f000), directMajor(0xffff_f000_0000_0000).?);
+    try std.testing.expectEqual(@as(u32, 0xffff_ffff), directMajor(std.math.maxInt(u64)).?);
+    try std.testing.expectEqual(@as(u32, 0xffff_ffff), directMinor(std.math.maxInt(u64)).?);
+    try std.testing.expectEqual(@as(u32, 0xffffff00), directMinor(0x00000ffffff00000).?);
 }

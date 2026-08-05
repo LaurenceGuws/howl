@@ -68,9 +68,13 @@ slices:
     product_change: howl-host Renderer source only; preserve DRM declarations, generated wiring, and public behavior
     output: migrate records r098, r101-r105, r116, and r119 with fd/time owner proofs
   - id: renderer_stat_device
-    status: active
+    status: accepted
     product_change: howl-host Renderer source only; preserve DRM declarations, generated wiring, and public behavior
     output: migrate records r114, r115, r117, and r118 with statx/device identity proofs
+  - id: final_generated_boundary_narrowing
+    status: active
+    product_change: howl-pty and howl-host generated native-header build ownership only
+    output: narrow pty_c to openpty ownership and renderer_c to retained DRM ownership
 
 acceptance:
   - All five Translate-C modules and five generated Wayland protocol cohorts are indexed exactly once.
