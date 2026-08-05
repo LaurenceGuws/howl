@@ -32,11 +32,16 @@ invariants:
 
 slices:
   - id: error_disposition_inventory
-    status: active
+    status: accepted
     product_change: none
     output: complete mechanical census of maintained error-handling syntax excluding explicit test declarations; proof-only helper reachability is resolved by owner review
+    accepted_facts:
+      - Pinned std.zig.Ast extraction records 2887 unique token identities across 62 maintained source, build, and tool files.
+      - The census contains 883 catch, 224 errdefer, 1711 transparent try, and 69 direct panic records.
+      - Explicit test declarations, historical examples, test/proof files, generated sources, optional orelse, and catch-owned panic tokens are excluded.
+      - JSONL and YAML reproduce byte-for-byte through the retained ignored Zig extractor and Nushell summarizer.
   - id: error_owner_review
-    status: pending
+    status: active
     product_change: none
     output: package-sized source review cohorts resolving every non-transparent site into exact owner semantics
   - id: source_audit_admission_review
