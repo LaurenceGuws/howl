@@ -5,12 +5,12 @@ sprint:
   status: active
   active_slice: error_owner_review
   active_cohort: host_renderer
-  active_subcohort: renderer_lifecycle_shape_helper
+  active_subcohort: renderer_redraw_chrome
 
 objective: >-
-  Resolve the nine Renderer lifecycle-shape proof-helper syntax records into
-  exact fixture ownership, cleanup, failure, and reachability semantics without
-  changing product code.
+  Resolve the sixteen Renderer Chrome-redraw syntax records into exact
+  retirement, planning, submission, completion, rollback, and proof semantics
+  without changing product code.
 
 questions:
   - id: population
@@ -25,11 +25,11 @@ questions:
     question: At which owner must each retained disposition remain observable, retryable, transactional, or infallible?
 
 active_scope:
-  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_lifecycle_shape_helper.yml
+  evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_redraw_chrome.yml
   product_change: forbidden
   population:
-    - records r00331 through r00339 from howl-host/src/renderer.zig
-    - Renderer lifecycleShapeForTest proof-only helper
+    - records r00340 through r00355 from howl-host/src/renderer.zig
+    - Renderer redrawChrome physical frame transaction
     - exact source-local proof owners for those records
   excluded:
     - accepted Host terminal cohort records r00444 through r00836
@@ -40,13 +40,14 @@ active_scope:
     - accepted Renderer wait records r00256 through r00275
     - accepted Renderer input-drain records r00276 through r00290
     - accepted Renderer topology records r00291 through r00330
-    - Renderer records r00340 through r00392 until their owner subcohorts
+    - accepted Renderer lifecycle-shape helper records r00331 through r00339
+    - Renderer records r00356 through r00392 until their owner subcohorts
     - non-Host package, root-build, and tool records
     - source-audit, comment, and authority corrections until their later slices
     - Git operations
 
 progress:
-  state: host_renderer_lifecycle_shape_helper_not_started
+  state: host_renderer_redraw_chrome_not_started
   accepted_syntax_inventory:
     files: 62
     records: 2887
@@ -266,6 +267,16 @@ progress:
         branches have deterministic evidence. Failure after cancelling an
         existing pending candidate remains unproved: the cited SourceLimit
         fixture began with no pending candidate and was downgraded.
+    renderer_lifecycle_shape_helper:
+      evidence: .zig/work/debt-payoff/error-and-authority-hygiene/owner_review_host_renderer_lifecycle_shape_helper.yml
+      records: 9
+      proof_only_helpers: 9
+      source_contract: 9
+      debt_candidates: 9
+      conclusion: >-
+        The lifecycle-shape receipt helper has exact fixture and cleanup source
+        contracts, but its success-only callers inject none of the nine failure
+        branches; no deterministic error evidence is claimed.
   cohort_order:
     - host_process_root
     - host_window_boundary
