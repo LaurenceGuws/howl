@@ -4,6 +4,7 @@ const std = @import("std");
 const renderer = @import("renderer.zig");
 const presentation_state = @import("presentation_state.zig");
 const terminal_runtime = @import("terminal_runtime");
+const terminal_visual_fifo = @import("terminal_visual_fifo");
 const window = @import("window.zig");
 const config = @import("config");
 
@@ -33,12 +34,14 @@ pub fn main(init: std.process.Init) MainError!void {
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
     defer terminals.deinit();
+    var terminal_visuals = try terminal_visual_fifo.Fifo.init(init.io, init.gpa);
+    defer terminal_visuals.deinit();
 
     const window_thread = try std.Thread.spawn(.{}, window.run, .{&boundary});
     const terminal_thread = std.Thread.spawn(
         .{},
         terminal_runtime.run,
-        .{ &terminals, init.gpa, loaded_config.fontPath(), "/bin/sh", parsed.command, owner_views.terminal },
+        .{ &terminals, &terminal_visuals, init.gpa, "/bin/sh", parsed.command },
     ) catch |failure| {
         boundary.requestStop(.render);
         window_thread.join();
@@ -47,6 +50,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const render_thread = std.Thread.spawn(.{}, renderer.run, .{
         &boundary,
         &terminals,
+        &terminal_visuals,
         init.gpa,
         loaded_config.fontPath(),
         owner_views.renderer,

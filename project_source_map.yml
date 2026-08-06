@@ -57,13 +57,14 @@ accepted:
   .howl/config/howl.conf: repository-local development cursor configuration defaults
   howl-host/src/presentation_state.zig: bounded cross-thread state, one latest ready frame, monotonic ready revision, atomic Render cancellation, and directional readiness ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, exact scale readiness including entered-output scale-one fallback, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: Host input, session, Composer, static-cursor physical replay, canvas-to-Vulkan adaptation, DMA-BUF ring ownership, Render-owned never-presented timeline reclamation, accepted startup product presentation, and compositor-release observation
+  howl-host/src/renderer.zig: Host input, session, terminal lifecycle grid derivation, bounded terminal pane Grid ownership, global visual FIFO drain, Composer, static-cursor physical replay, canvas-to-Vulkan adaptation, DMA-BUF ring ownership, Render-owned never-presented timeline reclamation, accepted startup product presentation, and compositor-release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs
   howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection
-  howl-host/src/terminal.zig: one caller-driven poll owner for bounded logical PTY, VT, terminal projection, child-write, and cleanup lifetimes
-  howl-host/src/terminal_handoff.zig: bounded Host terminal registration, lifecycle admission, ordered input, visibility, font requests, static cursor identity, child completion, retirement, and directional wake ownership without rendering payload transport
+  howl-host/src/terminal.zig: one poll owner for bounded PTY, VT, input, replies, consequences, exact admitted grids, ordered visual-journal enqueue, child completion, and cleanup lifetimes without font or rendering ownership
+  howl-host/src/terminal_handoff.zig: bounded Host terminal registration, exact lifecycle-grid admission, ordered input, visibility, static cursor identity, child completion, retirement, and directional wake ownership without visual payload transport
   howl-host/src/terminal_visual_fifo.zig: bounded global ordered deep-copy FIFO from exact VT visual transactions to one Renderer borrower with independent ready and capacity wakes
+  howl-host/src/terminal_fonts.zig: bounded Renderer-local native FontSet cache keyed by resolved point and DPI identity
   howl-host/test/chrome_state_equivalence_test.zig: test-only normalized legacy-topology oracle proving SessionState identity, projection, hit-test, and rollback equivalence
   howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
   howl-vk/src/terminal_cells.zig: one accepted terminal instance shadow, direct resolved backend updates, bounded sparse writes, borrowed replacement input, stable glyph-slot atlas ownership, preflighted mapped staging and Vulkan commands, u32 row indirection, static cursor draw data, and one bounded draw group without a Howl-Render dependency

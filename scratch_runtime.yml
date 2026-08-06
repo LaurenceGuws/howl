@@ -1,181 +1,56 @@
 schema: 1
+marathon: runtime_hot_paths
 sprint: terminal_render_foundation
-active_slice: terminal_visual_fifo
-status: review_ready
-base: 46889d2a685eb35fbd939cb8a189f00d07203f19
-branch: feature/runtime_hot_paths/measurement_baseline
-
-objective: >-
-  Retain one bounded global Host FIFO that deep-copies exact ordered VT visual
-  transactions for one stable Renderer head borrower without integrating
-  terminal producers or rendering consumers.
-
-terminal_visual_fifo:
-  path: howl-host/src/terminal_visual_fifo.zig
-  queue_slots: 256
-  slot_storage: stable_in_place
-  inline_operations_per_slot: 32
-  inline_cells_per_slot: 32
-  fifo_size_bytes: 645192
-  fifo_alignment: 8
-  slot_size_bytes: 2520
-  dynamic_payload_limit_bytes: 46137344
-  dynamic_budget_includes:
-    - overflow journal.Operation arrays
-    - overflow journal.Cell arrays
-    - masks and recolor classification arrays
-    - recolor RGB tables
-  ordering: one global reservation and commit order across all pane identities
-  consumer: one borrowed head transaction until exact completion
-  wakes:
-    ready: nonblocking eventfd with drain then shared-state recheck
-    capacity: nonblocking eventfd after slot or dynamic-budget release
-  excluded:
-    - lifecycle handoff state
-    - producer merging
-    - pane grids
-    - Canvas, GPU, frames, and Window wakes
-    - terminal-thread and Renderer integration
-
-prerequisite_implementation:
-  retained_boundary:
-    path: howl-host/src/terminal_handoff.zig
-    size_bytes: 56552
-    heap_bytes: 0
-    descriptors: 2 directional nonblocking eventfds
-    owners:
-      - monotonic pane, source, lifecycle, visible-set, cursor, font, and completion identity
-      - bounded lifecycle and input rings
-      - lifecycle admission transaction
-      - visible membership and font request coalescing
-      - static cursor inbox
-      - at-most-once child completion
-      - retirement and reverse descriptor cleanup
-    visible_commit_ownership: >-
-      A retained visible request cannot be superseded in requested, prepared,
-      or committing phase. The sole Renderer claimant therefore commits
-      infallibly after Composer success; retryable Composer rejection first
-      releases committing back to prepared.
-  removed_boundary:
-    path: howl-host/src/terminal_pool.zig
-    reason: its only accepted role was completed Canvas update storage
-  forbidden_surface_absent:
-    - PendingSlot
-    - ProducerUpdate
-    - reserveUpdate
-    - publishUpdate
-    - drainReady
-    - applyCandidate
-    - hasReadyUpdates
-    - Canvas resource, command, pixel, or frame queues
-  next_compile_boundary: >-
-    Howl-VK now accepts only resolved backend terminal inputs and has no
-    Howl-Render package dependency. Host imports the ordinary howl-vk root and
-    compiles past the former duplicate Canvas module graph. Its first failure
-    is the intentionally deleted howl_render.terminal projection in
-    terminal.zig. No alternate root, Host adapter, projection, mutation queue,
-    or compatibility API was added.
+slice: host_terminal_fifo_grid_integration
+status: accepted
+base: 55fff601aa26f513129b4cfea8ef4ee32ee23361
 
 changed_product_paths:
   added:
-    - howl-host/src/terminal_handoff.zig
-    - howl-render/src/terminal_cells.zig
-    - howl-vk/src/terminal_cells.zig
+    - howl-host/src/terminal_fonts.zig
   modified:
     - howl-host/build.zig
+    - howl-host/src/main.zig
     - howl-host/src/renderer.zig
     - howl-host/src/terminal.zig
-    - howl-render/build.zig
-    - howl-render/src/root.zig
-    - howl-render/src/root_generated.zig
-    - howl-render/src/root_native.zig
-    - howl-render/src/root_native_generated.zig
-    - howl-vk/build.zig
-    - howl-vk/build.zig.zon
-    - howl-vk/src/abi.zig
-    - howl-vk/src/proofs.zig
-    - howl-vk/src/root.zig
-  deleted:
-    - howl-host/src/terminal_pool.zig
+    - howl-host/src/terminal_handoff.zig
+  retained:
+    - howl-host/src/terminal_visual_fifo.zig
+    - howl-render/src/terminal_cells.zig
+    - howl-vt render journal APIs
+  forbidden_and_absent:
+    - compatibility transport
+    - physical terminal Vulkan integration
+    - terminal images above VT
+    - animation and blink scheduling
+    - cursor trails
+    - ligatures, selection, and hyperlinks
 
-implementation:
-  vt_render_transport:
-    - one preallocated transaction per parser byte
-    - one pending transaction blocks the next parser byte before semantic mutation
-    - final resolved cells and RGB cross the boundary without VT provenance
-    - exact initialization, resize, and alternate-grid replacement
-    - compact selective recolor for palette, defaults, and reverse-screen changes
-    - ordered copy, fill, masked erase, visual patch, and static cursor operations
-    - parser-to-Render parity proofs cover shell edits, scrolling, style, palette, reverse screen, alternate screen, and resize
-  render:
-    - 11-byte alignment-one resolved Cell
-    - one fixed current visual grid plus bounded first-old cell baselines
-    - touched-row baselines and structured row work without full row-map scans
-    - touched-identity cleanup rather than maximum-grid metadata clears
-    - structured full-row rotation and final fill preservation
-    - explicit init, resize, and alternate-grid replacement
-    - static cursor lowering independent from cells
-  Vulkan:
-    - 16-byte persistent terminal Instance shadow
-    - direct resolved backend Update and Instance input with no Howl-Render import
-    - one accepted instance shadow plus bounded sparse candidate writes
-    - caller-borrowed replacement cells rather than a second full candidate
-    - exact borrowed mapped instance, u32 row-map, and glyph staging partitions
-    - exact VkBufferCopy and VkBufferImageCopy candidate regions and command recording
-    - stable 380-slot opaque glyph identity supplied by the future Host adapter
-    - first-use glyph upload only with four-byte-aligned Vulkan copy offsets
-    - row-map transfer with zero moved-cell payload
-    - one terminal draw group per pane
-    - complete command preflight before the first Vulkan command
+accepted_state:
+  runtime_owner: PTY, VT, input, replies, consequences, child exit, lifecycle grids
+  renderer_owner: terminal FontSet cache and pane Grid table
+  transport_owner: one global terminal visual FIFO
+  lifecycle_barrier: same-grid font changes use resize revision and VT replace resize
+  lower_boundary: terminal_cells.Grid final equality
+  upper_effect: no Canvas, GPU, frame, or Window publication
 
-retained_memory:
-  receipt_configuration: 128 rows x 512 columns, 65,536 sparse and structured entries, 65,536 glyph bytes
-  render_grid_bytes_per_pane: 7342232
-  vulkan_store_bytes_per_pane: 7961720
-  combined_cpu_bytes_per_pane: 15303952
-  representable_cpu_bytes_if_64_future_callers_each_request_all_maxima: 979452928
-  future_logical_gpu_payload_bytes_per_pane: 1097728
-  future_logical_gpu_payload_bytes_under_same_arithmetic_multiplier: 70254592
-  note: >-
-    Host limits and steady memory are not selected or authorized. These are
-    library stress equations, while physical GPU allocation and execution
-    remain unimplemented and unclaimed.
+review_notes:
+  - standalone Renderer tests use explicit Host to Render identity conversions
+  - obsolete completed-Canvas Chrome retry proof was deleted rather than adapted
+  - FIFO stale identities are consumed without Grid mutation
+  - fallible Grid apply retains the borrowed FIFO head for fatal owner handling
+  - Runtime is the sole production journal source; an unexpected Grid apply failure is invariant-fatal and may leave partial current-state mutation
+  - no Grid apply rollback is claimed
+  - candidate Grid and font ownership is prepared before lifecycle commit
+  - one production-shaped proof chains admitted create and resize through Runtime, FIFO, and Renderer Grid ownership
 
 validation:
-  howl_vt_four_mode_check: passed
-  howl_vt_four_mode_test: passed
-  howl_render_four_mode_check: passed
-  howl_render_four_mode_test: passed
-  howl_vk_four_mode_check: passed
-  howl_vk_four_mode_test: passed
-  non_host_child_four_mode_check: passed for VT, PTY, Render, Vulkan, and Wayland
-  non_host_child_four_mode_test: passed for VT, PTY, Render, Vulkan, and Wayland
-  root_workspace_four_mode_check: >-
-    blocked in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall at the
-    intentionally deleted howl_render.terminal projection. The former
-    duplicate Canvas module graph is absent.
-  root_workspace_four_mode_test: >-
-    blocked by the deleted terminal projection and completed-update test cohort
-    in terminal.zig, plus Renderer tests that exercised that cohort. The new
-    isolated handoff tests pass; no compatibility projection or payload API was
-    added to make historical rendering tests compile.
-  terminal_handoff_four_mode_test: passed
-  strict_yaml: passed across tracked and foundation evidence YAML
-  source_audit: passed with the curated VT journal export recorded
-  protocol_validation: passed
+  debug_host_check: passed
+  debug_host_test: passed
+  four_mode_host: passed
+  four_mode_workspace: passed
+  source_audit: passed
+  protocol: passed
+  strict_yaml: passed
   formatting: passed
-  git_diff_check: passed
-  physical_vulkan_execution: not_run_and_not_claimed
-  Host_runtime: not_in_scope
-
-review_focus:
-  - every parser-byte transaction allocates before semantic mutation
-  - pending visual ownership blocks later parser bytes before VT mutation
-  - alternate exit and reverse-screen underline parity are causally covered
-  - final equality in retained Render state produces no backend work
-  - no complete generic Plan stage or replay is used by terminal-only work
-  - no moved-cell payload is produced by full-row scroll
-  - candidate failure leaves accepted Render and Vulkan ownership unchanged
-  - full replacement has only explicit lifecycle entry points
-  - outputs are exact sparse work, not permanent diagnostic counters
-  - Host control ownership is recovered; VT and terminal rendering remain untouched
+  diff_check: passed

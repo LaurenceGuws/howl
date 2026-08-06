@@ -92,6 +92,13 @@ pub fn build(b: *std.Build) void {
     });
     terminal_visual_fifo.addImport("howl_vt", vt.module("howl_vt"));
     terminal_visual_fifo.addImport("terminal_handoff", terminal_handoff);
+    const terminal_fonts = b.createModule(.{
+        .root_source_file = b.path("src/terminal_fonts.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_fonts.addImport("howl_render", render.module("howl_render"));
+    terminal_fonts.addImport("terminal_handoff", terminal_handoff);
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -102,9 +109,12 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("howl_vt", vt.module("howl_vt"));
     terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
+    terminal_runtime.addImport("terminal_visual_fifo", terminal_visual_fifo);
     terminal_runtime.addImport("config", config);
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_visual_fifo", terminal_visual_fifo);
+    root.addImport("terminal_fonts", terminal_fonts);
+    root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("session_chrome_adapter", session_chrome_adapter);
     root.addImport("session_domain", session_domain);
@@ -163,6 +173,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
     test_module.addImport("terminal_visual_fifo", terminal_visual_fifo);
+    test_module.addImport("terminal_fonts", terminal_fonts);
     test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
@@ -194,6 +205,10 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
+    renderer_test_module.addImport("terminal_visual_fifo", terminal_visual_fifo);
+    renderer_test_module.addImport("terminal_fonts", terminal_fonts);
+    renderer_test_module.addImport("terminal_runtime", terminal_runtime);
+    renderer_test_module.addImport("howl_vt", vt.module("howl_vt"));
     renderer_test_module.addImport("config", config);
     renderer_test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     renderer_test_module.addImport("session_domain", session_domain);

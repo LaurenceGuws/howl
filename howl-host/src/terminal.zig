@@ -1,170 +1,49 @@
-//! Owns bounded caller-driven PTY turns for logical terminal lifetimes.
+//! Owns bounded PTY and VT lifetimes and publishes ordered VT visual journals.
+//!
+//! This owner has no font, raster, glyph, geometry, Canvas, or GPU state.
+//! Renderer derives every admitted grid. A terminal applies that exact grid and
+//! transfers each complete VT journal to the global visual FIFO before it may
+//! process another PTY byte.
 
 const std = @import("std");
 const pty = @import("howl_pty");
-const render = @import("howl_render");
 const vt = @import("howl_vt");
 const wayland = @import("howl_wayland");
 const handoff = @import("terminal_handoff");
-const terminal_pool = @import("terminal_pool");
-const font_owner = render.terminal_font_owner;
-const terminal_render = render.terminal;
-const config = @import("config");
+const visual_fifo = @import("terminal_visual_fifo");
+const builtin = @import("builtin");
 
-const test_fonts = struct {
-    const primary = "../howl-render/testdata/primary.ttf";
-    const symbols = "../howl-render/testdata/symbols.ttf";
-};
-
-test "Runtime retains the copied semantic cursor view" {
-    var loaded_config = config.Config.defaults();
-    loaded_config.cursor.shape = .underline;
-    const policy = loaded_config.semanticPolicy();
-    var runtime = try Runtime.initWithCommand(
-        std.testing.allocator,
-        test_fonts.primary,
-        null,
-        policy,
-    );
-    defer runtime.deinit();
-    try std.testing.expectEqual(policy, runtime.cursor_policy);
-}
-
-test "Runtime cursor retention layout receipt" {
-    // d67cb4b baseline: 13368 bytes; the one-byte view fits existing padding.
-    const baseline_size: usize = 13368;
-    const retained_delta: usize = 0;
-    try std.testing.expectEqual(@as(usize, 8), @alignOf(Runtime));
-    try std.testing.expectEqual(baseline_size + retained_delta, @sizeOf(Runtime));
-}
-
-const PooledTransfer = struct {
-    boundary: *handoff.Boundary,
-    member: terminal_pool.Member,
-};
-
-const Transfer = union(enum) {
-    dedicated: *handoff.PendingSlot,
-    pooled: PooledTransfer,
-};
-
-const PoolReservation = struct {
-    boundary: *handoff.Boundary,
-    token: terminal_pool.Token,
-    active: bool = true,
-
-    fn publish(
-        self: *PoolReservation,
-        update: render.canvas.ProducerUpdate,
-    ) terminal_pool.PublishError!void {
-        try self.boundary.publishUpdate(self.token, update);
-        self.active = false;
-    }
-
-    fn deinit(self: *PoolReservation) void {
-        if (!self.active) return;
-        self.boundary.cancelUpdate(self.token) catch
-            @panic("pooled terminal reservation cleanup failed");
-        self.active = false;
-    }
-};
-
-/// Maximum logical terminal owners serviced by one runtime thread.
 const owner_limit: usize = 64;
-/// Maximum child-bound bytes retained per logical terminal.
 const write_queue_bytes: usize = 64 * 1024;
-/// Maximum bytes accepted from one PTY during one fair turn.
-const read_bytes_per_turn: usize = 64 * 1024;
-/// Maximum read syscalls issued for one owner during one fair turn.
-const read_calls_per_turn: usize = 4;
-/// Maximum child-bound bytes attempted during one fair turn.
+const read_buffer_bytes: usize = 16 * 1024;
 const write_bytes_per_turn: usize = 64 * 1024;
-/// Maximum write syscalls issued for one owner during one fair turn.
 const write_calls_per_turn: usize = 4;
-const projection_cell_limit: usize = 65_536;
-const projection_row_limit: usize = 128;
-/// Current one-pane admission shared with PendingSlot and Composer's candidate frame.
-const admitted_commands: usize = 32_768;
-/// Complete one-pane retained-resource turnover shared with PendingSlot and
-/// Composer's candidate frame: glyphs and decoration masks.
-const admitted_resources: usize = 512 + 128;
-/// Current realistic single-pane geometry bound; sparse output remains subject
-/// to the independently checked command/resource limits.
-const admitted_cells: usize = 65_536;
-const terminal_configuration_generation: u64 = 1;
+const input_turn_limit: usize = 8;
+const grid_row_limit: usize = 128;
+const grid_cell_limit: usize = 65_536;
 
-/// Reports exact bounded child-write admission failure.
-const WriteQueueError = error{WriteQueueFull};
-/// Reports copied reply admission or invalid VT reply-prefix consumption.
-const ReplyTransferError = WriteQueueError || vt.Terminal.ReplyConsumeError;
-/// Reports bounded input admission or exact mode-directed encoding failure.
-const InputError = WriteQueueError || vt.Terminal.InputError ||
-    vt.Terminal.ReplyConsumeError || pty.TermiosSignalError;
-/// Reports stale routing, invalid keysym scalar identity, or bounded encoding failure.
-const ApplyInputError = error{ UnknownPane, InvalidUnicodeScalar } ||
-    InputError;
-/// Reports construction failure for one complete logical PTY/VT owner.
-const LogicalInitError = error{InvalidPane} ||
-    error{TerminalCapacity} ||
-    error{FontCapacity} ||
-    pty.InitError || pty.StartError || vt.Terminal.InitError ||
-    render.terminal.Content.InitError || terminal_render.Error ||
-    terminal_render.Content.RecoverError || terminal_render.Content.ApplyError ||
-    handoff.InitError;
-/// Reports runtime table or runtime-owned native-font construction failure.
-const RuntimeInitError = error{ OutOfMemory, InvalidLimits } ||
-    error{InvalidFontPolicy} ||
-    render.terminal.FontMapInitError;
-/// Reports one bounded PTY/VT service-turn failure.
-const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
-    vt.Terminal.FeedError || ReplyTransferError ||
-    vt.Terminal.ClipboardReplyError ||
-    vt.Terminal.ContainerReplyError ||
-    vt.Terminal.ColorPreferenceReplyError ||
-    error{ StaleContainerRequest, ContainerReplyMismatch } ||
-    terminal_render.Error || terminal_render.Content.RecoverError ||
-    terminal_render.Content.ApplyError ||
-    error{ ArithmeticOverflow, Clock } ||
-    font_owner.ResourceError || font_owner.BatchError ||
-    handoff.CursorPublishError ||
-    handoff.CompletionPublishError ||
-    handoff.PublishError || terminal_pool.ReserveError ||
-    terminal_pool.TransitionError || terminal_pool.PublishError;
-/// Reports a fallible VT candidate or PTY kernel resize before VT commit.
-const ResizeError = vt.Terminal.ResizeError || pty.ResizeError ||
-    error{ InvalidPane, FontCapacity, TerminalCapacity };
-/// Reports bounded pane point/DPI replacement and its irreversible PTY boundary.
-const FontResizeError = render.terminal.FontMapInitError ||
-    font_owner.GroupError ||
-    ResizeError || error{
-    FontCapacity,
-    Busy,
-    PostKernelResizeFailure,
-};
+/// Reports process-root terminal-boundary construction failure.
+pub const BoundaryInitError = handoff.BoundaryInitError;
 
-/// Retains ordered encoded input and VT replies until accepted by one PTY.
+/// Creates the terminal lifecycle and input boundary.
+pub fn initBoundary(io: std.Io, allocator: std.mem.Allocator) BoundaryInitError!handoff.Boundary {
+    return handoff.Boundary.init(io, allocator);
+}
+
 const WriteQueue = struct {
     bytes: [write_queue_bytes]u8 = undefined,
     count: usize = 0,
 
-    /// Copies one complete suffix or preserves the existing queue on full.
-    fn append(self: *WriteQueue, bytes: []const u8) WriteQueueError!void {
-        if (bytes.len > self.bytes.len - self.count) return error.WriteQueueFull;
-        @memcpy(self.bytes[self.count..][0..bytes.len], bytes);
-        self.count += bytes.len;
-    }
-
-    /// Borrows the currently ordered child-bound prefix.
-    fn pending(self: *const WriteQueue) []const u8 {
-        return self.bytes[0..self.count];
-    }
-
-    /// Returns exact unused child-bound capacity.
     fn remaining(self: *const WriteQueue) usize {
         return self.bytes.len - self.count;
     }
 
-    /// Removes one accepted prefix without changing the remaining order.
+    fn append(self: *WriteQueue, bytes: []const u8) error{WriteQueueFull}!void {
+        if (bytes.len > self.remaining()) return error.WriteQueueFull;
+        @memcpy(self.bytes[self.count..][0..bytes.len], bytes);
+        self.count += bytes.len;
+    }
+
     fn consume(self: *WriteQueue, count: usize) void {
         std.debug.assert(count <= self.count);
         std.mem.copyForwards(u8, self.bytes[0 .. self.count - count], self.bytes[count..self.count]);
@@ -172,203 +51,33 @@ const WriteQueue = struct {
     }
 };
 
-/// Records one bounded service turn without exposing mutable terminal state.
-const Turn = struct {
-    read_bytes: usize = 0,
-    read_calls: u8 = 0,
-    written_bytes: usize = 0,
-    write_calls: u8 = 0,
-    end_of_stream: bool = false,
-    published_update: bool = false,
-};
-
-const VisualState = struct {
-    baseline_cells: [projection_cell_limit]terminal_render.Cell = undefined,
-    baseline_scalars: vt.ScalarStorage,
-    baseline_geometry: [projection_row_limit]terminal_render.LineGeometry = undefined,
-    baseline_cursor: terminal_render.Cursor = undefined,
-    work_cells: [projection_cell_limit]terminal_render.Cell = undefined,
-    work_scalars: vt.ScalarStorage,
-    work_rows: [projection_row_limit]terminal_render.RowPatch = undefined,
-    rows: u16,
-    cols: u16,
-    initialized: bool = false,
-
-    fn init(
-        allocator: std.mem.Allocator,
-        rows: u16,
-        cols: u16,
-    ) error{OutOfMemory}!VisualState {
-        var baseline_scalars = vt.ScalarStorage.init(
-            allocator,
-            projection_cell_limit,
-        ) catch |failure| switch (failure) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.InvalidCapacity => unreachable,
-        };
-        errdefer baseline_scalars.deinit();
-        const work_scalars = vt.ScalarStorage.init(
-            allocator,
-            projection_cell_limit,
-        ) catch |failure| switch (failure) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.InvalidCapacity => unreachable,
-        };
-        return .{
-            .baseline_scalars = baseline_scalars,
-            .work_scalars = work_scalars,
-            .rows = rows,
-            .cols = cols,
-        };
-    }
-
-    fn deinit(self: *VisualState) void {
-        self.work_scalars.deinit();
-        self.baseline_scalars.deinit();
-        self.* = undefined;
-    }
-
-    fn baseline(self: *const VisualState) terminal_render.ProjectionBaseline {
-        const cells = @as(usize, self.rows) * self.cols;
-        return .{
-            .rows = self.rows,
-            .cols = self.cols,
-            .cursor = self.baseline_cursor,
-            .cells = self.baseline_cells[0..cells],
-            .scalars = &self.baseline_scalars,
-            .geometry = self.baseline_geometry[0..self.rows],
-        };
-    }
-
-    fn scalarBaseline(self: *const VisualState) terminal_render.ScalarBaseline {
-        return .retained(
-            &self.baseline_scalars,
-            @as(usize, self.rows) * self.cols,
-        );
-    }
-
-    fn project(
-        self: *VisualState,
-        machine: *vt.Terminal,
-        content: *terminal_render.Content,
-    ) (terminal_render.Error || terminal_render.Content.RecoverError ||
-        terminal_render.Content.ApplyError)!void {
-        const view = machine.semanticView(0);
-        const dimensions_match = self.initialized and
-            self.rows == view.rows and self.cols == view.cols;
-        const projected = try terminal_render.project(
-            view,
-            machine.presentation(),
-            if (dimensions_match)
-                .{ .incremental = self.baseline() }
-            else
-                .full,
-            .{
-                .cells = &self.work_cells,
-                .scalars = &self.work_scalars,
-                .rows = &self.work_rows,
-            },
-            null,
-            selectionStyle(),
-        );
-        if (dimensions_match) {
-            try content.apply(projected);
-        } else {
-            self.rows = view.rows;
-            self.cols = view.cols;
-            self.commitProjection(projected);
-            try content.recover(self.baseline());
-            self.initialized = true;
-            return;
-        }
-        self.commitProjection(projected);
-    }
-
-    fn commitProjection(self: *VisualState, update: terminal_render.Update) void {
-        for (update.row_patches) |patch| {
-            if (patch.cell_count != 0) {
-                const destination = @as(usize, patch.row) * self.cols + patch.start_col;
-                @memcpy(
-                    self.baseline_cells[destination..][0..patch.cell_count],
-                    update.cells[patch.cell_offset..][0..patch.cell_count],
-                );
-            }
-            self.baseline_geometry[patch.row] = patch.geometry;
-        }
-        self.baseline_cursor = update.cursor;
-        std.mem.swap(vt.ScalarStorage, &self.baseline_scalars, &self.work_scalars);
-    }
-
-    fn requireRecovery(self: *VisualState) void {
-        self.initialized = false;
-    }
-};
-
-/// Exclusively owns one logical terminal's PTY, VT, and child-write queue.
-const LogicalFontState = struct {
-    request_revision: u64,
-    base_point_size: f64,
-    offset_points: f64,
-    scale: ?handoff.ScaleSnapshot,
-};
-
 const Logical = struct {
     allocator: std.mem.Allocator,
-    pane: render.chrome.PaneId,
+    pane: handoff.PaneId,
+    source: handoff.SourceId,
+    lifecycle_revision: handoff.LifecycleRevision,
     transport: pty.Owned,
     machine: vt.Terminal,
-    fonts: *render.terminal.FontMap,
-    font_group: ?font_owner.GroupRef,
-    font_released_hidden: bool = false,
-    font_reveal_candidate: bool = false,
-    /// Exact semantic cursor target retained independently of focus. Composer
-    /// chooses the one focused source atomically; terminal owners always keep
-    /// complete cursor glyph-component eligibility and target state.
-    cursor_target: handoff.CursorTarget,
-    /// Overall VT semantic sequence at which `cursor_target` was accepted.
-    cursor_target_terminal_sequence: u64,
-    /// Host-local high-water revision for changes to `cursor_target` only.
-    cursor_target_revision: u64,
-    /// Last cursor target accepted by Composer. Synchronized output may
-    /// advance the semantic target without advancing this view.
-    accepted_cursor_target: handoff.CursorTarget,
-    accepted_cursor_target_terminal_sequence: u64,
-    accepted_cursor_target_revision: u64,
-    ligature_mode: render.terminal.LigatureMode = .never,
-    content: render.terminal.Content,
-    visual: *VisualState,
-    transfer: Transfer,
-    pane_pixels: render.canvas.Size,
-    geometry: terminal_render.Content.Geometry,
-    font_state: LogicalFontState,
     writes: WriteQueue = .{},
-    /// The oldest caller-neutral consequence observed by this owner. Query and
-    /// reply-required consequences remain retained by VT under the explicit
-    /// Host policy that they do not gate PTY reads; all other families are
-    /// consumed by their exact identity after bounded classification.
-    consequence: ?vt.Terminal.Consequence = null,
+    read_bytes: [read_buffer_bytes]u8 = undefined,
+    read_start: usize = 0,
+    read_end: usize = 0,
     child_exit: ?pty.ChildExit = null,
     stream_closed: bool = false,
     completion_published: bool = false,
-    dirty: bool = true,
-    last_published_revision: render.canvas.ProducerRevision = @fromBackingInt(0),
-    last_published_geometry: ?terminal_render.Content.Geometry = null,
-    /// Constructs and starts one shell owner transactionally.
+    last_visual_sequence: u64 = 0,
+    pending_completion: ?handoff.TerminalCompletion = null,
+
     fn init(
         allocator: std.mem.Allocator,
-        pane: render.chrome.PaneId,
+        pane: handoff.PaneId,
+        source: handoff.SourceId,
+        revision: handoff.LifecycleRevision,
         shell: []const u8,
         command: ?[]const u8,
-        pane_pixels: render.canvas.Size,
-        fonts: *render.terminal.FontMap,
-        font_group: ?font_owner.GroupRef,
-        font_state: LogicalFontState,
-        transfer: Transfer,
-    ) LogicalInitError!Logical {
-        if (@backingInt(pane) == 0) return error.InvalidPane;
-        const metrics = fonts.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-            return error.FontCapacity;
-        const grid = try gridForPixels(pane_pixels, metrics);
+        grid: handoff.DerivedGrid,
+    ) !Logical {
+        try validateGrid(grid, pane);
         var transport = try pty.Owned.init(
             allocator,
             shell,
@@ -377,1812 +86,217 @@ const Logical = struct {
             .{ .term = "xterm-256color", .colorterm = "truecolor" },
         );
         errdefer transport.deinit();
-        try transport.start(grid.cols, grid.rows);
-        var machine = try vt.Terminal.init(allocator, grid.rows, grid.cols);
+        try transport.start(grid.columns, grid.rows);
+        var machine = try vt.Terminal.init(allocator, grid.rows, grid.columns);
         errdefer machine.deinit();
-        machine.setCellPixelSize(metrics.width_px, metrics.height_px) catch
-            return error.FontCapacity;
-        var content = try render.terminal.Content.init(
-            allocator,
-            contentLimits(),
-            fonts,
-        );
-        errdefer content.deinit();
-        const visual = try allocator.create(VisualState);
-        errdefer allocator.destroy(visual);
-        visual.* = try VisualState.init(allocator, grid.rows, grid.cols);
-        errdefer visual.deinit();
-        try visual.project(&machine, &content);
-        const initial_cursor_target = cursorTarget(&machine);
+        try machine.enableRenderJournal();
         return .{
             .allocator = allocator,
             .pane = pane,
+            .source = source,
+            .lifecycle_revision = revision,
             .transport = transport,
             .machine = machine,
-            .fonts = fonts,
-            .font_group = font_group,
-            .content = content,
-            .visual = visual,
-            .transfer = transfer,
-            .pane_pixels = pane_pixels,
-            .geometry = try paneGeometry(pane_pixels, fonts),
-            .font_state = font_state,
-            .cursor_target = initial_cursor_target,
-            .cursor_target_terminal_sequence = machine.semanticSequence(),
-            .cursor_target_revision = 1,
-            .accepted_cursor_target = initial_cursor_target,
-            .accepted_cursor_target_terminal_sequence = machine.semanticSequence(),
-            .accepted_cursor_target_revision = 1,
         };
     }
 
-    /// Stops the child and releases VT then PTY ownership in reverse order.
     fn deinit(self: *Logical) void {
-        self.visual.deinit();
-        self.allocator.destroy(self.visual);
-        self.content.deinit();
         self.machine.deinit();
         self.transport.deinit();
         self.* = undefined;
     }
 
-    /// Returns the borrowed master descriptor for the runtime poll set.
-    fn masterFd(self: *const Logical) error{NotStarted}!std.posix.fd_t {
+    fn masterFd(self: *const Logical) !std.posix.fd_t {
         return self.transport.masterFd();
     }
 
-    /// Replaces this pane's ligature policy and requires one complete
-    /// publication only when the retained mode changes.
-    fn setLigatureMode(
+    /// Copies a pending journal into the global FIFO before releasing VT ownership.
+    fn flushJournal(self: *Logical, fifo: *visual_fifo.Fifo) !bool {
+        const transaction = self.machine.renderTransaction() orelse return true;
+        const sequence = fifo.enqueue(.{
+            .pane = self.pane,
+            .source = self.source,
+            .lifecycle_revision = self.lifecycle_revision,
+        }, transaction) catch |failure| switch (failure) {
+            error.Pressure => return false,
+            else => return failure,
+        };
+        self.machine.consumeRenderTransaction();
+        self.last_visual_sequence = sequence;
+        return true;
+    }
+
+    fn resize(
         self: *Logical,
-        mode: render.terminal.LigatureMode,
-    ) void {
-        if (self.ligature_mode == mode) return;
-        self.ligature_mode = mode;
-        self.dirty = true;
-    }
-
-    /// Resizes the PTY first and commits its completely prepared VT state only afterward.
-    fn resize(self: *Logical, pane_pixels: render.canvas.Size) ResizeError!void {
-        const metrics = self.fonts.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-            return error.FontCapacity;
-        const grid = try gridForPixels(pane_pixels, metrics);
-        const geometry = try paneGeometry(pane_pixels, self.fonts);
-        const view = self.machine.semanticView(0);
-        if (view.cols == grid.cols and view.rows == grid.rows) {
-            self.pane_pixels = pane_pixels;
-            self.geometry = geometry;
-            self.last_published_geometry = null;
-            self.dirty = true;
-            return;
-        }
-        var prepared = try self.machine.prepareResize(grid.rows, grid.cols);
+        revision: handoff.LifecycleRevision,
+        grid: handoff.DerivedGrid,
+    ) !bool {
+        try validateGrid(grid, self.pane);
+        if (self.machine.renderTransaction() != null) return false;
+        var prepared = self.machine.prepareResize(grid.rows, grid.columns) catch |failure| switch (failure) {
+            error.TransactionPending => return false,
+            else => return failure,
+        };
         defer prepared.deinit();
-        try self.transport.resize(grid.cols, grid.rows);
+        try self.transport.resize(grid.columns, grid.rows);
         prepared.commit();
-        _ = self.refreshCursorTarget();
-        self.visual.rows = grid.rows;
-        self.visual.cols = grid.cols;
-        self.visual.initialized = false;
-        self.pane_pixels = pane_pixels;
-        self.geometry = geometry;
-        self.last_published_geometry = null;
-        self.dirty = true;
+        self.lifecycle_revision = revision;
+        return true;
     }
 
-    /// Encodes one caller-owned input event under current VT modes and retains it in order.
-    fn input(self: *Logical, event: vt.Terminal.InputEvent) InputError!void {
-        const admission = inputAdmissionBytes(event) catch
+    fn input(self: *Logical, event: vt.Terminal.InputEvent) !void {
+        const admission = try inputAdmissionBytes(event);
+        const required = std.math.add(usize, admission, self.machine.replyBytes().len) catch
             return error.WriteQueueFull;
-        const required = std.math.add(
-            usize,
-            admission,
-            self.machine.replyBytes().len,
-        ) catch return error.WriteQueueFull;
         if (required > self.writes.remaining()) return error.WriteQueueFull;
         var scratch: vt.Terminal.InputScratch = undefined;
-        var encoded = try self.machine.encodeInput(
-            self.allocator,
-            &scratch,
-            event,
-        );
+        var encoded = try self.machine.encodeInput(self.allocator, &scratch, event);
         defer encoded.deinit();
-        std.debug.assert(encoded.bytes.len <= admission);
         if (encoded.bytes.len == 1 and self.machine.termiosSignals() and
             try self.transport.handleTermiosSignal(encoded.bytes[0]))
         {
-            const replies = try collectReplies(&self.machine, &self.writes);
-            std.debug.assert(replies <= write_queue_bytes);
+            try collectReplies(&self.machine, &self.writes);
             return;
         }
-        const replies = try collectReplies(&self.machine, &self.writes);
-        std.debug.assert(replies <= write_queue_bytes);
+        try collectReplies(&self.machine, &self.writes);
         try self.writes.append(encoded.bytes);
     }
 
-    /// Performs one bounded ready-owner turn without blocking internally.
-    fn service(
-        self: *Logical,
-        shared_fonts: *font_owner.Owner,
-        work: *render.terminal.Content.Work,
-        readable: bool,
-        writable: bool,
-    ) ServiceError!Turn {
-        var result = Turn{};
-        if (writable and self.writes.count != 0) {
-            const written = try flushWrites(&self.transport, &self.writes);
-            result.written_bytes = written.written_bytes;
-            result.write_calls = written.write_calls;
-        }
-        const pending_replies = collectReplies(&self.machine, &self.writes) catch |failure| switch (failure) {
-            error.WriteQueueFull => {
-                result.published_update = try self.publishIfDirty(shared_fonts, work);
-                try self.observe();
-                try self.publishCompletionIfReady();
-                return result;
-            },
+    fn service(self: *Logical, fifo: *visual_fifo.Fifo, readable: bool, writable: bool) !void {
+        if (!try self.flushJournal(fifo)) return;
+        if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
+        collectReplies(&self.machine, &self.writes) catch |failure| switch (failure) {
+            error.WriteQueueFull => return,
             else => return failure,
         };
-        std.debug.assert(pending_replies <= write_queue_bytes);
         try self.disposeConsequence();
-        if (!readable) {
-            result.published_update = try self.publishIfDirty(shared_fonts, work);
-            try self.observe();
-            try self.publishCompletionIfReady();
-            return result;
-        }
-        var buffer: [read_bytes_per_turn / read_calls_per_turn]u8 = undefined;
-        while (result.read_calls < read_calls_per_turn and
-            result.read_bytes < read_bytes_per_turn)
-        {
-            result.read_calls += 1;
-            const count = self.transport.read(&buffer) catch |failure| switch (failure) {
-                error.Interrupted => continue,
-                error.WouldBlock => break,
-                error.EndOfStream => {
-                    result.end_of_stream = true;
-                    self.stream_closed = true;
-                    break;
-                },
-                else => return failure,
-            };
-            const summary = try self.machine.feedAt(
-                buffer[0..count],
-                try monotonicNanoseconds(),
-            );
-            self.routeMutation(summary) catch |failure| switch (failure) {
-                error.LifecycleStale,
-                error.CursorRevisionStale,
-                error.UnknownPane,
-                error.RetiredPane,
-                error.SourceStale,
-                => {},
-                else => return failure,
-            };
-            result.read_bytes += count;
-            const transferred = collectReplies(&self.machine, &self.writes) catch |failure| switch (failure) {
-                error.WriteQueueFull => break,
-                else => return failure,
-            };
-            std.debug.assert(transferred <= write_queue_bytes);
-            try self.disposeConsequence();
-        }
-        result.published_update = try self.publishIfDirty(shared_fonts, work);
-        try self.observe();
-        try self.publishCompletionIfReady();
-        return result;
-    }
 
-    fn publishCompletionIfReady(self: *Logical) handoff.CompletionPublishError!void {
-        if (self.completion_published or !self.stream_closed or self.dirty) return;
-        const child_exit = self.child_exit orelse return;
-        const pooled = switch (self.transfer) {
-            .pooled => |value| value,
-            .dedicated => return,
-        };
-        const termination = terminalTermination(child_exit);
-        pooled.boundary.publishCompletion(
-            self.pane,
-            pooled.member.source_id,
-            self.last_published_revision,
-            termination,
-        ) catch |failure| switch (failure) {
-            error.Stopping,
-            error.UnknownPane,
-            error.RetiredPane,
-            error.SourceStale,
-            error.DuplicateCompletion,
-            => {
-                self.completion_published = true;
+        if (self.read_start != self.read_end) try self.processBuffered(fifo);
+        if (!try self.flushJournal(fifo)) return;
+        if (self.read_start != self.read_end or !readable or self.stream_closed) {
+            try self.observeAndComplete(fifo);
+            return;
+        }
+
+        const count = self.transport.read(&self.read_bytes) catch |failure| switch (failure) {
+            error.Interrupted, error.WouldBlock => {
+                try self.observeAndComplete(fifo);
                 return;
             },
-            error.InvalidCompletion => return failure,
-        };
-        self.completion_published = true;
-    }
-
-    fn terminalTermination(child_exit: pty.ChildExit) handoff.TerminalTermination {
-        return switch (child_exit) {
-            .code => |code| .{ .code = code },
-            .signal => |signal_number| .{ .signal = signal_number },
-        };
-    }
-
-    fn routeMutation(self: *Logical, summary: vt.Terminal.FeedSummary) handoff.CursorPublishError!void {
-        const cursor_changed = self.refreshCursorTarget();
-        const ordinary_mutation = summary.stateChanged() and !summary.mutations.cursorOnly();
-        const synchronized = self.machine.synchronizedOutput();
-        // Synchronized output retains semantic cursor changes but suppresses
-        // physical cursor publication until the accepted mode-off update.
-        // Mixed feeds are carried by their ordinary publication exactly once.
-        if (summary.mutations.cursor and cursor_changed and
-            !synchronized and !summary.mutations.mode)
-        {
-            self.publishCursorTarget() catch |failure| {
-                switch (failure) {
-                    error.LifecycleStale,
-                    error.UnknownPane,
-                    error.RetiredPane,
-                    error.SourceStale,
-                    => {
-                        if (!summary.mutations.cursorOnly()) self.dirty = true;
-                    },
-                    error.CursorRevisionStale => {
-                        // A concurrent pooled drain rejected the new target
-                        // before acceptance. Keep the exact target pending in
-                        // the next ordinary cursor-free retry.
-                        self.dirty = true;
-                    },
-                    else => {
-                        if (!summary.mutations.cursorOnly()) self.dirty = true;
-                        return failure;
-                    },
-                }
-            };
-        }
-        if (ordinary_mutation) self.dirty = true;
-    }
-
-    fn publishCursorTarget(self: *Logical) handoff.CursorPublishError!void {
-        const pooled = switch (self.transfer) {
-            .pooled => |value| value,
-            .dedicated => return,
-        };
-        const maybe_identity = pooled.boundary.cursorPublicationIdentity(
-            self.pane,
-            pooled.member.source_id,
-        ) catch |failure| return failure;
-        const identity = maybe_identity orelse {
-            return error.LifecycleStale;
-        };
-        try pooled.boundary.publishCursor(.{
-            .pane = self.pane,
-            .source = pooled.member.source_id,
-            .terminal_sequence = self.cursor_target_terminal_sequence,
-            .cursor_revision = self.cursor_target_revision,
-            .visible_set_revision = identity.visible_set_revision,
-            .lifecycle_revision = identity.lifecycle_revision,
-            .target = self.cursor_target,
-        });
-    }
-
-    /// Compares complete accepted cursor state after each VT feed. The
-    /// revision advances only when the target changes, while ordinary text
-    /// mutations retain the target's original terminal sequence.
-    fn refreshCursorTarget(self: *Logical) bool {
-        const target = cursorTarget(&self.machine);
-        if (std.meta.eql(target, self.cursor_target)) return false;
-        self.cursor_target = target;
-        self.cursor_target_terminal_sequence = self.machine.semanticSequence();
-        self.cursor_target_revision = std.math.add(u64, self.cursor_target_revision, 1) catch
-            @panic("cursor target revision exhausted");
-        return true;
-    }
-
-    fn publishIfDirty(
-        self: *Logical,
-        shared_fonts: *font_owner.Owner,
-        work: *render.terminal.Content.Work,
-    ) ServiceError!bool {
-        if (!self.dirty) return false;
-        const published = switch (self.transfer) {
-            .dedicated => |slot| try self.publishDedicated(slot, work),
-            .pooled => |pooled| try self.publishPooled(shared_fonts, pooled, work),
-        };
-        if (published) self.dirty = false;
-        return published;
-    }
-
-    fn publishPooled(
-        self: *Logical,
-        shared_fonts: *font_owner.Owner,
-        pooled: PooledTransfer,
-        work: *render.terminal.Content.Work,
-    ) ServiceError!bool {
-        const accepted = pooled.boundary.acceptedTransferRevision(
-            self.pane,
-            pooled.member.source_id,
-        ) catch return false;
-        if (@backingInt(accepted) != 0)
-            try shared_fonts.observeAccepted(pooled.member.source_id, accepted);
-        const reserved = pooled.boundary.reserveUpdateRecovering(pooled.member) catch |failure| switch (failure) {
-            error.Busy, error.NoCapacity, error.GroupPriority => return false,
-            else => return failure,
-        };
-        if (reserved.discarded) |discarded| {
-            if (self.font_group != null) {
-                const identity = font_owner.BatchIdentity{
-                    .reservation_id = discarded.reservation_id,
-                    .source = discarded.source,
-                    .producer_revision = discarded.producer_revision,
-                };
-                shared_fonts.cancelBatchAfterDiscard(identity) catch |failure| {
-                    pooled.boundary.cancelUpdate(reserved.token) catch
-                        @panic("discarded ready reservation cleanup failed");
-                    return failure;
-                };
-            }
-        }
-        return self.publishReservedPooled(shared_fonts, pooled, reserved.token, work, null);
-    }
-
-    fn publishReservedPooled(
-        self: *Logical,
-        shared_fonts: *font_owner.Owner,
-        pooled: PooledTransfer,
-        token: terminal_pool.Token,
-        work: *render.terminal.Content.Work,
-        visible_set_revision: ?u64,
-    ) ServiceError!bool {
-        // Close may legitimately move the Boundary entry to closing after
-        // reservation and before publication. That exact Stale result cancels
-        // the block and forces full recovery below. Malformed counts, pixels,
-        // revisions, arithmetic, or pool ownership from canonical Content are
-        // invariant failures and remain fatal after the same cleanup.
-        var reservation = PoolReservation{
-            .boundary = pooled.boundary,
-            .token = token,
-        };
-        defer reservation.deinit();
-        var update_consumed = false;
-        defer {
-            if (update_consumed) self.visual.requireRecovery();
-        }
-        self.visual.project(&self.machine, &self.content) catch |failure| {
-            switch (failure) {
-                error.InsufficientCells,
-                error.InsufficientPatches,
-                error.ResourceMutationLimit,
-                => return false,
-                else => return failure,
-            }
-        };
-        var producer = if (self.font_group) |group|
-            try shared_fonts.producer(group)
-        else
-            null;
-        defer if (producer) |*value| value.deinit();
-        // A visible-set replacement may clear the outgoing Composer source
-        // in the same transaction that introduces this update. The shared
-        // font owner can still report the identity as accepted because the
-        // outgoing pane retains a producer reference, so require the incoming
-        // candidate to carry its declaration bytes explicitly.
-        if (visible_set_revision != null)
-            if (producer) |*value| value.requireDeclarations();
-        var update = self.content.takeUpdate(
-            work,
-            self.visual.scalarBaseline(),
-            self.geometry,
-            .{
-                .ligature_mode = self.ligature_mode,
+            error.EndOfStream => {
+                self.stream_closed = true;
+                try self.observeAndComplete(fifo);
+                return;
             },
-            if (producer) |*value| .{ .shared = value } else .local,
-        ) catch |failure| {
-            switch (failure) {
-                error.CommandLimit,
-                error.DecorationLimit,
-                error.GlyphLimit,
-                error.MaskLimit,
-                error.ResourceMutationLimit,
-                error.UploadByteLimit,
-                => return false,
-                else => return failure,
-            }
-        };
-        // takeUpdate() has synchronously committed Content ownership. Any
-        // later identity or pool failure must leave the next ordinary
-        // publication responsible for complete recovery.
-        update_consumed = true;
-        const maybe_identity = (if (visible_set_revision) |revision|
-            pooled.boundary.cursorPublicationIdentityForVisibleSet(
-                self.pane,
-                pooled.member.source_id,
-                revision,
-            )
-        else
-            pooled.boundary.cursorPublicationIdentity(
-                self.pane,
-                pooled.member.source_id,
-            )) catch |failure| switch (failure) {
-            error.LifecycleStale,
-            error.CursorRevisionStale,
-            error.UnknownPane,
-            error.SourceStale,
-            => return false,
-            error.RetiredPane => null,
             else => return failure,
         };
-        const sync_active = self.machine.synchronizedOutput();
-        if (sync_active) self.refreshAcceptedCursorTarget(pooled);
-        const target = if (sync_active) self.accepted_cursor_target else self.cursor_target;
-        const target_terminal_sequence = if (sync_active)
-            self.accepted_cursor_target_terminal_sequence
-        else
-            self.cursor_target_terminal_sequence;
-        const target_revision = if (sync_active)
-            self.accepted_cursor_target_revision
-        else
-            self.cursor_target_revision;
-        if (maybe_identity) |identity| {
-            update.cursor_binding = .{
-                .pane = @backingInt(self.pane),
-                .source = pooled.member.source_id,
-                .terminal_sequence = target_terminal_sequence,
-                .cursor_revision = target_revision,
-                .visible_set_revision = identity.visible_set_revision,
-                .lifecycle_revision = @backingInt(identity.lifecycle_revision),
-                .rect = try cursorRect(target, self.geometry),
-                .cell_origin = .{ .x = self.geometry.x, .y = self.geometry.y },
-                .cell_size = .{
-                    .width = self.geometry.metrics.width_px,
-                    .height = self.geometry.metrics.height_px,
-                },
-                .clip = self.geometry.clip,
-                .shape = switch (target.shape) {
-                    .block => .block,
-                    .underline => .underline,
-                    .bar => .bar,
-                    .none => .none,
-                },
-                .color = .{
-                    .r = target.cursor_color.r,
-                    .g = target.cursor_color.g,
-                    .b = target.cursor_color.b,
-                    .a = target.cursor_color.a,
-                },
-                .text_color = .{
-                    .r = target.text_color.r,
-                    .g = target.text_color.g,
-                    .b = target.text_color.b,
-                    .a = target.text_color.a,
-                },
-                .visible = target.visible and target.shape != .none,
-            };
-        }
-        const batch_identity = font_owner.BatchIdentity{
-            .reservation_id = token.reservation_id,
-            .source = token.source_id,
-            .producer_revision = update.revision,
-        };
-        var batch_reserved = false;
-        if (self.font_group) |group| {
-            shared_fonts.prepareBatch(batch_identity, group, update) catch |failure| switch (failure) {
-                error.BatchLimit,
-                error.ResourceLimit,
-                error.RetirementPending,
-                => return false,
+        self.read_start = 0;
+        self.read_end = count;
+        try self.processBuffered(fifo);
+        try self.observeAndComplete(fifo);
+    }
+
+    fn processBuffered(self: *Logical, fifo: *visual_fifo.Fifo) !void {
+        while (self.read_start != self.read_end) {
+            if (!try self.flushJournal(fifo)) return;
+            const byte = self.read_bytes[self.read_start];
+            _ = try self.machine.feedRenderByte(byte, try monotonicNanoseconds());
+            self.read_start += 1;
+            collectReplies(&self.machine, &self.writes) catch |failure| switch (failure) {
+                error.WriteQueueFull => return,
                 else => return failure,
             };
-            batch_reserved = true;
+            try self.disposeConsequence();
+            if (!try self.flushJournal(fifo)) return;
         }
-        defer if (batch_reserved)
-            shared_fonts.cancelBatchBeforeReady(batch_identity) catch
-                @panic("terminal font declaration batch cancellation failed");
-        reservation.publish(update) catch |failure| switch (failure) {
-            error.Stale => return false,
-            error.InvalidCounts,
-            error.InvalidPixels,
-            error.InvalidProducerRevision,
-            error.ArithmeticOverflow,
-            error.Busy,
-            => return failure,
-        };
-        if (batch_reserved) {
-            try shared_fonts.markBatchReady(batch_identity);
-            batch_reserved = false;
-        }
-        update_consumed = false;
-        self.last_published_revision = update.revision;
-        self.last_published_geometry = self.geometry;
-        return true;
+        self.read_start = 0;
+        self.read_end = 0;
     }
 
-    /// Refreshes the presentation cache only from the binding Composer has
-    /// accepted. Inbox publication and ready-pool admission never advance it.
-    fn refreshAcceptedCursorTarget(self: *Logical, pooled: PooledTransfer) void {
-        const binding = pooled.boundary.acceptedCursorBinding(
-            self.pane,
-            pooled.member.source_id,
-        ) orelse return;
-        const reconstructed = reconstructAcceptedCursorTarget(
-            self.accepted_cursor_target,
-            binding,
-        ) catch @panic("invalid Composer-accepted cursor binding");
-        self.accepted_cursor_target = reconstructed.target;
-        self.accepted_cursor_target_terminal_sequence =
-            reconstructed.terminal_sequence;
-        self.accepted_cursor_target_revision = reconstructed.cursor_revision;
-    }
-
-    const AcceptedCursorReconstruction = struct {
-        target: handoff.CursorTarget,
-        terminal_sequence: u64,
-        cursor_revision: u64,
-    };
-
-    /// Reconstructs the semantic cell from one Composer-accepted source-local
-    /// binding. `rect` includes `cell_origin`; subtracting it first keeps the
-    /// accepted cache independent of pane placement.
-    fn reconstructAcceptedCursorTarget(
-        prior: handoff.CursorTarget,
-        binding: render.canvas.CursorBinding,
-    ) error{InvalidAcceptedCursorBinding}!AcceptedCursorReconstruction {
-        const width: i32 = @intCast(binding.cell_size.width);
-        const height: i32 = @intCast(binding.cell_size.height);
-        if (width <= 0 or height <= 0)
-            return error.InvalidAcceptedCursorBinding;
-        const dimensions_valid = switch (binding.shape) {
-            .block, .none => binding.rect.width == binding.cell_size.width and
-                binding.rect.height == binding.cell_size.height,
-            .bar => binding.rect.width == 1 and
-                binding.rect.height == binding.cell_size.height,
-            .underline => binding.rect.width == binding.cell_size.width and
-                binding.rect.height == 1,
-        };
-        if (!dimensions_valid)
-            return error.InvalidAcceptedCursorBinding;
-        const local_x = std.math.sub(
-            i32,
-            binding.rect.x,
-            binding.cell_origin.x,
-        ) catch return error.InvalidAcceptedCursorBinding;
-        var local_y = std.math.sub(
-            i32,
-            binding.rect.y,
-            binding.cell_origin.y,
-        ) catch return error.InvalidAcceptedCursorBinding;
-        if (binding.shape == .underline) {
-            const underline_offset = std.math.sub(i32, height, 1) catch
-                return error.InvalidAcceptedCursorBinding;
-            local_y = std.math.sub(i32, local_y, underline_offset) catch
-                return error.InvalidAcceptedCursorBinding;
-        }
-        if (local_x < 0 or local_y < 0 or
-            @rem(local_x, width) != 0 or @rem(local_y, height) != 0)
-            return error.InvalidAcceptedCursorBinding;
-        const col: u32 = @intCast(@divTrunc(local_x, width));
-        const row: u32 = @intCast(@divTrunc(local_y, height));
-        if (col > std.math.maxInt(u16) or row > std.math.maxInt(u16))
-            return error.InvalidAcceptedCursorBinding;
-        var target = prior;
-        target.col = @intCast(col);
-        target.row = @intCast(row);
-        target.visible = binding.visible;
-        target.shape = switch (binding.shape) {
-            .block => .block,
-            .underline => .underline,
-            .bar => .bar,
-            .none => .none,
-        };
-        target.cursor_color = .{
-            .r = binding.color.r,
-            .g = binding.color.g,
-            .b = binding.color.b,
-            .a = binding.color.a,
-        };
-        target.text_color = .{
-            .r = binding.text_color.r,
-            .g = binding.text_color.g,
-            .b = binding.text_color.b,
-            .a = binding.text_color.a,
-        };
-        return .{
-            .target = target,
-            .terminal_sequence = binding.terminal_sequence,
-            .cursor_revision = binding.cursor_revision,
-        };
-    }
-
-    fn publishDedicated(
-        self: *Logical,
-        slot: *handoff.PendingSlot,
-        work: *render.terminal.Content.Work,
-    ) ServiceError!bool {
-        slot.reserve() catch |failure| switch (failure) {
-            error.Pending => return false,
-            else => return failure,
-        };
-        var reserved = true;
-        defer if (reserved) slot.cancelReserved();
-        self.visual.project(&self.machine, &self.content) catch |failure| {
-            switch (failure) {
-                error.InsufficientCells,
-                error.InsufficientPatches,
-                error.ResourceMutationLimit,
-                => return false,
-                else => return failure,
-            }
-        };
-        const update = self.content.takeUpdate(
-            work,
-            self.visual.scalarBaseline(),
-            self.geometry,
-            .{
-                .ligature_mode = self.ligature_mode,
-            },
-            .local,
-        ) catch |failure| switch (failure) {
-            error.CommandLimit,
-            error.DecorationLimit,
-            error.GlyphLimit,
-            error.MaskLimit,
-            error.ResourceMutationLimit,
-            error.UploadByteLimit,
-            => return false,
-            else => return failure,
-        };
-        slot.publishReservedUpdate(update);
-        reserved = false;
-        return true;
-    }
-
-    fn observe(self: *Logical) pty.ObserveError!void {
+    fn observeAndComplete(self: *Logical, fifo: *visual_fifo.Fifo) !void {
         switch (try self.transport.observeChild()) {
             .running => {},
-            .exited => |exit| {
-                self.child_exit = exit;
-            },
+            .exited => |value| self.child_exit = value,
         }
+        try self.stageCompletion(fifo);
     }
 
-    /// Applies one bounded Host policy to exactly the current consequence.
-    ///
-    /// Queries receive deterministic caller-neutral replies, so no reply-
-    /// required occurrence can retain the VT queue head indefinitely.
-    fn disposeConsequence(self: *Logical) ServiceError!void {
-        if (self.consequence == null)
-            self.consequence = pendingConsequence(&self.machine);
-        const current = self.consequence orelse return;
+    fn stageCompletion(self: *Logical, fifo: *visual_fifo.Fifo) !void {
+        if (self.completion_published or !self.stream_closed or self.child_exit == null or
+            self.read_start != self.read_end or !try self.flushJournal(fifo) or
+            self.last_visual_sequence == 0)
+            return;
+        const completion = handoff.TerminalCompletion{
+            .pane = self.pane,
+            .source = self.source,
+            .lifecycle_revision = self.lifecycle_revision,
+            .render_sequence = self.last_visual_sequence,
+            .termination = switch (self.child_exit.?) {
+                .code => |value| .{ .code = value },
+                .signal => |value| .{ .signal = value },
+            },
+        };
+        // The Boundary is supplied by Runtime so completion publication occurs there.
+        self.completion_published = true;
+        self.pending_completion = completion;
+    }
+
+    fn disposeConsequence(self: *Logical) !void {
+        const current = self.machine.consequenceHead() orelse return;
         const identity = current.id();
         switch (current) {
             .clipboard => |request| if (request.kind == .query) {
-                const replied = try self.machine.replyClipboard(identity, "");
-                std.debug.assert(replied);
-                self.consequence = null;
+                if (!try self.machine.replyClipboard(identity, "")) return error.StaleConsequence;
                 return;
             },
             .container => |occurrence| switch (occurrence.request) {
-                .report_screen_cells => try self.machine.replyContainer(
-                    identity,
-                    .{ .screen_cells = .{
-                        .rows = self.visual.rows,
-                        .cols = self.visual.cols,
-                    } },
-                ),
-                .report_state, .report_position, .report_icon_title => try self.machine.declineContainerQuery(identity),
+                .report_screen_cells => {
+                    const view = self.machine.semanticView(0);
+                    try self.machine.replyContainer(identity, .{ .screen_cells = .{
+                        .rows = view.rows,
+                        .cols = view.cols,
+                    } });
+                    return;
+                },
+                .report_state, .report_position, .report_icon_title => {
+                    try self.machine.declineContainerQuery(identity);
+                    return;
+                },
                 else => {},
             },
             .color_preference_query => {
                 try self.machine.replyColorPreference(identity, .dark);
-                self.consequence = null;
                 return;
             },
-            .notification, .pointer_shape, .file_transfer, .drag_drop, .bell, .legacy_control, .media_copy, .dcs, .string_control => {},
-        }
-        if (pendingConsequence(&self.machine)) |head| {
-            if (head.id() != identity) {
-                self.consequence = null;
-                return;
-            }
-        } else {
-            self.consequence = null;
-            return;
+            else => {},
         }
         self.machine.consumeConsequence(identity) catch |failure| switch (failure) {
-            error.ReplyRequired => unreachable,
-            error.StaleConsequence => {
-                self.consequence = null;
-                return;
-            },
+            error.ReplyRequired => return,
+            error.StaleConsequence => return,
         };
-        self.consequence = null;
     }
 };
 
-/// Advances a stable cursor across a fixed logical-owner index domain.
-const RoundRobin = struct {
-    cursor: u8 = 0,
-
-    /// Returns each index exactly once per round, beginning after the prior turn.
-    fn order(self: *RoundRobin, count: u8, output: *[owner_limit]u8) []const u8 {
-        if (count == 0) return output[0..0];
-        for (0..count) |offset| {
-            output[offset] = @intCast((@as(usize, self.cursor) + offset) % count);
-        }
-        self.cursor = @intCast((@as(usize, self.cursor) + 1) % count);
-        return output[0..count];
-    }
-};
-
-/// Reports exact logical-owner admission and identity failures.
-const RuntimeError = error{
-    OwnerLimit,
-    DuplicatePane,
-    UnknownPane,
-} || LogicalInitError || font_owner.GroupError || terminal_pool.RegisterError ||
-    terminal_pool.RetireError;
-/// Reports exact owner service or native poll failure for one runtime round.
-const PollError = ServiceError || error{PollFailed};
-
-const OwnerPollSet = struct {
-    descriptors: [owner_limit]std.posix.pollfd = undefined,
-    owner_indices: [owner_limit]u8 = undefined,
-    count: usize = 0,
-};
-
-const PollRound = struct {
-    serviced: usize = 0,
-    published: usize = 0,
-};
-
-/// Reports exact process-root terminal-boundary construction failures.
-pub const BoundaryInitError = handoff.BoundaryInitError;
-
-/// Reports exact typed lifecycle application and slot-retirement contention.
-const LifecycleError = RuntimeError || ResizeError || error{UnknownPane};
-
-/// Creates the process-root terminal control exchange without rendering payload storage.
-pub fn initBoundary(
-    io: std.Io,
-    allocator: std.mem.Allocator,
-) BoundaryInitError!handoff.Boundary {
-    return handoff.Boundary.init(io, allocator);
-}
-
-/// Runs the sole terminal owner until a typed shutdown request arrives.
-pub fn run(
-    boundary: *handoff.Boundary,
-    allocator: std.mem.Allocator,
-    font_path: []const u8,
-    shell: []const u8,
-    first_command: ?[]const u8,
-    cursor_policy: config.CursorSemanticPolicy,
-) void {
-    runFallible(boundary, allocator, font_path, shell, first_command, cursor_policy) catch |failure| {
-        std.debug.print("Terminal runtime failure: {s}\n", .{@errorName(failure)});
-        boundary.markStopped(true);
-        return;
-    };
-    boundary.markStopped(false);
-}
-
-fn runFallible(
-    boundary: *handoff.Boundary,
-    allocator: std.mem.Allocator,
-    font_path: []const u8,
-    shell: []const u8,
-    first_command: ?[]const u8,
-    cursor_policy: config.CursorSemanticPolicy,
-) !void {
-    var runtime = try Runtime.initWithCommand(
-        allocator,
-        font_path,
-        first_command,
-        cursor_policy,
-    );
-    defer runtime.deinit();
-    while (true) {
-        var owner_set = try runtime.buildPollSet();
-        var descriptors: [owner_limit + 1]std.posix.pollfd = undefined;
-        descriptors[0] = .{
-            .fd = boundary.terminalFd(),
-            .events = std.posix.POLL.IN,
-            .revents = 0,
-        };
-        const descriptor_count = owner_set.count + 1;
-        @memcpy(descriptors[1..descriptor_count], owner_set.descriptors[0..owner_set.count]);
-        const ready = std.posix.poll(descriptors[0..descriptor_count], -1) catch
-            return error.PollFailed;
-        std.debug.assert(ready <= descriptor_count);
-        if (descriptors[0].revents & std.posix.POLL.IN != 0) {
-            try boundary.drainTerminalWake();
-            if (boundary.isStopping()) break;
-            try runtime.reconcileAcceptedBatches(boundary);
-            try runtime.reconcileAcceptedVisibility(boundary);
-            runtime.releaseCancelledLifecycleFont(boundary);
-            if (runtime.count == 0) {
-                if (boundary.takeFontRequest()) |request| {
-                    try runtime.preflightFontRequest(request);
-                    runtime.commitFontRequest(request);
-                }
-            }
-            if (runtime.count != 0 or runtime.accepted_scale != null) {
-                if (boundary.takeLifecycleAdmission()) |request| {
-                    const result = runtime.validateLifecycleAdmission(request);
-                    boundary.completeLifecycleAdmission(
-                        request.revision,
-                        result,
-                    ) catch |failure| switch (failure) {
-                        error.StaleRevision, error.Stopping => {
-                            runtime.releaseLifecycleFont(request.revision);
-                        },
-                        error.CandidatePhase => return failure,
-                    };
-                }
-            }
-            try runtime.retryPendingClose(boundary);
-            var operation_count: u8 = 0;
-            while (operation_count < 8) : (operation_count += 1) {
-                if (runtime.pending_close != null) break;
-                const operation = boundary.takeAdmittedLifecycle() orelse break;
-                try runtime.applyLifecycle(boundary, operation, shell);
-            }
-            if (!boundary.lifecycleFontStable()) {
-                if (boundary.takeFontRequest()) |request| {
-                    runtime.pending_font = request;
-                }
-            }
-            try runtime.retryPendingFont(boundary);
-            var input_count: u8 = 0;
-            while (input_count < 8) : (input_count += 1) {
-                const input = boundary.takeInput() orelse break;
-                try runtime.applyInput(input);
-            }
-            boundary.rearmTerminalWork();
-            if (try runtime.prepareVisibleSet(boundary))
-                boundary.publishReady();
-            if (try runtime.servicePending() != 0) boundary.publishReady();
-        }
-        for (owner_set.descriptors[0..owner_set.count], descriptors[1..descriptor_count]) |*owner_descriptor, descriptor| {
-            owner_descriptor.revents = descriptor.revents;
-        }
-        const owner_round = try runtime.servicePollSet(&owner_set);
-        if (owner_round.published != 0) boundary.publishReady();
-    }
-}
-
-/// Retains the exact new-pane native group from admission through commit.
-const PendingLifecycleFont = struct {
-    revision: handoff.LifecycleRevision,
-    pane: render.chrome.PaneId,
-    group: font_owner.GroupRef,
-    map: *render.terminal.FontMap,
-};
-
-const ResolvedGroup = struct {
-    reference: font_owner.GroupRef,
-    map: *render.terminal.FontMap,
-};
-
-/// Owns the fixed logical-terminal collection and stable poll scheduling.
 const Runtime = struct {
     allocator: std.mem.Allocator,
-    font_path: []const u8,
+    fifo: *visual_fifo.Fifo,
     first_command: ?[]const u8,
-    /// Immutable startup copy of the Host terminal cursor semantic view.
-    cursor_policy: config.CursorSemanticPolicy,
-    fonts: *render.terminal.FontMap,
-    shared_fonts: font_owner.Owner,
-    owners: []?Logical,
-    work: render.terminal.Content.Work,
+    owners: [owner_limit]?Logical = @splat(null),
     count: u8 = 0,
-    scheduler: RoundRobin = .{},
-    /// A dequeued close retained until its slot leaves writing/draining.
-    pending_close: ?render.chrome.PaneId = null,
-    pending_font: ?handoff.FontRequest = null,
-    pending_lifecycle_font: ?PendingLifecycleFont = null,
-    accepted_scale: ?handoff.ScaleSnapshot = null,
-    accepted_font_policy: handoff.FontPolicy,
-    accepted_font_request_revision: u64 = 0,
-    accepted_visible_members: [handoff.visible_member_limit]handoff.VisibleMember = undefined,
-    accepted_visible_count: u8 = 0,
-    accepted_visible_revision: u64 = 0,
+    pending_lifecycle: ?handoff.AdmittedLifecycle = null,
+    pending_input: ?handoff.TerminalInput = null,
+    pending_close: ?handoff.PaneId = null,
 
-    /// Allocates the fixed 64-owner table without constructing children.
-    fn init(
-        allocator: std.mem.Allocator,
-        font_path: []const u8,
-    ) RuntimeInitError!Runtime {
-        return initWithCommand(
-            allocator,
-            font_path,
-            null,
-            config.Config.defaults().semanticPolicy(),
-        );
-    }
-
-    /// Constructs the runtime with one bounded command retained until the
-    /// first pane creation commits successfully.
-    fn initWithCommand(
-        allocator: std.mem.Allocator,
-        font_path: []const u8,
-        first_command: ?[]const u8,
-        cursor_policy: config.CursorSemanticPolicy,
-    ) RuntimeInitError!Runtime {
-        const owners = try allocator.alloc(?Logical, owner_limit);
-        errdefer allocator.free(owners);
-        @memset(owners, null);
-        const fonts = try allocator.create(render.terminal.FontMap);
-        errdefer allocator.destroy(fonts);
-        fonts.* = try render.terminal.FontMap.init(
-            allocator,
-            &.{
-                .{
-                    .key = .{ .slot = 0, .style = .normal },
-                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .bold },
-                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .italic },
-                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .bold_italic },
-                    .native = .{ .primary = font_path, .size = .{ .pixels = 16 } },
-                },
-            },
-        );
-        errdefer fonts.deinit();
-        var shared_fonts = try font_owner.Owner.init(allocator);
-        errdefer shared_fonts.deinit();
-        const work = try render.terminal.Content.Work.init(allocator, contentLimits());
-        const font_policy = try handoff.FontPolicy.init(16.0);
-        return .{
-            .allocator = allocator,
-            .font_path = font_path,
-            .first_command = first_command,
-            .cursor_policy = cursor_policy,
-            .fonts = fonts,
-            .shared_fonts = shared_fonts,
-            .owners = owners,
-            .work = work,
-            .accepted_font_policy = font_policy,
-        };
-    }
-
-    /// Constructs the production owner, then explicitly installs the test
-    /// point/DPI fixture required by tests that bypass lifecycle admission.
-    fn initTest(
-        allocator: std.mem.Allocator,
-        font_path: []const u8,
-    ) RuntimeInitError!Runtime {
-        var result = try Runtime.init(allocator, font_path);
-        errdefer result.deinit();
-        const test_size = render.terminal.Size{ .points = .{
-            .points = 12.0,
-            .dpi_x = .{ .numerator = 96, .denominator = 1 },
-            .dpi_y = .{ .numerator = 96, .denominator = 1 },
-        } };
-        const test_font_map = try render.terminal.FontMap.init(
-            allocator,
-            &.{
-                .{
-                    .key = .{ .slot = 0, .style = .normal },
-                    .native = .{ .primary = font_path, .size = test_size },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .bold },
-                    .native = .{ .primary = font_path, .size = test_size },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .italic },
-                    .native = .{ .primary = font_path, .size = test_size },
-                },
-                .{
-                    .key = .{ .slot = 0, .style = .bold_italic },
-                    .native = .{ .primary = font_path, .size = test_size },
-                },
-            },
-        );
-        result.fonts.deinit();
-        result.fonts.* = test_font_map;
-        return result;
-    }
-
-    /// Stops every live child in reverse table order and releases the table.
     fn deinit(self: *Runtime) void {
-        if (self.pending_lifecycle_font) |pending|
-            self.shared_fonts.releaseGroup(pending.group) catch
-                @panic("terminal lifecycle font cleanup failed");
-        var index = self.owners.len;
+        var index: usize = self.owners.len;
         while (index != 0) {
             index -= 1;
-            if (self.owners[index]) |*owner| {
-                const group = owner.font_group;
-                if (group) |reference| {
-                    var producer = self.shared_fonts.producer(reference) catch
-                        @panic("terminal font group missing during cleanup");
-                    defer producer.deinit();
-                    owner.content.releaseFontResources(.{ .shared = &producer });
-                }
-                owner.deinit();
-                if (group) |reference|
-                    self.shared_fonts.releaseGroup(reference) catch
-                        @panic("terminal font group cleanup failed");
-            }
+            if (self.owners[index]) |*owner| owner.deinit();
         }
-        self.work.deinit();
-        self.shared_fonts.deinit();
-        self.fonts.deinit();
-        self.allocator.destroy(self.fonts);
-        self.allocator.free(self.owners);
         self.* = undefined;
     }
 
-    /// Transactionally constructs one never-zero, nonduplicate logical owner.
-    fn add(
-        self: *Runtime,
-        pane: render.chrome.PaneId,
-        shell: []const u8,
-        command: ?[]const u8,
-        pane_pixels: render.canvas.Size,
-        transfer: Transfer,
-    ) RuntimeError!void {
-        return self.addWithGroup(
-            pane,
-            shell,
-            command,
-            pane_pixels,
-            transfer,
-            null,
-        );
-    }
-
-    /// Constructs one owner using an exact lifecycle-retained native group.
-    fn addWithGroup(
-        self: *Runtime,
-        pane: render.chrome.PaneId,
-        shell: []const u8,
-        command: ?[]const u8,
-        pane_pixels: render.canvas.Size,
-        transfer: Transfer,
-        prepared_group: ?ResolvedGroup,
-    ) RuntimeError!void {
-        if (self.find(pane) != null) return error.DuplicatePane;
-        if (self.count == owner_limit) return error.OwnerLimit;
-        const font_state = self.logicalFontState(pane);
-        const group = if (prepared_group) |candidate|
-            candidate
-        else if (font_state.scale != null)
-            try self.pointGroup(font_state)
-        else
-            null;
-        errdefer if (group != null and prepared_group == null) if (group) |candidate|
-            self.shared_fonts.releaseGroup(candidate.reference) catch
-                @panic("terminal font group construction cleanup failed");
-        var owner = try Logical.init(
-            self.allocator,
-            pane,
-            shell,
-            command,
-            pane_pixels,
-            if (group) |candidate| candidate.map else self.fonts,
-            if (group) |candidate| candidate.reference else null,
-            font_state,
-            transfer,
-        );
-        errdefer owner.deinit();
-        const index = self.freeIndex() orelse return error.OwnerLimit;
-        self.owners[index] = owner;
-        self.count += 1;
-    }
-
-    /// Stops and removes one exact logical owner without reusing its PaneId.
-    fn remove(self: *Runtime, pane: render.chrome.PaneId) error{UnknownPane}!void {
-        const index = self.find(pane) orelse return error.UnknownPane;
-        const group = self.owners[index].?.font_group;
-        if (group) |reference| {
-            var producer = self.shared_fonts.producer(reference) catch
-                @panic("terminal font group missing during removal");
-            defer producer.deinit();
-            self.owners[index].?.content.releaseFontResources(.{ .shared = &producer });
-        }
-        self.owners[index].?.deinit();
-        if (group) |reference|
-            self.shared_fonts.releaseGroup(reference) catch
-                @panic("terminal font group removal failed");
-        self.owners[index] = null;
-        self.count -= 1;
-    }
-
-    /// Runs one bounded poll round across every live borrowed master descriptor.
-    fn pollOnce(self: *Runtime, timeout_ms: i32) PollError!usize {
-        var owner_set = try self.buildPollSet();
-        if (owner_set.count == 0) return 0;
-        const ready = std.posix.poll(owner_set.descriptors[0..owner_set.count], timeout_ms) catch
-            return error.PollFailed;
-        std.debug.assert(ready <= owner_set.count);
-        return (try self.servicePollSet(&owner_set)).serviced;
-    }
-
-    fn buildPollSet(self: *Runtime) PollError!OwnerPollSet {
-        var result = OwnerPollSet{};
-        for (self.owners, 0..) |*maybe_owner, index| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            const write_events: i16 = if (owner.writes.count != 0)
-                std.posix.POLL.OUT
-            else
-                0;
-            result.descriptors[result.count] = .{
-                .fd = try owner.masterFd(),
-                .events = (if (!owner.stream_closed)
-                    @as(i16, std.posix.POLL.IN | std.posix.POLL.HUP)
-                else
-                    0) | write_events,
-                .revents = 0,
-            };
-            result.owner_indices[result.count] = @intCast(index);
-            result.count += 1;
-        }
-        return result;
-    }
-
-    fn servicePollSet(self: *Runtime, owner_set: *OwnerPollSet) ServiceError!PollRound {
-        var order_storage: [owner_limit]u8 = undefined;
-        var serviced: usize = 0;
-        var published: usize = 0;
-        for (self.scheduler.order(@intCast(owner_set.count), &order_storage)) |descriptor_index| {
-            const descriptor = owner_set.descriptors[descriptor_index];
-            if (descriptor.revents == 0) continue;
-            const owner = &self.owners[owner_set.owner_indices[descriptor_index]].?;
-            const turn = try owner.service(
-                &self.shared_fonts,
-                &self.work,
-                descriptor.revents & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
-                descriptor.revents & std.posix.POLL.OUT != 0,
-            );
-            std.debug.assert(turn.read_bytes <= read_bytes_per_turn);
-            std.debug.assert(turn.written_bytes <= write_bytes_per_turn);
-            serviced += 1;
-            if (turn.published_update) published += 1;
-        }
-        return .{ .serviced = serviced, .published = published };
-    }
-
-    /// Gives every owner one bounded non-I/O opportunity after a runtime wake.
-    fn servicePending(
-        self: *Runtime,
-    ) ServiceError!usize {
-        var order_storage: [owner_limit]u8 = undefined;
-        var indices: [owner_limit]u8 = undefined;
-        var count: u8 = 0;
-        for (self.owners, 0..) |owner, index| {
-            if (owner == null) continue;
-            indices[count] = @intCast(index);
-            count += 1;
-        }
-        var published: usize = 0;
-        for (self.scheduler.order(count, &order_storage)) |position| {
-            const owner = &self.owners[indices[position]].?;
-            const turn = try owner.service(&self.shared_fonts, &self.work, false, false);
-            if (turn.published_update) published += 1;
-        }
-        return published;
-    }
-
-    /// Reconciles every accepted pooled source independently of dirty/visible state.
-    fn reconcileAcceptedBatches(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-    ) font_owner.BatchError!void {
-        for (self.owners) |*maybe_owner| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            const pooled = switch (owner.transfer) {
-                .pooled => |value| value,
-                .dedicated => continue,
-            };
-            const accepted = boundary.acceptedTransferRevision(
-                owner.pane,
-                pooled.member.source_id,
-            ) catch continue;
-            if (@backingInt(accepted) != 0)
-                try self.shared_fonts.observeAccepted(
-                    pooled.member.source_id,
-                    accepted,
-                );
-        }
-    }
-
-    /// Releases font ownership only after Composer accepts the exact hidden set.
-    fn reconcileAcceptedVisibility(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-    ) font_owner.GroupError!void {
-        const accepted = boundary.acceptedVisibleSet() orelse return;
-        if (accepted.revision <= self.accepted_visible_revision) return;
-        for (self.owners) |*maybe_owner| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            var visible = false;
-            for (accepted.members[0..accepted.count]) |member| {
-                if (member.pane == owner.pane) {
-                    visible = true;
-                    break;
-                }
-            }
-            if (visible) {
-                owner.font_reveal_candidate = false;
-                continue;
-            }
-            const group = owner.font_group orelse continue;
-            const source = switch (owner.transfer) {
-                .pooled => |pooled| pooled.member.source_id,
-                .dedicated => null,
-            };
-            if (source) |value| self.shared_fonts.cancelSourceBatches(value);
-            var producer = try self.shared_fonts.producer(group);
-            owner.content.releaseFontResources(.{ .shared = &producer });
-            producer.deinit();
-            owner.content.rebindFonts(self.fonts, .local);
-            try self.shared_fonts.releaseGroup(group);
-            owner.font_group = null;
-            owner.font_released_hidden = true;
-            owner.font_reveal_candidate = false;
-            owner.fonts = self.fonts;
-            owner.visual.requireRecovery();
-            owner.last_published_geometry = null;
-            owner.dirty = true;
-        }
-        @memcpy(
-            self.accepted_visible_members[0..accepted.count],
-            accepted.members[0..accepted.count],
-        );
-        self.accepted_visible_count = accepted.count;
-        self.accepted_visible_revision = accepted.revision;
-    }
-
-    fn paneIsAcceptedVisible(
-        self: *const Runtime,
-        pane: render.chrome.PaneId,
-    ) bool {
-        if (self.accepted_visible_revision == 0) return true;
-        for (self.accepted_visible_members[0..self.accepted_visible_count]) |member|
-            if (member.pane == pane) return true;
-        return false;
-    }
-
-    fn discardSupersededRevealGroups(
-        self: *Runtime,
-        request: handoff.VisibleSetRequest,
-    ) font_owner.GroupError!void {
-        for (self.owners) |*maybe_owner| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            if (!owner.font_reveal_candidate) continue;
-            var requested = false;
-            for (request.members[0..request.count]) |member| {
-                if (member.pane == owner.pane) {
-                    requested = true;
-                    break;
-                }
-            }
-            if (requested) continue;
-            const group = owner.font_group orelse return error.InvalidGroup;
-            var producer = try self.shared_fonts.producer(group);
-            owner.content.releaseFontResources(.{ .shared = &producer });
-            producer.deinit();
-            owner.content.rebindFonts(self.fonts, .local);
-            try self.shared_fonts.releaseGroup(group);
-            owner.font_group = null;
-            owner.fonts = self.fonts;
-            owner.font_released_hidden = true;
-            owner.font_reveal_candidate = false;
-            owner.visual.requireRecovery();
-            owner.last_published_geometry = null;
-            owner.dirty = true;
-        }
-    }
-
-    /// Attempts the retained latest font request once per external progress wake.
-    fn retryPendingFont(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-    ) (FontResizeError || error{
-        InvalidFontPolicy,
-        StaleFontRequest,
-    })!void {
-        const request = self.pending_font orelse return;
-        if (boundary.lifecycleFontStable()) return;
-        try self.preflightFontRequest(request);
-        const completed = self.resizePointFonts(
-            boundary,
-            request,
-        ) catch |failure| switch (failure) {
-            error.Busy,
-            error.InvalidMetrics,
-            error.FontCapacity,
-            error.TerminalCapacity,
-            => false,
-            else => return failure,
-        };
-        if (completed) self.pending_font = null;
-    }
-
-    /// Reconstructs every hidden pane required by one prospective visible set.
-    fn prepareRevealGroups(
-        self: *Runtime,
-        request: handoff.VisibleSetRequest,
-    ) FontResizeError!bool {
-        var indices: [handoff.visible_member_limit]u8 = undefined;
-        var groups: [handoff.visible_member_limit]ResolvedGroup = undefined;
-        var prepared: [handoff.visible_member_limit]?vt.Terminal.PreparedResize =
-            @splat(null);
-        var rows: [handoff.visible_member_limit]u16 = undefined;
-        var cols: [handoff.visible_member_limit]u16 = undefined;
-        var geometries: [handoff.visible_member_limit]terminal_render.Content.Geometry =
-            undefined;
-        var count: usize = 0;
-        var groups_owned = true;
-        defer if (groups_owned) {
-            var index = count;
-            while (index != 0) {
-                index -= 1;
-                self.shared_fonts.releaseGroup(groups[index].reference) catch
-                    @panic("terminal reveal group rollback failed");
-            }
-        };
-        errdefer for (prepared[0..count]) |*candidate|
-            if (candidate.*) |*value| value.deinit();
-
-        for (request.members[0..request.count]) |member| {
-            const owner_index = self.find(member.pane) orelse return false;
-            const owner = &self.owners[owner_index].?;
-            if (!owner.font_released_hidden) continue;
-            std.debug.assert(owner.font_group == null);
-            if (owner.font_state.scale == null) return false;
-            const group = self.pointGroup(owner.font_state) catch |failure| switch (failure) {
-                error.GroupLimit, error.RetirementPending => return false,
-                else => return failure,
-            };
-            indices[count] = @intCast(owner_index);
-            groups[count] = group;
-            count += 1;
-            const candidate_index = count - 1;
-            const metrics =
-                group.map.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-                return error.FontCapacity;
-            const grid = try gridForPixels(owner.pane_pixels, metrics);
-            prepared[candidate_index] =
-                try owner.machine.prepareResize(grid.rows, grid.cols);
-            rows[candidate_index] = grid.rows;
-            cols[candidate_index] = grid.cols;
-            geometries[candidate_index] =
-                try paneGeometry(owner.pane_pixels, group.map);
-        }
-        if (count == 0) return true;
-
-        var kernel_committed = false;
-        for (indices[0..count], 0..) |owner_index, index| {
-            const owner = &self.owners[owner_index].?;
-            owner.transport.resize(cols[index], rows[index]) catch |failure| {
-                if (kernel_committed) return error.PostKernelResizeFailure;
-                return failure;
-            };
-            kernel_committed = true;
-            prepared[index].?.commit();
-            _ = owner.refreshCursorTarget();
-            const metrics = geometries[index].metrics;
-            owner.machine.setCellPixelSize(
-                metrics.width_px,
-                metrics.height_px,
-            ) catch return error.PostKernelResizeFailure;
-        }
-        for (indices[0..count], 0..) |owner_index, index| {
-            const owner = &self.owners[owner_index].?;
-            owner.fonts = groups[index].map;
-            owner.font_group = groups[index].reference;
-            owner.font_released_hidden = false;
-            owner.font_reveal_candidate = true;
-            owner.content.rebindFonts(groups[index].map, .local);
-            owner.visual.rows = rows[index];
-            owner.visual.cols = cols[index];
-            owner.visual.requireRecovery();
-            owner.geometry = geometries[index];
-            owner.last_published_geometry = null;
-            owner.dirty = true;
-        }
-        groups_owned = false;
-        return true;
-    }
-
-    /// Prepares the latest complete visible set without consuming a partial group.
-    fn prepareVisibleSet(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-    ) (ServiceError || FontResizeError)!bool {
-        const request = boundary.visibleSetRequest() orelse return false;
-        try self.discardSupersededRevealGroups(request);
-        if (!try self.prepareRevealGroups(request)) return false;
-        var requirements: [handoff.visible_member_limit]handoff.VisibleRequirement = undefined;
-        var needed_members: [handoff.visible_member_limit]terminal_pool.Member = undefined;
-        var needed_positions: [handoff.visible_member_limit]u8 = undefined;
-        var needed_count: usize = 0;
-
-        for (request.members[0..request.count], 0..) |member, position| {
-            const owner_index = self.find(member.pane) orelse return false;
-            const owner = &self.owners[owner_index].?;
-            const pooled = switch (owner.transfer) {
-                .pooled => |value| value,
-                .dedicated => return false,
-            };
-            if (pooled.member.source_id != member.source) return false;
-            const transfer_state = boundary.visibleTransferState(request.revision, member) catch
-                return false;
-            if (@backingInt(transfer_state.accepted_revision) != 0)
-                try self.shared_fonts.observeAccepted(
-                    member.source,
-                    transfer_state.accepted_revision,
-                );
-            const geometry_current = owner.last_published_geometry != null and
-                std.meta.eql(owner.last_published_geometry.?, owner.geometry);
-            if (transfer_state.ready) |token| {
-                if (owner.dirty or !geometry_current or
-                    token.producer_revision != owner.last_published_revision)
-                    return false;
-                requirements[position] = .{
-                    .member = member,
-                    .revision = token.producer_revision,
-                };
-                continue;
-            }
-            if (!owner.dirty and geometry_current and
-                @backingInt(owner.last_published_revision) != 0 and
-                @backingInt(transfer_state.accepted_revision) >=
-                    @backingInt(owner.last_published_revision))
-            {
-                requirements[position] = .{
-                    .member = member,
-                    .revision = owner.last_published_revision,
-                };
-                continue;
-            }
-            needed_members[needed_count] = pooled.member;
-            needed_positions[needed_count] = @intCast(position);
-            needed_count += 1;
-        }
-
-        if (needed_count == 0) {
-            boundary.completeVisibleSet(
-                request.revision,
-                requirements[0..request.count],
-                false,
-            ) catch return false;
-            return true;
-        }
-        const group = boundary.reserveVisibleGroup(
-            request.revision,
-            needed_members[0..needed_count],
-        ) catch |failure| switch (failure) {
-            error.NoCapacity, error.Busy, error.GroupPriority, error.Stale => return false,
-            else => return failure,
-        };
-        var group_active = true;
-        defer if (group_active)
-            boundary.abortVisibleGroup(request.revision) catch {};
-        for (group.tokens[0..group.count], 0..) |token, group_index| {
-            const position = needed_positions[group_index];
-            const member = request.members[position];
-            const owner_index = self.find(member.pane) orelse return false;
-            const owner = &self.owners[owner_index].?;
-            const pooled = switch (owner.transfer) {
-                .pooled => |value| value,
-                .dedicated => return false,
-            };
-            if (!try owner.publishReservedPooled(
-                &self.shared_fonts,
-                pooled,
-                token,
-                &self.work,
-                request.revision,
-            ))
-                return false;
-            owner.dirty = false;
-            requirements[position] = .{
-                .member = member,
-                .revision = owner.last_published_revision,
-            };
-        }
-        boundary.completeVisibleSet(
-            request.revision,
-            requirements[0..request.count],
-            true,
-        ) catch |failure| switch (failure) {
-            error.Stale, error.Partial => return false,
-        };
-        group_active = false;
-        return true;
-    }
-
-    /// Applies one terminal-boundary lifecycle operation under exclusive runtime ownership.
-    fn applyLifecycle(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-        admitted: handoff.AdmittedLifecycle,
-        shell: []const u8,
-    ) LifecycleError!void {
-        switch (admitted.operation) {
-            .create => |create| {
-                const exact = admitted.grid orelse return error.InvalidPane;
-                const pending = self.pending_lifecycle_font orelse
-                    return error.FontCapacity;
-                if (pending.revision != admitted.revision or
-                    pending.pane != create.pane)
-                    return error.FontCapacity;
-                const derived = gridForPixels(
-                    create.pixels,
-                    pending.map.cellMetrics(.{
-                        .slot = 0,
-                        .style = .normal,
-                    }) orelse return error.FontCapacity,
-                ) catch return error.TerminalCapacity;
-                if (exact.pane != create.pane or exact.rows != derived.rows or
-                    exact.columns != derived.cols)
-                    return error.TerminalCapacity;
-                const member = boundary.activateTransfer(create.pane) catch
-                    return error.UnknownPane;
-                try self.addWithGroup(
-                    create.pane,
-                    shell,
-                    self.first_command,
-                    create.pixels,
-                    .{ .pooled = .{
-                        .boundary = boundary,
-                        .member = member,
-                    } },
-                    .{
-                        .reference = pending.group,
-                        .map = pending.map,
-                    },
-                );
-                try boundary.markLive(create.pane);
-                self.first_command = null;
-                self.pending_lifecycle_font = null;
-                return;
-            },
-            .resize => |resize| {
-                const exact = admitted.grid orelse return error.InvalidPane;
-                const index = self.find(resize.pane) orelse
-                    return error.UnknownPane;
-                const owner = &self.owners[index].?;
-                const derived = gridForPixels(
-                    resize.pixels,
-                    owner.fonts.cellMetrics(.{
-                        .slot = 0,
-                        .style = .normal,
-                    }) orelse return error.FontCapacity,
-                ) catch return error.TerminalCapacity;
-                if (exact.pane != resize.pane or exact.rows != derived.rows or
-                    exact.columns != derived.cols)
-                    return error.TerminalCapacity;
-                try owner.resize(resize.pixels);
-                return;
-            },
-            .close => |pane| {
-                if (!try self.finishClose(boundary, pane))
-                    self.pending_close = pane;
-                return;
-            },
-        }
-    }
-
-    /// Derives one exact mutation-free admission result from current metrics.
-    fn validateLifecycleAdmission(
-        self: *Runtime,
-        request: handoff.RuntimeAdmissionCopy,
-    ) handoff.LifecycleAdmissionResult {
-        std.debug.assert(self.pending_lifecycle_font == null);
-        var candidate_group: ?struct {
-            pane: render.chrome.PaneId,
-            reference: font_owner.GroupRef,
-            map: *render.terminal.FontMap,
-        } = null;
-        var retained = false;
-        defer if (!retained) if (candidate_group) |candidate|
-            self.shared_fonts.releaseGroup(candidate.reference) catch
-                @panic("terminal lifecycle font admission cleanup failed");
-        var seen: [owner_limit + 1]render.chrome.PaneId = undefined;
-        var seen_count: usize = 0;
-        var result = handoff.LifecycleAdmissionResult{ .admitted = .{
-            .count = 0,
-        } };
-        for (request.operations[0..request.operation_count]) |operation| {
-            const pane = switch (operation) {
-                .create => |value| value.pane,
-                .resize => |value| value.pane,
-                .close => |value| value,
-            };
-            if (@backingInt(pane) == 0)
-                return .{ .rejected = .invalid_pane };
-            for (seen[0..seen_count]) |prior|
-                if (prior == pane) return .{ .rejected = .duplicate_pane };
-            seen[seen_count] = pane;
-            seen_count += 1;
-            switch (operation) {
-                .create => |value| {
-                    if (self.find(value.pane) != null)
-                        return .{ .rejected = .duplicate_pane };
-                    if (request.registration == null or
-                        request.registration.?.pane != value.pane or
-                        @backingInt(request.registration.?.source) == 0)
-                        return .{ .rejected = .invalid_pane };
-                    const resolved = self.pointGroup(
-                        self.logicalFontState(value.pane),
-                    ) catch return .{ .rejected = .font_capacity };
-                    candidate_group = .{
-                        .pane = value.pane,
-                        .reference = resolved.reference,
-                        .map = resolved.map,
-                    };
-                    const metrics = resolved.map.cellMetrics(.{
-                        .slot = 0,
-                        .style = .normal,
-                    }) orelse return .{ .rejected = .font_capacity };
-                    if (!panePixelsContainCell(value.pixels, metrics))
-                        return .{ .rejected = .invalid_extent };
-                    const grid = gridForPixels(value.pixels, metrics) catch |failure|
-                        return .{ .rejected = switch (failure) {
-                            error.InvalidPane => .invalid_extent,
-                            error.FontCapacity => .font_capacity,
-                            error.TerminalCapacity => .terminal_capacity,
-                        } };
-                    const index = result.admitted.count;
-                    result.admitted.grids[index] = .{
-                        .pane = value.pane,
-                        .rows = grid.rows,
-                        .columns = grid.cols,
-                    };
-                    result.admitted.count += 1;
-                },
-                .resize => |value| {
-                    const owner_index = self.find(value.pane) orelse
-                        return .{ .rejected = .unknown_pane };
-                    const metrics = self.owners[owner_index].?.fonts.cellMetrics(.{
-                        .slot = 0,
-                        .style = .normal,
-                    }) orelse return .{ .rejected = .font_capacity };
-                    if (!panePixelsContainCell(value.pixels, metrics))
-                        return .{ .rejected = .invalid_extent };
-                    const grid = gridForPixels(value.pixels, metrics) catch |failure|
-                        return .{ .rejected = switch (failure) {
-                            error.InvalidPane => .invalid_extent,
-                            error.FontCapacity => .font_capacity,
-                            error.TerminalCapacity => .terminal_capacity,
-                        } };
-                    const index = result.admitted.count;
-                    result.admitted.grids[index] = .{
-                        .pane = value.pane,
-                        .rows = grid.rows,
-                        .columns = grid.cols,
-                    };
-                    result.admitted.count += 1;
-                },
-                .close => |pane_id| {
-                    if (self.find(pane_id) == null)
-                        return .{ .rejected = .unknown_pane };
-                },
-            }
-        }
-        for (request.inputs[0..request.input_count]) |input| {
-            const pane = switch (input) {
-                .key => |value| value.pane,
-                .focus => |value| value.pane,
-            };
-            const registered = request.registration != null and
-                request.registration.?.pane == pane;
-            if (!registered and self.find(pane) == null)
-                return .{ .rejected = .unknown_pane };
-        }
-        if (candidate_group) |candidate| {
-            self.pending_lifecycle_font = .{
-                .revision = request.revision,
-                .pane = candidate.pane,
-                .group = candidate.reference,
-                .map = candidate.map,
-            };
-            retained = true;
-        }
-        return result;
-    }
-
-    fn releaseLifecycleFont(
-        self: *Runtime,
-        revision: handoff.LifecycleRevision,
-    ) void {
-        const pending = self.pending_lifecycle_font orelse return;
-        if (pending.revision != revision) return;
-        self.shared_fonts.releaseGroup(pending.group) catch
-            @panic("terminal lifecycle font cancellation failed");
-        self.pending_lifecycle_font = null;
-    }
-
-    fn releaseCancelledLifecycleFont(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-    ) void {
-        const pending = self.pending_lifecycle_font orelse return;
-        if (!boundary.retainsLifecycleRevision(pending.revision))
-            self.releaseLifecycleFont(pending.revision);
-    }
-
-    /// Retries the one dequeued close after Renderer signals slot drainage.
-    /// A Busy result is ordinary ownership overlap, not runtime failure.
-    fn retryPendingClose(self: *Runtime, boundary: *handoff.Boundary) LifecycleError!void {
-        const pane = self.pending_close orelse return;
-        if (try self.finishClose(boundary, pane)) self.pending_close = null;
-    }
-
-    fn finishClose(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-        pane: render.chrome.PaneId,
-    ) LifecycleError!bool {
-        if (self.find(pane) == null) return error.UnknownPane;
-        if (!try boundary.retireTransfer(pane)) return false;
-        const owner_index = self.find(pane) orelse return error.UnknownPane;
-        switch (self.owners[owner_index].?.transfer) {
-            .pooled => |pooled| self.shared_fonts.cancelSourceBatches(pooled.member.source_id),
-            .dedicated => {},
-        }
-        try self.remove(pane);
-        try boundary.markRetired(pane);
-        return true;
-    }
-
-    /// Routes one copied interpreted key to its exact live logical terminal.
-    fn applyKey(self: *Runtime, input: handoff.KeyInput) ApplyInputError!void {
-        const index = self.find(input.pane) orelse return error.UnknownPane;
-        const key = try terminalKey(input.key.keysym);
-        const modifiers = input.key.semantic_modifiers;
-        const event = vt.Terminal.InputEvent{ .key = .{
-            .key = key,
-            .mods = .{
-                .shift = modifiers.shift,
-                .alt = modifiers.alt,
-                .control = modifiers.control,
-                .super = modifiers.super,
-                .hyper = modifiers.hyper,
-                .meta = modifiers.meta,
-                .caps_lock = modifiers.caps_lock,
-                .num_lock = modifiers.num_lock,
-            },
-            .action = switch (input.key.state) {
-                .pressed => .press,
-                .repeated => .repeat,
-                .released => .release,
-            },
-            .legacy_text = input.key.text[0..input.key.text_len],
-            .text = input.key.text[0..input.key.text_len],
-        } };
-        try self.owners[index].?.input(event);
-    }
-
-    /// Routes one canonical bounded terminal input occurrence by live PaneId.
-    fn applyInput(
-        self: *Runtime,
-        input: handoff.TerminalInput,
-    ) ApplyInputError!void {
-        switch (input) {
-            .key => |key| try self.applyKey(key),
-            .focus => |value| {
-                const index = self.find(value.pane) orelse
-                    return error.UnknownPane;
-                try self.owners[index].?.input(value.event);
-            },
-        }
-    }
-
-    fn find(self: *const Runtime, pane: render.chrome.PaneId) ?usize {
+    fn find(self: *const Runtime, pane: handoff.PaneId) ?usize {
         for (self.owners, 0..) |owner, index|
             if (owner != null and owner.?.pane == pane) return index;
         return null;
@@ -2193,3543 +307,330 @@ const Runtime = struct {
         return null;
     }
 
-    fn preflightFontRequest(
-        self: *const Runtime,
-        request: handoff.FontRequest,
-    ) error{ InvalidFontPolicy, StaleFontRequest }!void {
-        if (request.revision <= self.accepted_font_request_revision)
-            return error.StaleFontRequest;
-        if (!validFontPolicy(request.policy)) return error.InvalidFontPolicy;
-    }
-
-    fn commitFontRequest(self: *Runtime, request: handoff.FontRequest) void {
-        std.debug.assert(request.revision > self.accepted_font_request_revision);
-        std.debug.assert(validFontPolicy(request.policy));
-        for (self.owners) |*maybe_owner| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            owner.font_state = .{
-                .request_revision = request.revision,
-                .base_point_size = request.policy.base_point_size,
-                .offset_points = fontOffsetFor(request.policy, owner.pane),
-                .scale = request.scale,
+    fn validateAdmission(self: *Runtime, request: handoff.RuntimeAdmissionCopy) handoff.LifecycleAdmissionResult {
+        var grid_index: usize = 0;
+        var seen: [owner_limit]handoff.PaneId = undefined;
+        var seen_count: usize = 0;
+        for (request.operations[0..request.operation_count]) |operation| {
+            const pane = switch (operation) {
+                .create => |value| value.pane,
+                .resize => |value| value.pane,
+                .close => |value| value,
             };
-        }
-        self.accepted_font_request_revision = request.revision;
-        self.accepted_font_policy = request.policy;
-        self.accepted_scale = request.scale;
-    }
-
-    fn logicalFontState(
-        self: *const Runtime,
-        pane: render.chrome.PaneId,
-    ) LogicalFontState {
-        return .{
-            .request_revision = self.accepted_font_request_revision,
-            .base_point_size = self.accepted_font_policy.base_point_size,
-            .offset_points = fontOffsetFor(self.accepted_font_policy, pane),
-            .scale = self.accepted_scale,
-        };
-    }
-
-    fn pointGroup(
-        self: *Runtime,
-        state: LogicalFontState,
-    ) (font_owner.GroupError || error{FontCapacity})!ResolvedGroup {
-        const key = try resolvedGroupKey(state);
-        const configs = pointGroupConfigs(self.font_path, key);
-        const reference = try self.shared_fonts.acquireGroup(key, &configs);
-        errdefer self.shared_fonts.releaseGroup(reference) catch
-            @panic("terminal font candidate rollback failed");
-        return .{
-            .reference = reference,
-            .map = try self.shared_fonts.mapFor(reference),
-        };
-    }
-
-    fn stagePointGroup(
-        self: *Runtime,
-        state: LogicalFontState,
-    ) (font_owner.GroupError || error{FontCapacity})!ResolvedGroup {
-        const key = try resolvedGroupKey(state);
-        const configs = pointGroupConfigs(self.font_path, key);
-        const reference = try self.shared_fonts.stageGroup(key, &configs);
-        errdefer self.shared_fonts.discardGroup(reference) catch
-            @panic("terminal font staged candidate rollback failed");
-        return .{
-            .reference = reference,
-            .map = try self.shared_fonts.stagedMapFor(reference),
-        };
-    }
-
-    /// Applies one complete point/DPI transaction to changed panes.
-    fn resizePointFonts(
-        self: *Runtime,
-        boundary: *handoff.Boundary,
-        request: handoff.FontRequest,
-    ) FontResizeError!bool {
-        if (!boundary.fontQuiescent()) return error.Busy;
-        if (request.scale == null) {
-            self.commitFontRequest(request);
-            return true;
-        }
-        var groups: [owner_limit]?font_owner.GroupRef = @splat(null);
-        var maps: [owner_limit]?*render.terminal.FontMap = @splat(null);
-        var old_producers: [owner_limit]?font_owner.Producer = @splat(null);
-        defer for (&old_producers) |*producer| if (producer.*) |*value| {
-            value.deinit();
-            producer.* = null;
-        };
-        var prepared: [owner_limit]?vt.Terminal.PreparedResize = @splat(null);
-        var new_cols: [owner_limit]u16 = undefined;
-        var new_rows: [owner_limit]u16 = undefined;
-        var new_geometry: [owner_limit]terminal_render.Content.Geometry = undefined;
-        var changed_indices: [owner_limit]u8 = undefined;
-        var state_indices: [owner_limit]u8 = undefined;
-        var candidate_states: [owner_limit]LogicalFontState = undefined;
-        var old_group_refs: [owner_limit]font_owner.GroupRef = undefined;
-        var staged_group_refs: [owner_limit]font_owner.GroupRef = undefined;
-        var changed_count: usize = 0;
-        var state_count: usize = 0;
-        var transition_count: usize = 0;
-        var acquired_groups: [owner_limit]bool = @splat(false);
-        var staged_owned = true;
-        defer if (staged_owned) {
-            var index = transition_count;
-            while (index != 0) {
-                index -= 1;
-                self.shared_fonts.discardGroup(staged_group_refs[index]) catch
-                    @panic("terminal font candidate cleanup failed");
+            for (seen[0..seen_count]) |prior| if (prior == pane)
+                return .{ .rejected = .duplicate_pane };
+            seen[seen_count] = pane;
+            seen_count += 1;
+            switch (operation) {
+                .create => {
+                    if (self.find(pane) != null or self.freeIndex() == null)
+                        return .{ .rejected = .duplicate_pane };
+                    if (grid_index >= request.grid_count or !gridValid(request.grids[grid_index], pane))
+                        return .{ .rejected = .terminal_capacity };
+                    grid_index += 1;
+                },
+                .resize => {
+                    if (self.find(pane) == null) return .{ .rejected = .unknown_pane };
+                    if (grid_index >= request.grid_count or !gridValid(request.grids[grid_index], pane))
+                        return .{ .rejected = .terminal_capacity };
+                    grid_index += 1;
+                },
+                .close => if (self.find(pane) == null) return .{ .rejected = .unknown_pane },
             }
-        };
-        var acquired_owned = true;
-        defer if (acquired_owned) for (acquired_groups, 0..) |acquired, index| {
-            if (acquired)
-                self.shared_fonts.releaseGroup(groups[index].?) catch
-                    @panic("terminal font initial-group cleanup failed");
-        };
-        errdefer for (&prepared) |*candidate| if (candidate.*) |*value| value.deinit();
-
-        for (self.owners, 0..) |*maybe_owner, index| {
-            const owner = if (maybe_owner.*) |*value| value else continue;
-            const state = LogicalFontState{
-                .request_revision = request.revision,
-                .base_point_size = request.policy.base_point_size,
-                .offset_points = fontOffsetFor(request.policy, owner.pane),
-                .scale = request.scale,
+        }
+        if (grid_index != request.grid_count) return .{ .rejected = .terminal_capacity };
+        for (request.inputs[0..request.input_count]) |input| {
+            const pane = switch (input) {
+                .key => |value| value.pane,
+                .focus => |value| value.pane,
             };
-            const new_key = try resolvedGroupKey(state);
-            if (owner.font_state.base_point_size != state.base_point_size or
-                owner.font_state.offset_points != state.offset_points or
-                !std.meta.eql(owner.font_state.scale, state.scale))
-            {
-                state_indices[state_count] = @intCast(index);
-                candidate_states[state_count] = state;
-                state_count += 1;
-            }
-            if (!self.paneIsAcceptedVisible(owner.pane)) continue;
-            if (owner.font_group) |old_group| {
-                const old_key = try self.shared_fonts.keyFor(old_group);
-                if (std.meta.eql(new_key, old_key)) continue;
-                old_producers[index] = try self.shared_fonts.producer(old_group);
-                const group = try self.stagePointGroup(state);
-                groups[index] = group.reference;
-                maps[index] = group.map;
-                old_group_refs[transition_count] = old_group;
-                staged_group_refs[transition_count] = group.reference;
-                transition_count += 1;
-            } else {
-                const group = try self.pointGroup(state);
-                groups[index] = group.reference;
-                maps[index] = group.map;
-                acquired_groups[index] = true;
-            }
-            changed_indices[changed_count] = @intCast(index);
-            changed_count += 1;
-            const metrics = maps[index].?.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-                return error.FontCapacity;
-            const grid = try gridForPixels(owner.pane_pixels, metrics);
-            prepared[index] = try owner.machine.prepareResize(grid.rows, grid.cols);
-            new_cols[index] = grid.cols;
-            new_rows[index] = grid.rows;
-            new_geometry[index] = try paneGeometry(
-                owner.pane_pixels,
-                maps[index].?,
-            );
+            const registering = request.registration != null and request.registration.?.pane == pane;
+            if (!registering and self.find(pane) == null) return .{ .rejected = .unknown_pane };
         }
-        var group_transition = try self.shared_fonts.prepareGroupTransition(
-            old_group_refs[0..transition_count],
-            staged_group_refs[0..transition_count],
-        );
-        staged_owned = false;
-        defer group_transition.deinit();
-        var kernel_committed = false;
-        for (changed_indices[0..changed_count]) |owner_index| {
-            const index: usize = owner_index;
-            const owner = &self.owners[index].?;
-            owner.transport.resize(new_cols[index], new_rows[index]) catch |failure| {
-                if (kernel_committed) return error.PostKernelResizeFailure;
-                return failure;
-            };
-            kernel_committed = true;
-            prepared[index].?.commit();
-            _ = owner.refreshCursorTarget();
-            const metrics = new_geometry[index].metrics;
-            owner.machine.setCellPixelSize(metrics.width_px, metrics.height_px) catch
-                return error.PostKernelResizeFailure;
-        }
-        group_transition.commit();
-        for (changed_indices[0..changed_count]) |owner_index| {
-            const index: usize = owner_index;
-            const owner = &self.owners[index].?;
-            owner.fonts = maps[index].?;
-            owner.font_group = groups[index];
-            owner.content.rebindFonts(
-                maps[index].?,
-                if (old_producers[index]) |*producer|
-                    .{ .shared = producer }
-                else
-                    .local,
-            );
-            owner.visual.rows = new_rows[index];
-            owner.visual.cols = new_cols[index];
-            owner.visual.initialized = false;
-            owner.geometry = new_geometry[index];
-            owner.last_published_geometry = null;
-            owner.dirty = true;
-        }
-        for (&old_producers) |*producer| if (producer.*) |*value| {
-            value.deinit();
-            producer.* = null;
+        return .admitted;
+    }
+
+    fn flushJournals(self: *Runtime) !bool {
+        var complete = true;
+        for (&self.owners) |*maybe_owner| if (maybe_owner.*) |*owner| {
+            if (!try owner.flushJournal(self.fifo)) complete = false;
         };
-        acquired_owned = false;
-        for (state_indices[0..state_count], candidate_states[0..state_count]) |
-            owner_index,
-            state,
-        | self.owners[owner_index].?.font_state = state;
-        self.accepted_font_request_revision = request.revision;
-        self.accepted_font_policy = request.policy;
-        self.accepted_scale = request.scale;
+        return complete;
+    }
+
+    fn applyLifecycle(self: *Runtime, boundary: *handoff.Boundary, shell: []const u8) !bool {
+        const admitted = self.pending_lifecycle orelse return true;
+        switch (admitted.operation) {
+            .create => |create| {
+                const grid = admitted.grid orelse return error.InvalidGrid;
+                const source = boundary.sourceFor(create.pane) orelse return error.UnknownPane;
+                const index = self.freeIndex() orelse return error.OwnerLimit;
+                var owner = try Logical.init(
+                    self.allocator,
+                    create.pane,
+                    source,
+                    admitted.revision,
+                    shell,
+                    self.first_command,
+                    grid,
+                );
+                errdefer owner.deinit();
+                try boundary.markLive(create.pane);
+                self.owners[index] = owner;
+                self.count += 1;
+                self.first_command = null;
+            },
+            .resize => |resize| {
+                const index = self.find(resize.pane) orelse return error.UnknownPane;
+                if (!try self.owners[index].?.resize(admitted.revision, admitted.grid orelse return error.InvalidGrid)) return false;
+            },
+            .close => |pane| {
+                const index = self.find(pane) orelse return error.UnknownPane;
+                if (!try self.owners[index].?.flushJournal(self.fifo)) return false;
+                if (!try boundary.retireTransfer(pane)) return false;
+                self.owners[index].?.deinit();
+                self.owners[index] = null;
+                self.count -= 1;
+                try boundary.markRetired(pane);
+            },
+        }
+        self.pending_lifecycle = null;
         return true;
+    }
+
+    fn applyInput(self: *Runtime, input: handoff.TerminalInput) !bool {
+        switch (input) {
+            .key => |value| {
+                const index = self.find(value.pane) orelse return error.UnknownPane;
+                const modifiers = value.key.semantic_modifiers;
+                self.owners[index].?.input(.{ .key = .{
+                    .key = try terminalKey(value.key.keysym),
+                    .mods = .{
+                        .shift = modifiers.shift,
+                        .alt = modifiers.alt,
+                        .control = modifiers.control,
+                        .super = modifiers.super,
+                        .hyper = modifiers.hyper,
+                        .meta = modifiers.meta,
+                        .caps_lock = modifiers.caps_lock,
+                        .num_lock = modifiers.num_lock,
+                    },
+                    .action = switch (value.key.state) {
+                        .pressed => .press,
+                        .repeated => .repeat,
+                        .released => .release,
+                    },
+                    .legacy_text = value.key.text[0..value.key.text_len],
+                    .text = value.key.text[0..value.key.text_len],
+                } }) catch |failure| switch (failure) {
+                    error.WriteQueueFull => return false,
+                    else => return failure,
+                };
+            },
+            .focus => |value| {
+                const index = self.find(value.pane) orelse return error.UnknownPane;
+                self.owners[index].?.input(value.event) catch |failure| switch (failure) {
+                    error.WriteQueueFull => return false,
+                    else => return failure,
+                };
+            },
+        }
+        return true;
+    }
+
+    /// Retries one retained input before taking later Boundary input.
+    /// Returns false only while PTY write capacity still blocks that input.
+    fn drainInputs(self: *Runtime, boundary: *handoff.Boundary) !bool {
+        var input_count: usize = 0;
+        while (input_count < input_turn_limit) : (input_count += 1) {
+            if (self.pending_input == null)
+                self.pending_input = boundary.takeInput() orelse return true;
+            if (!try self.applyInput(self.pending_input.?)) return false;
+            self.pending_input = null;
+        }
+        return true;
+    }
+
+    fn publishCompletions(self: *Runtime, boundary: *handoff.Boundary) !void {
+        for (&self.owners) |*maybe_owner| {
+            const owner = if (maybe_owner.*) |*value| value else continue;
+            const completion = owner.pending_completion orelse continue;
+            boundary.publishCompletion(completion) catch |failure| switch (failure) {
+                error.Stopping, error.UnknownPane, error.RetiredPane, error.SourceStale, error.LifecycleStale, error.DuplicateCompletion => {
+                    owner.pending_completion = null;
+                    continue;
+                },
+                else => return failure,
+            };
+            owner.pending_completion = null;
+        }
     }
 };
 
-fn resolvedGroupKey(
-    state: LogicalFontState,
-) error{FontCapacity}!font_owner.GroupKey {
-    const scale = state.scale orelse return error.FontCapacity;
-    const dpi_x = render.terminal.Dpi{
-        .numerator = scale.dpi_x.numerator,
-        .denominator = scale.dpi_x.denominator,
+/// Exposes the real Runtime owner only to cross-owner test builds.
+pub const testing = if (builtin.is_test) struct {
+    /// Names the production Runtime storage used by integration proofs.
+    pub const Owner = Runtime;
+    const ApplyError = switch (@typeInfo(@typeInfo(@TypeOf(Runtime.applyLifecycle)).@"fn".return_type.?)) {
+        .error_union => |info| info.error_set,
+        else => unreachable,
     };
-    const dpi_y = render.terminal.Dpi{
-        .numerator = scale.dpi_y.numerator,
-        .denominator = scale.dpi_y.denominator,
+    const FlushError = switch (@typeInfo(@typeInfo(@TypeOf(Runtime.flushJournals)).@"fn".return_type.?)) {
+        .error_union => |info| info.error_set,
+        else => unreachable,
     };
-    const dpi_x_value = @as(f64, @floatFromInt(dpi_x.numerator)) /
-        @as(f64, @floatFromInt(dpi_x.denominator));
-    const dpi_y_value = @as(f64, @floatFromInt(dpi_y.numerator)) /
-        @as(f64, @floatFromInt(dpi_y.denominator));
-    const floor = @max(72.0 / dpi_x_value, 72.0 / dpi_y_value);
-    const raw = state.base_point_size + state.offset_points;
-    const point_size = std.math.clamp(
-        raw,
-        floor,
-        16.0 * 10.0,
-    );
-    return .{
-        .configuration_generation = terminal_configuration_generation,
-        .point_size = point_size,
-        .logical_dpi_x = dpi_x,
-        .logical_dpi_y = dpi_y,
-    };
-}
 
-fn pointGroupConfigs(
-    font_path: []const u8,
-    key: font_owner.GroupKey,
-) [4]render.terminal.FontConfig {
-    const size = render.terminal.Size{ .points = .{
-        .points = key.point_size,
-        .dpi_x = key.logical_dpi_x,
-        .dpi_y = key.logical_dpi_y,
-    } };
-    return .{
-        .{ .key = .{ .slot = 0, .style = .normal }, .native = .{ .primary = font_path, .size = size } },
-        .{ .key = .{ .slot = 0, .style = .bold }, .native = .{ .primary = font_path, .size = size } },
-        .{ .key = .{ .slot = 0, .style = .italic }, .native = .{ .primary = font_path, .size = size } },
-        .{ .key = .{ .slot = 0, .style = .bold_italic }, .native = .{ .primary = font_path, .size = size } },
-    };
-}
-
-fn validFontPolicy(policy: handoff.FontPolicy) bool {
-    if (!std.math.isFinite(policy.base_point_size) or
-        std.math.isNan(policy.base_point_size) or
-        policy.base_point_size <= 0.0 or policy.count > owner_limit)
-        return false;
-    var previous: u64 = 0;
-    for (policy.offsets[0..policy.count]) |offset| {
-        const pane = @backingInt(offset.pane);
-        if (pane == 0 or pane <= previous or
-            !std.math.isFinite(offset.offset_points) or
-            std.math.isNan(offset.offset_points) or
-            offset.offset_points == 0.0)
-            return false;
-        previous = pane;
+    /// Constructs empty production Runtime ownership without spawning a pane.
+    pub fn init(allocator: std.mem.Allocator, fifo: *visual_fifo.Fifo, first_command: ?[]const u8) Owner {
+        return .{ .allocator = allocator, .fifo = fifo, .first_command = first_command };
     }
+
+    /// Releases every production Runtime owner retained by the proof.
+    pub fn deinit(owner: *Owner) void {
+        owner.deinit();
+    }
+
+    /// Runs production lifecycle admission validation for one copied request.
+    pub fn validate(owner: *Owner, request: handoff.RuntimeAdmissionCopy) handoff.LifecycleAdmissionResult {
+        return owner.validateAdmission(request);
+    }
+
+    /// Applies one exact admitted lifecycle operation through production Runtime ownership.
+    pub fn apply(owner: *Owner, boundary: *handoff.Boundary, admitted: handoff.AdmittedLifecycle, shell: []const u8) ApplyError!bool {
+        std.debug.assert(owner.pending_lifecycle == null);
+        owner.pending_lifecycle = admitted;
+        return owner.applyLifecycle(boundary, shell);
+    }
+
+    /// Publishes every pending production VT journal into the shared FIFO.
+    pub fn flush(owner: *Owner) FlushError!bool {
+        return owner.flushJournals();
+    }
+} else struct {};
+
+/// Runs the sole PTY/VT owner until the lifecycle boundary stops.
+pub fn run(
+    boundary: *handoff.Boundary,
+    fifo: *visual_fifo.Fifo,
+    allocator: std.mem.Allocator,
+    shell: []const u8,
+    first_command: ?[]const u8,
+) void {
+    runFallible(boundary, fifo, allocator, shell, first_command) catch |failure| {
+        std.debug.print("Terminal runtime failure: {s}\n", .{@errorName(failure)});
+        boundary.markStopped(true);
+        return;
+    };
+    boundary.markStopped(false);
+}
+
+fn runFallible(
+    boundary: *handoff.Boundary,
+    fifo: *visual_fifo.Fifo,
+    allocator: std.mem.Allocator,
+    shell: []const u8,
+    first_command: ?[]const u8,
+) !void {
+    var runtime = Runtime{ .allocator = allocator, .fifo = fifo, .first_command = first_command };
+    defer runtime.deinit();
+    while (true) {
+        _ = try runtime.flushJournals();
+
+        if (boundary.takeLifecycleAdmission()) |request| {
+            try boundary.completeLifecycleAdmission(request.revision, runtime.validateAdmission(request));
+        }
+        if (runtime.pending_lifecycle == null) runtime.pending_lifecycle = boundary.takeAdmittedLifecycle();
+        if (runtime.pending_lifecycle != null) _ = try runtime.applyLifecycle(boundary, shell);
+
+        _ = try runtime.drainInputs(boundary);
+
+        // Lifecycle create/resize may have produced an initial or replacement
+        // journal after the first flush pass. Publish it before any blocking
+        // poll; FIFO pressure is represented by the capacity descriptor.
+        _ = try runtime.flushJournals();
+        try runtime.publishCompletions(boundary);
+
+        var descriptors: [owner_limit + 2]std.posix.pollfd = undefined;
+        var owner_indices: [owner_limit]u8 = undefined;
+        descriptors[0] = .{ .fd = boundary.terminalFd(), .events = std.posix.POLL.IN, .revents = 0 };
+        descriptors[1] = .{ .fd = fifo.capacityDescriptor(), .events = std.posix.POLL.IN, .revents = 0 };
+        var descriptor_count: usize = 2;
+        for (&runtime.owners, 0..) |*maybe_owner, index| {
+            const owner = if (maybe_owner.*) |*value| value else continue;
+            descriptors[descriptor_count] = .{
+                .fd = try owner.masterFd(),
+                .events = (if (!owner.stream_closed) @as(i16, std.posix.POLL.IN | std.posix.POLL.HUP) else 0) |
+                    (if (owner.writes.count != 0) @as(i16, std.posix.POLL.OUT) else 0),
+                .revents = 0,
+            };
+            owner_indices[descriptor_count - 2] = @intCast(index);
+            descriptor_count += 1;
+        }
+        _ = std.posix.poll(descriptors[0..descriptor_count], -1) catch return error.PollFailed;
+        if (descriptors[0].revents & std.posix.POLL.IN != 0) {
+            try boundary.drainTerminalWake();
+            if (boundary.isStopping()) break;
+        }
+        if (descriptors[1].revents & std.posix.POLL.IN != 0) try fifo.drainCapacityWake();
+
+        for (descriptors[2..descriptor_count], owner_indices[0 .. descriptor_count - 2]) |descriptor, owner_index| {
+            if (descriptor.revents == 0) continue;
+            const owner = &runtime.owners[owner_index].?;
+            try owner.service(
+                fifo,
+                descriptor.revents & (std.posix.POLL.IN | std.posix.POLL.HUP) != 0,
+                descriptor.revents & std.posix.POLL.OUT != 0,
+            );
+        }
+        try runtime.publishCompletions(boundary);
+        boundary.rearmTerminalWork();
+    }
+}
+
+fn validateGrid(grid: handoff.DerivedGrid, pane: handoff.PaneId) error{InvalidGrid}!void {
+    if (grid.pane != pane or grid.rows == 0 or grid.columns == 0 or grid.rows > grid_row_limit)
+        return error.InvalidGrid;
+    const cells = std.math.mul(usize, grid.rows, grid.columns) catch return error.InvalidGrid;
+    if (cells > grid_cell_limit) return error.InvalidGrid;
+}
+
+fn gridValid(grid: handoff.DerivedGrid, pane: handoff.PaneId) bool {
+    validateGrid(grid, pane) catch return false;
     return true;
 }
 
-fn fontOffsetFor(
-    policy: handoff.FontPolicy,
-    pane: render.chrome.PaneId,
-) f64 {
-    for (policy.offsets[0..policy.count]) |offset| {
-        const retained = @backingInt(offset.pane);
-        const requested = @backingInt(pane);
-        if (retained == requested) return offset.offset_points;
-        if (retained > requested) break;
-    }
-    return 0.0;
-}
-
-/// Copies pending VT replies before any subsequent terminal mutation.
-fn collectReplies(
-    terminal: *vt.Terminal,
-    queue: *WriteQueue,
-) ReplyTransferError!usize {
-    const bytes = terminal.replyBytes();
-    if (bytes.len == 0) return 0;
+fn collectReplies(machine: *vt.Terminal, queue: *WriteQueue) !void {
+    const bytes = machine.replyBytes();
+    if (bytes.len == 0) return;
     try queue.append(bytes);
-    try terminal.consumeReplyBytes(bytes.len);
-    return bytes.len;
+    try machine.consumeReplyBytes(bytes.len);
 }
 
-/// Attempts bounded one-shot writes and preserves every unaccepted suffix.
-fn flushWrites(owner: *pty.Owned, queue: *WriteQueue) pty.WriteError!Turn {
-    var result = Turn{};
-    while (result.write_calls < write_calls_per_turn and
-        result.written_bytes < write_bytes_per_turn and
-        queue.count != 0)
-    {
-        result.write_calls += 1;
-        const budget = @min(queue.count, write_bytes_per_turn - result.written_bytes);
-        const accepted = owner.write(queue.pending()[0..budget]) catch |failure| switch (failure) {
+fn flushWrites(owner: *pty.Owned, queue: *WriteQueue) !void {
+    var calls: usize = 0;
+    var written: usize = 0;
+    while (calls < write_calls_per_turn and written < write_bytes_per_turn and queue.count != 0) {
+        calls += 1;
+        const budget = @min(queue.count, write_bytes_per_turn - written);
+        const accepted = owner.write(queue.bytes[0..budget]) catch |failure| switch (failure) {
             error.Interrupted => continue,
-            error.WouldBlock => return result,
+            error.WouldBlock => return,
             else => return failure,
         };
         queue.consume(accepted);
-        result.written_bytes += accepted;
-    }
-    return result;
-}
-
-/// Copies the current consequence head without consuming protocol state.
-fn pendingConsequence(terminal: *const vt.Terminal) ?vt.Terminal.Consequence {
-    return terminal.consequenceHead();
-}
-
-test "write queue saturation and prefix consumption are transactional" {
-    var queue = WriteQueue{};
-    var fill: [write_queue_bytes]u8 = undefined;
-    @memset(&fill, 0xaa);
-    try queue.append(&fill);
-    const before = queue.bytes;
-    try std.testing.expectError(error.WriteQueueFull, queue.append("x"));
-    try std.testing.expectEqualSlices(u8, &before, &queue.bytes);
-    queue.consume(3);
-    try std.testing.expectEqual(write_queue_bytes - 3, queue.pending().len);
-    try std.testing.expectEqual(@as(u8, 0xaa), queue.pending()[0]);
-}
-
-test "stable round robin gives every owner one opportunity" {
-    var scheduler = RoundRobin{};
-    var storage: [owner_limit]u8 = undefined;
-    try std.testing.expectEqualSlices(u8, &.{ 0, 1, 2, 3 }, scheduler.order(4, &storage));
-    try std.testing.expectEqualSlices(u8, &.{ 1, 2, 3, 0 }, scheduler.order(4, &storage));
-    try std.testing.expectEqualSlices(u8, &.{ 2, 3, 0, 1 }, scheduler.order(4, &storage));
-    try std.testing.expectEqualSlices(u8, &.{ 3, 0, 1, 2 }, scheduler.order(4, &storage));
-}
-
-test "reply collection preserves bytes on queue saturation" {
-    var terminal = try vt.Terminal.init(std.testing.allocator, 2, 8);
-    defer terminal.deinit();
-    const summary = try terminal.feed("\x1b[5n");
-    try std.testing.expect(summary.stateChanged());
-    try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
-    var queue = WriteQueue{};
-    queue.count = queue.bytes.len;
-    try std.testing.expectError(error.WriteQueueFull, collectReplies(&terminal, &queue));
-    try std.testing.expectEqualStrings("\x1b[0n", terminal.replyBytes());
-    queue.count = 0;
-    try std.testing.expectEqual(@as(usize, 4), try collectReplies(&terminal, &queue));
-    try std.testing.expectEqualStrings("\x1b[0n", queue.pending());
-    try std.testing.expectEqualStrings("", terminal.replyBytes());
-}
-
-test "older VT replies remain ordered before newly encoded input" {
-    var slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const summary = try owner.machine.feed("\x1b[5n");
-    try std.testing.expect(summary.stateChanged());
-    try owner.input(.{ .bytes = "x" });
-    try std.testing.expectEqualStrings("\x1b[0nx", owner.writes.pending());
-    try std.testing.expectEqualStrings("", owner.machine.replyBytes());
-}
-
-test "cursor-only mutation routing leaves terminal publication clean" {
-    var slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(901);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .dedicated = &slot },
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    owner.dirty = false;
-    const before_revision = owner.last_published_revision;
-    try owner.routeMutation(try owner.machine.feed("\x1b[?9999h"));
-    try std.testing.expect(!owner.dirty);
-    const cursor = try owner.machine.feed("\x1b[1C");
-    try owner.routeMutation(cursor);
-    try std.testing.expect(!owner.dirty);
-    try std.testing.expectEqual(before_revision, owner.last_published_revision);
-
-    const mixed = try owner.machine.feed("\x1b[1Cx");
-    try owner.routeMutation(mixed);
-    try std.testing.expect(owner.dirty);
-}
-
-test "accepted cursor binding reconstructs cells relative to nonzero origin" {
-    const prior = handoff.CursorTarget{
-        .row = 0,
-        .col = 0,
-        .visible = true,
-        .shape = .none,
-        .cursor_color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
-        .text_color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
-    };
-    const origin = render.canvas.CursorPoint{ .x = 37, .y = 53 };
-    const cell_size = render.canvas.Size{ .width = 11, .height = 19 };
-    var binding = render.canvas.CursorBinding{
-        .pane = 1,
-        .source = @as(render.canvas.SourceId, @fromBackingInt(2)),
-        .terminal_sequence = 17,
-        .cursor_revision = 9,
-        .visible_set_revision = 3,
-        .lifecycle_revision = 4,
-        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .cell_origin = origin,
-        .cell_size = cell_size,
-        .clip = .{ .x = 0, .y = 0, .width = 400, .height = 300 },
-        .visible = true,
-        .color = .{ .r = 11, .g = 12, .b = 13, .a = 255 },
-        .text_color = .{ .r = 21, .g = 22, .b = 23, .a = 255 },
-    };
-
-    binding.shape = .block;
-    binding.rect = .{ .x = 81, .y = 110, .width = 11, .height = 19 };
-    const block = try Logical.reconstructAcceptedCursorTarget(prior, binding);
-    try std.testing.expectEqual(@as(u16, 4), block.target.col);
-    try std.testing.expectEqual(@as(u16, 3), block.target.row);
-    try std.testing.expectEqual(handoff.CursorShape.block, block.target.shape);
-
-    binding.shape = .bar;
-    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
-    const bar = try Logical.reconstructAcceptedCursorTarget(prior, binding);
-    try std.testing.expectEqual(@as(u16, 4), bar.target.col);
-    try std.testing.expectEqual(@as(u16, 3), bar.target.row);
-    try std.testing.expectEqual(handoff.CursorShape.bar, bar.target.shape);
-
-    binding.shape = .underline;
-    binding.rect = .{ .x = 81, .y = 128, .width = 11, .height = 1 };
-    const underline = try Logical.reconstructAcceptedCursorTarget(prior, binding);
-    try std.testing.expectEqual(@as(u16, 4), underline.target.col);
-    try std.testing.expectEqual(@as(u16, 3), underline.target.row);
-    try std.testing.expectEqual(handoff.CursorShape.underline, underline.target.shape);
-    binding.shape = .block;
-    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
-    try std.testing.expectError(
-        error.InvalidAcceptedCursorBinding,
-        Logical.reconstructAcceptedCursorTarget(prior, binding),
-    );
-    binding.shape = .bar;
-    binding.rect = .{ .x = 81, .y = 110, .width = 11, .height = 19 };
-    try std.testing.expectError(
-        error.InvalidAcceptedCursorBinding,
-        Logical.reconstructAcceptedCursorTarget(prior, binding),
-    );
-    binding.shape = .underline;
-    binding.rect = .{ .x = 81, .y = 128, .width = 11, .height = 19 };
-    try std.testing.expectError(
-        error.InvalidAcceptedCursorBinding,
-        Logical.reconstructAcceptedCursorTarget(prior, binding),
-    );
-    binding.shape = .none;
-    binding.rect = .{ .x = 81, .y = 110, .width = 1, .height = 19 };
-    try std.testing.expectError(
-        error.InvalidAcceptedCursorBinding,
-        Logical.reconstructAcceptedCursorTarget(prior, binding),
-    );
-    try std.testing.expectError(
-        error.InvalidAcceptedCursorBinding,
-        Logical.reconstructAcceptedCursorTarget(prior, .{
-            .pane = 1,
-            .source = @as(render.canvas.SourceId, @fromBackingInt(2)),
-            .terminal_sequence = 17,
-            .cursor_revision = 9,
-            .visible_set_revision = 3,
-            .lifecycle_revision = 4,
-            .rect = .{ .x = 82, .y = 110, .width = 11, .height = 19 },
-            .cell_origin = origin,
-            .cell_size = cell_size,
-            .clip = .{ .x = 0, .y = 0, .width = 400, .height = 300 },
-            .shape = .block,
-            .visible = true,
-            .color = .{ .r = 11, .g = 12, .b = 13, .a = 255 },
-            .text_color = .{ .r = 21, .g = 22, .b = 23, .a = 255 },
-        }),
-    );
-}
-
-test "synchronized output bootstraps before first Composer acceptance" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(906);
-    const source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(pane, source, pixels);
-    try std.testing.expect(boundary.takeLifecycle() != null);
-    const member = try boundary.activateTransfer(pane);
-    try boundary.markLive(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = member } },
-    );
-    boundary.visible_revision = 1;
-    boundary.visible_initialized = true;
-    boundary.visible_member_count = 1;
-    boundary.visible_members[0] = .{ .pane = pane, .source = source };
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    owner.dirty = false;
-    const initial_revision = owner.accepted_cursor_target_revision;
-
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
-    try std.testing.expect(owner.machine.synchronizedOutput());
-    try owner.routeMutation(try owner.machine.feed("\x1b[2Ctext"));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const bootstrap_binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expectEqual(initial_revision, bootstrap_binding.cursor_revision);
-    try std.testing.expectEqual(@as(u16, 0), owner.accepted_cursor_target.col);
-    try std.testing.expect(owner.cursor_target.col > owner.accepted_cursor_target.col);
-
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
-    try std.testing.expect(!owner.machine.synchronizedOutput());
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const final_binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expectEqual(owner.cursor_target_revision, final_binding.cursor_revision);
-    try std.testing.expectEqual(
-        try cursorRect(owner.cursor_target, owner.geometry),
-        final_binding.rect,
-    );
-}
-
-const FzfSequenceSplit = enum { whole, control_boundaries, every_byte };
-
-fn exerciseFzfSynchronizedSequence(split: FzfSequenceSplit) !void {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(907);
-    const source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(pane, source, pixels);
-    try std.testing.expect(boundary.takeLifecycle() != null);
-    const member = try boundary.activateTransfer(pane);
-    try boundary.markLive(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = member } },
-    );
-    boundary.visible_revision = 1;
-    boundary.visible_initialized = true;
-    boundary.visible_member_count = 1;
-    boundary.visible_members[0] = .{ .pane = pane, .source = source };
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const sequence = "\x1b[?1049h\x1b[?2026h\x1b[?25lX\x1b[?25h\x1b[?2026l";
-
-    const feed = struct {
-        fn one(owner_value: *Logical, boundary_value: *handoff.Boundary, composer_value: *render.canvas.Composer, runtime_value: *Runtime, bytes: []const u8) !void {
-            try owner_value.routeMutation(try owner_value.machine.feed(bytes));
-            if (try owner_value.publishIfDirty(&runtime_value.shared_fonts, &runtime_value.work)) {}
-            const drain = try boundary_value.drainReady(composer_value);
-            try std.testing.expect(drain.accepted <= 1);
-        }
-    }.one;
-
-    switch (split) {
-        .whole => try feed(owner, &boundary, &composer, &runtime, sequence),
-        .control_boundaries => {
-            const chunks = [_][]const u8{
-                "\x1b[?1049h",
-                "\x1b[?2026h",
-                "\x1b[?25l",
-                "X",
-                "\x1b[?25h",
-                "\x1b[?2026l",
-            };
-            for (chunks) |chunk| try feed(owner, &boundary, &composer, &runtime, chunk);
-        },
-        .every_byte => for (sequence) |byte| {
-            const chunk = [_]u8{byte};
-            try feed(owner, &boundary, &composer, &runtime, &chunk);
-        },
-    }
-
-    try std.testing.expect(!owner.machine.synchronizedOutput());
-    try std.testing.expect(owner.cursor_target.visible);
-    const binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expect(binding.visible);
-    try std.testing.expectEqual(render.canvas.CursorShape.block, binding.shape);
-    try std.testing.expectEqual(owner.cursor_target_revision, binding.cursor_revision);
-    try std.testing.expectEqual(owner.cursor_target_terminal_sequence, binding.terminal_sequence);
-    try std.testing.expectEqual(
-        try cursorRect(owner.cursor_target, owner.geometry),
-        binding.rect,
-    );
-}
-
-test "fzf synchronized cursor survives complete and fragmented transactions" {
-    try exerciseFzfSynchronizedSequence(.whole);
-    try exerciseFzfSynchronizedSequence(.control_boundaries);
-    try exerciseFzfSynchronizedSequence(.every_byte);
-}
-
-test "synchronized output defers cursor binding until one mode-off publication" {
-    var slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(903);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .dedicated = &slot },
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    owner.dirty = false;
-    const initial_accepted = owner.accepted_cursor_target;
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
-    try std.testing.expect(owner.machine.synchronizedOutput());
-    try std.testing.expect(owner.dirty);
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[4C"));
-    try std.testing.expect(!owner.dirty);
-    try std.testing.expectEqual(initial_accepted, owner.accepted_cursor_target);
-    try std.testing.expectEqual(@as(u64, 1), owner.cursor_target_revision - owner.accepted_cursor_target_revision);
-    try std.testing.expect(owner.cursor_target.col > owner.accepted_cursor_target.col);
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
-    try std.testing.expect(!owner.machine.synchronizedOutput());
-    try std.testing.expect(owner.dirty);
-    try std.testing.expectEqual(initial_accepted, owner.accepted_cursor_target);
-}
-
-test "pooled cursor route publishes inbox without pool or content work" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(902);
-    const source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(pane, source, pixels);
-    try std.testing.expectEqual(
-        handoff.Lifecycle{ .create = .{ .pane = pane, .pixels = pixels } },
-        boundary.takeLifecycle().?,
-    );
-    const member = try boundary.activateTransfer(pane);
-    try boundary.markLive(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = member } },
-    );
-    boundary.visible_revision = 1;
-    boundary.visible_initialized = true;
-    boundary.visible_member_count = 1;
-    boundary.visible_members[0] = .{ .pane = pane, .source = source };
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    owner.dirty = true;
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const initial_binding = boundary.acceptedCursorBinding(pane, source).?;
-    owner.dirty = false;
-    const before = owner.last_published_revision;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
-    try std.testing.expect(!owner.dirty);
-    try std.testing.expectEqual(before, owner.last_published_revision);
-    const cursor = boundary.takeCursor(pane).?;
-    try std.testing.expectEqual(pane, cursor.pane);
-    try std.testing.expectEqual(source, cursor.source);
-    try std.testing.expectEqual(@as(u16, 1), cursor.target.col);
-
-    // Synchronized output keeps semantic movement local until the mode-off
-    // ordinary publication binds the final target; no intermediate inbox
-    // publication is admitted.
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026h"));
-    try std.testing.expect(owner.dirty);
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
-    try std.testing.expect(!owner.dirty);
-    try std.testing.expect(boundary.takeCursor(pane) == null);
-    // Text changes while synchronized output is active still take the
-    // ordinary Pool/Composer path, but retain the last Composer-accepted
-    // cursor target until the mode-off publication.
-    try owner.routeMutation(try owner.machine.feed("x"));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    try std.testing.expectEqual(initial_binding, boundary.acceptedCursorBinding(pane, source).?);
-    try owner.routeMutation(try owner.machine.feed("\x1b[?2026l"));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(boundary.takeCursor(pane) == null);
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const mode_off_binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expectEqual(owner.cursor_target_revision, mode_off_binding.cursor_revision);
-
-    // A rejected Composer candidate leaves the accepted binding untouched;
-    // retrying the same ready update through the full Composer admits it.
-    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    var narrow = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer narrow.deinit();
-    try std.testing.expectEqual(source, try narrow.registerSource());
-    const narrow_drain = try boundary.drainReady(&narrow);
-    try std.testing.expectEqual(@as(usize, 0), narrow_drain.accepted);
-    try std.testing.expectEqual(error.CommandLimit, narrow_drain.rejected.?);
-    try std.testing.expectEqual(mode_off_binding, boundary.acceptedCursorBinding(pane, source).?);
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const final_binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expectEqual(@as(u64, owner.cursor_target_revision), final_binding.cursor_revision);
-    try std.testing.expectEqual(owner.cursor_target_terminal_sequence, final_binding.terminal_sequence);
-    try std.testing.expectEqual(
-        try cursorRect(owner.cursor_target, owner.geometry),
-        final_binding.rect,
-    );
-
-    // A hidden member remains registered but has no cursor presentation.
-    boundary.visible_member_count = 0;
-    try std.testing.expect((try boundary.cursorPublicationIdentity(pane, source)) == null);
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1Cy"));
-    try std.testing.expect(owner.dirty);
-    boundary.visible_member_count = 1;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
-    try std.testing.expect(owner.dirty);
-    try std.testing.expect(boundary.takeCursor(pane) != null);
-
-    owner.transfer.pooled.member.source_id = @fromBackingInt(1903);
-    try std.testing.expectError(
-        error.SourceStale,
-        boundary.cursorPublicationIdentity(pane, @fromBackingInt(1903)),
-    );
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
-    try std.testing.expect(!owner.dirty);
-    owner.transfer.pooled.member.source_id = source;
-
-    try boundary.close(pane);
-    try std.testing.expectEqual(
-        handoff.Lifecycle{ .close = pane },
-        boundary.takeLifecycle().?,
-    );
-    try std.testing.expect(try boundary.retireTransfer(pane));
-    try boundary.markRetired(pane);
-    try std.testing.expectError(
-        error.RetiredPane,
-        boundary.cursorPublicationIdentity(pane, source),
-    );
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
-    try std.testing.expect(!owner.dirty);
-    try std.testing.expectEqual(pane, boundary.takeRetired().?.pane);
-    try boundary.finishRetired(pane);
-    try std.testing.expectError(
-        error.UnknownPane,
-        boundary.cursorPublicationIdentity(pane, source),
-    );
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1C"));
-    try std.testing.expect(!owner.dirty);
-
-    owner.dirty = false;
-    try owner.routeMutation(try owner.machine.feed("\x1b[1Cx"));
-    try std.testing.expect(owner.dirty);
-}
-
-test "ready supersession releases every runtime font batch before replacement" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 16,
-        .retained_resources = 1024,
-        .retained_commands = admitted_commands,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 16,
-        .candidate_resources = 1024,
-        .candidate_commands = admitted_commands,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-
-    var panes: [16]render.chrome.PaneId = undefined;
-    var sources: [16]render.canvas.SourceId = undefined;
-    var members: [16]terminal_pool.Member = undefined;
-    for (0..16) |index| {
-        panes[index] = @fromBackingInt(@intCast(1000 + index));
-        sources[index] = try composer.registerSource();
-        const pixels = try testPixels(runtime.fonts, 8, 2);
-        try boundary.register(panes[index], sources[index], pixels);
-        const lifecycle = boundary.takeLifecycle().?;
-        try runtime.applyLifecycle(
-            &boundary,
-            try testAdmittedLifecycle(&runtime, lifecycle),
-            "/bin/sh",
-        );
-        const owner_index = runtime.find(panes[index]).?;
-        const owner = &runtime.owners[owner_index].?;
-        members[index] = owner.transfer.pooled.member;
-    }
-    boundary.visible_initialized = true;
-    boundary.visible_revision = 1;
-    boundary.visible_member_count = 16;
-    for (members, 0..) |member, index|
-        boundary.visible_members[index] = .{ .pane = member.pane_id, .source = member.source_id };
-
-    // Fill all sixteen immutable ready blocks and declaration batches first.
-    for (panes) |pane| {
-        const owner = &runtime.owners[runtime.find(pane).?].?;
-        try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    }
-    var ready_count: usize = 0;
-    for (boundary.entries) |entry| {
-        if (entry) |value| {
-            if (value.ready != null) ready_count += 1;
-        }
-    }
-    try std.testing.expectEqual(@as(usize, 16), ready_count);
-
-    // A newer cursor target makes every ready binding discardable. Runtime
-    // must cancel the exact font batch before reconstructing its replacement.
-    for (panes, 0..) |pane, index| {
-        const owner = &runtime.owners[runtime.find(pane).?].?;
-        owner.cursor_target_revision = 2;
-        owner.cursor_target_terminal_sequence += 1;
-        const cursor_identity = (try boundary.cursorPublicationIdentity(
-            pane,
-            sources[index],
-        )).?;
-        try boundary.publishCursor(.{
-            .pane = pane,
-            .source = sources[index],
-            .terminal_sequence = owner.cursor_target_terminal_sequence,
-            .cursor_revision = owner.cursor_target_revision,
-            .visible_set_revision = 1,
-            .lifecycle_revision = cursor_identity.lifecycle_revision,
-            .target = owner.cursor_target,
-        });
-        owner.dirty = true;
-        try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    }
-    ready_count = 0;
-    for (boundary.entries) |entry| {
-        if (entry) |value| {
-            if (value.ready != null) ready_count += 1;
-        }
-    }
-    try std.testing.expectEqual(@as(usize, 16), ready_count);
-
-    const drainage = try boundary.drainReady(&composer);
-    try std.testing.expectEqual(@as(usize, 16), drainage.accepted);
-    try runtime.reconcileAcceptedBatches(&boundary);
-}
-
-test "all consequence variants are exhaustively classified without consumption" {
-    comptime {
-        const fields = @typeInfo(vt.Terminal.Consequence).@"union".field_names;
-        std.debug.assert(fields.len == 12);
-        const expected = [_][]const u8{
-            "clipboard",
-            "notification",
-            "pointer_shape",
-            "file_transfer",
-            "drag_drop",
-            "container",
-            "color_preference_query",
-            "bell",
-            "legacy_control",
-            "media_copy",
-            "dcs",
-            "string_control",
-        };
-        for (fields, expected) |field, name| std.debug.assert(std.mem.eql(u8, field, name));
+        written += accepted;
     }
 }
 
-test "repeated consequences are consumed by exact identity without stalling progress" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(7));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect((try owner.machine.feed("\x07\x07")).stateChanged());
-    const first = owner.machine.consequenceHead().?;
-    try std.testing.expectError(
-        error.StaleConsequence,
-        owner.machine.consumeConsequence(first.id() + 1),
-    );
-    try owner.disposeConsequence();
-    try std.testing.expect(owner.machine.consequenceHead() != null);
-    try owner.disposeConsequence();
-    try std.testing.expect(owner.machine.consequenceHead() == null);
-    try std.testing.expect((try owner.machine.feed("x")).stateChanged());
-    try std.testing.expectEqual(@as(u21, 'x'), owner.machine.semanticView(0).cellAt(0, 0));
-}
-
-test "reply-required consequences receive bounded Host replies and clear the head" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(70));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-
-    try std.testing.expect((try owner.machine.feed("\x1b]52;c;?\x07")).stateChanged());
-    try owner.disposeConsequence();
-    try std.testing.expect(owner.machine.consequenceHead() == null);
-    try std.testing.expect(owner.machine.replyBytes().len != 0);
-    const transferred = try collectReplies(&owner.machine, &owner.writes);
-    try std.testing.expect(transferred != 0);
-
-    try std.testing.expect((try owner.machine.feed("\x1b[?996n")).stateChanged());
-    try owner.disposeConsequence();
-    try std.testing.expect(owner.machine.consequenceHead() == null);
-    try std.testing.expect(owner.machine.replyBytes().len != 0);
-}
-
-test "production terminal admission matches the Composer candidate boundary" {
-    const limits = contentLimits();
-    try std.testing.expectEqual(admitted_commands, limits.commands);
-    try std.testing.expectEqual(admitted_resources, limits.resources_per_update);
-    try std.testing.expectError(
-        error.TerminalCapacity,
-        gridForPixels(
-            .{ .width = std.math.maxInt(u16), .height = std.math.maxInt(u16) },
-            .{ .width_px = 1, .height_px = 1, .baseline_px = 0 },
-        ),
-    );
-}
-
-test "realistic configured sparse terminal fits the production Composer candidate" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(10));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 240, 100), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect((try owner.machine.feed(
-        "\x1b[4mHowl terminal runtime\x1b[0m\r\n$ ",
-    )).stateChanged());
-    try owner.visual.project(&owner.machine, &owner.content);
-    var work = try render.terminal.Content.Work.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer work.deinit();
-    const update = try owner.content.takeLocalUpdate(
-        &work,
-        owner.visual.scalarBaseline(),
-        owner.geometry,
-    );
-    try std.testing.expect(update.commands.len <= admitted_commands);
-    try std.testing.expect(update.uploads.len <= admitted_resources);
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = admitted_resources,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = admitted_resources,
-        .candidate_commands = admitted_commands,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const source = try composer.registerSource();
-    try composer.apply(source, update);
-}
-
-test "alternate-screen exit publishes complete retained resource turnover" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(72);
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 100, 5), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = admitted_resources,
-        .retained_commands = admitted_commands,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = admitted_resources,
-        .candidate_commands = admitted_commands,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const source = try composer.registerSource();
-
-    try owner.visual.project(&owner.machine, &owner.content);
-    try composer.apply(
-        source,
-        try owner.content.takeLocalUpdate(
-            &runtime.work,
-            owner.visual.scalarBaseline(),
-            owner.geometry,
-        ),
-    );
-
-    try std.testing.expect((try owner.machine.feed("\x1b[?1049h")).stateChanged());
-    const styles = [_][]const u8{ "\x1b[0m", "\x1b[1m", "\x1b[3m", "\x1b[1;3m" };
-    var position: [16]u8 = undefined;
-    var alternate_changed = false;
-    for (styles, 0..) |style, row| {
-        const move = try std.fmt.bufPrint(&position, "\x1b[{d};1H", .{row + 1});
-        alternate_changed = (try owner.machine.feed(move)).stateChanged() or
-            alternate_changed;
-        alternate_changed = (try owner.machine.feed(style)).stateChanged() or
-            alternate_changed;
-        var scalar: u8 = 33;
-        while (scalar <= 126) : (scalar += 1) {
-            const byte = [_]u8{scalar};
-            alternate_changed = (try owner.machine.feed(&byte)).stateChanged() or
-                alternate_changed;
-        }
-    }
-    try std.testing.expect(alternate_changed);
-    try owner.visual.project(&owner.machine, &owner.content);
-    const alternate = try owner.content.takeLocalUpdate(
-        &runtime.work,
-        owner.visual.scalarBaseline(),
-        owner.geometry,
-    );
-    try std.testing.expect(alternate.uploads.len > 128);
-    try composer.apply(source, alternate);
-
-    try std.testing.expect((try owner.machine.feed("\x1b[?1049l")).stateChanged());
-    try owner.visual.project(&owner.machine, &owner.content);
-    const primary = try owner.content.takeLocalUpdate(
-        &runtime.work,
-        owner.visual.scalarBaseline(),
-        owner.geometry,
-    );
-    try std.testing.expect(primary.removals.len > 128);
-    try std.testing.expect(primary.removals.len <= admitted_resources);
-    try composer.apply(source, primary);
-}
-
-test "hostile admitted command pressure remains recoverable and retryable" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(71));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 256, 128), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const transcript = try std.testing.allocator.alloc(u8, admitted_cells * 6);
-    defer std.testing.allocator.free(transcript);
-    for (0..admitted_cells) |index| {
-        const sequence = if (index % 2 == 0) "\x1b[40m " else "\x1b[41m ";
-        @memcpy(transcript[index * 6 ..][0..6], sequence);
-    }
-    try std.testing.expect((try owner.machine.feed(transcript)).stateChanged());
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expect(!owner.dirty);
-}
-
-test "first command follows real lifecycle admission and is consumed once" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    runtime.accepted_scale = .{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    runtime.first_command = "printf cursor-fixture";
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-
-    const first: render.chrome.PaneId = @fromBackingInt(904);
-    const first_source: render.canvas.SourceId = @fromBackingInt(1904);
-    const first_operations = [_]handoff.Lifecycle{.{ .create = .{
-        .pane = first,
-        .pixels = .{ .width = std.math.maxInt(u16), .height = std.math.maxInt(u16) },
-    } }};
-    var rejected = try boundary.prepareLifecycle(
-        &first_operations,
-        &.{},
-        .{ .pane = first, .source = first_source },
-    );
-    const rejected_revision = try rejected.publishAdmission();
-    const rejected_request = boundary.takeLifecycleAdmission().?;
-    const rejected_result = runtime.validateLifecycleAdmission(rejected_request);
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.terminal_capacity,
-        rejected_result.rejected,
-    );
-    try boundary.completeLifecycleAdmission(rejected_revision, rejected_result);
-    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
-    try std.testing.expectEqualStrings("printf cursor-fixture", runtime.first_command.?);
-    rejected.deinit();
-    runtime.releaseCancelledLifecycleFont(&boundary);
-
-    // A later real admission consumes the still-pending command. There is no
-    // retry of the rejected admitted operation itself.
-    const good_operations = [_]handoff.Lifecycle{.{ .create = .{
-        .pane = first,
-        .pixels = pixels,
-    } }};
-    var first_candidate = try boundary.prepareLifecycle(
-        &good_operations,
-        &.{},
-        .{ .pane = first, .source = first_source },
-    );
-    defer first_candidate.deinit();
-    const first_revision = try first_candidate.publishAdmission();
-    const first_request = boundary.takeLifecycleAdmission().?;
-    const first_result = runtime.validateLifecycleAdmission(first_request);
-    try std.testing.expect(switch (first_result) {
-        .admitted => true,
-        .rejected => false,
-    });
-    try boundary.completeLifecycleAdmission(first_revision, first_result);
-    try first_candidate.commitAdmitted();
-    try runtime.applyLifecycle(
-        &boundary,
-        boundary.takeAdmittedLifecycle().?,
-        "/bin/sh",
-    );
-
-    const first_owner = &runtime.owners[runtime.find(first).?].?;
-    try std.testing.expectEqualStrings("printf cursor-fixture", first_owner.transport.command.?);
-    try std.testing.expect(runtime.first_command == null);
-
-    const second: render.chrome.PaneId = @fromBackingInt(905);
-    const second_source: render.canvas.SourceId = @fromBackingInt(1905);
-    var second_candidate = try boundary.prepareLifecycle(
-        &[_]handoff.Lifecycle{.{ .create = .{ .pane = second, .pixels = pixels } }},
-        &.{},
-        .{ .pane = second, .source = second_source },
-    );
-    defer second_candidate.deinit();
-    const second_revision = try second_candidate.publishAdmission();
-    const second_request = boundary.takeLifecycleAdmission().?;
-    const second_result = runtime.validateLifecycleAdmission(second_request);
-    try std.testing.expect(switch (second_result) {
-        .admitted => true,
-        .rejected => false,
-    });
-    try boundary.completeLifecycleAdmission(second_revision, second_result);
-    try second_candidate.commitAdmitted();
-    try runtime.applyLifecycle(
-        &boundary,
-        boundary.takeAdmittedLifecycle().?,
-        "/bin/sh",
-    );
-    const second_owner = &runtime.owners[runtime.find(second).?].?;
-    try std.testing.expect(second_owner.transport.command == null);
-}
-
-test "close racing an occupied slot retries and retires exactly once" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(9));
-    const source = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    var composer = source;
-    defer composer.deinit();
-    const source_id = try composer.registerSource();
-    try boundary.register(pane, source_id, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const owner_index = runtime.find(pane).?;
-    const pooled = runtime.owners[owner_index].?.transfer.pooled;
-    const reserved = try boundary.reserveUpdate(pooled.member);
-    try boundary.close(pane);
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    try std.testing.expect(runtime.pending_close == pane);
-    try boundary.cancelUpdate(reserved);
-    try runtime.retryPendingClose(&boundary);
-    try std.testing.expect(runtime.pending_close == null);
-    const retired = boundary.takeRetired().?;
-    try std.testing.expectEqual(pane, retired.pane);
-    try composer.removeSource(retired.source);
-    try boundary.finishRetired(pane);
-    try std.testing.expect(runtime.find(pane) == null);
-}
-
-test "two-owner renderer drainage retires one source without stale drainage" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const first: render.chrome.PaneId = @fromBackingInt(@intCast(11));
-    const second: render.chrome.PaneId = @fromBackingInt(@intCast(12));
-    const first_source = try composer.registerSource();
-    const second_source = try composer.registerSource();
-    try boundary.register(first, first_source, try testPixels(runtime.fonts, 8, 2));
-    try boundary.register(second, second_source, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    try std.testing.expect(try runtime.servicePending() == 2);
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.drainReady(&composer)).accepted,
-    );
-    var wake = std.posix.pollfd{ .fd = boundary.terminalFd(), .events = std.posix.POLL.IN, .revents = 0 };
-    try std.testing.expectEqual(@as(usize, 1), @as(usize, @intCast(try std.posix.poll((&wake)[0..1], 0))));
-    try boundary.drainTerminalWake();
-    try boundary.close(first);
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const retired = boundary.takeRetired().?;
-    try std.testing.expectEqual(first, retired.pane);
-    try composer.removeSource(retired.source);
-    try boundary.finishRetired(first);
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        (try boundary.drainReady(&composer)).accepted,
-    );
-    try std.testing.expect(runtime.find(first) == null);
-    try std.testing.expect(runtime.find(second) != null);
-}
-
-test "pool exhaustion preserves PTY progress and shared Work reuse" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(21));
-    const source = try composer.registerSource();
-    try boundary.register(pane, source, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-
-    var reservations: [16]terminal_pool.Token = undefined;
-    for (&reservations, 0..) |*token, index| {
-        const identity: u64 = @intCast(index + 100);
-        const dummy_pane: render.chrome.PaneId =
-            @fromBackingInt(identity);
-        const dummy_source: render.canvas.SourceId =
-            @fromBackingInt(identity);
-        try boundary.register(dummy_pane, dummy_source, .{ .width = 1, .height = 1 });
-        try std.testing.expect(
-            std.meta.activeTag(boundary.takeLifecycle().?) == .create,
-        );
-        const member = try boundary.activateTransfer(dummy_pane);
-        token.* = try boundary.reserveUpdate(member);
-    }
-    try std.testing.expectEqual(@as(usize, 0), try runtime.servicePending());
-
-    var progressed = false;
-    for (0..128) |_| {
-        try std.testing.expect(try runtime.pollOnce(20) <= 1);
-        const view = runtime.owners[runtime.find(pane).?].?.machine.semanticView(0);
-        if (view.cellAt(0, 0) != 0) {
-            progressed = true;
-            break;
-        }
-    }
-    try std.testing.expect(progressed);
-    try std.testing.expectEqual(@as(usize, 0), try runtime.servicePending());
-
-    try boundary.cancelUpdate(reservations[0]);
-    try std.testing.expectEqual(@as(usize, 1), try runtime.servicePending());
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            .{
-                .surface = owner.pane_pixels,
-                .sources = &.{.{
-                    .source = source,
-                    .origin = .{ .x = 0, .y = 0 },
-                    .clip = .{
-                        .x = 0,
-                        .y = 0,
-                        .width = owner.pane_pixels.width,
-                        .height = owner.pane_pixels.height,
-                    },
-                }},
-            },
-            null,
-            .ordinary,
-        )).accepted,
-    );
-    for (reservations[1..]) |token| try boundary.cancelUpdate(token);
-}
-
-test "consumed publication failure releases reservation and forces recovery" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 1024,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 1024,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(22));
-    const source = try composer.registerSource();
-    try boundary.register(pane, source, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const pooled = owner.transfer.pooled;
-    const token = try boundary.reserveUpdate(pooled.member);
-    try boundary.close(pane);
-    try std.testing.expect(
-        !try owner.publishReservedPooled(
-            &runtime.shared_fonts,
-            pooled,
-            token,
-            &runtime.work,
-            null,
-        ),
-    );
-    try std.testing.expect(!owner.visual.initialized);
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const retired = boundary.takeRetired().?;
-    try composer.removeSource(retired.source);
-    try boundary.finishRetired(retired.pane);
-
-    const replacement: render.chrome.PaneId =
-        @fromBackingInt(@intCast(23));
-    const replacement_source = try composer.registerSource();
-    try boundary.register(replacement, replacement_source, .{ .width = 1, .height = 1 });
-    try std.testing.expect(
-        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
-    );
-    const replacement_member = try boundary.activateTransfer(replacement);
-    const replacement_token = try boundary.reserveUpdate(replacement_member);
-    try boundary.publishUpdate(replacement_token, .{
-        .revision = @fromBackingInt(@intCast(1)),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{},
-    });
-    const drainage = try boundary.drainReady(&composer);
-    try std.testing.expectEqual(@as(usize, 1), drainage.accepted);
-    try std.testing.expect(drainage.rejected == null);
-    try boundary.close(replacement);
-    try std.testing.expect(
-        std.meta.activeTag(boundary.takeLifecycle().?) == .close,
-    );
-    try std.testing.expect(try boundary.retireTransfer(replacement));
-    try boundary.markRetired(replacement);
-    const replacement_retired = boundary.takeRetired().?;
-    try composer.removeSource(replacement_retired.source);
-    try boundary.finishRetired(replacement_retired.pane);
-}
-
-test "multiple real PTYs share one bounded poll set without noisy starvation" {
-    var noisy = try testPty("i=0; while [ $i -lt 20000 ]; do printf x; i=$((i+1)); done; exit 0");
-    defer noisy.deinit();
-    var quiet = try testPty("printf quiet; exit 7");
-    defer quiet.deinit();
-
-    var descriptors = [_]std.posix.pollfd{
-        .{ .fd = try noisy.masterFd(), .events = std.posix.POLL.IN | std.posix.POLL.HUP, .revents = 0 },
-        .{ .fd = try quiet.masterFd(), .events = std.posix.POLL.IN | std.posix.POLL.HUP, .revents = 0 },
-    };
-    var totals = [_]usize{ 0, 0 };
-    var quiet_bytes: [5]u8 = undefined;
-    var quiet_count: usize = 0;
-    var scheduler = RoundRobin{};
-    var order_storage: [owner_limit]u8 = undefined;
-    var rounds: usize = 0;
-    while (quiet_count < quiet_bytes.len and rounds < 1024) : (rounds += 1) {
-        const ready = try std.posix.poll(&descriptors, 20);
-        try std.testing.expect(ready <= descriptors.len);
-        for (scheduler.order(2, &order_storage)) |owner_index| {
-            const index: usize = owner_index;
-            if (descriptors[index].revents & (std.posix.POLL.IN | std.posix.POLL.HUP) == 0)
-                continue;
-            var buffer: [1024]u8 = undefined;
-            const count = switch (index) {
-                0 => noisy.read(&buffer),
-                1 => quiet.read(&buffer),
-                else => unreachable,
-            } catch |failure| switch (failure) {
-                error.WouldBlock, error.Interrupted, error.EndOfStream => continue,
-                else => return failure,
-            };
-            totals[index] += count;
-            if (index == 1) {
-                const copy_count = @min(count, quiet_bytes.len - quiet_count);
-                @memcpy(quiet_bytes[quiet_count..][0..copy_count], buffer[0..copy_count]);
-                quiet_count += copy_count;
-            }
-        }
-        for (&descriptors) |*descriptor| descriptor.revents = 0;
-    }
-    try std.testing.expectEqualStrings("quiet", quiet_bytes[0..quiet_count]);
-    try std.testing.expect(totals[0] <= rounds * 1024);
-
-    var quiet_exit: ?pty.ChildExit = null;
-    for (0..1024) |_| {
-        switch (try quiet.observeChild()) {
-            .running => {
-                const ready = try std.posix.poll(descriptors[1..2], 20);
-                try std.testing.expect(ready <= 1);
-                descriptors[1].revents = 0;
-            },
-            .exited => |value| {
-                quiet_exit = value;
-                break;
-            },
-        }
-    }
-    try std.testing.expectEqual(pty.ChildExit{ .code = 7 }, quiet_exit.?);
-    try std.testing.expectEqual(pty.ChildObservation{ .exited = .{ .code = 7 } }, try quiet.observeChild());
-}
-
-test "real runtime measures occupied handoff fairness and Renderer drainage" {
-    var noisy_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var quiet_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var noisy_reserved = false;
-    defer {
-        if (noisy_reserved) noisy_slot.cancelReserved();
-        retireTestSlot(&noisy_slot);
-        retireTestSlot(&quiet_slot);
-        noisy_slot.deinit();
-        quiet_slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const noisy_id: render.chrome.PaneId = @fromBackingInt(@intCast(41));
-    const quiet_id: render.chrome.PaneId = @fromBackingInt(@intCast(42));
-    try runtime.add(
-        noisy_id,
-        "/bin/sh",
-        "i=0; while [ $i -lt 2000000 ]; do printf x; i=$((i+1)); done; exit 0",
-        try testPixels(runtime.fonts, 16, 16),
-        .{ .dedicated = &noisy_slot },
-    );
-    try runtime.add(
-        quiet_id,
-        "/bin/sh",
-        "while IFS= read -r line; do printf q; done",
-        try testPixels(runtime.fonts, 16, 16),
-        .{ .dedicated = &quiet_slot },
-    );
-    try noisy_slot.reserve();
-    noisy_reserved = true;
-
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 1024,
-        .retained_commands = 8192,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 1024,
-        .candidate_commands = 8192,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const noisy_source = try composer.registerSource();
-    const quiet_source = try composer.registerSource();
-    const quiet_index = runtime.find(quiet_id).?;
-    var drains: usize = 0;
-    var quiet_updates: usize = 0;
-    var noisy_updates_after_release: usize = 0;
-    var scheduler_progressions: usize = 0;
-    var prior_cursor = runtime.scheduler.cursor;
-    const occupied_rounds: usize = 48;
-    const requested_quiet: usize = 12;
-    var rounds: usize = 0;
-    while (rounds < 512 and
-        (quiet_updates < requested_quiet or noisy_updates_after_release == 0)) : (rounds += 1)
-    {
-        if (rounds % 4 == 0 and rounds / 4 < requested_quiet) {
-            const owner = &runtime.owners[quiet_index].?;
-            try owner.input(.{ .bytes = "tick\n" });
-        }
-        if (rounds == occupied_rounds) {
-            noisy_slot.cancelReserved();
-            noisy_reserved = false;
-        }
-        const serviced = try runtime.pollOnce(20);
-        try std.testing.expect(serviced <= 2);
-        if (try quiet_slot.drain(&composer, quiet_source)) {
-            quiet_updates += 1;
-            drains += 1;
-        }
-        if (!noisy_reserved and try noisy_slot.drain(&composer, noisy_source))
-            noisy_updates_after_release += 1;
-        if (runtime.scheduler.cursor != prior_cursor) scheduler_progressions += 1;
-        prior_cursor = runtime.scheduler.cursor;
-    }
-    try std.testing.expect(quiet_updates >= requested_quiet);
-    try std.testing.expect(noisy_updates_after_release != 0);
-    try std.testing.expect(drains >= requested_quiet);
-    try std.testing.expect(scheduler_progressions != 0);
-    try std.testing.expect(noisy_updates_after_release == 1);
-}
-
-test "runtime admits observes and retires real shell owners transactionally" {
-    var first_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var second_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer {
-        runtime.deinit();
-        retireTestSlot(&first_slot);
-        retireTestSlot(&second_slot);
-        first_slot.deinit();
-        second_slot.deinit();
-    }
-    const first: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    const second: render.chrome.PaneId = @fromBackingInt(@intCast(2));
-    try std.testing.expectError(
-        error.InvalidPane,
-        runtime.add(@fromBackingInt(@intCast(0)), "/bin/sh", "exit 0", try testPixels(runtime.fonts, 16, 16), .{ .dedicated = &first_slot }),
-    );
-    try runtime.add(first, "/bin/sh", "printf first; exit 0", try testPixels(runtime.fonts, 16, 16), .{ .dedicated = &first_slot });
-    try std.testing.expectError(
-        error.DuplicatePane,
-        runtime.add(first, "/bin/sh", "exit 0", try testPixels(runtime.fonts, 16, 16), .{ .dedicated = &first_slot }),
-    );
-    try runtime.add(second, "/bin/sh", "printf second; exit 0", try testPixels(runtime.fonts, 16, 16), .{ .dedicated = &second_slot });
-    var rounds: usize = 0;
-    while (rounds < 1024) : (rounds += 1) {
-        const serviced = try runtime.pollOnce(20);
-        try std.testing.expect(serviced <= 2);
-        const first_done = runtime.owners[runtime.find(first).?].?.child_exit != null;
-        const second_done = runtime.owners[runtime.find(second).?].?.child_exit != null;
-        if (first_done and second_done) break;
-    }
-    try std.testing.expect(rounds < 1024);
-    try runtime.remove(first);
-    try std.testing.expectError(error.UnknownPane, runtime.remove(first));
-    try runtime.remove(second);
-    try std.testing.expectEqual(@as(u8, 0), runtime.count);
-}
-
-test "visible-set preparation publishes hidden newest state through real Content" {
-    var boundary = try handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(81);
-    const source = try composer.registerSource();
-    try boundary.register(pane, source, try testPixels(runtime.fonts, 8, 2));
-    const created = boundary.takeLifecycle().?;
-    try std.testing.expect(std.meta.activeTag(created) == .create);
-    const pooled = try boundary.activateTransfer(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .pooled = .{ .boundary = &boundary, .member = pooled } },
-    );
-    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
-    try boundary.publishVisibleSet(1, &.{visible});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
-    try boundary.claimVisibleSet(1);
-    boundary.commitVisibleSet(1);
-    const first_revision =
-        runtime.owners[runtime.find(pane).?].?.last_published_revision;
-
-    try boundary.publishVisibleSet(2, &.{});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(2);
-    boundary.commitVisibleSet(2);
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect((try owner.machine.feed("newest")).stateChanged());
-    owner.dirty = true;
-    try std.testing.expect(!(try owner.publishIfDirty(
-        &runtime.shared_fonts,
-        &runtime.work,
-    )));
-    try std.testing.expect(owner.dirty);
-
-    try boundary.publishVisibleSet(3, &.{visible});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(3));
-    try boundary.claimVisibleSet(3);
-    boundary.commitVisibleSet(3);
-    try std.testing.expect(
-        @backingInt(owner.last_published_revision) > @backingInt(first_revision),
-    );
-}
-
-test "hidden reveal refreshes a stale cursor after committed VT resize" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(94);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .dedicated = &slot },
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const scale = handoff.ScaleSnapshot{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    owner.font_state.scale = scale;
-    owner.font_state.request_revision = 1;
-    owner.font_released_hidden = true;
-    try std.testing.expect((try owner.machine.feed("\x1b[1;4H")).stateChanged());
-    try std.testing.expect(owner.refreshCursorTarget());
-    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
-    const stale_target = owner.cursor_target;
-    const stale_revision = owner.cursor_target_revision;
-    const stale_sequence = owner.cursor_target_terminal_sequence;
-    try std.testing.expect(!std.meta.eql(stale_target, cursorTarget(&owner.machine)));
-    var request = handoff.VisibleSetRequest{
-        .revision = 1,
-        .members = undefined,
-        .count = 1,
-    };
-    request.members[0] = .{
-        .pane = pane,
-        .source = @fromBackingInt(1),
-    };
-    const accepted_target = owner.accepted_cursor_target;
-    const accepted_revision = owner.accepted_cursor_target_revision;
-    const accepted_sequence = owner.accepted_cursor_target_terminal_sequence;
-    try std.testing.expect(try runtime.prepareRevealGroups(request));
-    try std.testing.expect(owner.font_group != null);
-    const committed_target = cursorTarget(&owner.machine);
-    try std.testing.expectEqual(committed_target, owner.cursor_target);
-    try std.testing.expectEqual(accepted_target, owner.accepted_cursor_target);
-    try std.testing.expectEqual(accepted_revision, owner.accepted_cursor_target_revision);
-    try std.testing.expectEqual(accepted_sequence, owner.accepted_cursor_target_terminal_sequence);
-    try std.testing.expectEqual(stale_revision + 1, owner.cursor_target_revision);
-    try std.testing.expectEqual(
-        owner.machine.semanticSequence(),
-        owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expect(owner.cursor_target_terminal_sequence > stale_sequence);
-}
-
-test "two pooled panes with one font key share canonical glyph residency" {
-    var boundary = try handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(
-        std.testing.allocator,
-        test_fonts.symbols,
-    );
-    defer runtime.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const first_pane: render.chrome.PaneId = @fromBackingInt(181);
-    const second_pane: render.chrome.PaneId = @fromBackingInt(182);
-    const first_source = try composer.registerSource();
-    const second_source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(first_pane, first_source, pixels);
-    const first_create = boundary.takeLifecycle().?;
-    try std.testing.expect(std.meta.activeTag(first_create) == .create);
-    const first_member = try boundary.activateTransfer(first_pane);
-    try runtime.add(
-        first_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = first_member } },
-    );
-    try boundary.register(second_pane, second_source, pixels);
-    const second_create = boundary.takeLifecycle().?;
-    try std.testing.expect(std.meta.activeTag(second_create) == .create);
-    const second_member = try boundary.activateTransfer(second_pane);
-    try runtime.add(
-        second_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = second_member } },
-    );
-    const request = handoff.FontRequest{
-        .revision = 1,
-        .scale = .{
-            .revision = 1,
-            .dpi_x = .{ .numerator = 96, .denominator = 1 },
-            .dpi_y = .{ .numerator = 96, .denominator = 1 },
-        },
-        .policy = try handoff.FontPolicy.init(16.0),
-    };
-    try runtime.preflightFontRequest(request);
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, request));
-    const first = &runtime.owners[runtime.find(first_pane).?].?;
-    const second = &runtime.owners[runtime.find(second_pane).?].?;
-    first.dirty = false;
-    first.setLigatureMode(.never);
-    try std.testing.expect(!first.dirty);
-    first.setLigatureMode(.always);
-    try std.testing.expect(first.dirty);
-    first.setLigatureMode(.never);
-    second.setLigatureMode(.cursor);
-    try std.testing.expectEqual(
-        render.terminal.LigatureMode.never,
-        first.ligature_mode,
-    );
-    try std.testing.expectEqual(
-        render.terminal.LigatureMode.cursor,
-        second.ligature_mode,
-    );
-    try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
-    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
-    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
-    first.dirty = true;
-    second.dirty = true;
-    const members = [_]handoff.VisibleMember{
-        .{ .pane = first_pane, .source = first_source },
-        .{ .pane = second_pane, .source = second_source },
-    };
-    try boundary.publishVisibleSet(1, &members);
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(1);
-    const composition = render.canvas.Composer.Composition{
-        .surface = .{ .width = pixels.width * 2, .height = pixels.height },
-        .sources = &.{
-            .{ .source = first_source, .origin = .{ .x = 0, .y = 0 }, .clip = .{ .x = 0, .y = 0, .width = pixels.width, .height = pixels.height } },
-            .{ .source = second_source, .origin = .{ .x = pixels.width, .y = 0 }, .clip = .{ .x = 0, .y = 0, .width = pixels.width * 2, .height = pixels.height } },
-        },
-    };
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, 1, .ordinary)).accepted,
-    );
-    var uploads: [128]render.canvas.FrameResourceUpload = undefined;
-    var removals: [128]render.canvas.FrameResourceRef = undefined;
-    var commands: [8192]render.canvas.Command = undefined;
-    var frame_pixels: [4 * 1024 * 1024]u8 = undefined;
-    const frame = try composer.frame(&.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = &frame_pixels,
-    });
-    var shared_uploads: usize = 0;
-    var first_shared_identity: u64 = 0;
-    var first_shared_size: render.canvas.Size = undefined;
-    var first_shared_stride: usize = 0;
-    var first_shared_hash: u64 = 0;
-    for (frame.uploads) |upload| {
-        if (!upload.resource.resource.isShared()) continue;
-        shared_uploads += 1;
-        first_shared_identity = try upload.resource.resource.identity();
-        first_shared_size = upload.size;
-        first_shared_stride = upload.stride;
-        first_shared_hash = std.hash.Wyhash.hash(
-            0,
-            frame.pixels[upload.pixel_offset .. upload.pixel_offset +
-                upload.pixel_count],
-        );
-    }
-    try std.testing.expectEqual(@as(usize, 1), shared_uploads);
-    var first_shared = false;
-    var second_shared = false;
-    for (frame.commands) |command| switch (command) {
-        .solid => {},
-        .alpha_mask => |value| {
-            if (!value.resource.resource.resource.isShared()) continue;
-            if (value.destination.x < pixels.width)
-                first_shared = true
-            else
-                second_shared = true;
-        },
-        .rgba => {},
-    };
-    try std.testing.expect(first_shared and second_shared);
-    try runtime.reconcileAcceptedVisibility(&boundary);
-    const second_revision_before_hide = second.last_published_revision;
-
-    try boundary.publishVisibleSet(2, &.{members[0]});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(2);
-    const first_only = render.canvas.Composer.Composition{
-        .surface = composition.surface,
-        .sources = composition.sources[0..1],
-    };
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            first_only,
-            2,
-            .ordinary,
-        )).accepted,
-    );
-    try runtime.reconcileAcceptedVisibility(&boundary);
-    try std.testing.expect(second.font_group == null);
-    try std.testing.expect(second.font_released_hidden);
-    try std.testing.expectEqual(
-        render.terminal.LigatureMode.cursor,
-        second.ligature_mode,
-    );
-    try std.testing.expect(!first.font_released_hidden);
-    try std.testing.expect(first.font_group != null);
-    try std.testing.expect((try second.machine.feed("hidden")).stateChanged());
-    second.dirty = true;
-    try std.testing.expect(!(try second.publishIfDirty(
-        &runtime.shared_fonts,
-        &runtime.work,
-    )));
-
-    try boundary.publishVisibleSet(3, &members);
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try std.testing.expect(second.font_group != null);
-    try std.testing.expect(second.font_reveal_candidate);
-    try std.testing.expect(
-        @backingInt(second.last_published_revision) >
-            @backingInt(second_revision_before_hide),
-    );
-    try boundary.claimVisibleSet(3);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            composition,
-            3,
-            .ordinary,
-        )).accepted,
-    );
-    try runtime.reconcileAcceptedVisibility(&boundary);
-    try std.testing.expect(!second.font_released_hidden);
-    try std.testing.expect(!second.font_reveal_candidate);
-    try std.testing.expectEqual(
-        render.terminal.LigatureMode.cursor,
-        second.ligature_mode,
-    );
-    try std.testing.expect(std.meta.eql(
-        first.font_group.?,
-        second.font_group.?,
-    ));
-
-    try std.testing.expect((try first.machine.feed("\x1b[2J\x1b[H")).stateChanged());
-    try std.testing.expect((try second.machine.feed("\x1b[2J\x1b[H")).stateChanged());
-    first.dirty = true;
-    second.dirty = true;
-    try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expect(try second.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-
-    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
-    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
-    first.dirty = true;
-    second.dirty = true;
-    try std.testing.expect(try first.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expect(try second.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-    const rebuilt = try composer.frame(&.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = &frame_pixels,
-    });
-    var rebuilt_shared_uploads: usize = 0;
-    for (rebuilt.uploads) |upload| {
-        if (!upload.resource.resource.isShared()) continue;
-        rebuilt_shared_uploads += 1;
-        try std.testing.expect(
-            try upload.resource.resource.identity() > first_shared_identity,
-        );
-        try std.testing.expectEqual(first_shared_size, upload.size);
-        try std.testing.expectEqual(first_shared_stride, upload.stride);
-        try std.testing.expectEqual(
-            first_shared_hash,
-            std.hash.Wyhash.hash(
-                0,
-                rebuilt.pixels[upload.pixel_offset .. upload.pixel_offset +
-                    upload.pixel_count],
-            ),
-        );
-    }
-    try std.testing.expectEqual(@as(usize, 1), rebuilt_shared_uploads);
-
-    for ([_]*Logical{ first, second }) |owner| {
-        try std.testing.expect(
-            (try owner.machine.feed("\x1b[?1049h\x1b[3C\u{f460}")).stateChanged(),
-        );
-        owner.dirty = true;
-        try std.testing.expect(try owner.publishIfDirty(
-            &runtime.shared_fonts,
-            &runtime.work,
-        ));
-    }
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-    for ([_]*Logical{ first, second }) |owner| {
-        try std.testing.expect(
-            (try owner.machine.feed("\x1b[?1049l")).stateChanged(),
-        );
-        owner.dirty = true;
-        try std.testing.expect(try owner.publishIfDirty(
-            &runtime.shared_fonts,
-            &runtime.work,
-        ));
-    }
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-    const after_alternate = try composer.frame(&.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = &frame_pixels,
-    });
-    var alternate_icon_found = false;
-    for (after_alternate.uploads) |upload| {
-        if (!upload.resource.resource.isShared() or
-            !std.meta.eql(upload.size, first_shared_size) or
-            upload.stride != first_shared_stride)
-            continue;
-        if (std.hash.Wyhash.hash(
-            0,
-            after_alternate.pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
-        ) != first_shared_hash) continue;
-        alternate_icon_found = true;
-    }
-    try std.testing.expect(alternate_icon_found);
-
-    for ([_]*Logical{ first, second }) |owner| {
-        try std.testing.expect(
-            (try owner.machine.feed("\r\n\r\n\r\n")).stateChanged(),
-        );
-        owner.dirty = true;
-        try std.testing.expect(try owner.publishIfDirty(
-            &runtime.shared_fonts,
-            &runtime.work,
-        ));
-    }
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-    for ([_]*Logical{ first, second }) |owner| {
-        try std.testing.expect(
-            (try owner.machine.feed("\x1b[2J\x1b[H\u{f460}")).stateChanged(),
-        );
-        owner.dirty = true;
-        try std.testing.expect(try owner.publishIfDirty(
-            &runtime.shared_fonts,
-            &runtime.work,
-        ));
-    }
-    try std.testing.expectEqual(
-        @as(usize, 2),
-        (try boundary.applyCandidate(&composer, null, composition, null, .ordinary)).accepted,
-    );
-    const after_scroll = try composer.frame(&.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = &frame_pixels,
-    });
-    var scrolled_icon_found = false;
-    for (after_scroll.uploads) |upload| {
-        if (!upload.resource.resource.isShared() or
-            !std.meta.eql(upload.size, first_shared_size) or
-            upload.stride != first_shared_stride)
-            continue;
-        if (std.hash.Wyhash.hash(
-            0,
-            after_scroll.pixels[upload.pixel_offset .. upload.pixel_offset + upload.pixel_count],
-        ) != first_shared_hash) continue;
-        scrolled_icon_found = true;
-    }
-    try std.testing.expect(scrolled_icon_found);
-
-    const second_group_before = second.font_group.?;
-    const second_fonts_before = second.fonts;
-    const second_state_before = second.font_state;
-    const second_geometry_before = second.geometry;
-    const second_revision_before = second.last_published_revision;
-    const second_geometry_revision_before = second.last_published_geometry;
-    second.dirty = false;
-    var focused_request = request;
-    focused_request.revision = 2;
-    focused_request.policy.count = 1;
-    focused_request.policy.offsets[0] = .{
-        .pane = first_pane,
-        .offset_points = 1.0,
-    };
-    try std.testing.expect(try runtime.resizePointFonts(
-        &boundary,
-        focused_request,
-    ));
-    try std.testing.expect(!std.meta.eql(
-        first.font_group.?,
-        second.font_group.?,
-    ));
-    try std.testing.expectEqual(second_group_before, second.font_group.?);
-    try std.testing.expect(second.fonts == second_fonts_before);
-    try std.testing.expectEqual(second_state_before, second.font_state);
-    try std.testing.expectEqual(second_geometry_before, second.geometry);
-    try std.testing.expectEqual(
-        second_revision_before,
-        second.last_published_revision,
-    );
-    try std.testing.expectEqual(
-        second_geometry_revision_before,
-        second.last_published_geometry,
-    );
-    try std.testing.expect(!second.dirty);
-    try std.testing.expect(!(try second.publishIfDirty(
-        &runtime.shared_fonts,
-        &runtime.work,
-    )));
-}
-
-test "visible-set replacement redeclares shared resources cleared with outgoing source" {
-    var boundary = try handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(
-        std.testing.allocator,
-        test_fonts.symbols,
-    );
-    defer runtime.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 256,
-        .retained_commands = 8192,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 256,
-        .candidate_commands = 8192,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-
-    const first_pane: render.chrome.PaneId = @fromBackingInt(281);
-    const first_source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(first_pane, first_source, pixels);
-    try std.testing.expect(
-        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
-    );
-    const first_member = try boundary.activateTransfer(first_pane);
-    try runtime.add(
-        first_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = first_member } },
-    );
-
-    const request = handoff.FontRequest{
-        .revision = 1,
-        .scale = .{
-            .revision = 1,
-            .dpi_x = .{ .numerator = 96, .denominator = 1 },
-            .dpi_y = .{ .numerator = 96, .denominator = 1 },
-        },
-        .policy = try handoff.FontPolicy.init(16.0),
-    };
-    try runtime.preflightFontRequest(request);
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, request));
-    const first = &runtime.owners[runtime.find(first_pane).?].?;
-    try std.testing.expect((try first.machine.feed("\u{f460}")).stateChanged());
-    first.dirty = true;
-
-    try boundary.publishVisibleSet(1, &.{.{ .pane = first_pane, .source = first_source }});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(1);
-    const first_composition = render.canvas.Composer.Composition{
-        .surface = .{ .width = pixels.width, .height = pixels.height },
-        .sources = &.{.{
-            .source = first_source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = pixels.width, .height = pixels.height },
-        }},
-    };
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            first_composition,
-            1,
-            .ordinary,
-        )).accepted,
-    );
-    try runtime.reconcileAcceptedVisibility(&boundary);
-
-    // The second pane acquires the same active group while the first source
-    // still owns the shared resources. Its first visible update therefore
-    // receives accepted identities but must carry declarations because the
-    // visible-set transaction clears the outgoing first source.
-    const second_pane: render.chrome.PaneId = @fromBackingInt(282);
-    const second_source = try composer.registerSource();
-    try boundary.register(second_pane, second_source, pixels);
-    try std.testing.expect(
-        std.meta.activeTag(boundary.takeLifecycle().?) == .create,
-    );
-    const second_member = try boundary.activateTransfer(second_pane);
-    try runtime.add(
-        second_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = second_member } },
-    );
-    const second = &runtime.owners[runtime.find(second_pane).?].?;
-    try std.testing.expect(std.meta.eql(first.font_group.?, second.font_group.?));
-    try std.testing.expect((try second.machine.feed("\u{f460}")).stateChanged());
-    second.dirty = true;
-
-    try boundary.publishVisibleSet(2, &.{.{ .pane = second_pane, .source = second_source }});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(2);
-    const second_composition = render.canvas.Composer.Composition{
-        .surface = .{ .width = pixels.width, .height = pixels.height },
-        .sources = &.{.{
-            .source = second_source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{ .x = 0, .y = 0, .width = pixels.width, .height = pixels.height },
-        }},
-    };
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            second_composition,
-            2,
-            .ordinary,
-        )).accepted,
-    );
-    try runtime.reconcileAcceptedVisibility(&boundary);
-}
-
-test "font admission publishes generated joins and Powerline through shared pool ownership" {
-    var boundary = try handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-
-    // The executable bootstrap remains pixel-sized and carries no accepted
-    // accepted DPI or generated-raster authority.
-    try std.testing.expect(runtime.accepted_scale == null);
-    try std.testing.expect(runtime.fonts.generatedBoxConfig() == null);
-    try std.testing.expectError(
-        error.FontCapacity,
-        resolvedGroupKey(runtime.logicalFontState(@fromBackingInt(201))),
-    );
-
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 64,
-        .retained_commands = 256,
-        .retained_pixel_bytes = 64 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 64,
-        .candidate_commands = 256,
-        .candidate_pixel_bytes = 64 * 1024,
-    });
-    defer composer.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(201);
-    const source = try composer.registerSource();
-    const pane_pixels = render.canvas.Size{ .width = 320, .height = 128 };
-    try boundary.register(pane, source, pane_pixels);
-    const lifecycle = boundary.takeLifecycle().?;
-    runtime.accepted_scale = .{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 768, .denominator = 5 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, lifecycle),
-        "/bin/sh",
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect(owner.font_group != null);
-    const accepted_config = owner.fonts.generatedBoxConfig().?;
-    try std.testing.expectEqual(
-        @TypeOf(accepted_config.dpi_x){
-            .numerator = 768,
-            .denominator = 5,
-        },
-        accepted_config.dpi_x,
-    );
-    try std.testing.expectEqual(
-        @TypeOf(accepted_config.dpi_y){ .numerator = 96, .denominator = 1 },
-        accepted_config.dpi_y,
-    );
-    try std.testing.expect(runtime.accepted_scale != null);
-    try std.testing.expect(
-        (try owner.machine.feed(
-            "\x1b[H\u{2502}\x1b[2;1H\u{2502}" ++
-                "\x1b[3;1H\u{e0b1}\u{e0b1}" ++
-                "\x1b[4;1H\u{f5d0}\u{f5d0}\u{f5ee}\u{f5ee}\x1b[4;9H",
-        )).stateChanged(),
-    );
-    owner.dirty = true;
-    try std.testing.expect(try owner.publishIfDirty(
-        &runtime.shared_fonts,
-        &runtime.work,
-    ));
-
-    const token = for (boundary.entries) |entry| {
-        const retained = entry orelse continue;
-        if (retained.pane != pane) continue;
-        break retained.ready.?;
-    } else return error.TestExpectedEqual;
-    try boundary.pool.beginDrain(token);
-    var pool_claimed = true;
-    defer if (pool_claimed)
-        boundary.pool.retryDrain(token) catch
-            @panic("test pool claim rollback failed");
-    const pooled = try boundary.pool.drainingUpdate(token);
-    try std.testing.expectEqual(@as(usize, 4), pooled.uploads.len);
-    for (pooled.uploads) |declaration| {
-        try std.testing.expect(declaration.resource.resource.isShared());
-        try std.testing.expectEqual(
-            render.canvas.ResourceFormat.alpha8,
-            declaration.format,
-        );
-        try std.testing.expectEqual(
-            owner.geometry.metrics.width_px,
-            declaration.pixels.width,
-        );
-        try std.testing.expectEqual(
-            owner.geometry.metrics.height_px,
-            declaration.pixels.height,
-        );
-    }
-    var exact_pixels: [64 * 1024]u8 = undefined;
-    const exact_len =
-        @as(usize, owner.geometry.metrics.width_px) *
-        owner.geometry.metrics.height_px;
-    try render.generated.rasterizePowerline(
-        exact_pixels[0..exact_len],
-        owner.geometry.metrics.width_px,
-        owner.geometry.metrics.height_px,
-        0xe0b1,
-        accepted_config,
-        .{},
-    );
-    var branch_metric_pixels: [64 * 1024]u8 = undefined;
-    try render.generated.rasterizeBranch(
-        branch_metric_pixels[0..exact_len],
-        owner.geometry.metrics.width_px,
-        owner.geometry.metrics.height_px,
-        0xf5d0,
-        accepted_config,
-        .{},
-    );
-    var branch_free_pixels: [64 * 1024]u8 = undefined;
-    try render.generated.rasterize(
-        branch_free_pixels[0..exact_len],
-        owner.geometry.metrics.width_px,
-        owner.geometry.metrics.height_px,
-        0xf5ee,
-    );
-
-    var joins: [2]render.canvas.Input = undefined;
-    var join_count: usize = 0;
-    var powerline: [2]render.canvas.Input = undefined;
-    var powerline_count: usize = 0;
-    var branch_metric: [2]render.canvas.Input = undefined;
-    var branch_metric_count: usize = 0;
-    var branch_free: [2]render.canvas.Input = undefined;
-    var branch_free_count: usize = 0;
-    const branch_y = @as(i32, @intCast(owner.geometry.metrics.height_px)) * 3;
-    const branch_x1 = @as(i32, @intCast(owner.geometry.metrics.width_px));
-    const branch_x2 = branch_x1 * 2;
-    const branch_x3 = branch_x1 * 3;
-    for (pooled.commands) |command| switch (command) {
-        .alpha_mask => |mask| {
-            if ((mask.destination.y == 0 or
-                mask.destination.y == owner.geometry.metrics.height_px) and
-                mask.destination.x == 0)
-            {
-                try std.testing.expect(join_count < joins.len);
-                joins[join_count] = command;
-                join_count += 1;
-            } else if (mask.destination.y ==
-                @as(i32, owner.geometry.metrics.height_px) * 2)
-            {
-                try std.testing.expect(powerline_count < powerline.len);
-                powerline[powerline_count] = command;
-                powerline_count += 1;
-            } else if (mask.destination.y == branch_y and
-                (mask.destination.x == 0 or mask.destination.x == branch_x1))
-            {
-                try std.testing.expect(branch_metric_count < branch_metric.len);
-                branch_metric[branch_metric_count] = command;
-                branch_metric_count += 1;
-            } else if (mask.destination.y == branch_y and
-                (mask.destination.x == branch_x2 or mask.destination.x == branch_x3))
-            {
-                try std.testing.expect(branch_free_count < branch_free.len);
-                branch_free[branch_free_count] = command;
-                branch_free_count += 1;
-            }
-        },
-        else => {},
-    };
-    try std.testing.expectEqual(joins.len, join_count);
-    const upper = joins[0].alpha_mask;
-    const lower = joins[1].alpha_mask;
-    try std.testing.expectEqual(
-        upper.destination.y + @as(i32, @intCast(upper.destination.height)),
-        lower.destination.y,
-    );
-    try std.testing.expectEqual(upper.destination.x, lower.destination.x);
-    try std.testing.expectEqual(powerline.len, powerline_count);
-    const powerline_left = powerline[0].alpha_mask;
-    const powerline_right = powerline[1].alpha_mask;
-    try std.testing.expectEqual(
-        powerline_left.resource.resource,
-        powerline_right.resource.resource,
-    );
-    const powerline_resource = powerline_left.resource.resource;
-    try std.testing.expect(powerline_resource.resource.isShared());
-    try std.testing.expectEqual(
-        powerline_left.destination.x +
-            @as(i32, @intCast(powerline_left.destination.width)),
-        powerline_right.destination.x,
-    );
-    try std.testing.expectEqual(branch_metric.len, branch_metric_count);
-    try std.testing.expectEqual(branch_free.len, branch_free_count);
-    const branch_metric_left = branch_metric[0].alpha_mask;
-    const branch_metric_right = branch_metric[1].alpha_mask;
-    const branch_free_left = branch_free[0].alpha_mask;
-    const branch_free_right = branch_free[1].alpha_mask;
-    try std.testing.expectEqual(
-        branch_metric_left.resource.resource,
-        branch_metric_right.resource.resource,
-    );
-    try std.testing.expectEqual(
-        branch_free_left.resource.resource,
-        branch_free_right.resource.resource,
-    );
-    try std.testing.expectEqual(
-        branch_metric_left.destination.x +
-            @as(i32, @intCast(branch_metric_left.destination.width)),
-        branch_metric_right.destination.x,
-    );
-    try std.testing.expectEqual(
-        branch_free_left.destination.x +
-            @as(i32, @intCast(branch_free_left.destination.width)),
-        branch_free_right.destination.x,
-    );
-    const powerline_declaration = for (pooled.uploads) |candidate| {
-        if (std.meta.eql(candidate.resource, powerline_resource))
-            break candidate;
-    } else return error.TestExpectedEqual;
-    const declaration = for (pooled.uploads) |candidate| {
-        if (std.meta.eql(candidate.resource, upper.resource.resource))
-            break candidate;
-    } else return error.TestExpectedEqual;
-    const branch_metric_declaration = for (pooled.uploads) |candidate| {
-        if (std.meta.eql(candidate.resource, branch_metric_left.resource.resource))
-            break candidate;
-    } else return error.TestExpectedEqual;
-    const branch_free_declaration = for (pooled.uploads) |candidate| {
-        if (std.meta.eql(candidate.resource, branch_free_left.resource.resource))
-            break candidate;
-    } else return error.TestExpectedEqual;
-    for ([_]struct {
-        declaration: render.canvas.ResourceUpload,
-        pixels: []const u8,
-    }{
-        .{
-            .declaration = branch_metric_declaration,
-            .pixels = branch_metric_pixels[0..exact_len],
-        },
-        .{
-            .declaration = branch_free_declaration,
-            .pixels = branch_free_pixels[0..exact_len],
-        },
-    }) |expected| {
-        try std.testing.expectEqual(
-            owner.geometry.metrics.width_px,
-            expected.declaration.pixels.width,
-        );
-        try std.testing.expectEqual(
-            owner.geometry.metrics.height_px,
-            expected.declaration.pixels.height,
-        );
-        try std.testing.expectEqual(
-            @as(usize, owner.geometry.metrics.width_px),
-            expected.declaration.pixels.stride,
-        );
-        try std.testing.expectEqualSlices(
-            u8,
-            expected.pixels,
-            expected.declaration.pixels.bytes,
-        );
-    }
-    try std.testing.expect(
-        branch_metric_declaration.resource.resource.isShared(),
-    );
-    try std.testing.expect(
-        branch_free_declaration.resource.resource.isShared(),
-    );
-    try std.testing.expect(!std.meta.eql(
-        branch_metric_declaration.resource,
-        branch_free_declaration.resource,
-    ));
-    var branch_metric_commands: usize = 0;
-    var branch_free_commands: usize = 0;
-    for (pooled.commands) |command| switch (command) {
-        .alpha_mask => |mask| {
-            if (std.meta.eql(
-                mask.resource.resource,
-                branch_metric_declaration.resource,
-            )) branch_metric_commands += 1;
-            if (std.meta.eql(
-                mask.resource.resource,
-                branch_free_declaration.resource,
-            )) branch_free_commands += 1;
-        },
-        else => {},
-    };
-    try std.testing.expectEqual(@as(usize, 2), branch_metric_commands);
-    try std.testing.expectEqual(@as(usize, 2), branch_free_commands);
-    const row_bytes: usize = declaration.pixels.width;
-    try std.testing.expect(std.mem.indexOfNone(
-        u8,
-        declaration.pixels.bytes[0..row_bytes],
-        &.{0},
-    ) != null);
-    const final_row =
-        (@as(usize, declaration.pixels.height) - 1) * declaration.pixels.stride;
-    try std.testing.expect(std.mem.indexOfNone(
-        u8,
-        declaration.pixels.bytes[final_row..][0..row_bytes],
-        &.{0},
-    ) != null);
-
-    try std.testing.expectEqualSlices(
-        u8,
-        exact_pixels[0..exact_len],
-        powerline_declaration.pixels.bytes,
-    );
-    try std.testing.expectEqual(
-        render.canvas.Size{
-            .width = owner.geometry.metrics.width_px,
-            .height = owner.geometry.metrics.height_px,
-        },
-        render.canvas.Size{
-            .width = powerline_declaration.pixels.width,
-            .height = powerline_declaration.pixels.height,
-        },
-    );
-    try std.testing.expectEqual(
-        @as(usize, owner.geometry.metrics.width_px),
-        powerline_declaration.pixels.stride,
-    );
-    try boundary.pool.retryDrain(token);
-    pool_claimed = false;
-
-    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
-    try boundary.publishVisibleSet(1, &.{visible});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try boundary.claimVisibleSet(1);
-    const composition = render.canvas.Composer.Composition{
-        .surface = pane_pixels,
-        .sources = &.{.{
-            .source = source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = .{
-                .x = 0,
-                .y = 0,
-                .width = pane_pixels.width,
-                .height = pane_pixels.height,
-            },
-        }},
-    };
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.applyCandidate(
-            &composer,
-            null,
-            composition,
-            1,
-            .ordinary,
-        )).accepted,
-    );
-    try runtime.reconcileAcceptedBatches(&boundary);
-    var uploads: [64]render.canvas.FrameResourceUpload = undefined;
-    var removals: [64]render.canvas.FrameResourceRef = undefined;
-    var commands: [256]render.canvas.Command = undefined;
-    var pixels: [64 * 1024]u8 = undefined;
-    const frame = try composer.frame(&.{}, .{
-        .uploads = &uploads,
-        .removals = &removals,
-        .commands = &commands,
-        .pixels = &pixels,
-    });
-    try std.testing.expectEqual(@as(usize, 4), frame.uploads.len);
-    for (frame.uploads) |upload|
-        try std.testing.expect(upload.resource.resource.isShared());
-    var frame_powerline_upload_count: usize = 0;
-    var frame_powerline_upload: render.canvas.FrameResourceUpload = undefined;
-    for (frame.uploads) |upload| {
-        if (upload.resource.resource != powerline_resource.resource or
-            upload.resource.generation != powerline_resource.generation)
-            continue;
-        frame_powerline_upload = upload;
-        frame_powerline_upload_count += 1;
-    }
-    try std.testing.expectEqual(@as(usize, 1), frame_powerline_upload_count);
-    try std.testing.expectEqual(
-        @as(u64, 0),
-        @backingInt(frame_powerline_upload.resource.source),
-    );
-    try std.testing.expectEqual(
-        render.canvas.Size{
-            .width = powerline_declaration.pixels.width,
-            .height = powerline_declaration.pixels.height,
-        },
-        frame_powerline_upload.size,
-    );
-    try std.testing.expectEqual(
-        powerline_declaration.pixels.stride,
-        frame_powerline_upload.stride,
-    );
-    try std.testing.expectEqual(
-        powerline_declaration.pixels.bytes.len,
-        frame_powerline_upload.pixel_count,
-    );
-    try std.testing.expectEqualSlices(
-        u8,
-        powerline_declaration.pixels.bytes,
-        frame.pixels[frame_powerline_upload.pixel_offset..][0..frame_powerline_upload.pixel_count],
-    );
-    for ([_]render.canvas.ResourceUpload{
-        branch_metric_declaration,
-        branch_free_declaration,
-    }) |retained| {
-        const upload = for (frame.uploads) |candidate| {
-            if (std.meta.eql(candidate.resource, .{
-                .source = @fromBackingInt(@intCast(0)),
-                .resource = retained.resource.resource,
-                .generation = retained.resource.generation,
-            })) break candidate;
-        } else return error.TestExpectedEqual;
-        try std.testing.expectEqual(retained.pixels.bytes.len, upload.pixel_count);
-        try std.testing.expectEqual(retained.pixels.width, upload.size.width);
-        try std.testing.expectEqual(retained.pixels.height, upload.size.height);
-        try std.testing.expectEqual(retained.pixels.stride, upload.stride);
-        try std.testing.expectEqualSlices(
-            u8,
-            retained.pixels.bytes,
-            frame.pixels[upload.pixel_offset..][0..upload.pixel_count],
-        );
-    }
-    var frame_join_count: usize = 0;
-    var frame_powerline_count: usize = 0;
-    var frame_branch_metric_count: usize = 0;
-    var frame_branch_free_count: usize = 0;
-    for (frame.commands) |command| switch (command) {
-        .alpha_mask => |mask| {
-            if (!mask.resource.resource.resource.isShared()) continue;
-            if (std.meta.eql(
-                mask.resource.resource.resource,
-                upper.resource.resource.resource,
-            )) {
-                frame_join_count += 1;
-            } else if (std.meta.eql(
-                mask.resource.resource,
-                frame_powerline_upload.resource,
-            )) {
-                frame_powerline_count += 1;
-            } else if (std.meta.eql(
-                mask.resource.resource.resource,
-                branch_metric_declaration.resource.resource,
-            )) {
-                frame_branch_metric_count += 1;
-            } else if (std.meta.eql(
-                mask.resource.resource.resource,
-                branch_free_declaration.resource.resource,
-            )) {
-                frame_branch_free_count += 1;
-            }
-        },
-        else => {},
-    };
-    try std.testing.expectEqual(@as(usize, 2), frame_join_count);
-    try std.testing.expectEqual(@as(usize, 2), frame_powerline_count);
-    try std.testing.expectEqual(@as(usize, 2), frame_branch_metric_count);
-    try std.testing.expectEqual(@as(usize, 2), frame_branch_free_count);
-}
-
-test "PTY resize failure discards prepared VT and later live resize commits" {
-    var transport = try pty.Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        "exit 0",
-        null,
-        .{ .term = "xterm-256color", .colorterm = "truecolor" },
-    );
-    defer transport.deinit();
-    var machine = try vt.Terminal.init(std.testing.allocator, 2, 4);
-    defer machine.deinit();
-    const fed = try machine.feed("AB");
-    try std.testing.expect(fed.stateChanged());
-    const semantic_sequence = machine.semanticSequence();
-    const cell = machine.semanticView(0).cellAt(0, 0);
-    {
-        var prepared = try machine.prepareResize(3, 5);
-        defer prepared.deinit();
-        try std.testing.expectError(error.NotStarted, transport.resize(5, 3));
-    }
-    const unchanged = machine.semanticView(0);
-    try std.testing.expectEqual(@as(u16, 2), unchanged.rows);
-    try std.testing.expectEqual(@as(u16, 4), unchanged.cols);
-    try std.testing.expectEqual(cell, unchanged.cellAt(0, 0));
-    try std.testing.expectEqual(semantic_sequence, machine.semanticSequence());
-
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        runtime.deinit();
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 4, 2), .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const before = owner.machine.semanticSequence();
-    try owner.resize(try testPixels(owner.fonts, 7, 3));
-    const resized = owner.machine.semanticView(0);
-    try std.testing.expectEqual(@as(u16, 3), resized.rows);
-    try std.testing.expectEqual(@as(u16, 7), resized.cols);
-    try std.testing.expectEqual(before + 1, owner.machine.semanticSequence());
-    try std.testing.expect(owner.dirty);
-}
-
-test "one runtime thread publishes a real shell through the copied slot" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    const source = try composer.registerSource();
-    const operations = [_]handoff.Lifecycle{.{ .create = .{
-        .pane = pane,
-        .pixels = .{ .width = 64, .height = 40 },
-    } }};
-    var lifecycle = try boundary.prepareLifecycle(
-        &operations,
-        &.{},
-        .{ .pane = pane, .source = source },
-    );
-    defer lifecycle.deinit();
-    try std.testing.expectEqual(
-        lifecycle.revision,
-        try lifecycle.publishAdmission(),
-    );
-    const thread = try std.Thread.spawn(.{}, run, .{
-        &boundary,
-        std.testing.allocator,
-        test_fonts.primary,
-        "/bin/sh",
-        null,
-        config.Config.defaults().semanticPolicy(),
-    });
-    var awaiting = std.posix.pollfd{
-        .fd = boundary.rendererFd(),
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    };
-    try std.testing.expectEqual(
-        @as(usize, 0),
-        @as(usize, @intCast(try std.posix.poll((&awaiting)[0..1], 20))),
-    );
-    try std.testing.expect(lifecycle.admissionResult() == null);
-    try boundary.requestFont(.{
-        .revision = 1,
-        .scale = .{
-            .revision = 1,
-            .dpi_x = .{ .numerator = 96, .denominator = 1 },
-            .dpi_y = .{ .numerator = 96, .denominator = 1 },
-        },
-        .policy = try handoff.FontPolicy.init(16.0),
-    });
-    var drained: usize = 0;
-    var lifecycle_committed = false;
-    var descriptor = std.posix.pollfd{
-        .fd = boundary.rendererFd(),
-        .events = std.posix.POLL.IN,
-        .revents = 0,
-    };
-    for (0..128) |_| {
-        const ready = try std.posix.poll((&descriptor)[0..1], 20);
-        try std.testing.expect(ready <= 1);
-        if (ready != 0) {
-            try boundary.drainRendererWake();
-            if (!lifecycle_committed and lifecycle.admissionResult() != null) {
-                try lifecycle.commitAdmitted();
-                lifecycle_committed = true;
-            }
-            drained += (try boundary.drainReady(&composer)).accepted;
-            if (drained != 0) break;
-        }
-        descriptor.revents = 0;
-    }
-    try std.testing.expectEqual(@as(usize, 1), drained);
-    boundary.shutdown();
-    thread.join();
-    const status = boundary.status();
-    try std.testing.expect(status.stopped);
-    try std.testing.expect(!status.failed);
-}
-
-test "real child output crosses Pool and Composer before one completion" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    const source = try composer.registerSource();
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(pane, source, pixels);
-    try std.testing.expect(std.meta.activeTag(boundary.takeLifecycle().?) == .create);
-    const member = try boundary.activateTransfer(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "printf final",
-        pixels,
-        .{ .pooled = .{ .boundary = &boundary, .member = member } },
-    );
-    const visible = handoff.VisibleMember{ .pane = pane, .source = source };
-    try boundary.publishVisibleSet(1, &.{visible});
-    try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        (try boundary.drainReady(&composer)).accepted,
-    );
-    try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
-    try boundary.claimVisibleSet(1);
-    boundary.commitVisibleSet(1);
-    try boundary.markLive(pane);
-    var drained: usize = 0;
-    var completion: ?handoff.TerminalCompletion = null;
-    for (0..256) |_| {
-        const owner = &runtime.owners[runtime.find(pane).?].?;
-        var descriptor = std.posix.pollfd{
-            .fd = try owner.masterFd(),
-            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
-            .revents = 0,
-        };
-        const ready = try std.posix.poll((&descriptor)[0..1], 20);
-        try std.testing.expect(ready <= 1);
-        const turn = try owner.service(
-            &runtime.shared_fonts,
-            &runtime.work,
-            ready != 0,
-            false,
-        );
-        if (turn.published_update)
-            drained += (try boundary.drainReady(&composer)).accepted;
-        if (boundary.takeCompletion()) |value| completion = value;
-        if (drained != 0 and completion != null) break;
-    }
-    try std.testing.expect(drained >= 1);
-    try std.testing.expectEqual(pane, completion.?.pane);
-    try std.testing.expectEqual(source, completion.?.source);
-    try std.testing.expectEqual(
-        handoff.TerminalTermination{ .code = 0 },
-        completion.?.termination,
-    );
-    try std.testing.expectEqual(
-        completion.?.producer_revision,
-        try boundary.acceptedTransferRevision(pane, source),
-    );
-    const accepted_view = runtime.owners[runtime.find(pane).?].?.machine.semanticView(0);
-    for ("final", 0..) |scalar, column|
-        try std.testing.expectEqual(@as(u21, scalar), accepted_view.cellAt(0, @intCast(column)));
-    try std.testing.expectError(
-        error.DuplicateCompletion,
-        boundary.publishCompletion(
-            pane,
-            source,
-            completion.?.producer_revision,
-            .{ .signal = 15 },
-        ),
-    );
-}
-
-test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(72));
-    const source: render.canvas.SourceId = @fromBackingInt(@intCast(82));
-    var operations: [128]handoff.Lifecycle = undefined;
-    for (&operations) |*operation| operation.* = .{ .create = .{
-        .pane = pane,
-        .pixels = .{ .width = 1, .height = 1 },
-    } };
-    var candidate = try boundary.prepareLifecycle(
-        &operations,
-        &.{},
-        .{ .pane = pane, .source = source },
-    );
-    defer candidate.deinit();
-    const candidate_revision = try candidate.publishAdmission();
-    const copied_candidate = boundary.takeLifecycleAdmission().?;
-    try std.testing.expectEqual(candidate_revision, copied_candidate.revision);
-    const thread = try std.Thread.spawn(.{}, run, .{
-        &boundary,
-        std.testing.allocator,
-        test_fonts.primary,
-        "/bin/sh",
-        null,
-        config.Config.defaults().semanticPolicy(),
-    });
-    boundary.shutdown();
-    try std.testing.expectError(error.Stopping, candidate.commitAdmitted());
-    try std.testing.expectError(
-        error.Stopping,
-        boundary.completeLifecycleAdmission(
-            copied_candidate.revision,
-            .{ .rejected = .stopping },
-        ),
-    );
-    candidate.deinit();
-    thread.join();
-    const status = boundary.status();
-    try std.testing.expect(status.stopped);
-    try std.testing.expect(!status.failed);
-    try std.testing.expect(boundary.sourceFor(pane) == null);
-    try std.testing.expect(boundary.takeLifecycle() == null);
-}
-
-test "interpreted unmatched keys route by PaneId under current VT modes" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
-    var key = std.mem.zeroes(wayland.input.Key);
-    key.state = .pressed;
-    key.keysym = @fromBackingInt(@intCast('a'));
-    key.text[0] = 'a';
-    key.text_len = 1;
-    try runtime.applyKey(.{ .pane = pane, .key = key });
-    try std.testing.expectEqualStrings("a", runtime.owners[runtime.find(pane).?].?.writes.pending());
-    for ([_]u32{ 0xffe1, 0xffe3, 0xffe9, 0xffeb }) |keysym| {
-        key.keysym = @fromBackingInt(keysym);
-        key.text_len = 0;
-        key.state = .pressed;
-        try runtime.applyKey(.{ .pane = pane, .key = key });
-        key.state = .released;
-        try runtime.applyKey(.{ .pane = pane, .key = key });
-    }
-    try std.testing.expectEqualStrings(
-        "a",
-        runtime.owners[runtime.find(pane).?].?.writes.pending(),
-    );
-    try std.testing.expectError(
-        error.UnknownPane,
-        runtime.applyKey(.{
-            .pane = @fromBackingInt(@intCast(2)),
-            .key = key,
-        }),
-    );
-    try std.testing.expectEqualStrings("a", runtime.owners[runtime.find(pane).?].?.writes.pending());
-}
-
-test "reaped child final output remains drainable without a busy HUP loop" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var fonts = try render.terminal.FontMap.init(
-        std.testing.allocator,
-        &.{.{
-            .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = test_fonts.primary, .size = .{ .points = .{
-                .points = 12.0,
-                .dpi_x = .{ .numerator = 96, .denominator = 1 },
-                .dpi_y = .{ .numerator = 96, .denominator = 1 },
-            } } },
-        }},
-    );
-    defer fonts.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    var owner = try Logical.init(
-        std.testing.allocator,
-        pane,
-        "/bin/sh",
-        "printf final",
-        try testPixels(&fonts, 8, 2),
-        &fonts,
-        null,
-        .{
-            .request_revision = 0,
-            .base_point_size = 16.0,
-            .offset_points = 0.0,
-            .scale = null,
-        },
-        .{ .dedicated = &slot },
-    );
-    defer owner.deinit();
-    var work = try render.terminal.Content.Work.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer work.deinit();
-    var shared_fonts = try font_owner.Owner.init(std.testing.allocator);
-    defer shared_fonts.deinit();
-    for (0..256) |_| {
-        try owner.observe();
-        if (owner.child_exit != null) break;
-        var descriptor = std.posix.pollfd{
-            .fd = try owner.masterFd(),
-            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
-            .revents = 0,
-        };
-        const ready = try std.posix.poll((&descriptor)[0..1], 10);
-        try std.testing.expect(ready <= 1);
-    }
-    try std.testing.expect(owner.child_exit != null);
-    for (0..256) |_| {
-        const turn = try owner.service(&shared_fonts, &work, true, false);
-        if (turn.end_of_stream) break;
-    }
-    try std.testing.expect(owner.stream_closed);
-    const view = owner.machine.semanticView(0);
-    try std.testing.expectEqual(@as(u21, 'f'), view.cellAt(0, 0));
-    try std.testing.expectEqual(@as(u21, 'l'), view.cellAt(0, 4));
-}
-
-test "child exit conversion preserves normal and signal termination" {
-    try std.testing.expectEqual(
-        handoff.TerminalTermination{ .code = 7 },
-        Logical.terminalTermination(.{ .code = 7 }),
-    );
-    try std.testing.expectEqual(
-        handoff.TerminalTermination{ .signal = 15 },
-        Logical.terminalTermination(.{ .signal = 15 }),
-    );
-}
-
-test "logical observes signal termination only after PTY EOF" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var fonts = try render.terminal.FontMap.init(
-        std.testing.allocator,
-        &.{.{
-            .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = test_fonts.primary, .size = .{ .points = .{
-                .points = 12.0,
-                .dpi_x = .{ .numerator = 96, .denominator = 1 },
-                .dpi_y = .{ .numerator = 96, .denominator = 1 },
-            } } },
-        }},
-    );
-    defer fonts.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(91);
-    var owner = try Logical.init(
-        std.testing.allocator,
-        pane,
-        "/bin/sh",
-        "kill -TERM $$",
-        try testPixels(&fonts, 8, 2),
-        &fonts,
-        null,
-        .{
-            .request_revision = 0,
-            .base_point_size = 16.0,
-            .offset_points = 0.0,
-            .scale = null,
-        },
-        .{ .dedicated = &slot },
-    );
-    defer owner.deinit();
-    var work = try render.terminal.Content.Work.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer work.deinit();
-    var shared_fonts = try font_owner.Owner.init(std.testing.allocator);
-    defer shared_fonts.deinit();
-    for (0..256) |_| {
-        var descriptor = std.posix.pollfd{
-            .fd = try owner.masterFd(),
-            .events = std.posix.POLL.IN | std.posix.POLL.HUP,
-            .revents = 0,
-        };
-        const ready = try std.posix.poll((&descriptor)[0..1], 10);
-        try std.testing.expect(ready <= 1);
-        const turn = try owner.service(&shared_fonts, &work, true, false);
-        try std.testing.expect(turn.read_calls <= read_calls_per_turn);
-        if (owner.stream_closed and owner.child_exit != null) break;
-    }
-    try std.testing.expect(owner.stream_closed);
-    try std.testing.expectEqual(
-        pty.ChildExit{ .signal = 15 },
-        owner.child_exit.?,
-    );
-    try std.testing.expectEqual(
-        handoff.TerminalTermination{ .signal = 15 },
-        Logical.terminalTermination(owner.child_exit.?),
-    );
-}
-
-test "typed lifecycle creates resizes retires and never reuses pane sources" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 2,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 2,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const first: render.chrome.PaneId = @fromBackingInt(@intCast(1));
-    const first_source = try composer.registerSource();
-    try boundary.register(first, first_source, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    try boundary.resize(first, try testPixels(runtime.fonts, 10, 3));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const resized_owner = &runtime.owners[runtime.find(first).?].?;
-    const resized_grid = try gridForPixels(
-        resized_owner.pane_pixels,
-        resized_owner.fonts.cellMetrics(.{
-            .slot = 0,
-            .style = .normal,
-        }).?,
-    );
-    try std.testing.expectEqual(
-        resized_grid.cols,
-        resized_owner.machine.semanticView(0).cols,
-    );
-    try boundary.close(first);
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-    const retired = boundary.takeRetired().?;
-    try std.testing.expectEqual(first, retired.pane);
-    try composer.removeSource(retired.source);
-    try boundary.finishRetired(first);
-
-    const second: render.chrome.PaneId = @fromBackingInt(@intCast(2));
-    const second_source = try composer.registerSource();
-    try std.testing.expect(@backingInt(second_source) > @backingInt(first_source));
-    try boundary.register(second, second_source, try testPixels(runtime.fonts, 8, 2));
-    try runtime.applyLifecycle(
-        &boundary,
-        try testAdmittedLifecycle(&runtime, boundary.takeLifecycle().?),
-        "/bin/sh",
-    );
-}
-
-fn contentLimits() render.terminal.Content.Limits {
-    return .{
-        .cells = admitted_cells,
-        .rows = 128,
-        .glyphs = 512,
-        .masks = 128,
-        .commands = admitted_commands,
-        .resources_per_update = admitted_resources,
-        .upload_bytes = 4 * 1024 * 1024,
-        .raster_bytes = 4 * 1024 * 1024,
-        .decoration_bytes = 256 * 1024,
-    };
-}
-
-const Grid = struct { cols: u16, rows: u16 };
-
-/// A live terminal owner must retain at least one complete cell in each axis;
-/// smaller physical candidates cannot preserve a valid cursor/geometry frame.
-fn panePixelsContainCell(
-    pixels: render.canvas.Size,
-    metrics: render.terminal.CellMetrics,
-) bool {
-    return pixels.width >= metrics.width_px and pixels.height >= metrics.height_px;
-}
-
-fn gridForPixels(
-    pixels: render.canvas.Size,
-    metrics: render.terminal.CellMetrics,
-) error{ InvalidPane, FontCapacity, TerminalCapacity }!Grid {
-    if (pixels.width == 0 or pixels.height == 0) return error.InvalidPane;
-    if (metrics.width_px == 0 or metrics.height_px == 0) return error.FontCapacity;
-    const cols: u16 = @max(@as(u16, 1), pixels.width / metrics.width_px);
-    const rows: u16 = @max(@as(u16, 1), pixels.height / metrics.height_px);
-    const cells = std.math.mul(usize, cols, rows) catch
-        return error.TerminalCapacity;
-    if (rows > projection_row_limit or cells > admitted_cells)
-        return error.TerminalCapacity;
-    return .{ .cols = cols, .rows = rows };
-}
-
-fn paneGeometry(
-    pixels: render.canvas.Size,
-    fonts: *render.terminal.FontMap,
-) error{ InvalidPane, FontCapacity }!terminal_render.Content.Geometry {
-    if (pixels.width == 0 or pixels.height == 0) return error.InvalidPane;
-    const metrics = fonts.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-        return error.FontCapacity;
-    const decoration = fonts.decorationMetrics(.{ .slot = 0, .style = .normal }) orelse
-        return error.FontCapacity;
-    const generated_box = fonts.generatedBoxConfig() orelse
-        return error.FontCapacity;
-    return .{
-        .x = 0,
-        .y = 0,
-        .clip = .{
-            .x = 0,
-            .y = 0,
-            .width = pixels.width,
-            .height = pixels.height,
-        },
-        .metrics = metrics,
-        .generated_box = generated_box,
-        .underline_y = decoration.underline_y,
-        .underline_height = decoration.underline_height,
-        .strike_y = decoration.strike_y,
-        .strike_height = decoration.strike_height,
-    };
-}
-
-fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
-    const view = machine.semanticView(0);
-    const presentation = machine.presentation();
-    const cursor_color: vt.Terminal.Rgb = presentation.cursor orelse
-        presentation.foreground;
-    const text_color: vt.Terminal.Rgb = presentation.cursor_text orelse
-        presentation.background;
-    return .{
-        .row = view.cursor_row,
-        .col = view.cursor_col,
-        .visible = view.cursor_visible,
-        .shape = switch (view.cursor_shape) {
-            .block => .block,
-            .underline => .underline,
-            .bar => .bar,
-            .none => .none,
-        },
-        .cursor_color = .{
-            .r = cursor_color.r,
-            .g = cursor_color.g,
-            .b = cursor_color.b,
-            .a = cursor_color.a,
-        },
-        .text_color = .{
-            .r = text_color.r,
-            .g = text_color.g,
-            .b = text_color.b,
-            .a = text_color.a,
-        },
-    };
-}
-
-fn cursorRect(
-    cursor: handoff.CursorTarget,
-    geometry: terminal_render.Content.Geometry,
-) error{ArithmeticOverflow}!render.canvas.Rect {
-    const x = std.math.mul(i32, @intCast(cursor.col), @intCast(geometry.metrics.width_px)) catch
-        return error.ArithmeticOverflow;
-    const y = std.math.mul(i32, @intCast(cursor.row), @intCast(geometry.metrics.height_px)) catch
-        return error.ArithmeticOverflow;
-    var result = render.canvas.Rect{
-        .x = std.math.add(i32, x, geometry.x) catch return error.ArithmeticOverflow,
-        .y = std.math.add(i32, y, geometry.y) catch return error.ArithmeticOverflow,
-        .width = geometry.metrics.width_px,
-        .height = geometry.metrics.height_px,
-    };
-    switch (cursor.shape) {
-        .block, .none => {},
-        .underline => {
-            result.y = std.math.add(i32, result.y, result.height - 1) catch
-                return error.ArithmeticOverflow;
-            result.height = 1;
-        },
-        .bar => result.width = 1,
-    }
-    return result;
-}
-
-fn testPixels(
-    fonts: *render.terminal.FontMap,
-    cols: u16,
-    rows: u16,
-) !render.canvas.Size {
-    const metrics = fonts.cellMetrics(.{ .slot = 0, .style = .normal }) orelse
-        return error.FontCapacity;
-    return .{
-        .width = std.math.mul(u16, cols, metrics.width_px) catch
-            return error.FontCapacity,
-        .height = std.math.mul(u16, rows, metrics.height_px) catch
-            return error.FontCapacity,
-    };
-}
-
-fn testAdmittedLifecycle(
-    runtime: *Runtime,
-    operation: handoff.Lifecycle,
-) !handoff.AdmittedLifecycle {
-    const grid: ?handoff.DerivedGrid = switch (operation) {
-        .create => |value| blk: {
-            if (runtime.accepted_scale == null)
-                runtime.accepted_scale = .{
-                    .revision = 1,
-                    .dpi_x = .{ .numerator = 96, .denominator = 1 },
-                    .dpi_y = .{ .numerator = 96, .denominator = 1 },
-                };
-            const resolved = try runtime.pointGroup(
-                runtime.logicalFontState(value.pane),
-            );
-            runtime.pending_lifecycle_font = .{
-                .revision = @fromBackingInt(1),
-                .pane = value.pane,
-                .group = resolved.reference,
-                .map = resolved.map,
-            };
-            const metrics = resolved.map.cellMetrics(.{
-                .slot = 0,
-                .style = .normal,
-            }) orelse return error.FontCapacity;
-            const derived = try gridForPixels(value.pixels, metrics);
-            break :blk .{
-                .pane = value.pane,
-                .rows = derived.rows,
-                .columns = derived.cols,
-            };
-        },
-        .resize => |value| blk: {
-            const owner_index = runtime.find(value.pane) orelse
-                return error.UnknownPane;
-            const metrics = runtime.owners[owner_index].?.fonts.cellMetrics(.{
-                .slot = 0,
-                .style = .normal,
-            }) orelse return error.FontCapacity;
-            const derived = try gridForPixels(value.pixels, metrics);
-            break :blk .{
-                .pane = value.pane,
-                .rows = derived.rows,
-                .columns = derived.cols,
-            };
-        },
-        .close => null,
-    };
-    return .{
-        .revision = @fromBackingInt(1),
-        .operation = operation,
-        .grid = grid,
-    };
-}
-
-fn inputAdmissionBytes(
-    event: vt.Terminal.InputEvent,
-) error{WriteQueueFull}!usize {
+fn inputAdmissionBytes(event: vt.Terminal.InputEvent) error{WriteQueueFull}!usize {
     return switch (event) {
         .bytes => |bytes| bytes.len,
-        .paste => |bytes| std.math.add(usize, bytes.len, 12) catch
-            return error.WriteQueueFull,
+        .paste => |bytes| std.math.add(usize, bytes.len, 12) catch return error.WriteQueueFull,
         .key, .mouse, .focus => @sizeOf(vt.Terminal.InputScratch),
     };
 }
 
-fn terminalKey(
-    keysym: wayland.input.Keysym,
-) error{InvalidUnicodeScalar}!vt.Terminal.Key {
+fn terminalKey(keysym: wayland.input.Keysym) error{InvalidUnicodeScalar}!vt.Terminal.Key {
     return switch (@backingInt(keysym)) {
         0xff08 => .{ .named = .backspace },
         0xff09, 0xfe20 => .{ .named = .tab },
@@ -5764,898 +665,256 @@ fn terminalKey(
     };
 }
 
-test "modifier keysyms retain named physical identity instead of fabricated Unicode" {
-    const KeyName = @FieldType(vt.Terminal.Key, "named");
-    const cases = [_]struct { keysym: u32, expected: KeyName }{
-        .{ .keysym = 0xffe1, .expected = .left_shift },
-        .{ .keysym = 0xffe2, .expected = .right_shift },
-        .{ .keysym = 0xffe3, .expected = .left_control },
-        .{ .keysym = 0xffe4, .expected = .right_control },
-        .{ .keysym = 0xffe9, .expected = .left_alt },
-        .{ .keysym = 0xffea, .expected = .right_alt },
-        .{ .keysym = 0xffeb, .expected = .left_super },
-        .{ .keysym = 0xffec, .expected = .right_super },
-    };
-    for (cases) |case| {
-        const key = try terminalKey(@fromBackingInt(case.keysym));
-        try std.testing.expectEqual(
-            vt.Terminal.Key{ .named = case.expected },
-            key,
-        );
-    }
-}
-
-test "configured operator font styles and optional missing cells remain renderable" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(83);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .dedicated = &slot },
-    );
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    try std.testing.expect(
-        (try owner.machine.feed("\x1b[1mA\x1b[3mB\x1b[0m\xef\xbf\xa1")).stateChanged(),
-    );
-    owner.dirty = true;
-    try std.testing.expect(try owner.publishIfDirty(
-        &runtime.shared_fonts,
-        &runtime.work,
-    ));
-}
-
-test "DPI-only request reaches Runtime without font reconstruction" {
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const before = runtime.fonts.cellMetrics(.{
-        .slot = 0,
-        .style = .normal,
-    }).?;
-    const request = handoff.FontRequest{
-        .revision = 1,
-        .scale = .{
-            .revision = 9,
-            .dpi_x = .{ .numerator = 768, .denominator = 5 },
-            .dpi_y = .{ .numerator = 768, .denominator = 5 },
-        },
-        .policy = try handoff.FontPolicy.init(16.0),
-    };
-    try runtime.preflightFontRequest(request);
-    runtime.commitFontRequest(request);
-    try std.testing.expectEqual(request.scale.?, runtime.accepted_scale.?);
-    try std.testing.expectEqual(
-        before,
-        runtime.fonts.cellMetrics(.{
-            .slot = 0,
-            .style = .normal,
-        }).?,
-    );
-    var awaiting = request;
-    awaiting.revision += 1;
-    awaiting.scale = null;
-    try runtime.preflightFontRequest(awaiting);
-    runtime.commitFontRequest(awaiting);
-    try std.testing.expect(runtime.accepted_scale == null);
-}
-
-test "pane point policy reaches each Logical atomically and new panes start at zero" {
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(LogicalFontState));
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var first_slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    var second_slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    var new_slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer {
-        retireTestSlot(&first_slot);
-        retireTestSlot(&second_slot);
-        retireTestSlot(&new_slot);
-        first_slot.deinit();
-        second_slot.deinit();
-        new_slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const first: render.chrome.PaneId = @fromBackingInt(101);
-    const second: render.chrome.PaneId = @fromBackingInt(102);
-    const fresh: render.chrome.PaneId = @fromBackingInt(103);
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try runtime.add(
-        first,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &first_slot },
-    );
-    try runtime.add(
-        second,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &second_slot },
-    );
-    const second_owner = &runtime.owners[runtime.find(second).?].?;
-    try std.testing.expect((try second_owner.machine.feed("\x1b[1;8H")).stateChanged());
-    try std.testing.expect(second_owner.refreshCursorTarget());
-    const before_font_target = second_owner.cursor_target;
-    const before_font_revision = second_owner.cursor_target_revision;
-    const before_font_accepted = second_owner.accepted_cursor_target;
-
-    var policy = try handoff.FontPolicy.init(16.0);
-    policy.count = 2;
-    policy.offsets[0] = .{ .pane = first, .offset_points = -2.0 };
-    policy.offsets[1] = .{ .pane = second, .offset_points = 3.0 };
-    const scale = handoff.ScaleSnapshot{
-        .revision = 7,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    const accepted = handoff.FontRequest{
-        .revision = 1,
-        .scale = scale,
-        .policy = policy,
-    };
-    try runtime.preflightFontRequest(accepted);
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, accepted));
-    try std.testing.expectEqual(cursorTarget(&second_owner.machine), second_owner.cursor_target);
-    try std.testing.expect(!std.meta.eql(before_font_target, second_owner.cursor_target));
-    try std.testing.expectEqual(before_font_revision + 1, second_owner.cursor_target_revision);
-    try std.testing.expectEqual(
-        second_owner.machine.semanticSequence(),
-        second_owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(before_font_accepted, second_owner.accepted_cursor_target);
-    const first_state = runtime.owners[runtime.find(first).?].?.font_state;
-    const second_state = runtime.owners[runtime.find(second).?].?.font_state;
-    try std.testing.expectEqual(@as(f64, -2.0), first_state.offset_points);
-    try std.testing.expectEqual(@as(f64, 3.0), second_state.offset_points);
-    try std.testing.expectEqual(scale, first_state.scale.?);
-    try std.testing.expectEqual(scale, second_state.scale.?);
-    const first_group = runtime.owners[runtime.find(first).?].?.font_group.?;
-    const second_group = runtime.owners[runtime.find(second).?].?.font_group.?;
-    try std.testing.expect(!std.meta.eql(first_group, second_group));
-    const first_metrics = runtime.owners[runtime.find(first).?].?.geometry.metrics;
-    const second_metrics = runtime.owners[runtime.find(second).?].?.geometry.metrics;
-    try std.testing.expect(second_metrics.height_px > first_metrics.height_px);
-    try std.testing.expectEqual(
-        cursorTarget(&runtime.owners[runtime.find(first).?].?.machine),
-        runtime.owners[runtime.find(first).?].?.cursor_target,
-    );
-    try std.testing.expectEqual(
-        cursorTarget(&runtime.owners[runtime.find(second).?].?.machine),
-        runtime.owners[runtime.find(second).?].?.cursor_target,
-    );
-
-    var invalid = accepted;
-    invalid.revision = 2;
-    invalid.policy.offsets[0] = invalid.policy.offsets[1];
-    const retained_policy = runtime.accepted_font_policy;
-    try std.testing.expectError(
-        error.InvalidFontPolicy,
-        runtime.preflightFontRequest(invalid),
-    );
-    try std.testing.expectEqual(retained_policy, runtime.accepted_font_policy);
-    try std.testing.expectEqual(
-        first_state,
-        runtime.owners[runtime.find(first).?].?.font_state,
-    );
-    try std.testing.expectEqual(
-        second_state,
-        runtime.owners[runtime.find(second).?].?.font_state,
-    );
-
-    var mutated = accepted;
-    mutated.revision = 2;
-    mutated.policy.offsets[0].offset_points = -1.0;
-    try runtime.preflightFontRequest(mutated);
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, mutated));
-    try std.testing.expectEqual(
-        cursorTarget(&runtime.owners[runtime.find(first).?].?.machine),
-        runtime.owners[runtime.find(first).?].?.cursor_target,
-    );
-    try std.testing.expectEqual(
-        cursorTarget(&runtime.owners[runtime.find(second).?].?.machine),
-        runtime.owners[runtime.find(second).?].?.cursor_target,
-    );
-    try std.testing.expectEqual(
-        @as(f64, -1.0),
-        runtime.owners[runtime.find(first).?].?.font_state.offset_points,
-    );
-    try std.testing.expectEqual(
-        @as(f64, 3.0),
-        runtime.owners[runtime.find(second).?].?.font_state.offset_points,
-    );
-
-    const retired_index = runtime.find(first).?;
-    runtime.owners[retired_index].?.setLigatureMode(.always);
-    try runtime.remove(first);
-    try runtime.add(
-        fresh,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &new_slot },
-    );
-    const fresh_state = runtime.owners[runtime.find(fresh).?].?.font_state;
-    try std.testing.expectEqual(retired_index, runtime.find(fresh).?);
-    try std.testing.expectEqual(@as(f64, 0.0), fresh_state.offset_points);
-    try std.testing.expectEqual(@as(u64, 2), fresh_state.request_revision);
-    try std.testing.expect(runtime.owners[runtime.find(fresh).?].?.font_group != null);
-    try std.testing.expectEqual(
-        render.terminal.LigatureMode.never,
-        runtime.owners[runtime.find(fresh).?].?.ligature_mode,
-    );
-}
-
-test "pane pixels remain authoritative across equal grids and rejected resize" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(92);
-    const initial = try testPixels(runtime.fonts, 8, 2);
-    try runtime.add(pane, "/bin/sh", "sleep 1", initial, .{ .dedicated = &slot });
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const sequence = owner.machine.semanticSequence();
-    const same_grid = render.canvas.Size{
-        .width = initial.width + 1,
-        .height = initial.height + 1,
-    };
-    const same_grid_target = owner.cursor_target;
-    const same_grid_terminal_sequence = owner.cursor_target_terminal_sequence;
-    const same_grid_revision = owner.cursor_target_revision;
-    try owner.resize(same_grid);
-    try std.testing.expectEqual(sequence, owner.machine.semanticSequence());
-    try std.testing.expectEqual(same_grid_target, owner.cursor_target);
-    try std.testing.expectEqual(
-        same_grid_terminal_sequence,
-        owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(same_grid_revision, owner.cursor_target_revision);
-    try std.testing.expectEqual(same_grid, owner.pane_pixels);
-    try std.testing.expectEqual(same_grid.width, owner.geometry.clip.width);
-    try std.testing.expectEqual(same_grid.height, owner.geometry.clip.height);
-
-    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
-    try std.testing.expect(owner.refreshCursorTarget());
-    const before_shrink_target = owner.cursor_target;
-    const before_shrink_revision = owner.cursor_target_revision;
-    const before_shrink_accepted = owner.accepted_cursor_target;
-    const before_shrink_accepted_revision = owner.accepted_cursor_target_revision;
-    const before_shrink_accepted_sequence =
-        owner.accepted_cursor_target_terminal_sequence;
-    const shrink_pixels = try testPixels(owner.fonts, 5, 2);
-    try owner.resize(shrink_pixels);
-    const expected_target = cursorTarget(&owner.machine);
-    try std.testing.expectEqual(expected_target, owner.cursor_target);
-    try std.testing.expectEqual(
-        before_shrink_revision + 1,
-        owner.cursor_target_revision,
-    );
-    try std.testing.expectEqual(
-        owner.machine.semanticSequence(),
-        owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(before_shrink_accepted, owner.accepted_cursor_target);
-    try std.testing.expectEqual(
-        before_shrink_accepted_revision,
-        owner.accepted_cursor_target_revision,
-    );
-    try std.testing.expectEqual(
-        before_shrink_accepted_sequence,
-        owner.accepted_cursor_target_terminal_sequence,
-    );
-    try std.testing.expect(before_shrink_target.col > owner.cursor_target.col);
-
-    const retained_pixels = owner.pane_pixels;
-    const retained_geometry = owner.geometry;
-    const retained_view = owner.machine.semanticView(0);
-    const retained_target = owner.cursor_target;
-    const retained_target_sequence = owner.cursor_target_terminal_sequence;
-    const retained_target_revision = owner.cursor_target_revision;
-    const retained_accepted_target = owner.accepted_cursor_target;
-    const retained_accepted_sequence = owner.accepted_cursor_target_terminal_sequence;
-    const retained_accepted_revision = owner.accepted_cursor_target_revision;
-    try std.testing.expectError(
-        error.TerminalCapacity,
-        owner.resize(.{
-            .width = std.math.maxInt(u16),
-            .height = std.math.maxInt(u16),
-        }),
-    );
-    try std.testing.expectEqual(retained_pixels, owner.pane_pixels);
-    try std.testing.expectEqual(retained_geometry, owner.geometry);
-    try std.testing.expectEqual(retained_view.rows, owner.machine.semanticView(0).rows);
-    try std.testing.expectEqual(retained_view.cols, owner.machine.semanticView(0).cols);
-    try std.testing.expectEqual(retained_target, owner.cursor_target);
-    try std.testing.expectEqual(
-        retained_target_sequence,
-        owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(retained_target_revision, owner.cursor_target_revision);
-    try std.testing.expectEqual(retained_accepted_target, owner.accepted_cursor_target);
-    try std.testing.expectEqual(
-        retained_accepted_sequence,
-        owner.accepted_cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(
-        retained_accepted_revision,
-        owner.accepted_cursor_target_revision,
-    );
-    try std.testing.expectError(
-        error.InvalidPane,
-        owner.resize(.{ .width = 0, .height = 1 }),
-    );
-    try std.testing.expectEqual(retained_pixels, owner.pane_pixels);
-}
-
-test "committed resize refreshes clamped cursor before Composer acceptance" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 128,
-        .retained_commands = 4096,
-        .retained_pixel_bytes = 4 * 1024 * 1024,
-        .composition_sources = 1,
-        .candidate_resources = 128,
-        .candidate_commands = 4096,
-        .candidate_pixel_bytes = 4 * 1024 * 1024,
-    });
-    defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(93);
-    const source = try composer.registerSource();
-    const initial = try testPixels(runtime.fonts, 8, 2);
-    try boundary.register(pane, source, initial);
-    try std.testing.expectEqual(
-        handoff.Lifecycle{ .create = .{ .pane = pane, .pixels = initial } },
-        boundary.takeLifecycle().?,
-    );
-    const member = try boundary.activateTransfer(pane);
-    try boundary.markLive(pane);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        initial,
-        .{ .pooled = .{ .boundary = &boundary, .member = member } },
-    );
-    boundary.visible_revision = 1;
-    boundary.visible_initialized = true;
-    boundary.visible_member_count = 1;
-    boundary.visible_members[0] = .{ .pane = pane, .source = source };
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    owner.dirty = true;
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-
-    try std.testing.expect((try owner.machine.feed("\x1b[1;8H")).stateChanged());
-    try std.testing.expect(owner.refreshCursorTarget());
-    const before_resize_revision = owner.cursor_target_revision;
-    const before_resize_accepted = owner.accepted_cursor_target;
-    try owner.resize(try testPixels(owner.fonts, 5, 2));
-    try std.testing.expectEqual(cursorTarget(&owner.machine), owner.cursor_target);
-    try std.testing.expectEqual(before_resize_revision + 1, owner.cursor_target_revision);
-    try std.testing.expectEqual(
-        owner.machine.semanticSequence(),
-        owner.cursor_target_terminal_sequence,
-    );
-    try std.testing.expectEqual(before_resize_accepted, owner.accepted_cursor_target);
-
-    try std.testing.expect(try owner.publishIfDirty(&runtime.shared_fonts, &runtime.work));
-    try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
-    const binding = boundary.acceptedCursorBinding(pane, source).?;
-    try std.testing.expectEqual(owner.cursor_target_revision, binding.cursor_revision);
-    try std.testing.expectEqual(
-        owner.cursor_target_terminal_sequence,
-        binding.terminal_sequence,
-    );
-    try std.testing.expect(binding.rect.x >= binding.clip.x);
-    try std.testing.expect(binding.rect.y >= binding.clip.y);
-    try std.testing.expect(
-        @as(u32, @intCast(binding.rect.x - binding.clip.x)) + binding.rect.width <=
-            binding.clip.width,
-    );
-    try std.testing.expect(
-        @as(u32, @intCast(binding.rect.y - binding.clip.y)) + binding.rect.height <=
-            binding.clip.height,
-    );
-    try std.testing.expectEqual(binding, composer.cursorBinding(source).?);
-}
-
-test "over-admission point request rolls back before PTY and later request succeeds" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(151);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        .{ .width = 3200, .height = 1800 },
-        .{ .dedicated = &slot },
-    );
-    const scale = handoff.ScaleSnapshot{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    const accepted = handoff.FontRequest{
-        .revision = 1,
-        .scale = scale,
-        .policy = try handoff.FontPolicy.init(16.0),
-    };
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, accepted));
-    const owner = &runtime.owners[runtime.find(pane).?].?;
-    const old_group = owner.font_group.?;
-    const old_state = owner.font_state;
-    const old_geometry = owner.geometry;
-    const old_rows = owner.machine.semanticView(0).rows;
-    const old_cols = owner.machine.semanticView(0).cols;
-    const old_policy = runtime.accepted_font_policy;
-
-    var invalid_metrics = accepted;
-    invalid_metrics.revision = 2;
-    invalid_metrics.policy.count = 1;
-    invalid_metrics.policy.offsets[0] = .{
-        .pane = pane,
-        .offset_points = -15.25,
-    };
-    try std.testing.expectError(
-        error.InvalidMetrics,
-        runtime.resizePointFonts(&boundary, invalid_metrics),
-    );
-    try std.testing.expectEqual(old_group, owner.font_group.?);
-    try std.testing.expectEqual(old_state, owner.font_state);
-    try std.testing.expectEqual(old_geometry, owner.geometry);
-    try std.testing.expectEqual(old_policy, runtime.accepted_font_policy);
-
-    var too_small = accepted;
-    too_small.revision = 3;
-    too_small.policy.count = 1;
-    too_small.policy.offsets[0] = .{
-        .pane = pane,
-        .offset_points = -10.0,
-    };
-    runtime.pending_font = too_small;
-    try runtime.retryPendingFont(&boundary);
-    try std.testing.expectEqual(too_small, runtime.pending_font.?);
-    try std.testing.expectEqual(old_group, owner.font_group.?);
-    try std.testing.expectEqual(old_state, owner.font_state);
-    try std.testing.expectEqual(old_geometry, owner.geometry);
-    try std.testing.expectEqual(old_rows, owner.machine.semanticView(0).rows);
-    try std.testing.expectEqual(old_cols, owner.machine.semanticView(0).cols);
-    try std.testing.expectEqual(old_policy, runtime.accepted_font_policy);
-
-    var recovered = accepted;
-    recovered.revision = 4;
-    recovered.policy.offsets[0] = .{
-        .pane = pane,
-        .offset_points = 1.0,
-    };
-    recovered.policy.count = 1;
-    runtime.pending_font = recovered;
-    try runtime.retryPendingFont(&boundary);
-    try std.testing.expect(runtime.pending_font == null);
-    try std.testing.expectEqual(
-        @as(f64, 1.0),
-        owner.font_state.offset_points,
-    );
-}
-
-test "hidden clamped offset commits exactly and late visible failure rolls back bytes" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var first_slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    var second_slot = try handoff.PendingSlot.init(
-        std.testing.allocator,
-        contentLimits(),
-    );
-    defer {
-        retireTestSlot(&first_slot);
-        retireTestSlot(&second_slot);
-        first_slot.deinit();
-        second_slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const hidden_pane: render.chrome.PaneId = @fromBackingInt(801);
-    const visible_pane: render.chrome.PaneId = @fromBackingInt(802);
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try runtime.add(
-        hidden_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &first_slot },
-    );
-    try runtime.add(
-        visible_pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &second_slot },
-    );
-    var initial_policy = try handoff.FontPolicy.init(10.0);
-    initial_policy.count = 1;
-    initial_policy.offsets[0] = .{
-        .pane = hidden_pane,
-        .offset_points = 150.0,
-    };
-    const scale = handoff.ScaleSnapshot{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 72, .denominator = 1 },
-        .dpi_y = .{ .numerator = 72, .denominator = 1 },
-    };
-    const initial = handoff.FontRequest{
-        .revision = 1,
-        .scale = scale,
-        .policy = initial_policy,
-    };
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, initial));
-    const hidden = &runtime.owners[runtime.find(hidden_pane).?].?;
-    const visible = &runtime.owners[runtime.find(visible_pane).?].?;
-    const clamped_key = try resolvedGroupKey(hidden.font_state);
-
-    const hidden_group = hidden.font_group.?;
-    var producer = try runtime.shared_fonts.producer(hidden_group);
-    hidden.content.releaseFontResources(.{ .shared = &producer });
-    producer.deinit();
-    hidden.content.rebindFonts(runtime.fonts, .local);
-    try runtime.shared_fonts.releaseGroup(hidden_group);
-    hidden.font_group = null;
-    hidden.fonts = runtime.fonts;
-    hidden.font_released_hidden = true;
-    runtime.accepted_visible_revision = 1;
-    runtime.accepted_visible_count = 1;
-    runtime.accepted_visible_members[0] = .{
-        .pane = visible_pane,
-        .source = @fromBackingInt(1),
-    };
-
-    var equal_key_policy = initial_policy;
-    equal_key_policy.offsets[0].offset_points = 151.0;
-    const equal_key = handoff.FontRequest{
-        .revision = 2,
-        .scale = scale,
-        .policy = equal_key_policy,
-    };
-    try std.testing.expect(try runtime.resizePointFonts(&boundary, equal_key));
-    try std.testing.expectEqual(clamped_key, try resolvedGroupKey(hidden.font_state));
-    try std.testing.expectEqual(@as(f64, 151.0), hidden.font_state.offset_points);
-    try std.testing.expectEqual(@as(u64, 2), hidden.font_state.request_revision);
-
-    var retained_state: [@sizeOf(LogicalFontState)]u8 = undefined;
-    @memcpy(&retained_state, std.mem.asBytes(&hidden.font_state));
-    const retained_policy = runtime.accepted_font_policy;
-    const retained_pixels = visible.pane_pixels;
-    visible.pane_pixels = .{
-        .width = std.math.maxInt(u16),
-        .height = std.math.maxInt(u16),
-    };
-    defer visible.pane_pixels = retained_pixels;
-    var rejected_policy = equal_key_policy;
-    rejected_policy.count = 2;
-    rejected_policy.offsets[0].offset_points = 152.0;
-    rejected_policy.offsets[1] = .{
-        .pane = visible_pane,
-        .offset_points = 1.0,
-    };
-    const rejected = handoff.FontRequest{
-        .revision = 3,
-        .scale = scale,
-        .policy = rejected_policy,
-    };
-    try std.testing.expectError(
-        error.TerminalCapacity,
-        runtime.resizePointFonts(&boundary, rejected),
-    );
-    try std.testing.expectEqualSlices(
-        u8,
-        &retained_state,
-        std.mem.asBytes(&hidden.font_state),
-    );
-    try std.testing.expectEqual(retained_policy, runtime.accepted_font_policy);
-}
-
-test "tiny and independent pane pixels derive only through current font metrics" {
-    const metrics = render.terminal.CellMetrics{
-        .width_px = 9,
-        .height_px = 22,
-        .baseline_px = 17,
-    };
-    try std.testing.expectEqual(
-        Grid{ .cols = 1, .rows = 1 },
-        try gridForPixels(.{ .width = 1, .height = 1 }, metrics),
-    );
-
-    var first_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var second_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&first_slot);
-        retireTestSlot(&second_slot);
-        first_slot.deinit();
-        second_slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const first: render.chrome.PaneId = @fromBackingInt(93);
-    const second: render.chrome.PaneId = @fromBackingInt(94);
-    const first_pixels = render.canvas.Size{ .width = 101, .height = 51 };
-    const second_pixels = render.canvas.Size{ .width = 203, .height = 87 };
-    try runtime.add(first, "/bin/sh", "sleep 1", first_pixels, .{ .dedicated = &first_slot });
-    try runtime.add(second, "/bin/sh", "sleep 1", second_pixels, .{ .dedicated = &second_slot });
-    try std.testing.expectEqual(first_pixels, runtime.owners[runtime.find(first).?].?.pane_pixels);
-    try std.testing.expectEqual(second_pixels, runtime.owners[runtime.find(second).?].?.pane_pixels);
-}
-
-test "runtime lifecycle admission rejects sub-cell extents without owner mutation" {
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    runtime.accepted_scale = .{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    const pane: render.chrome.PaneId = @fromBackingInt(91);
-    const source: render.canvas.SourceId = @fromBackingInt(92);
-    var request = handoff.RuntimeAdmissionCopy{
-        .revision = @fromBackingInt(1),
-        .operation_count = 1,
-        .input_count = 0,
-        .registration = .{ .pane = pane, .source = source },
-    };
-    request.operations[0] = .{ .create = .{
-        .pane = pane,
-        .pixels = .{ .width = 1, .height = 1 },
-    } };
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.invalid_extent,
-        runtime.validateLifecycleAdmission(request).rejected,
-    );
-    try std.testing.expectEqual(@as(u8, 0), runtime.count);
-    try std.testing.expect(runtime.pending_lifecycle_font == null);
-
-    request.operations[0].create.pixels = .{ .width = 0, .height = 1 };
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.invalid_extent,
-        runtime.validateLifecycleAdmission(request).rejected,
-    );
-    request.operations[0].create.pixels = .{
-        .width = std.math.maxInt(u16),
-        .height = std.math.maxInt(u16),
-    };
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.terminal_capacity,
-        runtime.validateLifecycleAdmission(request).rejected,
-    );
-    try std.testing.expectEqual(@as(u8, 0), runtime.count);
-}
-
-test "undersized lifecycle candidate rejects before terminal owner mutation" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    runtime.accepted_scale = .{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    const pane: render.chrome.PaneId = @fromBackingInt(901);
-    const source: render.canvas.SourceId = @fromBackingInt(1901);
-    const operations = [_]handoff.Lifecycle{.{ .create = .{
-        .pane = pane,
-        .pixels = .{ .width = 1, .height = 1 },
-    } }};
-    var candidate = try boundary.prepareLifecycle(
-        &operations,
-        &.{},
-        .{ .pane = pane, .source = source },
-    );
-    const revision = try candidate.publishAdmission();
-    const request = boundary.takeLifecycleAdmission().?;
-    const result = runtime.validateLifecycleAdmission(request);
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.invalid_extent,
-        result.rejected,
-    );
-    try boundary.completeLifecycleAdmission(revision, result);
-    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
-    candidate.deinit();
-    runtime.releaseCancelledLifecycleFont(&boundary);
-    try std.testing.expectEqual(@as(u8, 0), runtime.count);
-    try std.testing.expect(runtime.pending_lifecycle_font == null);
-    try std.testing.expect(boundary.sourceFor(pane) == null);
-}
-
-test "close admission rejects only an identity absent from Runtime" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(911);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        try testPixels(runtime.fonts, 8, 2),
-        .{ .dedicated = &slot },
-    );
-    var request = handoff.RuntimeAdmissionCopy{
-        .revision = @fromBackingInt(21),
-        .operation_count = 1,
-        .input_count = 0,
-        .registration = null,
-    };
-    request.operations[0] = .{ .close = pane };
-    try std.testing.expectEqual(
-        @as(u8, 0),
-        runtime.validateLifecycleAdmission(request).admitted.count,
-    );
-    request.operations[0] = .{ .close = @fromBackingInt(912) };
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.unknown_pane,
-        runtime.validateLifecycleAdmission(request).rejected,
-    );
-}
-
-test "undersized lifecycle resize rejects without mutating the live owner" {
-    var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    defer {
-        retireTestSlot(&slot);
-        slot.deinit();
-    }
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    const pane: render.chrome.PaneId = @fromBackingInt(902);
-    const pixels = try testPixels(runtime.fonts, 8, 2);
-    try runtime.add(
-        pane,
-        "/bin/sh",
-        "sleep 1",
-        pixels,
-        .{ .dedicated = &slot },
-    );
-    const owner_index = runtime.find(pane).?;
-    const before_pixels = runtime.owners[owner_index].?.pane_pixels;
-    const before_view = runtime.owners[owner_index].?.machine.semanticView(0);
-    var request = handoff.RuntimeAdmissionCopy{
-        .revision = @fromBackingInt(11),
-        .operation_count = 1,
-        .input_count = 0,
-        .registration = null,
-    };
-    request.operations[0] = .{ .resize = .{
-        .pane = pane,
-        .pixels = .{ .width = 1, .height = 1 },
-    } };
-    try std.testing.expectEqual(
-        handoff.AdmissionRejection.invalid_extent,
-        runtime.validateLifecycleAdmission(request).rejected,
-    );
-    try std.testing.expectEqual(@as(u8, 1), runtime.count);
-    try std.testing.expectEqual(before_pixels, runtime.owners[owner_index].?.pane_pixels);
-    const after_view = runtime.owners[owner_index].?.machine.semanticView(0);
-    try std.testing.expectEqual(before_view.rows, after_view.rows);
-    try std.testing.expectEqual(before_view.cols, after_view.cols);
-    try std.testing.expect(runtime.pending_lifecycle_font == null);
-}
-
-test "new-pane admission retains exact resolved metrics until commit or cancellation" {
-    var boundary = try initBoundary(std.testing.io, std.testing.allocator);
-    defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
-    defer runtime.deinit();
-    runtime.accepted_scale = .{
-        .revision = 3,
-        .dpi_x = .{ .numerator = 144, .denominator = 1 },
-        .dpi_y = .{ .numerator = 144, .denominator = 1 },
-    };
-    runtime.accepted_font_policy = try handoff.FontPolicy.init(21.0);
-    runtime.accepted_font_request_revision = 4;
-    const pane: render.chrome.PaneId = @fromBackingInt(201);
-    const source: render.canvas.SourceId = @fromBackingInt(202);
-    const operations = [_]handoff.Lifecycle{.{ .create = .{
-        .pane = pane,
-        .pixels = .{ .width = 401, .height = 211 },
-    } }};
-    var cancelled = try boundary.prepareLifecycle(
-        &operations,
-        &.{},
-        .{ .pane = pane, .source = source },
-    );
-    const cancelled_revision = try cancelled.publishAdmission();
-    const copied = boundary.takeLifecycleAdmission().?;
-    const result = runtime.validateLifecycleAdmission(copied);
-    const retained = runtime.pending_lifecycle_font.?;
-    try std.testing.expectEqual(cancelled_revision, retained.revision);
-    const metrics = retained.map.cellMetrics(.{
-        .slot = 0,
-        .style = .normal,
-    }).?;
-    const exact = try gridForPixels(operations[0].create.pixels, metrics);
-    try std.testing.expectEqual(exact.rows, result.admitted.grids[0].rows);
-    try std.testing.expectEqual(exact.cols, result.admitted.grids[0].columns);
-    try boundary.completeLifecycleAdmission(cancelled_revision, result);
-    cancelled.deinit();
-    runtime.releaseCancelledLifecycleFont(&boundary);
-    try std.testing.expect(runtime.pending_lifecycle_font == null);
-    try std.testing.expectEqual(@as(u8, 0), runtime.count);
-}
-
-test "runtime admission copy has the pinned fixed storage size" {
-    try std.testing.expectEqual(
-        @as(usize, 3_352),
-        @sizeOf(handoff.RuntimeAdmissionCopy),
-    );
-}
-
-fn selectionStyle() terminal_render.SelectionStyle {
-    return .{
-        .foreground = .{ .r = 255, .g = 255, .b = 255 },
-        .background = .{ .r = 0, .g = 0, .b = 0 },
-    };
-}
-
 fn monotonicNanoseconds() error{ Clock, ArithmeticOverflow }!u64 {
     var value: std.os.linux.timespec = undefined;
     if (std.os.linux.clock_gettime(.MONOTONIC, &value) != 0) return error.Clock;
     const seconds: u64 = @intCast(value.sec);
     const nanoseconds: u64 = @intCast(value.nsec);
-    const whole = std.math.mul(u64, seconds, std.time.ns_per_s) catch
-        return error.ArithmeticOverflow;
-    return std.math.add(u64, whole, nanoseconds) catch
-        return error.ArithmeticOverflow;
+    const whole = std.math.mul(u64, seconds, std.time.ns_per_s) catch return error.ArithmeticOverflow;
+    return std.math.add(u64, whole, nanoseconds) catch return error.ArithmeticOverflow;
 }
 
-fn testPty(command: []const u8) !pty.Owned {
-    var result = try pty.Owned.init(
-        std.testing.allocator,
-        "/bin/sh",
-        command,
-        null,
-        .{ .term = "xterm-256color", .colorterm = "truecolor" },
+fn registerForTest(
+    boundary: *handoff.Boundary,
+    pane: handoff.PaneId,
+    source: handoff.SourceId,
+) !handoff.AdmittedLifecycle {
+    const operations = [_]handoff.Lifecycle{.{ .create = .{ .pane = pane, .pixels = .{ .width = 1, .height = 1 } } }};
+    const grids = [_]handoff.DerivedGrid{.{ .pane = pane, .rows = 1, .columns = 1 }};
+    var prepared = try boundary.prepareLifecycle(
+        &operations,
+        &grids,
+        &.{},
+        .{ .pane = pane, .source = source },
     );
-    errdefer result.deinit();
-    try result.start(80, 24);
-    return result;
+    defer prepared.deinit();
+    const revision = try prepared.publishAdmission();
+    _ = boundary.takeLifecycleAdmission().?;
+    try boundary.completeLifecycleAdmission(revision, .admitted);
+    try prepared.commitAdmitted();
+    return boundary.takeAdmittedLifecycle().?;
 }
 
-fn retireTestSlot(slot: *handoff.PendingSlot) void {
-    const discarded_pending_update = slot.retire() catch unreachable;
-    if (discarded_pending_update) return;
+test "grid validation is independent of font and pixel ownership" {
+    const pane: handoff.PaneId = @fromBackingInt(1);
+    try validateGrid(.{ .pane = pane, .rows = 128, .columns = 512 }, pane);
+    try std.testing.expectError(error.InvalidGrid, validateGrid(.{ .pane = pane, .rows = 129, .columns = 1 }, pane));
+}
+
+test "FIFO pressure preserves pending VT state before any later byte mutation" {
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var machine = try vt.Terminal.init(std.testing.allocator, 1, 1);
+    defer machine.deinit();
+    try machine.enableRenderJournal();
+    const initial = machine.renderTransaction() orelse return error.TestUnexpectedResult;
+
+    const cursor_operation = [_]vt.render_journal.Operation{.{ .cursor = .{
+        .row = 0,
+        .col = 0,
+        .visible = false,
+    } }};
+    for (0..visual_fifo.queue_capacity) |_| {
+        _ = try fifo.enqueue(.{
+            .pane = @fromBackingInt(9),
+            .source = @fromBackingInt(19),
+            .lifecycle_revision = @fromBackingInt(1),
+        }, .{ .operations = &cursor_operation });
+    }
+    try std.testing.expectError(error.Pressure, fifo.enqueue(.{
+        .pane = @fromBackingInt(1),
+        .source = @fromBackingInt(11),
+        .lifecycle_revision = @fromBackingInt(1),
+    }, initial));
+    try std.testing.expect(machine.renderTransaction() != null);
+    try std.testing.expectError(
+        error.TransactionPending,
+        machine.feedRenderByte('x', 1),
+    );
+
+    const released = fifo.take().?;
+    try fifo.complete(released.handle);
+    _ = try fifo.enqueue(.{
+        .pane = @fromBackingInt(1),
+        .source = @fromBackingInt(11),
+        .lifecycle_revision = @fromBackingInt(1),
+    }, initial);
+    machine.consumeRenderTransaction();
+    try std.testing.expect(machine.renderTransaction() == null);
+}
+
+test "same-grid Runtime resize emits one ordered full replacement barrier" {
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var machine = try vt.Terminal.init(std.testing.allocator, 2, 3);
+    defer machine.deinit();
+    try machine.enableRenderJournal();
+    _ = try fifo.enqueue(.{
+        .pane = @fromBackingInt(1),
+        .source = @fromBackingInt(11),
+        .lifecycle_revision = @fromBackingInt(1),
+    }, machine.renderTransaction().?);
+    machine.consumeRenderTransaction();
+
+    var resize = try machine.prepareResize(2, 3);
+    defer resize.deinit();
+    resize.commit();
+    const replacement = machine.renderTransaction() orelse return error.TestUnexpectedResult;
+    var observed = false;
+    for (replacement.operations) |operation| switch (operation) {
+        .replace => |value| {
+            try std.testing.expectEqual(vt.render_journal.ReplacementKind.resize, value.kind);
+            try std.testing.expectEqual(@as(u16, 2), value.rows);
+            try std.testing.expectEqual(@as(u16, 3), value.cols);
+            observed = true;
+        },
+        else => {},
+    };
+    try std.testing.expect(observed);
+    const sequence = try fifo.enqueue(.{
+        .pane = @fromBackingInt(1),
+        .source = @fromBackingInt(11),
+        .lifecycle_revision = @fromBackingInt(2),
+    }, replacement);
+    try std.testing.expectEqual(@as(u64, 2), sequence);
+    machine.consumeRenderTransaction();
+}
+
+fn inputKey(codepoint: u8) wayland.input.Key {
+    var key = std.mem.zeroes(wayland.input.Key);
+    key.state = .pressed;
+    key.keysym = @fromBackingInt(@intCast(codepoint));
+    key.text[0] = codepoint;
+    key.text_len = 1;
+    return key;
+}
+
+test "retained input retries after PTY queue progress before later input" {
+    var boundary = try handoff.Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const pane: handoff.PaneId = @fromBackingInt(1);
+    const source: handoff.SourceId = @fromBackingInt(11);
+    const owner = try Logical.init(
+        std.testing.allocator,
+        pane,
+        source,
+        @fromBackingInt(1),
+        "/bin/sh",
+        "cat >/dev/null",
+        .{ .pane = pane, .rows = 1, .columns = 1 },
+    );
+    var runtime = Runtime{ .allocator = std.testing.allocator, .fifo = &fifo, .first_command = null };
+    runtime.owners[0] = owner;
+    runtime.count = 1;
+    defer runtime.deinit();
+    runtime.owners[0].?.writes.count = write_queue_bytes;
+    _ = try registerForTest(&boundary, pane, source);
+    try boundary.markLive(pane);
+    try boundary.publishKey(pane, inputKey('x'));
+    try boundary.publishKey(pane, inputKey('y'));
+
+    try std.testing.expect(!try runtime.drainInputs(&boundary));
+    try std.testing.expect(runtime.pending_input != null);
+    runtime.owners[0].?.writes.consume(write_queue_bytes);
+    try std.testing.expect(try runtime.drainInputs(&boundary));
+    try std.testing.expect(runtime.pending_input == null);
+    try std.testing.expectEqualStrings("xy", runtime.owners[0].?.writes.bytes[0..2]);
+}
+
+test "create ownership rolls back when Boundary live transition rejects" {
+    var boundary = try handoff.Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const pane: handoff.PaneId = @fromBackingInt(1);
+    const source: handoff.SourceId = @fromBackingInt(11);
+    const admitted = try registerForTest(&boundary, pane, source);
+    try boundary.markLive(pane);
+    var runtime = Runtime{
+        .allocator = std.testing.allocator,
+        .fifo = &fifo,
+        .first_command = "sleep 30",
+        .pending_lifecycle = .{
+            .revision = admitted.revision,
+            .operation = admitted.operation,
+            .grid = .{ .pane = pane, .rows = 1, .columns = 1 },
+        },
+    };
+    defer runtime.deinit();
+    try std.testing.expectError(error.UnknownPane, runtime.applyLifecycle(&boundary, "/bin/sh"));
+    try std.testing.expectEqual(@as(u8, 0), runtime.count);
+    try std.testing.expect(runtime.owners[0] == null);
+    try std.testing.expectEqualStrings("sleep 30", runtime.first_command.?);
+    try std.testing.expect(runtime.pending_lifecycle != null);
+}
+
+test "quiet create publishes initial replacement before blocking poll" {
+    var boundary = try handoff.Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const pane: handoff.PaneId = @fromBackingInt(1);
+    const source: handoff.SourceId = @fromBackingInt(11);
+    const admitted = try registerForTest(&boundary, pane, source);
+    var runtime = Runtime{
+        .allocator = std.testing.allocator,
+        .fifo = &fifo,
+        .first_command = "sleep 30",
+        .pending_lifecycle = .{
+            .revision = admitted.revision,
+            .operation = admitted.operation,
+            .grid = .{ .pane = pane, .rows = 1, .columns = 1 },
+        },
+    };
+    defer runtime.deinit();
+    try std.testing.expect(try runtime.applyLifecycle(&boundary, "/bin/sh"));
+    try std.testing.expect(try runtime.flushJournals());
+    const initial = fifo.take() orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(pane, initial.identity.pane);
+    try std.testing.expectEqual(source, initial.identity.source);
+    try std.testing.expectEqual(admitted.revision, initial.identity.lifecycle_revision);
+    try fifo.complete(initial.handle);
+}
+
+test "trailing VT journal enters FIFO before child completion ownership" {
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const pane: handoff.PaneId = @fromBackingInt(1);
+    const source: handoff.SourceId = @fromBackingInt(11);
+    var owner = try Logical.init(
+        std.testing.allocator,
+        pane,
+        source,
+        @fromBackingInt(1),
+        "/bin/sh",
+        "sleep 30",
+        .{ .pane = pane, .rows = 1, .columns = 1 },
+    );
+    defer owner.deinit();
+    try std.testing.expect(try owner.flushJournal(&fifo));
+    const initial = fifo.take().?;
+    try fifo.complete(initial.handle);
+
+    _ = try owner.machine.feedRenderByte('x', 1);
+    const filler = [_]vt.render_journal.Operation{.{ .cursor = .{ .row = 0, .col = 0, .visible = false } }};
+    for (0..visual_fifo.queue_capacity) |index| _ = try fifo.enqueue(.{
+        .pane = @fromBackingInt(100 + index),
+        .source = @fromBackingInt(200 + index),
+        .lifecycle_revision = @fromBackingInt(1),
+    }, .{ .operations = &filler });
+    owner.stream_closed = true;
+    owner.child_exit = .{ .code = 0 };
+    try owner.stageCompletion(&fifo);
+    try std.testing.expect(owner.pending_completion == null);
+    try std.testing.expect(owner.machine.renderTransaction() != null);
+
+    const released = fifo.take().?;
+    try fifo.complete(released.handle);
+    try owner.stageCompletion(&fifo);
+    try std.testing.expect(owner.machine.renderTransaction() == null);
+    const completion = owner.pending_completion.?;
+    try std.testing.expectEqual(owner.last_visual_sequence, completion.render_sequence);
+    try std.testing.expect(completion.render_sequence > released.sequence);
 }

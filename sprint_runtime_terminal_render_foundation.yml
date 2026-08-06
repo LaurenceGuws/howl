@@ -3,192 +3,101 @@ sprint:
   id: terminal_render_foundation
   marathon: runtime_hot_paths
   version: 0.1.6-dev
-  status: active
-  active_slice: terminal_visual_fifo
+  status: accepted
+  active_slice: completed
   objective: >-
-    Establish a small independently useful blank/ASCII/style/static-cursor
-    path from ordered VT visual mutations through retained Render state to
-    exact sparse Vulkan preparation before Host queue integration.
+    Own PTY and VT in Terminal Runtime, transfer exact VT journals through one
+    global FIFO, and let Renderer retain terminal fonts and final cell grids
+    without fabricating Canvas, GPU, frame, or Window work.
 
-accepted_evidence:
-  recovery_census: .zig/work/runtime-hot-path/terminal-render-foundation/recovery_census.yml
-  finite_contract: .zig/work/runtime-hot-path/terminal-render-foundation/finite_contract.yml
-  mutation_event_census: .zig/work/runtime-hot-path/terminal-render-foundation/mutation_event_census.yml
-  vt_render_mutation_contract: .zig/work/runtime-hot-path/terminal-render-foundation/vt_render_mutation_contract.yml
-  vt_render_mutation_bound_receipt: .zig/work/runtime-hot-path/terminal-render-foundation/vt_render_mutation_bound_receipt.txt
-  layout_receipt: .zig/work/runtime-hot-path/terminal-render-foundation/layout_receipt.txt
-  reviewer_gate: .zig/work/runtime-hot-path/terminal-render-foundation/reviewer_gate.yml
+ownership:
+  process_root:
+    - constructs one terminal_visual_fifo.Fifo
+    - passes the FIFO independently to Terminal Runtime and Renderer
+  terminal_runtime:
+    path: howl-host/src/terminal.zig
+    owns:
+      - PTY and VT lifetimes
+      - terminal input, replies, consequences, and child completion
+      - exact admitted lifecycle grid consumption
+      - one pending VT journal until FIFO enqueue commits
+    excludes:
+      - native fonts, metrics, raster, glyph, Canvas, GPU, and pane visual grids
+  renderer:
+    paths:
+      - howl-host/src/renderer.zig
+      - howl-host/src/terminal_fonts.zig
+    owns:
+      - bounded FontSet cache keyed by resolved point and DPI
+      - exact lifecycle grid derivation
+      - bounded pane table of howl-render terminal_cells.Grid
+      - global FIFO drain and final-equality Render update decision
+      - lifecycle revision to font epoch association
+  handoff:
+    path: howl-host/src/terminal_handoff.zig
+    owns:
+      - lifecycle admission and exact create or resize DerivedGrid copies
+      - monotonic pane, source, and lifecycle identities
+      - retirement and child-completion ordering
+  visual_fifo:
+    path: howl-host/src/terminal_visual_fifo.zig
+    owns:
+      - 256 globally ordered deep-copy slots
+      - one borrowed head until exact completion
+      - independent ready and capacity eventfds
 
-slices:
-  - id: retained_terminal_cell_primitive
-    status: accepted_prerequisite
-    product_owners:
-      - howl-render/src/terminal_cells.zig
-      - howl-vk/src/terminal_cells.zig
-    outcome: >-
-      Render retains one current visual grid plus bounded first-old cell and
-      row-map baselines. Vulkan retains one accepted instance shadow plus
-      bounded sparse writes and borrowed replacement input. Generic Canvas Plan
-      and Host publication remain separate.
-  - id: non_render_host_terminal_boundary
-    status: accepted_prerequisite
-    product_owners:
-      - howl-host/src/terminal_handoff.zig
-      - howl-host/build.zig
-    removed_owner:
-      - howl-host/src/terminal_pool.zig
-    outcome: >-
-      Recover one 56,552-byte allocation-free Host control boundary for terminal
-      registration, lifecycle, input, visibility, font requests, static cursor
-      identity, completion, retirement, and directional wakes. Completed Canvas
-      update transport and its fixed payload pool remain permanently absent.
-      Visible publication cannot supersede a retained claim, making Renderer
-      commit infallible after transactional Composer success.
-  - id: ordered_vt_mutation_transport
-    status: accepted_prerequisite
-    authorized: true
-    product_owners:
-      - howl-vt/src/render_journal.zig
-      - howl-vt/src/terminal.zig
-      - howl-render/src/terminal_cells.zig
-    outcome: >-
-      VT admits storage before each parser byte and retains at most one ordered
-      backend-neutral transaction containing final blank/ASCII/style/cursor
-      values. Render applies every operation in source order to one retained
-      grid, where final equality removes Canvas, GPU, and Window work.
-  - id: terminal_visual_fifo
-    status: review_ready
-    authorized: true
-    product_owners:
-      - howl-host/src/terminal_visual_fifo.zig
-      - howl-host/build.zig
-    outcome: >-
-      One 256-slot Host FIFO deep-copies complete VT visual transactions in
-      global producer order. Ordinary operation and cell payloads remain
-      inline; dynamic operation and slice payload ownership is bounded to
-      46,137,344 bytes across the queue. Renderer borrows only the stable head
-      and explicitly completes it, with separate ready and capacity wakes.
-  - id: host_render_integration
-    status: pending
-    authorized: false
-  - id: physical_runtime_acceptance
-    status: pending
-    authorized: false
+ordering:
+  - every PTY byte enters VT through feedRenderByte
+  - a complete VT journal must enqueue before that terminal processes another byte
+  - queue pressure preserves VT pending ownership and later-byte state
+  - Renderer applies FIFO entries globally in sequence
+  - FIFO completion occurs only after successful Grid application
+  - same-grid font changes use an ordered lifecycle resize and VT replace resize barrier
+  - older lifecycle entries use the old font epoch
+  - the replacement transaction switches the pane to the new font epoch
+  - final Grid equality decides whether Render work exists
+  - no Canvas, GPU, frame, or Window work is fabricated in this slice
 
-retained_shape:
-  render:
-    cell_size_bytes: 11
-    cell_alignment: 1
-    cells:
-      - blank
-      - printable ASCII
-      - deterministic question-mark replacement for unsupported codepoints
-    colors:
-      - final foreground RGB
-      - final background RGB
-      - final underline RGB
-    styles:
-      - bold
-      - dim
-      - italic
-      - underline
-      - strikethrough
-    cursor: static block, underline, bar, or hidden
-    ordinary_lowering:
-      - structured row rotation
-      - physical-span fill
-      - individual physical-cell update
-      - changed static cursor
-    bookkeeping: >-
-      Cell cleanup touches only recorded sparse identities. Row movement tracks
-      and compares only rows in structured operations; no ordinary full-grid or
-      maximum-grid metadata clear remains.
-    full_replacement_only:
-      - initialization
-      - resize
-      - alternate-grid replacement
-  Vulkan:
-    instance_size_bytes: 16
-    stable_glyph_slots: 380
-    glyph_identity: opaque stable slot selected by the future Host adapter
-    atlas_policy: fixed slot placement and first-use upload only
-    row_policy: persistent physical cells plus separate logical row map
-    row_map_entry_bytes: 4
-    draw_groups_per_pane: 1
-    command_boundary: >-
-      Exact mapped staging copies, sparse Vulkan transfer commands, and one
-      instanced draw command are owned; compatible resource creation, barriers,
-      render-pass setup, submission, and physical execution remain caller-owned.
-    physical_execution: not claimed in this package-only slice
+bounds:
+  terminal_owners: 64
+  font_cache_entries: 128
+  visual_fifo_slots: 256
+  maximum_rows_per_pane: 128
+  maximum_cells_per_pane: 65536
+  allocations_after_startup:
+    fifo: bounded_dynamic_payload_only
+    grid: create_candidate_only
+    font: cache_miss_only
 
-retained_cpu_memory_receipt:
-  configuration:
-    rows: 128
-    cols: 512
-    cells: 65536
-    sparse_updates: 65536
-    structured_updates: 65536
-    glyph_upload_bytes: 65536
-    arithmetic_multiplier_for_future_live_pane_bound: 64
-  render_grid_bytes_per_pane: 7342232
-  vulkan_store_bytes_per_pane: 7961720
-  combined_bytes_per_pane: 15303952
-  representable_worst_case_if_all_64_callers_request_every_maximum: 979452928
-  ownership: >-
-    Exact requested CPU payload plus owner-struct bytes under pinned Zig;
-    allocator-private metadata is excluded. This is a representable library
-    stress equation only. Host limits are not authorized or selected in this
-    slice, and 979,452,928 bytes is not accepted steady product memory.
-  candidate_shape: >-
-    Render has one full Cell grid and bounded sparse baselines. Vulkan has one
-    full accepted Instance shadow; ordinary staging is sparse and replacement
-    cells are caller-borrowed. No second full candidate grid or instance array
-    is retained.
-future_physical_payload_unimplemented:
-  instance_bytes_per_pane: 1048576
-  row_map_bytes_per_pane: 512
-  glyph_atlas_bytes_per_pane: 48640
-  logical_payload_per_pane: 1097728
-  representable_payload_if_all_64_callers_request_this_shape: 70254592
-  maximum_borrowed_mapped_staging_per_pane: 1114624
-  claim: >-
-    Logical resource and staging extents only. Resource creation, Vulkan memory
-    alignment, barriers, shaders, render-pass compatibility, submission, and
-    physical device execution are unimplemented and unclaimed.
+removed_surface:
+  - render.terminal
+  - terminal Content and VisualState
+  - terminal_pool
+  - terminal_font_owner
+  - FontMap and font groups
+  - terminal ligature, image, animation, blink scheduling, trail, selection, and hyperlink projection
+  - completed Canvas update transport
+  - compatibility aliases
 
-failure_ownership:
-  init_allocation: reverse cleanup and no retained owner
-  invalid_geometry_or_identity: reject before candidate ownership
-  sparse_or_structured_capacity: reject before mutation or preserve current and accepted GPU ownership
-  missing_or_invalid_glyph_raster: preserve accepted atlas and GPU shadows
-  mapped_staging_capacity: reject before writing any staging partition
-  invalid_vulkan_command_identity: reject before recording any command
-  candidate_discard: preserve current Render state and accepted rendered/GPU state for retry
-  candidate_complete: infallibly advance exact prepared sparse work after caller-observed GPU completion
+proofs:
+  - two panes preserve global FIFO sequence into Renderer grids
+  - 5 to 4 to 5 applies both transactions and yields no final Render update
+  - pressure preserves VT pending state before later byte mutation
+  - same-grid resize emits a full VT replacement and switches font epoch only at that barrier
+  - stale source and lifecycle entries complete without pane mutation
+  - malformed Grid application is invariant-fatal after any partial mutation; no rollback is claimed
+  - lifecycle admission carries exact Renderer-derived grids
+  - one admitted create and resize each cross Runtime application, FIFO publication, and Renderer Grid drain with exact identity and dimensions
+  - create allocations and candidate font ownership roll back before lifecycle commit
+  - retirement validates exact pane and source ownership
 
-proof_gate:
-  - exact 11-byte Cell and 16-byte Vulkan Instance layouts
-  - ordered four then five mutates current state and lowers no backend work
-  - one cell or style change lowers one sparse instance transfer
-  - one-row scroll lowers one row-map change plus exposed-row payload only
-  - ordinary lowering iterates retained changed physical identities, not the complete grid
-  - one-cell completion clears one recorded identity independent of the 65,536-cell grid
-  - row-map work is bounded by rows named by structured operations
-  - malformed public staging and command calls fail before writes or Vulkan commands
-  - cursor-only lowering copies no generic Canvas or Vulkan Plan
-  - complete replacement is explicit and retryable
-  - stable glyph identity uploads only on first use
-  - allocation, geometry, capacity, glyph, and candidate failures preserve accepted ownership
-  - Howl-Render and Howl-Vulkan check/test pass in all four optimization modes
-  - all still-possible workspace and static gates pass
-
-exclusions:
-  - no producer-side transaction merge
-  - no terminal-thread or Renderer integration of the Host visual FIFO
-  - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks
-  - no generated decorative glyph policy
-  - no generic Canvas Plan behavior change
-  - no Renderer ReplayState dependency
-  - no post-init allocation in ordinary update paths
-  - no physical Vulkan execution or runtime acceptance claim
-  - no PendingSlot, ProducerUpdate, Content, Composer candidate, completed-frame queue, or per-pane rendering update in terminal_handoff
+validation:
+  required:
+    - Host check and test in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall
+    - still-possible workspace check and test in all four modes
+    - strict duplicate-key YAML
+    - source audit and protocol validation
+    - formatting and git diff --check
+  excluded:
+    - GUI execution
+    - physical terminal Vulkan rendering

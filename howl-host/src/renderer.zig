@@ -22,6 +22,10 @@ const replay_pin_limit: usize = 2_048;
 const input_actions = @import("input_actions");
 const wayland = @import("howl_wayland");
 const terminal_handoff = @import("terminal_handoff");
+const terminal_visual_fifo = @import("terminal_visual_fifo");
+const terminal_fonts = @import("terminal_fonts");
+const terminal_runtime = @import("terminal_runtime");
+const vt = @import("howl_vt");
 const config = @import("config");
 const chrome_appearance = session_chrome_adapter.Appearance{
     .style = .{
@@ -94,7 +98,8 @@ fn focusedSourceForCandidate(
     pending: ?*const PendingTopology,
 ) ?render_api.canvas.SourceId {
     const render_pane = session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()) catch return null;
-    if (work.terminals.sourceFor(render_pane)) |source| return source;
+    if (work.terminals.sourceFor(toTerminalPaneId(render_pane))) |source|
+        return toRenderSourceId(source);
     if (pending) |value|
         if (value.new_pane) |pane|
             if (@backingInt(pane) == @backingInt(render_pane))
@@ -191,17 +196,6 @@ test "bootstrap cursor source resolves before lifecycle activation" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 8,
-            .glyphs = 16,
-            .masks = 8,
-            .resources_per_update = 16,
-            .raster_bytes = 4096,
-            .decoration_bytes = 4096,
-        },
     );
     defer terminals.deinit();
     var work: CanvasWork = undefined;
@@ -894,6 +888,20 @@ const PreparedBootstrapPublication = struct {
     }
 };
 
+const TerminalFontCandidate = struct {
+    scale: ?terminal_fonts.ScaleSnapshot,
+    policy: terminal_fonts.Policy,
+};
+
+fn installAcceptedFontCandidate(
+    policy: *terminal_fonts.Policy,
+    scale: *?terminal_fonts.ScaleSnapshot,
+    candidate: TerminalFontCandidate,
+) void {
+    policy.* = candidate.policy;
+    scale.* = candidate.scale;
+}
+
 const CanvasWork = struct {
     composer: *render_api.canvas.Composer,
     content: *render_api.chrome.Content,
@@ -913,11 +921,14 @@ const CanvasWork = struct {
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
+    terminal_visuals: *terminal_visual_fifo.Fifo,
+    terminal_visual_state: *TerminalVisualState,
+    terminal_fonts: *terminal_fonts.Cache,
     /// Startup-retained presentation view consumed by cursor geometry.
     cursor_policy: config.CursorPresentationPolicy,
-    terminal_font_policy: terminal_handoff.FontPolicy,
-    terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
-    font_request_high_water: u64 = 0,
+    terminal_font_policy: terminal_fonts.Policy,
+    terminal_scale: ?terminal_fonts.ScaleSnapshot = null,
+    terminal_font_candidate: ?TerminalFontCandidate = null,
     next_visible_revision: u64 = 1,
     visible_placements: [terminal_handoff.visible_member_limit]render_api.canvas.Composer.Placement = undefined,
     visible_count: u8 = 0,
@@ -933,6 +944,434 @@ const CanvasWork = struct {
     chrome_retry: ?ChromeRetry = null,
     replay: *ReplayState,
 };
+
+const TerminalPaneVisual = struct {
+    pane: terminal_handoff.PaneId,
+    source: terminal_handoff.SourceId,
+    lifecycle_revision: terminal_handoff.LifecycleRevision,
+    font: terminal_fonts.Ref,
+    grid: render_api.terminal_cells.Grid,
+    candidate_revision: ?terminal_handoff.LifecycleRevision = null,
+    candidate_font: ?terminal_fonts.Ref = null,
+
+    fn deinit(self: *TerminalPaneVisual, fonts: *terminal_fonts.Cache) void {
+        if (self.candidate_font) |font|
+            fonts.release(font) catch @panic("candidate terminal font reference became stale");
+        self.grid.deinit();
+        fonts.release(self.font) catch @panic("terminal font reference became stale");
+        self.* = undefined;
+    }
+
+    fn installCandidate(
+        self: *TerminalPaneVisual,
+        revision: terminal_handoff.LifecycleRevision,
+        font: terminal_fonts.Ref,
+    ) !void {
+        if (self.candidate_revision != null) return error.CandidatePending;
+        self.candidate_revision = revision;
+        self.candidate_font = font;
+    }
+};
+
+/// Owns the bounded Renderer-side terminal grids and applies the global VT FIFO.
+const TerminalVisualState = struct {
+    allocator: std.mem.Allocator,
+    fonts: *terminal_fonts.Cache,
+    panes: [session_chrome_adapter.max_live_panes]?TerminalPaneVisual = @splat(null),
+
+    fn deinit(self: *TerminalVisualState) void {
+        var index: usize = self.panes.len;
+        while (index != 0) {
+            index -= 1;
+            if (self.panes[index]) |*pane| pane.deinit(self.fonts);
+        }
+        self.* = undefined;
+    }
+
+    fn find(self: *TerminalVisualState, pane: terminal_handoff.PaneId) ?usize {
+        for (self.panes, 0..) |entry, index| if (entry != null and entry.?.pane == pane) return index;
+        return null;
+    }
+
+    /// Applies every currently available journal in global FIFO order.
+    ///
+    /// This boundary never prepares or completes Grid work. The future
+    /// physical terminal renderer owns candidate preparation and disposition
+    /// after this drain has folded all available journals into current state.
+    fn drain(self: *TerminalVisualState, fifo: *terminal_visual_fifo.Fifo) !void {
+        while (fifo.take()) |entry| {
+            const index = self.find(entry.identity.pane) orelse {
+                try fifo.complete(entry.handle);
+                continue;
+            };
+            const pane = &self.panes[index].?;
+            if (pane.source != entry.identity.source) {
+                try fifo.complete(entry.handle);
+                continue;
+            }
+            const candidate = pane.candidate_revision == entry.identity.lifecycle_revision;
+            if (pane.lifecycle_revision != entry.identity.lifecycle_revision and !candidate) {
+                try fifo.complete(entry.handle);
+                continue;
+            }
+            if (candidate) {
+                var resize_barrier = false;
+                for (entry.transaction.operations) |operation| switch (operation) {
+                    .replace => |replacement| {
+                        if (replacement.kind == .resize) resize_barrier = true;
+                    },
+                    else => {},
+                };
+                if (!resize_barrier) return error.MissingTerminalResizeBarrier;
+            }
+            // Runtime is the sole production FIFO writer and VT constructs
+            // bounded journal operations from its admitted Grid. An apply
+            // failure therefore identifies a fatal producer/consumer
+            // invariant after which this Grid and borrowed FIFO head remain
+            // owned for shutdown; partial current-state mutation is not
+            // represented as transactional rollback.
+            try render_api.terminal_cells.applyTransaction(&pane.grid, entry.transaction);
+            try fifo.complete(entry.handle);
+            if (candidate) {
+                const old_font = pane.font;
+                pane.font = pane.candidate_font.?;
+                pane.candidate_font = null;
+                pane.lifecycle_revision = entry.identity.lifecycle_revision;
+                pane.candidate_revision = null;
+                self.fonts.release(old_font) catch @panic("terminal font reference became stale");
+            }
+        }
+    }
+
+    fn retire(self: *TerminalVisualState, pane: terminal_handoff.PaneId, source: terminal_handoff.SourceId) !void {
+        const index = self.find(pane) orelse return error.UnknownPane;
+        if (self.panes[index].?.source != source) return error.StaleTerminalVisual;
+        self.panes[index].?.deinit(self.fonts);
+        self.panes[index] = null;
+    }
+};
+
+fn terminalJournalCell(codepoint: u8) vt.render_journal.Cell {
+    return .{
+        .codepoint = codepoint,
+        .foreground = .{ .r = 0xd8, .g = 0xde, .b = 0xe9 },
+        .background = .{ .r = 0x2e, .g = 0x34, .b = 0x40 },
+        .underline_color = .{ .r = 0xd8, .g = 0xde, .b = 0xe9 },
+    };
+}
+
+fn initializeTerminalPaneForTest(
+    state: *TerminalVisualState,
+    slot: usize,
+    pane: u64,
+    source: u64,
+    revision: u64,
+    font: terminal_fonts.Ref,
+) !void {
+    const grid = terminal_handoff.DerivedGrid{
+        .pane = @fromBackingInt(pane),
+        .rows = 1,
+        .columns = 1,
+    };
+    state.panes[slot] = .{
+        .pane = grid.pane,
+        .source = @fromBackingInt(source),
+        .lifecycle_revision = @fromBackingInt(revision),
+        .font = font,
+        .grid = try initTerminalVisualGrid(state.allocator, grid),
+    };
+    const initial = try state.panes[slot].?.grid.prepare();
+    try std.testing.expect(initial != null);
+    try state.panes[slot].?.grid.complete();
+}
+
+const TerminalVisualTestFixture = struct {
+    fifo: terminal_visual_fifo.Fifo,
+    fonts: terminal_fonts.Cache,
+    visuals: TerminalVisualState,
+    policy: terminal_fonts.Policy,
+    scale: terminal_fonts.ScaleSnapshot,
+
+    fn init(self: *TerminalVisualTestFixture) !void {
+        self.fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+        errdefer self.fifo.deinit();
+        self.fonts = try terminal_fonts.Cache.init(
+            std.testing.allocator,
+            "../howl-render/testdata/primary.ttf",
+        );
+        errdefer self.fonts.deinit();
+        self.visuals = .{ .allocator = std.testing.allocator, .fonts = &self.fonts };
+        self.policy = try terminal_fonts.Policy.init(6.0);
+        self.scale = .{
+            .revision = 1,
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        };
+    }
+
+    fn deinit(self: *TerminalVisualTestFixture) void {
+        self.visuals.deinit();
+        self.fonts.deinit();
+        self.fifo.deinit();
+        self.* = undefined;
+    }
+
+    fn addPane(
+        self: *TerminalVisualTestFixture,
+        slot: usize,
+        pane: terminal_handoff.PaneId,
+        source: terminal_handoff.SourceId,
+        revision: terminal_handoff.LifecycleRevision,
+    ) !void {
+        const font = try self.fonts.acquire(try terminal_fonts.Cache.keyFor(
+            self.policy,
+            self.scale,
+            pane,
+        ));
+        try initializeTerminalPaneForTest(
+            &self.visuals,
+            slot,
+            @backingInt(pane),
+            @backingInt(source),
+            @backingInt(revision),
+            font,
+        );
+    }
+
+    fn bind(self: *TerminalVisualTestFixture, work: *CanvasWork) void {
+        work.terminal_visuals = &self.fifo;
+        work.terminal_visual_state = &self.visuals;
+        work.terminal_fonts = &self.fonts;
+        work.terminal_font_policy = self.policy;
+        work.terminal_scale = self.scale;
+        work.terminal_font_candidate = null;
+    }
+};
+
+test "Renderer drains interleaved pane FIFO globally and final equality suppresses Render work" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const policy = try terminal_fonts.Policy.init(6.0);
+    const first_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, @fromBackingInt(1)));
+    const second_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, @fromBackingInt(2)));
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, first_font);
+    try initializeTerminalPaneForTest(&state, 1, 2, 12, 1, second_font);
+
+    var five = [_]vt.render_journal.Cell{terminalJournalCell('5')};
+    var four = [_]vt.render_journal.Cell{terminalJournalCell('4')};
+    var seven = [_]vt.render_journal.Cell{terminalJournalCell('7')};
+    const first_five = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &five } }};
+    const second_seven = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &seven } }};
+    try std.testing.expectEqual(@as(u64, 1), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
+    try std.testing.expectEqual(@as(u64, 2), try fifo.enqueue(.{ .pane = @fromBackingInt(2), .source = @fromBackingInt(12), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &second_seven }));
+    try state.drain(&fifo);
+    const first_update = try state.panes[0].?.grid.prepare();
+    try std.testing.expect(first_update != null);
+    try state.panes[0].?.grid.complete();
+    const second_update = try state.panes[1].?.grid.prepare();
+    try std.testing.expect(second_update != null);
+    try state.panes[1].?.grid.complete();
+    try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    try std.testing.expectEqual(@as(u8, '7'), (try state.panes[1].?.grid.current(0, 0)).codepoint);
+
+    const first_four = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &four } }};
+    try std.testing.expectEqual(@as(u64, 3), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_four }));
+    try std.testing.expectEqual(@as(u64, 4), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
+    try state.drain(&fifo);
+    try std.testing.expect((try state.panes[0].?.grid.prepare()) == null);
+    try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+}
+
+test "same-grid resize replacement is the font epoch barrier and stale FIFO is rejected" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const old_policy = try terminal_fonts.Policy.init(6.0);
+    const new_policy = try terminal_fonts.Policy.init(7.0);
+    const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(old_policy, scale, @fromBackingInt(1)));
+    const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(new_policy, scale, @fromBackingInt(1)));
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
+    try state.panes[0].?.installCandidate(@fromBackingInt(2), new_font);
+
+    var old_value = [_]vt.render_journal.Cell{terminalJournalCell('5')};
+    var replacement_cells = [_]vt.render_journal.Cell{terminalJournalCell('5')};
+    const old_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &old_value } }};
+    const barrier = [_]vt.render_journal.Operation{.{ .replace = .{ .kind = .resize, .rows = 1, .cols = 1, .cells = &replacement_cells } }};
+    _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &old_operation });
+    _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &barrier });
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(state.panes[0].?.lifecycle_revision));
+    try std.testing.expectEqual(new_font, state.panes[0].?.font);
+
+    var poison = [_]vt.render_journal.Cell{terminalJournalCell('x')};
+    const poison_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &poison } }};
+    _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(99), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &poison_operation });
+    _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &poison_operation });
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    const changed = try state.panes[0].?.grid.prepare();
+    try std.testing.expect(changed != null);
+    try std.testing.expectError(error.CandidatePending, state.panes[0].?.grid.set(
+        0,
+        0,
+        render_api.terminal_cells.Cell.blank(.{ .r = 1, .g = 2, .b = 3 }, .{ .r = 4, .g = 5, .b = 6 }),
+    ));
+}
+
+test "alternate-grid replacement remains pending for the future physical renderer" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
+    defer fonts.deinit();
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const old_policy = try terminal_fonts.Policy.init(6.0);
+    const new_policy = try terminal_fonts.Policy.init(7.0);
+    const pane: terminal_handoff.PaneId = @fromBackingInt(1);
+    const source: terminal_handoff.SourceId = @fromBackingInt(11);
+    const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(old_policy, scale, pane));
+    const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(new_policy, scale, pane));
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
+    try state.panes[0].?.installCandidate(@fromBackingInt(2), new_font);
+
+    var cells = [_]vt.render_journal.Cell{ terminalJournalCell('a'), terminalJournalCell('b') };
+    const operations = [_]vt.render_journal.Operation{.{ .replace = .{
+        .kind = .resize,
+        .rows = 1,
+        .cols = 2,
+        .cells = &cells,
+    } }};
+    _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+    try state.drain(&fifo);
+
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(state.panes[0].?.lifecycle_revision));
+    try std.testing.expectEqual(new_font, state.panes[0].?.font);
+    try std.testing.expectEqual(@as(u8, 'a'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    try std.testing.expectEqual(@as(u8, 'b'), (try state.panes[0].?.grid.current(0, 1)).codepoint);
+    try std.testing.expect((try state.panes[0].?.grid.prepare()) != null);
+}
+
+test "retirement rejects queued stale identity before same-pane reuse" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
+    defer fonts.deinit();
+    const policy = try terminal_fonts.Policy.init(6.0);
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const pane: terminal_handoff.PaneId = @fromBackingInt(1);
+    const old_source: terminal_handoff.SourceId = @fromBackingInt(11);
+    const new_source: terminal_handoff.SourceId = @fromBackingInt(12);
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
+
+    var poison = [_]vt.render_journal.Cell{terminalJournalCell('x')};
+    const poison_operations = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &poison } }};
+    _ = try fifo.enqueue(.{ .pane = pane, .source = old_source, .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &poison_operations });
+    try state.retire(pane, old_source);
+    const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
+    try initializeTerminalPaneForTest(&state, 0, 1, 12, 2, new_font);
+    var value = [_]vt.render_journal.Cell{terminalJournalCell('n')};
+    const operations = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &value } }};
+    _ = try fifo.enqueue(.{ .pane = pane, .source = new_source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(u8, 'n'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+}
+
+test "missing lifecycle barrier preserves pane state and FIFO ownership" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
+    defer fonts.deinit();
+    const policy = try terminal_fonts.Policy.init(6.0);
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const pane: terminal_handoff.PaneId = @fromBackingInt(1);
+    const source: terminal_handoff.SourceId = @fromBackingInt(11);
+    const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
+    const candidate_font = try fonts.acquire(.{
+        .points = 7.0,
+        .dpi_x = scale.dpi_x,
+        .dpi_y = scale.dpi_y,
+    });
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
+    try state.panes[0].?.installCandidate(@fromBackingInt(2), candidate_font);
+    var poison = [_]vt.render_journal.Cell{terminalJournalCell('x')};
+    const operations = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &poison } }};
+    _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+    try std.testing.expectError(error.MissingTerminalResizeBarrier, state.drain(&fifo));
+    try std.testing.expectEqual(@as(u21, 0), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(state.panes[0].?.lifecycle_revision));
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(state.panes[0].?.candidate_revision.?));
+    try std.testing.expect(fifo.take() == null);
+}
+
+test "malformed FIFO apply is invariant-fatal without rollback claims" {
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
+    defer fonts.deinit();
+    const policy = try terminal_fonts.Policy.init(6.0);
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    const pane: terminal_handoff.PaneId = @fromBackingInt(1);
+    const source: terminal_handoff.SourceId = @fromBackingInt(11);
+    const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    defer state.deinit();
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, font);
+    var first = [_]vt.render_journal.Cell{terminalJournalCell('a')};
+    var invalid = [_]vt.render_journal.Cell{terminalJournalCell('b')};
+    const operations = [_]vt.render_journal.Operation{
+        .{ .set_cells = .{ .row = 0, .col = 0, .cells = &first } },
+        .{ .set_cells = .{ .row = 1, .col = 0, .cells = &invalid } },
+    };
+    _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &operations });
+    try std.testing.expectError(error.InvalidGeometry, state.drain(&fifo));
+    try std.testing.expectEqual(@as(u8, 'a'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    try std.testing.expect(fifo.take() == null);
+}
 
 const SlotOwnership = enum(u8) {
     reusable,
@@ -987,6 +1426,7 @@ const OfferedFds = struct {
 pub fn run(
     boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
+    terminal_visuals: *terminal_visual_fifo.Fifo,
     allocator: std.mem.Allocator,
     font_path: []const u8,
     cursor_policy: config.CursorPresentationPolicy,
@@ -994,6 +1434,7 @@ pub fn run(
     runFallible(
         boundary,
         terminals,
+        terminal_visuals,
         allocator,
         font_path,
         cursor_policy,
@@ -1007,6 +1448,7 @@ pub fn run(
 fn runFallible(
     boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
+    terminal_visuals: *terminal_visual_fifo.Fifo,
     allocator: std.mem.Allocator,
     font_path: []const u8,
     cursor_policy: config.CursorPresentationPolicy,
@@ -1074,6 +1516,13 @@ fn runFallible(
     defer surface_residency.deinit();
     var replay = try ReplayState.init(allocator);
     defer replay.deinit();
+    var terminal_font_cache = try terminal_fonts.Cache.init(allocator, font_path);
+    defer terminal_font_cache.deinit();
+    var terminal_visual_state = TerminalVisualState{
+        .allocator = allocator,
+        .fonts = &terminal_font_cache,
+    };
+    defer terminal_visual_state.deinit();
     var canvas_work = CanvasWork{
         .composer = &composer,
         .content = &chrome_content,
@@ -1092,17 +1541,19 @@ fn runFallible(
         .builder = &surface_builder,
         .residency = &surface_residency,
         .terminals = terminals,
+        .terminal_visuals = terminal_visuals,
+        .terminal_visual_state = &terminal_visual_state,
+        .terminal_fonts = &terminal_font_cache,
         .cursor_policy = cursor_policy,
-        .terminal_font_policy = try terminal_handoff.FontPolicy.init(
+        .terminal_font_policy = try terminal_fonts.Policy.init(
             configured_terminal_base_points,
         ),
         .replay = &replay,
     };
     try retainTerminalScale(
-        canvas_work.terminals,
         canvas_work.terminal_font_policy,
         &canvas_work.terminal_scale,
-        &canvas_work.font_request_high_water,
+        &canvas_work.terminal_font_candidate,
         initial_surface,
     );
     var chrome_primitives: [256]render_api.chrome.Primitive = undefined;
@@ -1324,17 +1775,22 @@ fn runFallible(
     var terminal_completion: ?terminal_handoff.TerminalCompletion = null;
     var retained_configure: ?presentation_state.SurfaceConfig = null;
     var configure_work_pending = false;
-    var pending_topology: ?PendingTopology =
-        if (canvas_work.terminal_scale != null)
-            try prepareInitialTerminalTopology(
+    var pending_topology: ?PendingTopology = if (canvas_work.terminal_font_candidate) |candidate|
+        if (candidate.scale != null) blk: {
+            const pending = try prepareInitialTerminalTopology(
                 &canvas_work,
                 &chrome,
                 initial_surface,
-            )
-        else
-            null;
+                candidate,
+            );
+            canvas_work.terminal_font_candidate = null;
+            break :blk pending;
+        } else null
+    else
+        null;
     defer if (pending_topology) |*pending| pending.deinit();
     while (!boundary.shouldStop()) {
+        try terminal_visual_state.drain(terminal_visuals);
         if (boundary.takeConfigure()) |surface| {
             retainNewestConfigure(&retained_configure, surface);
             configure_work_pending = true;
@@ -1343,10 +1799,9 @@ fn runFallible(
             configure_work_pending = false;
             const surface = retained_configure.?;
             try retainTerminalScale(
-                canvas_work.terminals,
                 canvas_work.terminal_font_policy,
                 &canvas_work.terminal_scale,
-                &canvas_work.font_request_high_water,
+                &canvas_work.terminal_font_candidate,
                 surface,
             );
             if (!terminal_topology_committed) {
@@ -1368,12 +1823,15 @@ fn runFallible(
                     pending_topology = null;
                 }
                 chrome = candidate_chrome;
-                if (canvas_work.terminal_scale != null)
+                if (canvas_work.terminal_font_candidate) |candidate| if (candidate.scale != null) {
                     pending_topology = try prepareInitialTerminalTopology(
                         &canvas_work,
                         &chrome,
                         surface,
+                        candidate,
                     );
+                    canvas_work.terminal_font_candidate = null;
+                };
                 clearRetainedConfigure(&retained_configure);
                 continue;
             }
@@ -1391,8 +1849,22 @@ fn runFallible(
                 &pending_topology,
                 surface,
             );
+            if (configure_disposition != .retry)
+                canvas_work.terminal_font_candidate = null;
             applyConfigureDisposition(&retained_configure, configure_disposition);
         }
+        if (retained_configure == null) if (canvas_work.terminal_font_candidate) |request| {
+            if (terminal_topology_committed and pending_topology == null and request.scale != null) {
+                switch (try prepareFontTopologyReplacement(&canvas_work, &chrome, request)) {
+                    .retry => {},
+                    .rejected => canvas_work.terminal_font_candidate = null,
+                    .prepared => |prepared| {
+                        pending_topology = prepared;
+                        canvas_work.terminal_font_candidate = null;
+                    },
+                }
+            }
+        };
         if (terminal_topology_committed and deferred_topology_input == null and
             terminal_completion == null)
             try drainInput(
@@ -1407,7 +1879,11 @@ fn runFallible(
         const local_redraw_retry_turn = local_redraw_retry_pending;
         local_redraw_retry_pending = false;
         if (!local_redraw_retry_turn) {
-            const wake = try waitRenderWakeBlockingUntil(boundary, terminals, null);
+            const wake = try waitRenderWakeBlockingUntil(boundary, terminals, terminal_visuals, null);
+            if (wake.visual) {
+                try terminal_visuals.drainReadyWake();
+                try terminal_visual_state.drain(terminal_visuals);
+            }
             if (wake.terminal) {
                 reconcileFocusedCursor(
                     terminals,
@@ -1462,6 +1938,7 @@ fn runFallible(
                         candidate.state,
                         &pending_topology,
                         null,
+                        null,
                     )) {
                         .accepted => {},
                         .retry => try applyTerminalCompletionDisposition(
@@ -1489,6 +1966,7 @@ fn runFallible(
                         pending.surface
                     else
                         null;
+                    const retry_font_candidate = pending.font_candidate;
                     pending.deinit();
                     pending_topology = null;
                     if (retry_surface) |surface| {
@@ -1498,6 +1976,7 @@ fn runFallible(
                             &canvas_work,
                             &chrome,
                             surface,
+                            retry_font_candidate.?,
                         );
                         continue;
                     }
@@ -1915,7 +2394,6 @@ fn initialAdmissionFailure(
         .unknown_pane => error.InitialUnknownPane,
         .duplicate_pane => error.InitialDuplicatePane,
         .invalid_extent => error.InitialInvalidExtent,
-        .font_capacity => error.InitialFontCapacity,
         .terminal_capacity => error.InitialTerminalCapacity,
         .stopping => error.Stopping,
     };
@@ -1997,23 +2475,19 @@ fn terminalCompletionTransition(
 }
 
 fn retainTerminalScale(
-    terminals: *terminal_handoff.Boundary,
-    policy: terminal_handoff.FontPolicy,
-    retained: *?terminal_handoff.ScaleSnapshot,
-    request_high_water: *u64,
+    policy: terminal_fonts.Policy,
+    retained: *?terminal_fonts.ScaleSnapshot,
+    pending: *?TerminalFontCandidate,
     surface: presentation_state.SurfaceConfig,
 ) !void {
     const snapshot = try terminalScaleSnapshot(surface);
-    if (std.meta.eql(retained.*, snapshot)) return;
-    const revision = std.math.add(u64, request_high_water.*, 1) catch
-        return error.FontRevisionExhausted;
-    try terminals.requestFont(.{
-        .revision = revision,
+    const desired_policy = if (pending.*) |value| value.policy else policy;
+    const prior_scale = if (pending.*) |value| value.scale else retained.*;
+    if (std.meta.eql(prior_scale, snapshot)) return;
+    pending.* = .{
         .scale = snapshot,
-        .policy = policy,
-    });
-    request_high_water.* = revision;
-    retained.* = snapshot;
+        .policy = desired_policy,
+    };
 }
 
 fn retainNewestConfigure(
@@ -2049,7 +2523,7 @@ fn shouldRetryConfigureAfterWake(
 
 fn terminalScaleSnapshot(
     surface: presentation_state.SurfaceConfig,
-) !?terminal_handoff.ScaleSnapshot {
+) !?terminal_fonts.ScaleSnapshot {
     if (surface.dpi_x == null and surface.dpi_y == null) return null;
     const dpi_x = surface.dpi_x orelse return error.InvalidFrame;
     const dpi_y = surface.dpi_y orelse return error.InvalidFrame;
@@ -2104,7 +2578,7 @@ test "configure retention keeps only the newest generation" {
 }
 
 fn policyOffsetIndex(
-    policy: *const terminal_handoff.FontPolicy,
+    policy: *const terminal_fonts.Policy,
     pane: render_api.chrome.PaneId,
 ) ?usize {
     for (policy.offsets[0..policy.count], 0..) |offset, index| {
@@ -2117,7 +2591,7 @@ fn policyOffsetIndex(
 }
 
 fn policyOffset(
-    policy: *const terminal_handoff.FontPolicy,
+    policy: *const terminal_fonts.Policy,
     pane: render_api.chrome.PaneId,
 ) f64 {
     const index = policyOffsetIndex(policy, pane) orelse return 0.0;
@@ -2125,7 +2599,7 @@ fn policyOffset(
 }
 
 fn setPolicyOffset(
-    policy: *terminal_handoff.FontPolicy,
+    policy: *terminal_fonts.Policy,
     pane: render_api.chrome.PaneId,
     value: f64,
 ) error{ InvalidFontPolicy, FontPolicyCapacity }!void {
@@ -2158,7 +2632,7 @@ fn setPolicyOffset(
 }
 
 fn pruneFontPolicy(
-    policy: *terminal_handoff.FontPolicy,
+    policy: *terminal_fonts.Policy,
     topology: *const session.SessionState,
 ) void {
     var next = policy.*;
@@ -2173,10 +2647,10 @@ fn pruneFontPolicy(
 }
 
 fn adjustPolicyOffset(
-    policy: *terminal_handoff.FontPolicy,
+    policy: *terminal_fonts.Policy,
     pane: render_api.chrome.PaneId,
     delta: f64,
-    scale: terminal_handoff.ScaleSnapshot,
+    scale: terminal_fonts.ScaleSnapshot,
 ) error{ InvalidFontPolicy, FontPolicyCapacity }!void {
     if (!std.math.isFinite(delta) or std.math.isNan(delta) or delta == 0.0)
         return error.InvalidFontPolicy;
@@ -2204,7 +2678,7 @@ fn adjustPolicyOffset(
 }
 
 fn pointFloor(
-    scale: terminal_handoff.ScaleSnapshot,
+    scale: terminal_fonts.ScaleSnapshot,
 ) error{InvalidFontPolicy}!f64 {
     const dpi_x = @as(f64, @floatFromInt(scale.dpi_x.numerator)) /
         @as(f64, @floatFromInt(scale.dpi_x.denominator));
@@ -2217,33 +2691,26 @@ fn pointFloor(
 }
 
 fn publishFontPolicy(
-    terminals: *terminal_handoff.Boundary,
-    policy: *terminal_handoff.FontPolicy,
-    scale: ?terminal_handoff.ScaleSnapshot,
-    request_high_water: *u64,
-    candidate: terminal_handoff.FontPolicy,
+    scale: ?terminal_fonts.ScaleSnapshot,
+    pending: *?TerminalFontCandidate,
+    candidate: terminal_fonts.Policy,
 ) !void {
-    if (std.meta.eql(candidate, policy.*)) return;
-    const revision = std.math.add(u64, request_high_water.*, 1) catch
-        return error.FontRevisionExhausted;
-    try terminals.requestFont(.{
-        .revision = revision,
+    pending.* = .{
         .scale = scale,
         .policy = candidate,
-    });
-    request_high_water.* = revision;
-    policy.* = candidate;
+    };
 }
 
 fn requestPaneFontAction(
-    terminals: *terminal_handoff.Boundary,
-    policy: *terminal_handoff.FontPolicy,
-    scale: ?terminal_handoff.ScaleSnapshot,
-    request_high_water: *u64,
+    policy: *terminal_fonts.Policy,
+    scale: ?terminal_fonts.ScaleSnapshot,
+    pending: *?TerminalFontCandidate,
     topology: *const session.SessionState,
     action: input_actions.Action,
 ) !void {
-    var candidate = policy.*;
+    const desired_scale = if (pending.*) |value| value.scale else scale;
+    const desired_policy = if (pending.*) |value| value.policy else policy.*;
+    var candidate = desired_policy;
     pruneFontPolicy(&candidate, topology);
     const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
     switch (action) {
@@ -2251,60 +2718,59 @@ fn requestPaneFontAction(
             &candidate,
             pane,
             1.0,
-            scale orelse return error.AcceptedScaleUnavailable,
+            desired_scale orelse return error.AcceptedScaleUnavailable,
         ),
         .font_decrease => try adjustPolicyOffset(
             &candidate,
             pane,
             -1.0,
-            scale orelse return error.AcceptedScaleUnavailable,
+            desired_scale orelse return error.AcceptedScaleUnavailable,
         ),
         .font_reset => try setPolicyOffset(&candidate, pane, 0.0),
         else => return error.InvalidFontAction,
     }
+    if (std.meta.eql(candidate, desired_policy)) return;
     try publishFontPolicy(
-        terminals,
-        policy,
-        scale,
-        request_high_water,
+        desired_scale,
+        pending,
         candidate,
     );
 }
 
 fn requestBaseFontAction(
-    terminals: *terminal_handoff.Boundary,
-    policy: *terminal_handoff.FontPolicy,
-    scale: ?terminal_handoff.ScaleSnapshot,
-    request_high_water: *u64,
+    policy: *terminal_fonts.Policy,
+    scale: ?terminal_fonts.ScaleSnapshot,
+    pending: *?TerminalFontCandidate,
     topology: *const session.SessionState,
     action: input_actions.Action,
 ) !void {
-    var candidate = policy.*;
+    const desired_scale = if (pending.*) |value| value.scale else scale;
+    const desired_policy = if (pending.*) |value| value.policy else policy.*;
+    var candidate = desired_policy;
     pruneFontPolicy(&candidate, topology);
     const ceiling = configured_terminal_base_points * 10.0;
     const requested = switch (action) {
         .font_base_increase => increase: {
-            if (scale == null) return error.AcceptedScaleUnavailable;
+            if (desired_scale == null) return error.AcceptedScaleUnavailable;
             break :increase candidate.base_point_size + 1.0;
         },
         .font_base_decrease => decrease: {
-            if (scale == null) return error.AcceptedScaleUnavailable;
+            if (desired_scale == null) return error.AcceptedScaleUnavailable;
             break :decrease candidate.base_point_size - 1.0;
         },
         .font_base_reset => configured_terminal_base_points,
         else => return error.InvalidFontAction,
     };
     if (!std.math.isFinite(requested)) return error.InvalidFontPolicy;
-    const floor = if (scale) |accepted_scale|
+    const floor = if (desired_scale) |accepted_scale|
         try pointFloor(accepted_scale)
     else
         0.0;
     candidate.base_point_size = std.math.clamp(requested, floor, ceiling);
+    if (std.meta.eql(candidate, desired_policy)) return;
     try publishFontPolicy(
-        terminals,
-        policy,
-        scale,
-        request_high_water,
+        desired_scale,
+        pending,
         candidate,
     );
 }
@@ -2339,35 +2805,15 @@ test "Renderer copies only accepted DPI through terminal State" {
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(presentation_state.SurfaceConfig));
     try std.testing.expectEqual(
         @as(usize, 24),
-        @sizeOf(terminal_handoff.ScaleSnapshot),
+        @sizeOf(terminal_fonts.ScaleSnapshot),
     );
     try std.testing.expectEqual(
         @as(usize, 1_040),
-        @sizeOf(terminal_handoff.FontPolicy),
+        @sizeOf(terminal_fonts.Policy),
     );
-    try std.testing.expectEqual(
-        @as(usize, 1_080),
-        @sizeOf(terminal_handoff.FontRequest),
-    );
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 4,
-            .upload_bytes = 16,
-            .cells = 4,
-            .rows = 4,
-            .glyphs = 4,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 16,
-            .decoration_bytes = 16,
-        },
-    );
-    defer terminals.deinit();
-    const policy = try terminal_handoff.FontPolicy.init(16.0);
-    var retained: ?terminal_handoff.ScaleSnapshot = null;
-    var request_high_water: u64 = 0;
+    const policy = try terminal_fonts.Policy.init(16.0);
+    var retained: ?terminal_fonts.ScaleSnapshot = null;
+    var pending: ?TerminalFontCandidate = null;
     const provisional = presentation_state.SurfaceConfig{
         .generation = 1,
         .logical_width = 100,
@@ -2379,14 +2825,13 @@ test "Renderer copies only accepted DPI through terminal State" {
         .use_viewport = false,
     };
     try retainTerminalScale(
-        &terminals,
         policy,
         &retained,
-        &request_high_water,
+        &pending,
         provisional,
     );
     try std.testing.expect(retained == null);
-    try std.testing.expect(terminals.takeFontRequest() == null);
+    try std.testing.expect(pending == null);
     var accepted = provisional;
     accepted.generation = 2;
     accepted.scale_revision = 7;
@@ -2396,64 +2841,64 @@ test "Renderer copies only accepted DPI through terminal State" {
     accepted.dpi_x = .{ .numerator = 768, .denominator = 5 };
     accepted.dpi_y = .{ .numerator = 768, .denominator = 5 };
     try retainTerminalScale(
-        &terminals,
         policy,
         &retained,
-        &request_high_water,
+        &pending,
         accepted,
     );
-    const request = terminals.takeFontRequest().?;
+    const request = pending.?;
+    pending = null;
     const snapshot = request.scale.?;
     try std.testing.expectEqual(@as(u64, 7), snapshot.revision);
     try std.testing.expectEqual(
-        terminal_handoff.ExactRational{
+        terminal_fonts.ExactRational{
             .numerator = 768,
             .denominator = 5,
         },
         snapshot.dpi_x,
     );
+    var accepted_policy = policy;
+    installAcceptedFontCandidate(&accepted_policy, &retained, request);
     try retainTerminalScale(
-        &terminals,
         policy,
         &retained,
-        &request_high_water,
+        &pending,
         accepted,
     );
-    try std.testing.expect(terminals.takeFontRequest() == null);
+    try std.testing.expect(pending == null);
     var awaiting = accepted;
     awaiting.generation = 3;
     awaiting.dpi_x = null;
     awaiting.dpi_y = null;
     try retainTerminalScale(
-        &terminals,
         policy,
         &retained,
-        &request_high_water,
+        &pending,
         awaiting,
     );
-    const cleared = terminals.takeFontRequest().?;
+    const cleared = pending.?;
+    pending = null;
     try std.testing.expect(cleared.scale == null);
-    try std.testing.expect(retained == null);
+    try std.testing.expectEqual(snapshot, retained.?);
     accepted.scale_revision = 0;
     try std.testing.expectError(
         error.InvalidFrame,
         retainTerminalScale(
-            &terminals,
             policy,
             &retained,
-            &request_high_water,
+            &pending,
             accepted,
         ),
     );
-    try std.testing.expect(retained == null);
-    try std.testing.expect(terminals.takeFontRequest() == null);
+    try std.testing.expectEqual(snapshot, retained.?);
+    try std.testing.expect(pending == null);
 }
 
 test "Renderer pane point mutations clamp independently and reset omits zero" {
-    var policy = try terminal_handoff.FontPolicy.init(10.0);
+    var policy = try terminal_fonts.Policy.init(10.0);
     const first: render_api.chrome.PaneId = @fromBackingInt(1);
     const second: render_api.chrome.PaneId = @fromBackingInt(2);
-    const scale = terminal_handoff.ScaleSnapshot{
+    const scale = terminal_fonts.ScaleSnapshot{
         .revision = 1,
         .dpi_x = .{ .numerator = 72, .denominator = 1 },
         .dpi_y = .{ .numerator = 72, .denominator = 1 },
@@ -2469,87 +2914,51 @@ test "Renderer pane point mutations clamp independently and reset omits zero" {
     try setPolicyOffset(&policy, first, 0.0);
     try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&policy, first));
     try std.testing.expectEqual(@as(u8, 1), policy.count);
-    try std.testing.expectEqual(second, policy.offsets[0].pane);
+    try std.testing.expectEqual(toTerminalPaneId(second), policy.offsets[0].pane);
 }
 
 test "focused pane actions coalesce retained point state through real State" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 4,
-            .upload_bytes = 16,
-            .cells = 4,
-            .rows = 4,
-            .glyphs = 4,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 16,
-            .decoration_bytes = 16,
-        },
-    );
-    defer terminals.deinit();
     var topology = try session.SessionState.init(
         .{ .width = 100, .height = 80 },
     );
     const pane = topology.focusedPaneId();
     const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
-    var policy = try terminal_handoff.FontPolicy.init(10.0);
-    const scale = terminal_handoff.ScaleSnapshot{
+    var policy = try terminal_fonts.Policy.init(10.0);
+    const scale = terminal_fonts.ScaleSnapshot{
         .revision = 1,
         .dpi_x = .{ .numerator = 72, .denominator = 1 },
         .dpi_y = .{ .numerator = 72, .denominator = 1 },
     };
-    var high_water: u64 = 0;
+    var pending: ?TerminalFontCandidate = null;
     try requestPaneFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_increase,
     );
     try requestPaneFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_increase,
     );
-    const newest = terminals.takeFontRequest().?;
-    try std.testing.expectEqual(@as(u64, 2), newest.revision);
+    const newest = pending.?;
+    pending = null;
     try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&newest.policy, render_pane));
     try requestPaneFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_reset,
     );
-    const reset = terminals.takeFontRequest().?;
-    try std.testing.expectEqual(@as(u8, 0), reset.policy.count);
-    try std.testing.expectEqual(@as(u64, 3), reset.revision);
+    try std.testing.expect(pending == null);
+    try std.testing.expectEqual(@as(u8, 0), policy.count);
 }
 
 test "policy pruning retains hidden panes and removes a full stale table" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 4,
-            .upload_bytes = 16,
-            .cells = 4,
-            .rows = 4,
-            .glyphs = 4,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 16,
-            .decoration_bytes = 16,
-        },
-    );
-    defer terminals.deinit();
     var topology = try session.SessionState.init(
         .{ .width = 640, .height = 480 },
     );
@@ -2565,56 +2974,38 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     try topology.switchTab(first_tab);
     try std.testing.expectEqual(first, topology.focusedPaneId());
 
-    var policy = try terminal_handoff.FontPolicy.init(16.0);
+    var policy = try terminal_fonts.Policy.init(16.0);
     policy.count = 64;
-    policy.offsets[0] = .{ .pane = render_closed, .offset_points = 1.0 };
-    policy.offsets[1] = .{ .pane = render_hidden, .offset_points = 2.0 };
+    policy.offsets[0] = .{ .pane = toTerminalPaneId(render_closed), .offset_points = 1.0 };
+    policy.offsets[1] = .{ .pane = toTerminalPaneId(render_hidden), .offset_points = 2.0 };
     for (policy.offsets[2..], 0..) |*offset, index| {
         offset.* = .{
             .pane = @fromBackingInt(@intCast(100 + index)),
             .offset_points = 3.0,
         };
     }
-    const scale = terminal_handoff.ScaleSnapshot{
+    const scale = terminal_fonts.ScaleSnapshot{
         .revision = 1,
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
-    var high_water: u64 = 0;
+    var pending: ?TerminalFontCandidate = null;
     try requestPaneFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_increase,
     );
-    const request = terminals.takeFontRequest().?;
-    try std.testing.expectEqual(@as(u64, 1), request.revision);
+    const request = pending.?;
     try std.testing.expectEqual(@as(u8, 2), request.policy.count);
     try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&request.policy, try session_chrome_adapter.toRenderPaneId(first)));
     try std.testing.expectEqual(@as(f64, 2.0), policyOffset(&request.policy, render_hidden));
     try std.testing.expectEqual(@as(f64, 0.0), policyOffset(&request.policy, render_closed));
-    try std.testing.expectEqual(request.policy, policy);
+    try std.testing.expectEqual(@as(u8, 64), policy.count);
 }
 
 test "window base actions preserve every pane offset through real State" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 4,
-            .upload_bytes = 16,
-            .cells = 4,
-            .rows = 4,
-            .glyphs = 4,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 16,
-            .decoration_bytes = 16,
-        },
-    );
-    defer terminals.deinit();
     var topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
     );
@@ -2622,66 +3013,107 @@ test "window base actions preserve every pane offset through real State" {
     const second = try topology.split(first, .horizontal);
     const render_first = try session_chrome_adapter.toRenderPaneId(first);
     const render_second = try session_chrome_adapter.toRenderPaneId(second);
-    var policy = try terminal_handoff.FontPolicy.init(
+    var policy = try terminal_fonts.Policy.init(
         configured_terminal_base_points,
     );
     try setPolicyOffset(&policy, render_first, -2.0);
     try setPolicyOffset(&policy, render_second, 3.0);
     const retained_offsets = policy.offsets;
-    const scale = terminal_handoff.ScaleSnapshot{
+    const scale = terminal_fonts.ScaleSnapshot{
         .revision = 1,
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
-    var high_water: u64 = 0;
+    var pending: ?TerminalFontCandidate = null;
     try requestBaseFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_base_increase,
     );
-    try std.testing.expectEqual(@as(f64, 7.0), policy.base_point_size);
+    try std.testing.expectEqual(configured_terminal_base_points, policy.base_point_size);
     try std.testing.expectEqual(retained_offsets, policy.offsets);
     try requestBaseFontAction(
-        &terminals,
         &policy,
         null,
-        &high_water,
+        &pending,
         &topology,
         .font_base_reset,
     );
-    const reset_without_dpi = terminals.takeFontRequest().?;
-    try std.testing.expect(reset_without_dpi.scale == null);
+    const reset_without_dpi = pending.?;
+    pending = null;
+    try std.testing.expectEqual(scale, reset_without_dpi.scale.?);
     try std.testing.expectEqual(
         configured_terminal_base_points,
         reset_without_dpi.policy.base_point_size,
     );
     try std.testing.expectEqual(retained_offsets, reset_without_dpi.policy.offsets);
     try requestBaseFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_base_decrease,
     );
     try requestBaseFontAction(
-        &terminals,
         &policy,
         scale,
-        &high_water,
+        &pending,
         &topology,
         .font_base_increase,
     );
-    const newest = terminals.takeFontRequest().?;
+    const newest = pending.?;
     try std.testing.expectEqual(
         configured_terminal_base_points,
         newest.policy.base_point_size,
     );
     try std.testing.expectEqual(retained_offsets, newest.policy.offsets);
-    try std.testing.expectEqual(@as(u64, 4), newest.revision);
+}
+
+test "font actions and configure scale fold in both orders without no-op candidates" {
+    var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
+    const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
+    var accepted_policy = try terminal_fonts.Policy.init(configured_terminal_base_points);
+    const accepted_policy_bytes = accepted_policy;
+    const accepted_scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var retained_scale: ?terminal_fonts.ScaleSnapshot = accepted_scale;
+    const surface = presentation_state.SurfaceConfig{
+        .generation = 2,
+        .logical_width = 320,
+        .logical_height = 240,
+        .physical_width = 320,
+        .physical_height = 240,
+        .scale_revision = 2,
+        .dpi_x = .{ .numerator = 120, .denominator = 1 },
+        .dpi_y = .{ .numerator = 120, .denominator = 1 },
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+
+    var action_then_scale: ?TerminalFontCandidate = null;
+    try requestPaneFontAction(&accepted_policy, retained_scale, &action_then_scale, &topology, .font_increase);
+    try retainTerminalScale(accepted_policy, &retained_scale, &action_then_scale, surface);
+    const first = action_then_scale.?;
+    try std.testing.expectEqual(@as(f64, 1.0), policyOffset(&first.policy, pane));
+    try std.testing.expectEqual(@as(u64, 2), first.scale.?.revision);
+
+    retained_scale = accepted_scale;
+    var scale_then_action: ?TerminalFontCandidate = null;
+    try retainTerminalScale(accepted_policy, &retained_scale, &scale_then_action, surface);
+    try requestPaneFontAction(&accepted_policy, retained_scale, &scale_then_action, &topology, .font_increase);
+    const second = scale_then_action.?;
+    try std.testing.expectEqual(first.policy, second.policy);
+    try std.testing.expectEqual(first.scale, second.scale);
+
+    var no_op: ?TerminalFontCandidate = null;
+    try requestPaneFontAction(&accepted_policy, accepted_scale, &no_op, &topology, .font_reset);
+    try std.testing.expect(no_op == null);
+    try std.testing.expectEqual(accepted_policy_bytes, accepted_policy);
 }
 
 fn buildCanvasPlan(
@@ -2717,7 +3149,9 @@ fn buildCanvasPlanAt(
     surface_geometry: render_api.canvas.Size,
     content_origin: session_chrome_adapter.ContentOrigin,
 ) !CanvasPlanResult {
+    try work.terminal_visual_state.drain(work.terminal_visuals);
     while (work.terminals.takeRetired()) |retired| {
+        try work.terminal_visual_state.retire(retired.pane, retired.source);
         if (work.retired_source_count == work.retired_sources.len)
             return error.InvalidTopology;
         work.retired_sources[work.retired_source_count] = .{
@@ -3452,7 +3886,7 @@ test "accepted cursor geometry is fatal while publication mismatch rejects" {
     work.visible_placements[0].origin.x = 0;
     const publication = terminal_handoff.CursorPublication{
         .pane = @fromBackingInt(1),
-        .source = source,
+        .source = toTerminalSourceId(source),
         .terminal_sequence = 1,
         .cursor_revision = 2,
         .visible_set_revision = 2,
@@ -3584,29 +4018,33 @@ fn waitRenderWakeUntil(boundary: *presentation_state.State, absolute: u64) !bool
 
 const RenderWake = struct {
     terminal: bool,
+    visual: bool,
     deadline: bool,
 };
 
 fn waitRenderWakeBlockingUntil(
     boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
+    terminal_visuals: *terminal_visual_fifo.Fifo,
     absolute: ?u64,
 ) !RenderWake {
     var descriptors = [_]std.posix.pollfd{
         .{ .fd = boundary.renderFd(), .events = std.posix.POLL.IN, .revents = 0 },
         .{ .fd = terminals.rendererFd(), .events = std.posix.POLL.IN, .revents = 0 },
+        .{ .fd = terminal_visuals.readyDescriptor(), .events = std.posix.POLL.IN, .revents = 0 },
     };
     const result = if (absolute) |deadline_value|
         try pollUntil(DeadlinePoll, &descriptors, deadline_value) orelse
-            return .{ .terminal = false, .deadline = true }
+            return .{ .terminal = false, .visual = false, .deadline = true }
     else
         try pollWithoutDeadline(TypedPoll, &descriptors, -1);
-    if (result == 0) return .{ .terminal = false, .deadline = true };
+    if (result == 0) return .{ .terminal = false, .visual = false, .deadline = true };
     const boundary_woke = descriptors[0].revents & std.posix.POLL.IN != 0;
     if (boundary_woke) try boundary.drainRenderWake();
     const terminal_dirty = descriptors[1].revents & std.posix.POLL.IN != 0;
     if (terminal_dirty) try terminals.drainRendererWake();
-    return .{ .terminal = terminal_dirty, .deadline = false };
+    const visual_dirty = descriptors[2].revents & std.posix.POLL.IN != 0;
+    return .{ .terminal = terminal_dirty, .visual = visual_dirty, .deadline = false };
 }
 
 const DeadlinePoll = struct {
@@ -3764,29 +4202,20 @@ test "Renderer poll preserves timeout ownership EINTR deadlines and wake classif
         pollUntil(DeadlineFailure, (&descriptor)[0..1], std.time.ns_per_ms),
     );
 
-    const limits: render_api.terminal.Content.Limits = .{
-        .commands = 32,
-        .upload_bytes = 4096,
-        .cells = 32,
-        .rows = 4,
-        .glyphs = 8,
-        .masks = 2,
-        .resources_per_update = 8,
-        .raster_bytes = 4096,
-        .decoration_bytes = 1024,
-    };
+    var visuals = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer visuals.deinit();
     var boundary_only = try presentation_state.State.init(std.testing.io);
     defer boundary_only.deinit();
     var quiet_terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        limits,
     );
     defer quiet_terminals.deinit();
     boundary_only.requestStop(null);
     const boundary_wake = try waitRenderWakeBlockingUntil(
         &boundary_only,
         &quiet_terminals,
+        &visuals,
         null,
     );
     try std.testing.expect(!boundary_wake.terminal);
@@ -3797,13 +4226,14 @@ test "Renderer poll preserves timeout ownership EINTR deadlines and wake classif
     var terminal_only = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        limits,
     );
     defer terminal_only.deinit();
-    terminal_only.shutdown();
+    var cancelled = try terminal_only.prepareLifecycle(&.{}, &.{}, &.{}, null);
+    cancelled.deinit();
     const terminal_wake = try waitRenderWakeBlockingUntil(
         &quiet_boundary,
         &terminal_only,
+        &visuals,
         null,
     );
     try std.testing.expect(terminal_wake.terminal);
@@ -3911,15 +4341,13 @@ fn drainInput(
                                     .font_decrease,
                                     .font_reset,
                                     => requestPaneFontAction(
-                                        canvas_work.terminals,
                                         &canvas_work.terminal_font_policy,
                                         canvas_work.terminal_scale,
-                                        &canvas_work.font_request_high_water,
+                                        &canvas_work.terminal_font_candidate,
                                         topology,
                                         action,
                                     ) catch |failure| {
                                         const disposition: InputErrorDisposition = switch (failure) {
-                                            error.Stopping,
                                             error.InvalidFontAction,
                                             error.ArithmeticOverflow,
                                             error.InvalidText,
@@ -3943,15 +4371,14 @@ fn drainInput(
                                     .font_base_decrease,
                                     .font_base_reset,
                                     => requestBaseFontAction(
-                                        canvas_work.terminals,
                                         &canvas_work.terminal_font_policy,
                                         canvas_work.terminal_scale,
-                                        &canvas_work.font_request_high_water,
+                                        &canvas_work.terminal_font_candidate,
                                         topology,
                                         action,
                                     ) catch |failure| {
                                         const disposition: InputErrorDisposition = switch (failure) {
-                                            error.Stopping, error.InvalidFontAction => .fatal,
+                                            error.InvalidFontAction => .fatal,
                                             else => .reject,
                                         };
                                         if (disposition == .fatal) return failure;
@@ -4033,6 +4460,7 @@ fn drainInput(
                 next.state,
                 pending,
                 null,
+                null,
             )) {
                 .accepted => {},
                 .rejected => {},
@@ -4050,6 +4478,14 @@ const PendingTopologyPhase = enum {
     admitted,
 };
 
+const PreparedTerminalVisual = struct {
+    pane: terminal_handoff.PaneId,
+    source: terminal_handoff.SourceId,
+    grid: terminal_handoff.DerivedGrid,
+    font: terminal_fonts.Ref,
+    create: bool,
+};
+
 const PendingTopology = struct {
     candidate: session.SessionCandidate,
     composer: *render_api.canvas.Composer,
@@ -4059,6 +4495,14 @@ const PendingTopology = struct {
     new_pane: ?render_api.chrome.PaneId,
     new_source: ?render_api.canvas.SourceId,
     surface: ?presentation_state.SurfaceConfig = null,
+    visuals: *TerminalVisualState,
+    prepared_visuals: [session_chrome_adapter.max_live_panes]PreparedTerminalVisual = undefined,
+    prepared_visual_count: u8 = 0,
+    created_grid: ?render_api.terminal_cells.Grid = null,
+    accepted_font_policy: *terminal_fonts.Policy,
+    accepted_font_scale: *?terminal_fonts.ScaleSnapshot,
+    font_candidate: ?TerminalFontCandidate = null,
+    visuals_committed: bool = false,
     committed: bool = false,
 
     fn observeAdmission(self: *PendingTopology) ?terminal_handoff.AdmissionRejection {
@@ -4075,7 +4519,65 @@ const PendingTopology = struct {
     }
 
     fn commit(self: *PendingTopology) !void {
+        var reserved_creates: usize = 0;
+        var prepared_slots: [session_chrome_adapter.max_live_panes]usize = undefined;
+        var reserved_slots: [session_chrome_adapter.max_live_panes]bool = @splat(false);
+        for (self.prepared_visuals[0..self.prepared_visual_count], 0..) |prepared, prepared_index| {
+            if (prepared.create) {
+                if (self.visuals.find(prepared.pane) != null) return error.DuplicatePane;
+                if (self.created_grid == null) return error.InvalidTopology;
+                var free: ?usize = null;
+                for (self.visuals.panes, 0..) |entry, index| {
+                    if (entry == null and !reserved_slots[index]) {
+                        free = index;
+                        break;
+                    }
+                }
+                const index = free orelse return error.TerminalCapacity;
+                prepared_slots[prepared_index] = index;
+                reserved_slots[index] = true;
+                reserved_creates += 1;
+            } else {
+                const index = self.visuals.find(prepared.pane) orelse return error.UnknownPane;
+                const pane = self.visuals.panes[index].?;
+                if (pane.source != prepared.source) return error.StaleTerminalVisual;
+                if (pane.candidate_revision != null) return error.CandidatePending;
+                prepared_slots[prepared_index] = index;
+            }
+        }
+        var free_slots: usize = 0;
+        for (self.visuals.panes) |entry| if (entry == null) {
+            free_slots += 1;
+        };
+        if (reserved_creates > free_slots) return error.TerminalCapacity;
         try self.lifecycle.commitAdmitted();
+        for (self.prepared_visuals[0..self.prepared_visual_count], 0..) |prepared, prepared_index| {
+            const index = prepared_slots[prepared_index];
+            if (prepared.create) {
+                std.debug.assert(self.visuals.panes[index] == null);
+                self.visuals.panes[index] = .{
+                    .pane = prepared.pane,
+                    .source = prepared.source,
+                    .lifecycle_revision = self.revision,
+                    .font = prepared.font,
+                    .grid = self.created_grid.?,
+                };
+                self.created_grid = null;
+            } else {
+                std.debug.assert(self.visuals.panes[index] != null);
+                std.debug.assert(self.visuals.panes[index].?.pane == prepared.pane);
+                std.debug.assert(self.visuals.panes[index].?.source == prepared.source);
+                std.debug.assert(self.visuals.panes[index].?.candidate_revision == null);
+                self.visuals.panes[index].?.candidate_revision = self.revision;
+                self.visuals.panes[index].?.candidate_font = prepared.font;
+            }
+        }
+        self.visuals_committed = true;
+        if (self.font_candidate) |candidate| installAcceptedFontCandidate(
+            self.accepted_font_policy,
+            self.accepted_font_scale,
+            candidate,
+        );
         self.committed = true;
     }
 
@@ -4089,6 +4591,11 @@ const PendingTopology = struct {
     fn deinit(self: *PendingTopology) void {
         if (self.committed) return;
         self.lifecycle.deinit();
+        if (self.created_grid) |*grid| grid.deinit();
+        if (!self.visuals_committed) for (self.prepared_visuals[0..self.prepared_visual_count]) |*prepared| {
+            self.visuals.fonts.release(prepared.font) catch
+                @panic("prepared terminal font rollback failed");
+        };
         if (self.new_source) |source|
             self.composer.removeSource(source) catch
                 @panic("prepared terminal source rollback failed");
@@ -4101,7 +4608,22 @@ fn prepareTerminalTopology(
     candidate: *const session.SessionState,
     surface: ?presentation_state.SurfaceConfig,
 ) !PendingTopology {
+    return prepareTerminalTopologyWithFontBarrier(work, current, candidate, surface, null);
+}
+
+fn prepareTerminalTopologyWithFontBarrier(
+    work: *CanvasWork,
+    current: *const session.SessionState,
+    candidate: *const session.SessionState,
+    surface: ?presentation_state.SurfaceConfig,
+    font_candidate: ?TerminalFontCandidate,
+) !PendingTopology {
+    const force_font_barrier = font_candidate != null;
     var operations: [128]terminal_handoff.Lifecycle = undefined;
+    var visual_panes: [128]terminal_handoff.PaneId = undefined;
+    var visual_pixels: [128]terminal_handoff.PixelSize = undefined;
+    var visual_creates: [128]bool = undefined;
+    var visual_count: usize = 0;
     var operation_count: usize = 0;
     var inputs: [2]terminal_handoff.TerminalInput = undefined;
     var input_count: usize = 0;
@@ -4121,18 +4643,26 @@ fn prepareTerminalTopology(
                     .pixels = toTerminalPixels(pixels),
                 } };
                 operation_count += 1;
+                visual_panes[visual_count] = toTerminalPaneId(render_pane);
+                visual_pixels[visual_count] = toTerminalPixels(pixels);
+                visual_creates[visual_count] = true;
+                visual_count += 1;
                 new_panes += 1;
                 registration_pane = render_pane;
             } else {
                 const old_rect = current.paneRect(pane) orelse
                     return error.InvalidTopology;
                 const old_pixels = try panePixelsLocal(old_rect);
-                if (!std.meta.eql(old_pixels, pixels)) {
+                if (force_font_barrier or !std.meta.eql(old_pixels, pixels)) {
                     operations[operation_count] = .{ .resize = .{
                         .pane = toTerminalPaneId(render_pane),
                         .pixels = toTerminalPixels(pixels),
                     } };
                     operation_count += 1;
+                    visual_panes[visual_count] = toTerminalPaneId(render_pane);
+                    visual_pixels[visual_count] = toTerminalPixels(pixels);
+                    visual_creates[visual_count] = false;
+                    visual_count += 1;
                 }
             }
         }
@@ -4179,8 +4709,44 @@ fn prepareTerminalTopology(
         .{ .pane = toTerminalPaneId(registration_pane.?), .source = toTerminalSourceId(value) }
     else
         null;
+    var grids: [128]terminal_handoff.DerivedGrid = undefined;
+    var prepared_visuals: [session_chrome_adapter.max_live_panes]PreparedTerminalVisual = undefined;
+    var prepared_count: usize = 0;
+    var created_grid: ?render_api.terminal_cells.Grid = null;
+    errdefer for (prepared_visuals[0..prepared_count]) |*prepared| {
+        work.terminal_fonts.release(prepared.font) catch
+            @panic("prepared terminal font rollback failed");
+    };
+    errdefer if (created_grid) |*grid| grid.deinit();
+    for (0..visual_count) |index| {
+        const derived = try deriveTerminalGrid(
+            work,
+            visual_panes[index],
+            visual_pixels[index],
+            if (font_candidate) |value| value.policy else work.terminal_font_policy,
+            if (font_candidate) |value| value.scale else work.terminal_scale,
+        );
+        grids[index] = derived.grid;
+        const visual_source = if (visual_creates[index])
+            registration.?.source
+        else
+            work.terminals.sourceFor(visual_panes[index]) orelse return error.UnknownPane;
+        prepared_visuals[prepared_count] = .{
+            .pane = visual_panes[index],
+            .source = visual_source,
+            .grid = derived.grid,
+            .font = derived.font,
+            .create = visual_creates[index],
+        };
+        if (visual_creates[index]) {
+            std.debug.assert(created_grid == null);
+            created_grid = try initTerminalVisualGrid(work.terminal_visual_state.allocator, derived.grid);
+        }
+        prepared_count += 1;
+    }
     var lifecycle = try work.terminals.prepareLifecycle(
         operations[0..operation_count],
+        grids[0..visual_count],
         inputs[0..input_count],
         registration,
     );
@@ -4194,13 +4760,45 @@ fn prepareTerminalTopology(
         .new_pane = registration_pane,
         .new_source = source,
         .surface = surface,
+        .visuals = work.terminal_visual_state,
+        .prepared_visuals = prepared_visuals,
+        .prepared_visual_count = @intCast(prepared_count),
+        .created_grid = created_grid,
+        .accepted_font_policy = &work.terminal_font_policy,
+        .accepted_font_scale = &work.terminal_scale,
+        .font_candidate = font_candidate,
     };
+}
+
+const FontTopologyPreparation = union(enum) {
+    retry,
+    rejected,
+    prepared: PendingTopology,
+};
+
+fn prepareFontTopologyReplacement(
+    work: *CanvasWork,
+    topology: *const session.SessionState,
+    candidate: TerminalFontCandidate,
+) !FontTopologyPreparation {
+    return .{ .prepared = prepareTerminalTopologyWithFontBarrier(
+        work,
+        topology,
+        topology,
+        null,
+        candidate,
+    ) catch |failure| switch (failure) {
+        error.OperationLimit, error.OwnerLimit, error.CandidatePending => return .retry,
+        error.InvalidGeometry, error.InvalidFontScale => return .rejected,
+        else => return failure,
+    } };
 }
 
 fn prepareInitialTerminalTopology(
     work: *CanvasWork,
     candidate: *const session.SessionState,
     surface: presentation_state.SurfaceConfig,
+    font_candidate: TerminalFontCandidate,
 ) !PendingTopology {
     const pane = candidate.focusedPaneId();
     const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
@@ -4212,8 +4810,21 @@ fn prepareInitialTerminalTopology(
         .pane = toTerminalPaneId(render_pane),
         .pixels = toTerminalPixels(try panePixelsLocal(rect)),
     } }};
+    const derived = try deriveTerminalGrid(
+        work,
+        toTerminalPaneId(render_pane),
+        operations[0].create.pixels,
+        font_candidate.policy,
+        font_candidate.scale,
+    );
+    errdefer work.terminal_fonts.release(derived.font) catch
+        @panic("initial terminal font rollback failed");
+    var created_grid = try initTerminalVisualGrid(work.terminal_visual_state.allocator, derived.grid);
+    errdefer created_grid.deinit();
+    const grids = [_]terminal_handoff.DerivedGrid{derived.grid};
     var lifecycle = try work.terminals.prepareLifecycle(
         &operations,
+        &grids,
         &.{},
         .{ .pane = toTerminalPaneId(render_pane), .source = toTerminalSourceId(source) },
     );
@@ -4227,6 +4838,23 @@ fn prepareInitialTerminalTopology(
         .new_pane = render_pane,
         .new_source = source,
         .surface = surface,
+        .visuals = work.terminal_visual_state,
+        .prepared_visuals = blk: {
+            var values: [session_chrome_adapter.max_live_panes]PreparedTerminalVisual = undefined;
+            values[0] = .{
+                .pane = derived.grid.pane,
+                .source = toTerminalSourceId(source),
+                .grid = derived.grid,
+                .font = derived.font,
+                .create = true,
+            };
+            break :blk values;
+        },
+        .prepared_visual_count = 1,
+        .created_grid = created_grid,
+        .accepted_font_policy = &work.terminal_font_policy,
+        .accepted_font_scale = &work.terminal_scale,
+        .font_candidate = font_candidate,
     };
 }
 
@@ -4248,6 +4876,46 @@ fn toRenderSourceId(source: terminal_handoff.SourceId) render_api.canvas.SourceI
 
 fn toTerminalPixels(size: render_api.canvas.Size) terminal_handoff.PixelSize {
     return .{ .width = size.width, .height = size.height };
+}
+
+fn deriveTerminalGrid(
+    work: *CanvasWork,
+    pane: terminal_handoff.PaneId,
+    pixels: terminal_handoff.PixelSize,
+    policy: terminal_fonts.Policy,
+    accepted_scale: ?terminal_fonts.ScaleSnapshot,
+) !struct { grid: terminal_handoff.DerivedGrid, font: terminal_fonts.Ref } {
+    const scale = accepted_scale orelse return error.InvalidFontScale;
+    const key = try terminal_fonts.Cache.keyFor(policy, scale, pane);
+    const font = try work.terminal_fonts.acquire(key);
+    errdefer work.terminal_fonts.release(font) catch
+        @panic("terminal font derivation rollback failed");
+    const metrics = try work.terminal_fonts.metrics(font);
+    const rows_u32 = pixels.height / metrics.line_height;
+    const columns_u32 = pixels.width / metrics.advance_width;
+    if (rows_u32 == 0 or columns_u32 == 0 or rows_u32 > 128 or columns_u32 > std.math.maxInt(u16))
+        return error.InvalidGeometry;
+    const cells = std.math.mul(u32, rows_u32, columns_u32) catch return error.InvalidGeometry;
+    if (cells > render_api.terminal_cells.maximum_cells) return error.InvalidGeometry;
+    return .{
+        .grid = .{ .pane = pane, .rows = @intCast(rows_u32), .columns = @intCast(columns_u32) },
+        .font = font,
+    };
+}
+
+fn initTerminalVisualGrid(
+    allocator: std.mem.Allocator,
+    grid: terminal_handoff.DerivedGrid,
+) !render_api.terminal_cells.Grid {
+    return render_api.terminal_cells.Grid.init(allocator, .{
+        .rows = 128,
+        .cols = @intCast(render_api.terminal_cells.maximum_cells / 128),
+        .structured_operations = 128,
+        .sparse_cell_updates = render_api.terminal_cells.maximum_cells,
+    }, grid.rows, grid.columns, render_api.terminal_cells.Cell.blank(
+        .{ .r = 0xd8, .g = 0xde, .b = 0xe9 },
+        .{ .r = 0x2e, .g = 0x34, .b = 0x40 },
+    ));
 }
 
 const TerminalTopologyRequirements = struct {
@@ -4273,6 +4941,7 @@ fn attemptTopologyReplacement(
     prospective: session.SessionState,
     pending: *?PendingTopology,
     surface: ?presentation_state.SurfaceConfig,
+    font_candidate: ?TerminalFontCandidate,
 ) !TopologyReplacementDisposition {
     replacePendingTopology(
         work,
@@ -4280,6 +4949,7 @@ fn attemptTopologyReplacement(
         prospective,
         pending,
         surface,
+        font_candidate,
     ) catch |failure| switch (failure) {
         error.InvalidTopology,
         error.TerminalCapacity,
@@ -4324,6 +4994,7 @@ fn attemptConfigureReplacement(
         candidate_chrome,
         pending,
         surface,
+        work.terminal_font_candidate,
     );
 }
 
@@ -4387,6 +5058,7 @@ fn retryDeferredTopologyInput(
         candidate.state,
         pending,
         null,
+        null,
     );
     if (disposition != .retry) deferred.* = null;
     return disposition;
@@ -4395,6 +5067,7 @@ fn retryDeferredTopologyInput(
 fn preflightTerminalTopology(
     current: *const session.SessionState,
     candidate: *const session.SessionState,
+    force_font_barrier: bool,
 ) !TerminalTopologyRequirements {
     try validateTerminalTopology(candidate);
     var operations: usize = 0;
@@ -4406,7 +5079,7 @@ fn preflightTerminalTopology(
             if (!topologyContainsSemantic(current, pane)) new_panes += 1;
             const rect = candidate.paneRect(pane) orelse
                 return error.InvalidTopology;
-            if (!topologyContainsSemantic(current, pane) or
+            if (force_font_barrier or !topologyContainsSemantic(current, pane) or
                 !std.meta.eql(
                     try panePixelsLocal(rect),
                     try panePixelsLocal(current.paneRect(pane) orelse rect),
@@ -4442,8 +5115,10 @@ fn replacePendingTopology(
     prospective: session.SessionState,
     pending: *?PendingTopology,
     surface: ?presentation_state.SurfaceConfig,
+    font_candidate: ?TerminalFontCandidate,
 ) !void {
-    const requirements = preflightTerminalTopology(accepted, &prospective) catch |failure| {
+    const retained_font_candidate = font_candidate orelse if (pending.*) |old| old.font_candidate else null;
+    const requirements = preflightTerminalTopology(accepted, &prospective, retained_font_candidate != null) catch |failure| {
         return failure;
     };
     work.terminals.preflightLifecycleReplacement(
@@ -4457,11 +5132,12 @@ fn replacePendingTopology(
         old.deinit();
         pending.* = null;
     }
-    pending.* = prepareTerminalTopology(
+    pending.* = prepareTerminalTopologyWithFontBarrier(
         work,
         accepted,
         &prospective,
         retained_surface,
+        retained_font_candidate,
     ) catch |failure| {
         return failure;
     };
@@ -4528,34 +5204,46 @@ test "focused close omits stale focus-out while surviving focus change retains i
 
 fn admitPendingForTest(pending: *PendingTopology) !void {
     const request = pending.lifecycle.boundary.takeLifecycleAdmission().?;
-    var result = terminal_handoff.LifecycleAdmissionResult{
-        .admitted = .{ .count = 0 },
-    };
-    for (request.operations[0..request.operation_count]) |operation| switch (operation) {
-        .create => |value| {
-            result.admitted.grids[result.admitted.count] = .{
-                .pane = value.pane,
-                .rows = 1,
-                .columns = 1,
-            };
-            result.admitted.count += 1;
-        },
-        .resize => |value| {
-            result.admitted.grids[result.admitted.count] = .{
-                .pane = value.pane,
-                .rows = 1,
-                .columns = 1,
-            };
-            result.admitted.count += 1;
-        },
-        .close => {},
-    };
     try pending.lifecycle.boundary.completeLifecycleAdmission(
         request.revision,
-        result,
+        .admitted,
     );
     try std.testing.expect(pending.observeAdmission() == null);
     try std.testing.expectEqual(PendingTopologyPhase.admitted, pending.phase);
+}
+
+fn commitLifecycleForTest(
+    boundary: *terminal_handoff.Boundary,
+    operations: []const terminal_handoff.Lifecycle,
+    grids: []const terminal_handoff.DerivedGrid,
+    registration: ?terminal_handoff.Registration,
+) !terminal_handoff.LifecycleRevision {
+    var prepared = try boundary.prepareLifecycle(operations, grids, &.{}, registration);
+    defer prepared.deinit();
+    const revision = try prepared.publishAdmission();
+    const request = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(revision, request.revision);
+    try boundary.completeLifecycleAdmission(revision, .admitted);
+    try std.testing.expectEqual(terminal_handoff.LifecycleAdmissionResult.admitted, prepared.admissionResult().?);
+    try prepared.commitAdmitted();
+    return revision;
+}
+
+fn registerTerminalForTest(
+    boundary: *terminal_handoff.Boundary,
+    pane: terminal_handoff.PaneId,
+    source: terminal_handoff.SourceId,
+    pixels: terminal_handoff.PixelSize,
+) !terminal_handoff.AdmittedLifecycle {
+    const operations = [_]terminal_handoff.Lifecycle{.{ .create = .{ .pane = pane, .pixels = pixels } }};
+    const grids = [_]terminal_handoff.DerivedGrid{.{ .pane = pane, .rows = 1, .columns = 1 }};
+    _ = try commitLifecycleForTest(
+        boundary,
+        &operations,
+        &grids,
+        .{ .pane = pane, .source = source },
+    );
+    return boundary.takeAdmittedLifecycle().?;
 }
 
 const LifecycleShape = struct {
@@ -4574,17 +5262,6 @@ fn lifecycleShapeForTest(
     var boundary = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer boundary.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -4598,27 +5275,62 @@ fn lifecycleShapeForTest(
         .candidate_pixel_bytes = 1,
     });
     defer composer.deinit();
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const font_policy = try terminal_fonts.Policy.init(6.0);
+    const font_scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var visual_state = TerminalVisualState{
+        .allocator = std.testing.allocator,
+        .fonts = &fonts,
+    };
+    defer visual_state.deinit();
+    var visual_index: usize = 0;
     for (0..current.tabCount()) |tab_index| {
         for (0..current.paneCount(tab_index)) |pane_index| {
             const current_pane = current.paneId(tab_index, pane_index).?;
             const render_current_pane = try session_chrome_adapter.toRenderPaneId(current_pane);
             const source = try composer.registerSource();
-            try boundary.register(render_current_pane, source, try panePixelsLocal(current.paneRect(current_pane).?));
-            try std.testing.expect(boundary.takeLifecycle().? == .create);
-            try boundary.markLive(render_current_pane);
+            const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
+                font_policy,
+                font_scale,
+                toTerminalPaneId(render_current_pane),
+            ));
+            try initializeTerminalPaneForTest(
+                &visual_state,
+                visual_index,
+                @backingInt(render_current_pane),
+                @backingInt(source),
+                1,
+                font,
+            );
+            visual_index += 1;
+            const admitted = try registerTerminalForTest(&boundary, toTerminalPaneId(render_current_pane), toTerminalSourceId(source), toTerminalPixels(try panePixelsLocal(current.paneRect(current_pane).?)));
+            try std.testing.expect(admitted.operation == .create);
+            try boundary.markLive(toTerminalPaneId(render_current_pane));
         }
     }
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &boundary;
+    work.terminal_visual_state = &visual_state;
+    work.terminal_fonts = &fonts;
+    work.terminal_font_policy = font_policy;
+    work.terminal_scale = font_scale;
     var prepared = try prepareTerminalTopology(&work, current, candidate, null);
     defer prepared.deinit();
     const request = boundary.takeLifecycleAdmission().?;
     var result = LifecycleShape{
         .operation_count = request.operation_count,
         .input_count = request.input_count,
-        .registration_pane = if (request.registration) |registration| registration.pane else null,
-        .registration_source = if (request.registration) |registration| registration.source else null,
+        .registration_pane = if (request.registration) |registration| toRenderPaneId(registration.pane) else null,
+        .registration_source = if (request.registration) |registration| toRenderSourceId(registration.source) else null,
     };
     @memcpy(result.operations[0..result.operation_count], request.operations[0..result.operation_count]);
     @memcpy(result.inputs[0..result.input_count], request.inputs[0..result.input_count]);
@@ -4645,14 +5357,14 @@ test "session transitions derive exact Host lifecycle receipts" {
     try std.testing.expectEqual(@as(u64, 2), @backingInt(create_shape.registration_source.?));
     switch (create_shape.operations[0]) {
         .create => |operation| {
-            try std.testing.expectEqual(created_pane, operation.pane);
-            try std.testing.expectEqual(render_api.canvas.Size{ .width = 321, .height = 217 }, operation.pixels);
+            try std.testing.expectEqual(toTerminalPaneId(created_pane), operation.pane);
+            try std.testing.expectEqual(terminal_handoff.PixelSize{ .width = 321, .height = 217 }, operation.pixels);
         },
         else => return error.TestUnexpectedResult,
     }
     switch (create_shape.inputs[0]) {
         .focus => |input| {
-            try std.testing.expectEqual(base_pane, input.pane);
+            try std.testing.expectEqual(toTerminalPaneId(base_pane), input.pane);
             switch (input.event) {
                 .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .out), event),
                 else => return error.TestUnexpectedResult,
@@ -4662,7 +5374,7 @@ test "session transitions derive exact Host lifecycle receipts" {
     }
     switch (create_shape.inputs[1]) {
         .focus => |input| {
-            try std.testing.expectEqual(created_pane, input.pane);
+            try std.testing.expectEqual(toTerminalPaneId(created_pane), input.pane);
             switch (input.event) {
                 .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
                 else => return error.TestUnexpectedResult,
@@ -4680,8 +5392,8 @@ test "session transitions derive exact Host lifecycle receipts" {
     try std.testing.expect(resize_shape.registration_source == null);
     switch (resize_shape.operations[0]) {
         .resize => |operation| {
-            try std.testing.expectEqual(base_pane, operation.pane);
-            try std.testing.expectEqual(render_api.canvas.Size{ .width = 322, .height = 218 }, operation.pixels);
+            try std.testing.expectEqual(toTerminalPaneId(base_pane), operation.pane);
+            try std.testing.expectEqual(terminal_handoff.PixelSize{ .width = 322, .height = 218 }, operation.pixels);
         },
         else => return error.TestUnexpectedResult,
     }
@@ -4694,12 +5406,12 @@ test "session transitions derive exact Host lifecycle receipts" {
     try std.testing.expect(close_shape.registration_pane == null);
     try std.testing.expect(close_shape.registration_source == null);
     switch (close_shape.operations[0]) {
-        .close => |pane| try std.testing.expectEqual(created_pane, pane),
+        .close => |pane| try std.testing.expectEqual(toTerminalPaneId(created_pane), pane),
         else => return error.TestUnexpectedResult,
     }
     switch (close_shape.inputs[0]) {
         .focus => |input| {
-            try std.testing.expectEqual(base_pane, input.pane);
+            try std.testing.expectEqual(toTerminalPaneId(base_pane), input.pane);
             switch (input.event) {
                 .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
                 else => return error.TestUnexpectedResult,
@@ -4719,21 +5431,21 @@ test "session transitions derive exact Host lifecycle receipts" {
     try std.testing.expectEqual(@as(u64, 2), @backingInt(focus_shape.registration_source.?));
     switch (focus_shape.operations[0]) {
         .resize => |operation| {
-            try std.testing.expectEqual(base_pane, operation.pane);
-            try std.testing.expectEqual(render_api.canvas.Size{ .width = 160, .height = 217 }, operation.pixels);
+            try std.testing.expectEqual(toTerminalPaneId(base_pane), operation.pane);
+            try std.testing.expectEqual(terminal_handoff.PixelSize{ .width = 160, .height = 217 }, operation.pixels);
         },
         else => return error.TestUnexpectedResult,
     }
     switch (focus_shape.operations[1]) {
         .create => |operation| {
-            try std.testing.expectEqual(render_focused_pane, operation.pane);
-            try std.testing.expectEqual(render_api.canvas.Size{ .width = 161, .height = 217 }, operation.pixels);
+            try std.testing.expectEqual(toTerminalPaneId(render_focused_pane), operation.pane);
+            try std.testing.expectEqual(terminal_handoff.PixelSize{ .width = 161, .height = 217 }, operation.pixels);
         },
         else => return error.TestUnexpectedResult,
     }
     switch (focus_shape.inputs[0]) {
         .focus => |input| {
-            try std.testing.expectEqual(base_pane, input.pane);
+            try std.testing.expectEqual(toTerminalPaneId(base_pane), input.pane);
             switch (input.event) {
                 .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .out), event),
                 else => return error.TestUnexpectedResult,
@@ -4743,7 +5455,7 @@ test "session transitions derive exact Host lifecycle receipts" {
     }
     switch (focus_shape.inputs[1]) {
         .focus => |input| {
-            try std.testing.expectEqual(render_focused_pane, input.pane);
+            try std.testing.expectEqual(toTerminalPaneId(render_focused_pane), input.pane);
             switch (input.event) {
                 .focus => |event| try std.testing.expectEqual(@as(@TypeOf(event), .in), event),
                 else => return error.TestUnexpectedResult,
@@ -4757,17 +5469,6 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     var boundary = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer boundary.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -4788,13 +5489,45 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     const initial_rect = current.paneRect(pane).?;
     const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     const source = try composer.registerSource();
-    try boundary.register(render_pane, source, try panePixelsLocal(initial_rect));
-    const created = boundary.takeLifecycle().?;
+    const created_admitted = try registerTerminalForTest(&boundary, toTerminalPaneId(render_pane), toTerminalSourceId(source), toTerminalPixels(try panePixelsLocal(initial_rect)));
+    const created = created_admitted.operation;
     try std.testing.expectEqual(
-        try panePixelsLocal(initial_rect),
+        toTerminalPixels(try panePixelsLocal(initial_rect)),
         created.create.pixels,
     );
-    try boundary.markLive(render_pane);
+    try boundary.markLive(toTerminalPaneId(render_pane));
+
+    var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const font_policy = try terminal_fonts.Policy.init(6.0);
+    const font_scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var visual_state = TerminalVisualState{
+        .allocator = std.testing.allocator,
+        .fonts = &fonts,
+    };
+    defer visual_state.deinit();
+    const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
+        font_policy,
+        font_scale,
+        toTerminalPaneId(render_pane),
+    ));
+    try initializeTerminalPaneForTest(
+        &visual_state,
+        0,
+        @backingInt(render_pane),
+        @backingInt(source),
+        1,
+        font,
+    );
 
     var candidate = current;
     try candidate.resizeSurface(.{ .width = 321, .height = 241 });
@@ -4802,19 +5535,171 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &boundary;
-    var prepared = try prepareTerminalTopology(
+    work.terminal_visuals = &fifo;
+    work.terminal_visual_state = &visual_state;
+    work.terminal_fonts = &fonts;
+    work.terminal_font_policy = font_policy;
+    work.terminal_scale = font_scale;
+    const candidate_policy = try terminal_fonts.Policy.init(7.0);
+    const candidate_scale = terminal_fonts.ScaleSnapshot{
+        .revision = 2,
+        .dpi_x = .{ .numerator = 120, .denominator = 1 },
+        .dpi_y = .{ .numerator = 120, .denominator = 1 },
+    };
+    var prepared = try prepareTerminalTopologyWithFontBarrier(
         &work,
         &current,
         &candidate,
         null,
+        .{ .policy = candidate_policy, .scale = candidate_scale },
     );
     defer prepared.deinit();
-    try admitPendingForTest(&prepared);
+    const admission = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(@as(u8, 1), admission.operation_count);
+    try std.testing.expectEqual(@as(u8, 1), admission.grid_count);
+    try boundary.completeLifecycleAdmission(admission.revision, .admitted);
+    try std.testing.expect(prepared.observeAdmission() == null);
+    try std.testing.expectEqual(font_policy, work.terminal_font_policy);
+    try std.testing.expectEqual(font_scale, work.terminal_scale.?);
     try prepared.commit();
-    const resized = boundary.takeLifecycle().?;
+    try std.testing.expectEqual(candidate_policy, work.terminal_font_policy);
+    try std.testing.expectEqual(candidate_scale, work.terminal_scale.?);
+    const resized = boundary.takeAdmittedLifecycle().?;
     try std.testing.expectEqual(
-        try panePixelsLocal(resized_rect),
-        resized.resize.pixels,
+        toTerminalPixels(try panePixelsLocal(resized_rect)),
+        resized.operation.resize.pixels,
+    );
+}
+
+test "initial configure creates exact grid and commits accepted font ownership atomically" {
+    var boundary = try terminal_handoff.Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 1,
+        .retained_commands = 1,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 1,
+        .candidate_commands = 1,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    var fixture: TerminalVisualTestFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var runtime = terminal_runtime.testing.init(
+        std.testing.allocator,
+        &fixture.fifo,
+        "sleep 30",
+    );
+    defer terminal_runtime.testing.deinit(&runtime);
+    var work: CanvasWork = undefined;
+    work.composer = &composer;
+    work.terminals = &boundary;
+    fixture.bind(&work);
+    work.terminal_scale = null;
+    const accepted_policy = work.terminal_font_policy;
+    const policy = try terminal_fonts.Policy.init(7.0);
+    const scale = terminal_fonts.ScaleSnapshot{
+        .revision = 2,
+        .dpi_x = .{ .numerator = 120, .denominator = 1 },
+        .dpi_y = .{ .numerator = 120, .denominator = 1 },
+    };
+    const surface = presentation_state.SurfaceConfig{
+        .generation = 1,
+        .logical_width = 320,
+        .logical_height = 240,
+        .physical_width = 320,
+        .physical_height = 240,
+        .scale_revision = scale.revision,
+        .dpi_x = .{ .numerator = 120, .denominator = 1 },
+        .dpi_y = .{ .numerator = 120, .denominator = 1 },
+        .buffer_scale = 1,
+        .use_viewport = false,
+    };
+    const topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
+    var pending = try prepareInitialTerminalTopology(
+        &work,
+        &topology,
+        surface,
+        .{ .policy = policy, .scale = scale },
+    );
+    defer pending.deinit();
+    const admission = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(@as(u8, 1), admission.operation_count);
+    try std.testing.expectEqual(@as(u8, 1), admission.grid_count);
+    try std.testing.expect(admission.operations[0] == .create);
+    try std.testing.expectEqual(admission.operations[0].create.pane, admission.grids[0].pane);
+    try std.testing.expect(admission.grids[0].rows != 0 and admission.grids[0].columns != 0);
+    try std.testing.expectEqual(accepted_policy, work.terminal_font_policy);
+    try std.testing.expect(work.terminal_scale == null);
+    try boundary.completeLifecycleAdmission(
+        admission.revision,
+        terminal_runtime.testing.validate(&runtime, admission),
+    );
+    try std.testing.expect(pending.observeAdmission() == null);
+    try pending.commit();
+    try std.testing.expectEqual(policy, work.terminal_font_policy);
+    try std.testing.expectEqual(scale, work.terminal_scale.?);
+    const admitted = boundary.takeAdmittedLifecycle().?;
+    try std.testing.expectEqual(admission.grids[0], admitted.grid.?);
+    try std.testing.expect(try terminal_runtime.testing.apply(
+        &runtime,
+        &boundary,
+        admitted,
+        "/bin/sh",
+    ));
+    try std.testing.expect(try terminal_runtime.testing.flush(&runtime));
+    try fixture.visuals.drain(&fixture.fifo);
+    try std.testing.expectEqual(admission.revision, fixture.visuals.panes[0].?.lifecycle_revision);
+    const created_grid = admitted.grid.?;
+    const created_last = try fixture.visuals.panes[0].?.grid.current(created_grid.rows - 1, created_grid.columns - 1);
+    try std.testing.expectEqual(@as(u21, 0), created_last.codepoint);
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        fixture.visuals.panes[0].?.grid.current(created_grid.rows, 0),
+    );
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        fixture.visuals.panes[0].?.grid.current(0, created_grid.columns),
+    );
+
+    var resized = topology;
+    try resized.resizeSurface(.{ .width = 400, .height = 300 });
+    var resize_pending = try prepareTerminalTopology(&work, &topology, &resized, null);
+    defer resize_pending.deinit();
+    const resize_admission = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(@as(u8, 1), resize_admission.operation_count);
+    try std.testing.expectEqual(@as(u8, 1), resize_admission.grid_count);
+    try std.testing.expect(resize_admission.operations[0] == .resize);
+    try boundary.completeLifecycleAdmission(
+        resize_admission.revision,
+        terminal_runtime.testing.validate(&runtime, resize_admission),
+    );
+    try std.testing.expect(resize_pending.observeAdmission() == null);
+    try resize_pending.commit();
+    const resize_admitted = boundary.takeAdmittedLifecycle().?;
+    try std.testing.expect(try terminal_runtime.testing.apply(
+        &runtime,
+        &boundary,
+        resize_admitted,
+        "/bin/sh",
+    ));
+    try std.testing.expect(try terminal_runtime.testing.flush(&runtime));
+    try fixture.visuals.drain(&fixture.fifo);
+    const resized_grid = resize_admitted.grid.?;
+    try std.testing.expectEqual(resize_admission.grids[0], resized_grid);
+    try std.testing.expectEqual(resize_admission.revision, fixture.visuals.panes[0].?.lifecycle_revision);
+    const resized_last = try fixture.visuals.panes[0].?.grid.current(resized_grid.rows - 1, resized_grid.columns - 1);
+    try std.testing.expectEqual(@as(u21, 0), resized_last.codepoint);
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        fixture.visuals.panes[0].?.grid.current(resized_grid.rows, 0),
+    );
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        fixture.visuals.panes[0].?.grid.current(0, resized_grid.columns),
     );
 }
 
@@ -4822,17 +5707,6 @@ test "second pending pane creation preserves the first admitted candidate" {
     var boundary = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer boundary.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -4852,19 +5726,29 @@ test "second pending pane creation preserves the first admitted candidate" {
     const first = accepted.focusedPaneId();
     const render_first = try session_chrome_adapter.toRenderPaneId(first);
     const first_source = try composer.registerSource();
-    try boundary.register(
-        render_first,
-        first_source,
-        try panePixelsLocal(accepted.paneRect(first).?),
+    _ = try registerTerminalForTest(
+        &boundary,
+        toTerminalPaneId(render_first),
+        toTerminalSourceId(first_source),
+        toTerminalPixels(try panePixelsLocal(accepted.paneRect(first).?)),
     );
-    try std.testing.expect(boundary.takeLifecycle().? == .create);
-    try boundary.markLive(render_first);
+    try boundary.markLive(toTerminalPaneId(render_first));
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    try terminal_fixture.addPane(
+        0,
+        toTerminalPaneId(render_first),
+        toTerminalSourceId(first_source),
+        @fromBackingInt(1),
+    );
     var split = accepted;
     const split_pane = try split.split(first, .horizontal);
     try std.testing.expect(@backingInt(split_pane) != 0);
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &boundary;
+    terminal_fixture.bind(&work);
     var pending: ?PendingTopology = try prepareTerminalTopology(
         &work,
         &accepted,
@@ -4877,7 +5761,7 @@ test "second pending pane creation preserves the first admitted candidate" {
     const pane_count = pending.?.candidate.state.paneCount(0);
     try std.testing.expectError(error.NotAdmitted, pending.?.commit());
     try std.testing.expectEqual(@as(usize, 1), accepted.paneCount(0));
-    try std.testing.expect(boundary.takeLifecycle() == null);
+    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
     var second_split = pending.?.candidate.state;
     const second_split_pane = try second_split.split(
         second_split.focusedPaneId(),
@@ -4892,29 +5776,19 @@ test "second pending pane creation preserves the first admitted candidate" {
             second_split,
             &pending,
             null,
+            null,
         ),
     );
     try std.testing.expectEqual(revision, pending.?.revision);
     try std.testing.expectEqual(source, pending.?.new_source);
     try std.testing.expectEqual(pane_count, pending.?.candidate.state.paneCount(0));
-    try std.testing.expect(boundary.takeLifecycle() == null);
+    try std.testing.expect(boundary.takeAdmittedLifecycle() == null);
 }
 
 test "pending focus resize close and reorder folds issue fresh identities" {
     var boundary = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer boundary.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -4934,16 +5808,26 @@ test "pending focus resize close and reorder folds issue fresh identities" {
     const first = accepted.focusedPaneId();
     const render_first = try session_chrome_adapter.toRenderPaneId(first);
     const accepted_source = try composer.registerSource();
-    try boundary.register(
-        render_first,
-        accepted_source,
-        try panePixelsLocal(accepted.paneRect(first).?),
+    _ = try registerTerminalForTest(
+        &boundary,
+        toTerminalPaneId(render_first),
+        toTerminalSourceId(accepted_source),
+        toTerminalPixels(try panePixelsLocal(accepted.paneRect(first).?)),
     );
-    try std.testing.expect(boundary.takeLifecycle().? == .create);
-    try boundary.markLive(render_first);
+    try boundary.markLive(toTerminalPaneId(render_first));
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    try terminal_fixture.addPane(
+        0,
+        toTerminalPaneId(render_first),
+        toTerminalSourceId(accepted_source),
+        @fromBackingInt(1),
+    );
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &boundary;
+    terminal_fixture.bind(&work);
 
     var split = accepted;
     const second = try split.split(first, .horizontal);
@@ -4965,6 +5849,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         focused,
         &pending,
         null,
+        null,
     );
     try std.testing.expect(
         @backingInt(pending.?.revision) > @backingInt(first_revision),
@@ -4984,6 +5869,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         resized,
         &pending,
         null,
+        null,
     );
     try std.testing.expect(
         @backingInt(pending.?.revision) > @backingInt(focus_revision),
@@ -4997,6 +5883,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         &accepted,
         closed,
         &pending,
+        null,
         null,
     );
     try std.testing.expect(
@@ -5020,6 +5907,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
         reordered,
         &pending,
         null,
+        null,
     );
     try std.testing.expect(
         @backingInt(pending.?.revision) > @backingInt(tab_revision),
@@ -5028,7 +5916,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
 }
 
 test "PendingTopology has one fixed allocation-free value" {
-    try std.testing.expectEqual(@as(usize, 20_552), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 25_632), @sizeOf(PendingTopology));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(PendingTopology));
     try std.testing.expectEqual(
         @as(usize, 544),
@@ -5049,24 +5937,12 @@ test "drainInput forwards capture overflow press and release explicitly" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer terminals.deinit();
     var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
     const pane = try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId());
-    try terminals.register(pane, @fromBackingInt(@intCast(1)), .{ .width = 320, .height = 240 });
-    try std.testing.expect(terminals.takeLifecycle() != null);
-    try terminals.markLive(pane);
+    _ = try registerTerminalForTest(&terminals, toTerminalPaneId(pane), @fromBackingInt(@intCast(1)), .{ .width = 320, .height = 240 });
+    try terminals.markLive(toTerminalPaneId(pane));
 
     var actions = input_actions.State{};
     var captured: wayland.input.Key = std.mem.zeroes(wayland.input.Key);
@@ -5224,17 +6100,6 @@ test "drainInput propagates fatal session candidate invariants" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer terminals.deinit();
     var topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
@@ -5269,17 +6134,6 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32_768,
-            .upload_bytes = 4 * 1024 * 1024,
-            .cells = 32_768,
-            .rows = 128,
-            .glyphs = 512,
-            .masks = 128,
-            .resources_per_update = terminal_retained_resource_limit,
-            .raster_bytes = 4 * 1024 * 1024,
-            .decoration_bytes = 256 * 1024,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(
@@ -5312,7 +6166,7 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     });
     try std.testing.expectEqual(@as(usize, 0), provisional.uploads.len);
     try std.testing.expectEqual(@as(usize, 0), provisional.commands.len);
-    try std.testing.expect(terminals.takeLifecycle() == null);
+    try std.testing.expect(terminals.takeAdmittedLifecycle() == null);
 
     const topology = try session.SessionState.init(
         .{ .width = 320, .height = 240 },
@@ -5320,6 +6174,10 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    terminal_fixture.bind(&work);
     var pending = try prepareInitialTerminalTopology(
         &work,
         &topology,
@@ -5335,13 +6193,14 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
             .buffer_scale = 1,
             .use_viewport = false,
         },
+        .{ .scale = terminal_fixture.scale, .policy = terminal_fixture.policy },
     );
     const source = pending.new_source.?;
     const request = terminals.takeLifecycleAdmission().?;
     try std.testing.expectEqual(pending.revision, request.revision);
-    try std.testing.expect(terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())) == null);
+    try std.testing.expect(terminals.sourceFor(toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()))) == null);
     pending.deinit();
-    try std.testing.expect(terminals.takeLifecycle() == null);
+    try std.testing.expect(terminals.takeAdmittedLifecycle() == null);
     try std.testing.expectError(error.RetiredSource, composer.removeSource(source));
 }
 
@@ -5480,17 +6339,6 @@ test "undersized pending topology rejection removes provisional source" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 128,
-            .upload_bytes = 64 * 1024,
-            .cells = 128,
-            .rows = 8,
-            .glyphs = 32,
-            .masks = 8,
-            .resources_per_update = 32,
-            .raster_bytes = 64 * 1024,
-            .decoration_bytes = 4096,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -5515,13 +6363,13 @@ test "undersized pending topology rejection removes provisional source" {
         const pane = accepted.paneId(0, index).?;
         const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
         const source = try composer.registerSource();
-        try terminals.register(
-            render_pane,
-            source,
-            try panePixelsLocal(accepted.paneRect(pane).?),
+        _ = try registerTerminalForTest(
+            &terminals,
+            toTerminalPaneId(render_pane),
+            toTerminalSourceId(source),
+            toTerminalPixels(try panePixelsLocal(accepted.paneRect(pane).?)),
         );
-        try std.testing.expect(terminals.takeLifecycle() != null);
-        try terminals.markLive(render_pane);
+        try terminals.markLive(toTerminalPaneId(render_pane));
     }
     var candidate_state = (try input_actions.candidate(
         &accepted,
@@ -5533,55 +6381,43 @@ test "undersized pending topology rejection removes provisional source" {
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    for (0..accepted.paneCount(0)) |index| {
+        const semantic_pane = accepted.paneId(0, index).?;
+        const render_pane = try session_chrome_adapter.toRenderPaneId(semantic_pane);
+        try terminal_fixture.addPane(
+            index,
+            toTerminalPaneId(render_pane),
+            terminals.sourceFor(toTerminalPaneId(render_pane)).?,
+            @fromBackingInt(1),
+        );
+    }
+    terminal_fixture.bind(&work);
     var pending: ?PendingTopology = null;
-    try replacePendingTopology(
+    try std.testing.expectError(error.InvalidGeometry, replacePendingTopology(
         &work,
         &accepted,
         candidate_state,
         &pending,
         null,
-    );
-    defer if (pending) |*value| value.deinit();
-    const provisional_source = pending.?.new_source.?;
-    const revision = pending.?.revision;
-    const request = pending.?.lifecycle.boundary.takeLifecycleAdmission().?;
-    try std.testing.expectEqual(revision, request.revision);
-    try terminals.completeLifecycleAdmission(
-        revision,
-        .{ .rejected = .invalid_extent },
-    );
-    try std.testing.expectEqual(
-        .invalid_extent,
-        pending.?.observeAdmission().?,
-    );
-    pending.?.deinit();
-    pending = null;
+        null,
+    ));
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
+    try std.testing.expect(pending == null);
     try std.testing.expect(
-        terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(new_pane)) == null,
+        terminals.sourceFor(toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(new_pane))) == null,
     );
-    try std.testing.expect(terminals.takeLifecycle() == null);
-    try std.testing.expectError(
-        error.RetiredSource,
-        composer.removeSource(provisional_source),
-    );
+    try std.testing.expect(terminals.takeAdmittedLifecycle() == null);
+    const rollback_probe = try composer.registerSource();
+    try composer.removeSource(rollback_probe);
 }
 
 test "cancelled topology replacements reuse Composer storage and retain accepted state" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 4,
-            .glyphs = 8,
-            .masks = 2,
-            .resources_per_update = 8,
-            .raster_bytes = 4096,
-            .decoration_bytes = 1024,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -5599,17 +6435,27 @@ test "cancelled topology replacements reuse Composer storage and retain accepted
     const accepted_bytes = accepted;
     const pane = try session_chrome_adapter.toRenderPaneId(accepted.focusedPaneId());
     const accepted_source = try composer.registerSource();
-    try terminals.register(
-        pane,
-        accepted_source,
-        try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?),
+    _ = try registerTerminalForTest(
+        &terminals,
+        toTerminalPaneId(pane),
+        toTerminalSourceId(accepted_source),
+        toTerminalPixels(try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?)),
     );
-    try std.testing.expect(terminals.takeLifecycle() != null);
-    try terminals.markLive(pane);
+    try terminals.markLive(toTerminalPaneId(pane));
 
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    try terminal_fixture.addPane(
+        0,
+        toTerminalPaneId(pane),
+        toTerminalSourceId(accepted_source),
+        @fromBackingInt(1),
+    );
+    terminal_fixture.bind(&work);
     var pending: ?PendingTopology = null;
     for (0..130) |_| {
         const candidate = (try input_actions.candidate(
@@ -5622,12 +6468,13 @@ test "cancelled topology replacements reuse Composer storage and retain accepted
             candidate,
             &pending,
             null,
+            null,
         );
         try std.testing.expect(pending != null);
         pending.?.deinit();
         pending = null;
         try std.testing.expectEqualDeep(accepted_bytes, accepted);
-        try std.testing.expect(terminals.takeLifecycle() == null);
+        try std.testing.expect(terminals.takeAdmittedLifecycle() == null);
     }
     const final_candidate = (try input_actions.candidate(
         &accepted,
@@ -5639,6 +6486,7 @@ test "cancelled topology replacements reuse Composer storage and retain accepted
         final_candidate,
         &pending,
         null,
+        null,
     );
     defer if (pending) |*value| value.deinit();
     try std.testing.expect(pending != null);
@@ -5649,17 +6497,6 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 4,
-            .glyphs = 8,
-            .masks = 2,
-            .resources_per_update = 8,
-            .raster_bytes = 4096,
-            .decoration_bytes = 1024,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -5677,21 +6514,35 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     const accepted_bytes = accepted;
     const pane = try session_chrome_adapter.toRenderPaneId(accepted.focusedPaneId());
     const accepted_source = try composer.registerSource();
-    try terminals.register(
-        pane,
-        accepted_source,
-        try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?),
+    _ = try registerTerminalForTest(
+        &terminals,
+        toTerminalPaneId(pane),
+        toTerminalSourceId(accepted_source),
+        toTerminalPixels(try panePixelsLocal(accepted.paneRect(accepted.focusedPaneId()).?)),
     );
-    try terminals.markLive(pane);
-    for (0..127) |index|
-        try terminals.resize(pane, .{
-            .width = @intCast(80 + index),
-            .height = 24,
-        });
+    try terminals.markLive(toTerminalPaneId(pane));
+    for (0..128) |index| {
+        const resize = terminal_handoff.Lifecycle{ .resize = .{
+            .pane = toTerminalPaneId(pane),
+            .pixels = .{ .width = @intCast(80 + index), .height = 24 },
+        } };
+        const grid = terminal_handoff.DerivedGrid{ .pane = toTerminalPaneId(pane), .rows = 1, .columns = 1 };
+        _ = try commitLifecycleForTest(&terminals, &.{resize}, &.{grid}, null);
+    }
 
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    try terminal_fixture.addPane(
+        0,
+        toTerminalPaneId(pane),
+        toTerminalSourceId(accepted_source),
+        @fromBackingInt(1),
+    );
+    terminal_fixture.bind(&work);
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
@@ -5709,25 +6560,22 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
         false,
     );
     var retained_configure: ?presentation_state.SurfaceConfig = window_boundary.takeConfigure();
-    work.terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0);
+    work.terminal_font_policy = terminal_fixture.policy;
     work.terminal_scale = null;
-    work.font_request_high_water = 0;
     try retainTerminalScale(
-        work.terminals,
         work.terminal_font_policy,
         &work.terminal_scale,
-        &work.font_request_high_water,
+        &work.terminal_font_candidate,
         retained_configure.?,
     );
-    try std.testing.expect(work.terminals.takeFontRequest() != null);
+    try std.testing.expect(work.terminal_font_candidate != null);
     try retainTerminalScale(
-        work.terminals,
         work.terminal_font_policy,
         &work.terminal_scale,
-        &work.font_request_high_water,
+        &work.terminal_font_candidate,
         retained_configure.?,
     );
-    try std.testing.expect(work.terminals.takeFontRequest() == null);
+    try std.testing.expect(work.terminal_font_candidate != null);
     try std.testing.expectEqual(
         TopologyReplacementDisposition.retry,
         try attemptConfigureReplacement(
@@ -5737,6 +6585,9 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
             retained_configure.?,
         ),
     );
+    try std.testing.expect(work.terminal_font_candidate != null);
+    try std.testing.expectEqual(terminal_fixture.policy, work.terminal_font_policy);
+    try std.testing.expect(work.terminal_scale == null);
     try std.testing.expect(retained_configure != null);
     var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
     try std.testing.expectEqual(
@@ -5755,7 +6606,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     try std.testing.expect(pending == null);
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
     try terminals.drainRendererWake();
-    while (terminals.takeLifecycle() != null) {}
+    while (terminals.takeAdmittedLifecycle() != null) {}
     var renderer_wake = std.posix.pollfd{
         .fd = terminals.rendererFd(),
         .events = std.posix.POLL.IN,
@@ -5775,6 +6626,8 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
             retained_configure.?,
         ),
     );
+    try admitPendingForTest(&pending.?);
+    try pending.?.commit();
     clearRetainedConfigure(&retained_configure);
     pending.?.deinit();
     pending = null;
@@ -5833,6 +6686,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
             &accepted,
             rejected_state,
             &pending,
+            null,
             null,
         ),
     );
@@ -5900,17 +6754,6 @@ test "owner retirement wakes and progresses one retained topology input" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 4,
-            .glyphs = 8,
-            .masks = 2,
-            .resources_per_update = 8,
-            .raster_bytes = 4096,
-            .decoration_bytes = 1024,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -5929,17 +6772,15 @@ test "owner retirement wakes and progresses one retained topology input" {
     for (&panes, &sources, 0..) |*pane, *source, index| {
         pane.* = @fromBackingInt(@intCast(if (index == 0) 1 else 1_000 + index));
         source.* = try composer.registerSource();
-        try terminals.register(
-            pane.*,
-            source.*,
+        _ = try registerTerminalForTest(
+            &terminals,
+            toTerminalPaneId(pane.*),
+            toTerminalSourceId(source.*),
             .{ .width = 80, .height = 24 },
         );
-        const member = try terminals.activateTransfer(pane.*);
-        try std.testing.expectEqual(pane.*, member.pane_id);
-        try std.testing.expectEqual(source.*, member.source_id);
-        try terminals.markLive(pane.*);
+        try terminals.markLive(toTerminalPaneId(pane.*));
     }
-    while (terminals.takeLifecycle() != null) {}
+    while (terminals.takeAdmittedLifecycle() != null) {}
     try terminals.drainRendererWake();
 
     const accepted = try session.SessionState.init(.{ .width = 80, .height = 24 });
@@ -5947,6 +6788,16 @@ test "owner retirement wakes and progresses one retained topology input" {
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    var terminal_fixture: TerminalVisualTestFixture = undefined;
+    try terminal_fixture.init();
+    defer terminal_fixture.deinit();
+    try terminal_fixture.addPane(
+        0,
+        toTerminalPaneId(panes[0]),
+        toTerminalSourceId(sources[0]),
+        @fromBackingInt(1),
+    );
+    terminal_fixture.bind(&work);
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
@@ -5983,17 +6834,22 @@ test "owner retirement wakes and progresses one retained topology input" {
     try std.testing.expect(retained_configure != null);
 
     const retiring_pane = panes[panes.len - 1];
-    try terminals.close(retiring_pane);
-    const close = terminals.takeLifecycle().?;
-    try std.testing.expectEqual(retiring_pane, close.close);
+    _ = try commitLifecycleForTest(
+        &terminals,
+        &.{.{ .close = toTerminalPaneId(retiring_pane) }},
+        &.{},
+        null,
+    );
+    const close = terminals.takeAdmittedLifecycle().?;
+    try std.testing.expectEqual(toTerminalPaneId(retiring_pane), close.operation.close);
     try terminals.drainRendererWake();
-    try std.testing.expect(try terminals.retireTransfer(retiring_pane));
-    try terminals.markRetired(retiring_pane);
+    try std.testing.expect(try terminals.retireTransfer(toTerminalPaneId(retiring_pane)));
+    try terminals.markRetired(toTerminalPaneId(retiring_pane));
     const retired = terminals.takeRetired().?;
-    try std.testing.expectEqual(retiring_pane, retired.pane);
-    try std.testing.expectEqual(sources[sources.len - 1], retired.source);
+    try std.testing.expectEqual(toTerminalPaneId(retiring_pane), retired.pane);
+    try std.testing.expectEqual(toTerminalSourceId(sources[sources.len - 1]), retired.source);
     try terminals.drainRendererWake();
-    try composer.removeSource(retired.source);
+    try composer.removeSource(toRenderSourceId(retired.source));
     try terminals.finishRetired(retired.pane);
     var renderer_wake = std.posix.pollfd{
         .fd = terminals.rendererFd(),
@@ -6184,434 +7040,6 @@ test "borrowed Chrome retry preserves one consumptive sparse update" {
         expected_pixels[0..upload_pixels.len],
         frame.pixels[frame.uploads[0].pixel_offset .. frame.uploads[0].pixel_offset + frame.uploads[0].pixel_count],
     );
-}
-
-test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 8,
-            .glyphs = 16,
-            .masks = 8,
-            .resources_per_update = 16,
-            .raster_bytes = 4096,
-            .decoration_bytes = 4096,
-        },
-    );
-    defer terminals.deinit();
-    var content = try render_api.chrome.Content.init(
-        std.testing.allocator,
-        .{
-            .primitives = 32,
-            .text_bytes = 128,
-            .label_scalars = 64,
-            .shaped_glyphs = 64,
-            .glyphs = 32,
-            .commands = 128,
-            .resources_per_update = 32,
-            .upload_bytes = 32 * 1024,
-            .raster_bytes = 4096,
-        },
-        .{
-            .primary = "../howl-render/testdata/primary.ttf",
-            .size = .{ .pixels = 16 },
-        },
-    );
-    defer content.deinit();
-    var composer = try render_api.canvas.Composer.init(
-        std.testing.allocator,
-        .{
-            .sources = 5,
-            .retained_resources = 32,
-            .retained_commands = 256,
-            .retained_pixel_bytes = 64 * 1024,
-            .composition_sources = 3,
-            .candidate_resources = 32,
-            .candidate_commands = 128,
-            .candidate_pixel_bytes = 32 * 1024,
-        },
-    );
-    defer composer.deinit();
-    const blocker = try composer.registerSource();
-    const chrome_source = try composer.registerSource();
-    const terminal_source = try composer.registerSource();
-    var blocker_refs: [32]render_api.canvas.ResourceRef = undefined;
-    var blocker_uploads: [32]render_api.canvas.ResourceUpload = undefined;
-    var blocker_pixels: [32]u8 = undefined;
-    for (&blocker_uploads, 0..) |*upload, index| {
-        blocker_pixels[index] = @intCast(index);
-        blocker_refs[index] = .{
-            .resource = try render_api.canvas.ResourceId.local(index + 1),
-            .generation = @fromBackingInt(1),
-        };
-        upload.* = .{
-            .resource = blocker_refs[index],
-            .format = .alpha8,
-            .pixels = .{
-                .bytes = blocker_pixels[index..][0..1],
-                .width = 1,
-                .height = 1,
-                .stride = 1,
-            },
-        };
-    }
-    try composer.apply(blocker, .{
-        .revision = @fromBackingInt(1),
-        .uploads = &blocker_uploads,
-        .removals = &.{},
-        .commands = &.{},
-    });
-    var frame_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
-    var frame_removals: [32]render_api.canvas.FrameResourceRef = undefined;
-    var frame_commands: [256]render_api.canvas.Command = undefined;
-    var frame_pixels: [64 * 1024]u8 = undefined;
-    var surface_uploads: [32]vk_surface.Upload = undefined;
-    var surface_removals: [32]vk_surface.Removal = undefined;
-    var surface_commands: [256]vk_surface.FrameCommand = undefined;
-    var surface_residencies: [32]vk_surface.Residency = undefined;
-    var canvas_residencies: [32]render_api.canvas.Residency = undefined;
-    var builder = try vk_surface.FrameBuilder.init(std.testing.allocator);
-    defer builder.deinit();
-    var residency = try vk_surface.ResidencyStore.init(
-        std.testing.allocator,
-        .{ .resources = 32, .pixel_bytes = 64 * 1024 },
-    );
-    defer residency.deinit();
-    var replay = try ReplayState.init(std.testing.allocator);
-    defer replay.deinit();
-    const default_config = config.Config.defaults();
-    var work = CanvasWork{
-        .composer = &composer,
-        .content = &content,
-        .source = chrome_source,
-        .surface = .{ .width = 320, .height = 240 },
-        .content_origin = .{ .y = session_chrome_adapter.default_tab_bar_height },
-        .frame_uploads = &frame_uploads,
-        .frame_removals = &frame_removals,
-        .frame_commands = &frame_commands,
-        .frame_pixels = &frame_pixels,
-        .surface_uploads = &surface_uploads,
-        .surface_removals = &surface_removals,
-        .surface_commands = &surface_commands,
-        .surface_residencies = &surface_residencies,
-        .canvas_residencies = &canvas_residencies,
-        .builder = &builder,
-        .residency = &residency,
-        .terminals = &terminals,
-        .cursor_policy = default_config.presentationPolicy(),
-        .terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0),
-        .replay = &replay,
-    };
-    try std.testing.expectEqual(default_config.presentationPolicy(), work.cursor_policy);
-    const accepted_topology = try session.SessionState.init(
-        .{ .width = 320, .height = 216 },
-    );
-    const pane = accepted_topology.focusedPaneId();
-    const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
-    try terminals.register(
-        render_pane,
-        terminal_source,
-        .{ .width = 320, .height = 216 },
-    );
-    const lifecycle = terminals.takeLifecycle() orelse
-        return error.TestUnexpectedResult;
-    try std.testing.expectEqual(render_pane, lifecycle.create.pane);
-    const member = try terminals.activateTransfer(render_pane);
-    const terminal_command = render_api.canvas.Input{ .solid = .{
-        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
-    } };
-    const token = try terminals.reserveUpdate(member);
-    try terminals.publishUpdate(token, .{
-        .revision = @fromBackingInt(1),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{terminal_command},
-    });
-    var topology_a = accepted_topology;
-    const cancelled_pane = try topology_a.split(pane, .horizontal);
-    const render_cancelled_pane = try session_chrome_adapter.toRenderPaneId(cancelled_pane);
-    var cancelled_pending = try prepareTerminalTopology(
-        &work,
-        &accepted_topology,
-        &topology_a,
-        null,
-    );
-    try admitPendingForTest(&cancelled_pending);
-    const cancelled_source = cancelled_pending.new_source orelse
-        return error.TestUnexpectedResult;
-    const revision_a = cancelled_pending.revision;
-    var primitives: [256]render_api.chrome.Primitive = undefined;
-    var text: [
-        (session_chrome_adapter.max_tabs + session_chrome_adapter.max_panes_per_tab) *
-            session_chrome_adapter.max_label_bytes
-    ]u8 = undefined;
-    switch (try buildCanvasPlan(
-        &work,
-        &topology_a,
-        revision_a,
-        .{ .pane = render_cancelled_pane, .source = cancelled_source },
-        chrome_appearance,
-        &primitives,
-        &text,
-    )) {
-        .blocked => {},
-        .retry => return error.TestUnexpectedResult,
-        .accepted => return error.TestUnexpectedResult,
-    }
-    try std.testing.expectEqual(
-        revision_a,
-        work.chrome_retry.?.topology_revision.?,
-    );
-    try std.testing.expect(terminals.visibleSetRequest() == null);
-
-    try composer.removeSource(blocker);
-    cancelled_pending.deinit();
-    try std.testing.expect(terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(cancelled_pane)) == null);
-    var topology_b = accepted_topology;
-    const replacement_pane = try topology_b.split(pane, .horizontal);
-    try std.testing.expectEqual(cancelled_pane, replacement_pane);
-    try topology_b.renameTab(topology_b.activeTabId(), "newer");
-    var replacement_pending = try prepareTerminalTopology(
-        &work,
-        &accepted_topology,
-        &topology_b,
-        null,
-    );
-    defer replacement_pending.deinit();
-    try admitPendingForTest(&replacement_pending);
-    const replacement_source = replacement_pending.new_source orelse
-        return error.TestUnexpectedResult;
-    const render_replacement_pane = try session_chrome_adapter.toRenderPaneId(replacement_pane);
-    try std.testing.expect(
-        @backingInt(replacement_source) > @backingInt(cancelled_source),
-    );
-    const revision_b = replacement_pending.revision;
-    var retained_topology = accepted_topology;
-    const superseded_result = try buildCanvasPlan(
-        &work,
-        &topology_b,
-        revision_b,
-        .{ .pane = render_replacement_pane, .source = replacement_source },
-        chrome_appearance,
-        &primitives,
-        &text,
-    );
-    switch (superseded_result) {
-        .blocked => return error.TestUnexpectedResult,
-        .retry => {},
-        .accepted => return error.TestUnexpectedResult,
-    }
-    var local_retry_pending = false;
-    var local_retry_count: u8 = 0;
-    switch (try scheduleRedraw(.retry, false)) {
-        .retry => {
-            local_retry_pending = true;
-            local_retry_count += 1;
-        },
-        .wait, .published => return error.TestUnexpectedResult,
-    }
-    try std.testing.expectError(
-        error.InvalidFrame,
-        scheduleRedraw(.retry, true),
-    );
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        retained_topology.paneCount(0),
-    );
-    try std.testing.expect(work.chrome_retry == null);
-    try std.testing.expectEqual(@as(u8, 0), work.visible_count);
-    const local_retry_turn = local_retry_pending;
-    local_retry_pending = false;
-    var before_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
-    var before_removals: [32]render_api.canvas.FrameResourceRef = undefined;
-    var before_commands: [256]render_api.canvas.Command = undefined;
-    var before_pixels: [64 * 1024]u8 = undefined;
-    const before_frame = try composer.frame(&.{}, .{
-        .uploads = &before_uploads,
-        .removals = &before_removals,
-        .commands = &before_commands,
-        .pixels = &before_pixels,
-    });
-    const before_visible = terminals.acceptedVisibleSet();
-    const next_visible_revision = work.next_visible_revision;
-    work.next_visible_revision = std.math.maxInt(u64);
-    try std.testing.expectError(
-        error.RevisionOverflow,
-        prepareBootstrapPublication(
-            &work,
-            &topology_b,
-            replacement_pending.bootstrap(),
-        ),
-    );
-    try std.testing.expectEqual(
-        PendingTopologyPhase.admitted,
-        replacement_pending.phase,
-    );
-    try std.testing.expect(terminals.takeLifecycle() == null);
-    try std.testing.expect(terminals.visibleSetRequest() == null);
-    try std.testing.expectEqual(
-        @as(usize, 1),
-        retained_topology.paneCount(0),
-    );
-    var after_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
-    var after_removals: [32]render_api.canvas.FrameResourceRef = undefined;
-    var after_commands: [256]render_api.canvas.Command = undefined;
-    var after_pixels: [64 * 1024]u8 = undefined;
-    const after_frame = try composer.frame(&.{}, .{
-        .uploads = &after_uploads,
-        .removals = &after_removals,
-        .commands = &after_commands,
-        .pixels = &after_pixels,
-    });
-    try std.testing.expectEqual(before_frame.revision, after_frame.revision);
-    try std.testing.expectEqualDeep(before_frame.uploads, after_frame.uploads);
-    try std.testing.expectEqualDeep(before_frame.removals, after_frame.removals);
-    try std.testing.expectEqualDeep(before_frame.commands, after_frame.commands);
-    try std.testing.expectEqualSlices(u8, before_frame.pixels, after_frame.pixels);
-    try std.testing.expectEqualDeep(
-        before_visible,
-        terminals.acceptedVisibleSet(),
-    );
-    work.next_visible_revision = next_visible_revision;
-    var replacement_publication = try prepareBootstrapPublication(
-        &work,
-        &topology_b,
-        replacement_pending.bootstrap(),
-    );
-    defer replacement_publication.deinit();
-    const exact = try buildCanvasPlan(
-        &work,
-        &topology_b,
-        revision_b,
-        .{ .pane = render_replacement_pane, .source = replacement_source },
-        chrome_appearance,
-        &primitives,
-        &text,
-    );
-    switch (exact) {
-        .blocked => return error.TestUnexpectedResult,
-        .retry => return error.TestUnexpectedResult,
-        .accepted => {
-            residency.discard();
-            try std.testing.expectEqual(
-                RedrawSchedule.published,
-                try scheduleRedraw(.published, local_retry_turn),
-            );
-        },
-    }
-    try std.testing.expectEqual(@as(u8, 1), local_retry_count);
-    try std.testing.expect(!local_retry_pending);
-    try replacement_pending.commit();
-    retained_topology = topology_b;
-    replacement_publication.commit(&work);
-    try std.testing.expectEqual(@as(u8, 2), work.visible_count);
-    try std.testing.expectEqualStrings(
-        "newer",
-        (try session_chrome_adapter.project(
-            &retained_topology,
-            chrome_appearance,
-            .{ .width = 320, .height = 240 },
-            .{ .y = 24 },
-            &.{},
-            &primitives,
-            &text,
-        )).text[0.."newer".len],
-    );
-    var observed_replacement_create = false;
-    while (terminals.takeLifecycle()) |replacement_lifecycle| {
-        switch (replacement_lifecycle) {
-            .create => |create| {
-                try std.testing.expectEqual(render_replacement_pane, create.pane);
-                observed_replacement_create = true;
-            },
-            .resize, .close => {},
-        }
-    }
-    try std.testing.expect(observed_replacement_create);
-    const replacement_member = try terminals.activateTransfer(
-        render_replacement_pane,
-    );
-    const replacement_request = terminals.visibleSetRequest() orelse
-        return error.TestUnexpectedResult;
-    const replacement_group = try terminals.reserveVisibleGroup(
-        replacement_request.revision,
-        &.{replacement_member},
-    );
-    try terminals.publishUpdate(replacement_group.tokens[0], .{
-        .revision = @fromBackingInt(1),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{terminal_command},
-    });
-    try terminals.completeVisibleSet(
-        replacement_request.revision,
-        &.{
-            .{
-                .member = .{ .pane = try session_chrome_adapter.toRenderPaneId(pane), .source = terminal_source },
-                .revision = @fromBackingInt(1),
-            },
-            .{
-                .member = .{
-                    .pane = try session_chrome_adapter.toRenderPaneId(replacement_pane),
-                    .source = replacement_source,
-                },
-                .revision = @fromBackingInt(1),
-            },
-        },
-        true,
-    );
-    switch (try buildCanvasPlan(
-        &work,
-        &retained_topology,
-        revision_b,
-        null,
-        chrome_appearance,
-        &primitives,
-        &text,
-    )) {
-        .blocked => return error.TestUnexpectedResult,
-        .retry => return error.TestUnexpectedResult,
-        .accepted => residency.discard(),
-    }
-    const replacement_reuse = try terminals.reserveUpdate(
-        replacement_member,
-    );
-    try terminals.cancelUpdate(replacement_reuse);
-
-    const later = try terminals.reserveUpdate(member);
-    try terminals.publishUpdate(later, .{
-        .revision = @fromBackingInt(2),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{terminal_command},
-    });
-    for (0..presentation_state.slot_count) |_| {
-        const replacement_plan = try buildAcceptedCanvasPlan(&work);
-        try std.testing.expect(replacement_plan.commands.len != 0);
-        residency.discard();
-    }
-    try std.testing.expectError(error.Busy, terminals.reserveUpdate(member));
-    switch (try buildCanvasPlan(
-        &work,
-        &retained_topology,
-        revision_b,
-        null,
-        chrome_appearance,
-        &primitives,
-        &text,
-    )) {
-        .blocked => return error.TestUnexpectedResult,
-        .retry => return error.TestUnexpectedResult,
-        .accepted => residency.discard(),
-    }
-    const reused = try terminals.reserveUpdate(member);
-    try terminals.cancelUpdate(reused);
 }
 
 test "compact resource adaptation preserves local and shared namespaces mechanically" {
@@ -7034,30 +7462,18 @@ test "cursor replay supersession transfers the newest inbox target" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 4,
-            .upload_bytes = 16,
-            .cells = 4,
-            .rows = 4,
-            .glyphs = 4,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 16,
-            .decoration_bytes = 16,
-        },
     );
     defer terminals.deinit();
 
     const pane: render_api.chrome.PaneId = @fromBackingInt(701);
     const source: render_api.canvas.SourceId = @fromBackingInt(702);
-    try terminals.register(pane, source, .{ .width = 8, .height = 8 });
-    try std.testing.expect(terminals.takeLifecycle() != null);
-    try terminals.markLive(pane);
+    _ = try registerTerminalForTest(&terminals, toTerminalPaneId(pane), toTerminalSourceId(source), .{ .width = 8, .height = 8 });
+    try terminals.markLive(toTerminalPaneId(pane));
     terminals.visible_revision = 1;
     terminals.visible_initialized = true;
-    terminals.visible_members[0] = .{ .pane = pane, .source = source };
+    terminals.visible_members[0] = .{ .pane = toTerminalPaneId(pane), .source = toTerminalSourceId(source) };
     terminals.visible_member_count = 1;
-    const identity = (try terminals.cursorPublicationIdentity(pane, source)).?;
+    const identity = (try terminals.cursorPublicationIdentity(toTerminalPaneId(pane), toTerminalSourceId(source))).?;
     const target = terminal_handoff.CursorTarget{
         .row = 2,
         .col = 3,
@@ -7067,8 +7483,8 @@ test "cursor replay supersession transfers the newest inbox target" {
         .text_color = .{},
     };
     const first = terminal_handoff.CursorPublication{
-        .pane = pane,
-        .source = source,
+        .pane = toTerminalPaneId(pane),
+        .source = toTerminalSourceId(source),
         .terminal_sequence = 1,
         .cursor_revision = 1,
         .visible_set_revision = identity.visible_set_revision,
@@ -7076,7 +7492,7 @@ test "cursor replay supersession transfers the newest inbox target" {
         .target = target,
     };
     try terminals.publishCursor(first);
-    var pending: ?terminal_handoff.CursorPublication = terminals.takeCursor(pane).?;
+    var pending: ?terminal_handoff.CursorPublication = terminals.takeCursor(toTerminalPaneId(pane)).?;
     var second = first;
     second.terminal_sequence = 2;
     second.cursor_revision = 2;
@@ -7089,7 +7505,7 @@ test "cursor replay supersession transfers the newest inbox target" {
         &pending,
     ));
     try std.testing.expectEqual(second, pending.?);
-    try std.testing.expect(terminals.takeCursor(pane) == null);
+    try std.testing.expect(terminals.takeCursor(toTerminalPaneId(pane)) == null);
 }
 
 fn validateTerminalTopology(candidate: *const session.SessionState) !void {
@@ -7163,8 +7579,8 @@ test "focused cursor handoff drops A and accepts B without a terminal wake" {
         .text_color = .{ .r = 4, .g = 5, .b = 6 },
     };
     const publication_a = terminal_handoff.CursorPublication{
-        .pane = pane_a,
-        .source = source_a,
+        .pane = toTerminalPaneId(pane_a),
+        .source = toTerminalSourceId(source_a),
         .terminal_sequence = 7,
         .cursor_revision = 7,
         .visible_set_revision = 1,
@@ -7172,8 +7588,8 @@ test "focused cursor handoff drops A and accepts B without a terminal wake" {
         .target = target,
     };
     const publication_b = terminal_handoff.CursorPublication{
-        .pane = pane_b,
-        .source = source_b,
+        .pane = toTerminalPaneId(pane_b),
+        .source = toTerminalSourceId(source_b),
         .terminal_sequence = 8,
         .cursor_revision = 8,
         .visible_set_revision = 1,
@@ -7181,12 +7597,12 @@ test "focused cursor handoff drops A and accepts B without a terminal wake" {
         .target = target,
     };
     var pending: ?terminal_handoff.CursorPublication = publication_a;
-    retainFocusedCursor(source_a, &pending, null);
+    retainFocusedCursor(toTerminalSourceId(source_a), &pending, null);
     try std.testing.expectEqual(publication_a, pending.?);
     // B's inbox publication is retained while A is focused. Once the Host
     // focus transition is accepted, the same latest value is consumed without
     // requiring another terminal descriptor wake.
-    retainFocusedCursor(source_b, &pending, publication_b);
+    retainFocusedCursor(toTerminalSourceId(source_b), &pending, publication_b);
     try std.testing.expectEqual(publication_b, pending.?);
 }
 
@@ -8422,10 +8838,10 @@ test "terminal completion closes a non-final pane and completes only the final p
     const first = accepted.focusedPaneId();
     const second = try accepted.split(first, .vertical);
     const completion = terminal_handoff.TerminalCompletion{
-        .pane = try session_chrome_adapter.toRenderPaneId(second),
+        .pane = toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(second)),
         .source = @fromBackingInt(17),
         .lifecycle_revision = @fromBackingInt(3),
-        .producer_revision = @fromBackingInt(5),
+        .render_sequence = 5,
         .termination = .{ .code = 0 },
     };
     const before = accepted;
@@ -8440,17 +8856,6 @@ test "terminal completion closes a non-final pane and completes only the final p
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
-        .{
-            .commands = 32,
-            .upload_bytes = 4096,
-            .cells = 32,
-            .rows = 4,
-            .glyphs = 8,
-            .masks = 2,
-            .resources_per_update = 8,
-            .raster_bytes = 4096,
-            .decoration_bytes = 1024,
-        },
     );
     defer terminals.deinit();
     var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
@@ -8464,20 +8869,53 @@ test "terminal completion closes a non-final pane and completes only the final p
         .candidate_pixel_bytes = 1,
     });
     defer composer.deinit();
-    for ([_]session.PaneId{ first, second }) |semantic_pane| {
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const font_policy = try terminal_fonts.Policy.init(6.0);
+    const font_scale = terminal_fonts.ScaleSnapshot{
+        .revision = 1,
+        .dpi_x = .{ .numerator = 96, .denominator = 1 },
+        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+    };
+    var visual_state = TerminalVisualState{
+        .allocator = std.testing.allocator,
+        .fonts = &fonts,
+    };
+    defer visual_state.deinit();
+    for ([_]session.PaneId{ first, second }, 0..) |semantic_pane, index| {
         const render_pane = try session_chrome_adapter.toRenderPaneId(semantic_pane);
         const source = try composer.registerSource();
-        try terminals.register(
-            render_pane,
-            source,
-            try panePixelsLocal(accepted.paneRect(semantic_pane).?),
+        const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
+            font_policy,
+            font_scale,
+            toTerminalPaneId(render_pane),
+        ));
+        try initializeTerminalPaneForTest(
+            &visual_state,
+            index,
+            @backingInt(render_pane),
+            @backingInt(source),
+            1,
+            font,
         );
-        try std.testing.expect(terminals.takeLifecycle() != null);
-        try terminals.markLive(render_pane);
+        _ = try registerTerminalForTest(
+            &terminals,
+            toTerminalPaneId(render_pane),
+            toTerminalSourceId(source),
+            toTerminalPixels(try panePixelsLocal(accepted.paneRect(semantic_pane).?)),
+        );
+        try terminals.markLive(toTerminalPaneId(render_pane));
     }
     var work: CanvasWork = undefined;
     work.composer = &composer;
     work.terminals = &terminals;
+    work.terminal_visual_state = &visual_state;
+    work.terminal_fonts = &fonts;
+    work.terminal_font_policy = font_policy;
+    work.terminal_scale = font_scale;
     var pending: ?PendingTopology = null;
     defer if (pending) |*value| value.deinit();
     try std.testing.expectEqual(
@@ -8488,12 +8926,13 @@ test "terminal completion closes a non-final pane and completes only the final p
             transition.candidate.state,
             &pending,
             null,
+            null,
         ),
     );
     const admission = terminals.takeLifecycleAdmission().?;
     try std.testing.expectEqual(@as(u8, 2), admission.operation_count);
     var close_count: usize = 0;
-    var resize_pane: render_api.chrome.PaneId = undefined;
+    var resize_pane: terminal_handoff.PaneId = undefined;
     for (admission.operations[0..admission.operation_count]) |operation| switch (operation) {
         .close => |pane| {
             try std.testing.expectEqual(completion.pane, pane);
@@ -8505,14 +8944,7 @@ test "terminal completion closes a non-final pane and completes only the final p
     try std.testing.expectEqual(@as(usize, 1), close_count);
     try terminals.completeLifecycleAdmission(
         admission.revision,
-        .{ .admitted = .{
-            .grids = blk: {
-                var grids: [128]terminal_handoff.DerivedGrid = undefined;
-                grids[0] = .{ .pane = resize_pane, .rows = 1, .columns = 1 };
-                break :blk grids;
-            },
-            .count = 1,
-        } },
+        .admitted,
     );
     try std.testing.expect(pending.?.observeAdmission() == null);
     try std.testing.expectEqual(PendingTopologyPhase.admitted, pending.?.phase);
@@ -8540,10 +8972,10 @@ test "terminal completion closes a non-final pane and completes only the final p
     try std.testing.expect((try terminalCompletionTransition(
         &transition.candidate.state,
         .{
-            .pane = try session_chrome_adapter.toRenderPaneId(first),
+            .pane = toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(first)),
             .source = @fromBackingInt(18),
             .lifecycle_revision = @fromBackingInt(4),
-            .producer_revision = @fromBackingInt(6),
+            .render_sequence = 6,
             .termination = .{ .signal = 15 },
         },
         true,

@@ -1,6 +1,42 @@
-howl-host/src/terminal.zig|discard|_ = owner.refreshCursorTarget();
-howl-host/src/terminal.zig|discard|_ = owner.refreshCursorTarget();
-howl-host/src/terminal.zig|discard|_ = self.refreshCursorTarget();
+howl-host/src/renderer.zig|discard|_ = try commitLifecycleForTest(
+howl-host/src/renderer.zig|discard|_ = try commitLifecycleForTest(
+howl-host/src/renderer.zig|discard|_ = try commitLifecycleForTest(&terminals, &.{resize}, &.{grid}, null);
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &old_operation });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &poison_operation });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &barrier });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(99), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &poison_operation });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = pane, .source = new_source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = pane, .source = old_source, .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &poison_operations });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &operations });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+howl-host/src/renderer.zig|discard|_ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(&terminals, toTerminalPaneId(pane), @fromBackingInt(@intCast(1)), .{ .width = 320, .height = 240 });
+howl-host/src/renderer.zig|discard|_ = try registerTerminalForTest(&terminals, toTerminalPaneId(pane), toTerminalSourceId(source), .{ .width = 8, .height = 8 });
+howl-host/src/terminal.zig|discard|_ = boundary.takeLifecycleAdmission().?;
+howl-host/src/terminal.zig|discard|_ = std.posix.poll(descriptors[0..descriptor_count], -1) catch return error.PollFailed;
+howl-host/src/terminal.zig|discard|_ = try fifo.enqueue(.{
+howl-host/src/terminal.zig|discard|_ = try fifo.enqueue(.{
+howl-host/src/terminal.zig|discard|_ = try fifo.enqueue(.{
+howl-host/src/terminal.zig|discard|_ = try owner.machine.feedRenderByte('x', 1);
+howl-host/src/terminal.zig|discard|_ = try registerForTest(&boundary, pane, source);
+howl-host/src/terminal.zig|discard|_ = try runtime.drainInputs(boundary);
+howl-host/src/terminal.zig|discard|_ = try runtime.flushJournals();
+howl-host/src/terminal.zig|discard|_ = try runtime.flushJournals();
+howl-host/src/terminal.zig|discard|_ = try self.machine.feedRenderByte(byte, try monotonicNanoseconds());
+howl-host/src/terminal.zig|discard|for (0..visual_fifo.queue_capacity) |index| _ = try fifo.enqueue(.{
+howl-host/src/terminal.zig|discard|if (runtime.pending_lifecycle != null) _ = try runtime.applyLifecycle(boundary, shell);
+howl-host/src/terminal_handoff.zig|discard|_ = b.takeLifecycleAdmission().?;
+howl-host/src/terminal_handoff.zig|discard|_ = boundary.takeLifecycleAdmission().?;
+howl-host/src/terminal_handoff.zig|discard|_ = try registerForTest(&b, pane, source);
+howl-host/src/terminal_handoff.zig|discard|_ = try registerForTest(&b, pane, source);
+howl-host/src/terminal_handoff.zig|discard|_ = try registerForTest(&b, pane, source);
 howl-host/src/window.zig|anyopaque|fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn formatTable(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, fd: i32, size: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn fractionalPreferredScale(data: ?*anyopaque, object: ?*c.wp_fractional_scale_v1, scale_120: u32) callconv(.c) void {

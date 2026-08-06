@@ -81,8 +81,8 @@ implemented_shape:
       - compositor release is independent from Window pacing
       - a taken frame cannot be superseded
   terminal_runtime:
-    ownership_status: unchanged
-    capacity_status: projection and Content cell bounds widened explicitly from 32,768 to 65,536
+    ownership_status: superseded by active terminal_render_foundation sprint
+    capacity_status: retained terminal cell bound is 65,536
 
 window_blocking_loop:
   - condition: newer render state and Wayland pacing ready
@@ -131,7 +131,7 @@ preserved_contracts:
   - Render remains the sole Vulkan, DRM, Composer, Canvas-composition, and rendered-image-slot owner.
   - Three rendered-image slots and existing GPU memory bounds remain unchanged.
   - Input, configure, feedback, ring offer, retirement, release, stop, and first-failure ownership remain unchanged.
-  - Terminal handoff, VT, Canvas, and Composer behavior remain unchanged; terminal projection and Content cell capacity are explicitly 65,536 for full-surface six-point geometry.
+  - Presentation-state acceptance did not itself change Terminal handoff, VT, Canvas, or Composer behavior; later terminal_render_foundation work owns the terminal redesign.
   - Ready-frame revisions remain nonzero, monotonic, generation-qualified, and stale-safe.
   - No timeout, synthetic delay, or post-startup allocation was introduced.
   - Six-point terminal geometry consumes the full configured surface within the explicit 65,536-cell bound.
@@ -161,7 +161,7 @@ validation_gate:
     - changing the accepted cast or measurement receipts
 
 exclusions:
-  - no terminal-thread or terminal-handoff redesign
+  - no terminal-thread or terminal-handoff redesign within the closed presentation_state sprint
   - no VT, projection, Content, Canvas, or Composer behavior change
   - no GPU batching, damage-region, atlas, glyph-cache, or scroll optimization
   - no timer-based polling or synthetic render delay

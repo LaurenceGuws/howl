@@ -80,35 +80,6 @@ pub const VisibleSetRequest = struct {
     count: u8,
 };
 
-/// Copies one nonzero pane-local point offset.
-pub const PaneFontOffset = struct { pane: PaneId, offset_points: f64 };
-
-/// Copies one terminal base point size and sorted pane offsets.
-pub const FontPolicy = struct {
-    base_point_size: f64,
-    count: u8,
-    offsets: [owner_limit]PaneFontOffset,
-
-    /// Constructs an empty-offset policy after validating its base size.
-    pub fn init(base_point_size: f64) error{InvalidFontPolicy}!FontPolicy {
-        if (!validPoint(base_point_size) or base_point_size <= 0) return error.InvalidFontPolicy;
-        return .{ .base_point_size = base_point_size, .count = 0, .offsets = std.mem.zeroes([owner_limit]PaneFontOffset) };
-    }
-};
-
-/// Stores one normalized exact rational.
-pub const ExactRational = struct { numerator: u32, denominator: u32 };
-
-/// Copies one accepted output scale and DPI state.
-pub const ScaleSnapshot = struct {
-    revision: u64,
-    dpi_x: ExactRational,
-    dpi_y: ExactRational,
-};
-
-/// Copies the newest bounded font request.
-pub const FontRequest = struct { revision: u64, scale: ?ScaleSnapshot, policy: FontPolicy };
-
 /// Identifies one never-reused lifecycle candidate.
 pub const LifecycleRevision = enum(u64) { _ };
 
@@ -144,7 +115,6 @@ pub const AdmissionRejection = enum {
     unknown_pane,
     duplicate_pane,
     invalid_extent,
-    font_capacity,
     terminal_capacity,
     stopping,
 };
@@ -176,6 +146,8 @@ pub const RuntimeAdmissionCopy = struct {
     revision: LifecycleRevision,
     operations: [lifecycle_batch_limit]Lifecycle = undefined,
     operation_count: u8,
+    grids: [lifecycle_batch_limit]DerivedGrid = undefined,
+    grid_count: u8,
     inputs: [2]TerminalInput = undefined,
     input_count: u8,
     registration: ?Registration,
@@ -183,7 +155,7 @@ pub const RuntimeAdmissionCopy = struct {
 
 /// Copies one lifecycle admission result.
 pub const LifecycleAdmissionResult = union(enum) {
-    admitted: struct { grids: [lifecycle_batch_limit]DerivedGrid = undefined, count: u8 },
+    admitted,
     rejected: AdmissionRejection,
 };
 
@@ -234,6 +206,8 @@ pub const Boundary = struct {
     admission_revision: LifecycleRevision = @fromBackingInt(0),
     admission_operations: [lifecycle_batch_limit]Lifecycle = undefined,
     admission_operation_count: u8 = 0,
+    admission_grids: [lifecycle_batch_limit]DerivedGrid = undefined,
+    admission_grid_count: u8 = 0,
     admission_inputs: [2]TerminalInput = undefined,
     admission_input_count: u8 = 0,
     admission_registration: ?Registration = null,
@@ -246,8 +220,6 @@ pub const Boundary = struct {
     visible_member_count: u8 = 0,
     visible_revision: u64 = 0,
     visible_initialized: bool = false,
-    font_request: ?FontRequest = null,
-    font_high_water: u64 = 0,
     cursors: [owner_limit]CursorSlot = @splat(.{}),
     completions: [owner_limit]CompletionState = @splat(.empty),
     stopping: bool = false,
@@ -265,27 +237,6 @@ pub const Boundary = struct {
         closeDescriptor(self.renderer_fd);
         closeDescriptor(self.terminal_fd);
         self.* = undefined;
-    }
-
-    /// Registers one never-zero pane/source pair and queues its create operation.
-    pub fn register(self: *Boundary, pane: PaneId, source: SourceId, pixels: PixelSize) error{
-        InvalidPane,
-        DuplicatePane,
-        OwnerLimit,
-        OperationLimit,
-        Stopping,
-    }!void {
-        if (!validPane(pane) or !validSource(source) or !validPixels(pixels)) return error.InvalidPane;
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.stopping) return error.Stopping;
-        if (self.find(pane) != null) return error.DuplicatePane;
-        const index = self.freeIndex() orelse return error.OwnerLimit;
-        if (self.operation_count + self.reserved_operations == operation_limit) return error.OperationLimit;
-        const revision = self.nextRevision() catch return error.OperationLimit;
-        self.entries[index] = .{ .pane = pane, .source = source, .lifecycle_revision = revision };
-        self.pushOperation(.{ .create = .{ .pane = pane, .pixels = pixels } }, null, revision);
-        signal(self.terminal_fd);
     }
 
     /// Owns one invisible lifecycle candidate until commit or cancellation.
@@ -330,7 +281,6 @@ pub const Boundary = struct {
             if (b.stopping) return error.Stopping;
             if (!b.candidate_active or b.admission_revision != self.revision) return error.StaleRevision;
             if (b.admission_phase != .admitted) return error.NotAdmitted;
-            const admitted = b.admission_result.admitted;
             if (b.admission_registration) |registration| {
                 const index = b.reserved_entry orelse unreachable;
                 b.entries[index] = .{ .pane = registration.pane, .source = registration.source, .lifecycle_revision = self.revision };
@@ -339,13 +289,15 @@ pub const Boundary = struct {
             for (b.admission_operations[0..self.operation_count]) |operation| {
                 const grid: ?DerivedGrid = switch (operation) {
                     .create, .resize => blk: {
-                        const value = admitted.grids[grid_index];
+                        const value = b.admission_grids[grid_index];
                         grid_index += 1;
                         break :blk value;
                     },
                     .close => null,
                 };
                 b.pushOperation(operation, grid, self.revision);
+                if (operation == .resize)
+                    b.entries[b.find(operation.resize.pane).?].?.lifecycle_revision = self.revision;
                 if (operation == .close) b.entries[b.find(operation.close).?].?.state = .closing;
             }
             for (b.admission_inputs[0..self.input_count]) |input| b.pushInput(input);
@@ -373,7 +325,13 @@ pub const Boundary = struct {
     };
 
     /// Reserves one lifecycle candidate without exposing partial work.
-    pub fn prepareLifecycle(self: *Boundary, operations: []const Lifecycle, inputs: []const TerminalInput, registration: ?Registration) error{
+    pub fn prepareLifecycle(
+        self: *Boundary,
+        operations: []const Lifecycle,
+        grids: []const DerivedGrid,
+        inputs: []const TerminalInput,
+        registration: ?Registration,
+    ) error{
         InvalidPane,
         DuplicatePane,
         UnknownPane,
@@ -383,7 +341,7 @@ pub const Boundary = struct {
         Stopping,
         RevisionOverflow,
     }!PreparedLifecycle {
-        if (operations.len > lifecycle_batch_limit or inputs.len > 2) return error.OperationLimit;
+        if (operations.len > lifecycle_batch_limit or grids.len > lifecycle_batch_limit or inputs.len > 2) return error.OperationLimit;
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.stopping) return error.Stopping;
@@ -396,19 +354,32 @@ pub const Boundary = struct {
             if (self.find(value.pane) != null) return error.DuplicatePane;
             new_index = self.freeIndex() orelse return error.OwnerLimit;
         }
+        var grid_index: usize = 0;
         for (operations) |operation| switch (operation) {
-            .create => |value| if (registration == null or registration.?.pane != value.pane or !validPixels(value.pixels)) return error.InvalidPane,
-            .resize => |value| if (!validPixels(value.pixels)) return error.InvalidPane else if (self.find(value.pane) == null) return error.UnknownPane,
+            .create => |value| {
+                if (registration == null or registration.?.pane != value.pane or !validPixels(value.pixels)) return error.InvalidPane;
+                if (grid_index == grids.len or !validGrid(grids[grid_index], value.pane)) return error.InvalidPane;
+                grid_index += 1;
+            },
+            .resize => |value| {
+                if (!validPixels(value.pixels)) return error.InvalidPane;
+                if (self.find(value.pane) == null) return error.UnknownPane;
+                if (grid_index == grids.len or !validGrid(grids[grid_index], value.pane)) return error.InvalidPane;
+                grid_index += 1;
+            },
             .close => |pane| if (self.find(pane) == null) return error.UnknownPane,
         };
+        if (grid_index != grids.len) return error.InvalidPane;
         for (inputs) |input| {
             const pane = inputPane(input);
             if (self.find(pane) == null and (registration == null or registration.?.pane != pane)) return error.UnknownPane;
         }
         const revision = try self.nextRevision();
         @memcpy(self.admission_operations[0..operations.len], operations);
+        @memcpy(self.admission_grids[0..grids.len], grids);
         @memcpy(self.admission_inputs[0..inputs.len], inputs);
         self.admission_operation_count = @intCast(operations.len);
+        self.admission_grid_count = @intCast(grids.len);
         self.admission_input_count = @intCast(inputs.len);
         self.admission_registration = registration;
         self.admission_revision = revision;
@@ -446,8 +417,9 @@ pub const Boundary = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.admission_phase != .requested) return null;
-        var result = RuntimeAdmissionCopy{ .revision = self.admission_revision, .operation_count = self.admission_operation_count, .input_count = self.admission_input_count, .registration = self.admission_registration };
+        var result = RuntimeAdmissionCopy{ .revision = self.admission_revision, .operation_count = self.admission_operation_count, .grid_count = self.admission_grid_count, .input_count = self.admission_input_count, .registration = self.admission_registration };
         @memcpy(result.operations[0..result.operation_count], self.admission_operations[0..result.operation_count]);
+        @memcpy(result.grids[0..result.grid_count], self.admission_grids[0..result.grid_count]);
         @memcpy(result.inputs[0..result.input_count], self.admission_inputs[0..result.input_count]);
         self.admission_phase = .validating;
         return result;
@@ -460,38 +432,9 @@ pub const Boundary = struct {
         if (self.stopping) return error.Stopping;
         if (revision != self.admission_revision) return error.StaleRevision;
         if (self.admission_phase != .validating) return error.CandidatePhase;
-        if (result == .admitted) {
-            var expected: usize = 0;
-            for (self.admission_operations[0..self.admission_operation_count]) |operation| switch (operation) {
-                .create, .resize => expected += 1,
-                .close => {},
-            };
-            if (result.admitted.count != expected) return error.CandidatePhase;
-            var grid_index: usize = 0;
-            for (self.admission_operations[0..self.admission_operation_count]) |operation| switch (operation) {
-                .create => |create| {
-                    const grid = result.admitted.grids[grid_index];
-                    if (grid.pane != create.pane or grid.rows == 0 or grid.columns == 0)
-                        return error.CandidatePhase;
-                    grid_index += 1;
-                },
-                .resize => |resize_operation| {
-                    const grid = result.admitted.grids[grid_index];
-                    if (grid.pane != resize_operation.pane or grid.rows == 0 or grid.columns == 0)
-                        return error.CandidatePhase;
-                    grid_index += 1;
-                },
-                .close => {},
-            };
-        }
         self.admission_result = result;
         self.admission_phase = if (result == .admitted) .admitted else .rejected;
         signal(self.renderer_fd);
-    }
-
-    /// Dequeues one lifecycle operation without its admitted grid sidecar.
-    pub fn takeLifecycle(self: *Boundary) ?Lifecycle {
-        return if (self.takeAdmittedLifecycle()) |value| value.operation else null;
     }
 
     /// Dequeues one admitted lifecycle operation and wakes Renderer after capacity frees.
@@ -533,7 +476,7 @@ pub const Boundary = struct {
     pub fn rearmTerminalWork(self: *Boundary) void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        if (self.operation_count != 0 or self.input_count != 0 or self.font_request != null or self.admission_phase == .requested) signal(self.terminal_fd);
+        if (self.operation_count != 0 or self.input_count != 0 or self.admission_phase == .requested) signal(self.terminal_fd);
     }
 
     /// Owns one invisible visible-set candidate.
@@ -653,28 +596,6 @@ pub const Boundary = struct {
         return result;
     }
 
-    /// Coalesces one newer complete font request.
-    pub fn requestFont(self: *Boundary, request: FontRequest) error{ InvalidScale, InvalidFontPolicy, StaleRevision, Stopping }!void {
-        if (request.scale) |scale| if (scale.revision == 0 or !validRational(scale.dpi_x) or !validRational(scale.dpi_y)) return error.InvalidScale;
-        if (!validFontPolicy(request.policy)) return error.InvalidFontPolicy;
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.stopping) return error.Stopping;
-        if (request.revision == 0 or request.revision <= self.font_high_water) return error.StaleRevision;
-        self.font_high_water = request.revision;
-        self.font_request = request;
-        signal(self.terminal_fd);
-    }
-    /// Takes the newest font request exactly once.
-    pub fn takeFontRequest(self: *Boundary) ?FontRequest {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const result = self.font_request;
-        self.font_request = null;
-        signal(self.renderer_fd);
-        return result;
-    }
-
     /// Records successful terminal-owner construction.
     pub fn markLive(self: *Boundary, pane: PaneId) error{UnknownPane}!void {
         self.setEntryState(pane, .registered, .live) catch return error.UnknownPane;
@@ -687,22 +608,6 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return null;
         return self.entries[index].?.source;
     }
-    /// Queues one direct non-candidate resize.
-    pub fn resize(self: *Boundary, pane: PaneId, pixels: PixelSize) error{ InvalidPane, UnknownPane, OperationLimit }!void {
-        if (!validPixels(pixels)) return error.InvalidPane;
-        self.queueLifecycle(.{ .resize = .{ .pane = pane, .pixels = pixels } }) catch |failure| return failure;
-    }
-    /// Marks and queues one direct pane close.
-    pub fn close(self: *Boundary, pane: PaneId) error{ UnknownPane, OperationLimit }!void {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const index = self.find(pane) orelse return error.UnknownPane;
-        if (self.operation_count + self.reserved_operations == operation_limit) return error.OperationLimit;
-        self.entries[index].?.state = .closing;
-        self.pushOperation(.{ .close = pane }, null, self.entries[index].?.lifecycle_revision);
-        signal(self.terminal_fd);
-    }
-
     /// Returns the accepted static-cursor identity for one visible live source.
     pub fn cursorPublicationIdentity(self: *Boundary, pane: PaneId, source: SourceId) CursorPublishError!?CursorPublicationIdentity {
         self.mutex.lockUncancelable(self.io);
@@ -886,19 +791,6 @@ pub const Boundary = struct {
         self.pushInput(input);
         signal(self.terminal_fd);
     }
-    fn queueLifecycle(self: *Boundary, operation: Lifecycle) error{ UnknownPane, OperationLimit }!void {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const pane = switch (operation) {
-            .create => |v| v.pane,
-            .resize => |v| v.pane,
-            .close => |v| v,
-        };
-        const index = self.find(pane) orelse return error.UnknownPane;
-        if (self.operation_count + self.reserved_operations == operation_limit) return error.OperationLimit;
-        self.pushOperation(operation, null, self.entries[index].?.lifecycle_revision);
-        signal(self.terminal_fd);
-    }
     fn pushOperation(self: *Boundary, operation: Lifecycle, grid: ?DerivedGrid, revision: LifecycleRevision) void {
         const tail = (@as(usize, self.operation_head) + self.operation_count) % operation_limit;
         self.operations[tail] = operation;
@@ -928,6 +820,7 @@ pub const Boundary = struct {
         self.admission_phase = .none;
         self.admission_revision = @fromBackingInt(0);
         self.admission_operation_count = 0;
+        self.admission_grid_count = 0;
         self.admission_input_count = 0;
         self.admission_registration = null;
         self.reserved_entry = null;
@@ -970,31 +863,12 @@ fn validSource(source: SourceId) bool {
 fn validPixels(pixels: PixelSize) bool {
     return pixels.width != 0 and pixels.height != 0;
 }
-fn validPoint(value: f64) bool {
-    return std.math.isFinite(value) and !std.math.isNan(value);
+fn validGrid(grid: DerivedGrid, pane: PaneId) bool {
+    if (grid.pane != pane or grid.rows == 0 or grid.columns == 0) return false;
+    if (grid.rows > 128) return false;
+    const cells = std.math.mul(usize, grid.rows, grid.columns) catch return false;
+    return cells <= 65_536;
 }
-fn validRational(value: ExactRational) bool {
-    if (value.numerator == 0 or value.denominator == 0) return false;
-    var a = value.numerator;
-    var b = value.denominator;
-    while (b != 0) {
-        const r = a % b;
-        a = b;
-        b = r;
-    }
-    return a == 1;
-}
-fn validFontPolicy(policy: FontPolicy) bool {
-    if (!validPoint(policy.base_point_size) or policy.base_point_size <= 0 or policy.count > owner_limit) return false;
-    var prior: u64 = 0;
-    for (policy.offsets[0..policy.count]) |offset| {
-        const pane = @as(u64, @backingInt(offset.pane));
-        if (pane == 0 or pane <= prior or !validPoint(offset.offset_points) or offset.offset_points == 0) return false;
-        prior = pane;
-    }
-    return true;
-}
-
 const WakePair = struct { first: i32, second: i32 };
 const NativeEventfd = struct {
     fn create(flags: u32) usize {
@@ -1039,8 +913,24 @@ fn drain(fd: i32) error{Signal}!void {
     }
 }
 
+fn registerForTest(
+    boundary: *Boundary,
+    pane: PaneId,
+    source: SourceId,
+) !AdmittedLifecycle {
+    const operations = [_]Lifecycle{.{ .create = .{ .pane = pane, .pixels = .{ .width = 80, .height = 24 } } }};
+    const grids = [_]DerivedGrid{.{ .pane = pane, .rows = 1, .columns = 1 }};
+    var prepared = try boundary.prepareLifecycle(&operations, &grids, &.{}, .{ .pane = pane, .source = source });
+    defer prepared.deinit();
+    const revision = try prepared.publishAdmission();
+    _ = boundary.takeLifecycleAdmission().?;
+    try boundary.completeLifecycleAdmission(revision, .admitted);
+    try prepared.commitAdmitted();
+    return boundary.takeAdmittedLifecycle().?;
+}
+
 test "boundary layout is bounded and contains no payload bank" {
-    try std.testing.expectEqual(@as(usize, 56_552), @sizeOf(Boundary));
+    try std.testing.expectEqual(@as(usize, 55_448), @sizeOf(Boundary));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(Boundary));
 }
 
@@ -1049,8 +939,7 @@ test "registration input visibility cursor completion and retirement preserve id
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(1);
     const source: SourceId = @fromBackingInt(1);
-    try b.register(pane, source, .{ .width = 80, .height = 24 });
-    try std.testing.expect(b.takeLifecycle() != null);
+    _ = try registerForTest(&b, pane, source);
     try b.markLive(pane);
     var visible = try b.prepareVisibleSet(1, &.{.{ .pane = pane, .source = source }});
     visible.commit();
@@ -1060,8 +949,13 @@ test "registration input visibility cursor completion and retirement preserve id
     try b.publishCompletion(.{ .pane = pane, .source = source, .lifecycle_revision = identity.lifecycle_revision, .render_sequence = 1, .termination = .{ .code = 0 } });
     const completion = b.takeCompletion().?;
     try std.testing.expect(b.completionIsCurrent(completion));
-    try b.close(pane);
-    try std.testing.expect(b.takeLifecycle() != null);
+    var close = try b.prepareLifecycle(&.{.{ .close = pane }}, &.{}, &.{}, null);
+    defer close.deinit();
+    const close_revision = try close.publishAdmission();
+    _ = b.takeLifecycleAdmission().?;
+    try b.completeLifecycleAdmission(close_revision, .admitted);
+    try close.commitAdmitted();
+    try std.testing.expect(b.takeAdmittedLifecycle() != null);
     try std.testing.expect(try b.retireTransfer(pane));
     try b.markRetired(pane);
     const retired = b.takeRetired().?;
@@ -1075,12 +969,15 @@ test "lifecycle pressure cancellation frees capacity and signals progress" {
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(2);
     const source: SourceId = @fromBackingInt(2);
-    var prepared = try b.prepareLifecycle(&.{.{ .create = .{ .pane = pane, .pixels = .{ .width = 80, .height = 24 } } }}, &.{}, .{ .pane = pane, .source = source });
+    var prepared = try b.prepareLifecycle(
+        &.{.{ .create = .{ .pane = pane, .pixels = .{ .width = 80, .height = 24 } } }},
+        &.{.{ .pane = pane, .rows = 24, .columns = 80 }},
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
     try std.testing.expectEqual(prepared.revision, try prepared.publishAdmission());
     const request = b.takeLifecycleAdmission().?;
-    var grids: [lifecycle_batch_limit]DerivedGrid = undefined;
-    grids[0] = .{ .pane = pane, .rows = 24, .columns = 80 };
-    try b.completeLifecycleAdmission(request.revision, .{ .admitted = .{ .grids = grids, .count = 1 } });
+    try b.completeLifecycleAdmission(request.revision, .admitted);
     try prepared.commitAdmitted();
     const admitted = b.takeAdmittedLifecycle().?;
     try std.testing.expectEqual(pane, admitted.operation.create.pane);
@@ -1091,29 +988,24 @@ test "lifecycle admission rejects mismatched derived ownership transactionally" 
     var b = try Boundary.init(std.testing.io, std.testing.allocator);
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(22);
-    var prepared = try b.prepareLifecycle(
-        &.{.{ .create = .{ .pane = pane, .pixels = .{ .width = 80, .height = 24 } } }},
-        &.{},
-        .{ .pane = pane, .source = @fromBackingInt(22) },
-    );
-    defer prepared.deinit();
-    try std.testing.expectEqual(prepared.revision, try prepared.publishAdmission());
-    const request = b.takeLifecycleAdmission().?;
-    var grids: [lifecycle_batch_limit]DerivedGrid = undefined;
-    grids[0] = .{ .pane = @fromBackingInt(23), .rows = 24, .columns = 80 };
     try std.testing.expectError(
-        error.CandidatePhase,
-        b.completeLifecycleAdmission(request.revision, .{ .admitted = .{ .grids = grids, .count = 1 } }),
+        error.InvalidPane,
+        b.prepareLifecycle(
+            &.{.{ .create = .{ .pane = pane, .pixels = .{ .width = 80, .height = 24 } } }},
+            &.{.{ .pane = @fromBackingInt(23), .rows = 24, .columns = 80 }},
+            &.{},
+            .{ .pane = pane, .source = @fromBackingInt(22) },
+        ),
     );
-    try std.testing.expectEqual(@as(?Lifecycle, null), b.takeLifecycle());
+    try std.testing.expectEqual(@as(?AdmittedLifecycle, null), b.takeAdmittedLifecycle());
 }
 
 test "bounded input pressure preserves order and dequeue signals progress" {
     var b = try Boundary.init(std.testing.io, std.testing.allocator);
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(3);
-    try b.register(pane, @fromBackingInt(3), .{ .width = 80, .height = 24 });
-    try std.testing.expect(b.takeLifecycle() != null);
+    const admitted = try registerForTest(&b, pane, @fromBackingInt(3));
+    try std.testing.expectEqual(pane, admitted.operation.create.pane);
     for (0..input_limit) |index| try b.publishFocus(
         pane,
         .{ .focus = if (index % 2 == 0) .in else .out },
@@ -1136,8 +1028,7 @@ test "published visibility follows requested prepared committing accepted phases
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(31);
     const source: SourceId = @fromBackingInt(31);
-    try b.register(pane, source, .{ .width = 80, .height = 24 });
-    try std.testing.expect(b.takeLifecycle() != null);
+    _ = try registerForTest(&b, pane, source);
     try b.markLive(pane);
     try b.publishVisibleSet(1, &.{.{ .pane = pane, .source = source }});
     try std.testing.expectEqual(VisibleSetStatus.pending, b.visibleSetStatus(1));
@@ -1168,25 +1059,12 @@ test "published visibility follows requested prepared committing accepted phases
     try std.testing.expectEqual(source, accepted.members[0].source);
 }
 
-test "font requests coalesce and stale cursor completion identities reject" {
+test "stale cursor and completion identities reject" {
     var b = try Boundary.init(std.testing.io, std.testing.allocator);
     defer b.deinit();
-    var policy = try FontPolicy.init(6.0);
     const pane: PaneId = @fromBackingInt(4);
-    policy.offsets[0] = .{ .pane = pane, .offset_points = 1.0 };
-    policy.count = 1;
-    try b.requestFont(.{ .revision = 1, .scale = null, .policy = policy });
-    policy.offsets[0].offset_points = 2.0;
-    try b.requestFont(.{ .revision = 2, .scale = null, .policy = policy });
-    try std.testing.expectEqual(@as(f64, 2.0), b.takeFontRequest().?.policy.offsets[0].offset_points);
-    try std.testing.expectError(
-        error.StaleRevision,
-        b.requestFont(.{ .revision = 2, .scale = null, .policy = policy }),
-    );
-
     const source: SourceId = @fromBackingInt(4);
-    try b.register(pane, source, .{ .width = 80, .height = 24 });
-    try std.testing.expect(b.takeAdmittedLifecycle() != null);
+    _ = try registerForTest(&b, pane, source);
     try b.markLive(pane);
     var visible = try b.prepareVisibleSet(1, &.{.{ .pane = pane, .source = source }});
     visible.commit();
