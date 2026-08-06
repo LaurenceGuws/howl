@@ -61,15 +61,15 @@ accepted:
   howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection
   howl-host/src/terminal.zig: one caller-driven poll owner for bounded logical PTY, VT, terminal projection, child-write, and cleanup lifetimes
-  howl-host/src/terminal_pool.zig: fixed contiguous immutable-update pool storage, ordinary canonical Canvas publication, terminal-owned descriptors and group admission, atomic Renderer drainage, stale-token rejection, and reverse cleanup
+  howl-host/src/terminal_handoff.zig: bounded Host terminal registration, lifecycle admission, ordered input, visibility, font requests, static cursor identity, child completion, retirement, and directional wake ownership without rendering payload transport
   howl-host/test/chrome_state_equivalence_test.zig: test-only normalized legacy-topology oracle proving SessionState identity, projection, hit-test, and rollback equivalence
   howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
-  howl-vk/src/terminal_cells.zig: one accepted terminal instance shadow, bounded sparse writes, borrowed replacement input, stable ASCII/style glyph atlas identity, preflighted mapped staging and Vulkan commands, u32 row indirection, static cursor, and one bounded draw group
+  howl-vk/src/terminal_cells.zig: one accepted terminal instance shadow, direct resolved backend updates, bounded sparse writes, borrowed replacement input, stable glyph-slot atlas ownership, preflighted mapped staging and Vulkan commands, u32 row indirection, static cursor draw data, and one bounded draw group without a Howl-Render dependency
   howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner
   howl-vk/build.zig: independent Vulkan ABI, retained terminal-cell, dispatch, and package proof graph
-  howl-vk/build.zig.zon: Vulkan package identity, direct Render terminal-cell dependency, and source boundary
+  howl-vk/build.zig.zon: dependency-free Vulkan package identity and source boundary
   howl-vk/LICENSES: Vulkan-Headers provenance and license records
-  howl-vk/src/root.zig: curated Vulkan ABI and dispatch package root
+  howl-vk/src/root.zig: curated Vulkan ABI, dispatch, generic surface, and retained terminal-cell package root
   howl-vk/src/abi.zig: maintained minimal Vulkan 1.4.357 mechanical ABI including sparse buffer-copy and instanced-draw commands
   howl-vk/src/dispatch.zig: typed ExternalImageDispatch procedure loading and validation
   howl-vk/src/proofs.zig: Vulkan ABI, dispatch, generic surface residency, retained terminal-cell closure, rollback, and cleanup proofs

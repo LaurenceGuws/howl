@@ -1409,8 +1409,6 @@ fn runFallible(
         if (!local_redraw_retry_turn) {
             const wake = try waitRenderWakeBlockingUntil(boundary, terminals, null);
             if (wake.terminal) {
-                terminal_redraw_pending = terminals.hasReadyUpdates() or
-                    terminal_redraw_pending;
                 reconcileFocusedCursor(
                     terminals,
                     try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
@@ -1813,7 +1811,10 @@ fn runFallible(
             terminal_topology_committed)
         {
             const focused_pane = chrome.focusedPaneId();
-            const focused_source = canvas_work.terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(focused_pane));
+            const focused_source = if (canvas_work.terminals.sourceFor(toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(focused_pane)))) |source|
+                toRenderSourceId(source)
+            else
+                null;
             const replay_result = try replayCursorFrame(
                 boundary,
                 &canvas_work,
@@ -1986,7 +1987,7 @@ fn terminalCompletionTransition(
     identity_current: bool,
 ) !TerminalCompletionTransition {
     if (!identity_current) return .stale;
-    const pane = session_chrome_adapter.fromRenderPaneId(completion.pane) catch
+    const pane = session_chrome_adapter.fromRenderPaneId(toRenderPaneId(completion.pane)) catch
         return .stale;
     if (accepted.paneRect(pane) == null) return .stale;
     if (sessionPaneCount(accepted) == 1) return .final;
@@ -2150,7 +2151,7 @@ fn setPolicyOffset(
         var cursor: usize = next.count;
         while (cursor > index) : (cursor -= 1)
             next.offsets[cursor] = next.offsets[cursor - 1];
-        next.offsets[index] = .{ .pane = pane, .offset_points = value };
+        next.offsets[index] = .{ .pane = toTerminalPaneId(pane), .offset_points = value };
         next.count += 1;
     }
     policy.* = next;
@@ -2163,7 +2164,7 @@ fn pruneFontPolicy(
     var next = policy.*;
     var retained: u8 = 0;
     for (policy.offsets[0..policy.count]) |offset| {
-        if (!topologyContainsRender(topology, offset.pane)) continue;
+        if (!topologyContainsRender(topology, toRenderPaneId(offset.pane))) continue;
         next.offsets[retained] = offset;
         retained += 1;
     }
@@ -2720,8 +2721,8 @@ fn buildCanvasPlanAt(
         if (work.retired_source_count == work.retired_sources.len)
             return error.InvalidTopology;
         work.retired_sources[work.retired_source_count] = .{
-            .pane = retired.pane,
-            .source = retired.source,
+            .pane = toRenderPaneId(retired.pane),
+            .source = toRenderSourceId(retired.source),
         };
         work.retired_source_count += 1;
     }
@@ -2773,9 +2774,9 @@ fn buildCanvasPlanAt(
             const pane = topology.paneId(active_tab, pane_index) orelse
                 return error.InvalidTopology;
             const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
-            const source = work.terminals.sourceFor(render_pane) orelse
+            const source = work.terminals.sourceFor(toTerminalPaneId(render_pane)) orelse
                 if (bootstrap) |value|
-                    if (value.pane == render_pane) value.source else {
+                    if (value.pane == render_pane) toTerminalSourceId(value.source) else {
                         desired_complete = false;
                         continue;
                     }
@@ -2783,18 +2784,19 @@ fn buildCanvasPlanAt(
                     desired_complete = false;
                     continue;
                 };
+            const render_source = toRenderSourceId(source);
             if (desired_count == desired.len) return error.InvalidTopology;
             const rect = topology.paneRect(pane) orelse
                 return error.InvalidTopology;
             const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
             desired[desired_count] = .{
-                .source = source,
+                .source = render_source,
                 .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
                 .clip = physical_rect,
             };
-            if (bootstrap == null or source != bootstrap.?.source) {
+            if (bootstrap == null or render_source != bootstrap.?.source) {
                 desired_members[desired_count] = .{
-                    .pane = render_pane,
+                    .pane = toTerminalPaneId(render_pane),
                     .source = source,
                 };
             }
@@ -2862,8 +2864,10 @@ fn buildCanvasPlanAt(
     const focused_source = blk: {
         const focused_pane = topology.focusedPaneId();
         const render_focused_pane = try session_chrome_adapter.toRenderPaneId(focused_pane);
-        if (work.terminals.sourceFor(render_focused_pane)) |source|
-            if (placementContainsSource(terminal_placements, source)) break :blk source;
+        if (work.terminals.sourceFor(toTerminalPaneId(render_focused_pane))) |source| {
+            const render_source = toRenderSourceId(source);
+            if (placementContainsSource(terminal_placements, render_source)) break :blk render_source;
+        }
         if (bootstrap) |value| {
             if (value.pane == render_focused_pane and
                 placementContainsSource(terminal_placements, value.source))
@@ -2886,42 +2890,59 @@ fn buildCanvasPlanAt(
         );
         work.chrome_retry = retry;
     }
-    const candidate_result: ?terminal_handoff.CandidateDrainResult =
+    const candidate_applied =
         if (retrying_chrome and required_visible_revision != null and
         claimed_visible_revision == null)
-            null
-        else
-            work.terminals.applyCandidate(
-                work.composer,
-                chrome_change,
-                .{
+            false
+        else candidate: {
+            var changes: [1]render_api.canvas.Composer.SourceChange = undefined;
+            const changes_slice = if (chrome_change) |change| change_slice: {
+                changes[0] = change;
+                break :change_slice changes[0..1];
+            } else changes[0..0];
+            var hidden_sources: [terminal_handoff.visible_member_limit]render_api.canvas.SourceId = undefined;
+            var hidden_count: usize = 0;
+            if (claimed_visible_revision != null or
+                (bootstrap != null and !retry_superseded))
+            {
+                if (work.terminals.acceptedVisibleSet()) |accepted| {
+                    for (accepted.members[0..accepted.count]) |member| {
+                        const render_source = toRenderSourceId(member.source);
+                        if (placementContainsSource(placements[0..placement_count], render_source))
+                            continue;
+                        hidden_sources[hidden_count] = render_source;
+                        hidden_count += 1;
+                    }
+                }
+            }
+            work.composer.applyCandidate(.{
+                .changes = changes_slice,
+                .hidden_source_clears = hidden_sources[0..hidden_count],
+                .cursor_visible_set_revision = claimed_visible_revision,
+                .composition = .{
                     .surface = surface,
                     .sources = placements[0..placement_count],
                     .focused_source = focused_source,
                 },
-                claimed_visible_revision,
-                if (bootstrap != null and !retry_superseded)
-                    .bootstrap_replacement
-                else
-                    .ordinary,
-            ) catch |failure| switch (failure) {
+            }) catch |failure| switch (failure) {
                 error.ResourceLimit,
                 error.CommandLimit,
                 error.PixelLimit,
                 error.CompositionLimit,
-                error.Stale,
-                => blk: {
+                => {
                     if (claimed_visible_revision) |revision| {
                         try work.terminals.releaseVisibleSetClaim(revision);
                         claimed_visible_revision = null;
                     }
-                    break :blk null;
+                    break :candidate false;
                 },
                 else => return failure,
             };
-    if (candidate_result) |result| {
-        if (result.accepted > session_chrome_adapter.max_live_panes)
-            return error.InvalidFrame;
+            if (claimed_visible_revision) |revision|
+                work.terminals.commitVisibleSet(revision);
+            break :candidate true;
+        };
+    if (candidate_applied) {
         if (chrome_change != null) {
             work.producer_revision = producer_revision;
             work.chrome_retry = null;
@@ -2968,7 +2989,7 @@ fn buildCanvasPlanAt(
             continue;
         }
         try work.composer.removeSource(retired.source);
-        try work.terminals.finishRetired(retired.pane);
+        try work.terminals.finishRetired(toTerminalPaneId(retired.pane));
         work.retired_source_count -= 1;
         work.retired_sources[retired_index] =
             work.retired_sources[work.retired_source_count];
@@ -3076,16 +3097,20 @@ fn prepareBootstrapPublicationAt(
         const pane = topology.paneId(active_tab, pane_index) orelse
             return error.InvalidTopology;
         const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
-        const source = work.terminals.sourceFor(render_pane) orelse
-            if (bootstrap) |value|
-                if (value.pane == render_pane) value.source else return error.InvalidTopology
-            else
-                return error.InvalidTopology;
+        const source = if (work.terminals.sourceFor(toTerminalPaneId(render_pane))) |value|
+            toRenderSourceId(value)
+        else if (bootstrap) |value|
+            if (value.pane == render_pane) value.source else return error.InvalidTopology
+        else
+            return error.InvalidTopology;
         const rect = topology.paneRect(pane) orelse
             return error.InvalidTopology;
         const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
         if (count == members.len) return error.InvalidTopology;
-        members[count] = .{ .pane = render_pane, .source = source };
+        members[count] = .{
+            .pane = toTerminalPaneId(render_pane),
+            .source = toTerminalSourceId(source),
+        };
         placements[count] = .{
             .source = source,
             .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
@@ -3293,17 +3318,18 @@ fn cursorOverlayFor(
     publication: terminal_handoff.CursorPublication,
     require_newer: bool,
 ) !?vk_surface.CursorOverlay {
-    const binding = work.composer.cursorBinding(publication.source) orelse
+    const source = toRenderSourceId(publication.source);
+    const binding = work.composer.cursorBinding(source) orelse
         return null;
     if (binding.pane != @backingInt(publication.pane) or
-        binding.source != publication.source or
+        binding.source != source or
         binding.cell_size.width == 0 or binding.cell_size.height == 0 or
         binding.visible_set_revision != publication.visible_set_revision or
         binding.lifecycle_revision != @backingInt(publication.lifecycle_revision) or
         (require_newer and publication.cursor_revision <= binding.cursor_revision) or
         publication.terminal_sequence < binding.terminal_sequence)
         return error.InvalidFrame;
-    const placement = placementForSource(work, publication.source) orelse return null;
+    const placement = placementForSource(work, source) orelse return null;
     const x_offset = std.math.mul(
         i32,
         @intCast(publication.target.col),
@@ -3369,7 +3395,7 @@ fn publicationCursorOverlay(
 ) !CursorOverlayPreparation {
     // Validate accepted Composer binding and placement state independently.
     // Any error here is accepted-state corruption and must remain observable.
-    if ((try cursorOverlayForBinding(work, publication.source)) == null)
+    if ((try cursorOverlayForBinding(work, toRenderSourceId(publication.source))) == null)
         return .blocked;
     const overlay = cursorOverlayFor(
         work,
@@ -3451,8 +3477,8 @@ fn physicalPlanForBase(
     base: vk_surface.Plan,
     focused_pane: render_api.chrome.PaneId,
 ) !vk_surface.Plan {
-    const source = work.terminals.sourceFor(focused_pane) orelse return base;
-    const overlay = (try cursorOverlayForBinding(work, source)) orelse return base;
+    const source = work.terminals.sourceFor(toTerminalPaneId(focused_pane)) orelse return base;
+    const overlay = (try cursorOverlayForBinding(work, toRenderSourceId(source))) orelse return base;
     const candidate = work.replay.candidate();
     return vk_surface.replayCursor(
         base,
@@ -3864,7 +3890,7 @@ fn drainInput(
                         // unmatched press and its later release both follow the
                         // ordinary terminal-input path instead of being lost.
                         try canvas_work.terminals.publishKey(
-                            try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
+                            toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())),
                             key,
                         );
                         continue;
@@ -3950,7 +3976,7 @@ fn drainInput(
                     .consumed => null,
                     .unmatched => unmatched: {
                         try canvas_work.terminals.publishKey(
-                            try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
+                            toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())),
                             key,
                         );
                         break :unmatched null;
@@ -3959,7 +3985,7 @@ fn drainInput(
             },
             .keyboard_leave => reset: {
                 try canvas_work.terminals.publishFocus(
-                    try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
+                    toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())),
                     .{ .focus = .out },
                 );
                 actions.clear();
@@ -3993,7 +4019,7 @@ fn drainInput(
             },
             .keyboard_enter => enter: {
                 try canvas_work.terminals.publishFocus(
-                    try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId()),
+                    toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(topology.focusedPaneId())),
                     .{ .focus = .in },
                 );
                 break :enter null;
@@ -4091,8 +4117,8 @@ fn prepareTerminalTopology(
             const pixels = try panePixelsLocal(rect);
             if (!topologyContainsSemantic(current, pane)) {
                 operations[operation_count] = .{ .create = .{
-                    .pane = render_pane,
-                    .pixels = pixels,
+                    .pane = toTerminalPaneId(render_pane),
+                    .pixels = toTerminalPixels(pixels),
                 } };
                 operation_count += 1;
                 new_panes += 1;
@@ -4103,8 +4129,8 @@ fn prepareTerminalTopology(
                 const old_pixels = try panePixelsLocal(old_rect);
                 if (!std.meta.eql(old_pixels, pixels)) {
                     operations[operation_count] = .{ .resize = .{
-                        .pane = render_pane,
-                        .pixels = pixels,
+                        .pane = toTerminalPaneId(render_pane),
+                        .pixels = toTerminalPixels(pixels),
                     } };
                     operation_count += 1;
                 }
@@ -4117,13 +4143,13 @@ fn prepareTerminalTopology(
         // Surviving owners still receive the exact focus transition.
         if (shouldPublishFocusOut(current, candidate)) {
             inputs[input_count] = .{ .focus = .{
-                .pane = try session_chrome_adapter.toRenderPaneId(current.focusedPaneId()),
+                .pane = toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(current.focusedPaneId())),
                 .event = .{ .focus = .out },
             } };
             input_count += 1;
         }
         inputs[input_count] = .{ .focus = .{
-            .pane = try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
+            .pane = toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId())),
             .event = .{ .focus = .in },
         } };
         input_count += 1;
@@ -4133,7 +4159,7 @@ fn prepareTerminalTopology(
             const pane = current.paneId(tab_index, pane_index) orelse
                 return error.InvalidTopology;
             if (!topologyContainsSemantic(candidate, pane)) {
-                operations[operation_count] = .{ .close = try session_chrome_adapter.toRenderPaneId(pane) };
+                operations[operation_count] = .{ .close = toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(pane)) };
                 operation_count += 1;
             }
         }
@@ -4150,7 +4176,7 @@ fn prepareTerminalTopology(
         work.composer.removeSource(value) catch
             @panic("new terminal source rollback failed");
     const registration: ?terminal_handoff.Registration = if (source) |value|
-        .{ .pane = registration_pane.?, .source = value }
+        .{ .pane = toTerminalPaneId(registration_pane.?), .source = toTerminalSourceId(value) }
     else
         null;
     var lifecycle = try work.terminals.prepareLifecycle(
@@ -4183,13 +4209,13 @@ fn prepareInitialTerminalTopology(
     errdefer work.composer.removeSource(source) catch
         @panic("initial terminal source rollback failed");
     const operations = [_]terminal_handoff.Lifecycle{.{ .create = .{
-        .pane = render_pane,
-        .pixels = try panePixelsLocal(rect),
+        .pane = toTerminalPaneId(render_pane),
+        .pixels = toTerminalPixels(try panePixelsLocal(rect)),
     } }};
     var lifecycle = try work.terminals.prepareLifecycle(
         &operations,
         &.{},
-        .{ .pane = render_pane, .source = source },
+        .{ .pane = toTerminalPaneId(render_pane), .source = toTerminalSourceId(source) },
     );
     errdefer lifecycle.deinit();
     const revision = try lifecycle.publishAdmission();
@@ -4202,6 +4228,26 @@ fn prepareInitialTerminalTopology(
         .new_source = source,
         .surface = surface,
     };
+}
+
+fn toTerminalPaneId(pane: render_api.chrome.PaneId) terminal_handoff.PaneId {
+    return @fromBackingInt(@backingInt(pane));
+}
+
+fn toRenderPaneId(pane: terminal_handoff.PaneId) render_api.chrome.PaneId {
+    return @fromBackingInt(@backingInt(pane));
+}
+
+fn toTerminalSourceId(source: render_api.canvas.SourceId) terminal_handoff.SourceId {
+    return @fromBackingInt(@backingInt(source));
+}
+
+fn toRenderSourceId(source: terminal_handoff.SourceId) render_api.canvas.SourceId {
+    return @fromBackingInt(@backingInt(source));
+}
+
+fn toTerminalPixels(size: render_api.canvas.Size) terminal_handoff.PixelSize {
+    return .{ .width = size.width, .height = size.height };
 }
 
 const TerminalTopologyRequirements = struct {
@@ -6744,22 +6790,7 @@ fn redrawChrome(
     };
     var candidate_guard = CandidateOwnershipGuard{ .work = canvas_work };
     defer candidate_guard.deinit();
-    // Composer's accepted commands are cursor-free.  The only physical
-    // presentation derived from this candidate is one focused overlay, and
-    // it is translated through the exact terminal placement before replay.
-    const focused_source = focusedSourceForCandidate(
-        canvas_work,
-        &candidate,
-        pending,
-    ) orelse return .blocked;
-    // A bootstrap source is valid before lifecycle activation, but it has no
-    // cursor binding until its first accepted terminal update. The frame may
-    // therefore carry the cursor-free base once; later binding admission
-    // supplies the exact overlay without stranding the topology candidate.
-    const accepted_cursor_overlay = try cursorOverlayForBinding(
-        canvas_work,
-        focused_source,
-    );
+    // Composer's accepted commands form the cursor-free physical base.
     const physical_plan = try physicalPlanForBase(
         canvas_work,
         composer_plan,
@@ -6830,8 +6861,8 @@ fn redrawChrome(
     return .published;
 }
 
-/// Records one physical cursor replacement without touching Composer, Pool, or
-/// terminal Content. The accepted replay cohort remains authoritative until
+/// Records one physical cursor replacement without touching Composer or
+/// terminal visual state. The accepted replay cohort remains authoritative until
 /// completion preparation commits the replacement ring candidate.
 fn replayCursorFrame(
     boundary: *presentation_state.State,
@@ -6853,7 +6884,7 @@ fn replayCursorFrame(
     const publication = pending.*;
     if (publication == null) return .blocked;
     if (focused_source == null) return .blocked;
-    if (focused_source.? != publication.?.source) return .rejected;
+    if (focused_source.? != toRenderSourceId(publication.?.source)) return .rejected;
     const accepted_overlay = switch (try publicationCursorOverlay(work, publication.?, true)) {
         .blocked => return .blocked,
         .rejected => return .rejected,
@@ -7083,14 +7114,15 @@ fn reconcileFocusedCursor(
     focused_pane: render_api.chrome.PaneId,
     pending: *?terminal_handoff.CursorPublication,
 ) void {
-    const focused_source = terminals.sourceFor(focused_pane);
+    const terminal_pane = toTerminalPaneId(focused_pane);
+    const focused_source = terminals.sourceFor(terminal_pane);
     if (focused_source == null)
         dropPendingCursor(pending)
     else if (pending.* != null and pending.*.?.source != focused_source.?)
         dropPendingCursor(pending);
     retainFocusedCursor(focused_source, pending, null);
     if (focused_source == null) return;
-    if (terminals.takeCursor(focused_pane)) |publication| {
+    if (terminals.takeCursor(terminal_pane)) |publication| {
         retainFocusedCursor(focused_source, pending, publication);
     }
 }
@@ -7100,7 +7132,7 @@ fn dropPendingCursor(pending: *?terminal_handoff.CursorPublication) void {
 }
 
 fn retainFocusedCursor(
-    focused_source: ?render_api.canvas.SourceId,
+    focused_source: ?terminal_handoff.SourceId,
     pending: *?terminal_handoff.CursorPublication,
     newest: ?terminal_handoff.CursorPublication,
 ) void {

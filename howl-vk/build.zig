@@ -8,13 +8,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const render = b.dependency("howl_render", .{
-        .target = target,
-        .optimize = optimize,
-        .native_text = false,
-        .generated_glyphs = false,
-    }).module("howl_render");
-    module.addImport("howl_render", render);
     const proof_module = b.createModule(.{
         .root_source_file = b.path("src/proofs.zig"),
         .target = target,
@@ -28,7 +21,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    terminal_test_module.addImport("howl_render", render);
     const terminal_tests = b.addTest(.{
         .name = "howl-vk-terminal-cells",
         .root_module = terminal_test_module,

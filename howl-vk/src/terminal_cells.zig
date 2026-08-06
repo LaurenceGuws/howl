@@ -2,16 +2,18 @@
 //!
 //! The package does not own Render publication or submission policy. It owns
 //! one accepted instance shadow, bounded sparse candidate writes, borrowed
-//! replacement input, stable blank/ASCII glyph identities, first-use atlas
+//! replacement input, stable opaque glyph slots, first-use atlas
 //! uploads, row indirection, sparse instance transfers, and one bounded draw
 //! description. Resource creation, barriers, shader/render-pass compatibility,
 //! submission, and physical execution are left to future Host integration.
+//! Inputs are already-resolved backend instances and stable glyph slots. The
+//! future Host adapter, not this package, owns semantic Cell/Glyph conversion.
 
 const std = @import("std");
 const vk = @import("abi.zig");
-const terminal = @import("howl_render").terminal_cells;
+const maximum_cells: usize = 65_536;
 
-/// Maximum stable printable-ASCII glyph identities across four font styles.
+/// Maximum stable glyph slots exposed by the retained backend atlas.
 pub const glyph_slots: usize = 95 * 4;
 /// Number of stable atlas columns used by mechanical slot placement.
 pub const glyph_atlas_columns: u16 = 20;
@@ -20,11 +22,11 @@ const blank_glyph: u16 = std.math.maxInt(u16);
 
 /// Stores shader-ready resolved style flags.
 pub const InstanceFlags = packed struct(u16) {
-    /// Selects a bold glyph slot.
+    /// Applies the resolved bold presentation bit.
     bold: bool = false,
     /// Requests dim foreground presentation.
     dim: bool = false,
-    /// Selects an italic glyph slot.
+    /// Applies the resolved italic presentation bit.
     italic: bool = false,
     /// Requests one static underline.
     underline: bool = false,
@@ -48,6 +50,88 @@ pub const Instance = extern struct {
     underline_color: u32,
 };
 
+/// Selects one static cursor shape in backend draw terms.
+pub const CursorShape = enum(u8) { block, underline, bar, hidden };
+
+/// Supplies resolved static cursor draw data without semantic color policy.
+pub const CursorDraw = extern struct {
+    /// Selects the logical cursor row.
+    row: u16 = 0,
+    /// Selects the logical cursor column.
+    col: u16 = 0,
+    /// Stores packed RGBA cursor fill.
+    color: u32 = 0,
+    /// Stores packed RGBA text beneath a block cursor.
+    text_color: u32 = 0,
+    /// Selects the backend cursor geometry.
+    shape: CursorShape = .hidden,
+    /// Reports whether cursor geometry contributes to the draw.
+    visible: bool = false,
+};
+
+/// Selects the only complete persistent-instance replacement entry points.
+pub const ReplacementKind = enum { initialization, resize, alternate_grid };
+
+/// Rotates one contiguous logical-row range over persistent physical rows.
+pub const RowRotation = struct {
+    /// Selects the first logical row in the rotated range.
+    first: u16,
+    /// Bounds the contiguous logical-row range.
+    count: u16,
+    /// Rotates the range by this signed logical-row distance.
+    shift: i16,
+};
+
+/// Repeats one resolved instance over an exact physical-cell span.
+pub const Fill = struct {
+    /// Selects the first physical persistent-instance destination.
+    first: u32,
+    /// Bounds the contiguous physical destination span.
+    count: u32,
+    /// Supplies the resolved instance repeated over the span.
+    instance: Instance,
+};
+
+/// Replaces one exact physical cell with one resolved instance.
+pub const CellWriteInput = struct {
+    /// Selects one physical persistent-instance destination.
+    physical_index: u32,
+    /// Supplies the resolved replacement instance.
+    instance: Instance,
+};
+
+/// Borrows complete resolved instances for explicit replacement only.
+pub const Replacement = struct {
+    /// Classifies the explicit full-state ownership transition.
+    kind: ReplacementKind,
+    /// Supplies the replacement logical row count.
+    rows: u16,
+    /// Supplies the replacement logical column count.
+    cols: u16,
+    /// Borrows exactly `rows * cols` resolved instances.
+    instances: []const Instance,
+};
+
+/// Borrows one complete backend update prepared by the future Host adapter.
+pub const Update = struct {
+    /// Supplies the retained logical row count after this update.
+    rows: u16,
+    /// Supplies the retained logical column count after this update.
+    cols: u16,
+    /// Borrows a complete state only for explicit replacement.
+    replacement: ?Replacement,
+    /// Borrows ordered row-indirection mutations.
+    row_rotations: []const RowRotation,
+    /// Borrows ordered contiguous physical instance writes.
+    fills: []const Fill,
+    /// Borrows ordered individual physical instance writes.
+    cells: []const CellWriteInput,
+    /// Borrows stable glyph slots required by the candidate instances.
+    glyph_slots: []const u16,
+    /// Supplies the newest resolved static cursor draw, when changed.
+    cursor: ?CursorDraw,
+};
+
 comptime {
     std.debug.assert(@sizeOf(Instance) == 16);
     std.debug.assert(@alignOf(Instance) == 4);
@@ -56,7 +140,7 @@ comptime {
 /// Supplies one completed raster for an exact stable glyph identity.
 pub const GlyphRaster = struct {
     /// Qualifies the stable atlas slot.
-    key: terminal.GlyphKey,
+    slot: u16,
     /// Bounds copied mask columns.
     width: u16,
     /// Bounds copied mask rows.
@@ -70,8 +154,6 @@ pub const GlyphRaster = struct {
 /// Identifies one first-use upload copied into the fixed glyph atlas.
 pub const GlyphUpload = struct {
     /// Qualifies the first-use raster.
-    key: terminal.GlyphKey,
-    /// Identifies its stable atlas slot.
     slot: u16,
     /// Borrows the candidate-owned copied alpha bytes.
     pixels: []const u8,
@@ -88,7 +170,7 @@ pub const Draw = struct {
     /// Keeps the terminal pane as one bounded draw group.
     group_count: u32 = 1,
     /// Supplies static cursor state without generic-plan replay.
-    cursor: terminal.Cursor,
+    cursor: CursorDraw,
 };
 
 /// Borrows exact candidate transfers until `Store.complete` or `Store.discard`.
@@ -98,7 +180,7 @@ pub const Prepared = struct {
     /// Supplies active logical columns.
     cols: u16,
     /// Names the only path that uploads every active cell, when present.
-    replacement: ?terminal.ReplacementKind,
+    replacement: ?ReplacementKind,
     /// Supplies exact mapped instance-staging bytes required by this candidate.
     instance_staging_bytes: usize,
     /// Borrows exact sparse staging-to-persistent buffer regions.
@@ -252,10 +334,10 @@ pub const Store = struct {
     cols: u16 = 0,
     candidate_rows_count: u16 = 0,
     candidate_cols_count: u16 = 0,
-    accepted_cursor: terminal.Cursor = .{},
-    candidate_cursor: terminal.Cursor = .{},
-    candidate_replacement: ?terminal.ReplacementKind = null,
-    candidate_replacement_cells: []const terminal.Cell = &.{},
+    accepted_cursor: CursorDraw = .{},
+    candidate_cursor: CursorDraw = .{},
+    candidate_replacement: ?ReplacementKind = null,
+    candidate_replacement_instances: []const Instance = &.{},
     candidate_row_changed: bool = false,
     candidate_pending: bool = false,
 
@@ -322,11 +404,11 @@ pub const Store = struct {
         self.* = undefined;
     }
 
-    /// Prepares one Render-owned terminal update without changing accepted GPU
+    /// Prepares one resolved backend update without changing accepted GPU
     /// shadows or generic Canvas/Vulkan Plan storage.
     pub fn prepare(
         self: *Store,
-        update: terminal.Update,
+        update: Update,
         rasters: []const GlyphRaster,
     ) Error!Prepared {
         if (self.candidate_pending) return error.CandidatePending;
@@ -340,12 +422,12 @@ pub const Store = struct {
         self.candidate_rows_count = update.rows;
         self.candidate_cols_count = update.cols;
         self.candidate_cursor = update.cursor orelse self.accepted_cursor;
-        try self.stageGlyphs(update.glyphs, rasters);
+        try self.stageGlyphs(update.glyph_slots, rasters);
 
         if (update.replacement) |replacement| {
             self.candidate_replacement = replacement.kind;
-            self.candidate_replacement_cells = replacement.cells;
-            for (replacement.cells) |cell| try self.requireInstance(cell);
+            self.candidate_replacement_instances = replacement.instances;
+            for (replacement.instances) |instance| try self.requireInstance(instance);
             self.candidate_instance_count = cells;
             try self.appendCopy(0, 0, cells);
             for (self.candidate_rows[0..update.rows], 0..) |*row, index|
@@ -401,8 +483,10 @@ pub const Store = struct {
         if (!self.candidate_pending) return error.NoCandidate;
         if (self.candidate_replacement != null) {
             const cells: usize = @as(usize, self.candidate_rows_count) * self.candidate_cols_count;
-            for (self.candidate_replacement_cells[0..cells], 0..) |cell, index|
-                self.accepted_instances[index] = self.instanceFor(cell) catch unreachable;
+            @memcpy(
+                self.accepted_instances[0..cells],
+                self.candidate_replacement_instances[0..cells],
+            );
         } else {
             for (self.fill_writes[0..self.fill_write_count]) |fill_write|
                 @memset(
@@ -440,9 +524,9 @@ pub const Store = struct {
         return self.accepted_instances[physical_index];
     }
 
-    /// Reports whether one exact printable-ASCII/style raster is resident.
-    pub fn glyphResident(self: *const Store, key: terminal.GlyphKey) bool {
-        const slot = glyphSlot(key) catch return false;
+    /// Reports whether one exact stable glyph-slot raster is resident.
+    pub fn glyphResident(self: *const Store, slot: u16) bool {
+        if (slot >= glyph_slots) return false;
         return bit(self.glyph_resident, slot);
     }
 
@@ -459,8 +543,7 @@ pub const Store = struct {
 
         var byte_offset: usize = 0;
         if (self.candidate_replacement != null) {
-            for (self.candidate_replacement_cells) |cell| {
-                const instance = try self.instanceFor(cell);
+            for (self.candidate_replacement_instances) |instance| {
                 const bytes = std.mem.asBytes(&instance);
                 @memcpy(staging.instances[byte_offset..][0..bytes.len], bytes);
                 byte_offset += bytes.len;
@@ -585,10 +668,11 @@ pub const Store = struct {
         if (covered_bytes != staging_bytes) return error.InvalidGeometry;
 
         if (self.candidate_replacement != null) {
-            if (self.candidate_replacement_cells.len != cells or
+            if (self.candidate_replacement_instances.len != cells or
                 self.candidate_instance_count != cells or self.buffer_copy_count != 1)
                 return error.InvalidGeometry;
-            for (self.candidate_replacement_cells) |cell| try self.requireInstance(cell);
+            for (self.candidate_replacement_instances) |instance|
+                try self.requireInstance(instance);
         } else {
             var staged: usize = self.cell_write_count;
             for (self.fill_writes[0..self.fill_write_count]) |fill_write|
@@ -619,8 +703,7 @@ pub const Store = struct {
         var seen: [(glyph_slots + 63) / 64]u64 = @splat(0);
         for (self.glyph_uploads[0..self.glyph_upload_count]) |upload| {
             const slot: usize = upload.slot;
-            if (slot >= glyph_slots or bit(&seen, slot) or
-                upload.slot != glyphSlot(upload.key) catch return error.InvalidIdentity)
+            if (slot >= glyph_slots or bit(&seen, slot))
                 return error.InvalidGeometry;
             setBit(&seen, slot);
             const region = upload.region;
@@ -656,13 +739,13 @@ pub const Store = struct {
 
     fn stageGlyphs(
         self: *Store,
-        keys: []const terminal.GlyphKey,
+        slots: []const u16,
         rasters: []const GlyphRaster,
     ) Error!void {
-        for (keys) |key| {
-            const slot = try glyphSlot(key);
+        for (slots) |slot| {
+            if (slot >= glyph_slots) return error.InvalidIdentity;
             if (bit(self.glyph_resident, slot) or bit(self.candidate_glyphs, slot)) continue;
-            const raster = findRaster(rasters, key) orelse return error.GlyphUnavailable;
+            const raster = findRaster(rasters, slot) orelse return error.GlyphUnavailable;
             try self.stageGlyph(slot, raster);
         }
     }
@@ -686,7 +769,6 @@ pub const Store = struct {
         const column: u16 = @intCast(slot % glyph_atlas_columns);
         const row: u16 = @intCast(slot / glyph_atlas_columns);
         self.glyph_uploads[self.glyph_upload_count] = .{
-            .key = raster.key,
             .slot = @intCast(slot),
             .pixels = self.glyph_pixels[offset..next],
             .region = .{
@@ -716,7 +798,7 @@ pub const Store = struct {
         setBit(self.candidate_glyphs, slot);
     }
 
-    fn stageFill(self: *Store, update: terminal.FillUpdate) Error!void {
+    fn stageFill(self: *Store, update: Fill) Error!void {
         if (self.fill_write_count == self.fill_writes.len)
             return error.StructuredUpdateLimit;
         const first: usize = @intCast(update.first);
@@ -724,7 +806,7 @@ pub const Store = struct {
         const maximum: usize = @as(usize, self.rows) * self.cols;
         if (count == 0 or first > maximum or count > maximum - first)
             return error.InvalidGeometry;
-        const instance = try self.instanceFor(update.cell);
+        try self.requireInstance(update.instance);
         if (count > self.limits.sparse_cell_updates -| self.candidate_instance_count)
             return error.SparseUpdateLimit;
         const transfer_first = self.candidate_instance_count;
@@ -733,12 +815,12 @@ pub const Store = struct {
         self.fill_writes[self.fill_write_count] = .{
             .first = first,
             .count = count,
-            .instance = instance,
+            .instance = update.instance,
         };
         self.fill_write_count += 1;
     }
 
-    fn stageCell(self: *Store, update: terminal.CellUpdate) Error!void {
+    fn stageCell(self: *Store, update: CellWriteInput) Error!void {
         if (self.cell_write_count == self.cell_writes.len)
             return error.SparseUpdateLimit;
         const index: usize = @intCast(update.physical_index);
@@ -746,11 +828,11 @@ pub const Store = struct {
         if (index >= maximum) return error.InvalidGeometry;
         if (self.candidate_instance_count == self.limits.sparse_cell_updates)
             return error.SparseUpdateLimit;
-        const instance = try self.instanceFor(update.cell);
+        try self.requireInstance(update.instance);
         const transfer_index = self.candidate_instance_count;
         self.candidate_instance_count += 1;
         try self.appendCopy(transfer_index, index, 1);
-        self.cell_writes[self.cell_write_count] = .{ .index = index, .instance = instance };
+        self.cell_writes[self.cell_write_count] = .{ .index = index, .instance = update.instance };
         self.cell_write_count += 1;
     }
 
@@ -765,38 +847,12 @@ pub const Store = struct {
         self.buffer_copy_count += 1;
     }
 
-    fn instanceFor(self: *const Store, cell: terminal.Cell) Error!Instance {
-        const slot = if (cell.codepoint == 0 or cell.codepoint == ' ')
-            blank_glyph
-        else blk: {
-            const key = terminal.GlyphKey{
-                .codepoint = @intCast(cell.codepoint),
-                .bold = cell.style.bold,
-                .italic = cell.style.italic,
-            };
-            const value = try glyphSlot(key);
-            if (!bit(self.glyph_resident, value) and !bit(self.candidate_glyphs, value))
-                return error.GlyphUnavailable;
-            break :blk @as(u16, @intCast(value));
-        };
-        return .{
-            .glyph_slot = slot,
-            .flags = .{
-                .bold = cell.style.bold,
-                .dim = cell.style.dim,
-                .italic = cell.style.italic,
-                .underline = cell.style.underline,
-                .strikethrough = cell.style.strikethrough,
-            },
-            .foreground = color(cell.foreground),
-            .background = color(cell.background),
-            .underline_color = color(cell.underline_color),
-        };
-    }
-
-    fn requireInstance(self: *const Store, cell: terminal.Cell) Error!void {
-        const instance = try self.instanceFor(cell);
-        if (instance.flags.reserved != 0) return error.InvalidIdentity;
+    fn requireInstance(self: *const Store, instance: Instance) Error!void {
+        try validateInstance(instance);
+        if (instance.glyph_slot != blank_glyph and
+            !bit(self.glyph_resident, instance.glyph_slot) and
+            !bit(self.candidate_glyphs, instance.glyph_slot))
+            return error.GlyphUnavailable;
     }
 
     fn resetCandidate(self: *Store) void {
@@ -808,7 +864,7 @@ pub const Store = struct {
         self.glyph_upload_count = 0;
         @memset(self.candidate_glyphs, 0);
         self.candidate_replacement = null;
-        self.candidate_replacement_cells = &.{};
+        self.candidate_replacement_instances = &.{};
         self.candidate_row_changed = false;
         self.candidate_rows_count = 0;
         self.candidate_cols_count = 0;
@@ -830,8 +886,8 @@ fn validateLimits(limits: Limits) Error!usize {
         limits.sparse_cell_updates == 0 or limits.structured_updates == 0 or
         limits.glyph_width == 0 or limits.glyph_height == 0 or
         limits.glyph_upload_bytes == 0 or
-        limits.sparse_cell_updates > terminal.maximum_cells or
-        limits.structured_updates > terminal.maximum_cells)
+        limits.sparse_cell_updates > maximum_cells or
+        limits.structured_updates > maximum_cells)
         return error.InvalidLimits;
     const cells = std.math.mul(usize, limits.rows, limits.cols) catch
         return error.InvalidLimits;
@@ -839,7 +895,7 @@ fn validateLimits(limits: Limits) Error!usize {
         return error.InvalidLimits;
     const atlas_height = std.math.mul(u32, limits.glyph_height, glyph_atlas_rows) catch
         return error.InvalidLimits;
-    if (atlas_width == 0 or atlas_height == 0 or cells > terminal.maximum_cells)
+    if (atlas_width == 0 or atlas_height == 0 or cells > maximum_cells)
         return error.InvalidLimits;
     const copy_capacity = std.math.add(
         usize,
@@ -862,7 +918,7 @@ fn validateCommandBindings(
         return error.InvalidIdentity;
 }
 
-fn validateUpdate(limits: Limits, update: terminal.Update) Error!usize {
+fn validateUpdate(limits: Limits, update: Update) Error!usize {
     if (update.rows == 0 or update.cols == 0 or
         update.rows > limits.rows or update.cols > limits.cols)
         return error.InvalidGeometry;
@@ -870,7 +926,7 @@ fn validateUpdate(limits: Limits, update: terminal.Update) Error!usize {
         return error.InvalidGeometry;
     if (update.replacement) |replacement| {
         if (replacement.rows != update.rows or replacement.cols != update.cols or
-            replacement.cells.len != cells or update.row_rotations.len != 0 or
+            replacement.instances.len != cells or update.row_rotations.len != 0 or
             update.fills.len != 0 or update.cells.len != 0)
             return error.InvalidGeometry;
     }
@@ -883,26 +939,18 @@ fn validateUpdate(limits: Limits, update: terminal.Update) Error!usize {
         if (cursor.visible and (cursor.shape == .hidden or
             cursor.row >= update.rows or cursor.col >= update.cols))
             return error.InvalidGeometry;
-        if (!cursor.visible and !std.meta.eql(cursor, terminal.Cursor{}))
+        if (!cursor.visible and !std.meta.eql(cursor, CursorDraw{}))
             return error.InvalidIdentity;
     }
     return cells;
 }
 
-fn glyphSlot(key: terminal.GlyphKey) Error!usize {
-    if (key.reserved != 0 or key.codepoint < 0x20 or key.codepoint > 0x7e)
-        return error.InvalidIdentity;
-    const style: usize = @as(usize, @intFromBool(key.bold)) |
-        (@as(usize, @intFromBool(key.italic)) << 1);
-    return (@as(usize, key.codepoint) - 0x20) * 4 + style;
-}
-
-fn findRaster(rasters: []const GlyphRaster, key: terminal.GlyphKey) ?GlyphRaster {
-    for (rasters) |raster| if (raster.key == key) return raster;
+fn findRaster(rasters: []const GlyphRaster, slot: u16) ?GlyphRaster {
+    for (rasters) |raster| if (raster.slot == slot) return raster;
     return null;
 }
 
-fn applyRotation(rows: []u32, rotation: terminal.RowRotation) Error!void {
+fn applyRotation(rows: []u32, rotation: RowRotation) Error!void {
     if (rotation.count == 0 or rotation.first >= rows.len or
         @as(usize, rotation.count) > rows.len - rotation.first or
         rotation.shift == 0 or @abs(rotation.shift) >= rotation.count)
@@ -925,11 +973,10 @@ fn blankInstance() Instance {
     };
 }
 
-fn color(value: terminal.Rgb) u32 {
-    return @as(u32, value.r) |
-        (@as(u32, value.g) << 8) |
-        (@as(u32, value.b) << 16) |
-        (@as(u32, 0xff) << 24);
+fn validateInstance(instance: Instance) Error!void {
+    if (instance.flags.reserved != 0 or
+        (instance.glyph_slot != blank_glyph and instance.glyph_slot >= glyph_slots))
+        return error.InvalidIdentity;
 }
 
 fn bit(words: []const u64, index: usize) bool {
@@ -940,14 +987,21 @@ fn setBit(words: []u64, index: usize) void {
     words[index / 64] |= @as(u64, 1) << @intCast(index % 64);
 }
 
-fn testCell(codepoint: u21) terminal.Cell {
-    return terminal.Cell.init(
-        codepoint,
-        .{ .r = 0xee, .g = 0xee, .b = 0xee },
-        .{ .r = 0x11, .g = 0x11, .b = 0x11 },
-        .{ .r = 0x88, .g = 0x88, .b = 0x88 },
-        .{},
-    );
+fn testSlot(codepoint: u8, bold: bool, italic: bool) u16 {
+    std.debug.assert(codepoint >= 0x20 and codepoint <= 0x7e);
+    const style: u16 = @as(u16, @intFromBool(bold)) |
+        (@as(u16, @intFromBool(italic)) << 1);
+    return (@as(u16, codepoint) - 0x20) * 4 + style;
+}
+
+fn testInstance(codepoint: u8) Instance {
+    return .{
+        .glyph_slot = if (codepoint == ' ') blank_glyph else testSlot(codepoint, false, false),
+        .flags = .{},
+        .foreground = 0xffeeeeee,
+        .background = 0xff111111,
+        .underline_color = 0xff888888,
+    };
 }
 
 fn testLimits(rows: u16, cols: u16) Limits {
@@ -962,8 +1016,8 @@ fn testLimits(rows: u16, cols: u16) Limits {
     };
 }
 
-fn testRaster(key: terminal.GlyphKey, pixels: []const u8) GlyphRaster {
-    return .{ .key = key, .width = 1, .height = 1, .stride = 1, .pixels = pixels };
+fn testRaster(slot: u16, pixels: []const u8) GlyphRaster {
+    return .{ .slot = slot, .width = 1, .height = 1, .stride = 1, .pixels = pixels };
 }
 
 fn testCommandBindings() CommandBindings {
@@ -980,18 +1034,26 @@ fn testCommandBindings() CommandBindings {
     };
 }
 
-fn acceptInitial(grid: *terminal.Grid, store: *Store, pixels: []const u8) !void {
-    const update = (try grid.prepare()).?;
-    var rasters: [glyph_slots]GlyphRaster = undefined;
-    var raster_count: usize = 0;
-    for (update.glyphs) |key| {
-        rasters[raster_count] = testRaster(key, pixels);
-        raster_count += 1;
-    }
-    const prepared = try store.prepare(update, rasters[0..raster_count]);
-    try std.testing.expectEqual(terminal.ReplacementKind.initialization, prepared.replacement.?);
+fn acceptInitial(
+    store: *Store,
+    rows: u16,
+    cols: u16,
+    instances: []const Instance,
+    slots: []const u16,
+    rasters: []const GlyphRaster,
+) !void {
+    const prepared = try store.prepare(.{
+        .rows = rows,
+        .cols = cols,
+        .replacement = .{ .kind = .initialization, .rows = rows, .cols = cols, .instances = instances },
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{},
+        .glyph_slots = slots,
+        .cursor = null,
+    }, rasters);
+    try std.testing.expectEqual(ReplacementKind.initialization, prepared.replacement.?);
     try store.complete();
-    try grid.complete();
 }
 
 fn storeAllocationFailure(allocator: std.mem.Allocator) !void {
@@ -999,28 +1061,25 @@ fn storeAllocationFailure(allocator: std.mem.Allocator) !void {
     defer store.deinit();
 }
 
-test "render grid lowers through retained Vulkan storage without Plan copies" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 4, .cols = 5, .structured_operations = 8, .sparse_cell_updates = 20 },
-        4,
-        5,
-        testCell('5'),
-    );
-    defer grid.deinit();
+test "resolved sparse input lowers without Plan copies" {
     var store = try Store.init(std.testing.allocator, testLimits(4, 5));
     defer store.deinit();
     const pixels = [_]u8{0xff};
-    try acceptInitial(&grid, &store, &pixels);
+    const five_slot = testSlot('5', false, false);
+    const initial: [20]Instance = @splat(testInstance('5'));
+    try acceptInitial(&store, 4, 5, &initial, &.{five_slot}, &.{testRaster(five_slot, &pixels)});
 
-    try grid.set(1, 2, testCell('4'));
-    try grid.set(1, 2, testCell('5'));
-    try std.testing.expect((try grid.prepare()) == null);
-
-    try grid.set(1, 2, testCell('4'));
-    const update = (try grid.prepare()).?;
-    const key = update.glyphs[0];
-    const prepared = try store.prepare(update, &.{testRaster(key, &pixels)});
+    const four_slot = testSlot('4', false, false);
+    const prepared = try store.prepare(.{
+        .rows = 4,
+        .cols = 5,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{.{ .physical_index = 7, .instance = testInstance('4') }},
+        .glyph_slots = &.{four_slot},
+        .cursor = null,
+    }, &.{testRaster(four_slot, &pixels)});
     try std.testing.expectEqual(@as(usize, @sizeOf(Instance)), prepared.instance_staging_bytes);
     try std.testing.expectEqual(@as(usize, 1), prepared.instance_copies.len);
     try std.testing.expectEqual(@as(u64, 0), prepared.instance_copies[0].srcOffset);
@@ -1029,39 +1088,40 @@ test "render grid lowers through retained Vulkan storage without Plan copies" {
     try std.testing.expectEqual(@as(u32, 1), prepared.draw.group_count);
     try std.testing.expectEqual(@as(u32, 20), prepared.draw.instance_count);
     try store.complete();
-    try grid.complete();
 }
 
 test "maximum-cell retained CPU and future payload equations are exact" {
     const limits = Limits{
         .rows = 128,
         .cols = 512,
-        .sparse_cell_updates = terminal.maximum_cells,
-        .structured_updates = terminal.maximum_cells,
+        .sparse_cell_updates = maximum_cells,
+        .structured_updates = maximum_cells,
         .glyph_width = 8,
         .glyph_height = 16,
-        .glyph_upload_bytes = terminal.maximum_cells,
+        .glyph_upload_bytes = maximum_cells,
     };
     const physical = try physicalPayloadBytes(limits);
-    try std.testing.expectEqual(@as(usize, 312), @sizeOf(Store));
-    try std.testing.expectEqual(@as(usize, 7_961_712), try retainedCpuBytes(limits));
+    try std.testing.expectEqual(@as(usize, 320), @sizeOf(Store));
+    try std.testing.expectEqual(@as(usize, 7_961_720), try retainedCpuBytes(limits));
     try std.testing.expectEqual(@as(usize, 1_048_576), physical.instances);
     try std.testing.expectEqual(@as(usize, 512), physical.row_map);
     try std.testing.expectEqual(@as(usize, 48_640), physical.glyph_atlas);
 }
 
 test "GPU replacement lifecycle rejects premature and duplicate initialization" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 1, .structured_operations = 1, .sparse_cell_updates = 1 },
-        1,
-        1,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(1, 1));
     defer store.deinit();
-    const initial = (try grid.prepare()).?;
+    const blank = [_]Instance{testInstance(' ')};
+    const initial = Update{
+        .rows = 1,
+        .cols = 1,
+        .replacement = .{ .kind = .initialization, .rows = 1, .cols = 1, .instances = &blank },
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{},
+        .glyph_slots = &.{},
+        .cursor = null,
+    };
     var premature = initial;
     var premature_replacement = premature.replacement.?;
     premature_replacement.kind = .resize;
@@ -1069,31 +1129,30 @@ test "GPU replacement lifecycle rejects premature and duplicate initialization" 
     try std.testing.expectError(error.InvalidIdentity, store.prepare(premature, &.{}));
 
     const prepared = try store.prepare(initial, &.{});
-    try std.testing.expectEqual(terminal.ReplacementKind.initialization, prepared.replacement.?);
+    try std.testing.expectEqual(ReplacementKind.initialization, prepared.replacement.?);
     try store.complete();
-    try grid.complete();
     const before = try store.accepted(0);
     try std.testing.expectError(error.InvalidIdentity, store.prepare(initial, &.{}));
     try std.testing.expectEqualDeep(before, try store.accepted(0));
 }
 
 test "one-row scroll uploads row map and exposed row but no moved cells" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 4, .cols = 5, .structured_operations = 8, .sparse_cell_updates = 5 },
-        4,
-        5,
-        testCell('a'),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(4, 5));
     defer store.deinit();
     const pixels = [_]u8{0xff};
-    try acceptInitial(&grid, &store, &pixels);
-    try grid.copyRows(1, 0, 3);
-    try grid.fill(3, 0, 1, 5, testCell(' '));
-    const update = (try grid.prepare()).?;
-    const prepared = try store.prepare(update, &.{});
+    const a_slot = testSlot('a', false, false);
+    const initial: [20]Instance = @splat(testInstance('a'));
+    try acceptInitial(&store, 4, 5, &initial, &.{a_slot}, &.{testRaster(a_slot, &pixels)});
+    const prepared = try store.prepare(.{
+        .rows = 4,
+        .cols = 5,
+        .replacement = null,
+        .row_rotations = &.{.{ .first = 0, .count = 4, .shift = -1 }},
+        .fills = &.{.{ .first = 0, .count = 5, .instance = testInstance(' ') }},
+        .cells = &.{},
+        .glyph_slots = &.{},
+        .cursor = null,
+    }, &.{});
     try std.testing.expect(prepared.row_copy != null);
     try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 0 }, prepared.row_map);
     try std.testing.expectEqual(@as(u64, 4 * @sizeOf(u32)), prepared.row_copy.?.size);
@@ -1102,61 +1161,63 @@ test "one-row scroll uploads row map and exposed row but no moved cells" {
     try std.testing.expectEqual(@as(u64, 0), prepared.instance_copies[0].dstOffset);
     try std.testing.expectEqual(@as(u64, 5 * @sizeOf(Instance)), prepared.instance_copies[0].size);
     try store.complete();
-    try grid.complete();
 }
 
 test "stable glyph identity uploads only on first use" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 2, .structured_operations = 2, .sparse_cell_updates = 2 },
-        1,
-        2,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(1, 2));
     defer store.deinit();
-    try acceptInitial(&grid, &store, &.{});
+    const initial: [2]Instance = @splat(testInstance(' '));
+    try acceptInitial(&store, 1, 2, &initial, &.{}, &.{});
     const pixels = [_]u8{0xaa};
-    try grid.set(0, 0, testCell('x'));
-    const first = (try grid.prepare()).?;
-    const key = first.glyphs[0];
-    const first_prepared = try store.prepare(first, &.{testRaster(key, &pixels)});
+    const slot = testSlot('x', false, false);
+    const first_prepared = try store.prepare(.{
+        .rows = 1,
+        .cols = 2,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{.{ .physical_index = 0, .instance = testInstance('x') }},
+        .glyph_slots = &.{slot},
+        .cursor = null,
+    }, &.{testRaster(slot, &pixels)});
     try std.testing.expectEqual(@as(usize, 1), first_prepared.glyph_uploads.len);
-    try std.testing.expectEqual(
-        @as(u16, @intCast(try glyphSlot(key))),
-        first_prepared.glyph_uploads[0].slot,
-    );
+    try std.testing.expectEqual(slot, first_prepared.glyph_uploads[0].slot);
     try store.complete();
-    try grid.complete();
-    try std.testing.expect(store.glyphResident(key));
+    try std.testing.expect(store.glyphResident(slot));
 
-    try grid.set(0, 1, testCell('x'));
-    const second = (try grid.prepare()).?;
-    const second_prepared = try store.prepare(second, &.{});
+    const second_prepared = try store.prepare(.{
+        .rows = 1,
+        .cols = 2,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{.{ .physical_index = 1, .instance = testInstance('x') }},
+        .glyph_slots = &.{slot},
+        .cursor = null,
+    }, &.{});
     try std.testing.expectEqual(@as(usize, 0), second_prepared.glyph_uploads.len);
     try store.complete();
-    try grid.complete();
 }
 
 test "mapped staging preflights all partitions before writing" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 1, .structured_operations = 1, .sparse_cell_updates = 1 },
-        1,
-        1,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(1, 1));
     defer store.deinit();
-    try acceptInitial(&grid, &store, &.{});
+    const initial = [_]Instance{testInstance(' ')};
+    try acceptInitial(&store, 1, 1, &initial, &.{}, &.{});
     const accepted_before = try store.accepted(0);
 
     const pixels = [_]u8{0x7f};
-    try grid.set(0, 0, testCell('x'));
-    const update = (try grid.prepare()).?;
-    const prepared = try store.prepare(update, &.{testRaster(update.glyphs[0], &pixels)});
+    const slot = testSlot('x', false, false);
+    const prepared = try store.prepare(.{
+        .rows = 1,
+        .cols = 1,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{.{ .physical_index = 0, .instance = testInstance('x') }},
+        .glyph_slots = &.{slot},
+        .cursor = null,
+    }, &.{testRaster(slot, &pixels)});
     var instance_bytes: [@sizeOf(Instance)]u8 = undefined;
     var glyph_bytes: [1]u8 = undefined;
     try store.stageMapped(.{
@@ -1190,72 +1251,65 @@ test "mapped staging preflights all partitions before writing" {
     for (glyph_instances) |byte| try std.testing.expectEqual(@as(u8, 0x44), byte);
     try std.testing.expectEqualDeep(accepted_before, try store.accepted(0));
     try store.discard();
-    try grid.discard();
 }
 
 test "first-use glyph copy offsets satisfy Vulkan alignment" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 2, .structured_operations = 1, .sparse_cell_updates = 2 },
-        1,
-        2,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var limits = testLimits(1, 2);
     limits.glyph_upload_bytes = 5;
     var store = try Store.init(std.testing.allocator, limits);
     defer store.deinit();
-    try acceptInitial(&grid, &store, &.{});
+    const initial: [2]Instance = @splat(testInstance(' '));
+    try acceptInitial(&store, 1, 2, &initial, &.{}, &.{});
 
     const first_pixels = [_]u8{0x11};
     const second_pixels = [_]u8{0x22};
-    try grid.set(0, 0, testCell('x'));
-    try grid.set(0, 1, testCell('y'));
-    const update = (try grid.prepare()).?;
-    const prepared = try store.prepare(update, &.{
-        testRaster(update.glyphs[0], &first_pixels),
-        testRaster(update.glyphs[1], &second_pixels),
+    const x_slot = testSlot('x', false, false);
+    const y_slot = testSlot('y', false, false);
+    const prepared = try store.prepare(.{
+        .rows = 1,
+        .cols = 2,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{
+            .{ .physical_index = 0, .instance = testInstance('x') },
+            .{ .physical_index = 1, .instance = testInstance('y') },
+        },
+        .glyph_slots = &.{ x_slot, y_slot },
+        .cursor = null,
+    }, &.{
+        testRaster(x_slot, &first_pixels),
+        testRaster(y_slot, &second_pixels),
     });
     try std.testing.expectEqual(@as(usize, 2), prepared.glyph_uploads.len);
     try std.testing.expectEqual(@as(u64, 0), prepared.glyph_uploads[0].region.bufferOffset);
     try std.testing.expectEqual(@as(u64, 4), prepared.glyph_uploads[1].region.bufferOffset);
     try std.testing.expectEqualSlices(u8, &.{ 0x11, 0, 0, 0, 0x22 }, prepared.glyph_pixels);
     try store.discard();
-    try grid.discard();
 }
 
 test "cursor update draws without generic base geometry copy" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 2, .cols = 2, .structured_operations = 2, .sparse_cell_updates = 1 },
-        2,
-        2,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(2, 2));
     defer store.deinit();
-    try acceptInitial(&grid, &store, &.{});
-    try grid.setCursor(.{ .row = 1, .col = 1, .shape = .block, .visible = true });
-    const update = (try grid.prepare()).?;
-    const prepared = try store.prepare(update, &.{});
+    const initial: [4]Instance = @splat(testInstance(' '));
+    try acceptInitial(&store, 2, 2, &initial, &.{}, &.{});
+    const prepared = try store.prepare(.{
+        .rows = 2,
+        .cols = 2,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{},
+        .glyph_slots = &.{},
+        .cursor = .{ .row = 1, .col = 1, .shape = .block, .visible = true },
+    }, &.{});
     try std.testing.expectEqual(@as(usize, 0), prepared.instance_staging_bytes);
     try std.testing.expectEqual(@as(usize, 0), prepared.instance_copies.len);
     try std.testing.expect(prepared.draw.cursor.visible);
     try store.complete();
-    try grid.complete();
 }
 
 test "glyph and sparse preparation failures preserve accepted ownership" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 2, .structured_operations = 2, .sparse_cell_updates = 2 },
-        1,
-        2,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, .{
         .rows = 1,
         .cols = 2,
@@ -1266,17 +1320,27 @@ test "glyph and sparse preparation failures preserve accepted ownership" {
         .glyph_upload_bytes = 1,
     });
     defer store.deinit();
-    try acceptInitial(&grid, &store, &.{});
+    const initial: [2]Instance = @splat(testInstance(' '));
+    try acceptInitial(&store, 1, 2, &initial, &.{}, &.{});
     const before = try store.accepted(0);
-    try grid.set(0, 0, testCell('x'));
-    const update = (try grid.prepare()).?;
+    const slot = testSlot('x', false, false);
+    const update = Update{
+        .rows = 1,
+        .cols = 2,
+        .replacement = null,
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{.{ .physical_index = 0, .instance = testInstance('x') }},
+        .glyph_slots = &.{slot},
+        .cursor = null,
+    };
     try std.testing.expectError(error.GlyphUnavailable, store.prepare(update, &.{}));
     try std.testing.expectEqualDeep(before, try store.accepted(0));
     const bad_pixels = [_]u8{ 1, 2 };
     try std.testing.expectError(
         error.InvalidGlyphRaster,
         store.prepare(update, &.{.{
-            .key = update.glyphs[0],
+            .slot = slot,
             .width = 1,
             .height = 1,
             .stride = 1,
@@ -1289,26 +1353,23 @@ test "glyph and sparse preparation failures preserve accepted ownership" {
     invalid_geometry.cursor = .{ .row = 1, .col = 0, .shape = .block, .visible = true };
     try std.testing.expectError(error.InvalidGeometry, store.prepare(invalid_geometry, &.{}));
     try std.testing.expectEqualDeep(before, try store.accepted(0));
-    const invalid_keys = [_]terminal.GlyphKey{.{
-        .codepoint = 1,
-        .bold = false,
-        .italic = false,
-    }};
+    const invalid_slots = [_]u16{@intCast(glyph_slots)};
     var invalid_identity = update;
-    invalid_identity.glyphs = &invalid_keys;
+    invalid_identity.glyph_slots = &invalid_slots;
     try std.testing.expectError(error.InvalidIdentity, store.prepare(invalid_identity, &.{}));
     try std.testing.expectEqualDeep(before, try store.accepted(0));
 
-    try grid.discard();
-    try grid.set(0, 1, testCell('x'));
-    const overflow_update = (try grid.prepare()).?;
+    var overflow_update = update;
+    overflow_update.cells = &.{
+        .{ .physical_index = 0, .instance = testInstance('x') },
+        .{ .physical_index = 1, .instance = testInstance('x') },
+    };
     const pixels = [_]u8{0xaa};
     try std.testing.expectError(
         error.SparseUpdateLimit,
-        store.prepare(overflow_update, &.{testRaster(overflow_update.glyphs[0], &pixels)}),
+        store.prepare(overflow_update, &.{testRaster(slot, &pixels)}),
     );
     try std.testing.expectEqualDeep(before, try store.accepted(0));
-    try grid.discard();
 }
 
 test "allocation and Vulkan command layouts are exact" {
@@ -1358,19 +1419,20 @@ test "allocation and Vulkan command layouts are exact" {
 }
 
 test "malformed retained commands fail before the first Vulkan call" {
-    var grid = try terminal.Grid.init(
-        std.testing.allocator,
-        .{ .rows = 1, .cols = 1, .structured_operations = 1, .sparse_cell_updates = 1 },
-        1,
-        1,
-        testCell(' '),
-    );
-    defer grid.deinit();
     var store = try Store.init(std.testing.allocator, testLimits(1, 1));
     defer store.deinit();
-    const update = (try grid.prepare()).?;
-    const candidate = try store.prepare(update, &.{});
-    try std.testing.expectEqual(terminal.ReplacementKind.initialization, candidate.replacement.?);
+    const initial = [_]Instance{testInstance(' ')};
+    const candidate = try store.prepare(.{
+        .rows = 1,
+        .cols = 1,
+        .replacement = .{ .kind = .initialization, .rows = 1, .cols = 1, .instances = &initial },
+        .row_rotations = &.{},
+        .fills = &.{},
+        .cells = &.{},
+        .glyph_slots = &.{},
+        .cursor = null,
+    }, &.{});
+    try std.testing.expectEqual(ReplacementKind.initialization, candidate.replacement.?);
 
     const command: vk.VkCommandBuffer = @ptrFromInt(1);
     const bindings = testCommandBindings();

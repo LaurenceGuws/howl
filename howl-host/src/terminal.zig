@@ -1141,12 +1141,12 @@ pub const BoundaryInitError = handoff.BoundaryInitError;
 /// Reports exact typed lifecycle application and slot-retirement contention.
 const LifecycleError = RuntimeError || ResizeError || error{UnknownPane};
 
-/// Creates the process-root terminal exchange with the runtime's exact Content limits.
+/// Creates the process-root terminal control exchange without rendering payload storage.
 pub fn initBoundary(
     io: std.Io,
     allocator: std.mem.Allocator,
 ) BoundaryInitError!handoff.Boundary {
-    return handoff.Boundary.init(io, allocator, contentLimits());
+    return handoff.Boundary.init(io, allocator);
 }
 
 /// Runs the sole terminal owner until a typed shutdown request arrives.
@@ -3944,14 +3944,14 @@ test "visible-set preparation publishes hidden newest state through real Content
     try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
     try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
     try boundary.claimVisibleSet(1);
-    try boundary.commitVisibleSet(1);
+    boundary.commitVisibleSet(1);
     const first_revision =
         runtime.owners[runtime.find(pane).?].?.last_published_revision;
 
     try boundary.publishVisibleSet(2, &.{});
     try std.testing.expect(try runtime.prepareVisibleSet(&boundary));
     try boundary.claimVisibleSet(2);
-    try boundary.commitVisibleSet(2);
+    boundary.commitVisibleSet(2);
     const owner = &runtime.owners[runtime.find(pane).?].?;
     try std.testing.expect((try owner.machine.feed("newest")).stateChanged());
     owner.dirty = true;
@@ -3966,7 +3966,7 @@ test "visible-set preparation publishes hidden newest state through real Content
     try std.testing.expectEqual(@as(usize, 1), (try boundary.drainReady(&composer)).accepted);
     try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(3));
     try boundary.claimVisibleSet(3);
-    try boundary.commitVisibleSet(3);
+    boundary.commitVisibleSet(3);
     try std.testing.expect(
         @backingInt(owner.last_published_revision) > @backingInt(first_revision),
     );
@@ -5180,7 +5180,7 @@ test "real child output crosses Pool and Composer before one completion" {
     );
     try std.testing.expectEqual(handoff.VisibleSetStatus.ready, boundary.visibleSetStatus(1));
     try boundary.claimVisibleSet(1);
-    try boundary.commitVisibleSet(1);
+    boundary.commitVisibleSet(1);
     try boundary.markLive(pane);
     var drained: usize = 0;
     var completion: ?handoff.TerminalCompletion = null;

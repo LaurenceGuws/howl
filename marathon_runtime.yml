@@ -47,12 +47,18 @@ sprints:
       proof_cases: P001-P021
   - id: terminal_render_foundation
     status: active
-    active_slice: retained_terminal_cell_primitive
+    active_slice: non_render_host_terminal_boundary
     outcome: >-
       Restore one independently useful Render/Vulkan blank/ASCII/style/static-
       cursor primitive with one retained Render visual grid, bounded sparse
       baselines, one accepted Vulkan shadow, structured row movement, exact
       sparse Vulkan staging and commands, and no Host or VT integration.
+    prerequisite: >-
+      The non-render Host terminal handoff is recovered without the deleted
+      completed-Canvas transport. Howl-VK's backend terminal owner accepts only
+      resolved Vulkan inputs and no longer depends on Howl-Render. Host
+      compilation next reaches the deleted terminal projection path where the
+      future Host semantic-to-backend adapter belongs.
     exclusions:
       - no Host queue or terminal-thread integration
       - no generic Canvas Plan replacement

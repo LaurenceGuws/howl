@@ -1,19 +1,62 @@
 schema: 1
 sprint: terminal_render_foundation
-active_slice: retained_terminal_cell_primitive
+active_slice: non_render_host_terminal_boundary
 status: review_ready
-base: 07d60d4f99c492dc742550b5481b1704fedb9cd2
+base: b7387bcb2f92b1f7ae1557b123afca68d1764749
 branch: feature/runtime_hot_paths/measurement_baseline
 
 objective: >-
-  Deliver one reusable Howl-Render plus Howl-Vulkan retained terminal-cell
-  capability without Host/VT integration or generic Canvas Plan replacement.
+  Recover only the Host terminal control handoff required before ordered VT
+  mutation transport, permanently excluding completed Canvas updates.
+
+prerequisite_implementation:
+  retained_boundary:
+    path: howl-host/src/terminal_handoff.zig
+    size_bytes: 56552
+    heap_bytes: 0
+    descriptors: 2 directional nonblocking eventfds
+    owners:
+      - monotonic pane, source, lifecycle, visible-set, cursor, font, and completion identity
+      - bounded lifecycle and input rings
+      - lifecycle admission transaction
+      - visible membership and font request coalescing
+      - static cursor inbox
+      - at-most-once child completion
+      - retirement and reverse descriptor cleanup
+    visible_commit_ownership: >-
+      A retained visible request cannot be superseded in requested, prepared,
+      or committing phase. The sole Renderer claimant therefore commits
+      infallibly after Composer success; retryable Composer rejection first
+      releases committing back to prepared.
+  removed_boundary:
+    path: howl-host/src/terminal_pool.zig
+    reason: its only accepted role was completed Canvas update storage
+  forbidden_surface_absent:
+    - PendingSlot
+    - ProducerUpdate
+    - reserveUpdate
+    - publishUpdate
+    - drainReady
+    - applyCandidate
+    - hasReadyUpdates
+    - Canvas resource, command, pixel, or frame queues
+  next_compile_boundary: >-
+    Howl-VK now accepts only resolved backend terminal inputs and has no
+    Howl-Render package dependency. Host imports the ordinary howl-vk root and
+    compiles past the former duplicate Canvas module graph. Its first failure
+    is the intentionally deleted howl_render.terminal projection in
+    terminal.zig. No alternate root, Host adapter, projection, mutation queue,
+    or compatibility API was added.
 
 changed_product_paths:
   added:
+    - howl-host/src/terminal_handoff.zig
     - howl-render/src/terminal_cells.zig
     - howl-vk/src/terminal_cells.zig
   modified:
+    - howl-host/build.zig
+    - howl-host/src/renderer.zig
+    - howl-host/src/terminal.zig
     - howl-render/build.zig
     - howl-render/src/root.zig
     - howl-render/src/root_generated.zig
@@ -24,6 +67,8 @@ changed_product_paths:
     - howl-vk/src/abi.zig
     - howl-vk/src/proofs.zig
     - howl-vk/src/root.zig
+  deleted:
+    - howl-host/src/terminal_pool.zig
 
 implementation:
   render:
@@ -36,11 +81,12 @@ implementation:
     - static cursor lowering independent from cells
   Vulkan:
     - 16-byte persistent terminal Instance shadow
+    - direct resolved backend Update and Instance input with no Howl-Render import
     - one accepted instance shadow plus bounded sparse candidate writes
     - caller-borrowed replacement cells rather than a second full candidate
     - exact borrowed mapped instance, u32 row-map, and glyph staging partitions
     - exact VkBufferCopy and VkBufferImageCopy candidate regions and command recording
-    - stable 380-slot blank/ASCII bold/italic glyph identity
+    - stable 380-slot opaque glyph identity supplied by the future Host adapter
     - first-use glyph upload only with four-byte-aligned Vulkan copy offsets
     - row-map transfer with zero moved-cell payload
     - one terminal draw group per pane
@@ -49,9 +95,9 @@ implementation:
 retained_memory:
   receipt_configuration: 128 rows x 512 columns, 65,536 sparse and structured entries, 65,536 glyph bytes
   render_grid_bytes_per_pane: 7342232
-  vulkan_store_bytes_per_pane: 7961712
-  combined_cpu_bytes_per_pane: 15303944
-  representable_cpu_bytes_if_64_future_callers_each_request_all_maxima: 979452416
+  vulkan_store_bytes_per_pane: 7961720
+  combined_cpu_bytes_per_pane: 15303952
+  representable_cpu_bytes_if_64_future_callers_each_request_all_maxima: 979452928
   future_logical_gpu_payload_bytes_per_pane: 1097728
   future_logical_gpu_payload_bytes_under_same_arithmetic_multiplier: 70254592
   note: >-
@@ -67,12 +113,15 @@ validation:
   non_host_child_four_mode_check: passed for VT, PTY, Render, Vulkan, and Wayland
   non_host_child_four_mode_test: passed for VT, PTY, Render, Vulkan, and Wayland
   root_workspace_four_mode_check: >-
-    blocked only at the accepted deleted howl-host/src/terminal_handoff.zig
-    boundary after independent child and root evidence steps succeeded
+    blocked in Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall at the
+    intentionally deleted howl_render.terminal projection. The former
+    duplicate Canvas module graph is absent.
   root_workspace_four_mode_test: >-
-    blocked only in four Host owners importing the accepted deleted
-    howl-host/src/terminal_handoff.zig; the root reported 23 independently
-    runnable tests passed and every non-Host package was gated separately
+    blocked by the deleted terminal projection and completed-update test cohort
+    in terminal.zig, plus Renderer tests that exercised that cohort. The new
+    isolated handoff tests pass; no compatibility projection or payload API was
+    added to make historical rendering tests compile.
+  terminal_handoff_four_mode_test: passed
   strict_yaml: passed across tracked and foundation evidence YAML
   source_audit: passed with no new admission
   protocol_validation: passed
@@ -87,4 +136,4 @@ review_focus:
   - candidate failure leaves accepted Render and Vulkan ownership unchanged
   - full replacement has only explicit lifecycle entry points
   - outputs are exact sparse work, not permanent diagnostic counters
-  - Host and VT remain untouched
+  - Host control ownership is recovered; VT and terminal rendering remain untouched

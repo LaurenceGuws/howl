@@ -44,7 +44,10 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
+    const vk = b.dependency("howl_vk", .{
+        .target = target,
+        .optimize = optimize,
+    });
     const vt = b.dependency("howl_vt", .{
         .target = target,
         .optimize = optimize,
@@ -79,16 +82,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    terminal_handoff.addImport("howl_render", render.module("howl_render"));
     terminal_handoff.addImport("howl_vt", vt.module("howl_vt"));
     terminal_handoff.addImport("howl_wayland", wayland.module("howl_wayland"));
-    const terminal_pool = b.createModule(.{
-        .root_source_file = b.path("src/terminal_pool.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    terminal_pool.addImport("howl_render", render.module("howl_render"));
-    terminal_handoff.addImport("terminal_pool", terminal_pool);
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -99,7 +94,6 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("howl_vt", vt.module("howl_vt"));
     terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
-    terminal_runtime.addImport("terminal_pool", terminal_pool);
     terminal_runtime.addImport("config", config);
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_runtime", terminal_runtime);
@@ -138,13 +132,6 @@ pub fn build(b: *std.Build) void {
     fixture_check.addArtifactArg(fixture_classifier);
     fixture_check.setCwd(b.path("."));
     check.dependOn(&fixture_check.step);
-    const terminal_pool_check = b.addObject(.{
-        .name = "howl-host-terminal-pool-check",
-        .root_module = terminal_pool,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    check.dependOn(&terminal_pool_check.step);
     const run = b.addRunArtifact(executable);
     if (run_command) |command| run.addArgs(&.{ "--command", command });
     b.step("run", "Run the bounded live color ring").dependOn(&run.step);
@@ -166,7 +153,6 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
-    test_module.addImport("terminal_pool", terminal_pool);
     test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
@@ -241,16 +227,10 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
-    test_step.dependOn(&b.addRunArtifact(handoff_tests).step);
-    const terminal_pool_tests = b.addTest(.{
-        .root_module = terminal_pool,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    const run_terminal_pool_tests = b.addRunArtifact(terminal_pool_tests);
-    test_step.dependOn(&run_terminal_pool_tests.step);
-    b.step("test-pool", "Run fixed terminal pool storage proofs")
-        .dependOn(&run_terminal_pool_tests.step);
+    const run_handoff_tests = b.addRunArtifact(handoff_tests);
+    test_step.dependOn(&run_handoff_tests.step);
+    b.step("test-handoff", "Run terminal lifecycle handoff proofs")
+        .dependOn(&run_handoff_tests.step);
     const terminal_runtime_tests = b.addTest(.{
         .root_module = terminal_runtime,
         .use_llvm = false,
