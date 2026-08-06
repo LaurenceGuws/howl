@@ -323,7 +323,7 @@ const Logical = struct {
     font_reveal_candidate: bool = false,
     /// Exact semantic cursor target retained independently of focus. Composer
     /// chooses the one focused source atomically; terminal owners always keep
-    /// complete cursor glyph-component eligibility and target facts.
+    /// complete cursor glyph-component eligibility and target state.
     cursor_target: handoff.CursorTarget,
     /// Overall VT semantic sequence at which `cursor_target` was accepted.
     cursor_target_terminal_sequence: u64,
@@ -470,7 +470,7 @@ const Logical = struct {
         self.dirty = true;
     }
 
-    /// Encodes one caller-owned input fact under current VT modes and retains it in order.
+    /// Encodes one caller-owned input event under current VT modes and retains it in order.
     fn input(self: *Logical, event: vt.Terminal.InputEvent) InputError!void {
         const admission = inputAdmissionBytes(event) catch
             return error.WriteQueueFull;
@@ -666,7 +666,7 @@ const Logical = struct {
         });
     }
 
-    /// Compares complete accepted cursor facts after each VT feed. The
+    /// Compares complete accepted cursor state after each VT feed. The
     /// revision advances only when the target changes, while ordinary text
     /// mutations retain the target's original terminal sequence.
     fn refreshCursorTarget(self: *Logical) bool {
@@ -1149,7 +1149,7 @@ pub fn initBoundary(
     return handoff.Boundary.init(io, allocator, contentLimits());
 }
 
-/// Runs the sole terminal owner until a typed shutdown lifecycle fact arrives.
+/// Runs the sole terminal owner until a typed shutdown request arrives.
 pub fn run(
     boundary: *handoff.Boundary,
     allocator: std.mem.Allocator,
@@ -1353,7 +1353,7 @@ const Runtime = struct {
         };
     }
 
-    /// Constructs the production owner, then explicitly installs the factual
+    /// Constructs the production owner, then explicitly installs the test
     /// point/DPI fixture required by tests that bypass lifecycle admission.
     fn initTest(
         allocator: std.mem.Allocator,
@@ -1361,34 +1361,34 @@ const Runtime = struct {
     ) RuntimeInitError!Runtime {
         var result = try Runtime.init(allocator, font_path);
         errdefer result.deinit();
-        const factual_size = render.terminal.Size{ .points = .{
+        const test_size = render.terminal.Size{ .points = .{
             .points = 12.0,
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
         } };
-        const factual = try render.terminal.FontMap.init(
+        const test_font_map = try render.terminal.FontMap.init(
             allocator,
             &.{
                 .{
                     .key = .{ .slot = 0, .style = .normal },
-                    .native = .{ .primary = font_path, .size = factual_size },
+                    .native = .{ .primary = font_path, .size = test_size },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .bold },
-                    .native = .{ .primary = font_path, .size = factual_size },
+                    .native = .{ .primary = font_path, .size = test_size },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .italic },
-                    .native = .{ .primary = font_path, .size = factual_size },
+                    .native = .{ .primary = font_path, .size = test_size },
                 },
                 .{
                     .key = .{ .slot = 0, .style = .bold_italic },
-                    .native = .{ .primary = font_path, .size = factual_size },
+                    .native = .{ .primary = font_path, .size = test_size },
                 },
             },
         );
         result.fonts.deinit();
-        result.fonts.* = factual;
+        result.fonts.* = test_font_map;
         return result;
     }
 
@@ -1817,16 +1817,16 @@ const Runtime = struct {
                 .dedicated => return false,
             };
             if (pooled.member.source_id != member.source) return false;
-            const fact = boundary.visibleTransferFact(request.revision, member) catch
+            const transfer_state = boundary.visibleTransferState(request.revision, member) catch
                 return false;
-            if (@backingInt(fact.accepted_revision) != 0)
+            if (@backingInt(transfer_state.accepted_revision) != 0)
                 try self.shared_fonts.observeAccepted(
                     member.source,
-                    fact.accepted_revision,
+                    transfer_state.accepted_revision,
                 );
             const geometry_current = owner.last_published_geometry != null and
                 std.meta.eql(owner.last_published_geometry.?, owner.geometry);
-            if (fact.ready) |token| {
+            if (transfer_state.ready) |token| {
                 if (owner.dirty or !geometry_current or
                     token.producer_revision != owner.last_published_revision)
                     return false;
@@ -1838,7 +1838,7 @@ const Runtime = struct {
             }
             if (!owner.dirty and geometry_current and
                 @backingInt(owner.last_published_revision) != 0 and
-                @backingInt(fact.accepted_revision) >=
+                @backingInt(transfer_state.accepted_revision) >=
                     @backingInt(owner.last_published_revision))
             {
                 requirements[position] = .{
@@ -1904,7 +1904,7 @@ const Runtime = struct {
         return true;
     }
 
-    /// Applies one terminal-boundary lifecycle fact under exclusive runtime ownership.
+    /// Applies one terminal-boundary lifecycle operation under exclusive runtime ownership.
     fn applyLifecycle(
         self: *Runtime,
         boundary: *handoff.Boundary,
@@ -2261,7 +2261,7 @@ const Runtime = struct {
         };
     }
 
-    /// Applies one complete factual point/DPI transaction to changed panes.
+    /// Applies one complete point/DPI transaction to changed panes.
     fn resizePointFonts(
         self: *Runtime,
         boundary: *handoff.Boundary,
@@ -2425,11 +2425,11 @@ fn resolvedGroupKey(
         .numerator = scale.dpi_y.numerator,
         .denominator = scale.dpi_y.denominator,
     };
-    const factual_x = @as(f64, @floatFromInt(dpi_x.numerator)) /
+    const dpi_x_value = @as(f64, @floatFromInt(dpi_x.numerator)) /
         @as(f64, @floatFromInt(dpi_x.denominator));
-    const factual_y = @as(f64, @floatFromInt(dpi_y.numerator)) /
+    const dpi_y_value = @as(f64, @floatFromInt(dpi_y.numerator)) /
         @as(f64, @floatFromInt(dpi_y.denominator));
-    const floor = @max(72.0 / factual_x, 72.0 / factual_y);
+    const floor = @max(72.0 / dpi_x_value, 72.0 / dpi_y_value);
     const raw = state.base_point_size + state.offset_points;
     const point_size = std.math.clamp(
         raw,
@@ -4031,7 +4031,7 @@ test "hidden reveal refreshes a stale cursor after committed VT resize" {
     try std.testing.expect(owner.cursor_target_terminal_sequence > stale_sequence);
 }
 
-test "two pooled panes with one factual key share canonical glyph residency" {
+test "two pooled panes with one font key share canonical glyph residency" {
     var boundary = try handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -4132,7 +4132,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
         @as(usize, 2),
         (try boundary.applyCandidate(&composer, null, composition, 1, .ordinary)).accepted,
     );
-    var uploads: [128]render.canvas.ResourceUploadFact = undefined;
+    var uploads: [128]render.canvas.FrameResourceUpload = undefined;
     var removals: [128]render.canvas.FrameResourceRef = undefined;
     var commands: [8192]render.canvas.Command = undefined;
     var frame_pixels: [4 * 1024 * 1024]u8 = undefined;
@@ -4550,7 +4550,7 @@ test "visible-set replacement redeclares shared resources cleared with outgoing 
     try runtime.reconcileAcceptedVisibility(&boundary);
 }
 
-test "factual admission publishes generated joins and Powerline through shared pool ownership" {
+test "font admission publishes generated joins and Powerline through shared pool ownership" {
     var boundary = try handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -4561,7 +4561,7 @@ test "factual admission publishes generated joins and Powerline through shared p
     defer runtime.deinit();
 
     // The executable bootstrap remains pixel-sized and carries no accepted
-    // factual DPI or generated-raster authority.
+    // accepted DPI or generated-raster authority.
     try std.testing.expect(runtime.accepted_scale == null);
     try std.testing.expect(runtime.fonts.generatedBoxConfig() == null);
     try std.testing.expectError(
@@ -4906,7 +4906,7 @@ test "factual admission publishes generated joins and Powerline through shared p
         )).accepted,
     );
     try runtime.reconcileAcceptedBatches(&boundary);
-    var uploads: [64]render.canvas.ResourceUploadFact = undefined;
+    var uploads: [64]render.canvas.FrameResourceUpload = undefined;
     var removals: [64]render.canvas.FrameResourceRef = undefined;
     var commands: [256]render.canvas.Command = undefined;
     var pixels: [64 * 1024]u8 = undefined;
@@ -4920,7 +4920,7 @@ test "factual admission publishes generated joins and Powerline through shared p
     for (frame.uploads) |upload|
         try std.testing.expect(upload.resource.resource.isShared());
     var frame_powerline_upload_count: usize = 0;
-    var frame_powerline_upload: render.canvas.ResourceUploadFact = undefined;
+    var frame_powerline_upload: render.canvas.FrameResourceUpload = undefined;
     for (frame.uploads) |upload| {
         if (upload.resource.resource != powerline_resource.resource or
             upload.resource.generation != powerline_resource.generation)
@@ -5812,7 +5812,7 @@ test "configured operator font styles and optional missing cells remain renderab
     ));
 }
 
-test "factual DPI-only request reaches Runtime without font reconstruction" {
+test "DPI-only request reaches Runtime without font reconstruction" {
     var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const before = runtime.fonts.cellMetrics(.{

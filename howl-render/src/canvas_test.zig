@@ -46,7 +46,7 @@ fn sharedAlphaCommand(
     } };
 }
 
-test "editor-like facts preserve clipped deterministic order and qualify resources" {
+test "editor-like input preserves clipped deterministic order and qualifies resources" {
     const inputs = [_]canvas.Input{
         .{ .solid = .{
             .rect = .{ .x = -4, .y = 1, .width = 20, .height = 8 },
@@ -99,7 +99,7 @@ test "editor-like facts preserve clipped deterministic order and qualify resourc
     try std.testing.expectEqual(source, output[2].rgba.resource.resource.source);
 }
 
-test "fully clipped valid facts consume no output" {
+test "fully clipped valid input consumes no output" {
     const inputs = [_]canvas.Input{.{ .solid = .{
         .rect = .{ .x = -10, .y = -10, .width = 2, .height = 2 },
         .clip = .{ .x = 0, .y = 0, .width = 4, .height = 4 },
@@ -323,7 +323,7 @@ fn composerLimits() canvas.Composer.Limits {
 }
 
 const FrameStorage = struct {
-    uploads: [8]canvas.ResourceUploadFact = undefined,
+    uploads: [8]canvas.FrameResourceUpload = undefined,
     removals: [8]canvas.FrameResourceRef = undefined,
     commands: [16]canvas.Command = undefined,
     pixels: [64]u8 = undefined,
@@ -1172,7 +1172,7 @@ test "composer atomic candidate commits seventeen sources once" {
         .surface = .{ .width = 80, .height = 16 },
         .sources = &placements,
     });
-    var frame_uploads: [34]canvas.ResourceUploadFact = undefined;
+    var frame_uploads: [34]canvas.FrameResourceUpload = undefined;
     var frame_removals: [34]canvas.FrameResourceRef = undefined;
     var frame_commands: [34]canvas.Command = undefined;
     var frame_pixels: [34]u8 = undefined;
@@ -1343,7 +1343,7 @@ test "composer hidden clears fund sixteen incoming sources and changed chrome" {
     };
     incoming_placements[16] = placement(chrome, 0);
 
-    var frame_uploads: [16]canvas.ResourceUploadFact = undefined;
+    var frame_uploads: [16]canvas.FrameResourceUpload = undefined;
     var frame_removals: [16]canvas.FrameResourceRef = undefined;
     var frame_commands: [17]canvas.Command = undefined;
     var frame_pixels: [16]u8 = undefined;
@@ -1433,7 +1433,7 @@ test "composer hidden clear validation preserves retained frame and remains reus
         .sources = &.{visible_placement},
     });
     try composer.removeSource(retired);
-    var uploads: [1]canvas.ResourceUploadFact = undefined;
+    var uploads: [1]canvas.FrameResourceUpload = undefined;
     var removals: [1]canvas.FrameResourceRef = undefined;
     var commands: [1]canvas.Command = undefined;
     var pixels: [1]u8 = undefined;
@@ -1988,7 +1988,7 @@ test "composer atomic candidate relocates packed local ranges both directions" {
             .sources = &placements,
         },
     });
-    var uploads: [4]canvas.ResourceUploadFact = undefined;
+    var uploads: [4]canvas.FrameResourceUpload = undefined;
     var removals: [4]canvas.FrameResourceRef = undefined;
     var commands: [4]canvas.Command = undefined;
     var pixels: [4]u8 = undefined;
@@ -2327,7 +2327,7 @@ test "atomic candidate shares one logical resource across local sources" {
             .sources = &placements,
         },
     });
-    var uploads: [4]canvas.ResourceUploadFact = undefined;
+    var uploads: [4]canvas.FrameResourceUpload = undefined;
     var removals: [4]canvas.FrameResourceRef = undefined;
     var commands: [4]canvas.Command = undefined;
     var pixels: [8]u8 = undefined;
@@ -2862,7 +2862,7 @@ test "shared recovery pixel limit preserves the complete accepted bytes" {
             },
         }),
     );
-    var uploads: [1]canvas.ResourceUploadFact = undefined;
+    var uploads: [1]canvas.FrameResourceUpload = undefined;
     var removals: [1]canvas.FrameResourceRef = undefined;
     var commands: [1]canvas.Command = undefined;
     const recovered = try std.testing.allocator.alloc(u8, bank_size);
@@ -2936,7 +2936,7 @@ test "removeSource releases only its exact shared ownership" {
             .sources = &placements,
         },
     });
-    var uploads: [2]canvas.ResourceUploadFact = undefined;
+    var uploads: [2]canvas.FrameResourceUpload = undefined;
     var removals: [2]canvas.FrameResourceRef = undefined;
     var commands: [2]canvas.Command = undefined;
     var pixels: [4]u8 = undefined;

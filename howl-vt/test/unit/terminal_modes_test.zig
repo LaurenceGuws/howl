@@ -1109,7 +1109,7 @@ test "fragmented mixed report families preserve order and per-query rollback" {
     try std.testing.expectEqualStrings("\x9b0n", pendingOutput(&terminal)[fill.len..]);
 }
 
-test "terminal size reports use exact current cell and pixel facts" {
+test "terminal size reports use exact current cell and pixel dimensions" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 5);
     defer terminal.deinit();

@@ -123,9 +123,9 @@ fn gcdWide(left: u128, right: u128) u128 {
 
 const ScaleReadiness = enum(u8) { provisional, awaiting_compositor, accepted };
 
-/// Window-owned scale facts. `effective`, DPI, and `revision` become accepted
+/// Window-owned scale state. `effective`, DPI, and `revision` become accepted
 /// only after compositor readiness; bootstrap values never cross into Runtime.
-const ScaleFacts = struct {
+const ScaleState = struct {
     deduced: Rational = .one,
     preferred_integer: ?Rational = null,
     preferred_fractional_120: ?u32 = null,
@@ -143,7 +143,7 @@ const ScaleFacts = struct {
     readiness: ScaleReadiness = .provisional,
     revision: u64 = 0,
 
-    fn recompute(self: *ScaleFacts, highest_entered: ?Rational) ScaleError!void {
+    fn recompute(self: *ScaleState, highest_entered: ?Rational) ScaleError!void {
         var next = self.*;
         if (highest_entered) |value| next.deduced = value;
         const selected = if (next.fractional_capable and next.preferred_fractional_120 != null)
@@ -155,9 +155,9 @@ const ScaleFacts = struct {
         // A version-6 wl_surface may omit a distinct preferred-scale event
         // while it remains at the protocol default of one. Once configure and
         // wl_surface.enter establish exact output membership at scale one,
-        // that compositor-owned fact is sufficient to leave bootstrap. Higher
+        // that compositor-owned state is sufficient to leave bootstrap. Higher
         // deduced integer scales still wait for the preferred integer or
-        // fractional fact so a rounded wl_output scale cannot displace the
+        // fractional scale so a rounded wl_output scale cannot displace the
         // compositor's exact transport scale.
         const entered_default_ready = highest_entered != null and
             highest_entered.?.eql(.one) and !preferred_ready;
@@ -182,21 +182,21 @@ const ScaleFacts = struct {
         self.* = next;
     }
 
-    fn effectiveScale120(self: *const ScaleFacts) ScaleError!u32 {
+    fn effectiveScale120(self: *const ScaleState) ScaleError!u32 {
         if (self.fractional_capable and self.preferred_fractional_120 != null) return self.preferred_fractional_120.?;
         if (self.effective.denominator != 1) return error.InvalidScale;
         return std.math.mul(u32, self.effective.numerator, 120) catch error.ArithmeticOverflow;
     }
 };
 
-const OutputFact = struct {
+const OutputState = struct {
     object: ?*c.wl_output = null,
     global_name: u32 = 0,
     scale: u32 = 1,
     entered: bool = false,
 };
 
-// No output registry fact is accepted as surface membership. Until enter or a
+// No output registry entry is accepted as surface membership. Until enter or a
 // preferred compositor scale arrives, the scale remains provisional.
 
 const Ring = struct {
@@ -250,9 +250,9 @@ const State = struct {
     fractional_manager_name: u32 = 0,
     viewporter_name: u32 = 0,
     seat_name: u32 = 0,
-    outputs: [output_limit]OutputFact = .{ OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{}, OutputFact{} },
+    outputs: [output_limit]OutputState = .{ OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{}, OutputState{} },
     output_count: u8 = 0,
-    scale: ScaleFacts = .{},
+    scale: ScaleState = .{},
     configured: bool = false,
     configured_width: u32 = 0,
     configured_height: u32 = 0,
@@ -294,11 +294,11 @@ const State = struct {
             .release_points = self.ring.release_points,
         };
         self.ring.deinit();
-        if (retired) |fact| self.boundary.markWindowRingRetired(fact);
+        if (retired) |retired_ring| self.boundary.markWindowRingRetired(retired_ring);
         if (self.retiring) |*old| {
-            const fact = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const retired_ring = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
-            self.boundary.markWindowRingRetired(fact);
+            self.boundary.markWindowRingRetired(retired_ring);
             self.retiring = null;
         }
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
@@ -376,9 +376,9 @@ fn runFallible(boundary: *presentation_state.State) !void {
     if (display_fd < 0) return error.Dispatch;
     while (!boundary.shouldStop()) {
         if (state.retiring) |*old| if (boundary.takeWindowRingRetirementRequest(old.generation)) {
-            const fact = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const retired_ring = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
-            state.boundary.markWindowRingRetired(fact);
+            state.boundary.markWindowRingRetired(retired_ring);
             state.retiring = null;
         };
         if (state.pacing != .presenting) if (boundary.takeOffers()) |offer| {
@@ -489,7 +489,7 @@ fn waitWindowEvents(
     return error.Dispatch;
 }
 
-test "Window poll preserves indefinite ownership failure and clean readiness facts" {
+test "Window poll preserves indefinite ownership failure and clean readiness state" {
     const Ready = struct {
         var timeout: i32 = 0;
         var revents_clean: bool = false;
@@ -875,7 +875,7 @@ fn recomputeScale(state: *State) ScaleError!void {
     state.scale = next;
 }
 
-fn scaleTransportChanged(current: ScaleFacts, next: ScaleFacts) bool {
+fn scaleTransportChanged(current: ScaleState, next: ScaleState) bool {
     return (current.readiness == .accepted) !=
         (next.readiness == .accepted) or
         next.revision != current.revision or
@@ -891,25 +891,25 @@ fn physicalExtent(logical: u32, scale_120: u32) ScaleError!u32 {
     return @intCast(value);
 }
 
-fn publishConfigureForScale(state: *State, facts: ScaleFacts) ScaleError!void {
-    const scale_120 = try facts.effectiveScale120();
+fn publishConfigureForScale(state: *State, scale_state: ScaleState) ScaleError!void {
+    const scale_120 = try scale_state.effectiveScale120();
     const physical_width = try physicalExtent(state.configured_width, scale_120);
     const physical_height = try physicalExtent(state.configured_height, scale_120);
-    const use_viewport = facts.fractional_capable and facts.preferred_fractional_120 != null;
+    const use_viewport = scale_state.fractional_capable and scale_state.preferred_fractional_120 != null;
     const integer_scale = if (use_viewport) 1 else if (scale_120 % 120 == 0) scale_120 / 120 else return error.InvalidScale;
     try state.boundary.publishConfigure(
         state.configured_width,
         state.configured_height,
         physical_width,
         physical_height,
-        facts.revision,
-        if (facts.readiness == .accepted) .{
-            .numerator = facts.accepted_dpi_x.numerator,
-            .denominator = facts.accepted_dpi_x.denominator,
+        scale_state.revision,
+        if (scale_state.readiness == .accepted) .{
+            .numerator = scale_state.accepted_dpi_x.numerator,
+            .denominator = scale_state.accepted_dpi_x.denominator,
         } else null,
-        if (facts.readiness == .accepted) .{
-            .numerator = facts.accepted_dpi_y.numerator,
-            .denominator = facts.accepted_dpi_y.denominator,
+        if (scale_state.readiness == .accepted) .{
+            .numerator = scale_state.accepted_dpi_y.numerator,
+            .denominator = scale_state.accepted_dpi_y.denominator,
         } else null,
         integer_scale,
         use_viewport,
@@ -922,7 +922,7 @@ fn publishCurrentConfigure(state: *State) ScaleError!void {
 }
 
 fn outputIndex(state: *const State, output: ?*c.wl_output) ScaleError!usize {
-    for (state.outputs[0..state.output_count], 0..) |fact, index| if (fact.object == output) return index;
+    for (state.outputs[0..state.output_count], 0..) |output_state, index| if (output_state.object == output) return index;
     return error.UnknownOutput;
 }
 
@@ -1485,22 +1485,22 @@ test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
     try std.testing.expectError(error.InvalidScale, physicalExtent(0, 120));
     try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(presentation_state.surface_dimension_limit, 240));
 
-    var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true, .configure_ready = true, .fractional_capable = true };
-    facts.preferred_integer = try Rational.init(2, 1);
-    facts.preferred_fractional_120 = 180;
-    try facts.recompute(null);
-    try std.testing.expectEqual(try Rational.init(3, 2), facts.effective);
-    try std.testing.expectEqual(@as(u64, 1), facts.revision);
-    facts.preferred_fractional_120 = null;
-    try facts.recompute(null);
-    try std.testing.expectEqual(try Rational.init(2, 1), facts.effective);
-    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+    var scale_state = ScaleState{ .bootstrap_ready = true, .expect_preferred = true, .configure_ready = true, .fractional_capable = true };
+    scale_state.preferred_integer = try Rational.init(2, 1);
+    scale_state.preferred_fractional_120 = 180;
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(try Rational.init(3, 2), scale_state.effective);
+    try std.testing.expectEqual(@as(u64, 1), scale_state.revision);
+    scale_state.preferred_fractional_120 = null;
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(try Rational.init(2, 1), scale_state.effective);
+    try std.testing.expectEqual(@as(u64, 2), scale_state.revision);
 
-    facts.preferred_integer = null;
-    facts.configure_ready = true;
-    try facts.recompute(null);
-    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
-    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+    scale_state.preferred_integer = null;
+    scale_state.configure_ready = true;
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, scale_state.readiness);
+    try std.testing.expectEqual(@as(u64, 2), scale_state.revision);
 
     var state: State = .{ .boundary = undefined, .fractional_scale = @ptrFromInt(1), .scale = .{ .fractional_capable = true } };
     state.scale.preferred_fractional_120 = 180;
@@ -1510,18 +1510,18 @@ test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
 }
 
 test "entered scale one leaves bootstrap without a redundant preferred event" {
-    var facts = ScaleFacts{
+    var scale_state = ScaleState{
         .bootstrap_ready = true,
         .expect_preferred = true,
         .configure_ready = true,
         .fractional_capable = true,
     };
-    try facts.recompute(.one);
-    try std.testing.expectEqual(ScaleReadiness.accepted, facts.readiness);
-    try std.testing.expectEqual(@as(u64, 1), facts.revision);
-    try std.testing.expectEqual(Rational.one, facts.accepted_effective);
+    try scale_state.recompute(.one);
+    try std.testing.expectEqual(ScaleReadiness.accepted, scale_state.readiness);
+    try std.testing.expectEqual(@as(u64, 1), scale_state.revision);
+    try std.testing.expectEqual(Rational.one, scale_state.accepted_effective);
 
-    var rounded = ScaleFacts{
+    var rounded = ScaleState{
         .bootstrap_ready = true,
         .expect_preferred = true,
         .configure_ready = true,
@@ -1540,7 +1540,7 @@ test "fractional capability removal retains a pair required by active or offered
     try std.testing.expectEqual(FractionalDrop.retire_after_integer_commit, classifyFractionalDrop(true, false, false, true));
 }
 
-test "Window publishes integer and fractional logical/physical ring facts" {
+test "Window publishes integer and fractional logical/physical ring configuration" {
     var boundary = try presentation_state.State.init(std.testing.io);
     defer boundary.deinit();
     var state = State{
@@ -1572,34 +1572,34 @@ test "Window publishes integer and fractional logical/physical ring facts" {
 }
 
 test "Wayland scale precedence and accepted revisions are transactional" {
-    var facts = ScaleFacts{ .bootstrap_ready = true };
-    try facts.recompute(null);
-    try std.testing.expectEqual(ScaleReadiness.provisional, facts.readiness);
-    try std.testing.expectEqual(@as(u64, 0), facts.revision);
+    var scale_state = ScaleState{ .bootstrap_ready = true };
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.provisional, scale_state.readiness);
+    try std.testing.expectEqual(@as(u64, 0), scale_state.revision);
 
-    try facts.recompute(try Rational.init(2, 1));
-    try std.testing.expectEqual(try Rational.init(2, 1), facts.effective);
-    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+    try scale_state.recompute(try Rational.init(2, 1));
+    try std.testing.expectEqual(try Rational.init(2, 1), scale_state.effective);
+    try std.testing.expectEqual(@as(u64, 1), scale_state.revision);
 
-    facts.expect_preferred = true;
-    facts.configure_ready = false;
-    try facts.recompute(null);
-    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
-    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+    scale_state.expect_preferred = true;
+    scale_state.configure_ready = false;
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, scale_state.readiness);
+    try std.testing.expectEqual(@as(u64, 1), scale_state.revision);
 
-    facts.preferred_integer = try Rational.init(3, 1);
-    try facts.recompute(null);
-    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, facts.readiness);
-    facts.configure_ready = true;
-    try facts.recompute(null);
-    try std.testing.expectEqual(try Rational.init(3, 1), facts.effective);
-    try std.testing.expectEqual(Rational{ .numerator = 288, .denominator = 1 }, facts.dpi_x);
-    try std.testing.expectEqual(@as(u64, 2), facts.revision);
+    scale_state.preferred_integer = try Rational.init(3, 1);
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, scale_state.readiness);
+    scale_state.configure_ready = true;
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(try Rational.init(3, 1), scale_state.effective);
+    try std.testing.expectEqual(Rational{ .numerator = 288, .denominator = 1 }, scale_state.dpi_x);
+    try std.testing.expectEqual(@as(u64, 2), scale_state.revision);
 
-    const before_deduced = facts;
-    try facts.recompute(try Rational.init(4, 1));
-    try std.testing.expectEqual(@as(u64, 2), facts.revision);
-    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&before_deduced), std.mem.asBytes(&facts)));
+    const before_deduced = scale_state;
+    try scale_state.recompute(try Rational.init(4, 1));
+    try std.testing.expectEqual(@as(u64, 2), scale_state.revision);
+    try std.testing.expect(!std.mem.eql(u8, std.mem.asBytes(&before_deduced), std.mem.asBytes(&scale_state)));
 }
 
 test "Wayland configure without preferred scale continues awaiting until later callback" {
@@ -1638,24 +1638,24 @@ test "Wayland output membership selects highest deduced scale and retains last s
 }
 
 test "Wayland provisional and invalid scale changes preserve bytes" {
-    var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true };
-    const before = facts;
+    var scale_state = ScaleState{ .bootstrap_ready = true, .expect_preferred = true };
+    const before = scale_state;
     try std.testing.expectError(error.InvalidScale, Rational.init(0, 120));
     try std.testing.expectError(error.InvalidScale, Rational.init(2880, 120));
     try std.testing.expectError(error.InvalidScale, Rational.init(1, 0));
-    try std.testing.expectEqual(before, facts);
-    try facts.recompute(null);
-    try std.testing.expectEqual(ScaleReadiness.provisional, facts.readiness);
-    try std.testing.expectEqual(@as(u64, 0), facts.revision);
+    try std.testing.expectEqual(before, scale_state);
+    try scale_state.recompute(null);
+    try std.testing.expectEqual(ScaleReadiness.provisional, scale_state.readiness);
+    try std.testing.expectEqual(@as(u64, 0), scale_state.revision);
 
-    facts.bootstrap_ready = true;
-    facts.configure_ready = true;
-    facts.preferred_integer = try Rational.init(1, 1);
-    try facts.recompute(null);
-    facts.revision = std.math.maxInt(u64);
-    facts.accepted_valid = true;
-    facts.accepted_effective = facts.effective;
-    const exhausted = facts;
+    scale_state.bootstrap_ready = true;
+    scale_state.configure_ready = true;
+    scale_state.preferred_integer = try Rational.init(1, 1);
+    try scale_state.recompute(null);
+    scale_state.revision = std.math.maxInt(u64);
+    scale_state.accepted_valid = true;
+    scale_state.accepted_effective = scale_state.effective;
+    const exhausted = scale_state;
     var state: State = .{ .boundary = undefined };
     state.output_count = 0;
     state.scale = exhausted;
@@ -1663,7 +1663,7 @@ test "Wayland provisional and invalid scale changes preserve bytes" {
     try std.testing.expectEqual(exhausted, state.scale);
 }
 
-test "Wayland invalid callback facts preserve output membership and scale bytes" {
+test "Wayland invalid callbacks preserve output membership and scale state" {
     var state: State = .{ .boundary = undefined };
     const output: *c.wl_output = @ptrFromInt(3);
     state.output_count = 1;
@@ -1764,7 +1764,7 @@ test "Wayland widened DPI reduction succeeds before storage bounds" {
     try std.testing.expectError(error.ArithmeticOverflow, unrepresentable.dpi());
 }
 
-test "Window mapping preflights external facts and passes exact typed flags" {
+test "Window mapping preflights external inputs and passes exact typed flags" {
     const FakeMapping = struct {
         var calls: usize = 0;
         var fail: bool = false;
@@ -1822,7 +1822,7 @@ test "Window mapping preflights external facts and passes exact typed flags" {
 }
 
 test "Window retained feedback mapping ownership group remains 24 bytes" {
-    const PreviousFeedbackFacts = struct {
+    const PreviousFeedbackLayout = struct {
         fd: i32 = -1,
         size: usize = 0,
         pointer: ?[*]const u8 = null,
@@ -1831,8 +1831,8 @@ test "Window retained feedback mapping ownership group remains 24 bytes" {
     try std.testing.expectEqual(@as(usize, 8), @alignOf(MappedBytes));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(FeedbackMapping));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(FeedbackMapping));
-    try std.testing.expectEqual(@sizeOf(PreviousFeedbackFacts), @sizeOf(FeedbackMapping));
-    try std.testing.expectEqual(@alignOf(PreviousFeedbackFacts), @alignOf(FeedbackMapping));
+    try std.testing.expectEqual(@sizeOf(PreviousFeedbackLayout), @sizeOf(FeedbackMapping));
+    try std.testing.expectEqual(@alignOf(PreviousFeedbackLayout), @alignOf(FeedbackMapping));
 }
 
 test "Window feedback mapping owns one slice and tears down in reverse order" {

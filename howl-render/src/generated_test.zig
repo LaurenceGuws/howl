@@ -152,7 +152,7 @@ test "generated work and stroke bounds reject without mutation and permit reuse"
     try std.testing.expectEqual(@as(u8, 0xa5), pixels[16 * 16]);
 }
 
-test "box metrics preserve factual axes scale and independent curve derivation" {
+test "box metrics preserve DPI axes scale and independent curve derivation" {
     const config = generated.BoxDrawingConfig{
         .dpi_x = .{ .numerator = 768, .denominator = 5 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -227,7 +227,7 @@ test "box metrics preserve factual axes scale and independent curve derivation" 
     try std.testing.expect(std.mem.allEqual(u8, &horizontal, 0xa5));
 }
 
-test "Powerline raster matches Kitty endpoints across factual metric changes" {
+test "Powerline raster matches Kitty endpoints across DPI changes" {
     const config = generated.BoxDrawingConfig{
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -727,7 +727,7 @@ fn occupiedColumns(pixels: []const u8, width: usize) usize {
     return count;
 }
 
-test "generated geometry preserves representative family facts" {
+test "generated geometry preserves representative family metrics" {
     var pixels: [16 * 16]u8 = undefined;
     try rasterizeTest(&pixels, 16, 16, 0x2500);
     try std.testing.expect(std.mem.allEqual(u8, pixels[7 * 16 .. 9 * 16], 255));

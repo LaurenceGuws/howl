@@ -1,4 +1,4 @@
-//! Typed terminal input facts and mode-directed byte encoders.
+//! Typed terminal input events and mode-directed byte encoders.
 
 const std = @import("std");
 
@@ -294,7 +294,7 @@ pub fn encodeKey(
     };
 }
 
-/// Encodes one complete physical key fact under current terminal modes.
+/// Encodes one complete physical key event under current terminal modes.
 pub fn encodeEvent(
     buf: []u8,
     key: InputKey,

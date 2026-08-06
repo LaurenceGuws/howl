@@ -2,7 +2,7 @@
 
 const std = @import("std");
 
-/// Reports malformed resource syntax without retaining caller facts.
+/// Reports malformed resource syntax without retaining caller input.
 pub const Error = error{
     InvalidIdentity,
     InvalidGeneration,

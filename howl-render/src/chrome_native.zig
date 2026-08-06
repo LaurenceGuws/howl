@@ -19,13 +19,13 @@ pub const Rect = canonical.Rect;
 pub const Color = canonical.Color;
 /// Projects canonical Chrome style directly.
 pub const Style = canonical.Style;
-/// Projects canonical immutable tab facts directly.
+/// Projects canonical immutable tab descriptions directly.
 pub const Tab = canonical.Tab;
 /// Projects canonical pane layers directly.
 pub const PaneLayer = canonical.PaneLayer;
-/// Projects canonical scroll facts directly.
+/// Projects canonical scroll state directly.
 pub const Scroll = canonical.Scroll;
-/// Projects canonical immutable pane facts directly.
+/// Projects canonical immutable pane descriptions directly.
 pub const Pane = canonical.Pane;
 /// Projects canonical caller-owned selection directly.
 pub const Selection = canonical.Selection;

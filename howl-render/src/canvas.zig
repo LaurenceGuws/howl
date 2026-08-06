@@ -1,4 +1,4 @@
-//! Owns bounded backend-neutral drawing facts and exact surface clipping.
+//! Owns bounded backend-neutral drawing inputs and exact surface clipping.
 
 const std = @import("std");
 const validation = @import("canvas_validation");
@@ -17,7 +17,7 @@ pub const Error = error{
     InsufficientCommands,
 };
 
-const ResourceFactError = error{
+const ResourceValidationError = error{
     InvalidIdentity,
     InvalidGeneration,
     InvalidRevision,
@@ -202,7 +202,7 @@ pub const FrameResourceRef = struct {
         return result;
     }
 
-    /// Validates namespace, source, identity and generation facts.
+    /// Validates namespace, source, identity, and generation values.
     pub fn validate(self: FrameResourceRef) error{ InvalidIdentity, InvalidGeneration }!void {
         try self.resource.validate();
         if ((@backingInt(self.source) == 0) != self.resource.isShared())
@@ -233,7 +233,7 @@ pub const ResourceUpload = struct {
     /// Borrows complete pixel bytes for the duration of acceptance.
     ///
     /// `pixels.width` and `pixels.height` are the sole authoritative logical
-    /// extent. No parallel size fact may disagree with them.
+    /// extent. No parallel size field may disagree with them.
     pixels: Pixels,
 };
 
@@ -254,7 +254,7 @@ pub const Residency = struct {
 };
 
 /// Locates one copied upload in caller-owned frame pixel storage.
-pub const ResourceUploadFact = struct {
+pub const FrameResourceUpload = struct {
     /// Identifies the exact qualified resource generation.
     resource: FrameResourceRef,
     /// Selects the copied pixel representation.
@@ -348,7 +348,7 @@ pub const ProducerUpdate = struct {
     commands: []const Input,
     /// Binds the overlay to the exact semantic publication which produced it.
     /// The Host fills this identity before Pool admission; Render remains
-    /// backend-neutral and treats the fields as checked transaction facts.
+    /// backend-neutral and treats the fields as checked transaction input.
     cursor_binding: ?CursorBinding = null,
 };
 
@@ -519,7 +519,7 @@ pub const Composer = struct {
         hidden_source_clears: []const SourceId = &.{},
         /// Rebinds retained visible cursor targets to the visible-set
         /// revision committed with this composition. The target, lifecycle,
-        /// and terminal facts remain unchanged; only the composition
+        /// and terminal state remain unchanged; only the composition
         /// membership identity is advanced transactionally.
         cursor_visible_set_revision: ?u64 = null,
         /// Supplies the complete prospective visible composition.
@@ -530,8 +530,8 @@ pub const Composer = struct {
     ///
     /// Every initialized prefix is unchanged on failure.
     pub const FrameBuffers = struct {
-        /// Receives missing or replacement logical resource facts.
-        uploads: []ResourceUploadFact,
+        /// Receives missing or replacement logical resource updates.
+        uploads: []FrameResourceUpload,
         /// Receives backend resources absent from the visible logical frame.
         removals: []FrameResourceRef,
         /// Receives the complete visible surface command list.
@@ -545,7 +545,7 @@ pub const Composer = struct {
         /// Identifies the current visible logical frame.
         revision: FrameRevision,
         /// Missing or replacement logical resources.
-        uploads: []const ResourceUploadFact,
+        uploads: []const FrameResourceUpload,
         /// Backend resources no longer required by the visible frame.
         removals: []const FrameResourceRef,
         /// Complete ordered surface commands.
@@ -1461,7 +1461,7 @@ pub const Composer = struct {
     ) Composer.Error!void {
         if (view.format != expected_format) return error.FormatMismatch;
         validateExtent(view.size, view.source) catch |err|
-            return mapFactError(err);
+            return mapResourceError(err);
         if (findSharedResourceIndex(
             self.candidate_shared_resources[0..self.candidate_shared_resource_count],
             view.resource.resource,
@@ -1849,7 +1849,7 @@ pub const Composer = struct {
             self.candidate_high_water = old.local_high_water;
         }
         validateCandidateProducerUpdate(update) catch |err|
-            return mapFactError(err);
+            return mapResourceError(err);
         if (update.commands.len > self.candidate_commands.len)
             return error.CommandLimit;
 
@@ -2069,7 +2069,7 @@ pub const Composer = struct {
         if (view.format != format) return error.FormatMismatch;
         if (view.resource.resource.isShared()) {
             validateExtent(view.size, view.source) catch |err|
-                return mapFactError(err);
+                return mapResourceError(err);
             return;
         }
         const resource = findResource(
@@ -2084,7 +2084,7 @@ pub const Composer = struct {
             return error.InvalidGeneration;
         if (resource.format != view.format) return error.FormatMismatch;
         if (!std.meta.eql(resource.size, view.size)) return error.ExtentMismatch;
-        validateExtent(view.size, view.source) catch |err| return mapFactError(err);
+        validateExtent(view.size, view.source) catch |err| return mapResourceError(err);
     }
 
     fn commitCandidate(
@@ -2190,7 +2190,7 @@ pub const Composer = struct {
     ) Composer.Error!void {
         const ranges = [_]ByteRange{
             try byteRange(Residency, residency),
-            try byteRange(ResourceUploadFact, buffers.uploads),
+            try byteRange(FrameResourceUpload, buffers.uploads),
             try byteRange(FrameResourceRef, buffers.removals),
             try byteRange(Command, buffers.commands),
             try byteRange(u8, buffers.pixels),
@@ -2507,7 +2507,7 @@ pub const Composer = struct {
                 candidate_resources,
                 resource.local.resource,
             ) orelse return false;
-            if (!resourceFactsEqual(resource, candidate)) return false;
+            if (!resourcesEqual(resource, candidate)) return false;
             if (!std.mem.eql(
                 u8,
                 self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count],
@@ -2693,7 +2693,7 @@ fn placementsEqual(
     return true;
 }
 
-fn mapFactError(err: ResourceFactError) Composer.Error {
+fn mapResourceError(err: ResourceValidationError) Composer.Error {
     return switch (err) {
         error.InvalidIdentity => error.InvalidIdentity,
         error.InvalidGeneration => error.InvalidGeneration,
@@ -3016,7 +3016,7 @@ fn resourceReferencedVisibly(
     return false;
 }
 
-fn resourceFactsEqual(
+fn resourcesEqual(
     left: Composer.Resource,
     right: Composer.Resource,
 ) bool {
@@ -3199,7 +3199,7 @@ pub const Command = union(enum) {
         /// Mask color.
         color: Color,
         /// Marks a terminal glyph component eligible for physical cursor
-        /// recoloring. This fact is intrinsic to the accepted base command.
+        /// recoloring. This value is intrinsic to the accepted base command.
         cursor_component: bool = false,
     },
     /// Draws one retained RGBA resource through an exact clip.
@@ -3213,7 +3213,7 @@ pub const Command = union(enum) {
     },
 };
 
-/// Clips and qualifies ordered producer facts into caller command storage.
+/// Clips and qualifies ordered producer input into caller command storage.
 ///
 /// Canvas retains no resource or residency state. It validates identity syntax,
 /// formats, extents, geometry, clipping, arithmetic, aliases, and capacity
@@ -3332,12 +3332,12 @@ fn validateExtent(size: Size, source: ?SourceRect) error{ ExtentMismatch, Arithm
     }
 }
 
-fn validateUpload(upload: ResourceUpload) ResourceFactError!void {
+fn validateUpload(upload: ResourceUpload) ResourceValidationError!void {
     try validateLocalRef(upload.resource);
     try validatePixels(upload.pixels, upload.format);
 }
 
-fn validateRemoval(removal: ResourceRemoval) ResourceFactError!void {
+fn validateRemoval(removal: ResourceRemoval) ResourceValidationError!void {
     try validateLocalRef(removal.resource);
 }
 
@@ -3350,32 +3350,32 @@ fn validateLocalRef(resource: ResourceRef) error{ InvalidIdentity, InvalidGenera
     );
 }
 
-fn validateResidency(residency: Residency) ResourceFactError!void {
+fn validateResidency(residency: Residency) ResourceValidationError!void {
     try validateFrameRef(residency.resource);
     try validateExtent(residency.size, null);
 }
 
-fn validateUploadFact(fact: ResourceUploadFact, pixels_len: usize) ResourceFactError!void {
-    try validateFrameRef(fact.resource);
-    try validateExtent(fact.size, null);
-    const bytes_per_pixel: usize = switch (fact.format) {
+fn validateFrameResourceUpload(upload: FrameResourceUpload, pixels_len: usize) ResourceValidationError!void {
+    try validateFrameRef(upload.resource);
+    try validateExtent(upload.size, null);
+    const bytes_per_pixel: usize = switch (upload.format) {
         .alpha8 => 1,
         .rgba8 => 4,
     };
-    const row_bytes = std.math.mul(usize, fact.size.width, bytes_per_pixel) catch
+    const row_bytes = std.math.mul(usize, upload.size.width, bytes_per_pixel) catch
         return error.ArithmeticOverflow;
-    if (fact.stride < row_bytes) return error.InvalidPixels;
-    const preceding = std.math.mul(usize, fact.size.height - 1, fact.stride) catch
+    if (upload.stride < row_bytes) return error.InvalidPixels;
+    const preceding = std.math.mul(usize, upload.size.height - 1, upload.stride) catch
         return error.ArithmeticOverflow;
     const required = std.math.add(usize, preceding, row_bytes) catch
         return error.ArithmeticOverflow;
-    if (required != fact.pixel_count) return error.ExtentMismatch;
-    const end = std.math.add(usize, fact.pixel_offset, fact.pixel_count) catch
+    if (required != upload.pixel_count) return error.ExtentMismatch;
+    const end = std.math.add(usize, upload.pixel_offset, upload.pixel_count) catch
         return error.ArithmeticOverflow;
     if (end > pixels_len) return error.InvalidPixels;
 }
 
-fn validatePixels(pixels: Pixels, format: ResourceFormat) ResourceFactError!void {
+fn validatePixels(pixels: Pixels, format: ResourceFormat) ResourceValidationError!void {
     switch (format) {
         .alpha8 => try validation.alpha8(
             pixels.bytes.len,
@@ -3392,7 +3392,7 @@ fn validatePixels(pixels: Pixels, format: ResourceFormat) ResourceFactError!void
     }
 }
 
-fn validateProducerUpdate(update: ProducerUpdate) ResourceFactError!void {
+fn validateProducerUpdate(update: ProducerUpdate) ResourceValidationError!void {
     if (@backingInt(update.revision) == 0) return error.InvalidRevision;
     for (update.uploads) |upload| try validateUpload(upload);
     for (update.removals) |removal| try validateRemoval(removal);
@@ -3419,7 +3419,7 @@ fn validateProducerUpdate(update: ProducerUpdate) ResourceFactError!void {
 
 fn validateCandidateProducerUpdate(
     update: ProducerUpdate,
-) ResourceFactError!void {
+) ResourceValidationError!void {
     if (@backingInt(update.revision) == 0) return error.InvalidRevision;
     for (update.uploads) |upload| {
         try validateResourceRef(upload.resource);
@@ -3514,7 +3514,7 @@ fn overlaps(a: usize, a_len: usize, b: usize, b_len: usize) bool {
     return a < b + b_len and b < a + a_len;
 }
 
-test "resource fact syntax is exact and stateless" {
+test "resource update syntax is exact and stateless" {
     const local = ResourceRef{
         .resource = try ResourceId.local(7),
         .generation = @fromBackingInt(@intCast(9)),
@@ -3531,7 +3531,7 @@ test "resource fact syntax is exact and stateless" {
         .format = .alpha8,
         .size = .{ .width = 2, .height = 1 },
     });
-    try validateUploadFact(.{
+    try validateFrameResourceUpload(.{
         .resource = frame,
         .format = .alpha8,
         .size = .{ .width = 2, .height = 1 },
@@ -3568,7 +3568,7 @@ test "resource fact syntax is exact and stateless" {
     );
     try std.testing.expectError(
         error.ExtentMismatch,
-        validateUploadFact(.{
+        validateFrameResourceUpload(.{
             .resource = frame,
             .format = .rgba8,
             .size = .{ .width = 1, .height = 1 },
@@ -3602,7 +3602,7 @@ test "resource fact syntax is exact and stateless" {
     );
 }
 
-test "compact resource namespaces preserve phase identity and reject malformed facts" {
+test "compact resource namespaces preserve phase identity and reject malformed input" {
     try std.testing.expectEqual(@as(usize, 16), @sizeOf(ResourceRef));
     try std.testing.expectEqual(@as(usize, 24), @sizeOf(FrameResourceRef));
     const local_id = try ResourceId.local(17);
@@ -3903,7 +3903,7 @@ test "visible cursor binding identity failure is observable and transactional" {
     );
 }
 
-test "composer rejects shared producer facts without retained mutation" {
+test "composer rejects shared producer input without retained mutation" {
     var composer = try Composer.init(std.testing.allocator, .{
         .sources = 1,
         .retained_resources = 2,

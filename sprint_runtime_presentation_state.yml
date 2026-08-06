@@ -13,7 +13,7 @@ implemented_shape:
     module: howl-host/src/presentation_state.zig
     type: presentation_state.State
     owns:
-      - copied input, configure, feedback, offer, retirement, release, stop, stopped, and first-failure facts
+      - copied input, configuration, feedback, offer, retirement, release, stop, stopped, and first-failure state
       - exactly one latest ready frame
       - one nonresetting monotonic ready-frame revision high-water
       - presentation-state readiness from Render to Window

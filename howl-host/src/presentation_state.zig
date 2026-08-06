@@ -1,4 +1,4 @@
-//! Owns bounded copied facts and one latest ready frame shared by Window and Render.
+//! Owns bounded cross-thread state and one latest ready frame shared by Window and Render.
 
 const std = @import("std");
 const wayland = @import("howl_wayland");
@@ -10,7 +10,7 @@ const eventfd_flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
 pub const slot_count: usize = 3;
 /// Minimum compositor-configured surface extent retained by the host.
 pub const surface_min: i32 = 64;
-/// Bounds the DRM memory-plane facts copied for one slot.
+/// Bounds the DRM memory-plane descriptions copied for one slot.
 pub const plane_limit: usize = 4;
 /// Bounds one compositor-selected pixel dimension for this bounded host.
 pub const surface_dimension_limit: u32 = 8192;
@@ -33,7 +33,7 @@ pub const Feedback = struct {
     modifier: u64,
 };
 
-/// Copies one normalized positive rational fact without interpreting its
+/// Copies one normalized positive rational value without interpreting its
 /// domain. Equality is exact after the issuing owner canonicalizes it.
 pub const ExactRational = struct {
     numerator: u32,
@@ -43,7 +43,7 @@ pub const ExactRational = struct {
 /// Identifies one nonzero compositor-configured surface generation with
 /// independent logical coordinates and physical attachment dimensions.
 pub const SurfaceConfig = struct {
-    /// Monotonic identity; newer facts supersede older facts.
+    /// Monotonic identity; newer configurations supersede older configurations.
     generation: u64,
     /// Window-logical width used by Canvas topology and Wayland destination.
     logical_width: u32,
@@ -53,13 +53,13 @@ pub const SurfaceConfig = struct {
     physical_width: u32,
     /// Checked physical height allocated by Render/Vulkan.
     physical_height: u32,
-    /// Accepted Window scale revision; zero is the provisional bootstrap fact.
+    /// Accepted Window scale revision; zero identifies provisional bootstrap.
     scale_revision: u64,
-    /// Factual accepted logical DPI, absent while Window is provisional or
-    /// awaiting a new compositor fact.
+    /// Accepted logical DPI, absent while Window is provisional or
+    /// awaiting new compositor scale state.
     dpi_x: ?ExactRational = null,
     dpi_y: ?ExactRational = null,
-    /// Buffer scale fact applied by Window for this generation.
+    /// Buffer scale applied by Window for this generation.
     buffer_scale: u32,
     /// Whether Window applies a viewport destination for this generation.
     use_viewport: bool,
@@ -87,12 +87,12 @@ pub const SlotOffer = struct {
     planes: [plane_limit]Plane,
 };
 
-/// Transfers one exact configure fact with all three image-slot offers.
+/// Transfers one exact configuration with all three image-slot offers.
 ///
 /// State retains this pair atomically until Window takes it; a newer
 /// configure or offer cannot rewrite the config belonging to borrowed slots.
 pub const OfferedRing = struct {
-    /// Exact logical, physical, scale, and attachment facts for `slots`.
+    /// Exact logical, physical, scale, and attachment configuration for `slots`.
     config: SurfaceConfig,
     /// Complete fixed ring whose descriptors transfer to Window.
     slots: [slot_count]SlotOffer,
@@ -127,7 +127,7 @@ pub const Failure = enum {
     render,
 };
 
-/// Identifies one runtime owner for retirement facts.
+/// Identifies one runtime owner during retirement.
 pub const Owner = enum {
     window,
     render,
@@ -139,7 +139,7 @@ pub const Cancellation = union(enum) {
     shutdown,
 };
 
-/// Owns copied cross-thread facts, descriptor transfer, directional eventfds,
+/// Owns copied cross-thread state, descriptor transfer, directional eventfds,
 /// first-failure retention, and final owner-retirement state.
 pub const State = struct {
     io: std.Io,
@@ -273,7 +273,7 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Replaces keyboard repeat timing and wakes Render with the new fact.
+    /// Replaces keyboard repeat timing and wakes Render with the new values.
     pub fn publishRepeat(self: *State, repeat: wayland.input.Repeat) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
@@ -291,7 +291,7 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Replaces the newest configure fact, including zero unspecified values.
+    /// Replaces the newest configuration, including zero unspecified values.
     pub fn publishInputConfigure(self: *State, width: u32, height: u32) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
@@ -316,14 +316,14 @@ pub const State = struct {
         return self.input.take();
     }
 
-    /// Takes coalesced motion/configure facts and copies the latest masks.
+    /// Takes coalesced motion and configuration state and copies the latest masks.
     pub fn takeInputSnapshots(self: *State) wayland.input.Snapshot {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.input.takeSnapshots();
     }
 
-    /// Replaces the copied feedback fact and wakes Render.
+    /// Replaces the copied feedback state and wakes Render.
     pub fn publishFeedback(self: *State, feedback: Feedback) error{Stopping}!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
@@ -335,16 +335,17 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Copies the current feedback fact without transferring ownership.
+    /// Copies the current feedback state without transferring ownership.
     pub fn readFeedback(self: *State) ?Feedback {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.feedback;
     }
 
-    /// Publishes the newest bounded Window logical/physical configure fact.
-    /// Repeated identical facts retain their generation; newer dimensions,
-    /// attachment mode, or accepted scale revision supersede pending facts.
+    /// Publishes the newest bounded Window logical/physical configuration.
+    /// Repeated identical configurations retain their generation; newer
+    /// dimensions, attachment mode, or accepted scale revision supersede the
+    /// pending configuration.
     pub fn publishConfigure(
         self: *State,
         logical_width: u32,
@@ -410,7 +411,7 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Takes the newest pending configure fact for Render.
+    /// Takes the newest pending configuration for Render.
     pub fn takeConfigure(self: *State) ?SurfaceConfig {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -419,7 +420,7 @@ pub const State = struct {
         return result;
     }
 
-    /// Reports whether a staged generation is still the newest configure fact.
+    /// Reports whether a staged generation is still the newest configuration.
     pub fn isLatestGeneration(self: *State, generation: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -427,7 +428,7 @@ pub const State = struct {
     }
 
     /// Transfers every descriptor in one complete valid ring from Render to
-    /// State. Invalid facts, an unconsumed ring, or shutdown leave State
+    /// State. Invalid configuration, an unconsumed ring, or shutdown leave State
     /// unchanged and every supplied descriptor owned by Render.
     pub fn publishOffers(self: *State, offers: [slot_count]SlotOffer) error{ Stopping, OffersPending, InvalidOffer }!void {
         const generation = offers[0].generation;
@@ -478,7 +479,7 @@ pub const State = struct {
         signal(self.window_fd);
     }
 
-    /// Transfers one complete retained ring and its exact configure fact from
+    /// Transfers one complete retained ring and its exact configuration from
     /// State to Window under one lock acquisition.
     pub fn takeOffers(self: *State) ?OfferedRing {
         self.mutex.lockUncancelable(self.io);
@@ -534,8 +535,8 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Copies the currently presented release facts for Render's wait phase.
-    pub fn releaseFacts(self: *State, generation: u64) ?RetiredRing {
+    /// Copies the currently presented ring-release state for Render's wait phase.
+    pub fn ringReleaseState(self: *State, generation: u64) ?RetiredRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.pending_release) |pending| if (pending.generation == generation) return pending;
@@ -579,7 +580,7 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Copies the wrapper-retirement fact for Renderer cleanup ordering.
+    /// Takes wrapper-retirement state for Renderer cleanup ordering.
     pub fn takeWindowRingRetired(self: *State, generation: u64) ?RetiredRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -677,7 +678,7 @@ pub const State = struct {
         signal(self.render_fd);
     }
 
-    /// Copies the monotonic stop fact.
+    /// Copies the monotonic stop state.
     pub fn shouldStop(self: *State) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -695,7 +696,7 @@ pub const State = struct {
         signal(if (owner == .window) self.render_fd else self.window_fd);
     }
 
-    /// Copies both final owner-retirement facts.
+    /// Copies both final owner-retirement states.
     pub fn stopped(self: *State) struct { window: bool, render: bool } {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);

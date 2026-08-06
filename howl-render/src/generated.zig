@@ -39,11 +39,11 @@ pub const Glyph = enum {
 pub const BoxDrawingStroke = generated_geometry.BoxDrawingStroke;
 const BoxDrawingStrokes = generated_geometry.BoxDrawingStrokes;
 
-/// Owns one normalized exact factual DPI axis for generated geometry.
+/// Owns one normalized exact DPI axis for generated geometry.
 pub const Dpi = packed struct(u64) {
-    /// Retains the positive numerator of one normalized factual DPI axis.
+    /// Retains the positive numerator of one normalized DPI axis.
     numerator: u32,
-    /// Retains the positive denominator of one normalized factual DPI axis.
+    /// Retains the positive denominator of one normalized DPI axis.
     denominator: u32,
 
     fn validate(self: Dpi) Error!void {
@@ -57,9 +57,9 @@ pub const Dpi = packed struct(u64) {
 pub const BoxDrawingConfig = struct {
     /// Matches Kitty's default `box_drawing_scale` configuration.
     stroke_points: [4]f32 = .{ 0.001, 1.0, 1.5, 2.0 },
-    /// Supplies factual horizontal DPI.
+    /// Supplies horizontal DPI.
     dpi_x: Dpi,
-    /// Supplies factual vertical DPI.
+    /// Supplies vertical DPI.
     dpi_y: Dpi,
 
     fn validate(self: BoxDrawingConfig) Error!void {
@@ -72,7 +72,7 @@ pub const BoxDrawingConfig = struct {
     }
 };
 
-/// Copies exact Kitty OSC 66 scale facts into generated-raster identity.
+/// Copies exact Kitty OSC 66 scale values into generated-raster identity.
 pub const BoxDrawingSizing = packed struct(u16) {
     /// Carries the nonzero integer multicell height scale.
     scale: u8 = 1,
@@ -106,7 +106,7 @@ pub fn classify(codepoint: u32) ?Glyph {
 
 /// Fills exactly `width_px × height_px` caller-owned bytes for one implemented
 /// non-box glyph and leaves trailing output untouched. Unicode box drawing
-/// requires `rasterizeBox` because factual metrics are identity authority.
+/// requires `rasterizeBox` because resolved metrics are identity authority.
 pub fn rasterize(
     pixels: []u8,
     width_px: u16,
@@ -201,7 +201,7 @@ pub fn rasterizeWithStroke(
 }
 
 /// Rasterizes only Unicode box drawing from exact Kitty point, DPI, and
-/// multicell scale facts. All validation and derivation precede output mutation.
+/// multicell scale values. All validation and derivation precede output mutation.
 pub fn rasterizeBox(
     pixels: []u8,
     width_px: u16,
@@ -229,7 +229,7 @@ pub fn rasterizeBox(
 }
 
 /// Rasterizes the proven metric-sensitive Kitty Powerline subset from exact
-/// point, DPI, and multicell scale facts. Metric-free and unproven glyphs
+/// point, DPI, and multicell scale values. Metric-free and unproven glyphs
 /// reject.
 pub fn rasterizePowerline(
     pixels: []u8,
@@ -267,7 +267,7 @@ pub fn rasterizePowerline(
 }
 
 /// Rasterizes Kitty's generated U+EE00-U+EE0B progress/spinner family from
-/// exact point, DPI, and multicell scale facts.
+/// exact point, DPI, and multicell scale values.
 pub fn rasterizeProgress(
     pixels: []u8,
     width_px: u16,
@@ -302,7 +302,7 @@ pub fn rasterizeProgress(
 }
 
 /// Rasterizes Kitty's generated U+F5D0-U+F60D branch family from exact point,
-/// DPI, and multicell scale facts. U+F5EE is metric-free and must instead use
+/// DPI, and multicell scale values. U+F5EE is metric-free and must instead use
 /// `rasterize`; surplus metric identity is rejected.
 pub fn rasterizeBranch(
     pixels: []u8,

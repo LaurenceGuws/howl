@@ -1,4 +1,4 @@
-//! Projects caller-supplied chrome facts into bounded backend-neutral primitives.
+//! Projects caller-supplied chrome input into bounded backend-neutral primitives.
 
 const std = @import("std");
 const canvas = @import("canvas");
@@ -43,7 +43,7 @@ pub const Style = struct {
     border: Color,
 };
 
-/// Supplies one ordered tab label and its active appearance fact.
+/// Supplies one ordered tab label and its active appearance.
 pub const Tab = struct {
     /// Supplies the stable nonzero caller identity.
     id: TabId,
@@ -56,7 +56,7 @@ pub const Tab = struct {
 /// Selects tiled coverage or caller-ordered floating overlap.
 pub const PaneLayer = enum { tiled, floating };
 
-/// Supplies bounded scroll-model facts; no viewport policy is retained.
+/// Supplies bounded scroll-model state; no viewport policy is retained.
 pub const Scroll = struct {
     /// Supplies the positive visible item count.
     visible: u32,
@@ -66,7 +66,7 @@ pub const Scroll = struct {
     start: u32,
 };
 
-/// Supplies one immutable pane rectangle, label, focus fact, and scroll model.
+/// Supplies one immutable pane rectangle, label, focus state, and scroll model.
 pub const Pane = struct {
     /// Supplies the stable nonzero caller identity.
     id: PaneId,
@@ -76,7 +76,7 @@ pub const Pane = struct {
     label: []const u8,
     /// Selects focused versus unfocused frame styling.
     focused: bool,
-    /// Supplies scroll facts when a scrollbar should be projected.
+    /// Supplies scroll state when a scrollbar should be projected.
     scroll: ?Scroll,
     /// Supplies the pane composition layer. Tiled panes precede floating panes.
     layer: PaneLayer,
@@ -93,15 +93,15 @@ pub const Selection = struct {
     color: Color,
 };
 
-/// Supplies all immutable caller facts for one chrome projection.
+/// Supplies all immutable caller input for one chrome projection.
 pub const Input = struct {
     /// Bounds every emitted primitive after clipping.
     surface: Size,
     /// Sets the tab-bar height; zero hides it and larger values clamp to surface height.
     tab_bar_height: u16,
-    /// Borrows ordered tab facts.
+    /// Borrows ordered tab descriptions.
     tabs: []const Tab,
-    /// Borrows ordered pane facts.
+    /// Borrows ordered pane descriptions.
     panes: []const Pane,
     /// Borrows caller-mapped selection ranges in deterministic draw order.
     selections: []const Selection,
@@ -303,7 +303,7 @@ pub fn project(input: Input, primitives: []Primitive, text_storage: []u8) Error!
 }
 
 /// Returns the topmost caller identity at `point` without allocation or retained
-/// state. Hit-relevant geometry, identity, and order facts fail before a hit is
+/// state. Hit-relevant geometry, identity, and order fail before a hit is
 /// returned.
 pub fn hitTest(input: Input, point: Point) Error!?Hit {
     if (input.surface.width == 0 or input.surface.height == 0) return error.InvalidSurface;
@@ -400,7 +400,7 @@ fn contains(rect: Rect, point: Point) bool {
 fn edgeMask(pane: Pane, panes: []const Pane) BorderEdges {
     var edges = BorderEdges{};
     // Shared-edge suppression owns ordinary tiled structure. Focus is an
-    // overlay fact and must remain complete on every pane edge.
+    // overlay and must remain complete on every pane edge.
     if (pane.layer == .floating or pane.focused) return edges;
     const left = @as(i64, pane.rect.x);
     const top = @as(i64, pane.rect.y);

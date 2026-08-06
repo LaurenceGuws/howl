@@ -139,7 +139,7 @@ test "P001 P002 P003 latest ready state retains frame 1000 and one readiness edg
     try std.testing.expect(value.takeLatestReadyFrame() == null);
 }
 
-test "P010 P014 invalid facts preserve latest state and revision high water" {
+test "P010 P014 invalid frames preserve latest state and revision high water" {
     var value = try boundary();
     defer value.deinit();
     value.markWindowRingReady(1);
@@ -194,7 +194,7 @@ test "clean stop cannot be relabeled by a later owner callback" {
     try std.testing.expect(value.failure == null);
 }
 
-test "directional wakes follow fact ownership" {
+test "directional wakes follow state ownership" {
     var value = try boundary();
     defer value.deinit();
     try value.publishFeedback(.{ .device = 1, .fourcc = 2, .modifier = 3 });
@@ -209,7 +209,7 @@ test "directional wakes follow fact ownership" {
     try value.drainFrameReady();
 }
 
-test "Window input facts cross the Window/Render boundary without policy" {
+test "Window input events cross the Window/Render boundary without policy" {
     var value = try boundary();
     defer value.deinit();
     try value.publishInput(.{ .key = .{ .keycode = 44, .time = 17, .state = .repeated, .serial = 9, .modifiers = .{ .serial = 8, .depressed = 1, .latched = 2, .locked = 4, .group = 3 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
@@ -232,7 +232,7 @@ test "Window input facts cross the Window/Render boundary without policy" {
     try std.testing.expectEqual(@as(f64, 12.5), snapshot.motion.?.point.x);
 }
 
-test "configure facts coalesce and stale generations cannot cross the boundary" {
+test "configurations coalesce and stale generations cannot cross the boundary" {
     var value = try boundary();
     defer value.deinit();
     try std.testing.expectError(error.InvalidConfigure, value.publishConfigure(0, 480, 640, 480, 0, null, null, 1, false));
@@ -254,7 +254,7 @@ test "configure facts coalesce and stale generations cannot cross the boundary" 
     try std.testing.expect((try value.updateLatestReadyFrame(.{ .generation = second.generation, .revision = 2, .slot = 0, .acquire_point = 2, .release_point = 1 })) == null);
 }
 
-test "logical and physical configure facts remain paired transactionally" {
+test "logical and physical configuration remains paired transactionally" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(640, 480, 960, 720, 4, null, null, 1, true);
@@ -273,7 +273,7 @@ test "logical and physical configure facts remain paired transactionally" {
     try std.testing.expect(!second.use_viewport);
 }
 
-test "SurfaceConfig transports factual DPI without fabricating provisional facts" {
+test "SurfaceConfig transports accepted DPI without fabricating provisional state" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(
@@ -354,7 +354,7 @@ test "taken ring retains its exact configure while a newer ring is offered" {
     value.markWindowRingReady(generation);
 }
 
-test "1.6x State offer transaction retains logical Canvas and physical ring facts" {
+test "1.6x State offer transaction retains logical Canvas and physical ring configuration" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(1000, 600, 1600, 960, 1, null, null, 1, true);

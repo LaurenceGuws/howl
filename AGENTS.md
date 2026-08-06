@@ -52,8 +52,8 @@ tracked authorities; raw playground artifacts never become hidden product
 authority.
 
 Only one sprint and one slice are active unless the marathon explicitly proves
-that independent work can proceed. Accepted slice facts and commits move from
-the scratchpad into the sprint; accepted sprint facts and commits move into the
+that independent work can proceed. Accepted slice evidence and commits move from
+the scratchpad into the sprint; accepted sprint results and commits move into the
 marathon. Reset the scratchpad for the next slice or delete it when no slice is
 active. Delete the sprint when its accepted outcome is recorded by the
 marathon, and delete the marathon when its final gate lands.
@@ -70,8 +70,8 @@ YAML evidence to Git when no executable behavior exists to capture.
 
 1. YAML owns the query before execution: accepted policy, exact unknowns,
    reproduction procedure, event schema, bounds, exclusions, and acceptance
-   gate. It never fabricates runtime facts.
-2. JSONL owns factual runtime captures. Every runtime slice produces temporary
+   gate. It never fabricates runtime observations.
+2. JSONL owns direct runtime captures. Every runtime slice produces temporary
    structured evidence for review; GUI, CLI, simulation, fuzz, benchmark, and
    hostile-test runs differ only in who drives them. Use
    `tools/json_logger.zig`, emit bounded strongly typed events, and query the
@@ -134,7 +134,7 @@ their characters through domain meaning or reduced ambiguity.
 
 The monorepo exists only for Git, agent, and development ergonomics plus atomic
 history. Every `howl-*` directory is an independent small Zig package that owns
-its build identity, dependencies, native facts, and proofs. The root
+its build identity, dependencies, native interfaces, and proofs. The root
 `howl_workspace` exports no product module or artifact; it invokes child builds,
 validates root evidence, and provides development aliases.
 

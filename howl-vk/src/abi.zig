@@ -1,4 +1,4 @@
-//! Maintained minimal Vulkan 1.4.357 ABI for external image and semaphore facts.
+//! Maintained minimal Vulkan 1.4.357 ABI for external images and semaphores.
 //! SPDX-License-Identifier: Apache-2.0 OR MIT
 //! Source: KhronosGroup/Vulkan-Headers v1.4.357,
 //! commit e3b1eec08173d6b825cd3ac88c885a63b621504a.

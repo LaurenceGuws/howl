@@ -1817,7 +1817,7 @@ pub const Screen = struct {
     };
 
     /// Erases one display mode, preserving protected cells when requested.
-    /// Returns whether cells, row facts, history, or pending wrap changed; it cannot fail.
+    /// Returns whether cells, row state, history, or pending wrap changed; it cannot fail.
     pub fn eraseDisplay(self: *Screen, mode: EraseMode, protected: bool) bool {
         var changed = self.cancelPendingWrap();
         if (self.cells == null) return changed;
@@ -2000,7 +2000,7 @@ pub const Screen = struct {
         return changed;
     }
 
-    /// Stores one nonzero caller cell-pixel fact for terminal protocol reports.
+    /// Stores one nonzero caller cell-pixel size for terminal protocol reports.
     pub fn setCellPixelSize(self: *Screen, width: u32, height: u32) void {
         std.debug.assert(width > 0);
         std.debug.assert(height > 0);
@@ -2050,7 +2050,7 @@ pub const Screen = struct {
     }
 
     /// Select ISO, DEC, or unprotected provenance for subsequently written cells.
-    /// Returns false when the retained protection fact is already identical.
+    /// Returns false when the retained protection state is already identical.
     pub fn setCharacterProtection(self: *Screen, protection: ScreenProtection) bool {
         if (self.current_attrs.protected == protection) return false;
         self.current_attrs.protected = protection;
@@ -2058,7 +2058,7 @@ pub const Screen = struct {
     }
 
     /// Select rectangular or stream extent for subsequent rectangle-attribute changes.
-    /// Returns false when the retained extent fact is already identical.
+    /// Returns false when the retained extent is already identical.
     pub fn setRectAttrExtent(self: *Screen, rectangular: bool) bool {
         if (self.attr_change_extent_rect == rectangular) return false;
         self.attr_change_extent_rect = rectangular;
@@ -2642,7 +2642,7 @@ pub const Screen = struct {
     /// A zero count has the protocol default of one. The result is false when
     /// no preceding graphic exists or when scalar pressure prevents the first
     /// replay; true means at least one complete repetition committed. Accepted
-    /// repetition owns its ordinary wrapping, insertion, and dirty facts.
+    /// repetition owns its ordinary wrapping, insertion, and dirty state.
     pub fn repeatPreceding(self: *Screen, count: u16) bool {
         const graphic = self.last_graphic orelse return false;
         var remaining = @max(count, 1);
@@ -3527,7 +3527,7 @@ pub const Screen = struct {
     /// Set zero-based vertical margins after clamping them to the grid.
     ///
     /// An unordered result changes nothing. A valid command homes the cursor,
-    /// cancels pending wrap, and reports whether any retained fact changed.
+    /// cancels pending wrap, and reports whether any retained state changed.
     pub fn setScrollRegion(self: *Screen, top: u16, bottom: ?u16) bool {
         if (self.rows == 0) {
             const changed = self.scroll_top != 0 or self.scroll_bottom != 0 or
@@ -3603,7 +3603,7 @@ pub const Screen = struct {
     /// Insert at least one line at an admitted cursor inside both active regions.
     ///
     /// Counts clamp to the remaining region. An outside cursor changes only a
-    /// pending-wrap fact; the result reports exact row or wrap mutation.
+    /// pending-wrap state; the result reports exact row or wrap mutation.
     pub fn insertLines(self: *Screen, count: u16) bool {
         const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
@@ -3615,7 +3615,7 @@ pub const Screen = struct {
     /// Delete at least one line at an admitted cursor inside both active regions.
     ///
     /// Counts clamp to the remaining region. An outside cursor changes only a
-    /// pending-wrap fact; the result reports exact row or wrap mutation.
+    /// pending-wrap state; the result reports exact row or wrap mutation.
     pub fn deleteLines(self: *Screen, count: u16) bool {
         const changed = self.cancelPendingWrap();
         const bottom = self.scrollBottom();
@@ -3630,7 +3630,7 @@ pub const Screen = struct {
     }
 
     /// Scroll an ordered region upward by at most its bounded row count.
-    /// Returns exact cell, row-fact, history, damage, or pending-wrap mutation.
+    /// Returns exact cell, row, history, damage, or pending-wrap mutation.
     pub fn scrollUpRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
@@ -3677,7 +3677,7 @@ pub const Screen = struct {
     }
 
     /// Scroll an ordered region downward by at most its bounded row count.
-    /// Returns exact cell, row-fact, damage, or pending-wrap mutation.
+    /// Returns exact cell, row, damage, or pending-wrap mutation.
     pub fn scrollDownRegion(self: *Screen, top: u16, bottom: u16, count: u16) bool {
         var changed = self.cancelPendingWrap();
         if (self.rows == 0 or self.cols == 0 or top >= self.rows or top > bottom) return changed;
@@ -4089,7 +4089,7 @@ pub const Screen = struct {
         );
     }
 
-    // Clear one structural-edit range and its row facts, reporting only observable mutation.
+    // Clear one structural-edit range and its row state, reporting only observable mutation.
     fn clearStructuralRowRange(self: *Screen, row: u16, start_col: u16, end_col_exclusive: u16) bool {
         const cells = self.cells orelse return false;
         const start = self.rowStart(row);
@@ -5327,7 +5327,7 @@ fn containsCodepoint(screen: *const Screen, codepoint: u32) bool {
     return false;
 }
 
-test "Unicode scalar pressure preserves wide occupancy and terminal facts" {
+test "Unicode scalar pressure preserves wide occupancy and terminal state" {
     var screen = try Screen.initWithCells(std.testing.allocator, 1, 3);
     defer screen.deinit(std.testing.allocator);
     screen.writeCell(0x754c);

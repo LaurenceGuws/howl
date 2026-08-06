@@ -152,7 +152,7 @@ pub const Storage = struct {
     /// Plans the next deterministic first-fit range without mutating storage.
     ///
     /// The outgoing cells are treated as virtually free. Earlier plans are
-    /// treated as occupied. Counts come only from their owning cell facts.
+    /// treated as occupied. Counts come only from their owning cell state.
     pub fn planFirstFit(
         self: *const Storage,
         count: usize,
@@ -719,7 +719,7 @@ test "absolute range encoding covers maximum existing VT dimensions" {
     try std.testing.expectEqual(@as(usize, 4), @sizeOf(Range));
 }
 
-test "range validity derives presence and count from the owning cell fact" {
+test "range validity derives presence and count from the owning cell state" {
     var storage = try Storage.init(std.testing.allocator, page_cells * 2);
     defer storage.deinit();
 

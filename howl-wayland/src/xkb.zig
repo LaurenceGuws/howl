@@ -89,7 +89,7 @@ pub const State = struct {
         return c.xkb_state_key_get_one_sym(self.storage.ptr, @intCast(keycode));
     }
 
-    /// Resolves semantic facts through the current keymap's real modifier
+    /// Resolves semantic state through the current keymap's real modifier
     /// encodings. Virtual aliases contribute only genuinely distinct bits.
     pub fn semanticModifiers(self: *State) input.SemanticModifiers {
         return self.modifier_masks.semantic(self.effective_modifiers);

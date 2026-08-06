@@ -8,12 +8,12 @@ const std = @import("std");
 /// Owns one terminal emulator, its retained state, replies, and consequences.
 pub const Terminal = terminal.Terminal;
 /// Packs the semantic owners affected by one accepted PTY feed.
-pub const MutationFacts = terminal.MutationFacts;
+pub const MutationSet = terminal.MutationSet;
 /// Owns bounded overflow scalars for one caller-owned cell cohort.
 pub const ScalarStorage = scalar_storage.Storage;
 /// Borrows pinned Unicode 17 classification without transferring VT occupancy.
 pub const UnicodeProperties = unicode_17.Properties;
-/// Returns pinned Unicode 17 facts for one valid scalar.
+/// Returns pinned Unicode 17 properties for one valid scalar.
 pub const unicodeProperties = unicode_17.properties;
 /// Reports the fixed scalar-storage contract.
 pub const scalar = struct {

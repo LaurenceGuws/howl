@@ -208,7 +208,7 @@ fn mapWriteResult(result: usize, requested: usize) WriteError!usize {
     };
 }
 
-/// Reports the exact normal or signal termination fact returned by waitpid.
+/// Reports the exact normal or signal termination returned by waitpid.
 pub const ChildExit = union(enum) {
     code: u8,
     signal: u8,

@@ -510,17 +510,17 @@ test "cursor replay cohorts role-swap and reject pressure transactionally" {
     replay_slots[0].release_point = 4;
     replay_slots[1].release_point = 9;
     replay_slots[2].release_point = 7;
-    const release_facts = presentation_state.RetiredRing{
+    const release_state = presentation_state.RetiredRing{
         .generation = 1,
         .presented_mask = 0b101,
         .release_points = .{ 4, 9, 7 },
     };
-    var unrelated_release = release_facts;
+    var unrelated_release = release_state;
     unrelated_release.presented_mask = 0b001;
     try std.testing.expect(retiringSlotReady(&replay, unrelated_release, &replay_slots) == null);
     try std.testing.expectEqual(
         @as(?usize, 2),
-        retiringSlotReady(&replay, release_facts, &replay_slots),
+        retiringSlotReady(&replay, release_state, &replay_slots),
     );
     try std.testing.expectError(error.Retiring, replay.capture(plan, frame));
     // Slot 1 sorts before the retiring slot 2, but the exact retiring role is
@@ -726,7 +726,7 @@ fn commitCursorReplayAcceptance(
     next_acquire_point.* = following_acquire_point;
 }
 
-test "cursor replay preparation rejects candidate facts and preserves accepted ownership" {
+test "cursor replay preparation rejects candidate state and preserves accepted ownership" {
     try std.testing.expectEqual(
         frame_command_limit * 2 + 1,
         vk_surface.max_commands,
@@ -901,7 +901,7 @@ const CanvasWork = struct {
     surface: render_api.canvas.Size = .{ .width = 0, .height = 0 },
     content_origin: session_chrome_adapter.ContentOrigin = .{ .y = 0 },
     producer_revision: u64 = 0,
-    frame_uploads: []render_api.canvas.ResourceUploadFact,
+    frame_uploads: []render_api.canvas.FrameResourceUpload,
     frame_removals: []render_api.canvas.FrameResourceRef,
     frame_commands: []render_api.canvas.Command,
     frame_pixels: []u8,
@@ -1040,7 +1040,7 @@ fn runFallible(
     }, .{ .primary = font_path, .size = .{ .pixels = 16 } });
     defer chrome_content.deinit();
     const frame_uploads = try allocator.alloc(
-        render_api.canvas.ResourceUploadFact,
+        render_api.canvas.FrameResourceUpload,
         frame_resource_limit,
     );
     defer allocator.free(frame_uploads);
@@ -2250,13 +2250,13 @@ fn requestPaneFontAction(
             &candidate,
             pane,
             1.0,
-            scale orelse return error.FactualScaleUnavailable,
+            scale orelse return error.AcceptedScaleUnavailable,
         ),
         .font_decrease => try adjustPolicyOffset(
             &candidate,
             pane,
             -1.0,
-            scale orelse return error.FactualScaleUnavailable,
+            scale orelse return error.AcceptedScaleUnavailable,
         ),
         .font_reset => try setPolicyOffset(&candidate, pane, 0.0),
         else => return error.InvalidFontAction,
@@ -2283,19 +2283,19 @@ fn requestBaseFontAction(
     const ceiling = configured_terminal_base_points * 10.0;
     const requested = switch (action) {
         .font_base_increase => increase: {
-            if (scale == null) return error.FactualScaleUnavailable;
+            if (scale == null) return error.AcceptedScaleUnavailable;
             break :increase candidate.base_point_size + 1.0;
         },
         .font_base_decrease => decrease: {
-            if (scale == null) return error.FactualScaleUnavailable;
+            if (scale == null) return error.AcceptedScaleUnavailable;
             break :decrease candidate.base_point_size - 1.0;
         },
         .font_base_reset => configured_terminal_base_points,
         else => return error.InvalidFontAction,
     };
     if (!std.math.isFinite(requested)) return error.InvalidFontPolicy;
-    const floor = if (scale) |factual|
-        try pointFloor(factual)
+    const floor = if (scale) |accepted_scale|
+        try pointFloor(accepted_scale)
     else
         0.0;
     candidate.base_point_size = std.math.clamp(requested, floor, ceiling);
@@ -2333,7 +2333,7 @@ test "integer and fractional surfaces retain the logical Canvas extent" {
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(fractional));
 }
 
-test "Renderer copies only factual accepted DPI through terminal State" {
+test "Renderer copies only accepted DPI through terminal State" {
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(presentation_state.ExactRational));
     try std.testing.expectEqual(@as(usize, 64), @sizeOf(presentation_state.SurfaceConfig));
     try std.testing.expectEqual(
@@ -3367,7 +3367,7 @@ fn publicationCursorOverlay(
     publication: terminal_handoff.CursorPublication,
     require_newer: bool,
 ) !CursorOverlayPreparation {
-    // Validate accepted Composer binding and placement facts independently.
+    // Validate accepted Composer binding and placement state independently.
     // Any error here is accepted-state corruption and must remain observable.
     if ((try cursorOverlayForBinding(work, publication.source)) == null)
         return .blocked;
@@ -3500,7 +3500,7 @@ fn waitReleasePoints(boundary: *presentation_state.State, generation: u64, slots
     if (generation == 0) return;
     var wakes: u8 = 0;
     while (wakes < 32) : (wakes += 1) {
-        if (boundary.releaseFacts(generation)) |retired| {
+        if (boundary.ringReleaseState(generation)) |retired| {
             for (0..presentation_state.slot_count) |index| {
                 if ((retired.presented_mask & (@as(u8, 1) << @intCast(index))) != 0) {
                     try waitTimeline(drm_fd, slots[index].release_handle, retired.release_points[index]);
@@ -5254,7 +5254,7 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
         .surface = .{ .width = 320, .height = 240 },
         .sources = &.{},
     });
-    var uploads: [1]render_api.canvas.ResourceUploadFact = undefined;
+    var uploads: [1]render_api.canvas.FrameResourceUpload = undefined;
     var removals: [1]render_api.canvas.FrameResourceRef = undefined;
     var commands: [1]render_api.canvas.Command = undefined;
     var pixels: [1]u8 = undefined;
@@ -6120,7 +6120,7 @@ test "borrowed Chrome retry preserves one consumptive sparse update" {
             .sources = &chrome_placement,
         },
     });
-    var uploads: [16]render_api.canvas.ResourceUploadFact = undefined;
+    var uploads: [16]render_api.canvas.FrameResourceUpload = undefined;
     var removals: [16]render_api.canvas.FrameResourceRef = undefined;
     var commands: [32]render_api.canvas.Command = undefined;
     var pixels: [8192]u8 = undefined;
@@ -6219,7 +6219,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .removals = &.{},
         .commands = &.{},
     });
-    var frame_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var frame_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
     var frame_removals: [32]render_api.canvas.FrameResourceRef = undefined;
     var frame_commands: [256]render_api.canvas.Command = undefined;
     var frame_pixels: [64 * 1024]u8 = undefined;
@@ -6382,7 +6382,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try std.testing.expectEqual(@as(u8, 0), work.visible_count);
     const local_retry_turn = local_retry_pending;
     local_retry_pending = false;
-    var before_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var before_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
     var before_removals: [32]render_api.canvas.FrameResourceRef = undefined;
     var before_commands: [256]render_api.canvas.Command = undefined;
     var before_pixels: [64 * 1024]u8 = undefined;
@@ -6413,7 +6413,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         @as(usize, 1),
         retained_topology.paneCount(0),
     );
-    var after_uploads: [32]render_api.canvas.ResourceUploadFact = undefined;
+    var after_uploads: [32]render_api.canvas.FrameResourceUpload = undefined;
     var after_removals: [32]render_api.canvas.FrameResourceRef = undefined;
     var after_commands: [256]render_api.canvas.Command = undefined;
     var after_pixels: [64 * 1024]u8 = undefined;
@@ -6587,7 +6587,7 @@ test "compact resource adaptation preserves local and shared namespaces mechanic
     );
     try std.testing.expectEqual(
         @as(usize, 56),
-        @sizeOf(render_api.canvas.ResourceUploadFact),
+        @sizeOf(render_api.canvas.FrameResourceUpload),
     );
     try std.testing.expectEqual(
         @as(usize, 80),
@@ -7335,7 +7335,7 @@ fn reclaimNeverPresentedWith(
     // exact Render completion into the slot's release timeline so the next
     // Vulkan submission can import a real completed fence while reacquiring
     // external ownership.  This is Render reclamation, not a fabricated
-    // compositor release fact.
+    // compositor release state.
     try Ops.transfer(
         drm_fd,
         slot.release_handle,
@@ -7699,7 +7699,7 @@ test "P003 P005 P006 P007 slot reuse is supersession or exact release owned" {
     try std.testing.expectEqual(SlotOwnership.reusable, slots[1].ownership);
 }
 
-test "P006 real DRM timelines reclaim never-presented work without compositor facts" {
+test "P006 real DRM timelines reclaim never-presented work without compositor release" {
     const drm_fd = openRenderNode(226, 128) catch return error.SkipZigTest;
     defer closeDescriptor(drm_fd);
     var acquire_handle: u32 = 0;
@@ -7831,7 +7831,7 @@ fn releasedSlot(
         if (excluded_slot == index) continue;
         if (slot.ownership == .reusable) return index;
     }
-    const facts = boundary.releaseFacts(generation) orelse return error.NoReleasedSlot;
+    const release_state = boundary.ringReleaseState(generation) orelse return error.NoReleasedSlot;
     var first_candidate: ?usize = null;
     for (0..presentation_state.slot_count) |index| {
         if (excluded_slot == index) continue;
@@ -7839,8 +7839,8 @@ fn releasedSlot(
             slots[index].ownership != .compositor_owned and
             slots[index].ownership != .latest_ready_frame)
             continue;
-        const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(index))) != 0;
-        if (!presented or facts.release_points[index] != slots[index].release_point) continue;
+        const presented = (release_state.presented_mask & (@as(u8, 1) << @intCast(index))) != 0;
+        if (!presented or release_state.release_points[index] != slots[index].release_point) continue;
         slots[index].ownership = .compositor_owned;
         if (first_candidate == null) first_candidate = index;
         if (try timelineReady(drm_fd, slots[index].release_handle, slots[index].release_point)) {
@@ -7865,8 +7865,8 @@ fn releaseReplayRetirementIfReady(
     drm_fd: i32,
 ) !bool {
     const retiring_slot = replay.retiring_slot orelse return true;
-    const facts = boundary.releaseFacts(generation) orelse return false;
-    const ready_slot = retiringSlotReady(replay, facts, slots) orelse return false;
+    const release_state = boundary.ringReleaseState(generation) orelse return false;
+    const ready_slot = retiringSlotReady(replay, release_state, slots) orelse return false;
     std.debug.assert(ready_slot == retiring_slot);
     try waitTimeline(drm_fd, slots[ready_slot].release_handle, slots[ready_slot].release_point);
     replay.releaseRetiring(ready_slot);
@@ -7875,12 +7875,12 @@ fn releaseReplayRetirementIfReady(
 
 fn retiringSlotReady(
     replay: *const ReplayState,
-    facts: presentation_state.RetiredRing,
+    release_state: presentation_state.RetiredRing,
     slots: *const [presentation_state.slot_count]Slot,
 ) ?usize {
     const slot = replay.retiring_slot orelse return null;
-    const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(slot))) != 0;
-    if (!presented or facts.release_points[slot] != slots[slot].release_point)
+    const presented = (release_state.presented_mask & (@as(u8, 1) << @intCast(slot))) != 0;
+    if (!presented or release_state.release_points[slot] != slots[slot].release_point)
         return null;
     return slot;
 }

@@ -1,5 +1,5 @@
 //! Owns the finite physical-key capture and chrome-action policy applied only
-//! by Renderer. Wayland facts remain caller-neutral and topology remains the
+//! by Renderer. Wayland input remains caller-neutral and topology remains the
 //! transactional state owner.
 
 const std = @import("std");
@@ -59,7 +59,7 @@ pub const State = struct {
     count: u8 = 0,
 
     /// Classifies one exact key occurrence. Matched presses capture before
-    /// returning an action; repeated facts and releases for captured keys are
+    /// returning an action; repeated events and releases for captured keys are
     /// consumed without selecting another action.
     pub fn key(self: *State, event: wayland.input.Key) Error!Decision {
         if (self.find(event.keycode)) |index| {

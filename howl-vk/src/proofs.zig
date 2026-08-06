@@ -151,17 +151,17 @@ test "surface candidate discard models failed GPU application" {
     try std.testing.expectEqual(@as(usize, 2), (try store.enumerate(&output)).len);
 }
 
-test "atlas facts commit only through the completion boundary" {
+test "atlas state commits only through the completion boundary" {
     var context = surface.Context{};
     try std.testing.expect(!context.atlas_initialized);
     try std.testing.expect(!context.image_atlas_initialized);
     // A recording or submission failure does not call complete, so both
-    // layout facts remain at their prior values.
+    // layout state remains at its prior values.
     context.complete(.{ .alpha_initialized = true, .image_initialized = true });
     try std.testing.expect(context.atlas_initialized);
     try std.testing.expect(context.image_atlas_initialized);
     // Later replacement recording can require both transitions again, but a
-    // failed operation leaves the established facts unchanged.
+    // failed operation leaves the established state unchanged.
     context.complete(.{ .alpha_initialized = false, .image_initialized = false });
     try std.testing.expect(context.atlas_initialized);
     try std.testing.expect(context.image_atlas_initialized);

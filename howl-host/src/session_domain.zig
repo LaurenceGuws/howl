@@ -15,9 +15,9 @@ pub const PaneId = enum(u64) { _ };
 pub const Size = struct { width: u16, height: u16 };
 /// Backend-independent signed content-local rectangle.
 pub const Rect = struct { x: i32, y: i32, width: u16, height: u16 };
-/// Backend-independent bounded scroll facts.
+/// Backend-independent bounded scroll state.
 pub const Scroll = struct { visible: u32, total: u32, start: u32 };
-/// Semantic pane layer; the Chrome adapter maps it to presentation facts.
+/// Semantic pane layer; the Chrome adapter maps it to presentation inputs.
 pub const PaneLayer = enum { tiled, floating };
 
 /// Bounds the ordered tabs retained by one session.
@@ -33,7 +33,7 @@ pub const scrollbar_width: u16 = 8;
 /// Minimum scrollbar thumb retained by session validation.
 pub const scrollbar_min_thumb: u16 = 16;
 
-/// Reports invalid session facts without partial accepted-state mutation.
+/// Reports invalid session state without partial accepted-state mutation.
 pub const Error = error{
     Capacity,
     InvalidText,
@@ -67,7 +67,7 @@ pub const Tab = struct {
 
 /// Owns stable tab/pane identity and derives current tiled geometry directly
 /// from pane rectangles. The Host session owner retains this state; Window and
-/// Render observe only adapted facts. It performs no allocation and retains no
+/// Render observes only adapted state. It performs no allocation and retains no
 /// presentation policy.
 pub const SessionState = struct {
     tabs: [max_tabs]Tab = undefined,
@@ -153,7 +153,7 @@ pub const SessionState = struct {
         return true;
     }
 
-    /// Checks positive, non-overlapping, complete coverage and one focus fact
+    /// Checks positive, non-overlapping, complete coverage and one focused pane
     /// for every retained tab. This is a deterministic owner invariant proof.
     pub fn validate(self: *const SessionState) Error!void {
         try validateLayout(self);
@@ -215,7 +215,7 @@ pub const SessionState = struct {
         copyLabel(&self.tabs[location.tab].panes[location.pane].label, &self.tabs[location.tab].panes[location.pane].label_len, label);
     }
 
-    /// Replaces one pane's scroll facts only when the tuple and current pane
+    /// Replaces one pane's scroll state only when the tuple and current pane
     /// rectangle can produce the host's bounded scrollbar.
     pub fn setPaneScroll(self: *SessionState, id: PaneId, scroll: ?Scroll) Error!void {
         const location = self.findPane(id) orelse return error.InvalidId;
@@ -557,7 +557,7 @@ pub const SessionState = struct {
 };
 
 /// Backend-independent inline candidate containing exactly one copied state.
-/// Host lifecycle, source, visible-set, frame, and physical facts remain
+/// Host lifecycle, source, visible-set, frame, and physical state remain
 /// outside this value.
 pub const SessionCandidate = struct {
     state: SessionState,

@@ -1,4 +1,4 @@
-//! Owns Kitty-equivalent generated Unicode 17 width and grapheme facts.
+//! Owns Kitty-equivalent generated Unicode 17 width and grapheme properties.
 //!
 //! Provenance: Kitty d4106ef2db687579a69fefc949a6dc1b662f3ca8
 //! `kitty/char-props-data.h` SHA-256
@@ -100,7 +100,7 @@ fn readU32(offset: usize) u32 {
     return std.mem.readInt(u32, data[offset..][0..4], .little);
 }
 
-test "Unicode 17 generated properties preserve width and presentation facts" {
+test "Unicode 17 generated properties preserve width and presentation values" {
     try std.testing.expectEqual(@as(i4, 1), properties('A').width());
     try std.testing.expectEqual(@as(i4, 0), properties(0x0301).width());
     try std.testing.expectEqual(@as(i4, 2), properties(0x754c).width());

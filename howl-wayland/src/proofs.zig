@@ -1,7 +1,7 @@
 const std = @import("std");
 const wayland = @import("howl_wayland");
 
-test "ordered facts retain exact protocol order and saturate transactionally" {
+test "ordered events retain exact protocol order and saturate transactionally" {
     var state = wayland.input.State{};
     for (0..wayland.input.capacity) |index| {
         try state.push(.{ .key = .{ .keycode = @intCast(index), .time = @intCast(index + 10), .state = .pressed, .serial = @intCast(index), .modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 }, .semantic_modifiers = .{}, .keysym = @fromBackingInt(@intCast(0)), .text_len = 0, .text = std.mem.zeroes([wayland.input.key_text_limit]u8) } });
@@ -18,7 +18,7 @@ test "ordered facts retain exact protocol order and saturate transactionally" {
     try std.testing.expectEqual(@as(u16, 0), state.orderedCount());
 }
 
-test "coalesced facts preserve exact masks and checked revisions" {
+test "coalesced state preserves exact masks and checked revisions" {
     var state = wayland.input.State{};
     try state.setMotion(.{ .time = 11, .point = .{ .x = 1, .y = 2 }, .semantic_modifiers = .{} });
     try state.setModifiers(.{ .serial = 7, .depressed = 1, .latched = 2, .locked = 4, .group = 3 });
@@ -30,7 +30,7 @@ test "coalesced facts preserve exact masks and checked revisions" {
     try std.testing.expectEqual(@as(u32, 0), state.configureSnapshot().?.width);
 }
 
-test "ordered pointer facts retain occurrence coordinates under later motion" {
+test "ordered pointer events retain occurrence coordinates under later motion" {
     var state = wayland.input.State{};
     const first = wayland.input.Point{ .x = 3, .y = 4 };
     try state.push(.{ .button = .{
@@ -92,7 +92,7 @@ test "keyboard enter copies unaligned receive arrays without allocation metadata
     try std.testing.expectError(error.InvalidPressedKeys, wayland.input.keyboardEnter(1, &oversized));
 }
 
-test "key facts retain causal modifiers and repeated state" {
+test "key events retain causal modifiers and repeated state" {
     var state = wayland.input.State{};
     const modifiers = wayland.input.Modifiers{ .serial = 44, .depressed = 1, .latched = 2, .locked = 4, .group = 3 };
     try state.push(.{ .key = .{ .keycode = 30, .time = 55, .state = .repeated, .serial = 56, .modifiers = modifiers, .semantic_modifiers = .{ .shift = true }, .keysym = @fromBackingInt(@intCast(0x41)), .text_len = 1, .text = [_]u8{'A'} ++ std.mem.zeroes([wayland.input.key_text_limit - 1]u8) } });

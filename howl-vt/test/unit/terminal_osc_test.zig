@@ -81,7 +81,7 @@ test "GNU Screen title retains bounded title and icon with exact mutation" {
     try std.testing.expectEqual(@as(usize, expected_metadata_bytes), terminal.icon().?.len);
 }
 
-test "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation" {
+test "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -216,7 +216,7 @@ test "Kitty ignored OSC selectors remain bounded exact no-ops" {
     try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
 }
 
-test "working-directory report limit preserves the prior complete fact" {
+test "working-directory report limit preserves the prior complete value" {
     const allocator = std.testing.allocator;
     var terminal = try Terminal.init(allocator, 3, 8);
     defer terminal.deinit();
@@ -1276,7 +1276,7 @@ test "OSC 50 accepts only cursor shape without 1337 consequences" {
     );
 }
 
-test "cell pixel report facts reject zero and preserve configured dimensions" {
+test "cell pixel reports reject zero and preserve configured dimensions" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
     try terminal.setCellPixelSize(9, 18);

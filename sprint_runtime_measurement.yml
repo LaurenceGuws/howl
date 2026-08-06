@@ -29,7 +29,7 @@ slices:
     status: accepted
     observed_gap: >-
       PTY reaps the child and Terminal retains Logical.child_exit, but no
-      terminal-completion fact reaches Renderer; the pane and final Host
+      terminal-completion event reaches Renderer; the pane and final Host
       therefore remain live after the child exits.
     accepted_policy:
       - every drained child exit closes exactly its owning pane

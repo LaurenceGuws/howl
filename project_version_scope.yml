@@ -33,7 +33,7 @@ settled_capabilities:
 
 accepted_implementation:
   - The tracked Zig pin drives every workspace and child command.
-  - Window alone dispatches Wayland and presents completed copied slot facts.
+  - Window alone dispatches Wayland and presents completed copied slots.
   - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
   - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
   - Cursor presentation is independent of terminal text publication and accepted frame replacement.
@@ -51,7 +51,7 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Make child exit an exact pane lifecycle fact and final-Host completion boundary.
+  - Make child exit an exact pane lifecycle event and final-Host completion boundary.
   - Establish reproducible Neovim-scroll and rain workloads.
   - Measure external CPU/GPU cost before adding bounded owner instrumentation.
   - Correct only the first causally proven update-amplification owner.

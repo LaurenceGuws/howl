@@ -27,7 +27,7 @@ classifications:
     Howl mutates its bounded cell, protection, origin, and damage model exactly; reference-only multicell repair,
     external attributes, graphics, and conflicting erase or destination policy are outside the complete Howl family.
   color_policy_difference: &howl_color_policy_difference >-
-    Howl retains bounded host-neutral palette and terminal-color facts with fixed exact replies; reference-specific
+    Howl retains bounded host-neutral palette and terminal-color state with fixed exact replies; reference-specific
     parser breadth, reply formatting, logging, opacity, and presentation policy are outside the complete Howl family.
   protection_policy_difference: &howl_protection_policy_difference >-
     Howl retains ISO and DEC protection provenance per cell so ordinary and selective erase remain unambiguous;
@@ -74,11 +74,11 @@ classifications:
     emulation gates, row crossing, command ambiguity, permissive parsing, unbounded retention, and multiple-cursor
     policy are outside the complete Howl family.
   metadata_policy_difference: &howl_metadata_policy_difference >-
-    Howl retains exact bounded host-neutral title, icon, directory, remote-host, shell identity, and hyperlink facts;
+    Howl retains exact bounded host-neutral title, icon, directory, remote-host, shell identity, and hyperlink state;
     reference-specific trust, sanitization, decoding, structured-session, pool-reclamation, and presentation policy is
     outside the complete Howl family.
   shell_mark_policy_difference: &howl_shell_mark_policy_difference >-
-    Howl retains monotonic bounded A/B/C/D shell facts and positional exit status without choosing scrollback UI;
+    Howl retains monotonic bounded A/B/C/D shell state and positional exit status without choosing scrollback UI;
     reference-specific mark kinds, nesting, prompt, line-attribute, command-output, and session policy is outside the
     complete Howl family.
   compatibility_transport_difference: &howl_compatibility_transport_difference >-
@@ -377,7 +377,7 @@ references:
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: application keypad modes affect keypad encoding and DECRQM}}}
           libvterm.esc.ris: {raw: "ESC c", effect: hard terminal reset, relevance: core,
-            conditions: libvterm resets the active state and erases its grid; Howl retains broader host facts,
+            conditions: libvterm resets the active state and erases its grid; Howl retains broader host state,
             howl: {support: partial, disposition: excluded, rationale: *howl_lifecycle_difference, source: howl-vt/src/terminal.zig, symbol: hardReset, proof: {
               path: howl-vt/test/unit/terminal_test.zig,
               symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
@@ -699,7 +699,7 @@ references:
             conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
             howl: {support: partial, disposition: excluded,
               residual: libvterm owns one cross-bank mode while Howl retains per-screen cursor intent without animated Host presentation.,
-              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              rationale: Howl preserves the VT semantic state but presents a static cursor.,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
               symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
@@ -1277,18 +1277,18 @@ references:
             raw: "CSI Pm t"
             effect: dispatch window operation by first parameter
             conditions: >-
-              Howl retains operations 1-6, 8, 11, 13, 19, and 20; serializes matching host facts for retained queries;
-              answers 14/16/18/21 from owned facts; owns its bounded title stack; issues the Wayland minimize request;
-              and settles compositor-controlled operations with explicit no-op/zero-fact policy.
+              Howl retains operations 1-6, 8, 11, 13, 19, and 20; serializes matching host values for retained queries;
+              answers 14/16/18/21 from owned state; owns its bounded title stack; issues the Wayland minimize request;
+              and settles compositor-controlled operations with explicit no-op/zero-value policy.
             recognition: delegated
             relevance: host consequence
             howl: {support: partial, disposition: excluded,
-              residual: iTerm2 executes compositor-controlled operations and reports facts unavailable to Wayland.,
+              residual: iTerm2 executes compositor-controlled operations and reports values unavailable to Wayland.,
               rationale: Howl issues the one-way Wayland minimize request without claiming compositor action and
-                otherwise follows explicit no-op and unavailable-fact policy.,
+                otherwise follows explicit no-op and unavailable-value policy.,
               source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
               path: howl-host/src/window.zig,
-              symbol: "window request policy issues minimize and reports settled fallback facts"}}
+              symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.csi.decsnls:
             raw: "CSI rows * |"
             effect: request terminal row count
@@ -1301,7 +1301,7 @@ references:
               rationale: Wayland retains compositor authority over top-level dimensions and Howl has no emulation-level
                 compatibility policy.,
               source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
-                symbol: "window request policy issues minimize and reports settled fallback facts"}}
+                symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.csi.decscpp:
             raw: "CSI [cols=0] $ |"
             effect: request 80 or 132 terminal columns
@@ -1314,7 +1314,7 @@ references:
               rationale: Wayland retains compositor authority over top-level dimensions and Howl has no emulation-level
                 compatibility policy.,
               source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
-                symbol: "window request policy issues minimize and reports settled fallback facts"}}
+                symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.csi.su: {raw: "CSI [Ps=1] S", effect: scroll up,
             conditions: line-buffer history and selection consequences, howl: {support: partial,
               disposition: excluded, rationale: *howl_structural_policy_difference,
@@ -1602,7 +1602,7 @@ references:
             relevance: host metadata, howl: {support: partial, disposition: excluded,
               rationale: *howl_metadata_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
+                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation"}}}
           iterm2.osc.hyperlink: {raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "iTerm2 validates a 2 MiB URL and retains target= while Howl bounds the packet to 2 KiB
               and retains id=",
@@ -1694,7 +1694,7 @@ references:
             raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
             effect: update shell integration mark
             conditions: >-
-              Howl retains bounded A/B/C/D facts and the first positional D exit status; iTerm2 additionally owns
+              Howl retains bounded A/B/C/D state and the first positional D exit status; iTerm2 additionally owns
               N/P marks, aid nesting, prompt kinds, fresh-line behavior, and host shell state.
             howl: {support: partial, disposition: excluded, rationale: *howl_shell_mark_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {
@@ -1733,7 +1733,7 @@ references:
           iterm2.osc1337.set_mark: {raw: "OSC 1337 ; SetMark[=Pt] (BEL|ST)", effect: create scrollback mark,
             relevance: host metadata, howl: {support: missing, disposition: excluded,
               rationale: *howl_shell_mark_policy_difference,
-              residual: iTerm2 scroll-position marks are outside Howl's bounded A/B/C/D shell-fact model., proof: {
+              residual: iTerm2 scroll-position marks are outside Howl's bounded A/B/C/D shell-state model., proof: {
                 path: howl-vt/test/unit/terminal_osc_test.zig,
                 symbol: "unsupported SetMark and Kitty context metadata remain exact no-ops"}}}
           iterm2.osc1337.steal_focus:
@@ -1763,7 +1763,7 @@ references:
             relevance: host metadata, howl: {support: partial, disposition: excluded,
               rationale: *howl_metadata_policy_difference, source: howl-vt/src/terminal.zig,
               symbol: replaceWorkingDirectoryReport, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
-                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
+                symbol: "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation"}}}
           iterm2.osc1337.remote_host:
             raw: "OSC 1337 ; RemoteHost=user@host (BEL|ST)"
             effect: report remote host
@@ -2178,7 +2178,7 @@ references:
             conditions: Howl retains blink with each screen cursor while iTerm2 delegates one host cursor property,
             howl: {support: partial, disposition: excluded,
               residual: iTerm2 applies one host cursor property while Howl retains per-screen cursor intent without animated Host presentation.,
-              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              rationale: Howl preserves the VT semantic state but presents a static cursor.,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_cursor_test.zig,
                 symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           iterm2.mode.lnm_private: {raw: "CSI ? 20 h|l", effect: ignore private line mode,
@@ -2317,7 +2317,7 @@ references:
               symbol: Terminal.switchScreenMode, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal save reset and alternate lifecycle stays coherent across resize and bank changes"}}}
           iterm2.mode.key_up_1337: {raw: "CSI ? 1337 h|l", effect: toggle key-release reports, relevance: input,
-            conditions: "Howl retains, queries, saves, and resets the fact but deliberately uses its typed Kitty
+            conditions: "Howl retains, queries, saves, and resets the state but deliberately uses its typed Kitty
               keyboard protocol for key-release delivery instead of iTerm2's proprietary raw host event mode.",
             howl: {support: partial, disposition: excluded, rationale: *howl_input_policy_difference,
               residual: Howl does not implement iTerm2's proprietary raw host key-release event mode.,
@@ -2343,7 +2343,7 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}}
           iterm2.mode.resize_notifications: {raw: "CSI ? 2048 h|l", effect: toggle resize notifications,
-            conditions: resize reports require host-provided cell pixel facts, relevance: extension,
+            conditions: resize reports require host-provided cell pixel dimensions, relevance: extension,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
@@ -2358,7 +2358,7 @@ references:
             effect: deiconify window
             conditions: >-
               Howl retains every accepted request in a 32-entry FIFO; execution remains host policy. Operations are
-              acknowledged at the live head; queries require a matching head identity and exact host-supplied fact.
+              acknowledged at the live head; queries require a matching head identity and exact host-supplied value.
             relevance: host consequence
             howl: &iterm2_window_operation_howl {support: partial, disposition: excluded,
               residual: Reference executes a compositor-owned window operation that Howl consumes as an ordered no-op.,
@@ -2366,7 +2366,7 @@ references:
                 compositor-owned top-level; Howl consumes those requests as ordered no-ops.,
               source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
               path: howl-host/src/window.zig,
-              symbol: "window request policy issues minimize and reports settled fallback facts"}}
+              symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.window.iconify:
             <<: *iterm2_window_request
             raw: "CSI 2 t"
@@ -2377,7 +2377,7 @@ references:
               rationale: Howl issues the exact Wayland minimize request and does not claim that the compositor acted.,
               source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
               path: howl-host/src/window.zig,
-              symbol: "window request policy issues minimize and reports settled fallback facts"}}
+              symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.window.move:
             <<: *iterm2_window_request
             raw: "CSI 3 ; x ; y t"
@@ -2412,12 +2412,12 @@ references:
             effect: report iconified state
             relevance: query
             howl: &iterm2_window_query_howl {support: partial, disposition: excluded,
-              residual: Reference reports a live window or screen fact that Wayland does not expose to Howl.,
+              residual: Reference reports a live window or screen value that Wayland does not expose to Howl.,
               rationale: Wayland does not expose iconified state, global position, or containing-output cell
-                dimensions; Howl follows Foot by reporting normal and zero for unavailable facts.,
+                dimensions; Howl follows Foot by reporting normal and zero for unavailable values.,
               source: howl-host/src/window.zig,
               symbol: applyWindowRequests, proof: {path: howl-host/src/window.zig,
-                symbol: "window request policy issues minimize and reports settled fallback facts"}}
+                symbol: "window request policy issues minimize and reports settled fallback values"}}
           iterm2.window.report_position:
             <<: *iterm2_window_request
             raw: "CSI 13 t"
@@ -2431,11 +2431,11 @@ references:
               rationale: Howl deliberately reports terminal text-area pixels rather than compositor chrome.,
               source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "terminal size reports use exact current cell and pixel facts"}}}
+              symbol: "terminal size reports use exact current cell and pixel dimensions"}}}
           iterm2.window.report_cells: {raw: "CSI 18 t", effect: report terminal cell dimensions, relevance: query,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "terminal size reports use exact current cell and pixel facts"}}}
+              symbol: "terminal size reports use exact current cell and pixel dimensions"}}}
           iterm2.window.report_screen:
             <<: *iterm2_window_request
             raw: "CSI 19 t"
@@ -2668,7 +2668,7 @@ references:
             conditions: Kitty resets its shared cursor on alternate entry while Howl retains per-screen cursor style,
             howl: {support: partial, disposition: excluded,
               residual: Kitty resets one shared cursor while Howl retains per-screen cursor intent without animated Host presentation.,
-              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              rationale: Howl preserves the VT semantic state but presents a static cursor.,
               source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_cursor_test.zig,
                 symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           kitty.mode.dectcem: {raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
@@ -2784,7 +2784,7 @@ references:
                 path: howl-vt/test/unit/terminal_modes_test.zig,
                 symbol: "Kitty host-coordinated modes retain exact state reports and color notifications"}}
           kitty.mode.inband_resize: {raw: "CSI ? 2048 h|l", effect: toggle in-band resize notifications,
-            conditions: resize reports require host-provided cell pixel facts, relevance: extension,
+            conditions: resize reports require host-provided cell pixel dimensions, relevance: extension,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.appendInbandResizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
                 test: in-band resize mode emits transactional iTerm2 and Kitty reports}}}
@@ -3042,21 +3042,21 @@ references:
               path: howl-vt/test/unit/terminal_modes_test.zig,
               symbol: "Kitty parameterless mode save restores the exact curated mode set"}}
           kitty.csi.report_window_pixels: {raw: "CSI 14 ; [Ps] t", effect: report window pixel size,
-            conditions: Howl needs host cell pixels and has no Kitty window-id fact for Ps=2 frame dimensions,
+            conditions: Howl needs host cell pixels and has no Kitty window ID for Ps=2 frame dimensions,
             relevance: query, howl: {support: partial, disposition: excluded,
               rationale: *howl_report_policy_difference, source: howl-vt/src/terminal.zig, symbol: appendSizeReport,
               proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
-                symbol: "terminal size reports use exact current cell and pixel facts"}}}
+                symbol: "terminal size reports use exact current cell and pixel dimensions"}}}
           kitty.csi.report_cell_pixels: {raw: "CSI 16 ; [Ps] t", effect: report cell pixel size, relevance: query,
             conditions: Howl replies only after the embedding host supplies nonzero cell pixels,
             howl: {support: partial, disposition: excluded, rationale: *howl_report_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "terminal size reports use exact current cell and pixel facts"}}}
+              symbol: "terminal size reports use exact current cell and pixel dimensions"}}}
           kitty.csi.report_text_cells: {raw: "CSI 18 ; [Ps] t", effect: report text area dimensions,
             relevance: query, howl: {support: full, source: howl-vt/src/terminal.zig, symbol: appendSizeReport, proof: {
               path: howl-vt/test/unit/terminal_modes_test.zig,
-              symbol: "terminal size reports use exact current cell and pixel facts"}}}
+              symbol: "terminal size reports use exact current cell and pixel dimensions"}}}
           kitty.csi.title_push: {raw: "CSI 22 ; [Ps] t", effect: push title stack, relevance: host metadata,
             conditions: title 0 or 2 retains ten newest nonempty titles; icon 1 is ignored; trailing zero is accepted,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: applyTitleStack, proof: {
@@ -3077,7 +3077,7 @@ references:
               host-intent FIFO, including zero and repeated values, without executing resize policy.
             howl: {support: full, source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
               path: howl-host/src/window.zig,
-              symbol: "window request policy issues minimize and reports settled fallback facts"}}
+              symbol: "window request policy issues minimize and reports settled fallback values"}}
           kitty.csi.resize_cells_unsupported:
             raw: "CSI 8 ; rows ; cols t"
             effect: reject application cell resize
@@ -3088,7 +3088,7 @@ references:
               host-intent FIFO, including zero and repeated values, without executing resize policy.
             howl: {support: full, source: howl-host/src/window.zig, symbol: applyWindowRequests, proof: {
               path: howl-host/src/window.zig,
-              symbol: "window request policy issues minimize and reports settled fallback facts"}}
+              symbol: "window request policy issues minimize and reports settled fallback values"}}
           kitty.csi.restore_cursor: {raw: "CSI u", effect: restore cursor,
             conditions: "Howl additionally restores cursor visibility plus cell-domain protection, hyperlink, font,
               and baseline rendition",
@@ -3176,7 +3176,7 @@ references:
                 path: howl-vt/src/screen/main_test.zig,
                 symbol: "screen: structural edits report wrap row and dirty mutation exactly"}}}
           kitty.csi.scrollback_fill: {raw: "CSI [Ps=1] + T", effect: reverse scroll and fill from scrollback,
-            conditions: Howl restores bounded primary text rows and retained cell/line facts but has no graphics plane,
+            conditions: Howl restores bounded primary text rows and retained cell and line state but has no graphics plane,
             relevance: extension, howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics, source: howl-vt/src/terminal.zig,
               symbol: scrollDownFromHistory, proof: {path: howl-vt/test/unit/terminal_test.zig,
                 symbol: "terminal Kitty unscroll consumes primary history in row order"}}}
@@ -3244,7 +3244,7 @@ references:
             howl: {support: partial, disposition: excluded, rationale: *howl_metadata_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: replaceWorkingDirectoryReport, proof: {
               path: howl-vt/test/unit/terminal_osc_test.zig,
-              symbol: "OSC 7 and iTerm CurrentDir retain bounded directory facts with exact mutation"}}}
+              symbol: "OSC 7 and iTerm CurrentDir retain bounded directory state with exact mutation"}}}
           kitty.osc.hyperlink: {raw: "OSC 8 ; params ; URI (BEL|ST)", effect: set hyperlink,
             conditions: "Kitty truncates identifiers and garbage-collects its pool while Howl rejects overflow at fixed
               packet and pool bounds",
@@ -3273,7 +3273,7 @@ references:
               host-consumed message to the Wayland system bell while omitting Kitty parsing and desktop presentation",
             relevance: host consequence, howl: *howl_notification_bell_policy}
           kitty.osc.fg: {raw: "OSC 10 ; color (BEL|ST)", effect: set or query foreground,
-            conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB fact and exact reply but
+            conditions: &kitty_dynamic_color_condition "Howl retains the host-neutral RGB state and exact reply but
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
             howl: &kitty_dynamic_color_howl {support: partial, disposition: excluded,
               residual: Howl accepts a narrower deterministic color grammar and omits Kitty host refresh policy.,
@@ -3337,7 +3337,7 @@ references:
             raw: "OSC 21 ; Pt (BEL|ST)"
             effect: query set or reset terminal colors
             conditions: >-
-              Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB facts; transparent
+              Howl owns palette plus foreground/background/cursor/cursor-text/selection RGB states; transparent
               backgrounds, visual-bell color, opacity, and Kitty host refresh policy remain outside this subset.
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: graphics,
               source: howl-vt/src/terminal.zig, symbol: handleKittyControl, proof: {
@@ -3372,7 +3372,7 @@ references:
             conditions: >-
               Howl parses fragmented s/w/n/d/v/h metadata, retains bounded 7x7 cell clusters, expands mutation and
               selection damage across complete clusters, and projects scale/fraction/alignment through backend-neutral
-              Render facts.
+              Render input.
             howl:
               support: partial
               disposition: excluded
@@ -3412,7 +3412,7 @@ references:
             raw: "OSC 133 ; mark [; metadata] (BEL|ST)"
             effect: update shell integration mark
             conditions: >-
-              Howl retains bounded A/B/C/D facts and a typed first positional D exit status; Kitty owns line
+              Howl retains bounded A/B/C/D state and a typed first positional D exit status; Kitty owns line
               attributes and command-output marks while forwarding D payload policy to its host.
             howl: {support: partial, disposition: excluded, rationale: *howl_shell_mark_policy_difference,
               source: howl-vt/src/terminal.zig, symbol: parseShellMark, proof: {

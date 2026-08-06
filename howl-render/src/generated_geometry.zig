@@ -10,7 +10,7 @@ pub const BoxDrawingStroke = struct {
     heavy_stroke_px: u16,
 };
 
-/// Stores independently derived Kitty box geometry for both factual axes.
+/// Stores independently derived Kitty box geometry for both DPI axes.
 pub const BoxDrawingStrokes = struct {
     /// Uses Y DPI for horizontal box-line thickness at levels zero through three.
     horizontal: [4]u16,

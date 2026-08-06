@@ -1,13 +1,13 @@
 rules:
   - Every retained character buys capability, correctness, clarity, or deterministic evidence.
-  - Terminal protocol behavior follows primary evidence and exact owned facts.
-  - Implemented support, residual disposition, and concrete owner remain orthogonal protocol-catalogue facts.
+  - Terminal protocol behavior follows primary evidence and exact owned state.
+  - Implemented support, residual disposition, and concrete owner remain orthogonal protocol-catalogue fields.
   - Every module allocation uses an explicit caller-provided allocator.
   - Inputs, retained state, queues, payloads, grids, and platform consequences have explicit bounds.
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
   - Domain quantities use types sized for their meaning.
-  - VT owns terminal semantics, state and mutation facts, input encoding, replies, and terminal consequences.
+  - VT owns terminal semantics, state and mutation sets, input encoding, replies, and terminal consequences.
   - PTY owns Linux transport, descriptors, child processes, process-group cleanup, and foreground termios signaling.
   - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
   - Howl-host owns its concrete Wayland, Vulkan, DMA-BUF, explicit synchronization, render-thread, and presentation lifecycle.
@@ -15,7 +15,7 @@ rules:
   - Equal resolved terminal font configurations may share immutable cache entries, but changing or retiring one pane never mutates another pane's accepted font state or resources.
   - Terminal font caches retain active working sets only; zero-user entries begin deterministic retirement subject to copied-update and GPU-release ownership.
   - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
-  - The root workspace reconstructs no child module, dependency, native fact, proof, executable, or artifact.
+  - The root workspace reconstructs no child module, dependency, native interface, proof, executable, or artifact.
   - Every concrete artifact explicitly selects self-hosted Zig code generation and linking under the tracked compiler pin.
   - Tests prove behavior, failure, cleanup, bounds, and deterministic semantics rather than rejected architecture.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.

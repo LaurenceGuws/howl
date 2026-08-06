@@ -57,7 +57,7 @@ payloads remain valid only until the next terminal mutation.
 
 Observation does not allocate. `replyBytes`, `semanticView`,
 `consequenceHead`, and the direct metadata observers return borrowed or copied
-facts.
+state.
 
 Allocating operations state their ownership in their Zig contracts:
 

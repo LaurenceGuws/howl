@@ -331,7 +331,7 @@ test "terminal Kitty unscroll fragments and preserves alternate history" {
     try std.testing.expectEqual(@as(u21, 'a'), vt.semanticView(0).cellAt(1, 0));
 }
 
-test "terminal Kitty unscroll preserves logical authority and cell facts" {
+test "terminal Kitty unscroll preserves logical authority and cell state" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 2);
     defer vt.deinit();
 
@@ -501,7 +501,7 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     var vt = try Terminal.init(std.testing.allocator, 4, 8);
     defer vt.deinit();
 
-    // Save a primary cursor at the old edge with rendition and charset facts
+    // Save a primary cursor at the old edge with rendition and charset state
     // that must survive an alternate-bank soft reset and a narrower resize.
     try std.testing.expect((try vt.feed(
         "PRIMARY\x1b[4;8H\x1b[1;3m\x1b)0\x0e\x1b[?5h\x1b[?1049h",
@@ -510,7 +510,7 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     try std.testing.expectEqual(@as(u21, 0), vt.semanticView(0).cellAt(0, 0));
 
     // DECSTR is active-bank-local for row state and terminal-global for the
-    // mirrored input, margin, and visibility facts owned by Terminal.
+    // mirrored input, margin, and visibility state owned by Terminal.
     try std.testing.expect((try vt.feed(
         "ALT\x1b[4h\x1b[?25l\x1b[?69h\x1b[2;5s\x1b[3;4H\x1b[!p",
     )).stateChanged());

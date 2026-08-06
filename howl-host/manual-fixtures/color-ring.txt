@@ -36,7 +36,7 @@ Ownership evidence:
   Render alone created and mutated Vulkan objects.
   Render alone observed per-slot DRM release timelines.
   Window alone dispatched Wayland and committed completed revisions.
-  Directional eventfds woke each owner for newly published copied facts.
+  Directional eventfds woke each owner for newly published state.
   Window committed at most one revision per frame opportunity.
   Window sent no acknowledgement and did not gate Render GPU submission.
   Slot 0 release point 1 was exported to a sync-file, imported into a Vulkan

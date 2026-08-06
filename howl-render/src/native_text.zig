@@ -73,10 +73,10 @@ pub const GlyphWidthError = error{
     InvalidMetrics,
 };
 
-/// Names exact native facts required by Kitty ligature grouping.
+/// Names exact native metrics required by Kitty ligature grouping.
 pub const GroupError = ShapeError || error{ GlyphLoad, InvalidRaster };
 
-/// Owns one normalized positive rational factual DPI value.
+/// Owns one normalized positive rational DPI value.
 pub const Dpi = struct {
     numerator: u32,
     denominator: u32,
@@ -89,7 +89,7 @@ pub const Dpi = struct {
     }
 };
 
-/// Preserves one canonical point-size and factual DPI construction identity.
+/// Preserves one canonical point-size and DPI construction identity.
 pub const PointSize = struct {
     points: f64,
     dpi_x: Dpi,
@@ -125,7 +125,7 @@ pub const Config = struct {
 };
 
 /// Describes validated nonzero font-derived text geometry. Decoration lines
-/// use native font facts when valid and bounded configured fallbacks otherwise.
+/// use native font metrics when valid and bounded configured fallbacks otherwise.
 pub const Metrics = struct {
     /// Reports the nonzero nominal horizontal advance in pixels.
     advance_width: u16,
@@ -152,7 +152,7 @@ pub const Text = struct {
     clusters: []const u32,
 };
 
-/// Records one exact HarfBuzz glyph, source cluster, and 26.6-position facts.
+/// Records one exact HarfBuzz glyph, source cluster, and 26.6 position.
 pub const Glyph = struct {
     /// Identifies the selected native face glyph.
     id: u32,
@@ -501,7 +501,7 @@ pub const FontSet = struct {
         );
     }
 
-    /// Returns Kitty's exact zero-horizontal-metric empty-glyph fact.
+    /// Returns Kitty's exact zero-horizontal-metric empty-glyph result.
     pub fn glyphIsEmpty(
         self: *FontSet,
         face_index: u8,
@@ -1412,7 +1412,7 @@ test "nonstandard gray levels normalize or reject exact samples" {
     try std.testing.expectError(error.InvalidBitmap, grayAlpha(0, 1));
 }
 
-test "bitmap geometry rejects hostile external facts before slicing" {
+test "bitmap geometry rejects hostile external input before slicing" {
     var byte: u8 = 0;
     const pointer: [*]u8 = @ptrCast(&byte);
     try expectBitmapError(error.UnsupportedPixelMode, 0, 1, 1, 1, pointer);
@@ -1531,7 +1531,7 @@ test "native metric extraction is stable without allocator input" {
     try std.testing.expectEqualDeep(first, second);
 }
 
-test "point and factual DPI conversion is exact and separately derived" {
+test "point and DPI conversion is exact and separately derived" {
     const value = PointSize{
         .points = 10.1,
         .dpi_x = .{ .numerator = 768, .denominator = 5 },
@@ -1560,7 +1560,7 @@ test "point and factual DPI conversion is exact and separately derived" {
     );
 }
 
-test "factual DPI changes terminal metrics and raster while fitting restores exact size" {
+test "DPI changes terminal metrics and raster while fitting restores exact size" {
     const fonts = @import("test_fonts");
     const low = PointSize{
         .points = 12.0,

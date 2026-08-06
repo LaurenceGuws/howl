@@ -5,7 +5,7 @@ project:
 
 capabilities:
   vt:
-    role: terminal parsing, semantic state and mutation facts, input encoding, replies, and terminal consequences
+    role: terminal parsing, semantic state and mutation sets, input encoding, replies, and terminal consequences
   pty:
     role: Linux PTY transport and child-process lifecycle
   render:
@@ -23,7 +23,7 @@ ownership:
 
 workspace:
   purpose: Git, agent, and development ergonomics plus atomic history
-  children: each surviving capability owns its package identity, direct dependencies, native facts, and proofs
+  children: each surviving capability owns its package identity, direct dependencies, native interfaces, and proofs
   root: exports no product module or artifact
   toolchain: exact tracked Zig pin resolved through ignored .zig/zig; product and proof artifacts use self-hosted codegen and linker
   evidence: protocol evidence is family-owned at the root

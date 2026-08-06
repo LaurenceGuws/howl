@@ -55,11 +55,11 @@ interfaces and runtime behavior are not stable yet.
 
 | Package | Owns |
 | --- | --- |
-| `howl-vt` | Terminal parsing, semantic state, mutation facts, replies, input encoding, images, history, and reflow |
+| `howl-vt` | Terminal parsing, semantic state, mutation sets, replies, input encoding, images, history, and reflow |
 | `howl-pty` | Bounded Linux PTY transport and child-process lifecycle |
 | `howl-render` | Backend-neutral projection, shaping, generated terminal glyphs, retained resources, and composition |
 | `howl-vk` | Reusable Vulkan ABI, external-image dispatch, residency, staging, and recording |
-| `howl-wayland` | Reproducible Wayland protocols, input facts, and keyboard state |
+| `howl-wayland` | Reproducible Wayland protocols, input events, and keyboard state |
 | `howl-host` | The first-party Wayland, Vulkan, DMA-BUF, explicit-sync, tabs, panes, and terminal-runtime composition |
 
 Each `howl-*` directory is an independent Zig package with its own dependencies
@@ -73,7 +73,7 @@ Howl is currently `0.1.6-dev`.
 The terminal model, Linux PTY owner, native and generated text machinery,
 backend-neutral compositor, reusable Vulkan and Wayland foundations, and a
 multi-pane graphical host are working. Kitty-compatible Unicode occupancy,
-grapheme storage, ligatures, symbols, generated terminal glyphs, factual DPI,
+grapheme storage, ligatures, symbols, generated terminal glyphs, accepted DPI,
 fractional scaling, and pane-local font sizing have deterministic coverage.
 
 The `0.1.3-dev` milestone separated cursor mutation, publication,

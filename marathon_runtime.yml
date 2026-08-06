@@ -58,7 +58,7 @@ sprints:
 invariants:
   - PTY, VT, Render, Vulkan, Window, Terminal, and Renderer ownership remains unchanged unless exact evidence proves a boundary defect.
   - Measurement excludes Zig compilation and uses one prebuilt ReleaseFast executable.
-  - External process, thread, and GPU facts are preferred before product instrumentation.
+  - External process, thread, and GPU measurements are preferred before product instrumentation.
   - Temporary runtime events are bounded, typed, auto-rotated, and removed only after their reviewed capture is closed.
   - One semantic workload and one physical configuration identify every comparison receipt.
   - A performance correction never converts a fatal invariant into rejection, retry, or silent disposal.

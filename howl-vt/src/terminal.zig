@@ -206,7 +206,7 @@ const SavedAllModes = struct {
     reverse_screen_mode: bool = false,
 };
 
-// Borrows the DEC mode facts required to answer one mode query.
+// Borrows the DEC mode state required to answer one mode query.
 const DecView = struct {
     application_cursor_keys: bool,
     application_keypad: bool,
@@ -238,7 +238,7 @@ const DecView = struct {
     sixel_display_mode: bool,
 };
 
-// Borrows the ANSI mode facts required to answer one mode query.
+// Borrows the ANSI mode state required to answer one mode query.
 const AnsiView = struct {
     keyboard_action_mode: bool,
     insert_mode: bool,
@@ -555,7 +555,7 @@ const DragDropCommandKind = consequences.DragDropCommandKind;
 // Internal composition alias for the consequence-owned drag-and-drop command.
 const DragDropCommandView = consequences.DragDropCommandView;
 
-/// Supplies one caller fact serialized through Kitty OSC 72 framing.
+/// Supplies one caller value serialized through Kitty OSC 72 framing.
 const DragDropEventValue = union(enum) {
     query: struct { client_id: ?u32 },
     move: struct {
@@ -2581,7 +2581,7 @@ test "OSC shell mark maps to neutral semantic metadata" {
     try std.testing.expectEqual(@as(?i32, null), parseShellMark("C;7").?.status);
 }
 
-test "OSC Kitty caller-policy payloads expose only retained terminal facts" {
+test "OSC Kitty caller-policy payloads expose only retained terminal state" {
     const notification = oscProcess(.{ .notification = .{
         .command = 99,
         .payload = "i=1:p=body;Hello",
@@ -2665,7 +2665,7 @@ const ScreenSet = struct {
         alternate.deinit(allocator);
     }
 
-    /// Copies one nonzero caller cell-pixel fact to both screen identities.
+    /// Copies one nonzero caller cell-pixel size to both screen identities.
     fn setCellPixelSize(self: *ScreenSet, width: u32, height: u32) void {
         self.primary.setCellPixelSize(width, height);
         self.alternate.setCellPixelSize(width, height);
@@ -3103,7 +3103,7 @@ fn appendSizeReport(vt: *Terminal, scratch: []u8, kind: SizeReport) replies.Appe
             break :blk std.fmt.bufPrint(scratch, "6;{d};{d}t", .{ cell.height, cell.width }) catch unreachable;
         },
         .pixel_size_report => blk: {
-            // Without a distinct caller frame fact, Ps=2 retains the text-area fallback.
+            // Without distinct caller frame dimensions, Ps=2 retains the text-area fallback.
             const cell = active.cellPixelSize() orelse return false;
             const height = @as(u64, cell.height) * @as(u64, active.rows);
             const width = @as(u64, cell.width) * @as(u64, active.cols);
@@ -3222,7 +3222,7 @@ const TermcapValue = union(enum) {
     encoded: []const u8,
 };
 
-// Answers only capability facts owned by terminal state rather than caller configuration.
+// Answers only capabilities owned by terminal state rather than caller configuration.
 fn termcapValue(encoded_name: []const u8) ?TermcapValue {
     if (hexNameEquals(encoded_name, "Co") or hexNameEquals(encoded_name, "colors"))
         return .{ .encoded = "323536" };
@@ -4413,7 +4413,7 @@ fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
 /// This is the only mutation combination carried across the VT boundary. The
 /// individual bits are derived while applying the event and are never kept as
 /// a parallel summary representation.
-pub const MutationFacts = packed struct(u8) {
+pub const MutationSet = packed struct(u8) {
     /// Cursor position, visibility, style, color, or blink-intent mutation.
     cursor: bool = false,
     /// Cell, attribute, line, or grapheme mutation.
@@ -4432,12 +4432,12 @@ pub const MutationFacts = packed struct(u8) {
     history_loss: bool = false,
 
     /// Returns whether any semantic owner changed.
-    pub fn stateChanged(self: MutationFacts) bool {
+    pub fn stateChanged(self: MutationSet) bool {
         return @as(u8, @bitCast(self)) != 0;
     }
 
-    /// Returns whether this feed changes only cursor-owned facts.
-    pub fn cursorOnly(self: MutationFacts) bool {
+    /// Returns whether this feed changes only cursor-owned state.
+    pub fn cursorOnly(self: MutationSet) bool {
         return self.cursor and
             !self.text and
             !self.viewport and
@@ -4449,7 +4449,7 @@ pub const MutationFacts = packed struct(u8) {
     }
 
     /// Merges one event's owner bits without retaining another representation.
-    pub fn merge(self: *MutationFacts, other: MutationFacts) void {
+    pub fn merge(self: *MutationSet, other: MutationSet) void {
         self.* = @bitCast(@as(u8, @bitCast(self.*)) | @as(u8, @bitCast(other)));
     }
 };
@@ -4532,19 +4532,19 @@ const MutationObservation = struct {
         };
     }
 
-    /// Derives cursor, viewport, image, and history facts from accepted owners.
-    fn mergeInto(self: MutationObservation, after: MutationObservation, facts: *MutationFacts) void {
-        if (!std.meta.eql(self.cursor, after.cursor)) facts.cursor = true;
-        if (!std.meta.eql(self.viewport, after.viewport)) facts.viewport = true;
-        if (self.graphics_generation != after.graphics_generation) facts.images = true;
-        if (self.history_loss_generation != after.history_loss_generation) facts.history_loss = true;
+    /// Derives cursor, viewport, image, and history mutations from accepted state.
+    fn mergeInto(self: MutationObservation, after: MutationObservation, mutations: *MutationSet) void {
+        if (!std.meta.eql(self.cursor, after.cursor)) mutations.cursor = true;
+        if (!std.meta.eql(self.viewport, after.viewport)) mutations.viewport = true;
+        if (self.graphics_generation != after.graphics_generation) mutations.images = true;
+        if (self.history_loss_generation != after.history_loss_generation) mutations.history_loss = true;
     }
 };
 
 // Observable terminal mutations produced while applying one parser event.
 const EventEffect = struct {
     changed: bool,
-    mutations: MutationFacts = .{},
+    mutations: MutationSet = .{},
     suppress_owner_fallback: bool = false,
 };
 
@@ -4577,15 +4577,15 @@ fn suppressOwnerFallback(event: SemanticEvent) bool {
     };
 }
 
-fn semanticMutationFacts(
+fn semanticMutationSet(
     event: SemanticEvent,
     changed: bool,
     title_changed: bool,
     icon_changed: bool,
-) MutationFacts {
-    var facts: MutationFacts = .{};
-    if (title_changed) facts.title = true;
-    if (icon_changed) facts.icon = true;
+) MutationSet {
+    var mutations: MutationSet = .{};
+    if (title_changed) mutations.title = true;
+    if (icon_changed) mutations.icon = true;
     switch (event) {
         .cursor_up,
         .cursor_down,
@@ -4627,8 +4627,8 @@ fn semanticMutationFacts(
         .forward_index,
         .back_index,
         => {
-            facts.viewport = changed;
-            facts.text = changed;
+            mutations.viewport = changed;
+            mutations.text = changed;
         },
         // Payload consequences are not intrinsically image mutations.  The
         // complete feed compares the graphics generation and sets `images`
@@ -4642,21 +4642,21 @@ fn semanticMutationFacts(
         .title_stack,
         => {},
         .enter_alt_screen => |options| {
-            facts.mode = changed;
-            facts.text = options.clear and changed;
+            mutations.mode = changed;
+            mutations.text = options.clear and changed;
         },
         .exit_alt_screen => {
-            facts.mode = changed;
-            facts.text = changed;
+            mutations.mode = changed;
+            mutations.text = changed;
         },
         .hard_reset => {
-            facts.mode = changed;
-            facts.text = changed;
+            mutations.mode = changed;
+            mutations.text = changed;
         },
         .soft_reset => {
-            facts.mode = changed;
+            mutations.mode = changed;
         },
-        .save_cursor => facts.mode = changed,
+        .save_cursor => mutations.mode = changed,
         .auto_wrap,
         .origin_mode,
         .insert_mode,
@@ -4706,12 +4706,12 @@ fn semanticMutationFacts(
         .shell_integration_set,
         .text_size,
         .set_scroll_region,
-        => facts.mode = changed,
+        => mutations.mode = changed,
         else => {
-            if (changed) facts.text = true;
+            if (changed) mutations.text = true;
         },
     }
-    return facts;
+    return mutations;
 }
 
 /// Classify one parsed event into the canonical parser-to-domain vocabulary.
@@ -4772,7 +4772,7 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         const effect = try applyTitleStack(&vt.properties, semantic.title_stack);
         return .{
             .changed = effect.changed,
-            .mutations = semanticMutationFacts(
+            .mutations = semanticMutationSet(
                 semantic,
                 effect.changed,
                 effect.title_changed,
@@ -4792,7 +4792,7 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         else => false,
     };
     const changed = try applySemantic(vt, semantic);
-    var mutations = semanticMutationFacts(
+    var mutations = semanticMutationSet(
         semantic,
         changed,
         title_changed,
@@ -5319,9 +5319,9 @@ const TerminalFeedError = error{
     StringControlLimit,
 };
 
-/// Reports the one packed mutation fact crossing the VT feed boundary.
+/// Reports the one packed mutation set crossing the VT feed boundary.
 pub const TerminalFeedSummary = struct {
-    mutations: MutationFacts,
+    mutations: MutationSet,
 
     /// Derives the legacy aggregate state-change question from `mutations`.
     pub fn stateChanged(self: TerminalFeedSummary) bool {
@@ -5519,7 +5519,7 @@ const TerminalStream = struct {
     }
 
     fn nextSummary(self: *TerminalStream, byte: u8) TerminalFeedError!TerminalFeedSummary {
-        var mutations: MutationFacts = .{};
+        var mutations: MutationSet = .{};
         const state = &self.terminal.stream_state;
 
         errdefer {
@@ -6247,7 +6247,7 @@ pub const Terminal = struct {
     pub const ContainerRequest = consequences.ContainerRequest;
     /// Copies one accepted ordered container request and its monotonic identity.
     pub const ContainerOccurrence = consequences.ContainerOccurrence;
-    /// Supplies one caller-owned fact for a retained container query.
+    /// Supplies one caller-owned value for a retained container query.
     pub const ContainerReply = ContainerReplyValue;
     /// Reports parser, retained-state, and reply failures while feeding PTY bytes.
     pub const FeedError = TerminalFeedError;
@@ -6375,7 +6375,7 @@ pub const Terminal = struct {
     pub const ClipboardReplyError = replies.AppendError || error{ ConsequenceLimit, StaleClipboardRequest };
     /// Reports a reply prefix larger than the currently retained byte count.
     pub const ReplyConsumeError = error{InvalidReplyCount};
-    /// Reports stale or mismatched caller facts, allocation failure, or bounded reply saturation.
+    /// Reports stale or mismatched caller state, allocation failure, or bounded reply saturation.
     pub const ContainerReplyError = replies.AppendError || error{ ConsequenceLimit, StaleContainerRequest, ContainerReplyMismatch };
     /// Exposes one borrowed OSC 52 operation or Kitty OSC 5522 packet.
     pub const ClipboardRequest = ClipboardRequestView;
@@ -6475,7 +6475,7 @@ pub const Terminal = struct {
         /// Orders the image relative to terminal text.
         z: i32,
     };
-    /// Borrows coherent image-plane facts until terminal mutation.
+    /// Borrows coherent image-plane state until terminal mutation.
     pub const Images = struct {
         plane: *const graphics_mod.Plane,
         bank: graphics_mod.Bank,
@@ -7452,7 +7452,7 @@ pub const Terminal = struct {
         return self.semantic_sequence;
     }
 
-    /// Borrows terminal cells and cursor facts at one caller-selected history offset.
+    /// Borrows terminal cells and cursor state at one caller-selected history offset.
     ///
     /// The offset is clamped to retained primary history. VT retains no
     /// scrolling or follow policy.
@@ -8032,7 +8032,7 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
-    /// Declines one matching FIFO-head container query without fabricating facts.
+    /// Declines one matching FIFO-head container query without fabricating state.
     ///
     /// The embedder uses this when it owns no truthful reply value. No protocol
     /// bytes are emitted; exact identity validation and consumption are atomic.
@@ -8193,9 +8193,9 @@ test "terminal feed retains no caller scrolling intent" {
     try std.testing.expectEqual(@as(u32, 0), vt.semanticView(0).history_offset);
 }
 
-test "feed mutation facts keep cursor-only and mixed ownership distinct" {
-    try std.testing.expectEqual(@as(usize, 1), @sizeOf(MutationFacts));
-    try std.testing.expectEqual(@as(usize, 1), @alignOf(MutationFacts));
+test "feed mutation set keeps cursor-only and mixed ownership distinct" {
+    try std.testing.expectEqual(@as(usize, 1), @sizeOf(MutationSet));
+    try std.testing.expectEqual(@as(usize, 1), @alignOf(MutationSet));
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
 
@@ -8298,7 +8298,7 @@ test "fragmented absolute cursor control timestamps only on completion" {
     );
 }
 
-test "feed mutation facts derive printing, tabs, regions, scrolling, images, and no-ops" {
+test "feed mutation set derives printing, tabs, regions, scrolling, images, and no-ops" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 4, 8);
     defer terminal.deinit();
 

@@ -1,4 +1,4 @@
-//! Owns the package check/test integrity gate for generated Unicode 17 facts.
+//! Owns the package check/test integrity gate for generated Unicode 17 properties.
 
 const std = @import("std");
 

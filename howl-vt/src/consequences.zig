@@ -239,7 +239,7 @@ pub const ContainerRequest = union(enum) {
     report_icon_title,
 };
 
-// Bounds one FIFO burst while a caller applies policy or supplies query facts.
+// Bounds one FIFO burst while a caller applies policy or supplies query values.
 const container_request_capacity: u8 = 32;
 
 /// Borrows one accepted container request until head consumption.

@@ -5,7 +5,7 @@ const render = @import("howl_render");
 const session = @import("session_domain");
 const chrome = render.chrome;
 
-/// Errors returned while adapting semantic facts or projecting Chrome.
+/// Errors returned while adapting semantic state or projecting Chrome.
 pub const Error = session.Error || chrome.Error;
 /// Default Host tab-bar height used for physical content-origin derivation.
 pub const default_tab_bar_height: u16 = 24;
@@ -22,7 +22,7 @@ pub const max_live_panes: usize = session.max_live_panes;
 /// Maximum copied tab or pane label length.
 pub const max_label_bytes: usize = session.max_label_bytes;
 
-/// Caller-selected visual facts used only while deriving Chrome primitives.
+/// Caller-selected appearance used only while deriving Chrome primitives.
 pub const Appearance = struct {
     style: chrome.Style,
     tab_active_background: chrome.Color,
@@ -68,7 +68,7 @@ pub fn toRenderRect(local: session.Rect, origin: ContentOrigin) chrome.Error!chr
     return .{ .x = local.x, .y = @intCast(y), .width = local.width, .height = local.height };
 }
 
-/// Derives the checked physical content origin from surface and tab-bar facts.
+/// Derives the checked physical content origin from surface and tab-bar geometry.
 pub fn contentOrigin(surface: SurfaceGeometry, tab_bar_height: u16) chrome.Error!ContentOrigin {
     if (surface.width == 0 or surface.height == 0) return error.InvalidSurface;
     return .{ .y = @min(tab_bar_height, surface.height - 1) };
@@ -86,7 +86,7 @@ fn validateContentExtent(
         return error.InvalidSurface;
 }
 
-/// Projects content-local SessionState into surface-coordinate Render facts.
+/// Projects content-local SessionState into surface-coordinate Render inputs.
 pub fn project(
     state: *const session.SessionState,
     appearance: Appearance,
@@ -131,7 +131,7 @@ pub fn project(
     }, primitives, text);
 }
 
-/// Hit-tests the original surface-coordinate pointer against projected facts.
+/// Hit-tests the original surface-coordinate pointer against projected geometry.
 pub fn hitTest(
     state: *const session.SessionState,
     appearance: Appearance,

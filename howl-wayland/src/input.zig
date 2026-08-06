@@ -1,4 +1,4 @@
-//! Exact, bounded Wayland input facts. Ordered protocol occurrences remain in
+//! Exact, bounded Wayland input events. Ordered protocol occurrences remain in
 //! arrival order; only pointer motion, modifier, and configure snapshots are
 //! coalesced with checked revisions.
 
@@ -6,7 +6,7 @@ const std = @import("std");
 
 /// Maximum number of ordered protocol occurrences retained before saturation.
 pub const capacity: usize = 128;
-/// Maximum UTF-8 payload bytes retained for one interpreted key fact; one
+/// Maximum UTF-8 payload bytes retained for one interpreted key event; one
 /// additional byte is reserved for xkbcommon's terminating NUL.
 pub const key_text_limit: usize = 65;
 /// Maximum pressed-key entries copied from keyboard.enter.
@@ -23,7 +23,7 @@ pub const AxisSource = enum { wheel, finger, continuous, wheel_tilt };
 pub const RelativeDirection = enum { identical, inverted };
 /// Four protocol modifier masks plus group, without convenience booleans.
 pub const Modifiers = struct { serial: u32, depressed: u32, latched: u32, locked: u32, group: u32 };
-/// Effective semantic modifier facts resolved by the current xkb keymap.
+/// Effective semantic modifier state resolved by the current xkb keymap.
 /// Caps Lock and Num Lock remain distinct so callers can ignore only locks.
 pub const SemanticModifiers = packed struct(u8) {
     shift: bool = false,
@@ -58,7 +58,7 @@ pub const Keysym = enum(u32) {
     bar = 0x007c,
     _,
 };
-/// Ordered keyboard fact retaining physical identity plus interpretation from
+/// Ordered keyboard event retaining physical identity plus interpretation from
 /// the keymap active when the occurrence was received.
 pub const Key = struct {
     keycode: u32,
@@ -71,7 +71,7 @@ pub const Key = struct {
     text_len: u8,
     text: [key_text_limit]u8,
 };
-/// Ordered pointer-button fact with its protocol serial and timestamp.
+/// Ordered pointer-button event with its protocol serial and timestamp.
 pub const Button = struct {
     button: u32,
     time: u32,
@@ -81,7 +81,7 @@ pub const Button = struct {
     /// Semantic keyboard modifiers active for this exact button callback.
     semantic_modifiers: SemanticModifiers,
 };
-/// Ordered pointer-axis fact; each union arm is one exact protocol callback.
+/// Ordered pointer-axis event; each union arm is one exact protocol callback.
 pub const AxisEvent = union(enum) {
     value: struct { axis: Axis, time: u32, value: f64 },
     source: AxisSource,
@@ -93,13 +93,13 @@ pub const AxisEvent = union(enum) {
 };
 /// Surface-local pointer coordinates.
 pub const Point = struct { x: f64, y: f64 };
-/// Ordered pointer enter fact; serial is not discarded.
+/// Ordered pointer enter event; serial is not discarded.
 pub const KeyboardEnter = struct { serial: u32, pressed_count: u8, pressed: [pressed_key_limit]u32 };
-/// Ordered keyboard leave fact.
+/// Ordered keyboard leave event.
 pub const KeyboardLeave = struct { serial: u32 };
-/// Ordered pointer enter fact; serial and coordinates are preserved.
+/// Ordered pointer enter event; serial and coordinates are preserved.
 pub const PointerEnter = struct { serial: u32, point: Point };
-/// Ordered pointer leave fact; serial is not discarded.
+/// Ordered pointer leave event; serial is not discarded.
 pub const PointerLeave = struct { serial: u32 };
 /// Latest motion snapshot. Motion events may coalesce.
 pub const Motion = struct {
@@ -114,7 +114,7 @@ pub const Repeat = struct { rate: u32, delay: u32 };
 pub const Configure = struct { width: u32, height: u32, revision: u64 };
 /// Coalesced snapshots consumed by the embedding runtime.
 pub const Snapshot = struct { motion: ?Motion, modifiers: Modifiers, repeat: ?Repeat, configure: ?Configure, revision: u64 };
-/// Ordered facts that must never coalesce.
+/// Ordered events that must never coalesce.
 pub const Ordered = union(enum) {
     key: Key,
     keyboard_reset: void,
@@ -139,7 +139,7 @@ pub const PressedKeysError = error{InvalidPressedKeys};
 
 /// Copies one receive-side Wayland keyboard-enter key array. The bytes may be
 /// unaligned; libwayland's received `wl_array.alloc` is intentionally zero and
-/// is not an input-capacity fact.
+/// is not an input-capacity constraint.
 pub fn keyboardEnter(serial: u32, bytes: []const u8) PressedKeysError!KeyboardEnter {
     if (bytes.len % @sizeOf(u32) != 0 or bytes.len / @sizeOf(u32) > pressed_key_limit) return error.InvalidPressedKeys;
     var result = KeyboardEnter{
@@ -231,7 +231,7 @@ pub const State = struct {
         return self.storage.motion;
     }
 
-    /// Borrows the latest configure fact, if one has been received.
+    /// Borrows the latest configuration, if one has been received.
     pub fn configureSnapshot(self: *const State) ?Configure {
         return self.storage.configure;
     }
@@ -244,7 +244,7 @@ pub const State = struct {
         return result;
     }
 
-    /// Drops every fact and resets the revision.
+    /// Drops every queued event and resets the revision.
     pub fn reset(self: *State) void {
         self.* = .{};
     }

@@ -21,7 +21,7 @@ fn expectViewsEqual(a: Terminal.SemanticView, b: Terminal.SemanticView) !void {
     }
 }
 
-test "borrowed semantic view exposes complete cells and cursor facts" {
+test "borrowed semantic view exposes complete cells and cursor state" {
     var terminal = try Terminal.init(std.testing.allocator, 5, 10);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("HELLO")).stateChanged());
@@ -84,7 +84,7 @@ test "semantic view carries OSC colors and complete cell presentation" {
     try std.testing.expect(cell.attrs.strikethrough);
 }
 
-test "retained history facts survive ring wraparound" {
+test "retained history state survives ring wraparound" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 3, 2);
     defer terminal.deinit();
     try std.testing.expect((try terminal.feed("111\r\n222\r\n333\r\n444\r\n555")).stateChanged());

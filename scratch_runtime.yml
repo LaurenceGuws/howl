@@ -58,7 +58,7 @@ runtime_correction:
   physical_protocol: >-
     Never-presented work transfers its exact completed Render acquire timeline
     point into the slot release timeline, waits that exact transferred point,
-    and only then becomes Render reusable. No releaseFacts or compositor
+    and only then becomes Render reusable. No ringReleaseState or compositor
     release is fabricated.
   startup_protocol: >-
     The three product-background initialization renders are physically reclaimed
@@ -69,7 +69,7 @@ runtime_correction:
     After configure, exact wl_surface.enter membership at output scale one is
     accepted when a version-6 surface emits no redundant preferred-scale event.
     Higher deduced output scales still wait for exact preferred integer or
-    fractional facts.
+    fractional scale state.
   scale_one_capacity: >-
     The reproduced 1910 by 1048 terminal content extent derives 477 by 104 or
     49,608 cells at four-by-ten six-point metrics. Terminal projection and
@@ -84,7 +84,7 @@ runtime_correction:
     failure retains its acquire identity in submitted-render-fatal. Shared
     supersession and cancellation first represent the new shared state and the
     old superseded-reclaiming slot; physical reclaim failure retains the old
-    identity in superseded-reclaim-fatal without fabricating compositor facts.
+    identity in superseded-reclaim-fatal without fabricating compositor release.
   injected_failure_proofs:
     pre_submit: every operation from staging through failed queue submission
     post_submit: every operation after successful queue submission through acquire-timeline completion

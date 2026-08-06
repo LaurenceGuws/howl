@@ -20,7 +20,7 @@ pub const Command = struct {
     index_count: u32,
     clip: Rect,
 };
-/// Bounded caller-owned geometry and upload-change facts consumed synchronously.
+/// Bounded caller-owned geometry and upload changes consumed synchronously.
 pub const Plan = struct {
     vertices: []const Vertex,
     indices: []const u32,
@@ -30,7 +30,7 @@ pub const Plan = struct {
 };
 
 /// Records which atlas transitions were included in one submitted command
-/// buffer. The flags become factual only when the caller observes completion.
+/// buffer. The flags become accepted only when the caller observes completion.
 pub const Recording = struct {
     alpha_initialized: bool,
     image_initialized: bool,
@@ -48,10 +48,10 @@ pub const ResourceGeneration = struct {
     const shared_bit: u64 = @as(u64, 1) << 63;
     /// Largest independently issuable identity in either namespace.
     pub const max_identity: u64 = shared_bit - 1;
-    /// Reports malformed namespace, identity, source, or generation facts.
+    /// Reports malformed namespace, identity, source, or generation values.
     pub const InitError = error{ InvalidIdentity, InvalidGeneration };
 
-    /// Constructs and validates one generic resource fact mechanically.
+    /// Constructs and validates one generic resource update mechanically.
     pub fn init(
         source: u64,
         encoded_resource: u64,
@@ -134,7 +134,7 @@ pub const Frame = struct {
     removals: []const Removal,
     commands: []const FrameCommand,
 };
-/// Read-only factual residency observation supplied by the caller.
+/// Read-only accepted residency supplied by the caller.
 pub const Residency = struct {
     resource: ResourceGeneration,
     kind: Kind,
@@ -216,7 +216,7 @@ pub const Error = error{
 };
 
 /// Distinguishes canonical accepted-state corruption from rejectable cursor
-/// facts and from fixed replay-capacity invariants.
+/// input and from fixed replay-capacity invariants.
 pub const ReplayError = error{
     InvalidReplayBase,
     InvalidCursorOverlay,
@@ -446,7 +446,7 @@ pub const Context = struct {
         return recording;
     }
 
-    /// Commits atlas layout facts after the caller has observed GPU completion.
+    /// Commits atlas layout state after the caller has observed GPU completion.
     pub fn complete(self: *Context, recording: Recording) void {
         if (recording.alpha_initialized) self.atlas_initialized = true;
         if (recording.image_initialized) self.image_atlas_initialized = true;
@@ -487,7 +487,7 @@ pub const Context = struct {
     }
 
     /// Validates every plan relationship before mapped staging or command
-    /// recording. No caller bytes or context facts are touched on failure.
+    /// recording. No caller bytes or context state are touched on failure.
     fn validatePlan(plan: Plan, width: u32, height: u32) Error!void {
         if (width == 0 or height == 0) return error.InvalidPlan;
         if (plan.vertices.len > max_vertices or plan.indices.len > max_indices or plan.commands.len > max_commands) return error.InvalidPlan;
@@ -801,7 +801,7 @@ pub const ResidencyStore = struct {
         self.pending = false;
     }
 
-    /// Enumerates the factual active residency without mutating it.
+    /// Enumerates accepted active residency without mutating it.
     pub fn enumerate(self: *const ResidencyStore, output: []Residency) StoreError![]const Residency {
         if (output.len < self.active_count) return error.Capacity;
         for (self.active[0..self.active_count], 0..) |entry, index| output[index] = .{ .resource = entry.resource, .kind = entry.kind, .width = entry.width, .height = entry.height };
@@ -1175,7 +1175,7 @@ fn replayCursorWithCopier(
         .indices = buffers.indices[0..indices_used],
         .commands = buffers.commands[0..commands_used],
         // An ordinary replacement may introduce a new atlas. Preserve that
-        // fact through the physical cursor append; cursor-only replay bases
+        // state through the physical cursor append; cursor-only replay bases
         // are already accepted and therefore carry false here.
         .atlas_changed = base.atlas_changed,
         .image_atlas_changed = base.image_atlas_changed,
@@ -1996,7 +1996,7 @@ test "pixel coordinates convert to Vulkan NDC without inversion drift" {
     }, 100, 80);
 }
 
-test "clear-only plan records pending atlas facts and remains reusable" {
+test "clear-only plan records pending atlas state and remains reusable" {
     var context = Context{};
     const plan = Plan{ .vertices = &.{}, .indices = &.{}, .commands = &.{}, .atlas_changed = true, .image_atlas_changed = true };
     const first = try context.preflightRecording(plan, 64, 64, 64, 64);
@@ -2085,7 +2085,7 @@ test "recording preflight rejects a late collapsing physical scissor" {
     try std.testing.expect(!context.image_atlas_initialized);
 }
 
-test "record rejects malformed plans without changing atlas facts" {
+test "record rejects malformed plans without changing atlas state" {
     var context = Context{};
     const before_alpha = context.atlas_initialized;
     const before_image = context.image_atlas_initialized;

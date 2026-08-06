@@ -25,7 +25,7 @@ fn content() !render.chrome.Content {
     });
 }
 
-test "editor-like frame shapes text and projects selection without terminal facts" {
+test "editor-like frame shapes text and projects selection without terminal state" {
     var font = try render.text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .size = .{ .pixels = 16 },
