@@ -1,6 +1,7 @@
 //! Public embedding root for the terminal emulator.
 
 const terminal = @import("terminal.zig");
+const render_journal_mod = @import("render_journal.zig");
 const scalar_storage = @import("scalar_storage.zig");
 const unicode_17 = @import("unicode_17.zig");
 const std = @import("std");
@@ -9,6 +10,8 @@ const std = @import("std");
 pub const Terminal = terminal.Terminal;
 /// Packs the semantic owners affected by one accepted PTY feed.
 pub const MutationSet = terminal.MutationSet;
+/// Exposes final ordered visual mutations without transferring VT semantics.
+pub const render_journal = render_journal_mod;
 /// Owns bounded overflow scalars for one caller-owned cell cohort.
 pub const ScalarStorage = scalar_storage.Storage;
 /// Borrows pinned Unicode 17 classification without transferring VT occupancy.

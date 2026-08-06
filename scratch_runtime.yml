@@ -1,13 +1,13 @@
 schema: 1
 sprint: terminal_render_foundation
-active_slice: non_render_host_terminal_boundary
+active_slice: ordered_vt_mutation_transport
 status: review_ready
 base: b7387bcb2f92b1f7ae1557b123afca68d1764749
 branch: feature/runtime_hot_paths/measurement_baseline
 
 objective: >-
-  Recover only the Host terminal control handoff required before ordered VT
-  mutation transport, permanently excluding completed Canvas updates.
+  Emit exact ordered blank/ASCII/style/static-cursor visual transactions from
+  VT and apply them to one retained Render grid before Host FIFO integration.
 
 prerequisite_implementation:
   retained_boundary:
@@ -71,6 +71,14 @@ changed_product_paths:
     - howl-host/src/terminal_pool.zig
 
 implementation:
+  vt_render_transport:
+    - one preallocated transaction per parser byte
+    - one pending transaction blocks the next parser byte before semantic mutation
+    - final resolved cells and RGB cross the boundary without VT provenance
+    - exact initialization, resize, and alternate-grid replacement
+    - compact selective recolor for palette, defaults, and reverse-screen changes
+    - ordered copy, fill, masked erase, visual patch, and static cursor operations
+    - parser-to-Render parity proofs cover shell edits, scrolling, style, palette, reverse screen, alternate screen, and resize
   render:
     - 11-byte alignment-one resolved Cell
     - one fixed current visual grid plus bounded first-old cell baselines
@@ -106,6 +114,8 @@ retained_memory:
     remain unimplemented and unclaimed.
 
 validation:
+  howl_vt_four_mode_check: passed
+  howl_vt_four_mode_test: passed
   howl_render_four_mode_check: passed
   howl_render_four_mode_test: passed
   howl_vk_four_mode_check: passed
@@ -123,7 +133,7 @@ validation:
     added to make historical rendering tests compile.
   terminal_handoff_four_mode_test: passed
   strict_yaml: passed across tracked and foundation evidence YAML
-  source_audit: passed with no new admission
+  source_audit: passed with the curated VT journal export recorded
   protocol_validation: passed
   formatting: passed
   git_diff_check: passed
@@ -131,6 +141,10 @@ validation:
   Host_runtime: not_in_scope
 
 review_focus:
+  - every parser-byte transaction allocates before semantic mutation
+  - pending visual ownership blocks later parser bytes before VT mutation
+  - alternate exit and reverse-screen underline parity are causally covered
+  - final equality in retained Render state produces no backend work
   - no complete generic Plan stage or replay is used by terminal-only work
   - no moved-cell payload is produced by full-row scroll
   - candidate failure leaves accepted Render and Vulkan ownership unchanged

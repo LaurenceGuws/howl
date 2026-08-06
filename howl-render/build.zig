@@ -13,6 +13,11 @@ pub fn build(b: *std.Build) void {
         "generated_glyphs",
         "Expose the standalone generated terminal-glyph API",
     ) orelse true;
+    const vt_dependency = b.dependency("howl_vt", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const vt_module = vt_dependency.module("howl_vt");
     const root_source = if (native_enabled and generated_api_enabled)
         b.path("src/root_native_generated.zig")
     else if (native_enabled)
@@ -26,11 +31,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    module.addImport("howl_vt", vt_module);
     const test_module = b.createModule(.{
         .root_source_file = root_source,
         .target = target,
         .optimize = optimize,
     });
+    test_module.addImport("howl_vt", vt_module);
     const canvas_validation = b.createModule(.{
         .root_source_file = b.path("src/canvas_validation.zig"),
         .target = target,
@@ -140,13 +147,15 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const terminal_test_module = b.createModule(.{
+        .root_source_file = b.path("src/terminal_cells.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal_test_module.addImport("howl_vt", vt_module);
     const terminal_tests = b.addTest(.{
         .name = "howl-render-terminal-cells",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/terminal_cells.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = terminal_test_module,
         .use_llvm = false,
         .use_lld = false,
     });

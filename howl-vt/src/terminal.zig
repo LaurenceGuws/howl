@@ -10,6 +10,7 @@ const consequences = @import("consequences.zig");
 const input = @import("input.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
+const render_journal_mod = @import("render_journal.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -22,6 +23,7 @@ const ScreenCellAttrs = screen_mod.ScreenCellAttrs;
 const ScreenCursorShape = screen_mod.ScreenCursorShape;
 const ScreenEraseMode = screen_mod.ScreenEraseMode;
 const ScreenProtection = screen_mod.ScreenProtection;
+const RenderJournal = render_journal_mod;
 
 comptime {
     if (parser_mod.max_params > Screen.SgrOperands.capacity) {
@@ -4541,6 +4543,164 @@ const MutationObservation = struct {
     }
 };
 
+const RenderObservation = struct {
+    rows: u16,
+    cols: u16,
+    cursor_row: u16,
+    cursor_col: u16,
+    cursor_visible: bool,
+    cursor_shape: Screen.CursorShape,
+    wrap_pending: bool,
+    scroll_top: u16,
+    scroll_bottom: u16,
+    left_margin: u16,
+    right_margin: u16,
+    left_right_margin_mode: bool,
+    insert_mode: bool,
+    alternate: bool,
+    history_count: u32,
+    row_origin: u16,
+    presentation: Terminal.Presentation,
+
+    fn capture(terminal: *const Terminal) RenderObservation {
+        const active = terminal.screen_state.activeConst();
+        return .{
+            .rows = active.rows,
+            .cols = active.cols,
+            .cursor_row = active.cursor.row,
+            .cursor_col = active.cursor.col,
+            .cursor_visible = active.cursor.visible,
+            .cursor_shape = active.cursor.effective_shape,
+            .wrap_pending = active.wrap_pending,
+            .scroll_top = active.scroll_top,
+            .scroll_bottom = active.scrollBottom(),
+            .left_margin = active.left_margin,
+            .right_margin = active.rightBoundary(),
+            .left_right_margin_mode = active.left_right_margin_mode,
+            .insert_mode = active.insert_mode,
+            .alternate = terminal.screen_state.alt_active,
+            .history_count = active.history_count,
+            .row_origin = active.row_origin,
+            .presentation = terminal.presentation(),
+        };
+    }
+};
+
+fn journalRgb(value: Screen.Rgb) RenderJournal.Rgb {
+    return .{ .r = value.r, .g = value.g, .b = value.b };
+}
+
+fn resolveJournalCell(
+    terminal: *const Terminal,
+    cell: Terminal.Cell,
+) RenderJournal.Cell {
+    const presentation = terminal.presentation();
+    var foreground = cell.attrs.fg.resolve(presentation.foreground, &presentation.palette);
+    var background = cell.attrs.bg.resolve(presentation.background, &presentation.palette);
+    if (cell.attrs.reverse != presentation.reverse_screen)
+        std.mem.swap(Screen.Rgb, &foreground, &background);
+    const underline = cell.attrs.underline_color.resolve(foreground, &presentation.palette);
+    const codepoint: u21 = if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible)
+        0
+    else if (cell.codepoint <= std.math.maxInt(u21))
+        @intCast(cell.codepoint)
+    else
+        0xfffd;
+    return .{
+        .codepoint = if (codepoint == 0)
+            0
+        else if (codepoint >= 0x20 and codepoint <= 0x7e)
+            @intCast(codepoint)
+        else
+            '?',
+        .foreground = journalRgb(foreground),
+        .background = journalRgb(background),
+        .underline_color = journalRgb(underline),
+        .style = .{
+            .bold = cell.attrs.bold,
+            .dim = cell.attrs.dim,
+            .italic = cell.attrs.italic,
+            .underline = cell.attrs.underline,
+            .strikethrough = cell.attrs.strikethrough,
+        },
+    };
+}
+
+fn resolveJournalCursor(terminal: *const Terminal) RenderJournal.Cursor {
+    const active = terminal.screen_state.activeConst();
+    const presentation = terminal.presentation();
+    const shape: RenderJournal.CursorShape = switch (active.cursor.effective_shape) {
+        .block => .block,
+        .underline => .underline,
+        .bar => .bar,
+        .none => .hidden,
+    };
+    const visible = active.cursor.visible and shape != .hidden;
+    return .{
+        .row = active.cursor.row,
+        .col = active.cursor.col,
+        .color = journalRgb(presentation.cursor orelse presentation.foreground),
+        .text_color = journalRgb(presentation.cursor_text orelse presentation.background),
+        .shape = if (visible) shape else .hidden,
+        .visible = visible,
+    };
+}
+
+fn copyResolvedGrid(
+    terminal: *const Terminal,
+    output: []RenderJournal.Cell,
+) void {
+    const view = terminal.semanticView(0);
+    std.debug.assert(output.len == @as(usize, view.rows) * view.cols);
+    var offset: usize = 0;
+    var row: u16 = 0;
+    while (row < view.rows) : (row += 1) {
+        for (view.rowCells(row)) |cell| {
+            output[offset] = resolveJournalCell(terminal, cell);
+            offset += 1;
+        }
+    }
+}
+
+fn copyResolvedScreen(
+    terminal: *const Terminal,
+    screen: *const Screen,
+    output: []RenderJournal.Cell,
+) void {
+    std.debug.assert(output.len == @as(usize, screen.rows) * screen.cols);
+    const presentation = terminal.presentation();
+    var offset: usize = 0;
+    var row: u16 = 0;
+    while (row < screen.rows) : (row += 1) {
+        for (screen.visibleRowCells(row)) |cell| {
+            output[offset] = resolveJournalCellWithPresentation(cell, presentation);
+            offset += 1;
+        }
+    }
+}
+
+fn resolveJournalCursorForScreen(
+    terminal: *const Terminal,
+    screen: *const Screen,
+) RenderJournal.Cursor {
+    const presentation = terminal.presentation();
+    const shape: RenderJournal.CursorShape = switch (screen.cursor.effective_shape) {
+        .block => .block,
+        .underline => .underline,
+        .bar => .bar,
+        .none => .hidden,
+    };
+    const visible = screen.cursor.visible and shape != .hidden;
+    return .{
+        .row = screen.cursor.row,
+        .col = screen.cursor.col,
+        .color = journalRgb(presentation.cursor orelse presentation.foreground),
+        .text_color = journalRgb(presentation.cursor_text orelse presentation.background),
+        .shape = if (visible) shape else .hidden,
+        .visible = visible,
+    };
+}
+
 // Observable terminal mutations produced while applying one parser event.
 const EventEffect = struct {
     changed: bool,
@@ -4791,7 +4951,13 @@ fn applyParserEvent(vt: *Terminal, event: parser_mod.Event) SemanticEventError!E
         .icon_set => |value| !optionalBytesEqual(vt.properties.current_icon, value),
         else => false,
     };
+    const render_before = if (vt.render_builder != null)
+        RenderObservation.capture(vt)
+    else
+        null;
+    if (render_before) |before| appendRectAttrOperationsBefore(vt, semantic, before);
     const changed = try applySemantic(vt, semantic);
+    if (render_before) |before| appendRenderSemanticAfter(vt, semantic, before, changed);
     var mutations = semanticMutationSet(
         semantic,
         changed,
@@ -5318,6 +5484,7 @@ const TerminalFeedError = error{
     ParsedEventLimit,
     StringControlLimit,
 };
+const TerminalRenderFeedError = TerminalFeedError || error{TransactionPending};
 
 /// Reports the one packed mutation set crossing the VT feed boundary.
 pub const TerminalFeedSummary = struct {
@@ -5551,6 +5718,51 @@ const TerminalStream = struct {
         };
     }
 
+    fn nextRenderSummary(self: *TerminalStream, byte: u8) TerminalRenderFeedError!TerminalFeedSummary {
+        const state = &self.terminal.stream_state;
+        errdefer {
+            state.parser.reset();
+            state.dcs.reset();
+            state.string.reset();
+            self.terminal.render_builder = null;
+            self.terminal.render_pending.discard();
+        }
+        const phases = state.parser.next(byte);
+        if (state.parser.takeStringControlFailed()) |err| return err;
+        const budget = renderBudgetForPhases(self, phases);
+        var builder = self.terminal.render_pending.prepare(
+            self.terminal.allocator,
+            budget,
+        ) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.TransactionPending => error.TransactionPending,
+            error.InvalidBudget => error.ParsedEventLimit,
+        };
+        self.terminal.render_builder = &builder;
+        const before = MutationObservation.capture(self.terminal);
+        const render_before = RenderObservation.capture(self.terminal);
+        var mutations: MutationSet = .{};
+        for (phases) |phase| {
+            if (phase) |action| {
+                const graphics_before = self.terminal.graphics.generation();
+                const effect = try self.applyAction(action);
+                var event_mutations = effect.mutations;
+                if (self.terminal.graphics.generation() != graphics_before)
+                    event_mutations.images = true;
+                if (effect.changed and
+                    !effect.suppress_owner_fallback and
+                    !event_mutations.stateChanged())
+                    event_mutations.mode = true;
+                mutations.merge(event_mutations);
+            }
+        }
+        before.mergeInto(MutationObservation.capture(self.terminal), &mutations);
+        appendRenderCursorIfChanged(self.terminal, render_before);
+        self.terminal.render_builder = null;
+        self.terminal.render_pending.commit();
+        return .{ .mutations = mutations };
+    }
+
     /// Feeds a complete borrowed slice and merges per-byte mutation summaries.
     fn nextSliceSummary(self: *TerminalStream, bytes: []const u8) TerminalFeedError!TerminalFeedSummary {
         var summary: TerminalFeedSummary = .{ .mutations = .{} };
@@ -5664,6 +5876,19 @@ const TerminalStream = struct {
                         '8' => active.alignmentDisplay(),
                         else => return try self.applyEvent(.{ .esc_dispatch = esc }),
                     };
+                    if (changed and esc.final == '8' and self.terminal.render_builder != null) {
+                        appendFill(
+                            self.terminal,
+                            0,
+                            0,
+                            active.rows,
+                            active.cols,
+                            resolveJournalCell(
+                                self.terminal,
+                                self.terminal.semanticView(0).cellInfoAt(0, 0),
+                            ),
+                        );
+                    }
                     return .{ .changed = changed };
                 },
                 '%' => {
@@ -5838,6 +6063,896 @@ const TerminalStream = struct {
         return self.terminal.charset.mapCodepoint(cp);
     }
 };
+
+const RenderBudget = struct {
+    operations: usize = 1,
+    cells: usize = 0,
+    auxiliary_bytes: usize = 0,
+
+    fn include(self: *RenderBudget, other: RenderBudget) void {
+        self.operations = std.math.add(usize, self.operations, other.operations) catch
+            @panic("parser-byte journal operation bound overflow");
+        self.cells = std.math.add(usize, self.cells, other.cells) catch
+            @panic("parser-byte journal cell bound overflow");
+        self.auxiliary_bytes = std.math.add(
+            usize,
+            self.auxiliary_bytes,
+            other.auxiliary_bytes,
+        ) catch @panic("parser-byte journal payload bound overflow");
+    }
+
+    fn value(self: RenderBudget) RenderJournal.Budget {
+        return .{
+            .operations = self.operations,
+            .cells = @min(self.cells, RenderJournal.maximum_cells),
+            .auxiliary_bytes = self.auxiliary_bytes,
+        };
+    }
+};
+
+fn renderBudgetForPhases(
+    stream: *const TerminalStream,
+    phases: parser_mod.PhaseActions,
+) RenderJournal.Budget {
+    var total: RenderBudget = .{};
+    for (phases) |phase| if (phase) |action|
+        total.include(renderBudgetForAction(stream, action));
+    return total.value();
+}
+
+fn renderBudgetForAction(
+    stream: *const TerminalStream,
+    action: parser_mod.Action,
+) RenderBudget {
+    const terminal = stream.terminal;
+    const active = terminal.screen_state.activeConst();
+    const count: usize = @as(usize, active.rows) * active.cols;
+    return switch (action) {
+        .print => .{ .operations = 8, .cells = 16 },
+        .execute => |control| if (controlProcess(control)) |event|
+            renderBudgetForSemantic(active, count, event)
+        else
+            .{},
+        .csi_dispatch => |csi| if (csiProcess(
+            csi.final,
+            csi.params[0..csi.count],
+            csi.separators,
+            csi.leader,
+            csi.private,
+            csi.intermediates[0..csi.intermediates_len],
+        )) |event| renderBudgetForSemantic(active, count, event) else .{},
+        .osc_dispatch => |osc| if (oscProcess(osc)) |event|
+            renderBudgetForSemantic(active, count, event)
+        else
+            .{},
+        .esc_dispatch => |esc| if (escDispatchProcess(
+            esc.final,
+            esc.intermediates[0..esc.intermediates_len],
+        )) |event| renderBudgetForSemantic(active, count, event) else if (esc.intermediates_len == 1 and esc.intermediates[0] == '#' and esc.final == '8') .{ .operations = 2 } else .{},
+        else => .{},
+    };
+}
+
+fn renderBudgetForSemantic(
+    active: *const Screen,
+    cell_count: usize,
+    event: SemanticEvent,
+) RenderBudget {
+    return switch (event) {
+        .write_text, .write_codepoint => .{ .operations = 8, .cells = 16 },
+        .repeat_preceding => |count| .{
+            .operations = @as(usize, @min(count, active.rows)) + 8,
+            .cells = @min(cell_count, @as(usize, @max(count, 1)) * 2),
+        },
+        .scroll_down_from_history => |count| .{
+            .operations = @as(usize, @min(count, active.rows)) * 2 + 2,
+            .cells = @min(cell_count, @as(usize, @min(count, active.rows)) * active.cols),
+        },
+        .enter_alt_screen, .exit_alt_screen, .hard_reset => .{
+            .operations = 2,
+            .cells = cell_count,
+        },
+        .color_control, .iterm_set_colors => .{
+            .operations = 2,
+            .auxiliary_bytes = cell_count * 3 + RenderJournal.recolor_rgb_bytes,
+        },
+        .reverse_screen_mode => .{
+            .operations = 2,
+            .auxiliary_bytes = cell_count * 3 + RenderJournal.recolor_rgb_bytes,
+        },
+        .dec_mode_set, .dec_mode_reset => |modes| if (modeParamsContain(modes, 3) or
+            modeParamsContain(modes, 47) or
+            modeParamsContain(modes, 1047) or
+            modeParamsContain(modes, 1049)) .{ .operations = 4, .cells = cell_count } else if (modeParamsContain(modes, 5)) .{
+            .operations = 4,
+            .auxiliary_bytes = cell_count * 3 + RenderJournal.recolor_rgb_bytes,
+        } else .{ .operations = 4 },
+        .rect_attrs_change => .{
+            .operations = 4,
+            .auxiliary_bytes = 2 * ((cell_count + 7) / 8),
+        },
+        .selective_erase_line,
+        .rect_selective_erase,
+        .erase_display_below,
+        .erase_display_above,
+        .erase_display_complete,
+        .erase_display_scroll_complete,
+        => .{
+            .operations = 3,
+            .auxiliary_bytes = (cell_count + 7) / 8,
+        },
+        .text_size => .{ .operations = @as(usize, active.rows) + 8, .cells = cell_count },
+        else => .{ .operations = 6, .cells = 16 },
+    };
+}
+
+fn modeParamsContain(modes: ModeParams, target: u16) bool {
+    for (modes.params[0..modes.param_count]) |mode|
+        if (mode == target) return true;
+    return false;
+}
+
+fn appendRenderCursorIfChanged(
+    terminal: *Terminal,
+    before: RenderObservation,
+) void {
+    const active = terminal.screen_state.activeConst();
+    if (before.cursor_row == active.cursor.row and
+        before.cursor_col == active.cursor.col and
+        before.cursor_visible == active.cursor.visible and
+        before.cursor_shape == active.cursor.effective_shape and
+        std.meta.eql(before.presentation.cursor, terminal.presentation().cursor) and
+        std.meta.eql(before.presentation.cursor_text, terminal.presentation().cursor_text))
+        return;
+    terminal.render_builder.?.append(.{ .cursor = resolveJournalCursor(terminal) });
+}
+
+fn journalRect(row: u16, col: u16, rows: u16, cols: u16) RenderJournal.Rect {
+    return .{ .row = row, .col = col, .rows = rows, .cols = cols };
+}
+
+fn resolvedEraseCell(terminal: *const Terminal) RenderJournal.Cell {
+    const active = terminal.screen_state.activeConst();
+    var attrs = active.current_attrs;
+    attrs.protected = .none;
+    return resolveJournalCell(terminal, .{ .codepoint = 0, .attrs = attrs });
+}
+
+fn appendResolvedSpan(
+    terminal: *Terminal,
+    row: u16,
+    col: u16,
+    count: u16,
+) void {
+    if (count == 0 or row >= terminal.screen_state.activeConst().rows or
+        col >= terminal.screen_state.activeConst().cols)
+        return;
+    const bounded: u16 = @min(count, terminal.screen_state.activeConst().cols - col);
+    const cells = terminal.render_builder.?.cells(bounded);
+    const view = terminal.semanticView(0);
+    for (cells, view.rowCells(row)[col .. col + bounded]) |*destination, source|
+        destination.* = resolveJournalCell(terminal, source);
+    terminal.render_builder.?.append(.{ .set_cells = .{
+        .row = row,
+        .col = col,
+        .cells = cells,
+    } });
+}
+
+fn appendResolvedRows(
+    terminal: *Terminal,
+    first: u16,
+    count: u16,
+) void {
+    const active = terminal.screen_state.activeConst();
+    if (count == 0 or first >= active.rows) return;
+    const bounded = @min(count, active.rows - first);
+    var offset: u16 = 0;
+    while (offset < bounded) : (offset += 1)
+        appendResolvedSpan(terminal, first + offset, 0, active.cols);
+}
+
+fn appendFill(
+    terminal: *Terminal,
+    row: u16,
+    col: u16,
+    rows: u16,
+    cols: u16,
+    cell: RenderJournal.Cell,
+) void {
+    if (rows == 0 or cols == 0) return;
+    terminal.render_builder.?.append(.{ .fill = .{
+        .rect = journalRect(row, col, rows, cols),
+        .cell = cell,
+    } });
+}
+
+fn appendCopy(
+    terminal: *Terminal,
+    source_row: u16,
+    source_col: u16,
+    rows: u16,
+    cols: u16,
+    destination_row: u16,
+    destination_col: u16,
+) void {
+    if (rows == 0 or cols == 0 or
+        (source_row == destination_row and source_col == destination_col))
+        return;
+    terminal.render_builder.?.append(.{ .copy = .{
+        .source = journalRect(source_row, source_col, rows, cols),
+        .destination_row = destination_row,
+        .destination_col = destination_col,
+    } });
+}
+
+fn appendScroll(
+    terminal: *Terminal,
+    top: u16,
+    bottom: u16,
+    count: u16,
+    upward: bool,
+) void {
+    if (top > bottom) return;
+    const active = terminal.screen_state.activeConst();
+    const rows = bottom - top + 1;
+    const amount = @min(@max(count, 1), rows);
+    const left = if (active.left_right_margin_mode) active.left_margin else 0;
+    const right = if (active.left_right_margin_mode) active.right_margin else active.cols - 1;
+    const cols = right - left + 1;
+    if (amount < rows) {
+        if (upward)
+            appendCopy(terminal, top + amount, left, rows - amount, cols, top, left)
+        else
+            appendCopy(terminal, top, left, rows - amount, cols, top + amount, left);
+    }
+    appendFill(
+        terminal,
+        if (upward) bottom - amount + 1 else top,
+        left,
+        amount,
+        cols,
+        resolvedEraseCell(terminal),
+    );
+}
+
+fn appendColumnShift(
+    terminal: *Terminal,
+    top: u16,
+    bottom: u16,
+    left: u16,
+    right: u16,
+    count: u16,
+    leftward: bool,
+) void {
+    if (top > bottom or left > right) return;
+    const width = right - left + 1;
+    const amount = @min(@max(count, 1), width);
+    if (amount < width) {
+        if (leftward)
+            appendCopy(terminal, top, left + amount, bottom - top + 1, width - amount, top, left)
+        else
+            appendCopy(terminal, top, left, bottom - top + 1, width - amount, top, left + amount);
+    }
+    appendFill(
+        terminal,
+        top,
+        if (leftward) right - amount + 1 else left,
+        bottom - top + 1,
+        amount,
+        resolvedEraseCell(terminal),
+    );
+}
+
+fn appendWriteNeighborhood(
+    terminal: *Terminal,
+    before: RenderObservation,
+) void {
+    const active = terminal.screen_state.activeConst();
+    if (before.rows == 0 or before.cols == 0) return;
+    if (active.row_origin != before.row_origin or active.history_count != before.history_count)
+        appendScroll(terminal, before.scroll_top, before.scroll_bottom, 1, true);
+    if (before.insert_mode and before.cursor_row < active.rows and before.cursor_col < active.cols) {
+        const width: u16 = 1;
+        const right = before.right_margin;
+        if (before.cursor_col + width <= right) {
+            appendCopy(
+                terminal,
+                before.cursor_row,
+                before.cursor_col,
+                1,
+                right - before.cursor_col + 1 - width,
+                before.cursor_row,
+                before.cursor_col + width,
+            );
+            appendFill(terminal, before.cursor_row, before.cursor_col, 1, width, resolvedEraseCell(terminal));
+        }
+    }
+    const first_before = before.cursor_col -| 3;
+    appendResolvedSpan(terminal, @min(before.cursor_row, active.rows - 1), first_before, 7);
+    const first_after = active.cursor.col -| 4;
+    if (active.cursor.row != before.cursor_row or first_after != first_before)
+        appendResolvedSpan(terminal, active.cursor.row, first_after, 8);
+}
+
+fn appendMaskedErase(
+    terminal: *Terminal,
+    row: u16,
+    col: u16,
+    rows: u16,
+    cols: u16,
+    selective: bool,
+) void {
+    if (rows == 0 or cols == 0) return;
+    const total: usize = @as(usize, rows) * cols;
+    const mask = terminal.render_builder.?.bytes((total + 7) / 8);
+    @memset(mask, 0);
+    const view = terminal.semanticView(0);
+    var selected = total;
+    for (0..total) |offset| {
+        const cell = view.cellInfoAt(
+            row + @as(u16, @intCast(offset / cols)),
+            col + @as(u16, @intCast(offset % cols)),
+        );
+        if (cell.attrs.protected == .iso or
+            (selective and cell.attrs.protected == .dec))
+        {
+            selected -= 1;
+            continue;
+        }
+        mask[offset / 8] |= @as(u8, 1) << @intCast(offset % 8);
+    }
+    if (selected == total) {
+        appendFill(terminal, row, col, rows, cols, resolvedEraseCell(terminal));
+        return;
+    }
+    if (selected == 0) return;
+    terminal.render_builder.?.append(.{ .masked_fill = .{
+        .rect = journalRect(row, col, rows, cols),
+        .mask = mask,
+        .cell = resolvedEraseCell(terminal),
+    } });
+}
+
+fn activeOriginBounds(active: *const Screen) Screen.RectBounds {
+    const horizontal = active.origin_mode and active.left_right_margin_mode;
+    return .{
+        .top = if (active.origin_mode) active.scroll_top else 0,
+        .left = if (horizontal) active.left_margin else 0,
+        .bottom = if (active.origin_mode) active.scrollBottom() else active.rows - 1,
+        .right = if (horizontal) active.right_margin else active.cols - 1,
+    };
+}
+
+fn eraseLineRange(active: *const Screen, mode: ScreenEraseMode) struct { u16, u16 } {
+    const line_cols = active.cols;
+    return switch (mode) {
+        .cursor_to_end => .{ active.cursor.col, line_cols - active.cursor.col },
+        .start_to_cursor => .{ 0, active.cursor.col + 1 },
+        .all => .{ 0, line_cols },
+        .scrollback => .{ 0, 0 },
+    };
+}
+
+fn appendRectCopy(
+    terminal: *Terminal,
+    request: RectCopy,
+) void {
+    const active = terminal.screen_state.activeConst();
+    if (request.source_page != 1 or request.dest_page != 1) return;
+    const source = active.rectBounds(request.area) orelse return;
+    const origin = activeOriginBounds(active);
+    const destination_row = origin.top + @min(request.dest_top, origin.bottom - origin.top);
+    const destination_col = origin.left + @min(request.dest_left, origin.right - origin.left);
+    const rows = @min(source.bottom - source.top + 1, origin.bottom - destination_row + 1);
+    const cols = @min(source.right - source.left + 1, origin.right - destination_col + 1);
+    appendCopy(
+        terminal,
+        source.top,
+        source.left,
+        rows,
+        cols,
+        destination_row,
+        destination_col,
+    );
+}
+
+fn appendRenderSemanticAfter(
+    terminal: *Terminal,
+    event: SemanticEvent,
+    before: RenderObservation,
+    changed: bool,
+) void {
+    if (!changed) return;
+    const active = terminal.screen_state.activeConst();
+    if (before.alternate != terminal.screen_state.alt_active or
+        before.rows != active.rows or before.cols != active.cols)
+    {
+        appendReplacement(
+            terminal,
+            if (before.alternate != terminal.screen_state.alt_active) .alternate else .resize,
+        );
+        return;
+    }
+    if (before.presentation.reverse_screen != terminal.presentation().reverse_screen) {
+        appendRecolor(terminal, before.presentation);
+    }
+    switch (event) {
+        .write_text, .write_codepoint => appendWriteNeighborhood(terminal, before),
+        .repeat_preceding => |count| {
+            const rows = @min(
+                active.rows,
+                @as(u16, @intCast(@min(
+                    @as(usize, active.rows),
+                    (@as(usize, @max(count, 1)) * 2 + active.cols - 1) / active.cols + 2,
+                ))),
+            );
+            const first = @min(before.cursor_row, active.rows - rows);
+            appendResolvedRows(terminal, first, rows);
+        },
+        .line_feed, .next_line => {
+            if (before.cursor_row == before.scroll_bottom)
+                appendScroll(terminal, before.scroll_top, before.scroll_bottom, 1, true);
+        },
+        .reverse_index => {
+            if (before.cursor_row == before.scroll_top)
+                appendScroll(terminal, before.scroll_top, before.scroll_bottom, 1, false);
+        },
+        .forward_index => {
+            if (before.cursor_col == before.right_margin)
+                appendColumnShift(
+                    terminal,
+                    before.cursor_row,
+                    before.cursor_row,
+                    if (before.left_right_margin_mode) before.left_margin else 0,
+                    before.right_margin,
+                    1,
+                    true,
+                );
+        },
+        .back_index => {
+            if (before.cursor_col == before.left_margin)
+                appendColumnShift(
+                    terminal,
+                    before.cursor_row,
+                    before.cursor_row,
+                    before.left_margin,
+                    before.right_margin,
+                    1,
+                    false,
+                );
+        },
+        .insert_chars => |count| appendColumnShift(
+            terminal,
+            before.cursor_row,
+            before.cursor_row,
+            before.cursor_col,
+            before.right_margin,
+            count,
+            false,
+        ),
+        .delete_chars => |count| appendColumnShift(
+            terminal,
+            before.cursor_row,
+            before.cursor_row,
+            before.cursor_col,
+            before.right_margin,
+            count,
+            true,
+        ),
+        .insert_columns => |count| appendColumnShift(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            before.cursor_col,
+            before.right_margin,
+            count,
+            false,
+        ),
+        .delete_columns => |count| appendColumnShift(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            before.cursor_col,
+            before.right_margin,
+            count,
+            true,
+        ),
+        .shift_left_columns => |count| appendColumnShift(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            before.left_margin,
+            before.right_margin,
+            count,
+            true,
+        ),
+        .shift_right_columns => |count| appendColumnShift(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            before.left_margin,
+            before.right_margin,
+            count,
+            false,
+        ),
+        .insert_lines => |count| appendScroll(
+            terminal,
+            before.cursor_row,
+            before.scroll_bottom,
+            count,
+            false,
+        ),
+        .delete_lines => |count| appendScroll(
+            terminal,
+            before.cursor_row,
+            before.scroll_bottom,
+            count,
+            true,
+        ),
+        .scroll_up_lines => |count| appendScroll(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            count,
+            true,
+        ),
+        .scroll_down_lines => |count| appendScroll(
+            terminal,
+            before.scroll_top,
+            before.scroll_bottom,
+            count,
+            false,
+        ),
+        .scroll_down_from_history => |count| {
+            const rows = @min(@max(count, 1), before.scroll_bottom - before.scroll_top + 1);
+            appendScroll(terminal, before.scroll_top, before.scroll_bottom, rows, false);
+            appendResolvedRows(terminal, before.scroll_top, rows);
+        },
+        .erase_display_below => |selective| {
+            appendMaskedErase(
+                terminal,
+                before.cursor_row,
+                before.cursor_col,
+                1,
+                active.cols - before.cursor_col,
+                selective,
+            );
+            if (before.cursor_row + 1 < active.rows)
+                appendMaskedErase(
+                    terminal,
+                    before.cursor_row + 1,
+                    0,
+                    active.rows - before.cursor_row - 1,
+                    active.cols,
+                    selective,
+                );
+        },
+        .erase_display_above => |selective| {
+            if (before.cursor_row != 0)
+                appendMaskedErase(terminal, 0, 0, before.cursor_row, active.cols, selective);
+            appendMaskedErase(
+                terminal,
+                before.cursor_row,
+                0,
+                1,
+                before.cursor_col + 1,
+                selective,
+            );
+        },
+        .erase_display_complete, .erase_display_scroll_complete => |selective| appendMaskedErase(terminal, 0, 0, active.rows, active.cols, selective),
+        .erase_line => |mode| {
+            const start, const count = eraseLineRange(active, mode);
+            appendMaskedErase(terminal, before.cursor_row, start, 1, count, false);
+        },
+        .selective_erase_line => |mode| {
+            const start, const count = eraseLineRange(active, mode);
+            appendMaskedErase(terminal, before.cursor_row, start, 1, count, true);
+        },
+        .erase_chars => |count| appendMaskedErase(
+            terminal,
+            before.cursor_row,
+            before.cursor_col,
+            1,
+            @min(@max(count, 1), active.cols - before.cursor_col),
+            false,
+        ),
+        .rect_erase, .rect_selective_erase => |area| {
+            const bounds = active.rectBounds(area) orelse return;
+            appendMaskedErase(
+                terminal,
+                bounds.top,
+                bounds.left,
+                bounds.bottom - bounds.top + 1,
+                bounds.right - bounds.left + 1,
+                event == .rect_selective_erase,
+            );
+        },
+        .rect_fill => |request| {
+            const bounds = active.rectBounds(request.area) orelse return;
+            appendFill(
+                terminal,
+                bounds.top,
+                bounds.left,
+                bounds.bottom - bounds.top + 1,
+                bounds.right - bounds.left + 1,
+                resolveJournalCell(terminal, .{
+                    .codepoint = request.ch,
+                    .attrs = active.current_attrs,
+                }),
+            );
+        },
+        .rect_copy => |request| appendRectCopy(terminal, request),
+        .rect_attrs_change => {
+            // The pre-mutation visual patch owns ordinary style and color swaps.
+            // Re-resolve the bounded rectangle to cover cluster clearing and
+            // invisible-attribute changes without moving VT semantics into Render.
+            const request = event.rect_attrs_change;
+            const bounds = active.rectBounds(request.area) orelse return;
+            var row = bounds.top;
+            while (row <= bounds.bottom) : (row += 1) {
+                const start = if (active.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
+                const end = if (active.attr_change_extent_rect or row == bounds.bottom) bounds.right else active.cols - 1;
+                appendResolvedSpan(terminal, row, start, end - start + 1);
+            }
+        },
+        .reverse_screen_mode => {},
+        .color_control, .iterm_set_colors => appendRecolor(terminal, before.presentation),
+        .enter_alt_screen, .exit_alt_screen => unreachable,
+        .hard_reset => {
+            if (before.alternate != terminal.screen_state.alt_active)
+                appendReplacement(terminal, .alternate)
+            else
+                appendFill(terminal, 0, 0, active.rows, active.cols, resolvedEraseCell(terminal));
+        },
+        .clear_buffer => appendFill(
+            terminal,
+            0,
+            0,
+            active.rows,
+            active.cols,
+            resolveJournalCell(terminal, terminal.semanticView(0).cellInfoAt(0, 0)),
+        ),
+        .text_size => appendResolvedRows(terminal, 0, active.rows),
+        else => {},
+    }
+}
+
+fn appendReplacement(
+    terminal: *Terminal,
+    kind: RenderJournal.ReplacementKind,
+) void {
+    const view = terminal.semanticView(0);
+    const count: usize = @as(usize, view.rows) * view.cols;
+    const cells = terminal.render_builder.?.cells(count);
+    copyResolvedGrid(terminal, cells);
+    terminal.render_builder.?.append(.{ .replace = .{
+        .kind = kind,
+        .rows = view.rows,
+        .cols = view.cols,
+        .cells = cells,
+    } });
+}
+
+fn recolorToken(
+    table: *[256]RenderJournal.Rgb,
+    count: *u8,
+    value: RenderJournal.Rgb,
+) u8 {
+    var index: u16 = 1;
+    while (index <= count.*) : (index += 1)
+        if (std.meta.eql(table[index], value)) return @intCast(index);
+    if (count.* == 255) @panic("committed color transaction exceeded token proof");
+    count.* += 1;
+    table[count.*] = value;
+    return count.*;
+}
+
+fn resolveJournalCellWithPresentation(
+    cell: Terminal.Cell,
+    presentation: Terminal.Presentation,
+) RenderJournal.Cell {
+    var foreground = cell.attrs.fg.resolve(presentation.foreground, &presentation.palette);
+    var background = cell.attrs.bg.resolve(presentation.background, &presentation.palette);
+    if (cell.attrs.reverse != presentation.reverse_screen)
+        std.mem.swap(Screen.Rgb, &foreground, &background);
+    const underline = cell.attrs.underline_color.resolve(foreground, &presentation.palette);
+    const codepoint = if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible) 0 else cell.codepoint;
+    return .{
+        .codepoint = if (codepoint == 0) 0 else if (codepoint >= 0x20 and codepoint <= 0x7e) @intCast(codepoint) else '?',
+        .foreground = journalRgb(foreground),
+        .background = journalRgb(background),
+        .underline_color = journalRgb(underline),
+        .style = .{
+            .bold = cell.attrs.bold,
+            .dim = cell.attrs.dim,
+            .italic = cell.attrs.italic,
+            .underline = cell.attrs.underline,
+            .strikethrough = cell.attrs.strikethrough,
+        },
+    };
+}
+
+fn appendRecolor(
+    terminal: *Terminal,
+    before: Terminal.Presentation,
+) void {
+    const view = terminal.semanticView(0);
+    const count: usize = @as(usize, view.rows) * view.cols;
+    const foreground = terminal.render_builder.?.bytes(count);
+    const background = terminal.render_builder.?.bytes(count);
+    const underline = terminal.render_builder.?.bytes(count);
+    const table_bytes = terminal.render_builder.?.bytes(RenderJournal.recolor_rgb_bytes);
+    const table: *[256]RenderJournal.Rgb = @ptrCast(table_bytes.ptr);
+    @memset(table, .{ .r = 0, .g = 0, .b = 0 });
+    @memset(foreground, 0);
+    @memset(background, 0);
+    @memset(underline, 0);
+    var token_count: u8 = 0;
+    var changed = false;
+    var offset: usize = 0;
+    var row: u16 = 0;
+    while (row < view.rows) : (row += 1) {
+        for (view.rowCells(row)) |cell| {
+            const old = resolveJournalCellWithPresentation(cell, before);
+            const new = resolveJournalCell(terminal, cell);
+            if (!std.meta.eql(old.foreground, new.foreground)) {
+                foreground[offset] = recolorToken(table, &token_count, new.foreground);
+                changed = true;
+            }
+            if (!std.meta.eql(old.background, new.background)) {
+                background[offset] = recolorToken(table, &token_count, new.background);
+                changed = true;
+            }
+            if (!std.meta.eql(old.underline_color, new.underline_color)) {
+                underline[offset] = recolorToken(table, &token_count, new.underline_color);
+                changed = true;
+            }
+            offset += 1;
+        }
+    }
+    if (changed) terminal.render_builder.?.append(.{ .recolor = .{
+        .foreground = foreground,
+        .background = background,
+        .underline = underline,
+        .rgb = table,
+    } });
+}
+
+fn rectSelected(
+    active: *const Screen,
+    bounds: Screen.RectBounds,
+    row: u16,
+    col: u16,
+) bool {
+    if (row < bounds.top or row > bounds.bottom) return false;
+    const start = if (active.attr_change_extent_rect or row == bounds.top) bounds.left else 0;
+    const end = if (active.attr_change_extent_rect or row == bounds.bottom) bounds.right else active.cols - 1;
+    return col >= start and col <= end;
+}
+
+const RectAttrStyleChanges = struct {
+    set: RenderJournal.Style,
+    clear: RenderJournal.Style,
+    toggle: RenderJournal.Style,
+    touches_reverse: bool,
+    resets_reverse: bool,
+};
+
+fn rectAttrStyles(attrs: []const u16, reverse: bool) RectAttrStyleChanges {
+    var result: RectAttrStyleChanges = .{
+        .set = RenderJournal.Style{},
+        .clear = RenderJournal.Style{},
+        .toggle = RenderJournal.Style{},
+        .touches_reverse = false,
+        .resets_reverse = false,
+    };
+    for (attrs) |attr| switch (attr) {
+        0 => if (!reverse) {
+            result.clear = .{ .bold = true, .dim = true, .italic = true, .underline = true, .strikethrough = true };
+            result.resets_reverse = true;
+        },
+        1 => if (reverse) {
+            result.toggle.bold = true;
+        } else {
+            result.set.bold = true;
+        },
+        2 => if (reverse) {
+            result.toggle.dim = true;
+        } else {
+            result.set.dim = true;
+        },
+        3 => if (reverse) {
+            result.toggle.italic = true;
+        } else {
+            result.set.italic = true;
+        },
+        4 => if (reverse) {
+            result.toggle.underline = true;
+        } else {
+            result.set.underline = true;
+        },
+        7 => result.touches_reverse = true,
+        9 => if (reverse) {
+            result.toggle.strikethrough = true;
+        } else {
+            result.set.strikethrough = true;
+        },
+        22 => if (!reverse) {
+            result.clear.bold = true;
+            result.clear.dim = true;
+        },
+        23 => if (!reverse) {
+            result.clear.italic = true;
+        },
+        24 => if (!reverse) {
+            result.clear.underline = true;
+        },
+        27 => {
+            if (!reverse) result.resets_reverse = true;
+        },
+        29 => if (!reverse) {
+            result.clear.strikethrough = true;
+        },
+        else => {},
+    };
+    return result;
+}
+
+fn appendRectAttrOperationsBefore(
+    terminal: *Terminal,
+    event: SemanticEvent,
+    _: RenderObservation,
+) void {
+    if (terminal.render_builder == null or event != .rect_attrs_change) return;
+    const request = event.rect_attrs_change;
+    const active = terminal.screen_state.activeConst();
+    const bounds = active.rectBounds(request.area) orelse return;
+    const rows = bounds.bottom - bounds.top + 1;
+    const cols = active.cols;
+    const total: usize = @as(usize, rows) * cols;
+    const selected = terminal.render_builder.?.bytes((total + 7) / 8);
+    @memset(selected, 0);
+    const swap = terminal.render_builder.?.bytes((total + 7) / 8);
+    @memset(swap, 0);
+    const styles = rectAttrStyles(
+        request.attrs.params[0..request.attrs.param_count],
+        request.reverse,
+    );
+    const view = terminal.semanticView(0);
+    var any_swap = false;
+    for (0..total) |offset| {
+        const row = bounds.top + @as(u16, @intCast(offset / cols));
+        const col: u16 = @intCast(offset % cols);
+        if (!rectSelected(active, bounds, row, col)) continue;
+        selected[offset / 8] |= @as(u8, 1) << @intCast(offset % 8);
+        const reversed = view.cellInfoAt(row, col).attrs.reverse;
+        const should_swap = if (request.reverse and styles.touches_reverse)
+            true
+        else if (!request.reverse and styles.touches_reverse)
+            !reversed
+        else if (styles.resets_reverse)
+            reversed
+        else
+            false;
+        if (should_swap) {
+            swap[offset / 8] |= @as(u8, 1) << @intCast(offset % 8);
+            any_swap = true;
+        }
+    }
+    terminal.render_builder.?.append(.{ .visual_patch = .{
+        .rect = journalRect(bounds.top, 0, rows, cols),
+        .changed_mask = selected,
+        .set_style = styles.set,
+        .clear_style = styles.clear,
+        .toggle_style = styles.toggle,
+    } });
+    if (any_swap) terminal.render_builder.?.append(.{ .visual_patch = .{
+        .rect = journalRect(bounds.top, 0, rows, cols),
+        .changed_mask = swap,
+        .swap_foreground_background = true,
+    } });
+}
 
 fn capturedKittyGraphics(capture: *const StringCapture) bool {
     return capture.kind == .apc and capture.bytes.items.len != 0 and capture.bytes.items[0] == 'G';
@@ -6251,12 +7366,14 @@ pub const Terminal = struct {
     pub const ContainerReply = ContainerReplyValue;
     /// Reports parser, retained-state, and reply failures while feeding PTY bytes.
     pub const FeedError = TerminalFeedError;
+    /// Reports render-journal construction and parser-byte pressure exactly.
+    pub const RenderFeedError = TerminalRenderFeedError || error{ AlreadyEnabled, RenderJournalDisabled };
     /// Summarizes observable terminal changes from one feed operation.
     pub const FeedSummary = TerminalFeedSummary;
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
-    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity } ||
+    pub const ResizeError = error{ InvalidDimensions, ReplyLimit, ScalarCapacity, TransactionPending } ||
         std.mem.Allocator.Error;
     /// Owns a complete fallible resize candidate bound to one Terminal.
     ///
@@ -6268,6 +7385,7 @@ pub const Terminal = struct {
     pub const PreparedResize = struct {
         terminal: *Terminal,
         state: ?*PreparedResizeState,
+        render_prepared: bool = false,
         committed: bool = false,
 
         /// Commits both prepared screens and every resize side effect exactly once.
@@ -6296,6 +7414,7 @@ pub const Terminal = struct {
             const alternate_changed = self.terminal.graphics.clearBank(.alternate);
             std.debug.assert(!primary_changed or self.terminal.graphics.generation() != 0);
             std.debug.assert(!alternate_changed or self.terminal.graphics.generation() != 0);
+            if (self.render_prepared) self.terminal.render_pending.commit();
             advanceIdentity(&self.terminal.semantic_sequence);
             self.terminal.allocator.destroy(state);
             self.state = null;
@@ -6311,6 +7430,8 @@ pub const Terminal = struct {
                 state.replies.deinit();
                 self.terminal.allocator.destroy(state);
             }
+            if (!self.committed and self.render_prepared)
+                self.terminal.render_pending.discard();
             self.state = null;
             if (!self.committed) self.terminal.resize_prepared = false;
             self.committed = true;
@@ -6613,6 +7734,9 @@ pub const Terminal = struct {
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
     resize_prepared: bool = false,
+    render_journal_enabled: bool = false,
+    render_pending: RenderJournal.Pending = .{},
+    render_builder: ?*RenderJournal.Builder = null,
     fn requireNoPreparedResize(self: *const Terminal) void {
         if (self.resize_prepared)
             @panic("terminal mutation during prepared resize");
@@ -6675,6 +7799,7 @@ pub const Terminal = struct {
     pub fn deinit(self: *Terminal) void {
         self.requireNoPreparedResize();
         const allocator = self.allocator;
+        self.render_pending.deinit();
         self.graphics.deinit();
         self.consequences.deinit();
         self.properties.deinit();
@@ -6694,6 +7819,8 @@ pub const Terminal = struct {
     /// untimestamped.
     pub fn feedAt(self: *Terminal, bytes: []const u8, timestamp_ns: u64) FeedError!FeedSummary {
         self.requireNoPreparedResize();
+        if (self.render_journal_enabled)
+            @panic("render-aware terminal requires feedRenderByte");
         self.screen_state.setCursorMovementTimestamp(timestamp_ns);
         const graphics_before = self.graphics.generation();
         var stream = TerminalStream.init(self);
@@ -6702,6 +7829,69 @@ pub const Terminal = struct {
             summary.mutations.images = true;
         }
         return summary;
+    }
+
+    /// Starts exact visual mutation ownership with one initialization replacement.
+    pub fn enableRenderJournal(self: *Terminal) RenderFeedError!void {
+        self.requireNoPreparedResize();
+        if (self.render_journal_enabled) return error.AlreadyEnabled;
+        const view = self.semanticView(0);
+        const count = std.math.mul(usize, view.rows, view.cols) catch
+            return error.ParsedEventLimit;
+        var builder = self.render_pending.prepare(
+            self.allocator,
+            .{ .operations = 2, .cells = count },
+        ) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.TransactionPending => error.TransactionPending,
+            error.InvalidBudget => error.ParsedEventLimit,
+        };
+        errdefer self.render_pending.discard();
+        const cells = builder.cells(count);
+        copyResolvedGrid(self, cells);
+        builder.append(.{ .replace = .{
+            .kind = .initialization,
+            .rows = view.rows,
+            .cols = view.cols,
+            .cells = cells,
+        } });
+        builder.append(.{ .cursor = resolveJournalCursor(self) });
+        self.render_pending.commit();
+        self.render_journal_enabled = true;
+    }
+
+    /// Applies exactly one parser byte and retains at most one visual transaction.
+    pub fn feedRenderByte(
+        self: *Terminal,
+        byte: u8,
+        timestamp_ns: u64,
+    ) RenderFeedError!FeedSummary {
+        self.requireNoPreparedResize();
+        if (!self.render_journal_enabled) return error.RenderJournalDisabled;
+        if (self.render_pending.view() != null) return error.TransactionPending;
+        self.screen_state.setCursorMovementTimestamp(timestamp_ns);
+        const graphics_before = self.graphics.generation();
+        var stream = TerminalStream.init(self);
+        var summary = try stream.nextRenderSummary(byte);
+        if (self.graphics.generation() != graphics_before) summary.mutations.images = true;
+        self.completeStreamMutation(summary.stateChanged());
+        return summary;
+    }
+
+    /// Borrows one complete visual transaction until `consumeRenderTransaction`.
+    pub fn renderTransaction(self: *const Terminal) ?RenderJournal.Transaction {
+        return self.render_pending.view();
+    }
+
+    /// Releases the transaction after its next owner copied every operation.
+    pub fn consumeRenderTransaction(self: *Terminal) void {
+        self.render_pending.consume();
+    }
+
+    /// Cancels unpublished visual ownership and requires a new initialization.
+    pub fn disableRenderJournal(self: *Terminal) void {
+        self.render_pending.discard();
+        self.render_journal_enabled = false;
     }
 
     fn completeStreamMutation(
@@ -6739,6 +7929,8 @@ pub const Terminal = struct {
         cols: u16,
     ) ResizeError!PreparedResize {
         self.requireNoPreparedResize();
+        if (self.render_journal_enabled and self.render_pending.view() != null)
+            return error.TransactionPending;
         try validateDimensions(rows, cols);
         var report_bytes: [98]u8 = undefined;
         const report_len = self.prepareResizeReport(rows, cols, &report_bytes);
@@ -6751,6 +7943,30 @@ pub const Terminal = struct {
         errdefer primary.deinit(self.allocator);
         var alternate = try self.screen_state.alternate.prepareResize(self.allocator, rows, cols);
         errdefer alternate.deinit(self.allocator);
+        const render_prepared = self.render_journal_enabled;
+        if (render_prepared) {
+            const count = std.math.mul(usize, rows, cols) catch
+                return error.InvalidDimensions;
+            var builder = self.render_pending.prepare(
+                self.allocator,
+                .{ .operations = 2, .cells = count },
+            ) catch |err| return switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.TransactionPending => error.TransactionPending,
+                error.InvalidBudget => error.InvalidDimensions,
+            };
+            errdefer self.render_pending.discard();
+            const candidate = if (self.screen_state.alt_active) &alternate else &primary;
+            const cells = builder.cells(count);
+            copyResolvedScreen(self, candidate, cells);
+            builder.append(.{ .replace = .{
+                .kind = .resize,
+                .rows = rows,
+                .cols = cols,
+                .cells = cells,
+            } });
+            builder.append(.{ .cursor = resolveJournalCursorForScreen(self, candidate) });
+        }
         const state = try self.allocator.create(PreparedResizeState);
         state.* = .{
             .primary = primary,
@@ -6762,6 +7978,7 @@ pub const Terminal = struct {
         const result = PreparedResize{
             .terminal = self,
             .state = state,
+            .render_prepared = render_prepared,
         };
         self.resize_prepared = true;
         return result;

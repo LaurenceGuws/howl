@@ -8,6 +8,8 @@
 //! exposed-row changes instead of moved-cell payloads.
 
 const std = @import("std");
+const howl_vt = @import("howl_vt");
+const journal = howl_vt.render_journal;
 
 /// Bounds one retained terminal pane independently of its row/column shape.
 pub const maximum_cells: usize = 65_536;
@@ -82,6 +84,8 @@ comptime {
     std.debug.assert(@alignOf(Rgb) == 1);
     std.debug.assert(@sizeOf(Cell) == 11);
     std.debug.assert(@alignOf(Cell) == 1);
+    std.debug.assert(@sizeOf(Cell) == @sizeOf(journal.Cell));
+    std.debug.assert(@alignOf(Cell) == @alignOf(journal.Cell));
 }
 
 /// Selects one static cursor shape.
@@ -235,6 +239,128 @@ pub const Error = error{
     NoCandidate,
     OutOfMemory,
 };
+
+fn journalRgb(value: journal.Rgb) Rgb {
+    return .{ .r = value.r, .g = value.g, .b = value.b };
+}
+
+fn journalStyle(value: journal.Style) Style {
+    return .{
+        .bold = value.bold,
+        .dim = value.dim,
+        .italic = value.italic,
+        .underline = value.underline,
+        .strikethrough = value.strikethrough,
+    };
+}
+
+fn journalCell(value: journal.Cell) Cell {
+    return .{
+        .codepoint = value.codepoint,
+        .foreground = journalRgb(value.foreground),
+        .background = journalRgb(value.background),
+        .underline_color = journalRgb(value.underline_color),
+        .style = journalStyle(value.style),
+    };
+}
+
+fn journalCursor(value: journal.Cursor) Cursor {
+    return .{
+        .row = value.row,
+        .col = value.col,
+        .color = journalRgb(value.color),
+        .text_color = journalRgb(value.text_color),
+        .shape = switch (value.shape) {
+            .block => .block,
+            .underline => .underline,
+            .bar => .bar,
+            .hidden => .hidden,
+        },
+        .visible = value.visible,
+    };
+}
+
+/// Applies one complete VT-owned mutation transaction in source order.
+///
+/// The transaction already contains final visual values. This boundary does
+/// not interpret parser, palette, protection, or terminal attribute semantics.
+pub fn applyTransaction(grid: *Grid, transaction: journal.Transaction) Error!void {
+    for (transaction.operations) |operation| switch (operation) {
+        .set_cells => |set| {
+            for (set.cells, 0..) |cell, offset|
+                try grid.set(set.row, set.col + @as(u16, @intCast(offset)), journalCell(cell));
+        },
+        .fill => |fill| try grid.fill(
+            fill.rect.row,
+            fill.rect.col,
+            fill.rect.rows,
+            fill.rect.cols,
+            journalCell(fill.cell),
+        ),
+        .copy => |copy| try grid.copyRect(
+            copy.source.row,
+            copy.source.col,
+            copy.source.rows,
+            copy.source.cols,
+            copy.destination_row,
+            copy.destination_col,
+        ),
+        .masked_fill => |fill| try grid.maskedFill(
+            fill.rect.row,
+            fill.rect.col,
+            fill.rect.rows,
+            fill.rect.cols,
+            fill.mask,
+            journalCell(fill.cell),
+        ),
+        .recolor => |recolor| {
+            var rgb: [256]Rgb = undefined;
+            for (&rgb, recolor.rgb) |*destination, source|
+                destination.* = journalRgb(source);
+            try grid.recolor(
+                recolor.foreground,
+                recolor.background,
+                recolor.underline,
+                &rgb,
+            );
+        },
+        .visual_patch => |patch| try grid.visualPatch(
+            patch.rect.row,
+            patch.rect.col,
+            patch.rect.rows,
+            patch.rect.cols,
+            patch.changed_mask,
+            journalStyle(patch.set_style),
+            journalStyle(patch.clear_style),
+            journalStyle(patch.toggle_style),
+            patch.swap_foreground_background,
+            if (patch.foreground) |value| journalRgb(value) else null,
+            if (patch.background) |value| journalRgb(value) else null,
+            if (patch.underline) |value| journalRgb(value) else null,
+        ),
+        .replace => |replacement| {
+            const count = std.math.mul(usize, replacement.rows, replacement.cols) catch
+                return error.InvalidGeometry;
+            if (replacement.cells.len != count or count > maximum_cells)
+                return error.InvalidGeometry;
+            const cells = @as(
+                [*]const Cell,
+                @ptrCast(replacement.cells.ptr),
+            )[0..count];
+            try grid.replace(
+                switch (replacement.kind) {
+                    .initialization => .initialization,
+                    .resize => .resize,
+                    .alternate => .alternate_grid,
+                },
+                replacement.rows,
+                replacement.cols,
+                cells,
+            );
+        },
+        .cursor => |cursor| try grid.setCursor(journalCursor(cursor)),
+    };
+}
 
 const FillHint = struct {
     first: usize,
@@ -478,6 +604,184 @@ pub const Grid = struct {
         self.row_history_count += 1;
     }
 
+    /// Applies one overlapping rectangular copy in logical terminal order.
+    pub fn copyRect(
+        self: *Grid,
+        source_row: u16,
+        source_col: u16,
+        row_count: u16,
+        col_count: u16,
+        destination_row: u16,
+        destination_col: u16,
+    ) Error!void {
+        try self.requireMutable();
+        if (row_count == 0 or col_count == 0 or
+            @as(usize, source_row) + row_count > self.rows or
+            @as(usize, destination_row) + row_count > self.rows or
+            @as(usize, source_col) + col_count > self.cols or
+            @as(usize, destination_col) + col_count > self.cols)
+            return error.InvalidGeometry;
+        if (source_col == 0 and destination_col == 0 and
+            col_count == self.cols and source_row != destination_row)
+            return self.copyRows(source_row, destination_row, row_count);
+
+        var additional: usize = 0;
+        for (0..row_count) |row_offset| for (0..col_count) |col_offset| {
+            const index = try self.physicalIndex(
+                destination_row + @as(u16, @intCast(row_offset)),
+                destination_col + @as(u16, @intCast(col_offset)),
+            );
+            if (self.cell_slots[index] == untracked_cell) additional += 1;
+        };
+        if (!self.replacement_pending and self.rendered_valid and
+            additional > self.touched_cells.len - self.touched_cell_count)
+            return error.SparseUpdateLimit;
+
+        const reverse = destination_row > source_row or
+            (destination_row == source_row and destination_col > source_col);
+        const total: usize = @as(usize, row_count) * col_count;
+        for (0..total) |step| {
+            const logical = if (reverse) total - 1 - step else step;
+            const row_offset: u16 = @intCast(logical / col_count);
+            const col_offset: u16 = @intCast(logical % col_count);
+            const source = try self.physicalIndex(source_row + row_offset, source_col + col_offset);
+            const destination = try self.physicalIndex(destination_row + row_offset, destination_col + col_offset);
+            try self.applyCell(destination, self.current_cells[source]);
+        }
+    }
+
+    /// Applies one VT-selected erase mask without interpreting protection.
+    pub fn maskedFill(
+        self: *Grid,
+        row: u16,
+        col: u16,
+        row_count: u16,
+        col_count: u16,
+        mask: []const u8,
+        cell: Cell,
+    ) Error!void {
+        try self.requireMutable();
+        try validateCell(cell);
+        const total = std.math.mul(usize, row_count, col_count) catch return error.InvalidGeometry;
+        const mask_bytes = std.math.divCeil(usize, total, 8) catch return error.InvalidGeometry;
+        if (row_count == 0 or col_count == 0 or
+            @as(usize, row) + row_count > self.rows or
+            @as(usize, col) + col_count > self.cols or
+            mask.len != mask_bytes)
+            return error.InvalidGeometry;
+        var additional: usize = 0;
+        for (0..total) |offset| {
+            if (mask[offset / 8] & (@as(u8, 1) << @intCast(offset % 8)) == 0) continue;
+            const index = try self.physicalIndex(row + @as(u16, @intCast(offset / col_count)), col + @as(u16, @intCast(offset % col_count)));
+            if (self.cell_slots[index] == untracked_cell and !std.meta.eql(self.current_cells[index], cell)) additional += 1;
+        }
+        if (!self.replacement_pending and self.rendered_valid and
+            additional > self.touched_cells.len - self.touched_cell_count)
+            return error.SparseUpdateLimit;
+        for (0..total) |offset| {
+            if (mask[offset / 8] & (@as(u8, 1) << @intCast(offset % 8)) == 0) continue;
+            const index = try self.physicalIndex(row + @as(u16, @intCast(offset / col_count)), col + @as(u16, @intCast(offset % col_count)));
+            try self.applyCell(index, cell);
+        }
+    }
+
+    /// Applies final VT-classified RGB channels without retaining provenance.
+    pub fn recolor(
+        self: *Grid,
+        foreground: []const u8,
+        background: []const u8,
+        underline: []const u8,
+        rgb: *const [256]Rgb,
+    ) Error!void {
+        try self.requireMutable();
+        const count = try cellCount(self.rows, self.cols);
+        if (foreground.len != count or background.len != count or underline.len != count)
+            return error.InvalidGeometry;
+        var additional: usize = 0;
+        for (0..count) |logical| {
+            if (foreground[logical] == 0 and background[logical] == 0 and underline[logical] == 0) continue;
+            const row: u16 = @intCast(logical / self.cols);
+            const col: u16 = @intCast(logical % self.cols);
+            const index = try self.physicalIndex(row, col);
+            if (self.cell_slots[index] == untracked_cell) additional += 1;
+        }
+        if (!self.replacement_pending and self.rendered_valid and
+            additional > self.touched_cells.len - self.touched_cell_count)
+            return error.SparseUpdateLimit;
+        for (0..count) |logical| {
+            const fg = foreground[logical];
+            const bg = background[logical];
+            const ul = underline[logical];
+            if (fg == 0 and bg == 0 and ul == 0) continue;
+            const row: u16 = @intCast(logical / self.cols);
+            const col: u16 = @intCast(logical % self.cols);
+            const index = try self.physicalIndex(row, col);
+            var cell = self.current_cells[index];
+            if (fg != 0) cell.foreground = rgb[fg];
+            if (bg != 0) cell.background = rgb[bg];
+            if (ul != 0) cell.underline_color = rgb[ul];
+            try self.applyCell(index, cell);
+        }
+    }
+
+    /// Applies one VT-resolved visual patch without interpreting terminal semantics.
+    pub fn visualPatch(
+        self: *Grid,
+        row: u16,
+        col: u16,
+        row_count: u16,
+        col_count: u16,
+        changed_mask: ?[]const u8,
+        set_style: Style,
+        clear_style: Style,
+        toggle_style: Style,
+        swap_foreground_background: bool,
+        foreground: ?Rgb,
+        background: ?Rgb,
+        underline: ?Rgb,
+    ) Error!void {
+        try self.requireMutable();
+        if (set_style.reserved != 0 or clear_style.reserved != 0 or toggle_style.reserved != 0)
+            return error.InvalidIdentity;
+        const total = std.math.mul(usize, row_count, col_count) catch return error.InvalidGeometry;
+        const mask_bytes = std.math.divCeil(usize, total, 8) catch return error.InvalidGeometry;
+        if (row_count == 0 or col_count == 0 or
+            @as(usize, row) + row_count > self.rows or
+            @as(usize, col) + col_count > self.cols or
+            (changed_mask != null and changed_mask.?.len != mask_bytes))
+            return error.InvalidGeometry;
+
+        var additional: usize = 0;
+        for (0..total) |offset| {
+            if (changed_mask) |mask|
+                if (mask[offset / 8] & (@as(u8, 1) << @intCast(offset % 8)) == 0) continue;
+            const index = try self.physicalIndex(row + @as(u16, @intCast(offset / col_count)), col + @as(u16, @intCast(offset % col_count)));
+            if (self.cell_slots[index] == untracked_cell) additional += 1;
+        }
+        if (!self.replacement_pending and self.rendered_valid and
+            additional > self.touched_cells.len - self.touched_cell_count)
+            return error.SparseUpdateLimit;
+
+        const set_bits: u8 = @bitCast(set_style);
+        const clear_bits: u8 = @bitCast(clear_style);
+        const toggle_bits: u8 = @bitCast(toggle_style);
+        for (0..total) |offset| {
+            if (changed_mask) |mask|
+                if (mask[offset / 8] & (@as(u8, 1) << @intCast(offset % 8)) == 0) continue;
+            const index = try self.physicalIndex(row + @as(u16, @intCast(offset / col_count)), col + @as(u16, @intCast(offset % col_count)));
+            var cell = self.current_cells[index];
+            var style_bits: u8 = @bitCast(cell.style);
+            style_bits = ((style_bits | set_bits) & ~clear_bits) ^ toggle_bits;
+            cell.style = @bitCast(style_bits & 0x1f);
+            if (swap_foreground_background)
+                std.mem.swap(Rgb, &cell.foreground, &cell.background);
+            if (foreground) |value| cell.foreground = value;
+            if (background) |value| cell.background = value;
+            if (underline) |value| cell.underline_color = value;
+            try self.applyCell(index, cell);
+        }
+    }
+
     /// Replaces the complete grid for init, resize, or alternate-screen state.
     pub fn replace(
         self: *Grid,
@@ -487,8 +791,11 @@ pub const Grid = struct {
         cells: []const Cell,
     ) Error!void {
         try self.requireMutable();
-        if (kind == .initialization) return error.InvalidGeometry;
         const count = try validateDimensions(self.limits, rows, cols);
+        if (kind == .initialization and
+            (self.rendered_valid or !self.replacement_pending or
+                rows != self.rows or cols != self.cols))
+            return error.InvalidGeometry;
         if (cells.len != count) return error.InvalidGeometry;
         for (cells) |cell| try validateCell(cell);
         self.clearMutationTracking();
@@ -823,6 +1130,182 @@ fn acceptInitial(grid: *Grid) !void {
     try grid.complete();
 }
 
+fn applyPendingTerminalTransaction(
+    terminal: *howl_vt.Terminal,
+    grid: *Grid,
+) !void {
+    const transaction = terminal.renderTransaction() orelse return;
+    try applyTransaction(grid, transaction);
+    terminal.consumeRenderTransaction();
+}
+
+fn feedTerminalBytes(
+    terminal: *howl_vt.Terminal,
+    grid: *Grid,
+    bytes: []const u8,
+) !void {
+    for (bytes) |byte| {
+        const summary = try terminal.feedRenderByte(byte, 0);
+        std.mem.doNotOptimizeAway(summary);
+        try applyPendingTerminalTransaction(terminal, grid);
+    }
+}
+
+fn expectedTerminalCell(
+    terminal: *const howl_vt.Terminal,
+    cell: howl_vt.Terminal.Cell,
+) Cell {
+    const presentation = terminal.presentation();
+    var foreground = cell.attrs.fg.resolve(presentation.foreground, &presentation.palette);
+    var background = cell.attrs.bg.resolve(presentation.background, &presentation.palette);
+    if (cell.attrs.reverse != presentation.reverse_screen)
+        std.mem.swap(howl_vt.Terminal.Rgb, &foreground, &background);
+    const underline = cell.attrs.underline_color.resolve(foreground, &presentation.palette);
+    const codepoint: u21 = if (cell.x != 0 or cell.y != 0 or cell.attrs.invisible)
+        0
+    else if (cell.codepoint <= std.math.maxInt(u21))
+        @intCast(cell.codepoint)
+    else
+        0xfffd;
+    return Cell.init(
+        codepoint,
+        .{ .r = foreground.r, .g = foreground.g, .b = foreground.b },
+        .{ .r = background.r, .g = background.g, .b = background.b },
+        .{ .r = underline.r, .g = underline.g, .b = underline.b },
+        .{
+            .bold = cell.attrs.bold,
+            .dim = cell.attrs.dim,
+            .italic = cell.attrs.italic,
+            .underline = cell.attrs.underline,
+            .strikethrough = cell.attrs.strikethrough,
+        },
+    );
+}
+
+fn expectGridMatchesTerminal(
+    grid: *const Grid,
+    terminal: *const howl_vt.Terminal,
+) !void {
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(view.rows, grid.rows);
+    try std.testing.expectEqual(view.cols, grid.cols);
+    var row: u16 = 0;
+    while (row < view.rows) : (row += 1) {
+        var col: u16 = 0;
+        while (col < view.cols) : (col += 1) {
+            try std.testing.expectEqualDeep(
+                expectedTerminalCell(terminal, view.cellInfoAt(row, col)),
+                try grid.current(row, col),
+            );
+        }
+    }
+}
+
+fn initTerminalGrid(
+    rows: u16,
+    cols: u16,
+) !struct { howl_vt.Terminal, Grid } {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, rows, cols);
+    errdefer terminal.deinit();
+    var grid = try Grid.init(
+        std.testing.allocator,
+        .{
+            .rows = 16,
+            .cols = 32,
+            .structured_operations = maximum_cells,
+            .sparse_cell_updates = maximum_cells,
+        },
+        rows,
+        cols,
+        testCell(' '),
+    );
+    errdefer grid.deinit();
+    try terminal.enableRenderJournal();
+    try applyPendingTerminalTransaction(&terminal, &grid);
+    try acceptInitial(&grid);
+    return .{ terminal, grid };
+}
+
+test "parser bytes keep VT and retained Render cells equal across shell operations" {
+    var owners = try initTerminalGrid(4, 12);
+    defer owners[1].deinit();
+    defer owners[0].deinit();
+
+    const streams = [_][]const u8{
+        "alpha",
+        "\r\nbeta",
+        "\x1b[1;1H\x1b[31;1mZ\x1b[0m",
+        "\x1b[2;2H\x1b[2@XY",
+        "\x1b[3;2H\x1b[2P",
+        "\x1b[4;1Hlast\r\nscroll",
+        "\x1b[2;1H\x1b[2K",
+    };
+    for (streams) |stream| {
+        try feedTerminalBytes(&owners[0], &owners[1], stream);
+        try expectGridMatchesTerminal(&owners[1], &owners[0]);
+    }
+}
+
+test "alternate screen replacement keeps VT and retained Render cells equal" {
+    var owners = try initTerminalGrid(3, 8);
+    defer owners[1].deinit();
+    defer owners[0].deinit();
+
+    try feedTerminalBytes(&owners[0], &owners[1], "primary");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b[?1049halt");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b[?1049l");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+}
+
+test "palette and reverse-screen changes keep resolved Render cells equal" {
+    var owners = try initTerminalGrid(2, 8);
+    defer owners[1].deinit();
+    defer owners[0].deinit();
+
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b[31mred\x1b[0m");
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b]4;1;#123456\x07");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b[?5h");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+    try feedTerminalBytes(&owners[0], &owners[1], "\x1b[?5l");
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+}
+
+test "prepared resize publishes one exact Render replacement" {
+    var owners = try initTerminalGrid(2, 6);
+    defer owners[1].deinit();
+    defer owners[0].deinit();
+
+    try feedTerminalBytes(&owners[0], &owners[1], "first\r\nsecond");
+    var resize = try owners[0].prepareResize(3, 8);
+    defer resize.deinit();
+    resize.commit();
+    try applyPendingTerminalTransaction(&owners[0], &owners[1]);
+    try expectGridMatchesTerminal(&owners[1], &owners[0]);
+}
+
+test "pending visual ownership blocks before a later parser byte mutates VT" {
+    var terminal = try howl_vt.Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.enableRenderJournal();
+    const sequence = terminal.semanticSequence();
+    const before = terminal.semanticView(0).cellInfoAt(0, 0);
+
+    try std.testing.expectError(
+        error.TransactionPending,
+        terminal.feedRenderByte('x', 0),
+    );
+    try std.testing.expectEqual(sequence, terminal.semanticSequence());
+    try std.testing.expectEqualDeep(before, terminal.semanticView(0).cellInfoAt(0, 0));
+
+    terminal.consumeRenderTransaction();
+    const summary = try terminal.feedRenderByte('x', 0);
+    try std.testing.expect(summary.stateChanged());
+    try std.testing.expectEqual(@as(u21, 'x'), terminal.semanticView(0).cellInfoAt(0, 0).codepoint);
+}
+
 fn gridAllocationFailure(allocator: std.mem.Allocator) !void {
     var grid = try Grid.init(
         allocator,
@@ -964,6 +1447,80 @@ test "one-row scroll lowers row identity and exposed row only" {
     try std.testing.expectEqual(@as(u32, 5), update.fills[0].count);
     try std.testing.expectEqual(@as(usize, 0), update.cells.len);
     try grid.complete();
+}
+
+test "rectangular copy masked erase and recolor apply exact identities" {
+    var grid = try Grid.init(
+        std.testing.allocator,
+        .{ .rows = 3, .cols = 4, .structured_operations = 8, .sparse_cell_updates = 12 },
+        3,
+        4,
+        testCell('a'),
+    );
+    defer grid.deinit();
+    try acceptInitial(&grid);
+    try grid.set(0, 0, testCell('x'));
+    try grid.set(0, 1, testCell('y'));
+    try grid.copyRect(0, 0, 1, 2, 1, 1);
+    try std.testing.expectEqual(@as(u8, 'x'), (try grid.current(1, 1)).codepoint);
+    try std.testing.expectEqual(@as(u8, 'y'), (try grid.current(1, 2)).codepoint);
+    try grid.maskedFill(0, 0, 1, 4, &.{0b0000_0101}, testCell(' '));
+    try std.testing.expectEqual(@as(u8, ' '), (try grid.current(0, 0)).codepoint);
+    try std.testing.expectEqual(@as(u8, 'y'), (try grid.current(0, 1)).codepoint);
+    try std.testing.expectEqual(@as(u8, ' '), (try grid.current(0, 2)).codepoint);
+    var foreground: [12]u8 = @splat(0);
+    var background: [12]u8 = @splat(0);
+    var underline: [12]u8 = @splat(0);
+    foreground[6] = 1;
+    background[6] = 2;
+    underline[6] = 3;
+    var rgb: [256]Rgb = @splat(.{ .r = 0, .g = 0, .b = 0 });
+    rgb[1] = .{ .r = 1, .g = 2, .b = 3 };
+    rgb[2] = .{ .r = 4, .g = 5, .b = 6 };
+    rgb[3] = .{ .r = 7, .g = 8, .b = 9 };
+    try grid.recolor(&foreground, &background, &underline, &rgb);
+    const recolored = try grid.current(1, 2);
+    try std.testing.expectEqualDeep(rgb[1], recolored.foreground);
+    try std.testing.expectEqualDeep(rgb[2], recolored.background);
+    try std.testing.expectEqualDeep(rgb[3], recolored.underline_color);
+}
+
+test "visual patch is ordered and cancels across the maximum grid" {
+    var grid = try Grid.init(
+        std.testing.allocator,
+        .{ .rows = 128, .cols = 512, .structured_operations = 4, .sparse_cell_updates = maximum_cells },
+        128,
+        512,
+        testCell('x'),
+    );
+    defer grid.deinit();
+    try acceptInitial(&grid);
+    const toggle = Style{ .bold = true, .underline = true };
+    try grid.visualPatch(0, 0, 128, 512, null, .{}, .{}, toggle, true, null, null, null);
+    const changed = try grid.current(127, 511);
+    try std.testing.expect(changed.style.bold);
+    try std.testing.expect(changed.style.underline);
+    try std.testing.expectEqualDeep(testCell('x').background, changed.foreground);
+    try grid.visualPatch(0, 0, 128, 512, null, .{}, .{}, toggle, true, null, null, null);
+    try std.testing.expect((try grid.prepare()) == null);
+}
+
+test "visual patch mask and final colors affect only selected cells" {
+    var grid = try Grid.init(
+        std.testing.allocator,
+        .{ .rows = 1, .cols = 4, .structured_operations = 2, .sparse_cell_updates = 2 },
+        1,
+        4,
+        testCell('x'),
+    );
+    defer grid.deinit();
+    try acceptInitial(&grid);
+    const fg = Rgb{ .r = 9, .g = 8, .b = 7 };
+    try grid.visualPatch(0, 0, 1, 4, &.{0b0000_0101}, .{ .italic = true }, .{}, .{}, false, fg, null, null);
+    try std.testing.expect((try grid.current(0, 0)).style.italic);
+    try std.testing.expect(!(try grid.current(0, 1)).style.italic);
+    try std.testing.expect((try grid.current(0, 2)).style.italic);
+    try std.testing.expectEqualDeep(fg, (try grid.current(0, 2)).foreground);
 }
 
 test "cursor lowering is independent from cell replacement" {

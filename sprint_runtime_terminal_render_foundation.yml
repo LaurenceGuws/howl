@@ -4,16 +4,18 @@ sprint:
   marathon: runtime_hot_paths
   version: 0.1.6-dev
   status: active
-  active_slice: non_render_host_terminal_boundary
+  active_slice: ordered_vt_mutation_transport
   objective: >-
     Establish a small independently useful blank/ASCII/style/static-cursor
-    library path from backend-neutral retained Render state to exact sparse
-    Vulkan preparation before any Host or VT integration.
+    path from ordered VT visual mutations through retained Render state to
+    exact sparse Vulkan preparation before Host queue integration.
 
 accepted_evidence:
   recovery_census: .zig/work/runtime-hot-path/terminal-render-foundation/recovery_census.yml
   finite_contract: .zig/work/runtime-hot-path/terminal-render-foundation/finite_contract.yml
   mutation_event_census: .zig/work/runtime-hot-path/terminal-render-foundation/mutation_event_census.yml
+  vt_render_mutation_contract: .zig/work/runtime-hot-path/terminal-render-foundation/vt_render_mutation_contract.yml
+  vt_render_mutation_bound_receipt: .zig/work/runtime-hot-path/terminal-render-foundation/vt_render_mutation_bound_receipt.txt
   layout_receipt: .zig/work/runtime-hot-path/terminal-render-foundation/layout_receipt.txt
   reviewer_gate: .zig/work/runtime-hot-path/terminal-render-foundation/reviewer_gate.yml
 
@@ -29,7 +31,7 @@ slices:
       bounded sparse writes and borrowed replacement input. Generic Canvas Plan
       and Host publication remain separate.
   - id: non_render_host_terminal_boundary
-    status: review_ready
+    status: accepted_prerequisite
     product_owners:
       - howl-host/src/terminal_handoff.zig
       - howl-host/build.zig
@@ -43,8 +45,17 @@ slices:
       Visible publication cannot supersede a retained claim, making Renderer
       commit infallible after transactional Composer success.
   - id: ordered_vt_mutation_transport
-    status: pending
-    authorized: false
+    status: review_ready
+    authorized: true
+    product_owners:
+      - howl-vt/src/render_journal.zig
+      - howl-vt/src/terminal.zig
+      - howl-render/src/terminal_cells.zig
+    outcome: >-
+      VT admits storage before each parser byte and retains at most one ordered
+      backend-neutral transaction containing final blank/ASCII/style/cursor
+      values. Render applies every operation in source order to one retained
+      grid, where final equality removes Canvas, GPU, and Window work.
   - id: host_render_integration
     status: pending
     authorized: false
@@ -160,7 +171,7 @@ proof_gate:
   - all still-possible workspace and static gates pass
 
 exclusions:
-  - no Host or VT source changes
+  - no Host mutation FIFO or terminal-thread integration
   - no Host queue or unconsumed runtime transport
   - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks
   - no generated decorative glyph policy

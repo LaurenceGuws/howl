@@ -8,6 +8,7 @@ status=0
 root_publics=(
     'pub const Terminal = terminal.Terminal;'
     'pub const MutationSet = terminal.MutationSet;'
+    'pub const render_journal = render_journal_mod;'
     'pub const ScalarStorage = scalar_storage.Storage;'
     'pub const UnicodeProperties = unicode_17.Properties;'
     'pub const unicodeProperties = unicode_17.properties;'

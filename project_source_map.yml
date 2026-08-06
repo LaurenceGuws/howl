@@ -15,7 +15,8 @@ accepted:
   howl-vt/build.zig: VT package build and proof commands
   howl-vt/build.zig.zon: VT package identity and source boundary
   howl-vt/src: terminal parser, semantics, state, input, replies, consequences, and borrowed semantic views
-  howl-vt/src/howl_vt.zig: curated Terminal plus bounded scalar storage and pinned Unicode-classification embedding
+  howl-vt/src/howl_vt.zig: curated Terminal, visual-journal, bounded scalar-storage, and pinned Unicode-classification embedding
+  howl-vt/src/render_journal.zig: atomic backend-neutral blank/ASCII/style/cursor visual transactions with pre-mutation storage admission
   howl-vt/src/scalar_storage.zig: fixed owner-local overflow-scalar banks, range ownership, first-fit admission, coalescing, and rollback
   howl-vt/src/unicode_17.zig: generated Unicode 17 width, presentation, and grapheme-transition lookup
   howl-vt/src/unicode_17*.bin: pinned generated Unicode 17 runtime and conformance tables
