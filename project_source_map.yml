@@ -4,8 +4,9 @@ accepted:
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
   marathon_runtime.yml: active 0.1.6-dev runtime hot-path intervention, workloads, sprint order, invariants, and exclusions
-  sprint_runtime_measurement.yml: active workload completion and external baseline-measurement contract
-  scratch_runtime.yml: active child-exit lifecycle findings, worker flow, and review gate
+  sprint_runtime_measurement.yml: accepted workload completion and external baseline-measurement contract
+  sprint_runtime_presentation_state.yml: implemented latest-ready presentation-state ownership, bounds, proof map, and static acceptance gate
+  scratch_runtime.yml: active presentation-state implementation receipts, validation matrix, and remaining runtime gate
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   tools/json_logger.zig: reusable QAgent-derived bounded structured JSONL logger, disconnected from product package/runtime dependencies
@@ -60,9 +61,9 @@ accepted:
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
   .howl/config/howl.conf: repository-local development cursor configuration defaults
-  howl-host/src/window_render_boundary.zig: bounded copied cross-thread facts and directional eventfd ownership
-  howl-host/src/window.zig: Wayland discovery, dispatch, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: Host input, session, terminal, Composer, physical-replay, and deadline orchestration plus canvas-to-Vulkan adaptation, DMA-BUF ring ownership, and release observation
+  howl-host/src/presentation_state.zig: bounded copied cross-thread facts, one latest ready frame, monotonic ready revision, atomic Render cancellation, and directional readiness ownership
+  howl-host/src/window.zig: Wayland discovery, dispatch, exact scale readiness including entered-output scale-one fallback, DMA-BUF wrappers, frame pacing, and presentation
+  howl-host/src/renderer.zig: Host input, session, terminal, Composer, physical-replay, and deadline orchestration plus canvas-to-Vulkan adaptation, DMA-BUF ring ownership, Render-owned never-presented timeline reclamation, accepted startup product presentation, and compositor-release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs
   howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection

@@ -5,7 +5,7 @@
 const std = @import("std");
 const c = @import("renderer_c");
 const linux = std.os.linux;
-const window_render_boundary = @import("window_render_boundary.zig");
+const presentation_state = @import("presentation_state.zig");
 
 const terminal_retained_resource_limit: usize = 512 + 128 + 8;
 const chrome_retained_resource_limit: usize = 512;
@@ -31,6 +31,12 @@ const chrome_appearance = session_chrome_adapter.Appearance{
     },
     .tab_active_background = .{ .r = 48, .g = 72, .b = 112, .a = 255 },
     .tab_inactive_background = .{ .r = 28, .g = 34, .b = 46, .a = 255 },
+};
+const product_clear_color: [4]f32 = .{
+    20.0 / 255.0,
+    24.0 / 255.0,
+    32.0 / 255.0,
+    1,
 };
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
@@ -1287,7 +1293,7 @@ test "cursor replay cohorts role-swap and reject pressure transactionally" {
     replay_slots[0].release_point = 4;
     replay_slots[1].release_point = 9;
     replay_slots[2].release_point = 7;
-    const release_facts = window_render_boundary.RetiredRing{
+    const release_facts = presentation_state.RetiredRing{
         .generation = 1,
         .presented_mask = 0b101,
         .release_points = .{ 4, 9, 7 },
@@ -1431,10 +1437,12 @@ const CursorReplayResult = enum {
     published,
 };
 
-const ReplayCompletionError = error{
+const ReplayPublicationError = error{
     Stopping,
-    CompletionLimit,
+    StaleGeneration,
+    InvalidSlot,
     InvalidRevision,
+    InvalidFrame,
 };
 
 const PostSubmitDisposition = enum { fatal };
@@ -1476,8 +1484,8 @@ fn prepareCursorReplayCandidate(
     return .{ .prepared = candidate };
 }
 
-fn classifyReplayCompletionFailure(
-    _: ReplayCompletionError,
+fn classifyReplayPublicationFailure(
+    _: ReplayPublicationError,
 ) PostSubmitDisposition {
     return .fatal;
 }
@@ -1646,15 +1654,15 @@ test "cursor replay preparation rejects candidate facts and preserves accepted o
     );
     try std.testing.expectEqual(
         PostSubmitDisposition.fatal,
-        classifyReplayCompletionFailure(error.CompletionLimit),
+        classifyReplayPublicationFailure(error.StaleGeneration),
     );
     try std.testing.expectEqual(
         PostSubmitDisposition.fatal,
-        classifyReplayCompletionFailure(error.Stopping),
+        classifyReplayPublicationFailure(error.Stopping),
     );
     try std.testing.expectEqual(
         PostSubmitDisposition.fatal,
-        classifyReplayCompletionFailure(error.InvalidRevision),
+        classifyReplayPublicationFailure(error.InvalidRevision),
     );
 }
 
@@ -2108,6 +2116,20 @@ fn discardTrailAnimation(work: *CanvasWork, retry_at_candidate_deadline: bool) v
     work.trail_scratch_transfer = false;
 }
 
+const SlotOwnership = enum(u8) {
+    reusable,
+    rendering,
+    submitted_render_fatal,
+    latest_ready_frame,
+    window_taken,
+    compositor_owned,
+    unpublished_reclaiming,
+    unpublished_reclaim_fatal,
+    superseded_reclaiming,
+    superseded_reclaim_fatal,
+    submitted_unpublished_fatal,
+};
+
 const Slot = struct {
     width: u32 = 0,
     height: u32 = 0,
@@ -2117,12 +2139,14 @@ const Slot = struct {
     memory: vk.VkDeviceMemory = null,
     release_handle: u32 = 0,
     plane_count: u8 = 0,
-    planes: [window_render_boundary.plane_limit]window_render_boundary.Plane = undefined,
+    planes: [presentation_state.plane_limit]presentation_state.Plane = undefined,
     external: bool = false,
     attachment: vk_surface.Attachment = .{},
     owned_bytes: u64 = 0,
     release_point: u64 = 0,
     clear_color: [4]f32 = .{ 0, 0, 0, 1 },
+    ownership: SlotOwnership = .reusable,
+    submitted_acquire_point: u64 = 0,
 
     fn deinit(self: *Slot, device: vk.VkDevice, drm_fd: i32, gpu_bytes: *u64) void {
         self.attachment.deinit(device);
@@ -2143,7 +2167,7 @@ const OfferedFds = struct {
 /// Runs the sole Vulkan/DRM owner until the bounded ring completes or fails.
 /// All operational failures are recorded as the first Render runtime failure.
 pub fn run(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
@@ -2163,7 +2187,7 @@ pub fn run(
 }
 
 fn runFallible(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
@@ -2342,7 +2366,7 @@ fn runFallible(
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
     defer destroySyncobj(drm_fd, acquire_handle);
-    var rings = [_][window_render_boundary.slot_count]Slot{
+    var rings = [_][presentation_state.slot_count]Slot{
         .{ .{}, .{}, .{} },
         .{ .{}, .{}, .{} },
     };
@@ -2350,14 +2374,14 @@ fn runFallible(
         var ring_index = rings.len;
         while (ring_index > 0) {
             ring_index -= 1;
-            var index = window_render_boundary.slot_count;
+            var index = presentation_state.slot_count;
             while (index > 0) {
                 index -= 1;
                 rings[ring_index][index].deinit(device, drm_fd, &gpu_bytes);
             }
         }
     }
-    var offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = undefined;
+    var offers: [presentation_state.slot_count]presentation_state.SlotOffer = undefined;
     var offered_fds = [_]OfferedFds{ .{}, .{}, .{} };
     errdefer for (&offered_fds) |*fds| {
         if (fds.dma >= 0) closeDescriptor(fds.dma);
@@ -2393,42 +2417,83 @@ fn runFallible(
     if (vk.vkAllocateCommandBuffers(device, &command_info, &command) != vk.VK_SUCCESS) return error.Command;
     var queue_active = false;
     defer if (queue_active) {
-        if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) @panic("Render failed to quiesce Vulkan during cleanup");
+        // The operational failure is already the retained first Render
+        // failure. Cleanup still attempts device quiescence, but a second
+        // device result must not replace that exact failure during unwind.
+        if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS)
+            queue_active = false;
     };
 
     const colors = [_][4]f32{
-        .{ 0.08, 0.16, 0.24, 1 },
-        .{ 0.12, 0.48, 0.20, 1 },
-        .{ 0.52, 0.16, 0.56, 1 },
+        product_clear_color,
+        product_clear_color,
+        product_clear_color,
     };
     var next_acquire_point: u64 = 4;
     const initial_plan = try buildAcceptedCanvasPlan(&canvas_work);
     errdefer surface_residency.discard();
     errdefer replay.discard();
     for (&rings[0], 0..) |*slot, index| {
+        try beginSlotRendering(slot);
         queue_active = true;
         try render(&graphics, device, queue, family, command, slot, colors[index], initial_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, index + 1);
-        try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
         slot.release_point = 1;
+        try discardUnpublishedInitialization(
+            drm_fd,
+            acquire_handle,
+            slot,
+            index + 1,
+        );
     }
-    replay.commit(window_render_boundary.slot_count - 1);
-
-    // The first generation exercises real slot reuse before any resize: once
-    // Window has superseded slot 0, import its compositor release fence into
-    // a Vulkan wait semaphore, reacquire the image, and publish a fourth clear.
-    try waitTimeline(drm_fd, rings[0][0].release_handle, 1);
-    var release_sync_fd: i32 = -1;
-    if (c.drmSyncobjExportSyncFile(drm_fd, rings[0][0].release_handle, &release_sync_fd) != 0) return error.Syncobj;
-    errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
-    const release_wait = try importReleaseSemaphore(device, &dispatch, &release_sync_fd);
-    defer vk.vkDestroySemaphore(device, release_wait, null);
-    const reuse_plan = try buildAcceptedCanvasPlan(&canvas_work);
+    // The three unpublished renders initialize every physical slot but are
+    // never Window work. Preserve the accepted fourth startup render: reuse
+    // slot zero through its Render-owned physical fence, record the product
+    // clear, and publish only that frame.
+    const startup_slot = &rings[0][0];
+    try beginSlotRendering(startup_slot);
+    var startup_release_fd: i32 = -1;
+    if (c.drmSyncobjExportSyncFile(
+        drm_fd,
+        startup_slot.release_handle,
+        &startup_release_fd,
+    ) != 0) return error.Syncobj;
+    errdefer if (startup_release_fd >= 0) closeDescriptor(startup_release_fd);
+    const startup_wait = try importReleaseSemaphore(
+        device,
+        &dispatch,
+        &startup_release_fd,
+    );
+    defer vk.vkDestroySemaphore(device, startup_wait, null);
+    const startup_plan = try buildAcceptedCanvasPlan(&canvas_work);
     errdefer surface_residency.discard();
     errdefer replay.discard();
-    try render(&graphics, device, queue, family, command, &rings[0][0], .{ 0.72, 0.18, 0.20, 1 }, reuse_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, &surface_residency, release_wait, &dispatch, drm_fd, acquire_handle, next_acquire_point);
-    try boundary.publishCompletion(.{ .generation = initial_surface.generation, .revision = next_acquire_point, .slot = 0, .acquire_point = next_acquire_point, .release_point = 2 });
+    try render(
+        &graphics,
+        device,
+        queue,
+        family,
+        command,
+        startup_slot,
+        product_clear_color,
+        startup_plan,
+        surface_builder.alpha_pixels,
+        surface_builder.rgba_pixels,
+        &surface_residency,
+        startup_wait,
+        &dispatch,
+        drm_fd,
+        acquire_handle,
+        next_acquire_point,
+    );
+    startup_slot.release_point = 2;
+    try publishLatestReadyFrame(boundary, &rings[0], 0, .startup, .{
+        .generation = initial_surface.generation,
+        .revision = next_acquire_point,
+        .slot = 0,
+        .acquire_point = next_acquire_point,
+        .release_point = 2,
+    }, .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle });
     replay.commit(0);
-    rings[0][0].release_point = 2;
     next_acquire_point += 1;
 
     var active_ring: usize = 0;
@@ -2438,9 +2503,10 @@ fn runFallible(
     var cursor_replay_pending: ?terminal_handoff.CursorPublication = null;
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
+    var initial_admission_retry_used = false;
     var deferred_topology_input: ?DeferredTopologyInput = null;
     var terminal_completion: ?terminal_handoff.TerminalCompletion = null;
-    var retained_configure: ?window_render_boundary.SurfaceConfig = null;
+    var retained_configure: ?presentation_state.SurfaceConfig = null;
     var configure_work_pending = false;
     var pending_topology: ?PendingTopology =
         if (canvas_work.terminal_scale != null)
@@ -2607,14 +2673,31 @@ fn runFallible(
         }
         if (pending_topology) |*pending| {
             if (pending.phase == .awaiting_admission) {
-                if (pending.observeAdmission()) |_| {
+                if (pending.observeAdmission()) |rejection| {
                     if (terminal_completion != null)
                         try applyTerminalCompletionDisposition(
                             &terminal_completion,
                             .rejected,
                         );
+                    const retry_surface = if (!terminal_topology_committed and
+                        !initial_admission_retry_used)
+                        pending.surface
+                    else
+                        null;
                     pending.deinit();
                     pending_topology = null;
+                    if (retry_surface) |surface| {
+                        std.debug.assert(rejection != .stopping);
+                        initial_admission_retry_used = true;
+                        pending_topology = try prepareInitialTerminalTopology(
+                            &canvas_work,
+                            &chrome,
+                            surface,
+                        );
+                        continue;
+                    }
+                    if (!terminal_topology_committed)
+                        return initialAdmissionFailure(rejection);
                 }
             }
             if (pending_topology) |*admitted| {
@@ -2685,7 +2768,7 @@ fn runFallible(
                     }
                     const replacement = 1 - active_ring;
                     for (&rings[replacement]) |*slot| slot.* = .{};
-                    var replacement_offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = undefined;
+                    var replacement_offers: [presentation_state.slot_count]presentation_state.SlotOffer = undefined;
                     var replacement_fds = [_]OfferedFds{ .{}, .{}, .{} };
                     errdefer for (&replacement_fds) |*fds| {
                         if (fds.dma >= 0) closeDescriptor(fds.dma);
@@ -2738,8 +2821,14 @@ fn runFallible(
                     };
                     for (&replacement_fds) |*fds| fds.* = .{};
                     try waitWindowRing(boundary, surface.generation);
-                    var completion_batch: [window_render_boundary.slot_count]window_render_boundary.Completion = undefined;
+                    try cancelLatestReadyFrame(
+                        boundary,
+                        &rings[active_ring],
+                        .{ .generation = active_generation },
+                        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
+                    );
                     var candidate_acquire = next_acquire_point;
+                    var newest_ready: presentation_state.ReadyFrame = undefined;
                     const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
                     errdefer surface_residency.discard();
                     errdefer replay.discard();
@@ -2754,24 +2843,84 @@ fn runFallible(
                         null,
                     );
                     for (&rings[replacement], 0..) |*slot, index| {
-                        try render(&graphics, device, queue, family, command, slot, .{ 0.08 + @as(f32, @floatFromInt(index)) * 0.12, 0.22, 0.44, 1 }, physical_resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
-                        completion_batch[index] = .{
-                            .generation = surface.generation,
-                            .revision = candidate_acquire,
-                            .slot = @intCast(index),
-                            .acquire_point = candidate_acquire,
-                            .release_point = 1,
-                        };
+                        try beginSlotRendering(slot);
+                        try render(&graphics, device, queue, family, command, slot, product_clear_color, physical_resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
+                        slot.release_point = 1;
+                        try discardUnpublishedInitialization(
+                            drm_fd,
+                            acquire_handle,
+                            slot,
+                            candidate_acquire,
+                        );
                         candidate_acquire = std.math.add(u64, candidate_acquire, 1) catch
                             return error.RevisionOverflow;
                     }
+                    const replacement_slot = &rings[replacement][0];
+                    try beginSlotRendering(replacement_slot);
+                    var replacement_release_fd: i32 = -1;
+                    if (c.drmSyncobjExportSyncFile(
+                        drm_fd,
+                        replacement_slot.release_handle,
+                        &replacement_release_fd,
+                    ) != 0) return error.Syncobj;
+                    errdefer if (replacement_release_fd >= 0)
+                        closeDescriptor(replacement_release_fd);
+                    const replacement_wait = try importReleaseSemaphore(
+                        device,
+                        &dispatch,
+                        &replacement_release_fd,
+                    );
+                    defer vk.vkDestroySemaphore(
+                        device,
+                        replacement_wait,
+                        null,
+                    );
+                    const replacement_product_base =
+                        try buildAcceptedCanvasPlan(&canvas_work);
+                    const replacement_product_plan = try physicalPlanForBase(
+                        &canvas_work,
+                        replacement_product_base,
+                        try session_chrome_adapter.toRenderPaneId(
+                            admitted.candidate.state.focusedPaneId(),
+                        ),
+                        null,
+                    );
+                    try render(
+                        &graphics,
+                        device,
+                        queue,
+                        family,
+                        command,
+                        replacement_slot,
+                        product_clear_color,
+                        replacement_product_plan,
+                        surface_builder.alpha_pixels,
+                        surface_builder.rgba_pixels,
+                        &surface_residency,
+                        replacement_wait,
+                        &dispatch,
+                        drm_fd,
+                        acquire_handle,
+                        candidate_acquire,
+                    );
+                    replacement_slot.release_point = 2;
+                    newest_ready = .{
+                        .generation = surface.generation,
+                        .revision = candidate_acquire,
+                        .slot = 0,
+                        .acquire_point = candidate_acquire,
+                        .release_point = 2,
+                    };
+                    candidate_acquire = std.math.add(
+                        u64,
+                        candidate_acquire,
+                        1,
+                    ) catch return error.RevisionOverflow;
                     // The replacement ring has copied the cursor-bearing
                     // candidate. Keep the replay cohort itself cursor-free so
                     // the next physical cursor update starts from the new
                     // canonical base.
                     replay.restoreCandidateBase(resized_plan);
-                    var prepared_completions = try boundary.prepareCompletions(&completion_batch);
-                    defer prepared_completions.deinit();
                     try commitPendingTopology(&chrome, admitted);
                     canvas_work.surface = renderExtent(surface);
                     canvas_work.content_origin = try session_chrome_adapter.contentOrigin(
@@ -2781,10 +2930,16 @@ fn runFallible(
                     terminal_topology_committed = true;
                     if (bootstrap_publication) |*publication|
                         publication.commit(&canvas_work);
-                    prepared_completions.commit();
-                    replay.commit(window_render_boundary.slot_count - 1);
+                    try publishLatestReadyFrame(
+                        boundary,
+                        &rings[replacement],
+                        0,
+                        .replacement,
+                        newest_ready,
+                        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
+                    );
+                    replay.commit(0);
                     if (resized_cursor_color) |color| canvas_work.accepted_cursor_color = color;
-                    for (&rings[replacement]) |*slot| slot.release_point = 1;
                     next_acquire_point = candidate_acquire;
                     const old_ring = active_ring;
                     const old_generation = active_generation;
@@ -2988,6 +3143,12 @@ fn runFallible(
             }
         }
     }
+    try cancelLatestReadyFrame(
+        boundary,
+        &rings[active_ring],
+        .shutdown,
+        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
+    );
     try waitReleasePoints(boundary, active_generation, &rings[active_ring], drm_fd);
     boundary.requestWindowRingRetirement(active_generation);
     try waitWindowRingRetired(boundary, active_generation);
@@ -2995,16 +3156,38 @@ fn runFallible(
     queue_active = false;
 }
 
+fn initialAdmissionFailure(
+    rejection: terminal_handoff.AdmissionRejection,
+) error{
+    InitialInvalidPane,
+    InitialUnknownPane,
+    InitialDuplicatePane,
+    InitialInvalidExtent,
+    InitialFontCapacity,
+    InitialTerminalCapacity,
+    Stopping,
+} {
+    return switch (rejection) {
+        .invalid_pane => error.InitialInvalidPane,
+        .unknown_pane => error.InitialUnknownPane,
+        .duplicate_pane => error.InitialDuplicatePane,
+        .invalid_extent => error.InitialInvalidExtent,
+        .font_capacity => error.InitialFontCapacity,
+        .terminal_capacity => error.InitialTerminalCapacity,
+        .stopping => error.Stopping,
+    };
+}
+
 fn checkGpuBudget(width: u32, height: u32) !void {
     const pixels = std.math.mul(u64, width, height) catch return error.GpuMemoryLimit;
     // Reject impossible replacement geometry before Vulkan construction. The
     // six exported-image allocations are subsequently charged from their
     // exact VkMemoryRequirements.size alongside the shared atlas/staging.
-    const bytes = std.math.mul(u64, pixels, 4 * window_render_boundary.slot_count * 2) catch return error.GpuMemoryLimit;
+    const bytes = std.math.mul(u64, pixels, 4 * presentation_state.slot_count * 2) catch return error.GpuMemoryLimit;
     if (bytes > gpu_memory_limit) return error.GpuMemoryLimit;
 }
 
-fn renderExtent(surface: window_render_boundary.SurfaceConfig) render_api.canvas.Size {
+fn renderExtent(surface: presentation_state.SurfaceConfig) render_api.canvas.Size {
     return .{
         .width = @intCast(surface.logical_width),
         .height = @intCast(surface.logical_height),
@@ -3075,7 +3258,7 @@ fn retainTerminalScale(
     policy: terminal_handoff.FontPolicy,
     retained: *?terminal_handoff.ScaleSnapshot,
     request_high_water: *u64,
-    surface: window_render_boundary.SurfaceConfig,
+    surface: presentation_state.SurfaceConfig,
 ) !void {
     const snapshot = try terminalScaleSnapshot(surface);
     if (std.meta.eql(retained.*, snapshot)) return;
@@ -3091,21 +3274,21 @@ fn retainTerminalScale(
 }
 
 fn retainNewestConfigure(
-    retained: *?window_render_boundary.SurfaceConfig,
-    incoming: window_render_boundary.SurfaceConfig,
+    retained: *?presentation_state.SurfaceConfig,
+    incoming: presentation_state.SurfaceConfig,
 ) void {
     if (retained.* == null or incoming.generation > retained.*.?.generation)
         retained.* = incoming;
 }
 
 fn clearRetainedConfigure(
-    retained: *?window_render_boundary.SurfaceConfig,
+    retained: *?presentation_state.SurfaceConfig,
 ) void {
     retained.* = null;
 }
 
 fn applyConfigureDisposition(
-    retained: *?window_render_boundary.SurfaceConfig,
+    retained: *?presentation_state.SurfaceConfig,
     disposition: TopologyReplacementDisposition,
 ) void {
     switch (disposition) {
@@ -3115,14 +3298,14 @@ fn applyConfigureDisposition(
 }
 
 fn shouldRetryConfigureAfterWake(
-    retained: ?window_render_boundary.SurfaceConfig,
+    retained: ?presentation_state.SurfaceConfig,
     terminal_wake: bool,
 ) bool {
     return terminal_wake and retained != null;
 }
 
 fn terminalScaleSnapshot(
-    surface: window_render_boundary.SurfaceConfig,
+    surface: presentation_state.SurfaceConfig,
 ) !?terminal_handoff.ScaleSnapshot {
     if (surface.dpi_x == null and surface.dpi_y == null) return null;
     const dpi_x = surface.dpi_x orelse return error.InvalidFrame;
@@ -3142,9 +3325,9 @@ fn terminalScaleSnapshot(
 }
 
 test "configure retention keeps only the newest generation" {
-    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var boundary = try presentation_state.State.init(std.testing.io);
     defer boundary.deinit();
-    const base = window_render_boundary.SurfaceConfig{
+    const base = presentation_state.SurfaceConfig{
         .generation = 1,
         .logical_width = 800,
         .logical_height = 600,
@@ -3155,7 +3338,7 @@ test "configure retention keeps only the newest generation" {
         .use_viewport = false,
     };
     try boundary.publishConfigure(800, 600, 800, 600, 0, null, null, 1, false);
-    var retained: ?window_render_boundary.SurfaceConfig = boundary.takeConfigure();
+    var retained: ?presentation_state.SurfaceConfig = boundary.takeConfigure();
     try std.testing.expectEqual(@as(u64, 1), retained.?.generation);
     var newer = base;
     newer.logical_width = 1024;
@@ -3384,7 +3567,7 @@ fn requestBaseFontAction(
 }
 
 test "integer and fractional surfaces retain the logical Canvas extent" {
-    const integer = window_render_boundary.SurfaceConfig{
+    const integer = presentation_state.SurfaceConfig{
         .generation = 1,
         .logical_width = 100,
         .logical_height = 80,
@@ -3394,7 +3577,7 @@ test "integer and fractional surfaces retain the logical Canvas extent" {
         .buffer_scale = 2,
         .use_viewport = false,
     };
-    const fractional = window_render_boundary.SurfaceConfig{
+    const fractional = presentation_state.SurfaceConfig{
         .generation = 2,
         .logical_width = 100,
         .logical_height = 80,
@@ -3408,9 +3591,9 @@ test "integer and fractional surfaces retain the logical Canvas extent" {
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(fractional));
 }
 
-test "Renderer copies only factual accepted DPI through terminal Boundary" {
-    try std.testing.expectEqual(@as(usize, 8), @sizeOf(window_render_boundary.ExactRational));
-    try std.testing.expectEqual(@as(usize, 64), @sizeOf(window_render_boundary.SurfaceConfig));
+test "Renderer copies only factual accepted DPI through terminal State" {
+    try std.testing.expectEqual(@as(usize, 8), @sizeOf(presentation_state.ExactRational));
+    try std.testing.expectEqual(@as(usize, 64), @sizeOf(presentation_state.SurfaceConfig));
     try std.testing.expectEqual(
         @as(usize, 24),
         @sizeOf(terminal_handoff.ScaleSnapshot),
@@ -3445,7 +3628,7 @@ test "Renderer copies only factual accepted DPI through terminal Boundary" {
     const policy = try terminal_handoff.FontPolicy.init(16.0);
     var retained: ?terminal_handoff.ScaleSnapshot = null;
     var request_high_water: u64 = 0;
-    const provisional = window_render_boundary.SurfaceConfig{
+    const provisional = presentation_state.SurfaceConfig{
         .generation = 1,
         .logical_width = 100,
         .logical_height = 80,
@@ -3549,7 +3732,7 @@ test "Renderer pane point mutations clamp independently and reset omits zero" {
     try std.testing.expectEqual(second, policy.offsets[0].pane);
 }
 
-test "focused pane actions coalesce retained point state through real Boundary" {
+test "focused pane actions coalesce retained point state through real State" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -3681,7 +3864,7 @@ test "policy pruning retains hidden panes and removes a full stale table" {
     try std.testing.expectEqual(request.policy, policy);
 }
 
-test "window base actions preserve every pane offset through real Boundary" {
+test "window base actions preserve every pane offset through real State" {
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
         std.testing.allocator,
@@ -4569,7 +4752,7 @@ fn physicalPlanForBase(
     );
 }
 
-fn waitFeedback(boundary: *window_render_boundary.Boundary) !window_render_boundary.Feedback {
+fn waitFeedback(boundary: *presentation_state.State) !presentation_state.Feedback {
     var wakes: u8 = 0;
     while (wakes < 8) : (wakes += 1) {
         if (boundary.readFeedback()) |value| return value;
@@ -4579,7 +4762,7 @@ fn waitFeedback(boundary: *window_render_boundary.Boundary) !window_render_bound
     return error.FeedbackTimeout;
 }
 
-fn waitConfigure(boundary: *window_render_boundary.Boundary) !window_render_boundary.SurfaceConfig {
+fn waitConfigure(boundary: *presentation_state.State) !presentation_state.SurfaceConfig {
     var wakes: u8 = 0;
     while (wakes < 32) : (wakes += 1) {
         if (boundary.takeConfigure()) |value| return value;
@@ -4589,7 +4772,7 @@ fn waitConfigure(boundary: *window_render_boundary.Boundary) !window_render_boun
     return error.ConfigureTimeout;
 }
 
-fn waitWindowRing(boundary: *window_render_boundary.Boundary, generation: u64) !void {
+fn waitWindowRing(boundary: *presentation_state.State, generation: u64) !void {
     const absolute = std.math.add(u64, try monotonicNow(), 2_000_000_000) catch
         return error.Clock;
     while (true) {
@@ -4600,12 +4783,12 @@ fn waitWindowRing(boundary: *window_render_boundary.Boundary, generation: u64) !
     }
 }
 
-fn waitReleasePoints(boundary: *window_render_boundary.Boundary, generation: u64, slots: *[window_render_boundary.slot_count]Slot, drm_fd: i32) !void {
+fn waitReleasePoints(boundary: *presentation_state.State, generation: u64, slots: *[presentation_state.slot_count]Slot, drm_fd: i32) !void {
     if (generation == 0) return;
     var wakes: u8 = 0;
     while (wakes < 32) : (wakes += 1) {
         if (boundary.releaseFacts(generation)) |retired| {
-            for (0..window_render_boundary.slot_count) |index| {
+            for (0..presentation_state.slot_count) |index| {
                 if ((retired.presented_mask & (@as(u8, 1) << @intCast(index))) != 0) {
                     try waitTimeline(drm_fd, slots[index].release_handle, retired.release_points[index]);
                 }
@@ -4613,7 +4796,10 @@ fn waitReleasePoints(boundary: *window_render_boundary.Boundary, generation: u64
             // Window has made the generation ineligible for any later
             // presentation. Presented slots have completed their release
             // points; unpresented wrappers were never acquired by compositor.
-            for (slots) |*slot| slot.external = false;
+            for (slots) |*slot| {
+                slot.external = false;
+                retireSlotOwnership(slot);
+            }
             return;
         }
         try waitRenderWake(boundary);
@@ -4621,7 +4807,7 @@ fn waitReleasePoints(boundary: *window_render_boundary.Boundary, generation: u64
     return error.ReleaseObservationTimeout;
 }
 
-fn waitWindowRingRetired(boundary: *window_render_boundary.Boundary, generation: u64) !void {
+fn waitWindowRingRetired(boundary: *presentation_state.State, generation: u64) !void {
     if (generation == 0) return;
     var wakes: u8 = 0;
     while (wakes < 32) : (wakes += 1) {
@@ -4631,7 +4817,7 @@ fn waitWindowRingRetired(boundary: *window_render_boundary.Boundary, generation:
     return error.WindowRetirementTimeout;
 }
 
-fn waitRenderWake(boundary: *window_render_boundary.Boundary) !void {
+fn waitRenderWake(boundary: *presentation_state.State) !void {
     var descriptor = std.posix.pollfd{
         .fd = boundary.renderFd(),
         .events = std.posix.POLL.IN,
@@ -4645,7 +4831,7 @@ fn waitRenderWake(boundary: *window_render_boundary.Boundary) !void {
     return error.WakeTimeout;
 }
 
-fn waitRenderWakeUntil(boundary: *window_render_boundary.Boundary, absolute: u64) !bool {
+fn waitRenderWakeUntil(boundary: *presentation_state.State, absolute: u64) !bool {
     var descriptor = std.posix.pollfd{
         .fd = boundary.renderFd(),
         .events = std.posix.POLL.IN,
@@ -4663,7 +4849,7 @@ const RenderWake = struct {
 };
 
 fn waitRenderWakeBlockingUntil(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     terminals: *terminal_handoff.Boundary,
     absolute: ?u64,
 ) !RenderWake {
@@ -4853,7 +5039,7 @@ test "Renderer poll preserves timeout ownership EINTR deadlines and wake classif
         .raster_bytes = 4096,
         .decoration_bytes = 1024,
     };
-    var boundary_only = try window_render_boundary.Boundary.init(std.testing.io);
+    var boundary_only = try presentation_state.State.init(std.testing.io);
     defer boundary_only.deinit();
     var quiet_terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -4870,7 +5056,7 @@ test "Renderer poll preserves timeout ownership EINTR deadlines and wake classif
     try std.testing.expect(!boundary_wake.terminal);
     try std.testing.expect(!boundary_wake.deadline);
 
-    var quiet_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var quiet_boundary = try presentation_state.State.init(std.testing.io);
     defer quiet_boundary.deinit();
     var terminal_only = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -4946,7 +5132,7 @@ fn pointerFoldDisposition(_: session.Error) InputErrorDisposition {
 }
 
 fn drainInput(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     actions: *input_actions.State,
     canvas_work: *CanvasWork,
     topology: *session.SessionState,
@@ -5136,7 +5322,7 @@ const PendingTopology = struct {
     phase: PendingTopologyPhase = .awaiting_admission,
     new_pane: ?render_api.chrome.PaneId,
     new_source: ?render_api.canvas.SourceId,
-    surface: ?window_render_boundary.SurfaceConfig = null,
+    surface: ?presentation_state.SurfaceConfig = null,
     committed: bool = false,
 
     fn observeAdmission(self: *PendingTopology) ?terminal_handoff.AdmissionRejection {
@@ -5177,7 +5363,7 @@ fn prepareTerminalTopology(
     work: *CanvasWork,
     current: *const session.SessionState,
     candidate: *const session.SessionState,
-    surface: ?window_render_boundary.SurfaceConfig,
+    surface: ?presentation_state.SurfaceConfig,
 ) !PendingTopology {
     var operations: [128]terminal_handoff.Lifecycle = undefined;
     var operation_count: usize = 0;
@@ -5278,7 +5464,7 @@ fn prepareTerminalTopology(
 fn prepareInitialTerminalTopology(
     work: *CanvasWork,
     candidate: *const session.SessionState,
-    surface: window_render_boundary.SurfaceConfig,
+    surface: presentation_state.SurfaceConfig,
 ) !PendingTopology {
     const pane = candidate.focusedPaneId();
     const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
@@ -5330,7 +5516,7 @@ fn attemptTopologyReplacement(
     accepted: *const session.SessionState,
     prospective: session.SessionState,
     pending: *?PendingTopology,
-    surface: ?window_render_boundary.SurfaceConfig,
+    surface: ?presentation_state.SurfaceConfig,
 ) !TopologyReplacementDisposition {
     replacePendingTopology(
         work,
@@ -5358,7 +5544,7 @@ fn attemptConfigureReplacement(
     work: *CanvasWork,
     accepted: *const session.SessionState,
     pending: *?PendingTopology,
-    surface: window_render_boundary.SurfaceConfig,
+    surface: presentation_state.SurfaceConfig,
 ) !TopologyReplacementDisposition {
     var candidate_chrome = if (pending.*) |value|
         value.candidate.state
@@ -5499,7 +5685,7 @@ fn replacePendingTopology(
     accepted: *const session.SessionState,
     prospective: session.SessionState,
     pending: *?PendingTopology,
-    surface: ?window_render_boundary.SurfaceConfig,
+    surface: ?presentation_state.SurfaceConfig,
 ) !void {
     const requirements = preflightTerminalTopology(accepted, &prospective) catch |failure| {
         return failure;
@@ -6114,7 +6300,7 @@ test "deferred topology retry has one fixed allocation-free value" {
 }
 
 test "drainInput forwards capture overflow press and release explicitly" {
-    var input_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var input_boundary = try presentation_state.State.init(std.testing.io);
     defer input_boundary.deinit();
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -6292,7 +6478,7 @@ test "drainInput candidate dispositions are exhaustive" {
 }
 
 test "drainInput propagates fatal session candidate invariants" {
-    var input_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var input_boundary = try presentation_state.State.init(std.testing.io);
     defer input_boundary.deinit();
     var terminals = try terminal_handoff.Boundary.init(
         std.testing.io,
@@ -6783,7 +6969,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
-    var window_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var window_boundary = try presentation_state.State.init(std.testing.io);
     defer window_boundary.deinit();
     try window_boundary.publishConfigure(
         96,
@@ -6796,7 +6982,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
         1,
         false,
     );
-    var retained_configure: ?window_render_boundary.SurfaceConfig = window_boundary.takeConfigure();
+    var retained_configure: ?presentation_state.SurfaceConfig = window_boundary.takeConfigure();
     work.terminal_font_policy = try terminal_handoff.FontPolicy.init(16.0);
     work.terminal_scale = null;
     work.font_request_high_water = 0;
@@ -6884,7 +7070,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     pending = null;
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
 
-    const invalid_surface = window_render_boundary.SurfaceConfig{
+    const invalid_surface = presentation_state.SurfaceConfig{
         .generation = 3,
         .logical_width = 0,
         .logical_height = 0,
@@ -6961,7 +7147,7 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
     try std.testing.expectEqualDeep(accepted_bytes, accepted);
 
     terminals.shutdown();
-    const fatal_surface = window_render_boundary.SurfaceConfig{
+    const fatal_surface = presentation_state.SurfaceConfig{
         .generation = 4,
         .logical_width = 96,
         .logical_height = 48,
@@ -7041,7 +7227,7 @@ test "owner retirement wakes and progresses one retained topology input" {
     work.surface = .{ .width = 80, .height = 48 };
     work.content_origin = .{ .y = 24 };
     var pending: ?PendingTopology = null;
-    var window_boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var window_boundary = try presentation_state.State.init(std.testing.io);
     defer window_boundary.deinit();
     try window_boundary.publishConfigure(
         80,
@@ -7054,7 +7240,7 @@ test "owner retirement wakes and progresses one retained topology input" {
         1,
         false,
     );
-    var retained_configure: ?window_render_boundary.SurfaceConfig =
+    var retained_configure: ?presentation_state.SurfaceConfig =
         window_boundary.takeConfigure();
     var deferred: ?DeferredTopologyInput = .{ .action = .split_vertical };
     try std.testing.expectEqual(
@@ -7685,7 +7871,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
         .removals = &.{},
         .commands = &.{terminal_command},
     });
-    for (0..window_render_boundary.slot_count) |_| {
+    for (0..presentation_state.slot_count) |_| {
         const replacement_plan = try buildAcceptedCanvasPlan(&work);
         try std.testing.expect(replacement_plan.commands.len != 0);
         residency.discard();
@@ -8490,11 +8676,14 @@ test "compact resource adaptation preserves local and shared namespaces mechanic
 
 fn panePixelsLocal(rect: session.Rect) error{InvalidTopology}!render_api.canvas.Size {
     if (rect.width == 0 or rect.height == 0) return error.InvalidTopology;
-    return .{ .width = rect.width, .height = rect.height };
+    return .{
+        .width = rect.width,
+        .height = rect.height,
+    };
 }
 
 fn redrawChrome(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     topology: *session.SessionState,
     canvas_work: *CanvasWork,
     appearance: session_chrome_adapter.Appearance,
@@ -8505,7 +8694,7 @@ fn redrawChrome(
     queue: vk.VkQueue,
     family: u32,
     command: vk.VkCommandBuffer,
-    slots: *[window_render_boundary.slot_count]Slot,
+    slots: *[presentation_state.slot_count]Slot,
     generation: u64,
     dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
     drm_fd: i32,
@@ -8606,9 +8795,8 @@ fn redrawChrome(
         drm_fd,
         canvas_work.replay.acceptedSlot(),
     );
-    if (!boundary.canPublishCompletion(generation))
-        return error.CompletionUnavailable;
     const slot = &slots[slot_index];
+    try beginSlotRendering(slot);
     const acquire_point = next_acquire_point.*;
     const following_acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
     const release_point = std.math.add(u64, slot.release_point, 1) catch return error.RevisionOverflow;
@@ -8638,25 +8826,30 @@ fn redrawChrome(
     // The candidate bytes were used only for this synchronous recording.  Do
     // not let a cursor-bearing presentation become the next replay base.
     canvas_work.replay.restoreCandidateBase(composer_plan);
-    const completion = window_render_boundary.Completion{
+    const ready_frame = presentation_state.ReadyFrame{
         .generation = generation,
         .revision = acquire_point,
         .slot = @intCast(slot_index),
         .acquire_point = acquire_point,
         .release_point = release_point,
     };
-    var prepared_completion = try boundary.prepareCompletions(&.{completion});
-    defer prepared_completion.deinit();
     if (pending) |value| {
         try commitPendingTopology(topology, value);
         if (bootstrap_publication) |*publication|
             publication.commit(canvas_work);
     }
-    prepared_completion.commit();
+    slot.release_point = release_point;
+    try publishLatestReadyFrame(
+        boundary,
+        slots,
+        slot_index,
+        .ordinary_redraw,
+        ready_frame,
+        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
+    );
     canvas_work.replay.commit(slot_index);
     candidate_guard.disarm();
     if (accepted_cursor_color) |color| canvas_work.accepted_cursor_color = color;
-    slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
     return .published;
 }
@@ -8665,12 +8858,12 @@ fn redrawChrome(
 /// terminal Content. The accepted replay cohort remains authoritative until
 /// completion preparation commits the replacement ring candidate.
 fn replayCursorFrame(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     work: *CanvasWork,
     pending: *?terminal_handoff.CursorPublication,
     focused_source: ?render_api.canvas.SourceId,
     trail_only: bool,
-    slots: *[window_render_boundary.slot_count]Slot,
+    slots: *[presentation_state.slot_count]Slot,
     generation: u64,
     graphics: *vk_surface.Context,
     device: vk.VkDevice,
@@ -8763,7 +8956,6 @@ fn replayCursorFrame(
     );
     work.replay.pending = true;
     errdefer work.replay.discard();
-    if (!boundary.canPublishCompletion(generation)) return .blocked;
     const slot = &slots[slot_index];
     const acquire_point = next_acquire_point.*;
     const following_acquire_point = try std.math.add(u64, acquire_point, 1);
@@ -8781,7 +8973,7 @@ fn replayCursorFrame(
     // A preview-driven cursor burst can publish another target while this
     // candidate is being prepared.  Revalidate at the last point before
     // physical submission so an older target is never presented when the
-    // newer one is already waiting in the Boundary inbox: transfer that
+    // newer one is already waiting in the State inbox: transfer that
     // exact latest publication to the local pending slot and retry without a
     // terminal wake or a full Content/Pool/Composer rebuild.
     if (!trail_only and takeNewerCursorReplay(
@@ -8792,6 +8984,7 @@ fn replayCursorFrame(
         work.replay.discard();
         return .retry;
     }
+    try beginSlotRendering(slot);
     render(
         graphics,
         device,
@@ -8814,24 +9007,26 @@ fn replayCursorFrame(
     // accepted.  The presented candidate remains owned by the ring slot; the
     // replay cohort stays a stable base for the next cursor-only update.
     work.replay.restoreCandidateBase(base);
-    const completion = window_render_boundary.Completion{
+    const ready_frame = presentation_state.ReadyFrame{
         .generation = generation,
         .revision = acquire_point,
         .slot = @intCast(slot_index),
         .acquire_point = acquire_point,
         .release_point = release_point,
     };
-    // Submission has already occurred.  A completion reservation failure is
-    // therefore a non-retryable owner failure; retrying would submit the same
-    // physical slot twice without a tracked completion.
-    var prepared = boundary.prepareCompletions(&.{completion}) catch |failure| {
-        std.debug.assert(
-            classifyReplayCompletionFailure(failure) == .fatal,
-        );
+    // Submission has already occurred. Shared publication failure is fatal;
+    // retrying would submit the same physical slot twice without ownership.
+    slot.release_point = release_point;
+    publishLatestReadyFrame(
+        boundary,
+        slots,
+        slot_index,
+        .cursor_replay,
+        ready_frame,
+        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
+    ) catch |failure| {
         return failure;
     };
-    defer prepared.deinit();
-    prepared.commit();
     commitCursorReplayAcceptance(
         work,
         publication,
@@ -9038,24 +9233,699 @@ test "focused cursor handoff drops A and accepts B without a terminal wake" {
     try std.testing.expectEqual(publication_b, pending.?);
 }
 
+fn beginSlotRendering(slot: *Slot) error{InvalidFrame}!void {
+    if (slot.ownership != .reusable) return error.InvalidFrame;
+    slot.ownership = .rendering;
+    slot.submitted_acquire_point = 0;
+}
+
+fn fatalSlotOwnership(ownership: SlotOwnership) bool {
+    return switch (ownership) {
+        .submitted_render_fatal,
+        .unpublished_reclaim_fatal,
+        .superseded_reclaim_fatal,
+        .submitted_unpublished_fatal,
+        => true,
+        else => false,
+    };
+}
+
+fn retireSlotOwnership(slot: *Slot) void {
+    if (!fatalSlotOwnership(slot.ownership)) slot.ownership = .reusable;
+}
+
+const RenderAttempt = struct {
+    slot: *Slot,
+    acquire_point: u64,
+    submitted: bool = false,
+    complete: bool = false,
+
+    fn init(slot: *Slot, acquire_point: u64) error{InvalidFrame}!RenderAttempt {
+        if (slot.ownership != .rendering or acquire_point == 0)
+            return error.InvalidFrame;
+        return .{ .slot = slot, .acquire_point = acquire_point };
+    }
+
+    fn markSubmitted(self: *RenderAttempt) void {
+        std.debug.assert(!self.submitted and !self.complete);
+        self.submitted = true;
+        self.slot.submitted_acquire_point = self.acquire_point;
+    }
+
+    fn succeed(self: *RenderAttempt) void {
+        std.debug.assert(self.submitted and !self.complete);
+        self.complete = true;
+    }
+
+    fn fail(self: *RenderAttempt) void {
+        if (self.complete) return;
+        self.slot.ownership = if (self.submitted)
+            .submitted_render_fatal
+        else
+            .reusable;
+        if (!self.submitted) self.slot.submitted_acquire_point = 0;
+        self.complete = true;
+    }
+};
+
+const ReclaimAttempt = struct {
+    slot: *Slot,
+    fatal: SlotOwnership,
+    complete: bool = false,
+
+    fn init(
+        slot: *Slot,
+        reclaiming: SlotOwnership,
+        fatal: SlotOwnership,
+    ) error{InvalidFrame}!ReclaimAttempt {
+        if (slot.ownership != reclaiming or fatalSlotOwnership(reclaiming) or
+            !fatalSlotOwnership(fatal))
+            return error.InvalidFrame;
+        return .{ .slot = slot, .fatal = fatal };
+    }
+
+    fn succeed(self: *ReclaimAttempt) void {
+        std.debug.assert(!self.complete);
+        self.slot.ownership = .reusable;
+        self.slot.submitted_acquire_point = 0;
+        self.complete = true;
+    }
+
+    fn fail(self: *ReclaimAttempt) void {
+        if (self.complete) return;
+        self.slot.ownership = self.fatal;
+        self.complete = true;
+    }
+};
+
+fn reclaimNeverPresented(
+    drm_fd: i32,
+    acquire_handle: u32,
+    slot: *Slot,
+    acquire_point: u64,
+    release_point: u64,
+    reclaiming: SlotOwnership,
+    fatal: SlotOwnership,
+) !void {
+    return reclaimNeverPresentedWith(
+        PhysicalReclaimOps,
+        drm_fd,
+        acquire_handle,
+        slot,
+        acquire_point,
+        release_point,
+        reclaiming,
+        fatal,
+    );
+}
+
+const PhysicalReclaimOps = struct {
+    fn transfer(
+        drm_fd: i32,
+        release_handle: u32,
+        release_point: u64,
+        acquire_handle: u32,
+        acquire_point: u64,
+    ) !void {
+        if (c.drmSyncobjTransfer(
+            drm_fd,
+            release_handle,
+            release_point,
+            acquire_handle,
+            acquire_point,
+            0,
+        ) != 0) return error.Syncobj;
+    }
+
+    fn waitAvailable(drm_fd: i32, handle: u32, point: u64) !void {
+        var handles = [_]u32{handle};
+        var points = [_]u64{point};
+        const flags = c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT |
+            c.DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE;
+        if (c.drmSyncobjTimelineWait(
+            drm_fd,
+            &handles,
+            &points,
+            1,
+            try deadline(),
+            flags,
+            null,
+        ) != 0) return error.ReleaseAvailability;
+    }
+
+    fn waitComplete(drm_fd: i32, handle: u32, point: u64) !void {
+        var handles = [_]u32{handle};
+        var points = [_]u64{point};
+        if (c.drmSyncobjTimelineWait(
+            drm_fd,
+            &handles,
+            &points,
+            1,
+            try deadline(),
+            0,
+            null,
+        ) != 0) return error.ReleaseCompletion;
+    }
+};
+
+fn reclaimNeverPresentedWith(
+    comptime Ops: type,
+    drm_fd: i32,
+    acquire_handle: u32,
+    slot: *Slot,
+    acquire_point: u64,
+    release_point: u64,
+    reclaiming: SlotOwnership,
+    fatal: SlotOwnership,
+) !void {
+    var attempt = try ReclaimAttempt.init(slot, reclaiming, fatal);
+    errdefer attempt.fail();
+    if (!slot.external or acquire_point == 0 or release_point == 0 or
+        slot.release_handle == 0)
+        return error.InvalidFrame;
+
+    // render() released the image to VK_QUEUE_FAMILY_EXTERNAL and copied its
+    // completion into the Render-owned acquire timeline.  A frame which was
+    // never taken by Window has no compositor release point.  Transfer that
+    // exact Render completion into the slot's release timeline so the next
+    // Vulkan submission can import a real completed fence while reacquiring
+    // external ownership.  This is Render reclamation, not a fabricated
+    // compositor release fact.
+    try Ops.transfer(
+        drm_fd,
+        slot.release_handle,
+        release_point,
+        acquire_handle,
+        acquire_point,
+    );
+    try Ops.waitAvailable(drm_fd, slot.release_handle, release_point);
+    try Ops.waitComplete(drm_fd, slot.release_handle, release_point);
+    attempt.succeed();
+}
+
+fn discardUnpublishedInitialization(
+    drm_fd: i32,
+    acquire_handle: u32,
+    slot: *Slot,
+    acquire_point: u64,
+) !void {
+    if (slot.ownership != .rendering) return error.InvalidFrame;
+    slot.ownership = .unpublished_reclaiming;
+    try reclaimNeverPresented(
+        drm_fd,
+        acquire_handle,
+        slot,
+        acquire_point,
+        slot.release_point,
+        .unpublished_reclaiming,
+        .unpublished_reclaim_fatal,
+    );
+}
+
+const ReadyProducer = enum {
+    startup,
+    replacement,
+    ordinary_redraw,
+    cursor_replay,
+};
+
+const ReclaimContext = struct {
+    drm_fd: i32,
+    acquire_handle: u32,
+};
+
+fn publishLatestReadyFrame(
+    state: *presentation_state.State,
+    slots: *[presentation_state.slot_count]Slot,
+    slot_index: usize,
+    producer: ReadyProducer,
+    frame: presentation_state.ReadyFrame,
+    reclaim: ?ReclaimContext,
+) !void {
+    std.debug.assert(@backingInt(producer) < 4);
+    if (slot_index >= slots.len or frame.slot != slot_index or
+        slots[slot_index].ownership != .rendering)
+        return error.InvalidFrame;
+    var prior_latest: ?usize = null;
+    for (slots, 0..) |slot, index| {
+        if (slot.ownership == .latest_ready_frame) {
+            if (prior_latest != null) return error.InvalidFrame;
+            prior_latest = index;
+        }
+    }
+    const superseded = state.updateLatestReadyFrame(frame) catch |failure| {
+        slots[slot_index].ownership = .submitted_unpublished_fatal;
+        return failure;
+    };
+    slots[slot_index].ownership = .latest_ready_frame;
+    if (superseded) |old| {
+        if (old.slot >= slots.len or prior_latest != old.slot or
+            slots[old.slot].release_point != old.release_point)
+            return error.InvalidFrame;
+        slots[old.slot].ownership = .superseded_reclaiming;
+        if (reclaim) |physical| {
+            try reclaimNeverPresented(
+                physical.drm_fd,
+                physical.acquire_handle,
+                &slots[old.slot],
+                old.acquire_point,
+                old.release_point,
+                .superseded_reclaiming,
+                .superseded_reclaim_fatal,
+            );
+        } else slots[old.slot].ownership = .reusable;
+    } else if (prior_latest) |old| {
+        slots[old].ownership = .window_taken;
+    }
+}
+
+fn cancelLatestReadyFrame(
+    state: *presentation_state.State,
+    slots: *[presentation_state.slot_count]Slot,
+    cancellation: presentation_state.Cancellation,
+    reclaim: ?ReclaimContext,
+) !void {
+    var prior_latest: ?usize = null;
+    for (slots, 0..) |slot, index| {
+        if (slot.ownership == .latest_ready_frame) {
+            if (prior_latest != null) return error.InvalidFrame;
+            prior_latest = index;
+        }
+    }
+    const cancelled = state.cancelLatestReadyFrame(cancellation);
+    if (cancelled) |frame| {
+        if (frame.slot >= slots.len or prior_latest != frame.slot or
+            slots[frame.slot].release_point != frame.release_point)
+            return error.InvalidFrame;
+        slots[frame.slot].ownership = .superseded_reclaiming;
+        if (reclaim) |physical| {
+            try reclaimNeverPresented(
+                physical.drm_fd,
+                physical.acquire_handle,
+                &slots[frame.slot],
+                frame.acquire_point,
+                frame.release_point,
+                .superseded_reclaiming,
+                .superseded_reclaim_fatal,
+            );
+        } else slots[frame.slot].ownership = .reusable;
+    } else if (prior_latest) |index| {
+        slots[index].ownership = .window_taken;
+    }
+}
+
+fn completeSlotRelease(slot: *Slot) error{InvalidFrame}!void {
+    if (slot.ownership != .window_taken and
+        slot.ownership != .compositor_owned and
+        slot.ownership != .latest_ready_frame)
+        return error.InvalidFrame;
+    slot.ownership = .reusable;
+}
+
+const InjectedRenderBoundary = enum {
+    stage,
+    reset_command,
+    begin_command,
+    record,
+    end_command,
+    create_completion_semaphore,
+    queue_submit,
+    export_completion_fd,
+    create_temporary_syncobj,
+    import_completion_fd,
+    wait_render_completion,
+    complete_residency,
+    transfer_acquire_point,
+    wait_acquire_available,
+    wait_acquire_complete,
+};
+
+fn injectedRenderOwnership(
+    boundary: InjectedRenderBoundary,
+) SlotOwnership {
+    var slot = Slot{ .ownership = .rendering };
+    var attempt = RenderAttempt.init(&slot, 9) catch unreachable;
+    switch (boundary) {
+        .stage,
+        .reset_command,
+        .begin_command,
+        .record,
+        .end_command,
+        .create_completion_semaphore,
+        .queue_submit,
+        => {},
+        .export_completion_fd,
+        .create_temporary_syncobj,
+        .import_completion_fd,
+        .wait_render_completion,
+        .complete_residency,
+        .transfer_acquire_point,
+        .wait_acquire_available,
+        .wait_acquire_complete,
+        => attempt.markSubmitted(),
+    }
+    attempt.fail();
+    return slot.ownership;
+}
+
+test "render failure ownership is exact at every submission boundary" {
+    inline for (@typeInfo(InjectedRenderBoundary).@"enum".field_names, 0..) |_, index| {
+        const boundary: InjectedRenderBoundary = @fromBackingInt(@intCast(index));
+        const expected: SlotOwnership = switch (boundary) {
+            .stage,
+            .reset_command,
+            .begin_command,
+            .record,
+            .end_command,
+            .create_completion_semaphore,
+            .queue_submit,
+            => .reusable,
+            else => .submitted_render_fatal,
+        };
+        try std.testing.expectEqual(expected, injectedRenderOwnership(boundary));
+    }
+}
+
+const InjectedReclaimBoundary = enum {
+    transfer_release_point,
+    wait_release_available,
+    wait_release_complete,
+};
+
+const InjectedReclaimOwner = enum { supersession, cancellation };
+
+fn FailingReclaimOps(comptime failure: InjectedReclaimBoundary) type {
+    return struct {
+        fn transfer(_: i32, _: u32, _: u64, _: u32, _: u64) !void {
+            if (failure == .transfer_release_point) return error.Injected;
+        }
+
+        fn waitAvailable(_: i32, _: u32, _: u64) !void {
+            if (failure == .wait_release_available) return error.Injected;
+        }
+
+        fn waitComplete(_: i32, _: u32, _: u64) !void {
+            if (failure == .wait_release_complete) return error.Injected;
+        }
+    };
+}
+
+test "every superseded and cancellation reclaim boundary is fatal" {
+    inline for (@typeInfo(InjectedReclaimBoundary).@"enum".field_names, 0..) |_, index| {
+        const boundary: InjectedReclaimBoundary = @fromBackingInt(@intCast(index));
+        inline for ([_]InjectedReclaimOwner{ .supersession, .cancellation }) |_| {
+            var slot = Slot{
+                .release_handle = 1,
+                .external = true,
+                .ownership = .superseded_reclaiming,
+                .submitted_acquire_point = 11,
+                .release_point = 5,
+            };
+            try std.testing.expectError(error.Injected, reclaimNeverPresentedWith(
+                FailingReclaimOps(boundary),
+                -1,
+                1,
+                &slot,
+                11,
+                5,
+                .superseded_reclaiming,
+                .superseded_reclaim_fatal,
+            ));
+            try std.testing.expectEqual(
+                SlotOwnership.superseded_reclaim_fatal,
+                slot.ownership,
+            );
+            try std.testing.expectEqual(@as(u64, 11), slot.submitted_acquire_point);
+            try std.testing.expectEqual(@as(u64, 5), slot.release_point);
+        }
+    }
+}
+
+test "superseded and cancellation reclaim failures preserve coherent fatal identities" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    var slots: [presentation_state.slot_count]Slot = .{ .{}, .{}, .{} };
+    try beginSlotRendering(&slots[0]);
+    slots[0].release_point = 3;
+    slots[0].submitted_acquire_point = 7;
+    try publishLatestReadyFrame(&shared, &slots, 0, .ordinary_redraw, .{
+        .generation = 1,
+        .revision = 7,
+        .slot = 0,
+        .acquire_point = 7,
+        .release_point = 3,
+    }, null);
+
+    try beginSlotRendering(&slots[1]);
+    slots[1].release_point = 4;
+    slots[1].submitted_acquire_point = 8;
+    const old = (try shared.updateLatestReadyFrame(.{
+        .generation = 1,
+        .revision = 8,
+        .slot = 1,
+        .acquire_point = 8,
+        .release_point = 4,
+    })).?;
+    slots[1].ownership = .latest_ready_frame;
+    slots[old.slot].ownership = .superseded_reclaiming;
+    var superseded = try ReclaimAttempt.init(
+        &slots[old.slot],
+        .superseded_reclaiming,
+        .superseded_reclaim_fatal,
+    );
+    superseded.fail();
+    try std.testing.expectEqual(
+        SlotOwnership.latest_ready_frame,
+        slots[1].ownership,
+    );
+    try std.testing.expectEqual(
+        SlotOwnership.superseded_reclaim_fatal,
+        slots[0].ownership,
+    );
+    try std.testing.expectEqual(@as(u64, 7), slots[0].submitted_acquire_point);
+
+    const cancelled = shared.cancelLatestReadyFrame(.shutdown).?;
+    slots[cancelled.slot].ownership = .superseded_reclaiming;
+    var cancellation = try ReclaimAttempt.init(
+        &slots[cancelled.slot],
+        .superseded_reclaiming,
+        .superseded_reclaim_fatal,
+    );
+    cancellation.fail();
+    try std.testing.expect(shared.takeLatestReadyFrame() == null);
+    try std.testing.expectEqual(
+        SlotOwnership.superseded_reclaim_fatal,
+        slots[1].ownership,
+    );
+    try std.testing.expectEqual(@as(u64, 8), slots[1].submitted_acquire_point);
+}
+
+test "shutdown preserves every fatal slot identity without fabricated release" {
+    const fatal_states = [_]SlotOwnership{
+        .submitted_render_fatal,
+        .unpublished_reclaim_fatal,
+        .superseded_reclaim_fatal,
+        .submitted_unpublished_fatal,
+    };
+    for (fatal_states, 1..) |fatal, point| {
+        var slot = Slot{
+            .ownership = fatal,
+            .submitted_acquire_point = point,
+            .release_point = point + 10,
+        };
+        retireSlotOwnership(&slot);
+        try std.testing.expectEqual(fatal, slot.ownership);
+        try std.testing.expectEqual(point, slot.submitted_acquire_point);
+        try std.testing.expectEqual(point + 10, slot.release_point);
+    }
+}
+
+test "P003 P005 P006 P007 slot reuse is supersession or exact release owned" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    var slots: [presentation_state.slot_count]Slot = .{ .{}, .{}, .{} };
+    try beginSlotRendering(&slots[0]);
+    slots[0].release_point = 1;
+    try publishLatestReadyFrame(&shared, &slots, 0, .ordinary_redraw, .{
+        .generation = 1,
+        .revision = 1,
+        .slot = 0,
+        .acquire_point = 1,
+        .release_point = 1,
+    }, null);
+    try beginSlotRendering(&slots[1]);
+    slots[1].release_point = 1;
+    try publishLatestReadyFrame(&shared, &slots, 1, .cursor_replay, .{
+        .generation = 1,
+        .revision = 2,
+        .slot = 1,
+        .acquire_point = 2,
+        .release_point = 1,
+    }, null);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[0].ownership);
+    try std.testing.expectEqual(SlotOwnership.latest_ready_frame, slots[1].ownership);
+    try std.testing.expectEqual(@as(u64, 2), shared.takeLatestReadyFrame().?.revision);
+    try cancelLatestReadyFrame(&shared, &slots, .shutdown, null);
+    try std.testing.expectEqual(SlotOwnership.window_taken, slots[1].ownership);
+    slots[1].ownership = .compositor_owned;
+    try completeSlotRelease(&slots[1]);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[1].ownership);
+}
+
+test "P006 real DRM timelines reclaim never-presented work without compositor facts" {
+    const drm_fd = openRenderNode(226, 128) catch return error.SkipZigTest;
+    defer closeDescriptor(drm_fd);
+    var acquire_handle: u32 = 0;
+    if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0)
+        return error.SkipZigTest;
+    defer destroySyncobj(drm_fd, acquire_handle);
+    var release_handle: u32 = 0;
+    if (c.drmSyncobjCreate(drm_fd, 0, &release_handle) != 0)
+        return error.SkipZigTest;
+    defer destroySyncobj(drm_fd, release_handle);
+
+    var handles = [_]u32{acquire_handle};
+    var points = [_]u64{7};
+    if (c.drmSyncobjTimelineSignal(drm_fd, &handles, &points, 1) != 0)
+        return error.SkipZigTest;
+    var slot = Slot{
+        .release_handle = release_handle,
+        .external = true,
+        .release_point = 3,
+        .ownership = .unpublished_reclaiming,
+    };
+    try reclaimNeverPresented(
+        drm_fd,
+        acquire_handle,
+        &slot,
+        7,
+        3,
+        .unpublished_reclaiming,
+        .unpublished_reclaim_fatal,
+    );
+    try std.testing.expectEqual(SlotOwnership.reusable, slot.ownership);
+    try std.testing.expect(try timelineReady(drm_fd, release_handle, 3));
+    try std.testing.expect(!try timelineReady(drm_fd, release_handle, 4));
+}
+
+test "P008 P016 initialization exposes only the fourth product frame" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    var slots: [presentation_state.slot_count]Slot = .{ .{}, .{}, .{} };
+    for (&slots) |*slot| {
+        try beginSlotRendering(slot);
+        slot.release_point = 1;
+        slot.ownership = .reusable;
+    }
+    try beginSlotRendering(&slots[0]);
+    slots[0].release_point = 2;
+    try publishLatestReadyFrame(&shared, &slots, 0, .replacement, .{
+        .generation = 1,
+        .revision = 4,
+        .slot = 0,
+        .acquire_point = 4,
+        .release_point = 2,
+    }, null);
+    try std.testing.expectEqual(SlotOwnership.latest_ready_frame, slots[0].ownership);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[1].ownership);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[2].ownership);
+    try std.testing.expectEqual(@as(u64, 4), shared.takeLatestReadyFrame().?.revision);
+}
+
+test "P015 post-submit publication failure is fatal ownership" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    shared.requestStop(.render);
+    var slots: [presentation_state.slot_count]Slot = .{ .{}, .{}, .{} };
+    try beginSlotRendering(&slots[0]);
+    slots[0].release_point = 1;
+    try std.testing.expectError(error.Stopping, publishLatestReadyFrame(
+        &shared,
+        &slots,
+        0,
+        .ordinary_redraw,
+        .{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 },
+        null,
+    ));
+    try std.testing.expectEqual(
+        SlotOwnership.submitted_unpublished_fatal,
+        slots[0].ownership,
+    );
+}
+
+test "P009 replacement and shutdown preserve every retained slot ownership" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    var slots: [presentation_state.slot_count]Slot = .{ .{}, .{}, .{} };
+    try beginSlotRendering(&slots[0]);
+    slots[0].release_point = 1;
+    try publishLatestReadyFrame(&shared, &slots, 0, .startup, .{
+        .generation = 1,
+        .revision = 1,
+        .slot = 0,
+        .acquire_point = 1,
+        .release_point = 1,
+    }, null);
+    try cancelLatestReadyFrame(&shared, &slots, .{ .generation = 1 }, null);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[0].ownership);
+    slots[0].ownership = .window_taken;
+    try cancelLatestReadyFrame(&shared, &slots, .shutdown, null);
+    try std.testing.expectEqual(SlotOwnership.window_taken, slots[0].ownership);
+    slots[0].ownership = .compositor_owned;
+    try completeSlotRelease(&slots[0]);
+    try std.testing.expectEqual(SlotOwnership.reusable, slots[0].ownership);
+    slots[1].ownership = .submitted_unpublished_fatal;
+    try std.testing.expectEqual(
+        SlotOwnership.submitted_unpublished_fatal,
+        slots[1].ownership,
+    );
+}
+
+test "P011 every rendered producer names one latest-ready protocol" {
+    const names = @typeInfo(ReadyProducer).@"enum".field_names;
+    try std.testing.expectEqual(@as(usize, 4), names.len);
+    try std.testing.expectEqualStrings("startup", names[0]);
+    try std.testing.expectEqualStrings("replacement", names[1]);
+    try std.testing.expectEqualStrings("ordinary_redraw", names[2]);
+    try std.testing.expectEqualStrings("cursor_replay", names[3]);
+}
+
 fn releasedSlot(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     generation: u64,
-    slots: *[window_render_boundary.slot_count]Slot,
+    slots: *[presentation_state.slot_count]Slot,
     drm_fd: i32,
     excluded_slot: ?usize,
 ) !usize {
+    for (slots, 0..) |slot, index| {
+        if (excluded_slot == index) continue;
+        if (slot.ownership == .reusable) return index;
+    }
     const facts = boundary.releaseFacts(generation) orelse return error.NoReleasedSlot;
     var first_candidate: ?usize = null;
-    for (0..window_render_boundary.slot_count) |index| {
+    for (0..presentation_state.slot_count) |index| {
         if (excluded_slot == index) continue;
+        if (slots[index].ownership != .window_taken and
+            slots[index].ownership != .compositor_owned and
+            slots[index].ownership != .latest_ready_frame)
+            continue;
         const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(index))) != 0;
         if (!presented or facts.release_points[index] != slots[index].release_point) continue;
+        slots[index].ownership = .compositor_owned;
         if (first_candidate == null) first_candidate = index;
-        if (try timelineReady(drm_fd, slots[index].release_handle, slots[index].release_point)) return index;
+        if (try timelineReady(drm_fd, slots[index].release_handle, slots[index].release_point)) {
+            try completeSlotRelease(&slots[index]);
+            return index;
+        }
     }
     const index = first_candidate orelse return error.NoReleasedSlot;
     try waitTimeline(drm_fd, slots[index].release_handle, slots[index].release_point);
+    try completeSlotRelease(&slots[index]);
     return index;
 }
 
@@ -9063,10 +9933,10 @@ fn releasedSlot(
 /// is available. Until then both fixed roles remain occupied and no candidate
 /// may overwrite the old frame's command or resource-generation pins.
 fn releaseReplayRetirementIfReady(
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     replay: *ReplayState,
     generation: u64,
-    slots: *[window_render_boundary.slot_count]Slot,
+    slots: *[presentation_state.slot_count]Slot,
     drm_fd: i32,
 ) !bool {
     const retiring_slot = replay.retiring_slot orelse return true;
@@ -9080,8 +9950,8 @@ fn releaseReplayRetirementIfReady(
 
 fn retiringSlotReady(
     replay: *const ReplayState,
-    facts: window_render_boundary.RetiredRing,
-    slots: *const [window_render_boundary.slot_count]Slot,
+    facts: presentation_state.RetiredRing,
+    slots: *const [presentation_state.slot_count]Slot,
 ) ?usize {
     const slot = replay.retiring_slot orelse return null;
     const presented = (facts.presented_mask & (@as(u8, 1) << @intCast(slot))) != 0;
@@ -9239,12 +10109,12 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     list.pDrmFormatModifierProperties = &values;
     vk.vkGetPhysicalDeviceFormatProperties2(physical, vk.VK_FORMAT_R8G8B8A8_UNORM, &properties);
     for (values[0..list.drmFormatModifierCount]) |value| {
-        if (value.drmFormatModifier == modifier and value.drmFormatModifierPlaneCount > 0 and value.drmFormatModifierPlaneCount <= window_render_boundary.plane_limit) return @intCast(value.drmFormatModifierPlaneCount);
+        if (value.drmFormatModifier == modifier and value.drmFormatModifierPlaneCount > 0 and value.drmFormatModifierPlaneCount <= presentation_state.plane_limit) return @intCast(value.drmFormatModifierPlaneCount);
     }
     return error.Modifier;
 }
 
-fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: window_render_boundary.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *window_render_boundary.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
+fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, surface: presentation_state.SurfaceConfig, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, offer: *presentation_state.SlotOffer, offered_fds: *OfferedFds, gpu_bytes: *u64) !void {
     slot.width = surface.physical_width;
     slot.height = surface.physical_height;
     slot.coordinate_width = surface.logical_width;
@@ -9324,6 +10194,8 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
 }
 
 fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: ?*vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
+    var attempt = try RenderAttempt.init(slot, acquire_point);
+    errdefer attempt.fail();
     errdefer if (residency_commit) |store| store.discard();
     try graphics.stage(
         surface_plan,
@@ -9390,6 +10262,7 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &completion;
     if (vk.vkQueueSubmit(queue, 1, &submit, null) != vk.VK_SUCCESS) return error.Submit;
+    attempt.markSubmitted();
     var fd_info = std.mem.zeroes(vk.VkSemaphoreGetFdInfoKHR);
     fd_info.sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
     fd_info.semaphore = completion;
@@ -9409,6 +10282,7 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;
     slot.clear_color = color;
+    attempt.succeed();
 }
 
 fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {
@@ -9546,7 +10420,7 @@ test "renderer fd and monotonic boundary receipts" {
     try std.testing.expect(!closeSucceeded(std.math.maxInt(usize)));
 }
 
-test "renderer translated boundary census is migrated while DRM remains" {
+test "renderer presentation-state census is migrated while DRM remains" {
     const source = @embedFile("renderer.zig");
     inline for (.{
         "CLOCK_MONOTONIC", "ETIME",       "O_CLOEXEC", "O_RDWR", "clock_gettime", "close", "open", "timespec",

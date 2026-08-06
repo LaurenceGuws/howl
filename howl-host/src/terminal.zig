@@ -78,7 +78,7 @@ const read_calls_per_turn: usize = 4;
 const write_bytes_per_turn: usize = 64 * 1024;
 /// Maximum write syscalls issued for one owner during one fair turn.
 const write_calls_per_turn: usize = 4;
-const projection_cell_limit: usize = 32_768;
+const projection_cell_limit: usize = 65_536;
 const projection_row_limit: usize = 128;
 /// Current one-pane admission shared with PendingSlot and Composer's candidate frame.
 const admitted_commands: usize = 32_768;
@@ -87,7 +87,7 @@ const admitted_commands: usize = 32_768;
 const admitted_resources: usize = 512 + 128 + image_limit;
 /// Current realistic single-pane geometry bound; sparse output remains subject
 /// to the independently checked command/resource limits.
-const admitted_cells: usize = 32_768;
+const admitted_cells: usize = 65_536;
 const image_limit: usize = 8;
 const image_byte_limit: usize = 256 * 1024;
 const terminal_configuration_generation: u64 = 1;
@@ -6300,7 +6300,7 @@ test "over-admission point request rolls back before PTY and later request succe
         pane,
         "/bin/sh",
         "sleep 1",
-        .{ .width = 2390, .height = 1342 },
+        .{ .width = 3200, .height = 1800 },
         .{ .dedicated = &slot },
     );
     const scale = handoff.ScaleSnapshot{

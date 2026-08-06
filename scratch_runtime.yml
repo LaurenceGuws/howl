@@ -1,55 +1,104 @@
 schema: 1
-sprint: measurement_baseline
-active_slice: external_measurement_runner
-status: evidence_only_not_started
+sprint: presentation_state
+active_slice: physical_reclamation_and_startup_runtime_correction
+status: review_accepted_commit_pending
 
-operator_observation:
-  command: >-
-    ../.zig/zig build run -Doptimize=ReleaseFast
-    -Dfont=/usr/share/fonts/TTF/IosevkaTermNerdFont-Regular.ttf
-    -Dcommand='asciinema play ../.zig/work/runtime-hot-path/measurement-baseline/nvim-scroll-input-20260805-215127.cast'
-  result: fixture playback completes but the final pane and Howl remain open
+implemented:
+  shared_module: howl-host/src/presentation_state.zig
+  retained_latest_ready_frames: 1
+  retained_window_catchup_frames: 0
+  monotonic_ready_revision: State.latest_ready_revision
+  atomic_operations:
+    - State.updateLatestReadyFrame
+    - State.takeLatestReadyFrame
+    - State.cancelLatestReadyFrame
+    - State.drainFrameReady
+  Window:
+    - pacing-owned Wayland-only versus Wayland-plus-readiness blocking
+    - stale readiness drain followed by shared-state recheck
+    - wl_surface_commit enters Window presenting
+    - frameDone establishes Window done presenting
+  Render:
+    - explicit rendered-image-slot ownership
+    - exact superseded-frame physical reclamation through Render acquire-to-release timeline transfer
+    - exact release-controlled compositor-owned reuse
+    - fatal submitted-unpublished ownership
+    - shared startup, replacement, ordinary-redraw, and cursor-replay protocol
+    - accepted fourth startup product render after three unpublished physically reclaimed initialization renders
 
-review_finding:
-  first_retained_owner: howl-host/src/terminal.zig Logical.observe
-  fact: Logical.child_exit retains the exact pty.ChildExit
-  missing_progress: no bounded terminal-to-Renderer completion transport exists
-  domain_constraint: SessionState.closeTab preserves its nonempty invariant by creating a replacement main pane
-  conclusion: final Host completion is Renderer policy, not a fabricated empty SessionState
+proofs:
+  shared: howl-host/test/test.zig
+  Window: howl-host/src/window.zig
+  Render: howl-host/src/renderer.zig
+  deterministic_cases: P001-P021
+  layout: .zig/work/runtime-hot-path/presentation-state/layout_receipt.txt
 
-worker_flow:
-  - index the exact child-observation, EOF, publication, lifecycle, and shutdown path
-  - write the ignored finite completion contract before product mutation
-  - continue directly to implementation when no authority contradiction remains
-  - stop only for a genuine unresolved ownership decision
+validation:
+  debug_host_check: passed
+  debug_host_test: passed
+  host_four_mode_check: passed
+  host_four_mode_test: passed
+  workspace_four_mode_check: passed
+  workspace_four_mode_test: passed
+  strict_yaml: passed
+  source_audit: passed
+  protocol_validation: passed
+  formatting: passed
+  source_shape_closure: passed
+  git_diff_check: passed
+  layout_receipt: passed
+  runtime_gate: passed; operator accepted full-window behavior after the 65,536-cell correction
 
-implementation:
-  outcome: >-
-    Terminal publishes one EOF- and final-update-gated completion, Boundary
-    retains exact at-most-once identity through Composer acceptance and owner
-    retirement, and Renderer closes non-final panes transactionally or returns
-    normally for the final pane.
-  product_paths:
-    - howl-host/src/terminal.zig
-    - howl-host/src/terminal_handoff.zig
-    - howl-host/src/renderer.zig
-  retained_memory_bytes: 3072
-  finite_contract: .zig/work/runtime-hot-path/measurement-baseline/finite_child_exit_completion_contract.yml
-  finite_contract_sha256: 90d28bbd92143db653bc480ba789a5a78bb9af998a5c1a708146cf280746a982
-  review: accepted
-  operator_gate: passed; fixture playback completed and Howl exited naturally
+runtime_correction:
+  first_failure: >-
+    Reusing a logically superseded slot exported its unsignaled compositor
+    release syncobj; the subsequent Vulkan queue wait prevented completion and
+    the first observed failing operation was drmSyncobjWait on the exported
+    render-completion sync file, reported as RenderTimeout.
+  physical_protocol: >-
+    Never-presented work transfers its exact completed Render acquire timeline
+    point into the slot release timeline, waits that exact transferred point,
+    and only then becomes Render reusable. No releaseFacts or compositor
+    release is fabricated.
+  startup_protocol: >-
+    The three product-background initialization renders are physically reclaimed
+    without publication. A fourth product-background render is performed in
+    slot 0 and is the only startup latest ready frame. Replacement uses the
+    same four-render physical protocol.
+  scale_one_correction: >-
+    After configure, exact wl_surface.enter membership at output scale one is
+    accepted when a version-6 surface emits no redundant preferred-scale event.
+    Higher deduced output scales still wait for exact preferred integer or
+    fractional facts.
+  scale_one_capacity: >-
+    The reproduced 1910 by 1048 terminal content extent derives 477 by 104 or
+    49,608 cells at four-by-ten six-point metrics. Terminal projection and
+    Content admission retain the full configured surface under one explicit
+    65,536-cell bound; fixture geometry never constrains product rendering.
+  replacement_pending_correction: >-
+    The fourth replacement render now builds and stages its own residency
+    candidate before completion; it no longer calls ResidencyStore.complete
+    after the initialization render already consumed the prior candidate.
+  failure_ownership_correction: >-
+    render() restores reusable only through vkQueueSubmit failure. Every later
+    failure retains its acquire identity in submitted-render-fatal. Shared
+    supersession and cancellation first represent the new shared state and the
+    old superseded-reclaiming slot; physical reclaim failure retains the old
+    identity in superseded-reclaim-fatal without fabricating compositor facts.
+  injected_failure_proofs:
+    pre_submit: every operation from staging through failed queue submission
+    post_submit: every operation after successful queue submission through acquire-timeline completion
+    superseded_reclaim: transfer, availability wait, and completion wait
+    cancellation_reclaim: transfer, availability wait, and completion wait
+    shutdown: every fatal ownership retains acquire and release identity and preserves the first failure
+  evidence:
+    - Debug natural startup with command true exited successfully
+    - ReleaseFast accepted cast exited naturally without Render failure
+    - real DRM syncobj timeline transfer and exact-point proof passed
 
-next_slice:
-  objective: >-
-    Build once in ReleaseFast, then collect comparable external Howl and Kitty
-    process, thread, memory, wakeup, and GPU facts for the exact Neovim cast.
-  product_instrumentation: forbidden_until_external_attribution_is_exhausted
-  implementation: not_started
-
-review_gate:
-  - completion cannot overtake trailing PTY output
-  - one child produces at most one completion fact
-  - a stale completion cannot close a reused physical owner slot or fresh identity
-  - pane closure uses existing topology and lifecycle transactions
-  - final-pane completion exits normally rather than reporting HostFailure
-  - no measurement workaround or unrelated runtime optimization enters the diff
+review_focus:
+  - exactly one latest ready frame
+  - Window pacing remains independent from compositor release
+  - Render cancellation and Window take return each identity at most once
+  - stale presentation-state readiness cannot spin or lose a concurrent update
+  - terminal ownership is unchanged; projection and Content capacity changed explicitly to 65,536 cells

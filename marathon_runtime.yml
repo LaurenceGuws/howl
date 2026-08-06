@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.5-dev
     sprint_pattern: feature/runtime_hot_paths/<sprint>
-  active_sprint: measurement_baseline
+  active_sprint: presentation_state
   objective: >-
     Measure and correct the first unnecessary amplification between exact
     terminal output, semantic mutation, rendering work, GPU submission, and
@@ -31,8 +31,20 @@ workloads:
 
 sprints:
   - id: measurement_baseline
-    status: active
+    status: accepted
     outcome: reproducible workloads, owned process completion, and comparable external CPU/GPU receipts
+  - id: presentation_state
+    status: accepted_commit_pending
+    outcome: one shared latest ready frame observed by the Window-owned Wayland pacing loop without catch-up presentation
+    implementation:
+      shared_owner: howl-host/src/presentation_state.zig presentation_state.State
+      retained_latest_ready_frames: 1
+      retained_window_catchup_frames: 0
+      never_presented_reclamation: exact Render acquire-to-release timeline transfer before reuse
+      startup_presentation: accepted fourth product render only; initialization frames are never Window work
+      scale_one_bootstrap: exact entered-output scale one is accepted after configure without a redundant preferred-scale callback
+      finite_terminal_region: full configured surface at six points within the explicit 65,536-cell bound
+      proof_cases: P001-P021
   - id: update_amplification
     status: pending
     outcome: exact bytes-to-presentation amplification receipt locating the first disproportionate owner

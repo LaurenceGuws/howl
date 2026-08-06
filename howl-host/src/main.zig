@@ -2,7 +2,7 @@
 
 const std = @import("std");
 const renderer = @import("renderer.zig");
-const window_render_boundary = @import("window_render_boundary.zig");
+const presentation_state = @import("presentation_state.zig");
 const terminal_runtime = @import("terminal_runtime");
 const window = @import("window.zig");
 const dev_config = @import("dev_config");
@@ -29,7 +29,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const parsed = try dev_config.parseArguments(args[0..arg_count]);
     const config = try dev_config.loadFile(init.io, init.gpa, parsed.config_path);
     const owner_views = config.ownerViews();
-    var boundary = try window_render_boundary.Boundary.init(init.io);
+    var boundary = try presentation_state.State.init(init.io);
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
     defer terminals.deinit();

@@ -3,7 +3,7 @@
 const std = @import("std");
 const c = @import("howl_wayland").c;
 const wayland = @import("howl_wayland");
-const window_render_boundary = @import("window_render_boundary.zig");
+const presentation_state = @import("presentation_state.zig");
 
 const format_limit: usize = 64;
 const output_limit: usize = 16;
@@ -150,9 +150,20 @@ const ScaleFacts = struct {
             try Rational.init(next.preferred_fractional_120.?, 120)
         else
             next.preferred_integer orelse highest_entered;
+        const preferred_ready = next.preferred_integer != null or
+            next.preferred_fractional_120 != null;
+        // A version-6 wl_surface may omit a distinct preferred-scale event
+        // while it remains at the protocol default of one. Once configure and
+        // wl_surface.enter establish exact output membership at scale one,
+        // that compositor-owned fact is sufficient to leave bootstrap. Higher
+        // deduced integer scales still wait for the preferred integer or
+        // fractional fact so a rounded wl_output scale cannot displace the
+        // compositor's exact transport scale.
+        const entered_default_ready = highest_entered != null and
+            highest_entered.?.eql(.one) and !preferred_ready;
         const ready = next.bootstrap_ready and selected != null and
             (!next.expect_preferred or (next.configure_ready and
-                (next.preferred_integer != null or next.preferred_fractional_120 != null)));
+                (preferred_ready or entered_default_ready)));
         if (selected) |value| {
             next.effective = value;
             next.dpi_x = try next.effective.dpi();
@@ -196,14 +207,14 @@ const Ring = struct {
     logical_height: u32 = 0,
     buffer_scale: u32 = 1,
     use_viewport: bool = false,
-    buffers: [window_render_boundary.slot_count]?*c.wl_buffer = .{ null, null, null },
-    acquire_timelines: [window_render_boundary.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
-    release_timelines: [window_render_boundary.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    buffers: [presentation_state.slot_count]?*c.wl_buffer = .{ null, null, null },
+    acquire_timelines: [presentation_state.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    release_timelines: [presentation_state.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
     presented_mask: u8 = 0,
-    release_points: [window_render_boundary.slot_count]u64 = .{ 0, 0, 0 },
+    release_points: [presentation_state.slot_count]u64 = .{ 0, 0, 0 },
 
     fn deinit(self: *Ring) void {
-        var index = window_render_boundary.slot_count;
+        var index = presentation_state.slot_count;
         while (index > 0) {
             index -= 1;
             if (self.buffers[index]) |value| c.wl_buffer_destroy(value);
@@ -215,7 +226,7 @@ const Ring = struct {
 };
 
 const State = struct {
-    boundary: *window_render_boundary.Boundary,
+    boundary: *presentation_state.State,
     compositor: ?*c.wl_compositor = null,
     xdg: ?*c.xdg_wm_base = null,
     dmabuf: ?*c.zwp_linux_dmabuf_v1 = null,
@@ -255,6 +266,7 @@ const State = struct {
     ring: Ring = .{},
     retiring: ?Ring = null,
     frame_callback: ?*c.wl_callback = null,
+    pacing: WindowPacing = .ready,
     presented_generation: u64 = 0,
     presented: u64 = 0,
     input_ready: bool = false,
@@ -276,7 +288,7 @@ const State = struct {
         for (self.outputs[0..self.output_count]) |output| if (output.object) |value| c.wl_output_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
-        const retired = if (self.ring.generation == 0) null else window_render_boundary.RetiredRing{
+        const retired = if (self.ring.generation == 0) null else presentation_state.RetiredRing{
             .generation = self.ring.generation,
             .presented_mask = self.ring.presented_mask,
             .release_points = self.ring.release_points,
@@ -284,7 +296,7 @@ const State = struct {
         self.ring.deinit();
         if (retired) |fact| self.boundary.markWindowRingRetired(fact);
         if (self.retiring) |*old| {
-            const fact = window_render_boundary.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const fact = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
             self.boundary.markWindowRingRetired(fact);
             self.retiring = null;
@@ -304,9 +316,15 @@ const State = struct {
     }
 };
 
-/// Runs the sole Wayland owner until the window/render Boundary requests retirement.
+const WindowPacing = enum(u8) {
+    ready,
+    presenting,
+    done_presenting,
+};
+
+/// Runs the sole Wayland owner until shared presentation state requests retirement.
 /// All operational failures are recorded as the first Window runtime failure.
-pub fn run(boundary: *window_render_boundary.Boundary) void {
+pub fn run(boundary: *presentation_state.State) void {
     runFallible(boundary) catch |failure| {
         std.debug.print("Window failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.window);
@@ -314,7 +332,7 @@ pub fn run(boundary: *window_render_boundary.Boundary) void {
     boundary.markStopped(.window);
 }
 
-fn runFallible(boundary: *window_render_boundary.Boundary) !void {
+fn runFallible(boundary: *presentation_state.State) !void {
     var state = State{ .boundary = boundary };
     state.xkb_context = wayland.xkb.Context.init() catch return error.Xkb;
     const display = c.wl_display_connect(null) orelse return error.WaylandConnect;
@@ -346,7 +364,7 @@ fn runFallible(boundary: *window_render_boundary.Boundary) !void {
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
     if (c.xdg_toplevel_add_listener(state.toplevel.?, &toplevel_listener, &state) != 0) return error.Listener;
     c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan ring");
-    c.xdg_toplevel_set_min_size(state.toplevel.?, window_render_boundary.surface_min, window_render_boundary.surface_min);
+    c.xdg_toplevel_set_min_size(state.toplevel.?, presentation_state.surface_min, presentation_state.surface_min);
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
     if (state.configured_width == 0) state.configured_width = 640;
@@ -358,31 +376,37 @@ fn runFallible(boundary: *window_render_boundary.Boundary) !void {
     if (display_fd < 0) return error.Dispatch;
     while (!boundary.shouldStop()) {
         if (state.retiring) |*old| if (boundary.takeWindowRingRetirementRequest(old.generation)) {
-            const fact = window_render_boundary.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
+            const fact = presentation_state.RetiredRing{ .generation = old.generation, .presented_mask = old.presented_mask, .release_points = old.release_points };
             old.deinit();
             state.boundary.markWindowRingRetired(fact);
             state.retiring = null;
         };
-        if (state.frame_callback == null) if (boundary.takeOffers()) |offer| {
+        if (state.pacing != .presenting) if (boundary.takeOffers()) |offer| {
             try constructRing(&state, offer);
             boundary.markWindowRingReady(offer.config.generation);
         };
-        if (state.frame_callback == null) {
-            if (boundary.takeCompletion()) |completion| {
-                if (completion.generation == state.ring.generation) {
-                    try present(&state, completion);
-                }
+        if (state.pacing != .presenting) {
+            if (try takeLatestReadyAfterDrain(boundary)) |frame| {
+                try present(&state, frame);
+                continue;
             }
+            state.pacing = .ready;
         }
         if (c.wl_display_dispatch_pending(display) < 0) return error.Dispatch;
         if (c.wl_display_flush(display) < 0) return error.Dispatch;
         var descriptors = [_]std.posix.pollfd{
             .{ .fd = display_fd, .events = std.posix.POLL.IN, .revents = 0 },
-            .{ .fd = boundary.windowFd(), .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = boundary.frameReadyFd(), .events = std.posix.POLL.IN, .revents = 0 },
         };
-        const poll_result = try waitWindowEvents(WindowPoll, &descriptors);
-        const actions = classifyWindowPoll(poll_result, &descriptors);
-        if (actions.drain_boundary) try boundary.drainWindowWake();
+        const descriptor_count: usize = if (state.pacing == .presenting) 1 else 2;
+        const poll_result = try waitWindowEvents(
+            WindowPoll,
+            descriptors[0..descriptor_count],
+        );
+        const actions = classifyWindowPoll(
+            poll_result,
+            descriptors[0..descriptor_count],
+        );
         if (actions.dispatch_display and c.wl_display_dispatch(display) < 0)
             return error.Dispatch;
         if (c.wl_display_get_error(display) != 0) return error.Protocol;
@@ -392,6 +416,28 @@ fn runFallible(boundary: *window_render_boundary.Boundary) !void {
         c.wl_surface_commit(surface);
         if (c.wl_display_flush(display) < 0) return error.Dispatch;
     }
+}
+
+/// Takes current Window work, or drains a stale readiness edge and rechecks.
+/// The second take closes a concurrent Render update before Window may block.
+fn takeLatestReadyAfterDrain(
+    state: *presentation_state.State,
+) error{Signal}!?presentation_state.ReadyFrame {
+    return takeLatestReadyAfterDrainWith(NoReadyPublication, state);
+}
+
+const NoReadyPublication = struct {
+    fn afterDrain(_: *presentation_state.State) error{}!void {}
+};
+
+fn takeLatestReadyAfterDrainWith(
+    comptime Hook: type,
+    state: *presentation_state.State,
+) !?presentation_state.ReadyFrame {
+    if (state.takeLatestReadyFrame()) |frame| return frame;
+    try state.drainFrameReady();
+    try Hook.afterDrain(state);
+    return state.takeLatestReadyFrame();
 }
 
 const WindowPoll = struct {
@@ -414,18 +460,19 @@ const WindowPollResult = union(enum) {
 };
 
 const WindowPollActions = struct {
-    drain_boundary: bool,
+    presentation_state_ready: bool,
     dispatch_display: bool,
 };
 
 fn classifyWindowPoll(
     result: WindowPollResult,
-    descriptors: *const [2]std.posix.pollfd,
+    descriptors: []const std.posix.pollfd,
 ) WindowPollActions {
     return switch (result) {
-        .interrupted => .{ .drain_boundary = false, .dispatch_display = false },
+        .interrupted => .{ .presentation_state_ready = false, .dispatch_display = false },
         .ready => |ready| .{
-            .drain_boundary = ready > 0 and descriptors[1].revents & std.posix.POLL.IN != 0,
+            .presentation_state_ready = ready > 0 and descriptors.len == 2 and
+                descriptors[1].revents & std.posix.POLL.IN != 0,
             .dispatch_display = ready > 0 and descriptors[0].revents & std.posix.POLL.IN != 0,
         },
     };
@@ -501,36 +548,101 @@ test "Window poll preserves indefinite ownership failure and clean readiness fac
     try std.testing.expect(Interrupted.revents_clean);
 
     try std.testing.expectEqual(
-        WindowPollActions{ .drain_boundary = false, .dispatch_display = false },
+        WindowPollActions{ .presentation_state_ready = false, .dispatch_display = false },
         classifyWindowPoll(interrupted, &descriptors),
     );
     descriptors[0].revents = std.posix.POLL.IN;
     descriptors[1].revents = 0;
     try std.testing.expectEqual(
-        WindowPollActions{ .drain_boundary = false, .dispatch_display = true },
+        WindowPollActions{ .presentation_state_ready = false, .dispatch_display = true },
         classifyWindowPoll(.{ .ready = 1 }, &descriptors),
     );
     descriptors[0].revents = 0;
     descriptors[1].revents = std.posix.POLL.IN;
     try std.testing.expectEqual(
-        WindowPollActions{ .drain_boundary = true, .dispatch_display = false },
+        WindowPollActions{ .presentation_state_ready = true, .dispatch_display = false },
         classifyWindowPoll(.{ .ready = 1 }, &descriptors),
     );
     descriptors[0].revents = std.posix.POLL.IN;
     descriptors[1].revents = std.posix.POLL.IN;
     try std.testing.expectEqual(
-        WindowPollActions{ .drain_boundary = true, .dispatch_display = true },
+        WindowPollActions{ .presentation_state_ready = true, .dispatch_display = true },
         classifyWindowPoll(.{ .ready = 2 }, &descriptors),
     );
     descriptors[0].revents = std.posix.POLL.HUP;
     descriptors[1].revents = std.posix.POLL.ERR;
     try std.testing.expectEqual(
-        WindowPollActions{ .drain_boundary = false, .dispatch_display = false },
+        WindowPollActions{ .presentation_state_ready = false, .dispatch_display = false },
         classifyWindowPoll(.{ .ready = 1 }, &descriptors),
     );
 }
 
-fn constructRing(state: *State, offered: window_render_boundary.OfferedRing) !void {
+test "P012 P013 pacing selects Wayland-only or Wayland-plus-readiness" {
+    var descriptors = [_]std.posix.pollfd{
+        .{ .fd = 11, .events = std.posix.POLL.IN, .revents = std.posix.POLL.IN },
+        .{ .fd = 12, .events = std.posix.POLL.IN, .revents = std.posix.POLL.IN },
+    };
+    const blocked = classifyWindowPoll(.{ .ready = 1 }, descriptors[0..1]);
+    try std.testing.expect(blocked.dispatch_display);
+    try std.testing.expect(!blocked.presentation_state_ready);
+    const idle = classifyWindowPoll(.{ .ready = 2 }, descriptors[0..2]);
+    try std.testing.expect(idle.dispatch_display);
+    try std.testing.expect(idle.presentation_state_ready);
+}
+
+test "P017 stale readiness drains before an empty Window block" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    const frame = presentation_state.ReadyFrame{
+        .generation = 1,
+        .revision = 1,
+        .slot = 0,
+        .acquire_point = 1,
+        .release_point = 1,
+    };
+    try std.testing.expect((try shared.updateLatestReadyFrame(frame)) == null);
+    try std.testing.expectEqual(frame, shared.cancelLatestReadyFrame(.shutdown).?);
+    try std.testing.expect((try takeLatestReadyAfterDrain(&shared)) == null);
+    var descriptor = std.posix.pollfd{
+        .fd = shared.frameReadyFd(),
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(@as(usize, 0), try std.posix.poll((&descriptor)[0..1], 0));
+}
+
+test "P018 P019 publication between drain and recheck is observed without catch-up" {
+    const Publish = struct {
+        fn afterDrain(shared: *presentation_state.State) !void {
+            try std.testing.expect((try shared.updateLatestReadyFrame(.{
+                .generation = 1,
+                .revision = 7,
+                .slot = 2,
+                .acquire_point = 7,
+                .release_point = 1,
+            })) == null);
+        }
+    };
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    shared.markWindowRingReady(1);
+    const frame = (try takeLatestReadyAfterDrainWith(Publish, &shared)).?;
+    try std.testing.expectEqual(@as(u64, 7), frame.revision);
+    try std.testing.expect(shared.takeLatestReadyFrame() == null);
+    try shared.drainFrameReady();
+}
+
+test "P007 frame callback completion changes only Window pacing" {
+    var shared = try presentation_state.State.init(std.testing.io);
+    defer shared.deinit();
+    var state = State{ .boundary = &shared, .pacing = .presenting };
+    completeFramePacing(&state);
+    try std.testing.expectEqual(WindowPacing.done_presenting, state.pacing);
+    try std.testing.expect(state.frame_callback == null);
+}
+
+fn constructRing(state: *State, offered: presentation_state.OfferedRing) !void {
     const config = offered.config;
     var offers = offered.slots;
     defer for (&offers) |*offer| {
@@ -554,7 +666,7 @@ fn constructRing(state: *State, offered: window_render_boundary.OfferedRing) !vo
     errdefer next.deinit();
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
-        if (offer.plane_count == 0 or offer.plane_count > window_render_boundary.plane_limit) return error.InvalidPlane;
+        if (offer.plane_count == 0 or offer.plane_count > presentation_state.plane_limit) return error.InvalidPlane;
         const params = c.zwp_linux_dmabuf_v1_create_params(state.dmabuf.?) orelse return error.Buffer;
         defer c.zwp_linux_buffer_params_v1_destroy(params);
         for (0..offer.plane_count) |plane| {
@@ -578,12 +690,13 @@ fn constructRing(state: *State, offered: window_render_boundary.OfferedRing) !vo
     if (old.generation != 0) state.retiring = old;
 }
 
-fn present(state: *State, completion: window_render_boundary.Completion) !void {
-    if (completion.slot >= window_render_boundary.slot_count or completion.revision <= state.presented) {
-        return error.InvalidCompletion;
+fn present(state: *State, frame: presentation_state.ReadyFrame) !void {
+    if (frame.slot >= presentation_state.slot_count or frame.revision <= state.presented) {
+        return error.InvalidReadyFrame;
     }
-    if (state.frame_callback != null) return error.PresentationPaced;
-    if (completion.generation != state.ring.generation) return error.InvalidCompletion;
+    if (state.pacing == .presenting or state.frame_callback != null)
+        return error.PresentationPaced;
+    if (frame.generation != state.ring.generation) return error.InvalidReadyFrame;
     const viewport = if (state.ring.use_viewport or state.fractional_retire_pending)
         state.viewport orelse return error.PresentationPaced
     else
@@ -592,9 +705,9 @@ fn present(state: *State, completion: window_render_boundary.Completion) !void {
         state.fractional_scale orelse return error.PresentationPaced
     else
         null;
-    const slot: usize = completion.slot;
-    c.wp_linux_drm_syncobj_surface_v1_set_acquire_point(state.sync_surface.?, state.ring.acquire_timelines[slot].?, 0, @intCast(completion.acquire_point));
-    c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, state.ring.release_timelines[slot].?, 0, @intCast(completion.release_point));
+    const slot: usize = frame.slot;
+    c.wp_linux_drm_syncobj_surface_v1_set_acquire_point(state.sync_surface.?, state.ring.acquire_timelines[slot].?, 0, @intCast(frame.acquire_point));
+    c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, state.ring.release_timelines[slot].?, 0, @intCast(frame.release_point));
     state.frame_callback = c.wl_surface_frame(state.surface.?) orelse return error.Frame;
     if (c.wl_callback_add_listener(state.frame_callback.?, &frame_listener, state) != 0) return error.Listener;
     const retire_fractional = !state.ring.use_viewport and state.fractional_retire_pending;
@@ -613,22 +726,23 @@ fn present(state: *State, completion: window_render_boundary.Completion) !void {
     c.wl_surface_attach(state.surface.?, state.ring.buffers[slot].?, 0, 0);
     c.wl_surface_damage_buffer(state.surface.?, 0, 0, @intCast(state.ring.width), @intCast(state.ring.height));
     c.wl_surface_commit(state.surface.?);
+    state.pacing = .presenting;
     if (retire_fractional) {
         c.wp_fractional_scale_v1_destroy(retiring_fractional.?);
         state.fractional_scale = null;
         state.fractional_retire_pending = false;
     }
-    state.presented_generation = completion.generation;
-    state.presented = completion.revision;
+    state.presented_generation = frame.generation;
+    state.presented = frame.revision;
     state.input_ready = true;
-    state.ring.presented_mask |= @as(u8, 1) << @intCast(completion.slot);
-    state.ring.release_points[slot] = completion.release_point;
-    try state.boundary.recordPresentation(completion.generation, completion.slot, completion.release_point);
+    state.ring.presented_mask |= @as(u8, 1) << @intCast(frame.slot);
+    state.ring.release_points[slot] = frame.release_point;
+    try state.boundary.recordPresentation(frame.generation, frame.slot, frame.release_point);
     if (retire_fractional and state.fractional_manager != null and state.viewporter != null)
         try prepareFractionalSurface(state);
 }
 
-fn selectFeedback(state: *const State) ?window_render_boundary.Feedback {
+fn selectFeedback(state: *const State) ?presentation_state.Feedback {
     for (state.formats[0..state.format_count]) |format| {
         if (format.device == state.feedback_device and format.fourcc == 0x34324241) return .{
             .device = state.feedback_device,
@@ -773,7 +887,7 @@ fn physicalExtent(logical: u32, scale_120: u32) ScaleError!u32 {
     const product = std.math.mul(u128, @as(u128, logical), @as(u128, scale_120)) catch return error.ArithmeticOverflow;
     const rounded = std.math.add(u128, product, 60) catch return error.ArithmeticOverflow;
     const value = rounded / 120;
-    if (value == 0 or value > window_render_boundary.surface_dimension_limit) return error.ArithmeticOverflow;
+    if (value == 0 or value > presentation_state.surface_dimension_limit) return error.ArithmeticOverflow;
     return @intCast(value);
 }
 
@@ -1034,7 +1148,12 @@ const toplevel_listener = c.xdg_toplevel_listener{ .configure = topConfigure, .c
 fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (callback) |value| c.wl_callback_destroy(value);
+    completeFramePacing(state);
+}
+
+fn completeFramePacing(state: *State) void {
     state.frame_callback = null;
+    state.pacing = .done_presenting;
 }
 const frame_listener = c.wl_callback_listener{ .done = frameDone };
 
@@ -1364,7 +1483,7 @@ test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
     try std.testing.expectEqual(@as(u32, 125), try physicalExtent(100, 150));
     try std.testing.expectEqual(@as(u32, 667), try physicalExtent(640, 125));
     try std.testing.expectError(error.InvalidScale, physicalExtent(0, 120));
-    try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(window_render_boundary.surface_dimension_limit, 240));
+    try std.testing.expectError(error.ArithmeticOverflow, physicalExtent(presentation_state.surface_dimension_limit, 240));
 
     var facts = ScaleFacts{ .bootstrap_ready = true, .expect_preferred = true, .configure_ready = true, .fractional_capable = true };
     facts.preferred_integer = try Rational.init(2, 1);
@@ -1390,6 +1509,29 @@ test "Wayland fractional scale gate, precedence, rounding and stale callbacks" {
     try std.testing.expectEqual(before, state.scale);
 }
 
+test "entered scale one leaves bootstrap without a redundant preferred event" {
+    var facts = ScaleFacts{
+        .bootstrap_ready = true,
+        .expect_preferred = true,
+        .configure_ready = true,
+        .fractional_capable = true,
+    };
+    try facts.recompute(.one);
+    try std.testing.expectEqual(ScaleReadiness.accepted, facts.readiness);
+    try std.testing.expectEqual(@as(u64, 1), facts.revision);
+    try std.testing.expectEqual(Rational.one, facts.accepted_effective);
+
+    var rounded = ScaleFacts{
+        .bootstrap_ready = true,
+        .expect_preferred = true,
+        .configure_ready = true,
+        .fractional_capable = true,
+    };
+    try rounded.recompute(try Rational.init(2, 1));
+    try std.testing.expectEqual(ScaleReadiness.awaiting_compositor, rounded.readiness);
+    try std.testing.expectEqual(@as(u64, 0), rounded.revision);
+}
+
 test "fractional capability removal retains a pair required by active or offered rings" {
     try std.testing.expectEqual(FractionalDrop.absent, classifyFractionalDrop(false, false, false, false));
     try std.testing.expectEqual(FractionalDrop.destroy_now, classifyFractionalDrop(true, false, false, false));
@@ -1399,7 +1541,7 @@ test "fractional capability removal retains a pair required by active or offered
 }
 
 test "Window publishes integer and fractional logical/physical ring facts" {
-    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var boundary = try presentation_state.State.init(std.testing.io);
     defer boundary.deinit();
     var state = State{
         .boundary = &boundary,
@@ -1571,7 +1713,7 @@ test "Wayland output removal is harmless, recomputes membership, and reuses slot
 }
 
 test "final output removal publishes absent DPI while retaining accepted scale" {
-    var boundary = try window_render_boundary.Boundary.init(std.testing.io);
+    var boundary = try presentation_state.State.init(std.testing.io);
     defer boundary.deinit();
     var state = State{
         .boundary = &boundary,

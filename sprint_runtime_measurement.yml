@@ -3,8 +3,8 @@ sprint:
   id: measurement_baseline
   marathon: runtime_hot_paths
   version: 0.1.6-dev
-  status: active
-  active_slice: external_measurement_runner
+  status: accepted
+  active_slice: none
   objective: >-
     Establish exact workload completion and external measurement boundaries
     before attributing or changing runtime cost.
@@ -61,13 +61,18 @@ slices:
       retained_completion_bytes: 3072
       operator_gate: passed; accepted Neovim cast completed and Howl exited naturally
   - id: external_measurement_runner
-    status: active
-    outcome: one prebuilt ReleaseFast runner with bounded Howl and Kitty CPU/GPU receipts
+    status: accepted
+    outcome: one warmup and five bounded Howl CPU, memory, and contextual GPU receipts
+    evidence:
+      raw_jsonl: .zig/work/runtime-hot-path/measurement-baseline/measurement-20260806-094109/measurement_raw.jsonl
+      raw_sha256: 72eb6e8a975b94c103de1f8d24ef2939b0cd0d8cb3a8bf856de3575e9509d601
+      summary_yml: .zig/work/runtime-hot-path/measurement-baseline/measurement-20260806-094109/measurement_summary.yml
+      summary_sha256: f8daa491935b5e8c707208119d07db2a8a48e84ddb1fe3902b4acd5a92d437c7
   - id: rain_fixture
-    status: pending_operator_capture
+    status: deferred_to_later_workload
     outcome: one exact sustained large-font output fixture
   - id: sprint_acceptance
-    status: pending
+    status: accepted
     outcome: reviewed fixtures, natural process completion, and reproducible baseline receipts
 
 exclusions:

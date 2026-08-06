@@ -1,4 +1,4 @@
-//! Owns the bounded copied facts exchanged by Window and Render.
+//! Owns bounded copied facts and one latest ready frame shared by Window and Render.
 
 const std = @import("std");
 const wayland = @import("howl_wayland");
@@ -66,7 +66,7 @@ pub const SurfaceConfig = struct {
 };
 
 /// Transfers one slot's duplicated descriptors and immutable plane layout from
-/// Render to Window. Boundary owns every descriptor after successful publish;
+/// Render to Window. State owns every descriptor after successful publish;
 /// `takeOffers` transfers all three descriptors to Window.
 pub const SlotOffer = struct {
     /// Surface generation owning the image and wrappers.
@@ -89,7 +89,7 @@ pub const SlotOffer = struct {
 
 /// Transfers one exact configure fact with all three image-slot offers.
 ///
-/// Boundary retains this pair atomically until Window takes it; a newer
+/// State retains this pair atomically until Window takes it; a newer
 /// configure or offer cannot rewrite the config belonging to borrowed slots.
 pub const OfferedRing = struct {
     /// Exact logical, physical, scale, and attachment facts for `slots`.
@@ -98,8 +98,8 @@ pub const OfferedRing = struct {
     slots: [slot_count]SlotOffer,
 };
 
-/// Copies one completed Render revision for compositor presentation.
-pub const Completion = struct {
+/// Copies one newest completed Render revision eligible for Window presentation.
+pub const ReadyFrame = struct {
     /// Surface generation owning the completed slot.
     generation: u64,
     /// Nonzero globally increasing render revision.
@@ -133,9 +133,15 @@ pub const Owner = enum {
     render,
 };
 
+/// Selects which retained latest ready frame Render atomically cancels.
+pub const Cancellation = union(enum) {
+    generation: u64,
+    shutdown,
+};
+
 /// Owns copied cross-thread facts, descriptor transfer, directional eventfds,
 /// first-failure retention, and final owner-retirement state.
-pub const Boundary = struct {
+pub const State = struct {
     io: std.Io,
     mutex: std.Io.Mutex = .init,
     feedback: ?Feedback = null,
@@ -161,10 +167,8 @@ pub const Boundary = struct {
     pending_release: ?RetiredRing = null,
     retire_request_generation: u64 = 0,
     retired: ?RetiredRing = null,
-    completions: [slot_count]Completion = undefined,
-    completion_head: u8 = 0,
-    completion_count: u8 = 0,
-    completion_reserved: u8 = 0,
+    latest_ready_frame: ?ReadyFrame = null,
+    latest_ready_revision: u64 = 0,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -175,13 +179,13 @@ pub const Boundary = struct {
 
     /// Creates both directional nonblocking eventfds.
     /// On failure, no descriptor remains owned by the caller.
-    pub fn init(io: std.Io) error{Signal}!Boundary {
+    pub fn init(io: std.Io) error{Signal}!State {
         const pair = try createWakePair(NativeEventfd);
         return .{ .io = io, .render_fd = pair.first, .window_fd = pair.second };
     }
 
     /// Closes retained offers and both eventfds after Window and Render join.
-    pub fn deinit(self: *Boundary) void {
+    pub fn deinit(self: *State) void {
         for (&self.offers) |*offer| {
             if (offer.*) |owned| {
                 closeDescriptor(owned.dma_fd);
@@ -196,27 +200,27 @@ pub const Boundary = struct {
     }
 
     /// Borrows the Window-to-Render eventfd until `deinit`.
-    pub fn renderFd(self: *const Boundary) i32 {
+    pub fn renderFd(self: *const State) i32 {
         return self.render_fd;
     }
 
-    /// Borrows the Render-to-Window eventfd until `deinit`.
-    pub fn windowFd(self: *const Boundary) i32 {
+    /// Borrows the presentation-state readiness eventfd until `deinit`.
+    pub fn frameReadyFd(self: *const State) i32 {
         return self.window_fd;
     }
 
     /// Drains all pending Render wakes without blocking.
-    pub fn drainRenderWake(self: *Boundary) error{Signal}!void {
+    pub fn drainRenderWake(self: *State) error{Signal}!void {
         try drain(self.render_fd);
     }
 
-    /// Drains all pending Window wakes without blocking.
-    pub fn drainWindowWake(self: *Boundary) error{Signal}!void {
+    /// Drains stale or current presentation-state readiness without blocking.
+    pub fn drainFrameReady(self: *State) error{Signal}!void {
         try drain(self.window_fd);
     }
 
     /// Appends one exact Wayland occurrence for Render without policy.
-    pub fn publishInput(self: *Boundary, event: wayland.input.Ordered) error{ Stopping, InputFull, InputRevisionOverflow }!void {
+    pub fn publishInput(self: *State, event: wayland.input.Ordered) error{ Stopping, InputFull, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -234,7 +238,7 @@ pub const Boundary = struct {
     }
 
     /// Replaces the coalesced pointer snapshot and wakes Render.
-    pub fn publishMotion(self: *Boundary, motion: wayland.input.Motion) error{ Stopping, InputRevisionOverflow }!void {
+    pub fn publishMotion(self: *State, motion: wayland.input.Motion) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -252,7 +256,7 @@ pub const Boundary = struct {
     }
 
     /// Replaces exact depressed/latched/locked/group masks and wakes Render.
-    pub fn publishModifiers(self: *Boundary, modifiers: wayland.input.Modifiers) error{ Stopping, InputRevisionOverflow }!void {
+    pub fn publishModifiers(self: *State, modifiers: wayland.input.Modifiers) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -270,7 +274,7 @@ pub const Boundary = struct {
     }
 
     /// Replaces keyboard repeat timing and wakes Render with the new fact.
-    pub fn publishRepeat(self: *Boundary, repeat: wayland.input.Repeat) error{ Stopping, InputRevisionOverflow }!void {
+    pub fn publishRepeat(self: *State, repeat: wayland.input.Repeat) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -288,7 +292,7 @@ pub const Boundary = struct {
     }
 
     /// Replaces the newest configure fact, including zero unspecified values.
-    pub fn publishInputConfigure(self: *Boundary, width: u32, height: u32) error{ Stopping, InputRevisionOverflow }!void {
+    pub fn publishInputConfigure(self: *State, width: u32, height: u32) error{ Stopping, InputRevisionOverflow }!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -306,21 +310,21 @@ pub const Boundary = struct {
     }
 
     /// Removes one oldest input occurrence for Render.
-    pub fn takeInput(self: *Boundary) ?wayland.input.Ordered {
+    pub fn takeInput(self: *State) ?wayland.input.Ordered {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.input.take();
     }
 
     /// Takes coalesced motion/configure facts and copies the latest masks.
-    pub fn takeInputSnapshots(self: *Boundary) wayland.input.Snapshot {
+    pub fn takeInputSnapshots(self: *State) wayland.input.Snapshot {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.input.takeSnapshots();
     }
 
     /// Replaces the copied feedback fact and wakes Render.
-    pub fn publishFeedback(self: *Boundary, feedback: Feedback) error{Stopping}!void {
+    pub fn publishFeedback(self: *State, feedback: Feedback) error{Stopping}!void {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
@@ -332,7 +336,7 @@ pub const Boundary = struct {
     }
 
     /// Copies the current feedback fact without transferring ownership.
-    pub fn readFeedback(self: *Boundary) ?Feedback {
+    pub fn readFeedback(self: *State) ?Feedback {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.feedback;
@@ -342,7 +346,7 @@ pub const Boundary = struct {
     /// Repeated identical facts retain their generation; newer dimensions,
     /// attachment mode, or accepted scale revision supersede pending facts.
     pub fn publishConfigure(
-        self: *Boundary,
+        self: *State,
         logical_width: u32,
         logical_height: u32,
         physical_width: u32,
@@ -407,7 +411,7 @@ pub const Boundary = struct {
     }
 
     /// Takes the newest pending configure fact for Render.
-    pub fn takeConfigure(self: *Boundary) ?SurfaceConfig {
+    pub fn takeConfigure(self: *State) ?SurfaceConfig {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         const result = self.configure;
@@ -416,16 +420,16 @@ pub const Boundary = struct {
     }
 
     /// Reports whether a staged generation is still the newest configure fact.
-    pub fn isLatestGeneration(self: *Boundary, generation: u64) bool {
+    pub fn isLatestGeneration(self: *State, generation: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.latest_generation == generation;
     }
 
     /// Transfers every descriptor in one complete valid ring from Render to
-    /// Boundary. Invalid facts, an unconsumed ring, or shutdown leave Boundary
+    /// State. Invalid facts, an unconsumed ring, or shutdown leave State
     /// unchanged and every supplied descriptor owned by Render.
-    pub fn publishOffers(self: *Boundary, offers: [slot_count]SlotOffer) error{ Stopping, OffersPending, InvalidOffer }!void {
+    pub fn publishOffers(self: *State, offers: [slot_count]SlotOffer) error{ Stopping, OffersPending, InvalidOffer }!void {
         const generation = offers[0].generation;
         const width = offers[0].width;
         const height = offers[0].height;
@@ -475,8 +479,8 @@ pub const Boundary = struct {
     }
 
     /// Transfers one complete retained ring and its exact configure fact from
-    /// Boundary to Window under one lock acquisition.
-    pub fn takeOffers(self: *Boundary) ?OfferedRing {
+    /// State to Window under one lock acquisition.
+    pub fn takeOffers(self: *State) ?OfferedRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.offer_count != slot_count) return null;
@@ -494,7 +498,7 @@ pub const Boundary = struct {
 
     /// Reports whether the exact transferred-but-not-yet-taken ring still
     /// requires the Window-owned viewport/fractional-scale pair.
-    pub fn pendingOffersUseViewport(self: *Boundary) bool {
+    pub fn pendingOffersUseViewport(self: *State) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.offer_count != slot_count) return false;
@@ -502,7 +506,7 @@ pub const Boundary = struct {
     }
 
     /// Publishes completed Window wrapper construction and wakes Render.
-    pub fn markWindowRingReady(self: *Boundary, generation: u64) void {
+    pub fn markWindowRingReady(self: *State, generation: u64) void {
         self.mutex.lockUncancelable(self.io);
         if (self.presented_generation != 0 and self.presented_mask != 0) {
             self.pending_release = .{ .generation = self.presented_generation, .presented_mask = self.presented_mask, .release_points = self.presented_release_points };
@@ -512,28 +516,12 @@ pub const Boundary = struct {
         self.presented_generation = generation;
         self.presented_mask = 0;
         self.presented_release_points = .{ 0, 0, 0 };
-        // A replacement ring supersedes every queued completion from the old
-        // generation. Compact in place so a stale queue can never fill the
-        // bounded completion transport or strand the new ring.
-        var kept: [slot_count]Completion = undefined;
-        var kept_count: u8 = 0;
-        var index: u8 = 0;
-        while (index < self.completion_count) : (index += 1) {
-            const completion = self.completions[(self.completion_head + index) % @as(u8, slot_count)];
-            if (completion.generation == generation) {
-                kept[kept_count] = completion;
-                kept_count += 1;
-            }
-        }
-        self.completions = kept;
-        self.completion_head = 0;
-        self.completion_count = kept_count;
         self.mutex.unlock(self.io);
         signal(self.render_fd);
     }
 
     /// Records a slot release point while its Window wrapper remains live.
-    pub fn recordPresentation(self: *Boundary, generation: u64, slot: u8, release_point: u64) error{InvalidRevision}!void {
+    pub fn recordPresentation(self: *State, generation: u64, slot: u8, release_point: u64) error{InvalidRevision}!void {
         if (slot >= slot_count or generation == 0 or release_point == 0) return error.InvalidRevision;
         self.mutex.lockUncancelable(self.io);
         if (self.presented_generation != generation) {
@@ -547,7 +535,7 @@ pub const Boundary = struct {
     }
 
     /// Copies the currently presented release facts for Render's wait phase.
-    pub fn releaseFacts(self: *Boundary, generation: u64) ?RetiredRing {
+    pub fn releaseFacts(self: *State, generation: u64) ?RetiredRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.pending_release) |pending| if (pending.generation == generation) return pending;
@@ -556,7 +544,7 @@ pub const Boundary = struct {
     }
 
     /// Requests Window to retire wrappers after Render has observed release.
-    pub fn requestWindowRingRetirement(self: *Boundary, generation: u64) void {
+    pub fn requestWindowRingRetirement(self: *State, generation: u64) void {
         self.mutex.lockUncancelable(self.io);
         if (generation > self.retire_request_generation) self.retire_request_generation = generation;
         self.mutex.unlock(self.io);
@@ -564,7 +552,7 @@ pub const Boundary = struct {
     }
 
     /// Copies and consumes the newest wrapper-retirement request.
-    pub fn takeWindowRingRetirementRequest(self: *Boundary, generation: u64) bool {
+    pub fn takeWindowRingRetirementRequest(self: *State, generation: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.retire_request_generation >= generation) {
@@ -575,14 +563,14 @@ pub const Boundary = struct {
     }
 
     /// Copies whether Window completed every slot wrapper.
-    pub fn isWindowRingReady(self: *Boundary, generation: u64) bool {
+    pub fn isWindowRingReady(self: *State, generation: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.window_ring_ready and self.window_ring_generation == generation;
     }
 
     /// Records that Window has destroyed wrappers from an older generation.
-    pub fn markWindowRingRetired(self: *Boundary, retired: RetiredRing) void {
+    pub fn markWindowRingRetired(self: *State, retired: RetiredRing) void {
         self.mutex.lockUncancelable(self.io);
         if (self.retired == null or retired.generation > self.retired.?.generation) {
             self.retired = retired;
@@ -592,7 +580,7 @@ pub const Boundary = struct {
     }
 
     /// Copies the wrapper-retirement fact for Renderer cleanup ordering.
-    pub fn takeWindowRingRetired(self: *Boundary, generation: u64) ?RetiredRing {
+    pub fn takeWindowRingRetired(self: *State, generation: u64) ?RetiredRing {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         if (self.retired) |retired| {
@@ -607,134 +595,79 @@ pub const Boundary = struct {
         return null;
     }
 
-    /// Appends one ordered completion and wakes Window transactionally.
-    pub fn publishCompletion(self: *Boundary, completion: Completion) error{ Stopping, CompletionLimit, InvalidRevision }!void {
+    /// Replaces the latest ready frame and returns the exact superseded frame.
+    /// Only an empty-to-ready transition signals presentation-state readiness.
+    pub fn updateLatestReadyFrame(
+        self: *State,
+        frame: ReadyFrame,
+    ) error{ Stopping, StaleGeneration, InvalidSlot, InvalidRevision }!?ReadyFrame {
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
             self.mutex.unlock(self.io);
             return error.Stopping;
         }
-        if (completion.generation == 0 or completion.generation != self.window_ring_generation or completion.revision == 0 or completion.slot >= slot_count) {
+        if (frame.generation == 0 or frame.generation != self.window_ring_generation) {
+            self.mutex.unlock(self.io);
+            return error.StaleGeneration;
+        }
+        if (frame.slot >= slot_count) {
+            self.mutex.unlock(self.io);
+            return error.InvalidSlot;
+        }
+        if (frame.revision == 0 or frame.acquire_point == 0 or
+            frame.release_point == 0 or
+            frame.revision <= self.latest_ready_revision)
+        {
             self.mutex.unlock(self.io);
             return error.InvalidRevision;
         }
-        if (self.completion_count + self.completion_reserved == slot_count) {
-            self.mutex.unlock(self.io);
-            return error.CompletionLimit;
-        }
-        if (self.completion_count != 0) {
-            const tail = (self.completion_head + self.completion_count - 1) % slot_count;
-            if (completion.revision <= self.completions[tail].revision) {
-                self.mutex.unlock(self.io);
-                return error.InvalidRevision;
-            }
-        }
-        const tail = (self.completion_head + self.completion_count) % slot_count;
-        self.completions[tail] = completion;
-        self.completion_count += 1;
+        const superseded = self.latest_ready_frame;
+        self.latest_ready_frame = frame;
+        self.latest_ready_revision = frame.revision;
         self.mutex.unlock(self.io);
-        signal(self.window_fd);
+        if (superseded == null) signal(self.window_fd);
+        return superseded;
     }
 
-    /// Owns one validated completion reservation until exposure or discard.
-    pub const PreparedCompletions = struct {
-        boundary: *Boundary,
-        values: [slot_count]Completion = undefined,
-        count: u8,
-        completed: bool = false,
-
-        /// Exposes every reserved completion and wakes Window as one infallible step.
-        pub fn commit(self: *PreparedCompletions) void {
-            if (self.completed) @panic("completion reservation already completed");
-            const boundary = self.boundary;
-            boundary.mutex.lockUncancelable(boundary.io);
-            defer boundary.mutex.unlock(boundary.io);
-            std.debug.assert(boundary.completion_reserved >= self.count);
-            boundary.completion_reserved -= self.count;
-            for (self.values[0..self.count]) |completion| {
-                std.debug.assert(boundary.completion_count < slot_count);
-                const tail = (boundary.completion_head + boundary.completion_count) %
-                    slot_count;
-                boundary.completions[tail] = completion;
-                boundary.completion_count += 1;
-            }
-            self.completed = true;
-            signal(boundary.window_fd);
-        }
-
-        /// Releases reserved capacity without exposing any completion.
-        pub fn deinit(self: *PreparedCompletions) void {
-            if (self.completed) return;
-            const boundary = self.boundary;
-            boundary.mutex.lockUncancelable(boundary.io);
-            std.debug.assert(boundary.completion_reserved >= self.count);
-            boundary.completion_reserved -= self.count;
-            boundary.mutex.unlock(boundary.io);
-            self.completed = true;
-        }
-    };
-
-    /// Validates and reserves an ordered completion batch without waking Window.
-    pub fn prepareCompletions(
-        self: *Boundary,
-        completions: []const Completion,
-    ) error{ Stopping, CompletionLimit, InvalidRevision }!PreparedCompletions {
-        if (completions.len == 0 or completions.len > slot_count)
-            return error.CompletionLimit;
+    /// Atomically takes the newest Window work. A taken frame cannot be superseded.
+    pub fn takeLatestReadyFrame(self: *State) ?ReadyFrame {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        if (self.stop_requested) return error.Stopping;
-        if (completions.len >
-            slot_count - self.completion_count - self.completion_reserved)
-            return error.CompletionLimit;
-        var prior_revision: u64 = if (self.completion_count == 0)
-            0
-        else
-            self.completions[
-                (self.completion_head + self.completion_count - 1) % slot_count
-            ].revision;
-        for (completions) |completion| {
-            if (completion.generation == 0 or
-                completion.generation != self.window_ring_generation or
-                completion.revision == 0 or completion.slot >= slot_count or
-                completion.revision <= prior_revision)
-                return error.InvalidRevision;
-            prior_revision = completion.revision;
+        const frame = self.latest_ready_frame;
+        if (frame) |value| {
+            if (value.generation != self.window_ring_generation) return null;
         }
-        var prepared = PreparedCompletions{
-            .boundary = self,
-            .count = @intCast(completions.len),
+        self.latest_ready_frame = null;
+        return frame;
+    }
+
+    /// Returns one matching never-taken frame to Render. This operation and
+    /// Window take share one lock, so exactly one caller can receive the value.
+    pub fn cancelLatestReadyFrame(
+        self: *State,
+        cancellation: Cancellation,
+    ) ?ReadyFrame {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const frame = self.latest_ready_frame orelse return null;
+        const matches = switch (cancellation) {
+            .generation => |generation| frame.generation == generation,
+            .shutdown => true,
         };
-        @memcpy(prepared.values[0..completions.len], completions);
-        self.completion_reserved += @intCast(completions.len);
-        return prepared;
+        if (!matches) return null;
+        self.latest_ready_frame = null;
+        return frame;
     }
 
-    /// Reports whether Render can append one completion for the active Window
-    /// ring. Window is the only consumer, so capacity cannot decrease between
-    /// this preflight and a same-thread publication.
-    pub fn canPublishCompletion(self: *Boundary, generation: u64) bool {
+    /// Copies whether shared Window work currently exists.
+    pub fn hasLatestReadyFrame(self: *State) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return !self.stop_requested and
-            generation != 0 and
-            generation == self.window_ring_generation and
-            self.completion_count + self.completion_reserved < slot_count;
-    }
-
-    /// Removes and copies the oldest completed revision for Window.
-    pub fn takeCompletion(self: *Boundary) ?Completion {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.completion_count == 0) return null;
-        const result = self.completions[self.completion_head];
-        self.completion_head = (self.completion_head + 1) % @as(u8, slot_count);
-        self.completion_count -= 1;
-        return result;
+        return self.latest_ready_frame != null;
     }
 
     /// Makes stop monotonic, preserves the first failure, and wakes both owners.
-    pub fn requestStop(self: *Boundary, failure: ?Failure) void {
+    pub fn requestStop(self: *State, failure: ?Failure) void {
         self.mutex.lockUncancelable(self.io);
         const first = !self.stop_requested;
         self.stop_requested = true;
@@ -745,14 +678,14 @@ pub const Boundary = struct {
     }
 
     /// Copies the monotonic stop fact.
-    pub fn shouldStop(self: *Boundary) bool {
+    pub fn shouldStop(self: *State) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.stop_requested;
     }
 
     /// Publishes one owner's final retirement and wakes its peer.
-    pub fn markStopped(self: *Boundary, owner: Owner) void {
+    pub fn markStopped(self: *State, owner: Owner) void {
         self.mutex.lockUncancelable(self.io);
         switch (owner) {
             .window => self.window_stopped = true,
@@ -763,7 +696,7 @@ pub const Boundary = struct {
     }
 
     /// Copies both final owner-retirement facts.
-    pub fn stopped(self: *Boundary) struct { window: bool, render: bool } {
+    pub fn stopped(self: *State) struct { window: bool, render: bool } {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return .{ .window = self.window_stopped, .render = self.render_stopped };
@@ -772,7 +705,7 @@ pub const Boundary = struct {
 
 fn closeDescriptor(descriptor: i32) void {
     if (std.posix.system.close(descriptor) != 0)
-        @panic("window/render boundary descriptor cleanup failed");
+        @panic("presentation-state descriptor cleanup failed");
 }
 
 const WakePair = struct { first: i32, second: i32 };
@@ -822,7 +755,7 @@ fn signal(descriptor: i32) void {
         if (result == @sizeOf(u64)) return;
         if (result < 0 and std.posix.errno(result) == .INTR) continue;
         if (result < 0 and std.posix.errno(result) == .AGAIN) return;
-        @panic("eventfd write violated the live Boundary invariant");
+        @panic("eventfd write violated the live State invariant");
     }
 }
 

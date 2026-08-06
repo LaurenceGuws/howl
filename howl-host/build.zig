@@ -179,13 +179,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const test_window_render_boundary = b.createModule(.{
-        .root_source_file = b.path("src/window_render_boundary.zig"),
+    const test_presentation_state = b.createModule(.{
+        .root_source_file = b.path("src/presentation_state.zig"),
         .target = target,
         .optimize = optimize,
     });
-    test_window_render_boundary.addImport("howl_wayland", wayland.module("howl_wayland"));
-    test_module.addImport("window_render_boundary", test_window_render_boundary);
+    test_presentation_state.addImport("howl_wayland", wayland.module("howl_wayland"));
+    test_module.addImport("presentation_state", test_presentation_state);
     test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);

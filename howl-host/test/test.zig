@@ -1,13 +1,13 @@
 const std = @import("std");
 const linux = std.os.linux;
-const window_render_boundary = @import("window_render_boundary");
+const presentation_state = @import("presentation_state");
 const session_chrome_adapter = @import("session_chrome_adapter");
 const session = @import("session_domain");
 const render = @import("howl_render");
 const wayland = @import("howl_wayland");
 
-fn boundary() !window_render_boundary.Boundary {
-    return window_render_boundary.Boundary.init(std.testing.io);
+fn boundary() !presentation_state.State {
+    return presentation_state.State.init(std.testing.io);
 }
 
 fn closeDescriptor(descriptor: i32) std.posix.E {
@@ -32,12 +32,12 @@ test "feedback and ring offers transfer complete copied ownership" {
     try std.testing.expect(value.takeOffers() == null);
 }
 
-test "malformed offers preserve Boundary and caller descriptor ownership" {
+test "malformed offers preserve State and caller descriptor ownership" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     var offers = try realOffers();
-    offers[1].plane_count = window_render_boundary.plane_limit + 1;
+    offers[1].plane_count = presentation_state.plane_limit + 1;
     try std.testing.expectError(error.InvalidOffer, value.publishOffers(offers));
     try std.testing.expectEqual(@as(u8, 0), value.offer_count);
     try std.testing.expect(value.takeOffers() == null);
@@ -78,15 +78,15 @@ test "pending offers remain exact and reject a second ownership transfer" {
     closeOffers(second);
 }
 
-test "Boundary cleanup closes every retained offered descriptor" {
+test "State cleanup closes every retained offered descriptor" {
     var value = try boundary();
-    const planes = [window_render_boundary.plane_limit]window_render_boundary.Plane{
+    const planes = [presentation_state.plane_limit]presentation_state.Plane{
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
     };
-    var offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = @splat(.{
+    var offers: [presentation_state.slot_count]presentation_state.SlotOffer = @splat(.{
         .generation = 1,
         .width = 64,
         .height = 64,
@@ -112,66 +112,62 @@ test "Boundary cleanup closes every retained offered descriptor" {
     }
 }
 
-test "completion queue is bounded ordered and never acknowledges Render" {
+test "P001 P002 P003 latest ready state retains frame 1000 and one readiness edge" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
-    try value.publishOffers(try realOffers());
-    closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
-    try std.testing.expect(value.canPublishCompletion(1));
-    try std.testing.expect(!value.canPublishCompletion(2));
-    try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
-    try value.publishCompletion(.{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
-    try value.publishCompletion(.{ .generation = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 });
-    try std.testing.expect(!value.canPublishCompletion(1));
-    try std.testing.expectError(error.CompletionLimit, value.publishCompletion(.{ .generation = 1, .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 }));
-    try std.testing.expectEqual(@as(u64, 1), value.takeCompletion().?.revision);
-    try std.testing.expect(value.canPublishCompletion(1));
-    try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
-    try std.testing.expectEqual(@as(u64, 3), value.takeCompletion().?.revision);
-    try std.testing.expect(value.takeCompletion() == null);
+    var revision: u64 = 1;
+    while (revision <= 1000) : (revision += 1) {
+        const frame = presentation_state.ReadyFrame{
+            .generation = 1,
+            .revision = revision,
+            .slot = @intCast((revision - 1) % presentation_state.slot_count),
+            .acquire_point = revision,
+            .release_point = revision,
+        };
+        const superseded = try value.updateLatestReadyFrame(frame);
+        if (revision == 1) {
+            try std.testing.expect(superseded == null);
+            try expectReadable(value.frameReadyFd());
+            try value.drainFrameReady();
+        } else {
+            try std.testing.expectEqual(revision - 1, superseded.?.revision);
+            try expectNotReadable(value.frameReadyFd());
+        }
+    }
+    try std.testing.expectEqual(@as(u64, 1000), value.takeLatestReadyFrame().?.revision);
+    try std.testing.expect(value.takeLatestReadyFrame() == null);
 }
 
-test "invalid and stale revisions preserve queued completion" {
+test "P010 P014 invalid facts preserve latest state and revision high water" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
-    try value.publishOffers(try realOffers());
-    closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
-    try value.publishCompletion(.{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
-    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .generation = 1, .revision = 2, .slot = 2, .acquire_point = 3, .release_point = 1 }));
-    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .generation = 1, .revision = 3, .slot = 3, .acquire_point = 4, .release_point = 1 }));
-    try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
-}
-
-test "completion batch validates fully before publishing any member" {
-    var value = try boundary();
-    defer value.deinit();
-    try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
-    try value.publishOffers(try realOffers());
-    closeOffers(value.takeOffers().?.slots);
-    value.markWindowRingReady(1);
-    const valid = [_]window_render_boundary.Completion{
-        .{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 },
-        .{ .generation = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 },
-        .{ .generation = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 },
+    const accepted = presentation_state.ReadyFrame{
+        .generation = 1,
+        .revision = 1000,
+        .slot = 1,
+        .acquire_point = 1000,
+        .release_point = 1,
     };
-    var malformed = valid;
-    malformed[2].revision = 2;
+    try std.testing.expect((try value.updateLatestReadyFrame(accepted)) == null);
     try std.testing.expectError(
         error.InvalidRevision,
-        value.prepareCompletions(&malformed),
+        value.updateLatestReadyFrame(accepted),
     );
-    try std.testing.expect(value.takeCompletion() == null);
-    var prepared = try value.prepareCompletions(&valid);
-    defer prepared.deinit();
-    try std.testing.expect(!value.canPublishCompletion(1));
-    prepared.commit();
-    for (valid) |expected|
-        try std.testing.expectEqual(expected, value.takeCompletion().?);
-    try std.testing.expect(value.takeCompletion() == null);
+    var invalid = accepted;
+    invalid.revision = 1001;
+    invalid.slot = 3;
+    try std.testing.expectError(error.InvalidSlot, value.updateLatestReadyFrame(invalid));
+    invalid.slot = 2;
+    invalid.generation = 2;
+    try std.testing.expectError(error.StaleGeneration, value.updateLatestReadyFrame(invalid));
+    try std.testing.expectEqual(@as(u64, 1000), value.latest_ready_revision);
+    try std.testing.expectEqual(accepted, value.takeLatestReadyFrame().?);
+    try std.testing.expectEqual(@as(u64, 1000), value.latest_ready_revision);
+    invalid.generation = 1;
+    invalid.revision = 1001;
+    try std.testing.expect((try value.updateLatestReadyFrame(invalid)) == null);
 }
 
 test "stop is monotonic and preserves the first runtime failure" {
@@ -180,7 +176,7 @@ test "stop is monotonic and preserves the first runtime failure" {
     value.requestStop(.window);
     value.requestStop(.render);
     try std.testing.expect(value.shouldStop());
-    try std.testing.expectEqual(window_render_boundary.Failure.window, value.failure.?);
+    try std.testing.expectEqual(presentation_state.Failure.window, value.failure.?);
     try std.testing.expectError(error.Stopping, value.publishFeedback(.{ .device = 1, .fourcc = 1, .modifier = 1 }));
     value.markStopped(.window);
     value.markStopped(.render);
@@ -208,9 +204,9 @@ test "directional wakes follow fact ownership" {
     try value.publishOffers(try realOffers());
     closeOffers(value.takeOffers().?.slots);
     value.markWindowRingReady(1);
-    try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
-    try expectReadable(value.windowFd());
-    try value.drainWindowWake();
+    try std.testing.expect((try value.updateLatestReadyFrame(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 })) == null);
+    try expectReadable(value.frameReadyFd());
+    try value.drainFrameReady();
 }
 
 test "Window input facts cross the Window/Render boundary without policy" {
@@ -254,8 +250,8 @@ test "configure facts coalesce and stale generations cannot cross the boundary" 
     try std.testing.expectError(error.InvalidOffer, value.publishOffers(stale_offers));
     closeOffers(stale_offers);
     value.markWindowRingReady(second.generation);
-    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .generation = first.generation, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 }));
-    try value.publishCompletion(.{ .generation = second.generation, .revision = 2, .slot = 0, .acquire_point = 2, .release_point = 1 });
+    try std.testing.expectError(error.StaleGeneration, value.updateLatestReadyFrame(.{ .generation = first.generation, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 }));
+    try std.testing.expect((try value.updateLatestReadyFrame(.{ .generation = second.generation, .revision = 2, .slot = 0, .acquire_point = 2, .release_point = 1 })) == null);
 }
 
 test "logical and physical configure facts remain paired transactionally" {
@@ -295,7 +291,7 @@ test "SurfaceConfig transports factual DPI without fabricating provisional facts
     try std.testing.expect(provisional.dpi_x == null);
     try std.testing.expect(provisional.dpi_y == null);
 
-    const dpi = window_render_boundary.ExactRational{
+    const dpi = presentation_state.ExactRational{
         .numerator = 768,
         .denominator = 5,
     };
@@ -358,7 +354,7 @@ test "taken ring retains its exact configure while a newer ring is offered" {
     value.markWindowRingReady(generation);
 }
 
-test "1.6x Boundary offer transaction retains logical Canvas and physical ring facts" {
+test "1.6x State offer transaction retains logical Canvas and physical ring facts" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(1000, 600, 1600, 960, 1, null, null, 1, true);
@@ -428,14 +424,44 @@ test "fractional offers retain viewport ownership across a newer integer configu
     try std.testing.expect(integer.generation > fractional_generation);
 }
 
-test "replacement readiness cancels queued stale completions" {
+test "P004 P017 replacement cancellation is atomic and leaves only a stale readiness edge" {
     var value = try boundary();
     defer value.deinit();
     try value.publishConfigure(64, 64, 64, 64, 0, null, null, 1, false);
     value.markWindowRingReady(1);
-    try value.publishCompletion(.{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
+    const frame = presentation_state.ReadyFrame{ .generation = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 };
+    try std.testing.expect((try value.updateLatestReadyFrame(frame)) == null);
     value.markWindowRingReady(2);
-    try std.testing.expect(value.takeCompletion() == null);
+    try std.testing.expect(value.takeLatestReadyFrame() == null);
+    try std.testing.expectEqual(frame, value.cancelLatestReadyFrame(.{ .generation = 1 }).?);
+    try std.testing.expect(value.cancelLatestReadyFrame(.shutdown) == null);
+    try expectReadable(value.frameReadyFd());
+    try value.drainFrameReady();
+    try expectNotReadable(value.frameReadyFd());
+    const taken = presentation_state.ReadyFrame{ .generation = 2, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 };
+    try std.testing.expect((try value.updateLatestReadyFrame(taken)) == null);
+    try std.testing.expectEqual(taken, value.takeLatestReadyFrame().?);
+    try std.testing.expect(value.cancelLatestReadyFrame(.{ .generation = 2 }) == null);
+}
+
+test "P018 P019 drain recheck closes publication race without lost wake or catch-up" {
+    var value = try boundary();
+    defer value.deinit();
+    value.markWindowRingReady(1);
+    try std.testing.expect(value.takeLatestReadyFrame() == null);
+    try value.drainFrameReady();
+    const frame = presentation_state.ReadyFrame{
+        .generation = 1,
+        .revision = 1,
+        .slot = 2,
+        .acquire_point = 1,
+        .release_point = 1,
+    };
+    try std.testing.expect((try value.updateLatestReadyFrame(frame)) == null);
+    try std.testing.expectEqual(frame, value.takeLatestReadyFrame().?);
+    try value.drainFrameReady();
+    try expectNotReadable(value.frameReadyFd());
+    try std.testing.expect(value.takeLatestReadyFrame() == null);
 }
 
 test "session adapter retains stable identities through pane and tab changes" {
@@ -476,20 +502,33 @@ fn expectReadable(descriptor: i32) !void {
     try std.testing.expect((poll_descriptor.revents & std.posix.POLL.IN) != 0);
 }
 
+fn expectNotReadable(descriptor: i32) !void {
+    var poll_descriptor = std.posix.pollfd{
+        .fd = descriptor,
+        .events = std.posix.POLL.IN,
+        .revents = 0,
+    };
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        try std.posix.poll((&poll_descriptor)[0..1], 0),
+    );
+    try std.testing.expectEqual(@as(i16, 0), poll_descriptor.revents);
+}
+
 fn eventDescriptor() !i32 {
     const value = linux.eventfd(0, linux.EFD.CLOEXEC | linux.EFD.NONBLOCK);
     if (linux.errno(value) != .SUCCESS) return error.Descriptor;
     return std.math.cast(i32, value) orelse return error.Descriptor;
 }
 
-fn realOffers() ![window_render_boundary.slot_count]window_render_boundary.SlotOffer {
-    const planes = [window_render_boundary.plane_limit]window_render_boundary.Plane{
+fn realOffers() ![presentation_state.slot_count]presentation_state.SlotOffer {
+    const planes = [presentation_state.plane_limit]presentation_state.Plane{
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
         .{ .offset = 0, .stride = 256 },
     };
-    var offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer = @splat(.{
+    var offers: [presentation_state.slot_count]presentation_state.SlotOffer = @splat(.{
         .generation = 1,
         .width = 64,
         .height = 64,
@@ -508,7 +547,7 @@ fn realOffers() ![window_render_boundary.slot_count]window_render_boundary.SlotO
     return offers;
 }
 
-fn closeOffers(offers: [window_render_boundary.slot_count]window_render_boundary.SlotOffer) void {
+fn closeOffers(offers: [presentation_state.slot_count]presentation_state.SlotOffer) void {
     for (offers) |offer| {
         if (offer.dma_fd >= 0) std.debug.assert(closeDescriptor(offer.dma_fd) == .SUCCESS);
         if (offer.acquire_timeline_fd >= 0) std.debug.assert(closeDescriptor(offer.acquire_timeline_fd) == .SUCCESS);
