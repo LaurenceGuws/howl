@@ -140,12 +140,26 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const terminal_tests = b.addTest(.{
+        .name = "howl-render-terminal-cells",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/terminal_cells.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = false,
+        .use_lld = false,
+    });
     const check = b.step("check", "Compile the selected rendering capability and proofs");
     check.dependOn(&tests.step);
+    check.dependOn(&terminal_tests.step);
     const run_tests = b.addRunArtifact(tests);
+    const run_terminal_tests = b.addRunArtifact(terminal_tests);
     run_tests.addPassthruArgs();
+    run_terminal_tests.addPassthruArgs();
     const test_step = b.step("test", "Run the selected rendering capability proofs");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&run_terminal_tests.step);
     b.default_step = check;
 }
 

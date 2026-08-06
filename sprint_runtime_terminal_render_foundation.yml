@@ -1,0 +1,156 @@
+schema: 1
+sprint:
+  id: terminal_render_foundation
+  marathon: runtime_hot_paths
+  version: 0.1.6-dev
+  status: active
+  active_slice: retained_terminal_cell_primitive
+  objective: >-
+    Establish a small independently useful blank/ASCII/style/static-cursor
+    library path from backend-neutral retained Render state to exact sparse
+    Vulkan preparation before any Host or VT integration.
+
+accepted_evidence:
+  recovery_census: .zig/work/runtime-hot-path/terminal-render-foundation/recovery_census.yml
+  finite_contract: .zig/work/runtime-hot-path/terminal-render-foundation/finite_contract.yml
+  mutation_event_census: .zig/work/runtime-hot-path/terminal-render-foundation/mutation_event_census.yml
+  layout_receipt: .zig/work/runtime-hot-path/terminal-render-foundation/layout_receipt.txt
+  reviewer_gate: .zig/work/runtime-hot-path/terminal-render-foundation/reviewer_gate.yml
+
+slices:
+  - id: retained_terminal_cell_primitive
+    status: review_ready
+    product_owners:
+      - howl-render/src/terminal_cells.zig
+      - howl-vk/src/terminal_cells.zig
+    outcome: >-
+      Render retains one current visual grid plus bounded first-old cell and
+      row-map baselines. Vulkan retains one accepted instance shadow plus
+      bounded sparse writes and borrowed replacement input. Generic Canvas Plan
+      and Host publication remain separate.
+  - id: ordered_vt_mutation_transport
+    status: pending
+    authorized: false
+  - id: host_render_integration
+    status: pending
+    authorized: false
+  - id: physical_runtime_acceptance
+    status: pending
+    authorized: false
+
+retained_shape:
+  render:
+    cell_size_bytes: 11
+    cell_alignment: 1
+    cells:
+      - blank
+      - printable ASCII
+      - deterministic question-mark replacement for unsupported codepoints
+    colors:
+      - final foreground RGB
+      - final background RGB
+      - final underline RGB
+    styles:
+      - bold
+      - dim
+      - italic
+      - underline
+      - strikethrough
+    cursor: static block, underline, bar, or hidden
+    ordinary_lowering:
+      - structured row rotation
+      - physical-span fill
+      - individual physical-cell update
+      - changed static cursor
+    bookkeeping: >-
+      Cell cleanup touches only recorded sparse identities. Row movement tracks
+      and compares only rows in structured operations; no ordinary full-grid or
+      maximum-grid metadata clear remains.
+    full_replacement_only:
+      - initialization
+      - resize
+      - alternate-grid replacement
+  Vulkan:
+    instance_size_bytes: 16
+    stable_glyph_slots: 380
+    glyph_identity: printable ASCII plus bold and italic tuple
+    atlas_policy: fixed slot placement and first-use upload only
+    row_policy: persistent physical cells plus separate logical row map
+    row_map_entry_bytes: 4
+    draw_groups_per_pane: 1
+    command_boundary: >-
+      Exact mapped staging copies, sparse Vulkan transfer commands, and one
+      instanced draw command are owned; compatible resource creation, barriers,
+      render-pass setup, submission, and physical execution remain caller-owned.
+    physical_execution: not claimed in this package-only slice
+
+retained_cpu_memory_receipt:
+  configuration:
+    rows: 128
+    cols: 512
+    cells: 65536
+    sparse_updates: 65536
+    structured_updates: 65536
+    glyph_upload_bytes: 65536
+    arithmetic_multiplier_for_future_live_pane_bound: 64
+  render_grid_bytes_per_pane: 7342232
+  vulkan_store_bytes_per_pane: 7961712
+  combined_bytes_per_pane: 15303944
+  representable_worst_case_if_all_64_callers_request_every_maximum: 979452416
+  ownership: >-
+    Exact requested CPU payload plus owner-struct bytes under pinned Zig;
+    allocator-private metadata is excluded. This is a representable library
+    stress equation only. Host limits are not authorized or selected in this
+    slice, and 979,452,416 bytes is not accepted steady product memory.
+  candidate_shape: >-
+    Render has one full Cell grid and bounded sparse baselines. Vulkan has one
+    full accepted Instance shadow; ordinary staging is sparse and replacement
+    cells are caller-borrowed. No second full candidate grid or instance array
+    is retained.
+future_physical_payload_unimplemented:
+  instance_bytes_per_pane: 1048576
+  row_map_bytes_per_pane: 512
+  glyph_atlas_bytes_per_pane: 48640
+  logical_payload_per_pane: 1097728
+  representable_payload_if_all_64_callers_request_this_shape: 70254592
+  maximum_borrowed_mapped_staging_per_pane: 1114624
+  claim: >-
+    Logical resource and staging extents only. Resource creation, Vulkan memory
+    alignment, barriers, shaders, render-pass compatibility, submission, and
+    physical device execution are unimplemented and unclaimed.
+
+failure_ownership:
+  init_allocation: reverse cleanup and no retained owner
+  invalid_geometry_or_identity: reject before candidate ownership
+  sparse_or_structured_capacity: reject before mutation or preserve current and accepted GPU ownership
+  missing_or_invalid_glyph_raster: preserve accepted atlas and GPU shadows
+  mapped_staging_capacity: reject before writing any staging partition
+  invalid_vulkan_command_identity: reject before recording any command
+  candidate_discard: preserve current Render state and accepted rendered/GPU state for retry
+  candidate_complete: infallibly advance exact prepared sparse work after caller-observed GPU completion
+
+proof_gate:
+  - exact 11-byte Cell and 16-byte Vulkan Instance layouts
+  - ordered four then five mutates current state and lowers no backend work
+  - one cell or style change lowers one sparse instance transfer
+  - one-row scroll lowers one row-map change plus exposed-row payload only
+  - ordinary lowering iterates retained changed physical identities, not the complete grid
+  - one-cell completion clears one recorded identity independent of the 65,536-cell grid
+  - row-map work is bounded by rows named by structured operations
+  - malformed public staging and command calls fail before writes or Vulkan commands
+  - cursor-only lowering copies no generic Canvas or Vulkan Plan
+  - complete replacement is explicit and retryable
+  - stable glyph identity uploads only on first use
+  - allocation, geometry, capacity, glyph, and candidate failures preserve accepted ownership
+  - Howl-Render and Howl-Vulkan check/test pass in all four optimization modes
+  - all still-possible workspace and static gates pass
+
+exclusions:
+  - no Host or VT source changes
+  - no Host queue or unconsumed runtime transport
+  - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks
+  - no generated decorative glyph policy
+  - no generic Canvas Plan behavior change
+  - no Renderer ReplayState dependency
+  - no post-init allocation in ordinary update paths
+  - no physical Vulkan execution or runtime acceptance claim

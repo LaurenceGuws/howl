@@ -3,6 +3,9 @@
     .version = "0.1.6-dev",
     .fingerprint = 0x22701b3a48d82e22,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .dependencies = .{
+        .howl_render = .{ .path = "../howl-render" },
+    },
     .paths = .{
         "build.zig",
         "build.zig.zon",

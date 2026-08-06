@@ -3,6 +3,7 @@
 const std = @import("std");
 const vk = @import("howl_vk");
 const surface = vk.surface;
+const terminal_cells = vk.terminal_cells;
 
 fn local(
     source: u64,
@@ -10,6 +11,10 @@ fn local(
     generation: u64,
 ) !surface.ResourceGeneration {
     return surface.ResourceGeneration.init(source, resource, generation);
+}
+
+test "retained terminal-cell capability is part of the curated package" {
+    try std.testing.expectEqual(@as(usize, 16), @sizeOf(terminal_cells.Instance));
 }
 
 test "surface contract is analyzed with generic draw storage" {
@@ -301,7 +306,7 @@ test "consumed ABI sizes, alignments, constants, and signatures" {
 
 test "ABI declaration analysis and layout drift receipt" {
     const declarations = @typeInfo(vk.abi).@"struct".decl_names;
-    try std.testing.expectEqual(@as(usize, 516), declarations.len);
+    try std.testing.expectEqual(@as(usize, 520), declarations.len);
     var layout_receipt: usize = 0;
     inline for (declarations) |name| {
         const value = @field(vk.abi, name);
@@ -313,5 +318,5 @@ test "ABI declaration analysis and layout drift receipt" {
             else => {},
         }
     }
-    try std.testing.expectEqual(@as(usize, 12964), layout_receipt);
+    try std.testing.expectEqual(@as(usize, 13028), layout_receipt);
 }

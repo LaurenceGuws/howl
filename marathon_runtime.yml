@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.5-dev
     sprint_pattern: feature/runtime_hot_paths/<sprint>
-  active_sprint: presentation_state
+  active_sprint: terminal_render_foundation
   objective: >-
     Measure and correct the first unnecessary amplification between exact
     terminal output, semantic mutation, rendering work, GPU submission, and
@@ -34,7 +34,7 @@ sprints:
     status: accepted
     outcome: reproducible workloads, owned process completion, and comparable external CPU/GPU receipts
   - id: presentation_state
-    status: accepted_commit_pending
+    status: accepted
     outcome: one shared latest ready frame observed by the Window-owned Wayland pacing loop without catch-up presentation
     implementation:
       shared_owner: howl-host/src/presentation_state.zig presentation_state.State
@@ -45,6 +45,18 @@ sprints:
       scale_one_bootstrap: exact entered-output scale one is accepted after configure without a redundant preferred-scale callback
       finite_terminal_region: full configured surface at six points within the explicit 65,536-cell bound
       proof_cases: P001-P021
+  - id: terminal_render_foundation
+    status: active
+    active_slice: retained_terminal_cell_primitive
+    outcome: >-
+      Restore one independently useful Render/Vulkan blank/ASCII/style/static-
+      cursor primitive with one retained Render visual grid, bounded sparse
+      baselines, one accepted Vulkan shadow, structured row movement, exact
+      sparse Vulkan staging and commands, and no Host or VT integration.
+    exclusions:
+      - no Host queue or terminal-thread integration
+      - no generic Canvas Plan replacement
+      - no physical Vulkan execution claim before Host integration
   - id: update_amplification
     status: pending
     outcome: exact bytes-to-presentation amplification receipt locating the first disproportionate owner
