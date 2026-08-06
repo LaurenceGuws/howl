@@ -4,7 +4,7 @@ sprint:
   marathon: runtime_hot_paths
   version: 0.1.6-dev
   status: active
-  active_slice: ordered_vt_mutation_transport
+  active_slice: terminal_visual_fifo
   objective: >-
     Establish a small independently useful blank/ASCII/style/static-cursor
     path from ordered VT visual mutations through retained Render state to
@@ -45,7 +45,7 @@ slices:
       Visible publication cannot supersede a retained claim, making Renderer
       commit infallible after transactional Composer success.
   - id: ordered_vt_mutation_transport
-    status: review_ready
+    status: accepted_prerequisite
     authorized: true
     product_owners:
       - howl-vt/src/render_journal.zig
@@ -56,6 +56,18 @@ slices:
       backend-neutral transaction containing final blank/ASCII/style/cursor
       values. Render applies every operation in source order to one retained
       grid, where final equality removes Canvas, GPU, and Window work.
+  - id: terminal_visual_fifo
+    status: review_ready
+    authorized: true
+    product_owners:
+      - howl-host/src/terminal_visual_fifo.zig
+      - howl-host/build.zig
+    outcome: >-
+      One 256-slot Host FIFO deep-copies complete VT visual transactions in
+      global producer order. Ordinary operation and cell payloads remain
+      inline; dynamic operation and slice payload ownership is bounded to
+      46,137,344 bytes across the queue. Renderer borrows only the stable head
+      and explicitly completes it, with separate ready and capacity wakes.
   - id: host_render_integration
     status: pending
     authorized: false
@@ -171,8 +183,8 @@ proof_gate:
   - all still-possible workspace and static gates pass
 
 exclusions:
-  - no Host mutation FIFO or terminal-thread integration
-  - no Host queue or unconsumed runtime transport
+  - no producer-side transaction merge
+  - no terminal-thread or Renderer integration of the Host visual FIFO
   - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks
   - no generated decorative glyph policy
   - no generic Canvas Plan behavior change

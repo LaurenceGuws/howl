@@ -84,6 +84,14 @@ pub fn build(b: *std.Build) void {
     });
     terminal_handoff.addImport("howl_vt", vt.module("howl_vt"));
     terminal_handoff.addImport("howl_wayland", wayland.module("howl_wayland"));
+    const terminal_visual_fifo = b.createModule(.{
+        .root_source_file = b.path("src/terminal_visual_fifo.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    terminal_visual_fifo.addImport("howl_vt", vt.module("howl_vt"));
+    terminal_visual_fifo.addImport("terminal_handoff", terminal_handoff);
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -96,6 +104,7 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
     terminal_runtime.addImport("config", config);
     root.addImport("terminal_handoff", terminal_handoff);
+    root.addImport("terminal_visual_fifo", terminal_visual_fifo);
     root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("session_chrome_adapter", session_chrome_adapter);
     root.addImport("session_domain", session_domain);
@@ -153,6 +162,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("session_domain", session_domain);
     test_module.addImport("input_actions", input_actions);
     test_module.addImport("terminal_handoff", terminal_handoff);
+    test_module.addImport("terminal_visual_fifo", terminal_visual_fifo);
     test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
@@ -231,6 +241,15 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_handoff_tests.step);
     b.step("test-handoff", "Run terminal lifecycle handoff proofs")
         .dependOn(&run_handoff_tests.step);
+    const visual_fifo_tests = b.addTest(.{
+        .root_module = terminal_visual_fifo,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    const run_visual_fifo_tests = b.addRunArtifact(visual_fifo_tests);
+    test_step.dependOn(&run_visual_fifo_tests.step);
+    b.step("test-visual-fifo", "Run terminal visual FIFO proofs")
+        .dependOn(&run_visual_fifo_tests.step);
     const terminal_runtime_tests = b.addTest(.{
         .root_module = terminal_runtime,
         .use_llvm = false,

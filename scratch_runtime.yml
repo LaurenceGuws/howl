@@ -1,13 +1,41 @@
 schema: 1
 sprint: terminal_render_foundation
-active_slice: ordered_vt_mutation_transport
+active_slice: terminal_visual_fifo
 status: review_ready
-base: b7387bcb2f92b1f7ae1557b123afca68d1764749
+base: 46889d2a685eb35fbd939cb8a189f00d07203f19
 branch: feature/runtime_hot_paths/measurement_baseline
 
 objective: >-
-  Emit exact ordered blank/ASCII/style/static-cursor visual transactions from
-  VT and apply them to one retained Render grid before Host FIFO integration.
+  Retain one bounded global Host FIFO that deep-copies exact ordered VT visual
+  transactions for one stable Renderer head borrower without integrating
+  terminal producers or rendering consumers.
+
+terminal_visual_fifo:
+  path: howl-host/src/terminal_visual_fifo.zig
+  queue_slots: 256
+  slot_storage: stable_in_place
+  inline_operations_per_slot: 32
+  inline_cells_per_slot: 32
+  fifo_size_bytes: 645192
+  fifo_alignment: 8
+  slot_size_bytes: 2520
+  dynamic_payload_limit_bytes: 46137344
+  dynamic_budget_includes:
+    - overflow journal.Operation arrays
+    - overflow journal.Cell arrays
+    - masks and recolor classification arrays
+    - recolor RGB tables
+  ordering: one global reservation and commit order across all pane identities
+  consumer: one borrowed head transaction until exact completion
+  wakes:
+    ready: nonblocking eventfd with drain then shared-state recheck
+    capacity: nonblocking eventfd after slot or dynamic-budget release
+  excluded:
+    - lifecycle handoff state
+    - producer merging
+    - pane grids
+    - Canvas, GPU, frames, and Window wakes
+    - terminal-thread and Renderer integration
 
 prerequisite_implementation:
   retained_boundary:
