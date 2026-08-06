@@ -50,7 +50,7 @@ accepted:
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
   howl-host/manual-fixtures: bounded compositor-visible Wayland integration, text-sizing, color, and generated-glyph receipts
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
-  howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
+  howl-host/src/config.zig: bounded startup-only repository-local font and cursor configuration parsing
   .howl/config/howl.conf: repository-local development cursor configuration defaults
   howl-host/src/presentation_state.zig: bounded copied cross-thread facts, one latest ready frame, monotonic ready revision, atomic Render cancellation, and directional readiness ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, exact scale readiness including entered-output scale-one fallback, DMA-BUF wrappers, frame pacing, and presentation

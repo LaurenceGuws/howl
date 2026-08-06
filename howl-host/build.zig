@@ -3,7 +3,6 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const run_font = b.option([]const u8, "font", "Absolute font path passed to the live host");
     const run_command = b.option([]const u8, "command", "One-shot /bin/sh -c command for the first pane");
     const headers = b.addWriteFiles();
     const renderer_header = headers.add("renderer-native.h",
@@ -21,8 +20,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const dev_config_options = b.addOptions();
-    dev_config_options.addOption(
+    const config_options = b.addOptions();
+    config_options.addOption(
         []const u8,
         "repository_config_path",
         b.root.joinString(
@@ -30,12 +29,12 @@ pub fn build(b: *std.Build) void {
             "../.howl/config/howl.conf",
         ) catch @panic("OOM"),
     );
-    const dev_config = b.createModule(.{
-        .root_source_file = b.path("src/dev_config.zig"),
+    const config = b.createModule(.{
+        .root_source_file = b.path("src/config.zig"),
         .target = target,
         .optimize = optimize,
     });
-    dev_config.addImport("dev_config_options", dev_config_options.createModule());
+    config.addImport("config_options", config_options.createModule());
     const render = b.dependency("howl_render", .{
         .target = target,
         .optimize = optimize,
@@ -52,7 +51,7 @@ pub fn build(b: *std.Build) void {
     });
     const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
     root.addImport("howl_render", render.module("howl_render"));
-    root.addImport("dev_config", dev_config);
+    root.addImport("config", config);
     const session_chrome_adapter = b.createModule(.{
         .root_source_file = b.path("src/session_chrome_adapter.zig"),
         .target = target,
@@ -101,28 +100,7 @@ pub fn build(b: *std.Build) void {
     terminal_runtime.addImport("howl_wayland", wayland.module("howl_wayland"));
     terminal_runtime.addImport("terminal_handoff", terminal_handoff);
     terminal_runtime.addImport("terminal_pool", terminal_pool);
-    terminal_runtime.addImport("dev_config", dev_config);
-    const terminal_runtime_facts = b.addOptions();
-    terminal_runtime_facts.addOption(
-        []const u8,
-        "font_path",
-        run_font orelse b.root.joinString(
-            b.allocator,
-            "../howl-render/testdata/primary.ttf",
-        ) catch @panic("OOM"),
-    );
-    terminal_runtime_facts.addOption(
-        []const u8,
-        "symbol_font_path",
-        b.root.joinString(
-            b.allocator,
-            "../howl-render/testdata/symbols.ttf",
-        ) catch @panic("OOM"),
-    );
-    terminal_runtime.addImport(
-        "terminal_runtime_facts",
-        terminal_runtime_facts.createModule(),
-    );
+    terminal_runtime.addImport("config", config);
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("session_chrome_adapter", session_chrome_adapter);
@@ -168,7 +146,6 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&terminal_pool_check.step);
     const run = b.addRunArtifact(executable);
-    if (run_font) |font| run.addArgs(&.{ "--font", font });
     if (run_command) |command| run.addArgs(&.{ "--command", command });
     b.step("run", "Run the bounded live color ring").dependOn(&run.step);
 
@@ -198,8 +175,8 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
-    const dev_config_tests = b.addTest(.{ .root_module = dev_config, .use_llvm = false, .use_lld = false });
-    test_step.dependOn(&b.addRunArtifact(dev_config_tests).step);
+    const config_tests = b.addTest(.{ .root_module = config, .use_llvm = false, .use_lld = false });
+    test_step.dependOn(&b.addRunArtifact(config_tests).step);
     test_step.dependOn(&fixture_check.step);
     const window_test_module = b.createModule(.{
         .root_source_file = b.path("src/window.zig"),
@@ -221,7 +198,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
-    renderer_test_module.addImport("dev_config", dev_config);
+    renderer_test_module.addImport("config", config);
     renderer_test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     renderer_test_module.addImport("session_domain", session_domain);
     renderer_test_module.addImport("input_actions", input_actions);

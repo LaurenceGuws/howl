@@ -5,9 +5,9 @@ const renderer = @import("renderer.zig");
 const presentation_state = @import("presentation_state.zig");
 const terminal_runtime = @import("terminal_runtime");
 const window = @import("window.zig");
-const dev_config = @import("dev_config");
+const config = @import("config");
 
-const MainError = std.Thread.SpawnError || dev_config.LoadError || error{
+const MainError = std.Thread.SpawnError || config.LoadError || error{
     ArithmeticOverflow,
     Signal,
     OwnerDidNotStop,
@@ -26,9 +26,9 @@ pub fn main(init: std.process.Init) MainError!void {
         args[arg_count] = argument;
         arg_count += 1;
     }
-    const parsed = try dev_config.parseArguments(args[0..arg_count]);
-    const config = try dev_config.loadFile(init.io, init.gpa, parsed.config_path);
-    const owner_views = config.ownerViews();
+    const parsed = try config.parseArguments(args[0..arg_count]);
+    const loaded_config = try config.loadFile(init.io, init.gpa, parsed.config_path);
+    const owner_views = loaded_config.ownerViews();
     var boundary = try presentation_state.State.init(init.io);
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
@@ -38,7 +38,7 @@ pub fn main(init: std.process.Init) MainError!void {
     const terminal_thread = std.Thread.spawn(
         .{},
         terminal_runtime.run,
-        .{ &terminals, init.gpa, parsed.font_path, "/bin/sh", parsed.command, owner_views.terminal },
+        .{ &terminals, init.gpa, loaded_config.fontPath(), "/bin/sh", parsed.command, owner_views.terminal },
     ) catch |failure| {
         boundary.requestStop(.render);
         window_thread.join();
@@ -48,7 +48,7 @@ pub fn main(init: std.process.Init) MainError!void {
         &boundary,
         &terminals,
         init.gpa,
-        parsed.font_path,
+        loaded_config.fontPath(),
         owner_views.renderer,
     }) catch |failure| {
         boundary.requestStop(.render);

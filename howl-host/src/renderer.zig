@@ -22,7 +22,7 @@ const replay_pin_limit: usize = 2_048;
 const input_actions = @import("input_actions");
 const wayland = @import("howl_wayland");
 const terminal_handoff = @import("terminal_handoff");
-const dev_config = @import("dev_config");
+const config = @import("config");
 const chrome_appearance = session_chrome_adapter.Appearance{
     .style = .{
         .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
@@ -914,7 +914,7 @@ const CanvasWork = struct {
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
     /// Startup-retained presentation view consumed by cursor geometry.
-    cursor_policy: dev_config.CursorPresentationPolicy,
+    cursor_policy: config.CursorPresentationPolicy,
     terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     font_request_high_water: u64 = 0,
@@ -989,7 +989,7 @@ pub fn run(
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
-    cursor_policy: dev_config.CursorPresentationPolicy,
+    cursor_policy: config.CursorPresentationPolicy,
 ) void {
     runFallible(
         boundary,
@@ -1009,7 +1009,7 @@ fn runFallible(
     terminals: *terminal_handoff.Boundary,
     allocator: std.mem.Allocator,
     font_path: []const u8,
-    cursor_policy: dev_config.CursorPresentationPolicy,
+    cursor_policy: config.CursorPresentationPolicy,
 ) !void {
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
@@ -6237,7 +6237,7 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     defer residency.deinit();
     var replay = try ReplayState.init(std.testing.allocator);
     defer replay.deinit();
-    const default_config = dev_config.Config.defaults();
+    const default_config = config.Config.defaults();
     var work = CanvasWork{
         .composer = &composer,
         .content = &content,

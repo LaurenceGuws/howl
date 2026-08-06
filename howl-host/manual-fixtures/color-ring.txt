@@ -1,8 +1,8 @@
 Howl Vulkan host foundation — initial persistent-surface receipt
 
 Command:
-  ../.zig/zig build run -Doptimize=ReleaseSafe \
-    -Dfont=/absolute/path/to/a/Unicode-monospace-font.ttf
+  Configure font.path in ../.howl/config/howl.conf, then run:
+  ../.zig/zig build run -Doptimize=ReleaseSafe
 
 The product remains alive after this initial receipt and exits only after the
 compositor closes the surface. The bounded owner proofs are the automated gate;
@@ -55,7 +55,7 @@ Ownership evidence:
   transactionally when accumulated renames exhaust the retained set.
   GPU memory is bounded at 512 MiB and charges the exact Vulkan memory
   requirement of six exportable images, the shared atlas, and shared staging.
-  The font path is explicit and independent of the process working directory.
+  The font path is retained by runtime configuration rather than build options.
   Main joins both owners, then retires the shared boundary and std.Io root.
 
 No Vulkan API failure, Wayland protocol error, or synchronization failure was

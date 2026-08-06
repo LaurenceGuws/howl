@@ -5,20 +5,24 @@ const pty = @import("howl_pty");
 const render = @import("howl_render");
 const vt = @import("howl_vt");
 const wayland = @import("howl_wayland");
-const facts = @import("terminal_runtime_facts");
 const handoff = @import("terminal_handoff");
 const terminal_pool = @import("terminal_pool");
 const font_owner = render.terminal_font_owner;
 const terminal_render = render.terminal;
-const dev_config = @import("dev_config");
+const config = @import("config");
+
+const test_fonts = struct {
+    const primary = "../howl-render/testdata/primary.ttf";
+    const symbols = "../howl-render/testdata/symbols.ttf";
+};
 
 test "Runtime retains the copied semantic cursor view" {
-    var config = dev_config.Config.defaults();
-    config.cursor.shape = .underline;
-    const policy = config.semanticPolicy();
+    var loaded_config = config.Config.defaults();
+    loaded_config.cursor.shape = .underline;
+    const policy = loaded_config.semanticPolicy();
     var runtime = try Runtime.initWithCommand(
         std.testing.allocator,
-        facts.font_path,
+        test_fonts.primary,
         null,
         policy,
     );
@@ -1152,7 +1156,7 @@ pub fn run(
     font_path: []const u8,
     shell: []const u8,
     first_command: ?[]const u8,
-    cursor_policy: dev_config.CursorSemanticPolicy,
+    cursor_policy: config.CursorSemanticPolicy,
 ) void {
     runFallible(boundary, allocator, font_path, shell, first_command, cursor_policy) catch |failure| {
         std.debug.print("Terminal runtime failure: {s}\n", .{@errorName(failure)});
@@ -1168,7 +1172,7 @@ fn runFallible(
     font_path: []const u8,
     shell: []const u8,
     first_command: ?[]const u8,
-    cursor_policy: dev_config.CursorSemanticPolicy,
+    cursor_policy: config.CursorSemanticPolicy,
 ) !void {
     var runtime = try Runtime.initWithCommand(
         allocator,
@@ -1266,7 +1270,7 @@ const Runtime = struct {
     font_path: []const u8,
     first_command: ?[]const u8,
     /// Immutable startup copy of the Host terminal cursor semantic view.
-    cursor_policy: dev_config.CursorSemanticPolicy,
+    cursor_policy: config.CursorSemanticPolicy,
     fonts: *render.terminal.FontMap,
     shared_fonts: font_owner.Owner,
     owners: []?Logical,
@@ -1293,7 +1297,7 @@ const Runtime = struct {
             allocator,
             font_path,
             null,
-            dev_config.Config.defaults().semanticPolicy(),
+            config.Config.defaults().semanticPolicy(),
         );
     }
 
@@ -1303,7 +1307,7 @@ const Runtime = struct {
         allocator: std.mem.Allocator,
         font_path: []const u8,
         first_command: ?[]const u8,
-        cursor_policy: dev_config.CursorSemanticPolicy,
+        cursor_policy: config.CursorSemanticPolicy,
     ) RuntimeInitError!Runtime {
         const owners = try allocator.alloc(?Logical, owner_limit);
         errdefer allocator.free(owners);
@@ -2572,7 +2576,7 @@ test "older VT replies remain ordered before newly encoded input" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -2593,7 +2597,7 @@ test "cursor-only mutation routing leaves terminal publication clean" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(901);
     try runtime.add(
@@ -2724,7 +2728,7 @@ test "synchronized output bootstraps before first Composer acceptance" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(906);
     const source = try composer.registerSource();
@@ -2788,7 +2792,7 @@ fn exerciseFzfSynchronizedSequence(split: FzfSequenceSplit) !void {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(907);
     const source = try composer.registerSource();
@@ -2867,7 +2871,7 @@ test "synchronized output defers cursor binding until one mode-off publication" 
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(903);
     try runtime.add(
@@ -2909,7 +2913,7 @@ test "pooled cursor route publishes inbox without pool or content work" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(902);
     const source = try composer.registerSource();
@@ -3067,7 +3071,7 @@ test "ready supersession releases every runtime font batch before replacement" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
 
     var panes: [16]render.chrome.PaneId = undefined;
@@ -3170,7 +3174,7 @@ test "repeated consequences are consumed by exact identity without stalling prog
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(7));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -3195,7 +3199,7 @@ test "reply-required consequences receive bounded Host replies and clear the hea
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(70));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -3233,7 +3237,7 @@ test "realistic configured sparse terminal fits the production Composer candidat
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(10));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 240, 100), .{ .dedicated = &slot });
@@ -3275,7 +3279,7 @@ test "alternate-screen exit publishes complete retained resource turnover" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(72);
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 100, 5), .{ .dedicated = &slot });
@@ -3348,7 +3352,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(71));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 256, 128), .{ .dedicated = &slot });
@@ -3367,7 +3371,7 @@ test "hostile admitted command pressure remains recoverable and retryable" {
 test "first command follows real lifecycle admission and is consumed once" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 1,
@@ -3461,7 +3465,7 @@ test "first command follows real lifecycle admission and is consumed once" {
 test "close racing an occupied slot retries and retires exactly once" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(9));
     const source = try render.canvas.Composer.init(std.testing.allocator, .{
@@ -3517,7 +3521,7 @@ test "two-owner renderer drainage retires one source without stale drainage" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(@intCast(11));
     const second: render.chrome.PaneId = @fromBackingInt(@intCast(12));
@@ -3575,7 +3579,7 @@ test "pool exhaustion preserves PTY progress and shared Work reuse" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(21));
     const source = try composer.registerSource();
@@ -3656,7 +3660,7 @@ test "consumed publication failure releases reservation and forces recovery" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(22));
     const source = try composer.registerSource();
@@ -3791,7 +3795,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
         noisy_slot.deinit();
         quiet_slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const noisy_id: render.chrome.PaneId = @fromBackingInt(@intCast(41));
     const quiet_id: render.chrome.PaneId = @fromBackingInt(@intCast(42));
@@ -3866,7 +3870,7 @@ test "real runtime measures occupied handoff fairness and Renderer drainage" {
 test "runtime admits observes and retires real shell owners transactionally" {
     var first_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
     var second_slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer {
         runtime.deinit();
         retireTestSlot(&first_slot);
@@ -3908,7 +3912,7 @@ test "visible-set preparation publishes hidden newest state through real Content
         contentLimits(),
     );
     defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
         .sources = 1,
@@ -3974,7 +3978,7 @@ test "hidden reveal refreshes a stale cursor after committed VT resize" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(94);
     try runtime.add(
@@ -4036,7 +4040,7 @@ test "two pooled panes with one factual key share canonical glyph residency" {
     defer boundary.deinit();
     var runtime = try Runtime.initTest(
         std.testing.allocator,
-        facts.symbol_font_path,
+        test_fonts.symbols,
     );
     defer runtime.deinit();
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
@@ -4430,7 +4434,7 @@ test "visible-set replacement redeclares shared resources cleared with outgoing 
     defer boundary.deinit();
     var runtime = try Runtime.initTest(
         std.testing.allocator,
-        facts.symbol_font_path,
+        test_fonts.symbols,
     );
     defer runtime.deinit();
     var composer = try render.canvas.Composer.init(std.testing.allocator, .{
@@ -4553,7 +4557,7 @@ test "factual admission publishes generated joins and Powerline through shared p
         contentLimits(),
     );
     defer boundary.deinit();
-    var runtime = try Runtime.init(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.init(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
 
     // The executable bootstrap remains pixel-sized and carries no accepted
@@ -5033,7 +5037,7 @@ test "PTY resize failure discards prepared VT and later live resize commits" {
     try std.testing.expectEqual(cell, unchanged.cellAt(0, 0));
     try std.testing.expectEqual(semantic_sequence, machine.semanticSequence());
 
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     var slot = try handoff.PendingSlot.init(std.testing.allocator, contentLimits());
     defer {
         runtime.deinit();
@@ -5085,10 +5089,10 @@ test "one runtime thread publishes a real shell through the copied slot" {
     const thread = try std.Thread.spawn(.{}, run, .{
         &boundary,
         std.testing.allocator,
-        facts.font_path,
+        test_fonts.primary,
         "/bin/sh",
         null,
-        dev_config.Config.defaults().semanticPolicy(),
+        config.Config.defaults().semanticPolicy(),
     });
     var awaiting = std.posix.pollfd{
         .fd = boundary.rendererFd(),
@@ -5152,7 +5156,7 @@ test "real child output crosses Pool and Composer before one completion" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     const source = try composer.registerSource();
@@ -5247,10 +5251,10 @@ test "real runtime exits when shutdown races a fully reserved lifecycle batch" {
     const thread = try std.Thread.spawn(.{}, run, .{
         &boundary,
         std.testing.allocator,
-        facts.font_path,
+        test_fonts.primary,
         "/bin/sh",
         null,
-        dev_config.Config.defaults().semanticPolicy(),
+        config.Config.defaults().semanticPolicy(),
     });
     boundary.shutdown();
     try std.testing.expectError(error.Stopping, candidate.commitAdmitted());
@@ -5276,7 +5280,7 @@ test "interpreted unmatched keys route by PaneId under current VT modes" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     try runtime.add(pane, "/bin/sh", "sleep 1", try testPixels(runtime.fonts, 8, 2), .{ .dedicated = &slot });
@@ -5319,7 +5323,7 @@ test "reaped child final output remains drainable without a busy HUP loop" {
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .size = .{ .points = .{
+            .native = .{ .primary = test_fonts.primary, .size = .{ .points = .{
                 .points = 12.0,
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -5395,7 +5399,7 @@ test "logical observes signal termination only after PTY EOF" {
         std.testing.allocator,
         &.{.{
             .key = .{ .slot = 0, .style = .normal },
-            .native = .{ .primary = facts.font_path, .size = .{ .points = .{
+            .native = .{ .primary = test_fonts.primary, .size = .{ .points = .{
                 .points = 12.0,
                 .dpi_x = .{ .numerator = 96, .denominator = 1 },
                 .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -5465,7 +5469,7 @@ test "typed lifecycle creates resizes retires and never reuses pane sources" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(@intCast(1));
     const first_source = try composer.registerSource();
@@ -5787,7 +5791,7 @@ test "configured operator font styles and optional missing cells remain renderab
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(83);
     try runtime.add(
@@ -5809,7 +5813,7 @@ test "configured operator font styles and optional missing cells remain renderab
 }
 
 test "factual DPI-only request reaches Runtime without font reconstruction" {
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const before = runtime.fonts.cellMetrics(.{
         .slot = 0,
@@ -5866,7 +5870,7 @@ test "pane point policy reaches each Logical atomically and new panes start at z
         second_slot.deinit();
         new_slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(101);
     const second: render.chrome.PaneId = @fromBackingInt(102);
@@ -6005,7 +6009,7 @@ test "pane pixels remain authoritative across equal grids and rejected resize" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(92);
     const initial = try testPixels(runtime.fonts, 8, 2);
@@ -6118,7 +6122,7 @@ test "committed resize refreshes clamped cursor before Composer acceptance" {
         .candidate_pixel_bytes = 4 * 1024 * 1024,
     });
     defer composer.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(93);
     const source = try composer.registerSource();
@@ -6188,7 +6192,7 @@ test "over-admission point request rolls back before PTY and later request succe
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(151);
     try runtime.add(
@@ -6283,7 +6287,7 @@ test "hidden clamped offset commits exactly and late visible failure rolls back 
         first_slot.deinit();
         second_slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const hidden_pane: render.chrome.PaneId = @fromBackingInt(801);
     const visible_pane: render.chrome.PaneId = @fromBackingInt(802);
@@ -6403,7 +6407,7 @@ test "tiny and independent pane pixels derive only through current font metrics"
         first_slot.deinit();
         second_slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const first: render.chrome.PaneId = @fromBackingInt(93);
     const second: render.chrome.PaneId = @fromBackingInt(94);
@@ -6416,7 +6420,7 @@ test "tiny and independent pane pixels derive only through current font metrics"
 }
 
 test "runtime lifecycle admission rejects sub-cell extents without owner mutation" {
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 1,
@@ -6461,7 +6465,7 @@ test "runtime lifecycle admission rejects sub-cell extents without owner mutatio
 test "undersized lifecycle candidate rejects before terminal owner mutation" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 1,
@@ -6501,7 +6505,7 @@ test "close admission rejects only an identity absent from Runtime" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(911);
     try runtime.add(
@@ -6535,7 +6539,7 @@ test "undersized lifecycle resize rejects without mutating the live owner" {
         retireTestSlot(&slot);
         slot.deinit();
     }
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     const pane: render.chrome.PaneId = @fromBackingInt(902);
     const pixels = try testPixels(runtime.fonts, 8, 2);
@@ -6574,7 +6578,7 @@ test "undersized lifecycle resize rejects without mutating the live owner" {
 test "new-pane admission retains exact resolved metrics until commit or cancellation" {
     var boundary = try initBoundary(std.testing.io, std.testing.allocator);
     defer boundary.deinit();
-    var runtime = try Runtime.initTest(std.testing.allocator, facts.font_path);
+    var runtime = try Runtime.initTest(std.testing.allocator, test_fonts.primary);
     defer runtime.deinit();
     runtime.accepted_scale = .{
         .revision = 3,

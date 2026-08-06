@@ -16,9 +16,11 @@ From `howl-host`, run a receipt with:
 
 ```text
 ../.zig/zig build run -Doptimize=ReleaseFast \
-  -Dfont=/absolute/path/to/font.ttf \
   -Dcommand='./manual-fixtures/RECEIPT.sh'
 ```
+
+Set `font.path` in `../.howl/config/howl.conf`, or select another complete
+configuration with the runtime `--config` argument.
 
 Python receipts use the same command with their `.py` filename. The one-shot
 command is applied only to the first successfully created pane.

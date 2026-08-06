@@ -1,18 +1,20 @@
-//! Owns the bounded repository-local startup configuration for the host.
+//! Owns bounded repository-local startup configuration for the host.
 //!
 //! The process root reads this file once before constructing any Boundary or
 //! runtime thread. The process root retains one typed value, then copies only
 //! owner-specific cursor views into the Host terminal and Renderer owners.
 
 const std = @import("std");
-const build_options = @import("dev_config_options");
+const build_options = @import("config_options");
 
-/// The largest accepted development configuration file, including comments.
+/// The largest accepted configuration file, including comments.
 pub const max_file_bytes: usize = 4096;
 /// The largest single physical line accepted before comment stripping.
 pub const max_line_bytes: usize = 256;
 /// The largest one-shot shell command accepted by the host launcher.
 pub const max_command_bytes: usize = 4096;
+/// The largest UTF-8 font path retained by startup configuration.
+pub const max_font_path_bytes: usize = 240;
 /// The repository-local configuration used when `--config` is absent.
 pub const default_path: []const u8 = build_options.repository_config_path;
 
@@ -73,12 +75,19 @@ pub const OwnerViews = struct {
 
 /// Represents one complete validated configuration for parser-boundary tests.
 pub const Config = struct {
+    /// Inline storage for the configured primary terminal font path.
+    font_path_bytes: [max_font_path_bytes]u8,
+    /// Initialized prefix of `font_path_bytes`.
+    font_path_len: u16,
     /// Complete immutable cursor configuration.
     cursor: CursorConfig,
 
     /// Returns the accepted operator-resolved development values.
     pub fn defaults() Config {
-        return .{
+        const default_font_path = "../howl-render/testdata/primary.ttf";
+        var result: Config = .{
+            .font_path_bytes = @splat(0),
+            .font_path_len = default_font_path.len,
             .cursor = .{
                 .shape = .beam,
                 .color = .{ .r = 0x73, .g = 0xf9, .b = 0x90 },
@@ -87,6 +96,13 @@ pub const Config = struct {
                 .underline_thickness_points = 2.0,
             },
         };
+        @memcpy(result.font_path_bytes[0..default_font_path.len], default_font_path);
+        return result;
+    }
+
+    /// Borrows the configured font path for the lifetime of this value.
+    pub fn fontPath(self: *const Config) []const u8 {
+        return self.font_path_bytes[0..self.font_path_len];
     }
 
     /// Copies only the semantic shape for the Host terminal owner.
@@ -113,9 +129,8 @@ pub const Config = struct {
     }
 };
 
-/// Retains the two process-root command-line paths after bounded parsing.
+/// Retains process-root command-line selection after bounded parsing.
 pub const ParsedArguments = struct {
-    font_path: []const u8,
     config_path: []const u8,
     /// Optional one-shot command for the first successfully created pane.
     command: ?[]const u8,
@@ -124,7 +139,6 @@ pub const ParsedArguments = struct {
 /// Parses the complete bounded startup argument vector without allocation.
 pub fn parseArguments(args: []const []const u8) error{InvalidArguments}!ParsedArguments {
     if (args.len == 0 or args[0].len == 0) return error.InvalidArguments;
-    var font_path: ?[]const u8 = null;
     var config_path: []const u8 = default_path;
     var config_seen = false;
     var command: ?[]const u8 = null;
@@ -132,12 +146,7 @@ pub fn parseArguments(args: []const []const u8) error{InvalidArguments}!ParsedAr
     var index: usize = 1;
     while (index < args.len) : (index += 1) {
         const argument = args[index];
-        if (std.mem.eql(u8, argument, "--font")) {
-            if (font_path != null or index + 1 >= args.len) return error.InvalidArguments;
-            index += 1;
-            font_path = args[index];
-            if (font_path.?.len == 0) return error.InvalidArguments;
-        } else if (std.mem.eql(u8, argument, "--config")) {
+        if (std.mem.eql(u8, argument, "--config")) {
             if (config_seen or index + 1 >= args.len) return error.InvalidArguments;
             config_seen = true;
             index += 1;
@@ -153,7 +162,6 @@ pub fn parseArguments(args: []const []const u8) error{InvalidArguments}!ParsedAr
         } else return error.InvalidArguments;
     }
     return .{
-        .font_path = font_path orelse return error.InvalidArguments,
         .config_path = config_path,
         .command = command,
     };
@@ -171,7 +179,7 @@ pub const ParseError = error{
 /// Reports file access, bounded read, allocation, or parser failure.
 pub const LoadError = std.Io.Dir.ReadFileAllocError || ParseError;
 
-const key_count = 5;
+const key_count = 6;
 
 /// Parses one complete configuration into typed storage for boundary tests.
 pub fn parse(bytes: []const u8) ParseError!Config {
@@ -206,11 +214,12 @@ fn parseInto(bytes: []const u8, result: *Config) ParseError!void {
         if (seen & bit != 0) return error.DuplicateKey;
         seen |= bit;
         switch (bit) {
-            1 << 0 => result.cursor.shape = try parseEnum(CursorShape, fields.next()),
-            1 << 1 => result.cursor.color = try parseColor(fields.next()),
-            1 << 2 => result.cursor.unfocused_shape = try parseEnum(UnfocusedCursorShape, fields.next()),
-            1 << 3 => result.cursor.beam_thickness_points = try parsePositiveFloat(fields.next()),
-            1 << 4 => result.cursor.underline_thickness_points = try parsePositiveFloat(fields.next()),
+            1 << 0 => try parseFontPath(fields.next(), result),
+            1 << 1 => result.cursor.shape = try parseEnum(CursorShape, fields.next()),
+            1 << 2 => result.cursor.color = try parseColor(fields.next()),
+            1 << 3 => result.cursor.unfocused_shape = try parseEnum(UnfocusedCursorShape, fields.next()),
+            1 << 4 => result.cursor.beam_thickness_points = try parsePositiveFloat(fields.next()),
+            1 << 5 => result.cursor.underline_thickness_points = try parsePositiveFloat(fields.next()),
             else => unreachable,
         }
         if (fields.next() != null) return error.MalformedValue;
@@ -243,6 +252,7 @@ fn trimAscii(value: []const u8) []const u8 {
 
 fn keyBit(key: []const u8) ?u16 {
     const names = [_][]const u8{
+        "font.path",
         "cursor.shape",
         "cursor.color",
         "cursor.unfocused_shape",
@@ -252,6 +262,14 @@ fn keyBit(key: []const u8) ?u16 {
     for (names, 0..) |name, index| if (std.mem.eql(u8, key, name))
         return @as(u16, 1) << @intCast(index);
     return null;
+}
+
+fn parseFontPath(value: ?[]const u8, result: *Config) ParseError!void {
+    const path = value orelse return error.MalformedValue;
+    if (path.len == 0 or path.len > max_font_path_bytes) return error.InvalidValue;
+    @memset(&result.font_path_bytes, 0);
+    @memcpy(result.font_path_bytes[0..path.len], path);
+    result.font_path_len = @intCast(path.len);
 }
 
 fn parseEnum(comptime T: type, value: ?[]const u8) ParseError!T {
@@ -304,9 +322,10 @@ fn parseFloat(value: ?[]const u8) ParseError!f64 {
     return result;
 }
 
-test "development config parses the complete accepted typed file" {
+test "config parses the complete accepted typed file" {
     const parsed = try parse(
         "# comment\n" ++
+            "font.path ../howl-render/testdata/primary.ttf\n" ++
             "cursor.shape beam\n" ++
             "cursor.color #73f990\n" ++
             "cursor.unfocused_shape hollow\n" ++
@@ -314,6 +333,7 @@ test "development config parses the complete accepted typed file" {
             "cursor.underline_thickness_points 2.0\n",
     );
     try std.testing.expectEqual(Config.defaults(), parsed);
+    try std.testing.expectEqualStrings("../howl-render/testdata/primary.ttf", parsed.fontPath());
     try std.testing.expectEqual(
         CursorSemanticPolicy{ .shape = .beam },
         parsed.semanticPolicy(),
@@ -333,7 +353,7 @@ test "typed owner views copy values without retaining the complete config" {
 
 test "typed cursor configuration layout receipt" {
     // Pinned after removing unsupported Host blink and trail presentation.
-    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Config));
+    try std.testing.expectEqual(@as(usize, 272), @sizeOf(Config));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(Config));
     try std.testing.expectEqual(@as(usize, 1), @sizeOf(CursorSemanticPolicy));
     try std.testing.expectEqual(@as(usize, 1), @alignOf(CursorSemanticPolicy));
@@ -343,8 +363,9 @@ test "typed cursor configuration layout receipt" {
     try std.testing.expectEqual(@as(usize, 8), @alignOf(OwnerViews));
 }
 
-test "development config rejects missing, duplicate, unknown, malformed, and oversized records" {
-    const complete = "cursor.shape beam\n" ++
+test "config rejects missing, duplicate, unknown, malformed, and oversized records" {
+    const complete = "font.path ../howl-render/testdata/primary.ttf\n" ++
+        "cursor.shape beam\n" ++
         "cursor.color #73f990\n" ++
         "cursor.unfocused_shape hollow\n" ++
         "cursor.beam_thickness_points 1.5\n" ++
@@ -358,7 +379,7 @@ test "development config rejects missing, duplicate, unknown, malformed, and ove
     try std.testing.expectError(error.ConfigTooLarge, parse(&oversized));
 }
 
-test "development config rejects bounded physical lines and invalid typed values" {
+test "config rejects bounded physical lines and invalid typed values" {
     var long_line: [max_line_bytes + 1]u8 = undefined;
     @memset(&long_line, 'x');
     try std.testing.expect(long_line.len < max_file_bytes);
@@ -369,38 +390,45 @@ test "development config rejects bounded physical lines and invalid typed values
     try std.testing.expectError(error.InvalidValue, parse("cursor.beam_thickness_points inf\n"));
 }
 
+test "font path is retained inline at its exact bound" {
+    var config = Config.defaults();
+    const maximum: [max_font_path_bytes]u8 = @splat('a');
+    try parseFontPath(&maximum, &config);
+    try std.testing.expectEqualStrings(&maximum, config.fontPath());
+
+    const oversized: [max_font_path_bytes + 1]u8 = @splat('b');
+    try std.testing.expectError(error.InvalidValue, parseFontPath(&oversized, &config));
+    try std.testing.expectError(error.InvalidValue, parseFontPath("", &config));
+    try std.testing.expectEqualStrings(&maximum, config.fontPath());
+}
+
 test "startup arguments prove explicit selection, ordering, and rejection" {
     const explicit = try parseArguments(&.{
-        "howl-host", "--config", "/tmp/howl.conf", "--font", "font.ttf",
+        "howl-host", "--config", "/tmp/howl.conf",
     });
     try std.testing.expectEqualStrings("/tmp/howl.conf", explicit.config_path);
-    try std.testing.expectEqualStrings("font.ttf", explicit.font_path);
     try std.testing.expect(explicit.command == null);
-    const reversed = try parseArguments(&.{
-        "howl-host", "--font", "font.ttf", "--config", "/tmp/howl.conf",
-    });
-    try std.testing.expectEqualStrings(explicit.config_path, reversed.config_path);
-    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--config", "a", "--config", "b", "--font", "f" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--config", "a", "--config", "b" }));
     try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--config" }));
-    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--font", "f", "--unknown", "x" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--unknown", "value" }));
 }
 
 test "startup command is bounded, optional, and one-shot at the parser boundary" {
     const parsed = try parseArguments(&.{
-        "howl-host", "--command", "printf fixture", "--font", "font.ttf",
+        "howl-host", "--command", "printf fixture",
     });
     try std.testing.expectEqualStrings("printf fixture", parsed.command.?);
     var too_long: [max_command_bytes + 1]u8 = undefined;
     @memset(&too_long, 'x');
-    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", &too_long, "--font", "f" }));
-    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "", "--font", "f" }));
-    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "a", "--command", "b", "--font", "f" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", &too_long }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "" }));
+    try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command", "a", "--command", "b" }));
     try std.testing.expectError(error.InvalidArguments, parseArguments(&.{ "howl-host", "--command" }));
 }
 
-test "development config rejects allocation before retaining any configuration bytes" {
+test "config rejects allocation before retaining any configuration bytes" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    const path = "dev-config-allocation-failure.conf";
+    const path = "config-allocation-failure.conf";
     {
         var file = try std.Io.Dir.cwd().createFile(std.testing.io, path, .{ .truncate = true });
         defer file.close(std.testing.io);
@@ -411,8 +439,8 @@ test "development config rejects allocation before retaining any configuration b
     try std.testing.expectError(error.OutOfMemory, loadFile(std.testing.io, failing.allocator(), path));
 }
 
-test "development config reports a missing explicit file" {
-    const path = "dev-config-missing.conf";
+test "config reports a missing explicit file" {
+    const path = "config-missing.conf";
     std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
     try std.testing.expectError(
         error.FileNotFound,
@@ -420,7 +448,7 @@ test "development config reports a missing explicit file" {
     );
 }
 
-test "repository-local development config validates at its compiled default path" {
+test "repository-local config validates at its compiled default path" {
     const loaded = try loadFile(std.testing.io, std.testing.allocator, default_path);
     const owners = loaded.ownerViews();
     try std.testing.expectEqual(CursorShape.beam, owners.terminal.shape);
@@ -428,14 +456,15 @@ test "repository-local development config validates at its compiled default path
     try std.testing.expectEqual(UnfocusedCursorShape.hollow, owners.renderer.unfocused_shape);
 }
 
-test "process-root explicit config reaches the exact terminal and renderer owners" {
-    const path = "dev-config-explicit.conf";
+test "explicit config retains font and exact cursor owner views" {
+    const path = "config-explicit.conf";
     {
         var file = try std.Io.Dir.cwd().createFile(std.testing.io, path, .{ .truncate = true });
         defer file.close(std.testing.io);
         var writer = file.writer(std.testing.io, &.{});
         try writer.interface.writeAll(
-            "cursor.shape underline\n" ++
+            "font.path /tmp/operator-font.ttf\n" ++
+                "cursor.shape underline\n" ++
                 "cursor.color #010203\n" ++
                 "cursor.unfocused_shape beam\n" ++
                 "cursor.beam_thickness_points 2\n" ++
@@ -445,6 +474,7 @@ test "process-root explicit config reaches the exact terminal and renderer owner
     defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
     const loaded = try loadFile(std.testing.io, std.testing.allocator, path);
     const owners = loaded.ownerViews();
+    try std.testing.expectEqualStrings("/tmp/operator-font.ttf", loaded.fontPath());
     try std.testing.expectEqual(CursorSemanticPolicy{ .shape = .underline }, owners.terminal);
     try std.testing.expectEqual(Color{ .r = 1, .g = 2, .b = 3 }, owners.renderer.color);
     try std.testing.expectEqual(UnfocusedCursorShape.beam, owners.renderer.unfocused_shape);
