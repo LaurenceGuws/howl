@@ -27,9 +27,9 @@ settled_capabilities:
   - name: pty
     acceptance: caller-polled Linux PTY and child-process lifecycle
   - name: render
-    acceptance: reusable text plus backend-neutral terminal, generated-glyph, cursor-free, image, and Chrome composition
+    acceptance: reusable native text, generated glyphs, generic Canvas composition, and Chrome composition
   - name: executable
-    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, multi-pane terminal runtime, and Kitty-led physical cursor presentation
+    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, session topology, and static physical cursor presentation; terminal rendering is intentionally absent pending replacement
 
 accepted_implementation:
   - The tracked Zig pin drives every workspace and child command.

@@ -77,10 +77,10 @@ grapheme storage, ligatures, symbols, generated terminal glyphs, factual DPI,
 fractional scaling, and pane-local font sizing have deterministic coverage.
 
 The `0.1.3-dev` milestone separated cursor mutation, publication,
-cursor-free terminal frames, synchronized-output deferral, physical replay,
-and Kitty-led trail presentation into composable state machines. The frozen
-`0.1.4-dev` milestone separated session-domain decisions from Host integration
-and completed the reviewed cursor/presentation and topology ownership boundary.
+cursor-free terminal frames, synchronized-output deferral, and physical replay
+into composable state machines. The frozen `0.1.4-dev` milestone separated
+session-domain decisions from Host integration and completed the reviewed
+static-cursor presentation and topology ownership boundary.
 Ordered keyboard, repeat, mouse, terminal identity, and input hot-path work
 remains deferred. The accepted `0.1.5-dev` milestone paid down structural debt
 without adding terminal capability. The active `0.1.6-dev` milestone measures
@@ -101,7 +101,7 @@ work.
 | Bounded terminal semantics and Linux process transport | Accepted |
 | Native text, terminal glyphs, composition, Vulkan, and Wayland foundations | Accepted |
 | First-party multi-pane graphical host boundary | Accepted |
-| Cursor correctness, animation, blink, and presentation boundary | Accepted for 0.1.4-dev |
+| Static cursor correctness and presentation boundary | Accepted for 0.1.4-dev |
 | Structural debt payoff | Accepted for 0.1.5-dev |
 | Runtime hot-path measurement and first-owner correction | Active in 0.1.6-dev |
 | Maximum multi-pane pressure | Planned |

@@ -40,7 +40,6 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .native_text = true,
-        .terminal = true,
     });
     const pty = b.dependency("howl_pty", .{
         .target = target,
@@ -281,31 +280,5 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     test_step.dependOn(&b.addRunArtifact(terminal_runtime_tests).step);
-    const terminal_contract = b.createModule(.{
-        .root_source_file = b.path("test/terminal_contract_test.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-    terminal_contract.addImport("session_chrome_adapter", session_chrome_adapter);
-    terminal_contract.addImport("howl_render", render.module("howl_render"));
-    terminal_contract.addImport("howl_vt", vt.module("howl_vt"));
-    terminal_contract.addImport("terminal_handoff", terminal_handoff);
-    terminal_contract.addImport("session_domain", session_domain);
-    const terminal_test_facts = b.addOptions();
-    terminal_test_facts.addOption(
-        []const u8,
-        "font_path",
-        b.root.joinString(
-            b.allocator,
-            "../howl-render/testdata/primary.ttf",
-        ) catch @panic("OOM"),
-    );
-    terminal_contract.addImport("terminal_test_facts", terminal_test_facts.createModule());
-    const terminal_contract_tests = b.addTest(.{
-        .root_module = terminal_contract,
-        .use_llvm = false,
-        .use_lld = false,
-    });
-    test_step.dependOn(&b.addRunArtifact(terminal_contract_tests).step);
     b.default_step = check;
 }

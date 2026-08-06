@@ -2,7 +2,6 @@ accepted:
   .zigversion: exact Zig compiler pin resolved locally through ignored .zig/zig
   protocol_coverage.yml: pinned protocol evidence and normalized ownership facts
   protocol_coverage.nu: catalogue normalization, validation, and query commands
-  cursor_design.yml: cursor-only configuration policy, ownership boundaries, research index, and implementation gates
   marathon_runtime.yml: active 0.1.6-dev runtime hot-path intervention, workloads, sprint order, invariants, and exclusions
   sprint_runtime_measurement.yml: accepted workload completion and external baseline-measurement contract
   sprint_runtime_presentation_state.yml: implemented latest-ready presentation-state ownership, bounds, proof map, and static acceptance gate
@@ -32,15 +31,11 @@ accepted:
   howl-pty/build.zig: PTY package build, coherent translated Linux headers, and proofs
   howl-pty/build.zig.zon: PTY package identity and source boundary
   howl-pty/src/howl_pty.zig: Linux PTY transport, foreground termios signals, and child-process lifecycle
-  howl-render/build.zig: independently selected generic text, standalone generated, terminal projection, and mandatory native-plus-generated terminal-text graphs
+  howl-render/build.zig: independently selected generic native text, standalone generated glyphs, Canvas, and Chrome graphs
   howl-render/build.zig.zon: render package identity, owned assets, and licenses
-  howl-render/src/root*.zig: curated roots exposing generic text and standalone generated APIs independently while routing all terminal rendering through render.terminal
+  howl-render/src/root*.zig: curated roots exposing generic native text, standalone generated glyphs, Canvas, and Chrome APIs
   howl-render/src/native_text.zig: native font loading, shaping, metrics, Kitty-compatible glyph-width measurement, and alpha rasterization
   howl-render/src/generated*.zig: generated terminal-glyph classification, geometry, and rasterization
-  howl-render/src/terminal_projection.zig: stateless VT cell semantic projection into caller buffers
-  howl-render/src/image_projection.zig: stateless VT image-plane projection into caller buffers
-  howl-render/src/terminal_test.zig: terminal projection bounds, sparse damage, cursor, and rollback proofs
-  howl-render/src/image_projection_test.zig: image projection identity, placement, capacity, and alias proofs
   howl-render/src/canvas.zig: canonical clipped Canvas facts, retained logical resources, and ordered Composer frames
   howl-render/src/canvas_validation.zig: private shared Canvas identity, extent, and pixel-plane validation
   howl-render/src/canvas_test.zig: Canvas syntax, Composer retention, revision, residency, recovery, alias, and rollback proofs
@@ -48,34 +43,26 @@ accepted:
   howl-render/src/chrome_test.zig: deterministic chrome geometry, overlap order, clipping, hit, capacity, rollback, and alias proofs
   howl-render/src/chrome_reuse_test.zig: independent editor-like native-text and chrome reuse proof through the curated package root
   howl-render/src/chrome_native.zig: native-capable Chrome Content retention and Canvas update production
-  howl-render/src/terminal_canvas.zig: sole public terminal-rendering surface, exact Host font contracts, native/generated Content retention, and Canvas update production
-  howl-render/src/vertical_test.zig: capable-root terminal/chrome producer-to-Composer composition proof
-  howl-render/src/terminal_text*.zig: private one-run native/generated selection, bounded narrow-symbol configuration, Kitty symbol-span admission, ligature positioning, raster identity, and native decoration metrics
-  howl-render/src/terminal_text_test.zig: private generated-only and mandatory native-plus-generated terminal run-preparation proofs
   howl-render/src/*_test.zig: selected render capability proofs
   howl-render/testdata: deterministic render test fonts
   howl-render/LICENSES: render-owned asset and native-library provenance
   howl-host/build.zig: first-party executable build, install, run, proof, and required renderer_c native-header ownership
   howl-host/build.zig.zon: host package identity and direct standalone dependencies
-  howl-host/manual-fixtures: bounded compositor-visible terminal, Wayland integration, image, text-sizing, color, and generated-glyph receipts
+  howl-host/manual-fixtures: bounded compositor-visible Wayland integration, text-sizing, color, and generated-glyph receipts
   howl-host/src/main.zig: process roots, Window and Render thread construction, joining, and final failure
   howl-host/src/dev_config.zig: bounded startup-only repository-local cursor configuration parsing and immutable typed facts
   .howl/config/howl.conf: repository-local development cursor configuration defaults
   howl-host/src/presentation_state.zig: bounded copied cross-thread facts, one latest ready frame, monotonic ready revision, atomic Render cancellation, and directional readiness ownership
   howl-host/src/window.zig: Wayland discovery, dispatch, exact scale readiness including entered-output scale-one fallback, DMA-BUF wrappers, frame pacing, and presentation
-  howl-host/src/renderer.zig: Host input, session, terminal, Composer, physical-replay, and deadline orchestration plus canvas-to-Vulkan adaptation, DMA-BUF ring ownership, Render-owned never-presented timeline reclamation, accepted startup product presentation, and compositor-release observation
+  howl-host/src/renderer.zig: Host input, session, Composer, static-cursor physical replay, canvas-to-Vulkan adaptation, DMA-BUF ring ownership, Render-owned never-presented timeline reclamation, accepted startup product presentation, and compositor-release observation
   howl-host/src/session_domain.zig: backend-independent semantic TabId/PaneId ownership, content-local topology state, transactional geometry/focus mutations, and invariant proofs
   howl-host/src/session_chrome_adapter.zig: checked SessionState-to-Render identity/geometry adaptation, immutable chrome projection, and surface-coordinate hit testing
   howl-host/src/input_actions.zig: Renderer-owned exact key-chord capture, chrome-action mapping, and SessionState candidate selection
-  howl-host/src/terminal_handoff.zig: bounded lifecycle and input facts plus shared-pool release/acquire terminal Content transfer into canonical Canvas facts and exact Composer drainage
   howl-host/src/terminal.zig: one caller-driven poll owner for bounded logical PTY, VT, terminal projection, child-write, and cleanup lifetimes
   howl-host/src/terminal_pool.zig: fixed contiguous immutable-update pool storage, ordinary canonical Canvas publication, terminal-owned descriptors and group admission, atomic Renderer drainage, stale-token rejection, and reverse cleanup
-  howl-render/src/terminal_font_owner.zig: Render-defined bounded native font-group and shared font-resource producer behavior instantiated and exclusively owned by the Host terminal runtime
-  howl-host/test/terminal_contract_test.zig: deterministic two-VT projection, synchronized copied handoff, producer rollback, occupied retirement, Composer qualification, visibility, and recovery proof
   howl-host/test/chrome_state_equivalence_test.zig: test-only normalized legacy-topology oracle proving SessionState identity, projection, hit-test, and rollback equivalence
-  howl-vk/src/surface.zig: reusable solid, masked trail, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
+  howl-vk/src/surface.zig: reusable solid, alpha-mask, and RGBA Vulkan pipelines, qualified sparse residency, candidate GPU atlases, staging, recording, commit/discard, and reverse cleanup
   howl-vk/src/shaders: checked SPIR-V and source inventory consumed by the generic surface owner
-  howl-vk/tools/verify_shaders.sh: pinned trail source-to-SPIR-V command, hashes, and byte reproducibility gate
   howl-vk/build.zig: independent Vulkan ABI and dispatch package build and proofs
   howl-vk/build.zig.zon: Vulkan package identity and source boundary
   howl-vk/LICENSES: Vulkan-Headers provenance and license facts

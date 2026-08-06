@@ -12,7 +12,7 @@ capabilities:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
     role: first-party Wayland, Vulkan, DMA-BUF, and explicit-synchronization lifetime foundation
-    status: persistent compositor-configured three-slot surface with Renderer-owned chrome and a multi-pane terminal runtime; terminal input, pane-local font ownership, Kitty-led text correctness, physical cursor replay, and trail presentation are accepted, while performance parity plus maximum multi-pane admission remain deferred
+    status: persistent compositor-configured three-slot surface with Renderer-owned chrome and a multi-pane terminal runtime; terminal input and static physical cursor replay are accepted while terminal rendering is being replaced
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator
@@ -26,8 +26,8 @@ workspace:
   children: each surviving capability owns its package identity, direct dependencies, native facts, and proofs
   root: exports no product module or artifact
   toolchain: exact tracked Zig pin resolved through ignored .zig/zig; product and proof artifacts use self-hosted codegen and linker
-  evidence: protocol and cross-capability cursor design evidence are family-owned at the root
+  evidence: protocol evidence is family-owned at the root
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome, multi-pane terminal runtime, Kitty-compatible text machinery, physical cursor replay, and trail presentation accepted
+  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome, multi-pane terminal runtime, and static physical cursor replay; terminal rendering is intentionally absent pending replacement

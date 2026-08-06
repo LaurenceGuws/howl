@@ -20,10 +20,6 @@ pub const default_path: []const u8 = build_options.repository_config_path;
 pub const CursorShape = enum { block, beam, underline };
 /// Selects the configured unfocused cursor shape.
 pub const UnfocusedCursorShape = enum { hollow, block, beam, underline };
-/// Selects the bounded blink interval policy.
-pub const BlinkInterval = enum { system };
-/// Selects the bounded trail color policy.
-pub const TrailColor = enum { cursor };
 
 /// Retains one exact sRGB cursor color.
 pub const Color = struct {
@@ -33,14 +29,6 @@ pub const Color = struct {
     g: u8,
     /// Blue channel.
     b: u8,
-};
-
-/// Retains the two Kitty-compatible trail decay endpoints in seconds.
-pub const TrailDecay = struct {
-    /// Initial retained trail opacity endpoint in seconds.
-    start_seconds: f64,
-    /// Final retained trail opacity endpoint in seconds.
-    end_seconds: f64,
 };
 
 /// Retains all accepted cursor configuration without a string dictionary.
@@ -55,18 +43,6 @@ pub const CursorConfig = struct {
     beam_thickness_points: f64,
     /// Underline thickness in points.
     underline_thickness_points: f64,
-    /// Blink interval policy.
-    blink_interval: BlinkInterval,
-    /// Inactivity duration after which blinking stops.
-    stop_blinking_after_seconds: f64,
-    /// Cursor-trail delay in milliseconds.
-    trail_delay_ms: u32,
-    /// Cursor-trail decay endpoints.
-    trail_decay_seconds: TrailDecay,
-    /// Number of cursor cells required before trail admission.
-    trail_start_threshold_cells: u16,
-    /// Cursor-trail color policy.
-    trail_color: TrailColor,
 };
 
 /// Retains the configured semantic cursor shape for the Host terminal owner.
@@ -85,18 +61,6 @@ pub const CursorPresentationPolicy = struct {
     beam_thickness_points: f64,
     /// Configured underline thickness in points.
     underline_thickness_points: f64,
-    /// Configured blink interval policy.
-    blink_interval: BlinkInterval,
-    /// Inactivity duration after which blinking stops.
-    stop_blinking_after_seconds: f64,
-    /// Delay before a cursor trail begins.
-    trail_delay_ms: u32,
-    /// Fast and slow trail decay endpoints.
-    trail_decay_seconds: TrailDecay,
-    /// Number of cells required before trail admission.
-    trail_start_threshold_cells: u16,
-    /// Source used for trail color.
-    trail_color: TrailColor,
 };
 
 /// The only two cursor views that process-root startup may distribute.
@@ -121,12 +85,6 @@ pub const Config = struct {
                 .unfocused_shape = .hollow,
                 .beam_thickness_points = 1.5,
                 .underline_thickness_points = 2.0,
-                .blink_interval = .system,
-                .stop_blinking_after_seconds = 15.0,
-                .trail_delay_ms = 1,
-                .trail_decay_seconds = .{ .start_seconds = 0.1, .end_seconds = 0.4 },
-                .trail_start_threshold_cells = 0,
-                .trail_color = .cursor,
             },
         };
     }
@@ -143,12 +101,6 @@ pub const Config = struct {
             .unfocused_shape = self.cursor.unfocused_shape,
             .beam_thickness_points = self.cursor.beam_thickness_points,
             .underline_thickness_points = self.cursor.underline_thickness_points,
-            .blink_interval = self.cursor.blink_interval,
-            .stop_blinking_after_seconds = self.cursor.stop_blinking_after_seconds,
-            .trail_delay_ms = self.cursor.trail_delay_ms,
-            .trail_decay_seconds = self.cursor.trail_decay_seconds,
-            .trail_start_threshold_cells = self.cursor.trail_start_threshold_cells,
-            .trail_color = self.cursor.trail_color,
         };
     }
 
@@ -219,7 +171,7 @@ pub const ParseError = error{
 /// Reports file access, bounded read, allocation, or parser failure.
 pub const LoadError = std.Io.Dir.ReadFileAllocError || ParseError;
 
-const key_count = 11;
+const key_count = 5;
 
 /// Parses one complete configuration into typed storage for boundary tests.
 pub fn parse(bytes: []const u8) ParseError!Config {
@@ -259,21 +211,6 @@ fn parseInto(bytes: []const u8, result: *Config) ParseError!void {
             1 << 2 => result.cursor.unfocused_shape = try parseEnum(UnfocusedCursorShape, fields.next()),
             1 << 3 => result.cursor.beam_thickness_points = try parsePositiveFloat(fields.next()),
             1 << 4 => result.cursor.underline_thickness_points = try parsePositiveFloat(fields.next()),
-            1 << 5 => result.cursor.blink_interval = try parseEnum(BlinkInterval, fields.next()),
-            1 << 6 => result.cursor.stop_blinking_after_seconds = try parseNonNegativeFloat(fields.next()),
-            1 << 7 => result.cursor.trail_delay_ms = try parseUnsigned(u32, fields.next()),
-            1 << 8 => {
-                result.cursor.trail_decay_seconds.start_seconds =
-                    try parseNonNegativeFloat(fields.next());
-                result.cursor.trail_decay_seconds.end_seconds =
-                    try parseNonNegativeFloat(fields.next());
-                if (result.cursor.trail_decay_seconds.end_seconds <
-                    result.cursor.trail_decay_seconds.start_seconds)
-                    return error.InvalidValue;
-            },
-            1 << 9 => result.cursor.trail_start_threshold_cells =
-                try parseUnsigned(u16, fields.next()),
-            1 << 10 => result.cursor.trail_color = try parseEnum(TrailColor, fields.next()),
             else => unreachable,
         }
         if (fields.next() != null) return error.MalformedValue;
@@ -311,12 +248,6 @@ fn keyBit(key: []const u8) ?u16 {
         "cursor.unfocused_shape",
         "cursor.beam_thickness_points",
         "cursor.underline_thickness_points",
-        "cursor.blink_interval",
-        "cursor.stop_blinking_after_seconds",
-        "cursor.trail_delay_ms",
-        "cursor.trail_decay_seconds",
-        "cursor.trail_start_threshold_cells",
-        "cursor.trail_color",
     };
     for (names, 0..) |name, index| if (std.mem.eql(u8, key, name))
         return @as(u16, 1) << @intCast(index);
@@ -373,11 +304,6 @@ fn parseFloat(value: ?[]const u8) ParseError!f64 {
     return result;
 }
 
-fn parseUnsigned(comptime T: type, value: ?[]const u8) ParseError!T {
-    const text = value orelse return error.MalformedValue;
-    return std.fmt.parseInt(T, text, 10) catch return error.InvalidValue;
-}
-
 test "development config parses the complete accepted typed file" {
     const parsed = try parse(
         "# comment\n" ++
@@ -385,13 +311,7 @@ test "development config parses the complete accepted typed file" {
             "cursor.color #73f990\n" ++
             "cursor.unfocused_shape hollow\n" ++
             "cursor.beam_thickness_points 1.5\n" ++
-            "cursor.underline_thickness_points 2.0\n" ++
-            "cursor.blink_interval system\n" ++
-            "cursor.stop_blinking_after_seconds 15.0\n" ++
-            "cursor.trail_delay_ms 1\n" ++
-            "cursor.trail_decay_seconds 0.1 0.4\n" ++
-            "cursor.trail_start_threshold_cells 0\n" ++
-            "cursor.trail_color cursor\n",
+            "cursor.underline_thickness_points 2.0\n",
     );
     try std.testing.expectEqual(Config.defaults(), parsed);
     try std.testing.expectEqual(
@@ -399,7 +319,6 @@ test "development config parses the complete accepted typed file" {
         parsed.semanticPolicy(),
     );
     try std.testing.expectEqual(parsed.cursor.beam_thickness_points, parsed.presentationPolicy().beam_thickness_points);
-    try std.testing.expectEqual(parsed.cursor.trail_delay_ms, parsed.presentationPolicy().trail_delay_ms);
 }
 
 test "typed owner views copy values without retaining the complete config" {
@@ -407,22 +326,20 @@ test "typed owner views copy values without retaining the complete config" {
     const semantic = config.semanticPolicy();
     const presentation = config.presentationPolicy();
     config.cursor.shape = .underline;
-    config.cursor.trail_delay_ms = 99;
     config.cursor.beam_thickness_points = 7.0;
     try std.testing.expectEqual(CursorShape.beam, semantic.shape);
-    try std.testing.expectEqual(@as(u32, 1), presentation.trail_delay_ms);
     try std.testing.expectEqual(@as(f64, 1.5), presentation.beam_thickness_points);
 }
 
 test "typed cursor configuration layout receipt" {
-    // Pinned for the d67cb4b startup-retention boundary.
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(Config));
+    // Pinned after removing unsupported Host blink and trail presentation.
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Config));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(Config));
     try std.testing.expectEqual(@as(usize, 1), @sizeOf(CursorSemanticPolicy));
     try std.testing.expectEqual(@as(usize, 1), @alignOf(CursorSemanticPolicy));
-    try std.testing.expectEqual(@as(usize, 56), @sizeOf(CursorPresentationPolicy));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(CursorPresentationPolicy));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(CursorPresentationPolicy));
-    try std.testing.expectEqual(@as(usize, 64), @sizeOf(OwnerViews));
+    try std.testing.expectEqual(@as(usize, 32), @sizeOf(OwnerViews));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(OwnerViews));
 }
 
@@ -431,13 +348,7 @@ test "development config rejects missing, duplicate, unknown, malformed, and ove
         "cursor.color #73f990\n" ++
         "cursor.unfocused_shape hollow\n" ++
         "cursor.beam_thickness_points 1.5\n" ++
-        "cursor.underline_thickness_points 2.0\n" ++
-        "cursor.blink_interval system\n" ++
-        "cursor.stop_blinking_after_seconds 15.0\n" ++
-        "cursor.trail_delay_ms 1\n" ++
-        "cursor.trail_decay_seconds 0.1 0.4\n" ++
-        "cursor.trail_start_threshold_cells 0\n" ++
-        "cursor.trail_color cursor\n";
+        "cursor.underline_thickness_points 2.0\n";
     try std.testing.expectError(error.DuplicateKey, parse(complete ++ "cursor.shape beam\n"));
     try std.testing.expectError(error.UnknownKey, parse("cursor.nope value\n"));
     try std.testing.expectError(error.InvalidValue, parse("cursor.color nope\n"));
@@ -456,11 +367,6 @@ test "development config rejects bounded physical lines and invalid typed values
     try std.testing.expectError(error.InvalidValue, parse("cursor.beam_thickness_points -1\n"));
     try std.testing.expectError(error.InvalidValue, parse("cursor.beam_thickness_points nan\n"));
     try std.testing.expectError(error.InvalidValue, parse("cursor.beam_thickness_points inf\n"));
-    try std.testing.expectError(error.InvalidValue, parse("cursor.trail_decay_seconds 0.4 0.1\n"));
-    try std.testing.expectError(error.InvalidValue, parse("cursor.trail_delay_ms -1\n"));
-    try std.testing.expectError(error.InvalidValue, parse("cursor.trail_delay_ms 4294967296\n"));
-    try std.testing.expectError(error.InvalidValue, parse("cursor.trail_start_threshold_cells 65536\n"));
-    try std.testing.expectError(error.MalformedValue, parse("cursor.trail_decay_seconds 0.1\n"));
 }
 
 test "startup arguments prove explicit selection, ordering, and rejection" {
@@ -520,7 +426,6 @@ test "repository-local development config validates at its compiled default path
     try std.testing.expectEqual(CursorShape.beam, owners.terminal.shape);
     try std.testing.expectEqual(Color{ .r = 0x73, .g = 0xf9, .b = 0x90 }, owners.renderer.color);
     try std.testing.expectEqual(UnfocusedCursorShape.hollow, owners.renderer.unfocused_shape);
-    try std.testing.expectEqual(BlinkInterval.system, owners.renderer.blink_interval);
 }
 
 test "process-root explicit config reaches the exact terminal and renderer owners" {
@@ -534,13 +439,7 @@ test "process-root explicit config reaches the exact terminal and renderer owner
                 "cursor.color #010203\n" ++
                 "cursor.unfocused_shape beam\n" ++
                 "cursor.beam_thickness_points 2\n" ++
-                "cursor.underline_thickness_points 3\n" ++
-                "cursor.blink_interval system\n" ++
-                "cursor.stop_blinking_after_seconds 0\n" ++
-                "cursor.trail_delay_ms 7\n" ++
-                "cursor.trail_decay_seconds 0.2 0.3\n" ++
-                "cursor.trail_start_threshold_cells 4\n" ++
-                "cursor.trail_color cursor\n",
+                "cursor.underline_thickness_points 3\n",
         );
     }
     defer std.Io.Dir.cwd().deleteFile(std.testing.io, path) catch {};
@@ -549,7 +448,6 @@ test "process-root explicit config reaches the exact terminal and renderer owner
     try std.testing.expectEqual(CursorSemanticPolicy{ .shape = .underline }, owners.terminal);
     try std.testing.expectEqual(Color{ .r = 1, .g = 2, .b = 3 }, owners.renderer.color);
     try std.testing.expectEqual(UnfocusedCursorShape.beam, owners.renderer.unfocused_shape);
-    try std.testing.expectEqual(@as(u32, 7), owners.renderer.trail_delay_ms);
     try std.testing.expectEqual(@as(f64, 2.0), owners.renderer.beam_thickness_points);
     try std.testing.expectEqual(@as(f64, 3.0), owners.renderer.underline_thickness_points);
 }

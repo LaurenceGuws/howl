@@ -10,7 +10,6 @@ const handoff = @import("terminal_handoff");
 const terminal_pool = @import("terminal_pool");
 const font_owner = render.terminal_font_owner;
 const terminal_render = render.terminal;
-const terminal_images = render.terminal_images;
 const dev_config = @import("dev_config");
 
 test "Runtime retains the copied semantic cursor view" {
@@ -83,13 +82,11 @@ const projection_row_limit: usize = 128;
 /// Current one-pane admission shared with PendingSlot and Composer's candidate frame.
 const admitted_commands: usize = 32_768;
 /// Complete one-pane retained-resource turnover shared with PendingSlot and
-/// Composer's candidate frame: glyphs, decoration masks, and terminal images.
-const admitted_resources: usize = 512 + 128 + image_limit;
+/// Composer's candidate frame: glyphs and decoration masks.
+const admitted_resources: usize = 512 + 128;
 /// Current realistic single-pane geometry bound; sparse output remains subject
 /// to the independently checked command/resource limits.
 const admitted_cells: usize = 65_536;
-const image_limit: usize = 8;
-const image_byte_limit: usize = 256 * 1024;
 const terminal_configuration_generation: u64 = 1;
 
 /// Reports exact bounded child-write admission failure.
@@ -109,7 +106,6 @@ const LogicalInitError = error{InvalidPane} ||
     pty.InitError || pty.StartError || vt.Terminal.InitError ||
     render.terminal.Content.InitError || terminal_render.Error ||
     terminal_render.Content.RecoverError || terminal_render.Content.ApplyError ||
-    terminal_images.Error ||
     handoff.InitError;
 /// Reports runtime table or runtime-owned native-font construction failure.
 const RuntimeInitError = error{ OutOfMemory, InvalidLimits } ||
@@ -123,7 +119,7 @@ const ServiceError = pty.ReadError || pty.WriteError || pty.ObserveError ||
     vt.Terminal.ColorPreferenceReplyError ||
     error{ StaleContainerRequest, ContainerReplyMismatch } ||
     terminal_render.Error || terminal_render.Content.RecoverError ||
-    terminal_render.Content.ApplyError || terminal_images.Error ||
+    terminal_render.Content.ApplyError ||
     error{ ArithmeticOverflow, Clock } ||
     font_owner.ResourceError || font_owner.BatchError ||
     handoff.CursorPublishError ||
@@ -190,13 +186,6 @@ const VisualState = struct {
     work_cells: [projection_cell_limit]terminal_render.Cell = undefined,
     work_scalars: vt.ScalarStorage,
     work_rows: [projection_row_limit]terminal_render.RowPatch = undefined,
-    image_pixels: [image_byte_limit]u8 = undefined,
-    image_uploads: [image_limit]terminal_images.ImageUpload = undefined,
-    image_removals: [image_limit]u32 = undefined,
-    image_placements: [image_limit]terminal_images.ImagePlacement = undefined,
-    image_identities: [image_limit]terminal_images.ImageIdentity = undefined,
-    image_identity_count: usize = 0,
-    image_generation: u64 = 0,
     rows: u16,
     cols: u16,
     initialized: bool = false,
@@ -259,7 +248,7 @@ const VisualState = struct {
         machine: *vt.Terminal,
         content: *terminal_render.Content,
     ) (terminal_render.Error || terminal_render.Content.RecoverError ||
-        terminal_render.Content.ApplyError || terminal_images.Error)!void {
+        terminal_render.Content.ApplyError)!void {
         const view = machine.semanticView(0);
         const dimensions_match = self.initialized and
             self.rows == view.rows and self.cols == view.cols;
@@ -278,27 +267,17 @@ const VisualState = struct {
             null,
             selectionStyle(),
         );
-        const image_update = try self.projectImages(machine);
         if (dimensions_match) {
-            try content.apply(
-                projected,
-                if (image_update.generation != self.image_generation)
-                    image_update
-                else
-                    null,
-            );
+            try content.apply(projected);
         } else {
             self.rows = view.rows;
             self.cols = view.cols;
             self.commitProjection(projected);
-            try content.recover(self.baseline(), image_update);
-            self.commitImageIdentities(image_update);
+            try content.recover(self.baseline());
             self.initialized = true;
             return;
         }
         self.commitProjection(projected);
-        if (image_update.generation != self.image_generation)
-            self.commitImageIdentities(image_update);
     }
 
     fn commitProjection(self: *VisualState, update: terminal_render.Update) void {
@@ -316,57 +295,8 @@ const VisualState = struct {
         std.mem.swap(vt.ScalarStorage, &self.baseline_scalars, &self.work_scalars);
     }
 
-    fn projectImages(
-        self: *VisualState,
-        machine: *const vt.Terminal,
-    ) terminal_images.Error!terminal_images.Update {
-        return terminal_images.project(machine.images(0), .{
-            .retained = self.image_identities[0..self.image_identity_count],
-            .pixels = &self.image_pixels,
-            .uploads = &self.image_uploads,
-            .removals = &self.image_removals,
-            .placements = &self.image_placements,
-        });
-    }
-
-    fn commitImageIdentities(
-        self: *VisualState,
-        update: terminal_images.Update,
-    ) void {
-        for (update.removals) |removed| {
-            var index: usize = 0;
-            while (index < self.image_identity_count) : (index += 1) {
-                if (self.image_identities[index].id != removed) continue;
-                std.mem.copyForwards(
-                    terminal_images.ImageIdentity,
-                    self.image_identities[index .. self.image_identity_count - 1],
-                    self.image_identities[index + 1 .. self.image_identity_count],
-                );
-                self.image_identity_count -= 1;
-                break;
-            }
-        }
-        for (update.uploads) |upload| {
-            var found = false;
-            for (self.image_identities[0..self.image_identity_count]) |*identity| {
-                if (identity.id != upload.identity.id) continue;
-                identity.* = upload.identity;
-                found = true;
-                break;
-            }
-            if (!found) {
-                std.debug.assert(self.image_identity_count < self.image_identities.len);
-                self.image_identities[self.image_identity_count] = upload.identity;
-                self.image_identity_count += 1;
-            }
-        }
-        self.image_generation = update.generation;
-    }
-
     fn requireRecovery(self: *VisualState) void {
         self.initialized = false;
-        self.image_identity_count = 0;
-        self.image_generation = 0;
     }
 };
 
@@ -818,13 +748,6 @@ const Logical = struct {
             switch (failure) {
                 error.InsufficientCells,
                 error.InsufficientPatches,
-                error.InsufficientImagePixels,
-                error.InsufficientImageUploads,
-                error.InsufficientImageRemovals,
-                error.InsufficientImagePlacements,
-                error.ImageLimit,
-                error.ImagePixelLimit,
-                error.PlacementLimit,
                 error.ResourceMutationLimit,
                 => return false,
                 else => return failure,
@@ -1081,13 +1004,6 @@ const Logical = struct {
             switch (failure) {
                 error.InsufficientCells,
                 error.InsufficientPatches,
-                error.InsufficientImagePixels,
-                error.InsufficientImageUploads,
-                error.InsufficientImageRemovals,
-                error.InsufficientImagePlacements,
-                error.ImageLimit,
-                error.ImagePixelLimit,
-                error.PlacementLimit,
                 error.ResourceMutationLimit,
                 => return false,
                 else => return failure,
@@ -2708,8 +2624,6 @@ test "accepted cursor binding reconstructs cells relative to nonzero origin" {
         .col = 0,
         .visible = true,
         .shape = .none,
-        .blink = false,
-        .blink_fast = false,
         .cursor_color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
         .text_color = .{ .r = 4, .g = 5, .b = 6, .a = 255 },
     };
@@ -2927,8 +2841,6 @@ fn exerciseFzfSynchronizedSequence(split: FzfSequenceSplit) !void {
 
     try std.testing.expect(!owner.machine.synchronizedOutput());
     try std.testing.expect(owner.cursor_target.visible);
-    try std.testing.expect(owner.cursor_target.blink);
-    try std.testing.expect(owner.machine.semanticView(0).cursor_blink);
     const binding = boundary.acceptedCursorBinding(pane, source).?;
     try std.testing.expect(binding.visible);
     try std.testing.expectEqual(render.canvas.CursorShape.block, binding.shape);
@@ -5607,9 +5519,6 @@ fn contentLimits() render.terminal.Content.Limits {
     return .{
         .cells = admitted_cells,
         .rows = 128,
-        .images = 8,
-        .placements = 8,
-        .image_bytes = 256 * 1024,
         .glyphs = 512,
         .masks = 128,
         .commands = admitted_commands,
@@ -5692,9 +5601,6 @@ fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
             .bar => .bar,
             .none => .none,
         },
-        .blink = view.cursor_blink,
-        .blink_fast = false,
-        .movement_timestamp_ns = view.cursor_movement_timestamp_ns,
         .cursor_color = .{
             .r = cursor_color.r,
             .g = cursor_color.g,
@@ -5708,17 +5614,6 @@ fn cursorTarget(machine: *const vt.Terminal) handoff.CursorTarget {
             .a = text_color.a,
         },
     };
-}
-
-test "cursor target carries VT absolute-position timestamp through Host projection" {
-    var machine = try vt.Terminal.init(std.testing.allocator, 4, 8);
-    defer machine.deinit();
-    const summary = try machine.feedAt("\x1b[1;1H", 40_000_000);
-    try std.testing.expect(summary.stateChanged());
-    try std.testing.expectEqual(
-        @as(u64, 40_000_000),
-        cursorTarget(&machine).movement_timestamp_ns,
-    );
 }
 
 fn cursorRect(

@@ -58,786 +58,6 @@ const ChromeRetry = struct {
     topology_revision: ?terminal_handoff.LifecycleRevision,
 };
 
-/// Retains Kitty-shaped trail presentation facts for one active tab.
-///
-/// The record is backend-neutral and never writes a position back into VT.
-const CursorTrail = struct {
-    needs_render: bool = false,
-    updated_at: u64 = 0,
-    opacity: f32 = 0,
-    corner_x: [4]f32 = .{ 0, 0, 0, 0 },
-    corner_y: [4]f32 = .{ 0, 0, 0, 0 },
-    cursor_edge_x: [2]f32 = .{ 0, 0 },
-    cursor_edge_y: [2]f32 = .{ 0, 0 },
-    /// Accumulated clip of the physically accepted transition endpoints.  It
-    /// remains through retargets while a new target is admitted so the trail
-    /// can span every still-visible outgoing pane.
-    endpoint_clip: vk_surface.Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
-    /// Clip of the newly admitted endpoint.  It becomes endpoint_clip only
-    /// after an accepted frame settles the trail exactly at that endpoint.
-    target_clip: vk_surface.Rect = .{ .x = 0, .y = 0, .width = 0, .height = 0 },
-};
-
-const TrailSlot = struct {
-    id: ?session.TabId = null,
-    trail: CursorTrail = .{},
-    initialized: bool = false,
-};
-
-const TrailTransferCandidate = struct {
-    from: session.TabId,
-    to: session.TabId,
-    trail: CursorTrail = .{},
-    initialized: bool = false,
-    deadline: ?u64 = null,
-};
-
-const AcceptedTrailSurface = struct {
-    owner: session.TabId,
-    trail: CursorTrail,
-    initialized: bool,
-};
-
-// Kitty's retained vertex order: right-top, right-bottom, left-bottom,
-// left-top.  Initialization and every target update use these same identities.
-const trail_corner_x = [4]usize{ 1, 1, 0, 0 };
-const trail_corner_y = [4]usize{ 0, 1, 1, 0 };
-const trail_frame_interval_ns: u64 = std.time.ns_per_s / 60;
-
-const CursorTrailEdges = struct {
-    x: [2]f32,
-    y: [2]f32,
-};
-
-fn checkedTrailClipUnion(
-    left: vk_surface.Rect,
-    right: vk_surface.Rect,
-) !vk_surface.Rect {
-    if (left.width == 0 or left.height == 0 or right.width == 0 or right.height == 0)
-        return error.InvalidFrame;
-    const left_right = std.math.add(i64, @as(i64, left.x), @as(i64, left.width)) catch
-        return error.InvalidFrame;
-    const left_bottom = std.math.add(i64, @as(i64, left.y), @as(i64, left.height)) catch
-        return error.InvalidFrame;
-    const right_right = std.math.add(i64, @as(i64, right.x), @as(i64, right.width)) catch
-        return error.InvalidFrame;
-    const right_bottom = std.math.add(i64, @as(i64, right.y), @as(i64, right.height)) catch
-        return error.InvalidFrame;
-    const x = @min(@as(i64, left.x), @as(i64, right.x));
-    const y = @min(@as(i64, left.y), @as(i64, right.y));
-    const max_x = @max(left_right, right_right);
-    const max_y = @max(left_bottom, right_bottom);
-    if (x < 0 or y < 0 or
-        max_x <= x or max_y <= y or
-        max_x > std.math.maxInt(i32) or max_y > std.math.maxInt(i32))
-        return error.InvalidFrame;
-    const width = max_x - x;
-    const height = max_y - y;
-    if (width > std.math.maxInt(u32) or height > std.math.maxInt(u32))
-        return error.InvalidFrame;
-    return .{
-        .x = @intCast(x),
-        .y = @intCast(y),
-        .width = @intCast(width),
-        .height = @intCast(height),
-    };
-}
-
-fn prepareTrailRetargetClip(
-    trail: *CursorTrail,
-    next_clip: vk_surface.Rect,
-    active: bool,
-) !void {
-    var candidate = trail.*;
-    if (active) {
-        candidate.endpoint_clip = try checkedTrailClipUnion(
-            candidate.endpoint_clip,
-            candidate.target_clip,
-        );
-    }
-    const admitted_clip = try checkedTrailClipUnion(candidate.endpoint_clip, next_clip);
-    if (admitted_clip.width == 0 or admitted_clip.height == 0)
-        return error.InvalidFrame;
-    trail.* = candidate;
-}
-
-fn trailEdges(overlay: vk_surface.CursorOverlay) !CursorTrailEdges {
-    const right = std.math.add(i32, overlay.rect.x, @intCast(overlay.rect.width)) catch
-        return error.InvalidFrame;
-    const bottom = std.math.add(i32, overlay.rect.y, @intCast(overlay.rect.height)) catch
-        return error.InvalidFrame;
-    return .{
-        .x = .{ @floatFromInt(overlay.rect.x), @floatFromInt(right) },
-        .y = .{ @floatFromInt(overlay.rect.y), @floatFromInt(bottom) },
-    };
-}
-
-fn trailSnap(
-    trail: *CursorTrail,
-    edges: CursorTrailEdges,
-    endpoint_clip: vk_surface.Rect,
-    now: u64,
-    visible: bool,
-) void {
-    trail.cursor_edge_x = edges.x;
-    trail.cursor_edge_y = edges.y;
-    for (0..4) |index| {
-        trail.corner_x[index] = edges.x[trail_corner_x[index]];
-        trail.corner_y[index] = edges.y[trail_corner_y[index]];
-    }
-    trail.updated_at = now;
-    trail.opacity = if (visible) 1.0 else 0.0;
-    trail.needs_render = false;
-    trail.endpoint_clip = endpoint_clip;
-    trail.target_clip = endpoint_clip;
-}
-
-fn trailPrepareTargetAt(
-    trail: *CursorTrail,
-    overlay: vk_surface.CursorOverlay,
-    cell_size: render_api.canvas.Size,
-    now: u64,
-    movement_timestamp_ns: u64,
-    policy: dev_config.CursorPresentationPolicy,
-    trail_deadline_out: *?u64,
-    initialized: *bool,
-) !void {
-    const edges = try trailEdges(overlay);
-    const delay_ns = std.math.mul(u64, policy.trail_delay_ms, std.time.ns_per_ms) catch
-        return error.InvalidFrame;
-    const admission_base = if (movement_timestamp_ns == 0)
-        now
-    else
-        @min(movement_timestamp_ns, now);
-    const candidate_deadline = std.math.add(u64, admission_base, delay_ns) catch
-        return error.InvalidFrame;
-    if (!initialized.*) {
-        trailSnap(trail, edges, overlay.clip, now, overlay.visible);
-        initialized.* = true;
-        trail_deadline_out.* = null;
-        return;
-    }
-    const same_target = std.meta.eql(trail.cursor_edge_x, edges.x) and
-        std.meta.eql(trail.cursor_edge_y, edges.y);
-    if (overlay.visible and same_target and trail_deadline_out.* != null) return;
-    if (overlay.visible and same_target and trail.opacity >= 1.0 and !trail.needs_render) {
-        trail_deadline_out.* = null;
-        return;
-    }
-    trail.cursor_edge_x = edges.x;
-    trail.cursor_edge_y = edges.y;
-    if (!overlay.visible) {
-        trailSnap(trail, edges, overlay.clip, now, false);
-        trail_deadline_out.* = null;
-        return;
-    }
-    if (same_target and trail.opacity == 0 and !trail.needs_render) {
-        trailSnap(trail, edges, overlay.clip, now, true);
-        trail_deadline_out.* = null;
-        return;
-    }
-    if (policy.trail_start_threshold_cells != 0 and !trail.needs_render and
-        cell_size.width != 0 and cell_size.height != 0)
-    {
-        const dx = @as(i32, @intFromFloat(@round(
-            (trail.corner_x[0] - edges.x[1]) / @as(f32, @floatFromInt(cell_size.width)),
-        )));
-        const dy = @as(i32, @intFromFloat(@round(
-            (trail.corner_y[0] - edges.y[0]) / @as(f32, @floatFromInt(cell_size.height)),
-        )));
-        if (@abs(dx) + @abs(dy) <= policy.trail_start_threshold_cells) {
-            trailSnap(trail, edges, overlay.clip, now, true);
-            trail_deadline_out.* = null;
-            return;
-        }
-    }
-    // The old endpoint clip is retained in endpoint_clip; the target clip is
-    // transferred only with the physical frame carrying this trail.
-    trail.target_clip = overlay.clip;
-    trail.updated_at = now;
-    trail_deadline_out.* = @max(candidate_deadline, now);
-}
-
-fn trailPrepareTarget(
-    trail: *CursorTrail,
-    overlay: vk_surface.CursorOverlay,
-    cell_size: render_api.canvas.Size,
-    now: u64,
-    policy: dev_config.CursorPresentationPolicy,
-    trail_deadline_out: *?u64,
-    initialized: *bool,
-) !void {
-    return trailPrepareTargetAt(
-        trail,
-        overlay,
-        cell_size,
-        now,
-        now,
-        policy,
-        trail_deadline_out,
-        initialized,
-    );
-}
-
-fn trailAdvance(
-    trail: *CursorTrail,
-    now: u64,
-    policy: dev_config.CursorPresentationPolicy,
-    trail_deadline_out: *?u64,
-) bool {
-    if (trail_deadline_out.*) |value| if (now < value) return false;
-    trail_deadline_out.* = null;
-    const elapsed = now -| trail.updated_at;
-    trail.updated_at = now;
-    const dt = @as(f32, @floatFromInt(elapsed)) / @as(f32, @floatFromInt(std.time.ns_per_s));
-    const fast = @as(f32, @floatCast(policy.trail_decay_seconds.start_seconds));
-    const slow = @as(f32, @floatCast(policy.trail_decay_seconds.end_seconds));
-    if (trail.opacity < 1.0 and slow > 0) {
-        trail.opacity = @min(1.0, trail.opacity + dt / slow);
-    }
-    const target_x = trail.cursor_edge_x;
-    const target_y = trail.cursor_edge_y;
-    const center_x = (target_x[0] + target_x[1]) * 0.5;
-    const center_y = (target_y[0] + target_y[1]) * 0.5;
-    const diagonal = std.math.sqrt(
-        (target_x[1] - target_x[0]) * (target_x[1] - target_x[0]) +
-            (target_y[0] - target_y[1]) * (target_y[0] - target_y[1]),
-    ) * 0.5;
-    if (diagonal > 0 and dt > 0 and (fast > 0 or slow > 0)) {
-        var dot: [4]f32 = undefined;
-        var dx: [4]f32 = undefined;
-        var dy: [4]f32 = undefined;
-        var min_dot = std.math.floatMax(f32);
-        var max_dot = -std.math.floatMax(f32);
-        for (0..4) |index| {
-            const tx = target_x[trail_corner_x[index]];
-            const ty = target_y[trail_corner_y[index]];
-            dx[index] = tx - trail.corner_x[index];
-            dy[index] = ty - trail.corner_y[index];
-            const distance = std.math.sqrt(dx[index] * dx[index] + dy[index] * dy[index]);
-            if (distance <= 0) {
-                dot[index] = 0;
-            } else {
-                dot[index] = (dx[index] * (tx - center_x) + dy[index] * (ty - center_y)) /
-                    diagonal / distance;
-            }
-            min_dot = @min(min_dot, dot[index]);
-            max_dot = @max(max_dot, dot[index]);
-        }
-        for (0..4) |index| {
-            if (dx[index] == 0 and dy[index] == 0) continue;
-            const decay = if (min_dot == max_dot)
-                slow
-            else
-                slow + (fast - slow) * (dot[index] - min_dot) / (max_dot - min_dot);
-            if (decay <= 0) {
-                trail.corner_x[index] = target_x[trail_corner_x[index]];
-                trail.corner_y[index] = target_y[trail_corner_y[index]];
-                continue;
-            }
-            const step = 1.0 - std.math.exp2(-10.0 * dt / decay);
-            trail.corner_x[index] += dx[index] * step;
-            trail.corner_y[index] += dy[index] * step;
-        }
-    }
-    // Kitty settles in physical coordinates.  A half-cell threshold leaves
-    // a visibly detached trail on large fonts; the exact completion bound is
-    // half a physical pixel on each axis.
-    const x_threshold: f32 = 0.5;
-    const y_threshold: f32 = 0.5;
-    const previous_needs_render = trail.needs_render;
-    trail.needs_render = false;
-    var corners_settled = true;
-    for (0..4) |index| {
-        if (@abs(target_x[trail_corner_x[index]] - trail.corner_x[index]) > x_threshold or
-            @abs(target_y[trail_corner_y[index]] - trail.corner_y[index]) > y_threshold)
-        {
-            corners_settled = false;
-        }
-    }
-    if (corners_settled) {
-        for (0..4) |index| {
-            trail.corner_x[index] = target_x[trail_corner_x[index]];
-            trail.corner_y[index] = target_y[trail_corner_y[index]];
-        }
-    } else {
-        trail.needs_render = true;
-    }
-    const opacity_settled = trail.opacity == 0 or trail.opacity >= 1.0;
-    if (!opacity_settled) trail.needs_render = true;
-    if (trail.needs_render) {
-        trail_deadline_out.* = std.math.add(u64, now, trail_frame_interval_ns) catch null;
-    }
-    return trail.needs_render or previous_needs_render;
-}
-
-test "cursor trail state follows Kitty delay, easing, threshold, and visibility" {
-    const policy = dev_config.Config.defaults().presentationPolicy();
-    const cell_size = render_api.canvas.Size{ .width = 10, .height = 20 };
-    const base_overlay = vk_surface.CursorOverlay{
-        .rect = .{ .x = 20, .y = 40, .width = 10, .height = 20 },
-        .clip = .{ .x = 0, .y = 0, .width = 200, .height = 200 },
-        .shape = .block,
-        .color = .{ 0.45, 0.98, 0.56, 1 },
-        .text_color = .{ 1, 1, 1, 1 },
-        .visible = true,
-    };
-    var trail = CursorTrail{};
-    var initialized = false;
-    var trail_deadline: ?u64 = null;
-    try trailPrepareTarget(&trail, base_overlay, cell_size, 100, policy, &trail_deadline, &initialized);
-    try std.testing.expect(initialized);
-    try std.testing.expectEqual(@as(f32, 1.0), trail.opacity);
-    try std.testing.expect(trail_deadline == null);
-    try std.testing.expectEqual(@as(f32, 30), trail.corner_x[0]);
-    try std.testing.expectEqual(@as(f32, 40), trail.corner_y[0]);
-
-    var moved = base_overlay;
-    moved.rect.x += 30;
-    try trailPrepareTarget(&trail, moved, cell_size, 200, policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(u64, 1_000_200), trail_deadline.?);
-    try std.testing.expect(!trail.needs_render);
-    try trailPrepareTarget(&trail, moved, cell_size, 300, policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(u64, 1_000_200), trail_deadline.?);
-    const before = trail;
-    try std.testing.expect(!trailAdvance(&trail, 500_000, policy, &trail_deadline));
-    try std.testing.expectEqual(before, trail);
-    try std.testing.expect(trailAdvance(&trail, 1_100_000, policy, &trail_deadline));
-    try std.testing.expect(trail.needs_render);
-    try std.testing.expect(trail.corner_x[0] > before.corner_x[0]);
-    try std.testing.expect(trail_deadline.? > 1_100_000);
-    try std.testing.expect(trailAdvance(&trail, 10_000_000_000, policy, &trail_deadline));
-    try std.testing.expect(!trailAdvance(&trail, 10_000_000_001, policy, &trail_deadline));
-    try std.testing.expectEqual([4]f32{ 60, 60, 50, 50 }, trail.corner_x);
-    try std.testing.expectEqual([4]f32{ 40, 60, 60, 40 }, trail.corner_y);
-    try std.testing.expectEqual(@as(f32, 1.0), trail.opacity);
-    try std.testing.expect(trail_deadline == null);
-
-    var timestamped = trail;
-    var timestamped_initialized = true;
-    var timestamped_deadline: ?u64 = null;
-    var timestamped_target = moved;
-    timestamped_target.rect.x += 10;
-    try trailPrepareTargetAt(
-        &timestamped,
-        timestamped_target,
-        cell_size,
-        2_000_000,
-        1_000_000,
-        policy,
-        &timestamped_deadline,
-        &timestamped_initialized,
-    );
-    // The movement happened before Host acceptance, so the configured delay
-    // is already elapsed and the candidate is due immediately.
-    try std.testing.expectEqual(@as(u64, 2_000_000), timestamped_deadline.?);
-
-    // Completion is a physical-pixel rule, not a cell-sized rule.  A
-    // subpixel remainder must snap on the next due frame.
-    var subpixel = trail;
-    subpixel.corner_x = .{ 59.51, 60.49, 50.49, 49.51 };
-    subpixel.corner_y = .{ 40.49, 59.51, 60.49, 39.51 };
-    subpixel.needs_render = true;
-    subpixel.updated_at = 0;
-    var subpixel_deadline: ?u64 = null;
-    try std.testing.expect(trailAdvance(&subpixel, 1, policy, &subpixel_deadline));
-    try std.testing.expect(!trailAdvance(&subpixel, 2, policy, &subpixel_deadline));
-    try std.testing.expectEqual([4]f32{ 60, 60, 50, 50 }, subpixel.corner_x);
-    try std.testing.expectEqual([4]f32{ 40, 60, 60, 40 }, subpixel.corner_y);
-    try std.testing.expect(subpixel_deadline == null);
-
-    var hidden = moved;
-    hidden.visible = false;
-    try trailPrepareTarget(&trail, hidden, cell_size, 2_000_000, policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(f32, 0.0), trail.opacity);
-    try std.testing.expect(!trail.needs_render);
-    try std.testing.expect(trail_deadline == null);
-    hidden.visible = true;
-    try trailPrepareTarget(&trail, hidden, cell_size, 2_100_000, policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(f32, 1.0), trail.opacity);
-    try std.testing.expectEqual(@as(f32, 60), trail.corner_x[0]);
-    try std.testing.expect(trail_deadline == null);
-
-    const accepted_before_overflow = trail;
-    const deadline_before_overflow = trail_deadline;
-    try std.testing.expectError(
-        error.InvalidFrame,
-        trailPrepareTarget(
-            &trail,
-            base_overlay,
-            cell_size,
-            std.math.maxInt(u64),
-            policy,
-            &trail_deadline,
-            &initialized,
-        ),
-    );
-    try std.testing.expectEqual(accepted_before_overflow, trail);
-    try std.testing.expectEqual(deadline_before_overflow, trail_deadline);
-
-    var threshold_policy = policy;
-    threshold_policy.trail_start_threshold_cells = 4;
-    trailSnap(
-        &trail,
-        .{ .x = .{ 20, 30 }, .y = .{ 40, 60 } },
-        base_overlay.clip,
-        3_000_000,
-        true,
-    );
-    var near = base_overlay;
-    near.rect.x += 10;
-    try trailPrepareTarget(&trail, near, cell_size, 3_100_000, threshold_policy, &trail_deadline, &initialized);
-    try std.testing.expectEqual(@as(f32, 40), trail.corner_x[0]);
-    try std.testing.expect(trail_deadline == null);
-}
-
-fn trailCornersInsideClip(corner_x: [4]f32, corner_y: [4]f32, clip: vk_surface.Rect) bool {
-    const right = @as(f32, @floatFromInt(clip.x)) + @as(f32, @floatFromInt(clip.width));
-    const bottom = @as(f32, @floatFromInt(clip.y)) + @as(f32, @floatFromInt(clip.height));
-    for (corner_x, corner_y) |x, y| {
-        if (x < @as(f32, @floatFromInt(clip.x)) or x > right or
-            y < @as(f32, @floatFromInt(clip.y)) or y > bottom)
-            return false;
-    }
-    return true;
-}
-
-test "cursor trail submits Kitty direct corners for one-cell cursor shapes" {
-    const clip = vk_surface.Rect{ .x = 0, .y = 0, .width = 256, .height = 256 };
-    const canvas_clip = render_api.canvas.Rect{ .x = 0, .y = 0, .width = 256, .height = 256 };
-    const shapes = .{ render_api.canvas.CursorShape.block, .bar, .underline };
-    const expected_x = .{
-        [4]f32{ 20, 20, 10, 10 },
-        [4]f32{ 11, 11, 10, 10 },
-        [4]f32{ 20, 20, 10, 10 },
-    };
-    const expected_y = .{
-        [4]f32{ 30, 50, 50, 30 },
-        [4]f32{ 30, 50, 50, 30 },
-        [4]f32{ 49, 50, 50, 49 },
-    };
-    inline for (shapes, expected_x, expected_y) |shape, want_x, want_y| {
-        const binding = render_api.canvas.CursorBinding{
-            .pane = 1,
-            .source = @fromBackingInt(2),
-            .terminal_sequence = 1,
-            .cursor_revision = 1,
-            .visible_set_revision = 1,
-            .lifecycle_revision = 1,
-            .rect = .{ .x = 10, .y = 30, .width = 10, .height = 20 },
-            .clip = canvas_clip,
-            .shape = shape,
-            .visible = true,
-        };
-        const placement = render_api.canvas.Composer.Placement{
-            .source = binding.source,
-            .origin = .{ .x = 0, .y = 0 },
-            .clip = canvas_clip,
-        };
-        const overlay = (try cursorOverlayForPlacement(binding, placement)).?;
-        const edges = try trailEdges(overlay);
-        var trail = CursorTrail{};
-        trailSnap(&trail, edges, overlay.clip, 1, true);
-        try std.testing.expectEqual(want_x, trail.corner_x);
-        try std.testing.expectEqual(want_y, trail.corner_y);
-        try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, clip));
-
-        var animated = trail;
-        for (0..4) |index| animated.corner_x[index] -= 20;
-        animated.updated_at = 0;
-        animated.needs_render = true;
-        var animation_deadline: ?u64 = 0;
-        try std.testing.expect(trailAdvance(
-            &animated,
-            16_000_000,
-            dev_config.Config.defaults().presentationPolicy(),
-            &animation_deadline,
-        ));
-        for (0..4) |index| {
-            const target_x = edges.x[trail_corner_x[index]];
-            const target_y = edges.y[trail_corner_y[index]];
-            try std.testing.expect(animated.corner_x[index] >= target_x - 20 and animated.corner_x[index] <= target_x);
-            try std.testing.expectEqual(target_y, animated.corner_y[index]);
-        }
-    }
-}
-
-test "cursor trail direct corners remain inside accumulated split-focus clips" {
-    const start = vk_surface.Rect{ .x = 10, .y = 20, .width = 10, .height = 20 };
-    const horizontal = vk_surface.Rect{ .x = 210, .y = 20, .width = 10, .height = 20 };
-    const vertical = vk_surface.Rect{ .x = 10, .y = 220, .width = 10, .height = 20 };
-    const diagonal = vk_surface.Rect{ .x = 210, .y = 220, .width = 10, .height = 20 };
-    const moves = .{
-        .{ start, horizontal, [4]f32{ 220, 220, 210, 210 }, [4]f32{ 20, 40, 40, 20 } },
-        .{ start, vertical, [4]f32{ 20, 20, 10, 10 }, [4]f32{ 220, 240, 240, 220 } },
-        .{ start, diagonal, [4]f32{ 220, 220, 210, 210 }, [4]f32{ 220, 240, 240, 220 } },
-    };
-    const start_x = [4]f32{ 20, 20, 10, 10 };
-    const start_y = [4]f32{ 20, 40, 40, 20 };
-    inline for (moves) |move| {
-        const accumulated = try checkedTrailClipUnion(move[0], move[1]);
-        try std.testing.expect(trailCornersInsideClip(start_x, start_y, accumulated));
-        try std.testing.expect(trailCornersInsideClip(move[2], move[3], accumulated));
-    }
-}
-
-test "cursor trail Kitty timing and easing numeric receipt" {
-    // Kitty cursor_trail.c:84-124, with dt=0.016s, fast=.1s, slow=.4s.
-    // The constants below are the independent binary32 trajectory receipt,
-    // not a second implementation of the state machine.
-    var trail = CursorTrail{
-        .updated_at = 0,
-        .opacity = 1,
-        .corner_x = .{ 0, 0, 0, 0 },
-        .corner_y = .{ 0, 0, 0, 0 },
-        .cursor_edge_x = .{ 30, 40 },
-        .cursor_edge_y = .{ 20, 40 },
-        .needs_render = true,
-    };
-    var receipt_deadline: ?u64 = 0;
-    const policy = dev_config.Config.defaults().presentationPolicy();
-    try std.testing.expect(trailAdvance(&trail, 16_000_000, policy, &receipt_deadline));
-    const expected_x = [4]f32{ 14.035134, 26.80492, 13.645503, 7.2642517 };
-    const expected_y = [4]f32{ 7.017567, 26.80492, 18.194004, 4.8428345 };
-    for (0..4) |index| {
-        try std.testing.expect(@abs(trail.corner_x[index] - expected_x[index]) < 0.0001);
-        try std.testing.expect(@abs(trail.corner_y[index] - expected_y[index]) < 0.0001);
-    }
-    try std.testing.expectEqual(@as(u64, 16_000_000 + trail_frame_interval_ns), receipt_deadline.?);
-}
-
-test "cursor trail advancement preserves Kitty corner identity" {
-    const policy = dev_config.Config.defaults().presentationPolicy();
-    var trail = CursorTrail{
-        .updated_at = 0,
-        .needs_render = true,
-        .opacity = 1,
-        .corner_x = .{ 20, 20, 10, 10 },
-        .corner_y = .{ 30, 50, 50, 30 },
-        .cursor_edge_x = .{ 70, 80 },
-        .cursor_edge_y = .{ 90, 110 },
-    };
-    const initial_x = trail.corner_x;
-    const initial_y = trail.corner_y;
-    var frame_deadline: ?u64 = 0;
-    var requested_frames: usize = 0;
-    const samples = [_]u64{ 16_000_000, 32_000_000, 48_000_000, 10_000_000_000 };
-    for (samples) |now| {
-        if (trailAdvance(&trail, now, policy, &frame_deadline)) requested_frames += 1;
-        for (0..4) |index| {
-            const target_x = trail.cursor_edge_x[trail_corner_x[index]];
-            const target_y = trail.cursor_edge_y[trail_corner_y[index]];
-            const min_x = @min(initial_x[index], target_x);
-            const max_x = @max(initial_x[index], target_x);
-            const min_y = @min(initial_y[index], target_y);
-            const max_y = @max(initial_y[index], target_y);
-            try std.testing.expect(trail.corner_x[index] >= min_x and trail.corner_x[index] <= max_x);
-            try std.testing.expect(trail.corner_y[index] >= min_y and trail.corner_y[index] <= max_y);
-        }
-    }
-    try std.testing.expect(requested_frames >= 3);
-    try std.testing.expectEqual([4]f32{ 80, 80, 70, 70 }, trail.corner_x);
-    try std.testing.expectEqual([4]f32{ 90, 110, 110, 90 }, trail.corner_y);
-}
-
-test "cursor trail layout retains endpoint clips" {
-    try std.testing.expectEqual(@as(usize, 96), @sizeOf(CursorTrail));
-    try std.testing.expectEqual(@as(usize, 8), @alignOf(CursorTrail));
-}
-
-test "trail endpoint clip union is checked and bounded" {
-    const union_clip = try checkedTrailClipUnion(
-        .{ .x = 10, .y = 20, .width = 10, .height = 20 },
-        .{ .x = 30, .y = 40, .width = 10, .height = 20 },
-    );
-    try std.testing.expectEqual(
-        vk_surface.Rect{ .x = 10, .y = 20, .width = 30, .height = 40 },
-        union_clip,
-    );
-    try std.testing.expectError(
-        error.InvalidFrame,
-        checkedTrailClipUnion(
-            .{ .x = -1, .y = 20, .width = 10, .height = 20 },
-            .{ .x = 30, .y = 40, .width = 10, .height = 20 },
-        ),
-    );
-    try std.testing.expectError(
-        error.InvalidFrame,
-        checkedTrailClipUnion(
-            .{ .x = std.math.maxInt(i32), .y = 0, .width = 1, .height = 1 },
-            .{ .x = std.math.maxInt(i32), .y = 0, .width = 1, .height = 1 },
-        ),
-    );
-}
-
-test "cursor trail candidate rejection preserves accepted state" {
-    var work: CanvasWork = undefined;
-    work.trails = undefined;
-    const tab_id: session.TabId = @fromBackingInt(@intCast(7));
-    work.trails[0] = .{ .id = tab_id };
-    work.trail_scratch_tab = tab_id;
-    work.trail_deadline = 700;
-    work.trail_previous_deadline = 700;
-    work.trail_scratch_deadline = 1_700;
-    work.trail_scratch = .{
-        .opacity = 0.5,
-        .needs_render = true,
-        .endpoint_clip = .{ .x = 10, .y = 10, .width = 20, .height = 20 },
-        .target_clip = .{ .x = 40, .y = 40, .width = 20, .height = 20 },
-    };
-    const accepted = CursorTrail{
-        .opacity = 1.0,
-        .updated_at = 9,
-        .endpoint_clip = .{ .x = 10, .y = 10, .width = 20, .height = 20 },
-        .target_clip = .{ .x = 40, .y = 40, .width = 20, .height = 20 },
-    };
-    work.trails[0].trail = accepted;
-    work.trails[0].initialized = true;
-    discardTrailAnimation(&work, false);
-    try std.testing.expectEqual(accepted, work.trails[0].trail);
-    try std.testing.expect(work.trails[0].initialized);
-    try std.testing.expectEqual(@as(?u64, 700), work.trail_deadline);
-    try std.testing.expect(work.trail_scratch_tab == null);
-    try std.testing.expect(work.trail_scratch_deadline == null);
-    try std.testing.expect(work.trail_previous_deadline == null);
-}
-
-test "trail clip lifetime spans accepted frames and settles exactly" {
-    var work: CanvasWork = undefined;
-    work.trails = undefined;
-    const tab_id: session.TabId = @fromBackingInt(@intCast(8));
-    const old_clip = vk_surface.Rect{ .x = 10, .y = 10, .width = 20, .height = 20 };
-    const new_clip = vk_surface.Rect{ .x = 100, .y = 100, .width = 20, .height = 20 };
-    const replacement_clip = vk_surface.Rect{ .x = 200, .y = 40, .width = 20, .height = 20 };
-    work.trails[0] = .{
-        .id = tab_id,
-        .initialized = true,
-        .trail = .{
-            .needs_render = true,
-            .opacity = 1,
-            .endpoint_clip = old_clip,
-            .target_clip = new_clip,
-        },
-    };
-
-    work.trail_scratch = work.trails[0].trail;
-    work.trail_scratch_tab = tab_id;
-    work.trail_scratch_deadline = 2;
-    commitTrailAnimation(&work);
-    try std.testing.expectEqual(old_clip, work.trails[0].trail.endpoint_clip);
-    try std.testing.expectEqual(new_clip, work.trails[0].trail.target_clip);
-
-    // A newer target during the active transition changes only target_clip;
-    // the currently visible outgoing path remains covered by old_clip.
-    work.trail_scratch = work.trails[0].trail;
-    work.trail_scratch.target_clip = replacement_clip;
-    work.trail_scratch.needs_render = true;
-    work.trail_scratch_tab = tab_id;
-    work.trail_scratch_deadline = 3;
-    commitTrailAnimation(&work);
-    try std.testing.expectEqual(old_clip, work.trails[0].trail.endpoint_clip);
-    try std.testing.expectEqual(replacement_clip, work.trails[0].trail.target_clip);
-
-    work.trail_scratch = work.trails[0].trail;
-    work.trail_scratch.needs_render = false;
-    work.trail_scratch_tab = tab_id;
-    work.trail_scratch_deadline = null;
-    commitTrailAnimation(&work);
-    try std.testing.expectEqual(replacement_clip, work.trails[0].trail.endpoint_clip);
-}
-
-test "active retarget accumulates A B C coverage transactionally" {
-    const clip_a = vk_surface.Rect{ .x = 0, .y = 0, .width = 20, .height = 20 };
-    const clip_b = vk_surface.Rect{ .x = 100, .y = 100, .width = 20, .height = 20 };
-    const clip_c = vk_surface.Rect{ .x = 200, .y = 40, .width = 20, .height = 20 };
-    var trail = CursorTrail{
-        .needs_render = true,
-        .endpoint_clip = clip_a,
-        .target_clip = clip_b,
-        .corner_x = .{ 120, 120, 100, 100 },
-        .corner_y = .{ 100, 120, 120, 100 },
-        .cursor_edge_x = .{ 100, 120 },
-        .cursor_edge_y = .{ 100, 120 },
-    };
-    const before_reversal = trail;
-    try prepareTrailRetargetClip(&trail, clip_a, true);
-    trail.target_clip = clip_a;
-    const reversal_clip = try checkedTrailClipUnion(trail.endpoint_clip, clip_a);
-    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, reversal_clip));
-    trail.cursor_edge_x = .{ 0, 20 };
-    trail.cursor_edge_y = .{ 0, 20 };
-    trail.updated_at = 0;
-    var reversal_deadline: ?u64 = 0;
-    try std.testing.expect(trailAdvance(&trail, 16_000_000, dev_config.Config.defaults().presentationPolicy(), &reversal_deadline));
-    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, reversal_clip));
-
-    try prepareTrailRetargetClip(&trail, clip_c, true);
-    trail.target_clip = clip_c;
-    const abc_clip = try checkedTrailClipUnion(trail.endpoint_clip, clip_c);
-    try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, abc_clip));
-    trail.cursor_edge_x = .{ 200, 220 };
-    trail.cursor_edge_y = .{ 40, 60 };
-    trail.updated_at = 16_000_000;
-    reversal_deadline = 16_000_000;
-    var retarget_frames: usize = 0;
-    for ([_]u64{ 32_000_000, 48_000_000, 64_000_000 }) |now| {
-        if (trailAdvance(&trail, now, dev_config.Config.defaults().presentationPolicy(), &reversal_deadline)) retarget_frames += 1;
-        try std.testing.expect(trailCornersInsideClip(trail.corner_x, trail.corner_y, abc_clip));
-    }
-    try std.testing.expect(retarget_frames > 0);
-
-    const before_failure = trail;
-    try std.testing.expectError(
-        error.InvalidFrame,
-        prepareTrailRetargetClip(&trail, .{ .x = -1, .y = 0, .width = 20, .height = 20 }, true),
-    );
-    try std.testing.expectEqual(before_failure, trail);
-    try std.testing.expect(!std.meta.eql(before_reversal.endpoint_clip, trail.endpoint_clip));
-}
-
-test "due trail transitions survive continuous ordinary redraw candidates" {
-    const policy = dev_config.Config.defaults().presentationPolicy();
-    const tab_id: session.TabId = @fromBackingInt(@intCast(31));
-    var work: CanvasWork = undefined;
-    resetTrailRecords(&work);
-    work.trails[0] = .{
-        .id = tab_id,
-        .initialized = true,
-        .trail = .{
-            .updated_at = 0,
-            .corner_x = .{ 10, 10, 0, 0 },
-            .corner_y = .{ 0, 20, 20, 0 },
-            .cursor_edge_x = .{ 100, 110 },
-            .cursor_edge_y = .{ 0, 20 },
-            .opacity = 1,
-            .needs_render = true,
-        },
-    };
-    work.trail_deadline = 0;
-    var now: u64 = 0;
-    var accepted_frames: usize = 0;
-    for (0..4) |_| {
-        now += trail_frame_interval_ns;
-        var candidate = work.trails[0].trail;
-        var candidate_deadline = work.trail_deadline;
-        try std.testing.expect(trailAdvance(&candidate, now, policy, &candidate_deadline));
-        work.trail_scratch = candidate;
-        work.trail_scratch_tab = tab_id;
-        work.trail_scratch_deadline = candidate_deadline;
-        work.trail_previous_deadline = work.trail_deadline;
-        work.trail_frame_pending = true;
-
-        // This is the same commit path used when an ordinary terminal redraw
-        // carries the due trail quad; no quiet-terminal turn is required.
-        commitTrailAnimation(&work);
-        work.trail_frame_pending = false;
-        accepted_frames += 1;
-        try std.testing.expectEqual(@as(?session.TabId, null), work.trail_scratch_tab);
-        try std.testing.expect(work.trails[0].trail.corner_x[0] > 0);
-    }
-    try std.testing.expectEqual(@as(usize, 4), accepted_frames);
-}
-
 const CanvasPlanResult = union(enum) {
     blocked,
     retry,
@@ -976,9 +196,6 @@ test "bootstrap cursor source resolves before lifecycle activation" {
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 8,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 4096,
             .glyphs = 16,
             .masks = 8,
             .resources_per_update = 16,
@@ -1491,23 +708,13 @@ fn classifyReplayPublicationFailure(
 }
 
 fn discardRejectedCursorReplay(
-    work: *CanvasWork,
     pending: *?terminal_handoff.CursorPublication,
-    trail_only: bool,
 ) void {
-    if (trail_only) {
-        discardTrailAnimation(work, false);
-        work.trail_frame_pending = false;
-    } else {
-        dropPendingCursor(pending);
-    }
+    dropPendingCursor(pending);
 }
 
 fn commitCursorReplayAcceptance(
     work: *CanvasWork,
-    publication: ?terminal_handoff.CursorPublication,
-    accepted_overlay: vk_surface.CursorOverlay,
-    trail_only: bool,
     slot_index: usize,
     slot: *Slot,
     release_point: u64,
@@ -1515,17 +722,13 @@ fn commitCursorReplayAcceptance(
     following_acquire_point: u64,
 ) void {
     work.replay.commitCursor(slot_index);
-    if (!trail_only) if (publication) |value| {
-        work.last_cursor_publication = value;
-        work.accepted_cursor_color = accepted_overlay.color;
-    };
     slot.release_point = release_point;
     next_acquire_point.* = following_acquire_point;
 }
 
 test "cursor replay preparation rejects candidate facts and preserves accepted ownership" {
     try std.testing.expectEqual(
-        frame_command_limit * 2 + 2,
+        frame_command_limit * 2 + 1,
         vk_surface.max_commands,
     );
     try std.testing.expectEqual(vk_surface.max_commands * 4, vk_surface.max_vertices);
@@ -1581,44 +784,25 @@ test "cursor replay preparation rejects candidate facts and preserves accepted o
             .col = 0,
             .visible = true,
             .shape = .block,
-            .blink = false,
-            .blink_fast = false,
             .cursor_color = .{},
             .text_color = .{},
         },
     };
     var work: CanvasWork = undefined;
     work.replay = &replay;
-    work.last_cursor_publication = null;
-    work.accepted_cursor_color = null;
     var pending: ?terminal_handoff.CursorPublication = publication;
     var slot = Slot{};
     var next_acquire_point: u64 = 11;
-    discardRejectedCursorReplay(&work, &pending, false);
+    discardRejectedCursorReplay(&pending);
     try std.testing.expect(pending == null);
     try std.testing.expect(replay.acceptedSlot() == null);
     try std.testing.expectEqual(@as(u64, 0), slot.release_point);
     try std.testing.expectEqual(@as(u64, 11), next_acquire_point);
-    try std.testing.expect(work.last_cursor_publication == null);
-
-    work.trail_scratch_tab = @fromBackingInt(1);
-    work.trail_scratch_transfer = false;
-    work.trail_previous_deadline = 14;
-    work.trail_scratch_deadline = 15;
-    work.trail_deadline = 16;
-    work.trail_frame_pending = true;
-    discardRejectedCursorReplay(&work, &pending, true);
-    try std.testing.expect(work.trail_scratch_tab == null);
-    try std.testing.expect(!work.trail_frame_pending);
-    try std.testing.expectEqual(@as(?u64, 14), work.trail_deadline);
 
     replay.pending = true;
     replay.restoreCandidateBase(base);
     commitCursorReplayAcceptance(
         &work,
-        publication,
-        valid_overlay,
-        false,
         1,
         &slot,
         12,
@@ -1626,17 +810,9 @@ test "cursor replay preparation rejects candidate facts and preserves accepted o
         13,
     );
     try std.testing.expectEqual(@as(?usize, 1), replay.acceptedSlot());
-    try std.testing.expectEqual(publication, work.last_cursor_publication.?);
-    try std.testing.expectEqual(valid_overlay.color, work.accepted_cursor_color.?);
     try std.testing.expectEqual(@as(u64, 12), slot.release_point);
     try std.testing.expectEqual(@as(u64, 13), next_acquire_point);
 
-    var malformed_base = base;
-    malformed_base.trail_mask = .{ .x = 0, .y = 0, .width = 1, .height = 1 };
-    try std.testing.expectError(
-        error.InvalidReplayBase,
-        prepareCursorReplayCandidate(malformed_base, valid_overlay, buffers),
-    );
     var oversized_base = base;
     oversized_base.commands = candidate.commands[0 .. frame_command_limit + 1];
     try std.testing.expectError(
@@ -1737,32 +913,8 @@ const CanvasWork = struct {
     builder: *vk_surface.FrameBuilder,
     residency: *vk_surface.ResidencyStore,
     terminals: *terminal_handoff.Boundary,
-    /// Startup-retained presentation view consumed by cursor geometry, trail
-    /// timing, and frame-demand ownership; no reload path exists.
+    /// Startup-retained presentation view consumed by cursor geometry.
     cursor_policy: dev_config.CursorPresentationPolicy,
-    /// One fixed trail record per exact bounded TabId. Ordered tab slots are
-    /// never the ownership key, so close/reorder/reuse cannot inherit a trail.
-    trails: [session_chrome_adapter.max_tabs]TrailSlot = undefined,
-    trail_scratch: CursorTrail = .{},
-    trail_scratch_tab: ?session.TabId = null,
-    trail_scratch_deadline: ?u64 = null,
-    trail_previous_deadline: ?u64 = null,
-    trail_scratch_transfer: bool = false,
-    /// A tab presentation transfer is only a candidate until the physical
-    /// trail replay carrying it is accepted.
-    trail_transfer: ?TrailTransferCandidate = null,
-    trail_transfer_previous_deadline: ?u64 = null,
-    trail_deadline: ?u64 = null,
-    trail_frame_pending: bool = false,
-    /// Last physically accepted presentation, independent of semantic TabId
-    /// slot lifetime. Retired tabs may lose their semantic slot while this
-    /// snapshot remains the source for the next accepted transfer.
-    accepted_trail_surface: ?AcceptedTrailSurface = null,
-    last_cursor_publication: ?terminal_handoff.CursorPublication = null,
-    /// Background color from the last physically accepted cursor overlay.
-    /// Semantic cursor updates do not advance this value until Composer/ring
-    /// acceptance, matching Kitty's last-rendered cursor fallback.
-    accepted_cursor_color: ?[4]f32 = null,
     terminal_font_policy: terminal_handoff.FontPolicy,
     terminal_scale: ?terminal_handoff.ScaleSnapshot = null,
     font_request_high_water: u64 = 0,
@@ -1781,340 +933,6 @@ const CanvasWork = struct {
     chrome_retry: ?ChromeRetry = null,
     replay: *ReplayState,
 };
-
-fn resetTrailRecords(work: *CanvasWork) void {
-    for (&work.trails) |*slot| slot.* = .{};
-    work.trail_scratch = .{};
-    work.trail_scratch_tab = null;
-    work.trail_scratch_deadline = null;
-    work.trail_previous_deadline = null;
-    work.trail_scratch_transfer = false;
-    work.trail_transfer = null;
-    work.trail_transfer_previous_deadline = null;
-    work.trail_deadline = null;
-    work.trail_frame_pending = false;
-    work.accepted_trail_surface = null;
-    work.last_cursor_publication = null;
-}
-
-/// Copies the last physically accepted trail presentation to a newly active
-/// TabId. The incoming semantic target is retargeted separately, so this
-/// helper carries only physical presentation state and never aliases storage.
-fn transferTrailPresentation(
-    candidate: *TrailTransferCandidate,
-    outgoing: ?AcceptedTrailSurface,
-    now: u64,
-) void {
-    candidate.initialized = false;
-    candidate.trail = .{};
-    if (outgoing) |surface| {
-        if (!surface.initialized) return;
-        candidate.trail = surface.trail;
-        candidate.initialized = true;
-    } else return;
-    candidate.trail.needs_render = true;
-    // Kitty restarts the transferred animation clock at the active-tab
-    // transition time; it does not use a zero sentinel.
-    candidate.trail.updated_at = now;
-}
-
-fn prepareTrailTransferCandidate(
-    work: *CanvasWork,
-    tab_id: session.TabId,
-    now: u64,
-) void {
-    const accepted_owner = if (work.accepted_trail_surface) |surface| surface.owner else null;
-    var transfer = work.trail_transfer;
-    if (transfer) |pending| {
-        if (pending.to != tab_id) {
-            // A newer accepted topology supersedes an unpresented transfer.
-            // Restore the pending scheduler state and retain the old owner.
-            transfer = null;
-            work.trail_transfer = null;
-            work.trail_deadline = work.trail_transfer_previous_deadline;
-            work.trail_transfer_previous_deadline = null;
-            work.trail_frame_pending = false;
-        }
-    }
-    if (transfer == null and accepted_owner != null and accepted_owner.? != tab_id) {
-        var candidate = TrailTransferCandidate{
-            .from = accepted_owner.?,
-            .to = tab_id,
-        };
-        transferTrailPresentation(&candidate, work.accepted_trail_surface, now);
-        transfer = candidate;
-        work.trail_transfer_previous_deadline = work.trail_deadline;
-    }
-    work.trail_transfer = transfer;
-}
-
-fn findTrailSlot(work: *const CanvasWork, tab_id: session.TabId) ?usize {
-    for (work.trails, 0..) |slot, index| {
-        if (slot.id) |id| if (id == tab_id) return index;
-    }
-    return null;
-}
-
-fn topologyHasTrailTab(topology: *const session.SessionState, tab_id: session.TabId) bool {
-    for (0..topology.tabCount()) |index| {
-        if (topology.tabId(index).? == tab_id) return true;
-    }
-    return false;
-}
-
-fn reconcileTrailTopology(work: *CanvasWork, topology: *const session.SessionState) !void {
-    var candidate = work.trails;
-    for (&candidate) |*slot| {
-        if (slot.id) |id| {
-            if (!topologyHasTrailTab(topology, id)) slot.* = .{};
-        }
-    }
-    for (0..topology.tabCount()) |index| {
-        const tab_id = topology.tabId(index).?;
-        var present = false;
-        for (candidate) |slot| {
-            if (slot.id) |id| {
-                if (id == tab_id) {
-                    present = true;
-                    break;
-                }
-            }
-        }
-        if (!present) {
-            var inserted = false;
-            for (&candidate) |*slot| {
-                if (slot.id == null) {
-                    slot.* = .{ .id = tab_id };
-                    inserted = true;
-                    break;
-                }
-            }
-            if (!inserted) return error.InvalidFrame;
-        }
-    }
-    work.trails = candidate;
-}
-
-fn syncAcceptedTrail(
-    work: *CanvasWork,
-    topology: *const session.SessionState,
-    now: u64,
-    reset: bool,
-) !void {
-    const tab_id = topology.activeTabId();
-    const slot_index = findTrailSlot(work, tab_id) orelse return error.InvalidFrame;
-    var candidate_slot = work.trails[slot_index];
-    prepareTrailTransferCandidate(work, tab_id, now);
-    const transfer = work.trail_transfer;
-    const active_transition = transfer != null;
-    if (transfer == null and reset) {
-        candidate_slot = .{ .id = tab_id };
-    }
-    const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(session_chrome_adapter.toRenderPaneId(pane) catch return error.InvalidFrame) orelse {
-        work.trail_deadline = null;
-        work.trail_frame_pending = false;
-        if (transfer) |candidate| {
-            var updated = candidate;
-            updated.deadline = null;
-            work.trail_transfer = updated;
-        }
-        return;
-    };
-    const binding = work.composer.cursorBinding(source) orelse {
-        work.trail_deadline = null;
-        work.trail_frame_pending = false;
-        if (transfer) |candidate| {
-            var updated = candidate;
-            updated.deadline = null;
-            work.trail_transfer = updated;
-        }
-        return;
-    };
-    const overlay = (try cursorOverlayForBinding(work, source)) orelse {
-        work.trail_deadline = null;
-        work.trail_frame_pending = false;
-        if (transfer) |candidate| {
-            var updated = candidate;
-            updated.deadline = null;
-            work.trail_transfer = updated;
-        }
-        return;
-    };
-    if (transfer) |candidate| {
-        var candidate_transfer = candidate;
-        var candidate_trail = candidate_transfer.trail;
-        var candidate_initialized = candidate_transfer.initialized;
-        if (candidate_initialized and overlay.visible) {
-            try prepareTrailRetargetClip(
-                &candidate_trail,
-                overlay.clip,
-                candidate_trail.needs_render or candidate_transfer.deadline != null,
-            );
-        }
-        var candidate_deadline = candidate_transfer.deadline;
-        const movement_timestamp_ns = if (work.last_cursor_publication) |publication|
-            if (publication.source == source) publication.target.movement_timestamp_ns else now
-        else
-            now;
-        try trailPrepareTargetAt(
-            &candidate_trail,
-            overlay,
-            binding.cell_size,
-            now,
-            movement_timestamp_ns,
-            work.cursor_policy,
-            &candidate_deadline,
-            &candidate_initialized,
-        );
-        candidate_transfer.trail = candidate_trail;
-        candidate_transfer.initialized = candidate_initialized;
-        candidate_transfer.deadline = candidate_deadline;
-        work.trail_transfer = candidate_transfer;
-        work.trail_deadline = candidate_deadline;
-        work.trail_frame_pending = false;
-        return;
-    }
-    if (candidate_slot.initialized and overlay.visible) {
-        // A retarget during an active transition must retain every endpoint
-        // already visible in the current direct corner quad.  Fold the prior
-        // target into endpoint_clip before replacing target_clip; otherwise
-        // an A->B->A reversal would clip corners still near B down to A.
-        try prepareTrailRetargetClip(
-            &candidate_slot.trail,
-            overlay.clip,
-            candidate_slot.trail.needs_render or work.trail_deadline != null,
-        );
-    }
-    // A tab transition restarts the incoming presentation clock.  Never let
-    // the outgoing tab's due time short-circuit the transferred target.
-    var candidate_deadline = if (active_transition) null else work.trail_deadline;
-    const movement_timestamp_ns = if (work.last_cursor_publication) |publication|
-        if (publication.source == source) publication.target.movement_timestamp_ns else now
-    else
-        now;
-    try trailPrepareTargetAt(
-        &candidate_slot.trail,
-        overlay,
-        binding.cell_size,
-        now,
-        movement_timestamp_ns,
-        work.cursor_policy,
-        &candidate_deadline,
-        &candidate_slot.initialized,
-    );
-    work.trails[slot_index] = candidate_slot;
-    work.trail_deadline = candidate_deadline;
-    work.trail_frame_pending = false;
-}
-
-/// Advances the physically accepted trail snapshot after the frame carrying
-/// the corresponding trail/cursor presentation has been accepted. Semantic
-/// synchronization must not call this before replay/ring acceptance.
-fn acceptTrailSurfaceSnapshot(work: *CanvasWork, tab_id: session.TabId) !void {
-    const slot_index = findTrailSlot(work, tab_id) orelse return error.InvalidFrame;
-    work.accepted_trail_surface = .{
-        .owner = tab_id,
-        .trail = work.trails[slot_index].trail,
-        .initialized = work.trails[slot_index].initialized,
-    };
-}
-
-fn prepareTrailAnimation(
-    work: *CanvasWork,
-    topology: *const session.SessionState,
-    now: u64,
-) !bool {
-    const tab_id = topology.activeTabId();
-    const slot_index = findTrailSlot(work, tab_id) orelse return false;
-    const transfer = if (work.trail_transfer) |candidate|
-        if (candidate.to == tab_id) candidate else return false
-    else
-        null;
-    const initialized = if (transfer) |candidate|
-        candidate.initialized
-    else
-        work.trails[slot_index].initialized;
-    if (!initialized) return false;
-    const pane = topology.focusedPaneId();
-    const source = work.terminals.sourceFor(session_chrome_adapter.toRenderPaneId(pane) catch return false) orelse return false;
-    if (work.composer.cursorBinding(source) == null) return false;
-    const old_deadline = if (transfer) |value| value.deadline else work.trail_deadline;
-    var candidate = if (transfer) |value| value.trail else work.trails[slot_index].trail;
-    var candidate_deadline = old_deadline;
-    if (!trailAdvance(
-        &candidate,
-        now,
-        work.cursor_policy,
-        &candidate_deadline,
-    )) {
-        if (transfer) |value| {
-            var updated = value;
-            updated.deadline = candidate_deadline;
-            work.trail_transfer = updated;
-        }
-        work.trail_deadline = candidate_deadline;
-        return false;
-    }
-    work.trail_scratch = candidate;
-    work.trail_scratch_tab = tab_id;
-    work.trail_scratch_deadline = candidate_deadline;
-    work.trail_previous_deadline = old_deadline;
-    work.trail_scratch_transfer = transfer != null;
-    return true;
-}
-
-fn commitTrailAnimation(work: *CanvasWork) void {
-    const tab_id = work.trail_scratch_tab orelse return;
-    const slot_index = findTrailSlot(work, tab_id) orelse {
-        discardTrailAnimation(work, false);
-        return;
-    };
-    const transfer_commit = work.trail_scratch_transfer;
-    work.trails[slot_index].trail = work.trail_scratch;
-    work.trails[slot_index].initialized = true;
-    // Keep the original endpoint clip for every in-flight frame.  The
-    // animated direct corner quad can still occupy the outgoing pane until
-    // its corners and opacity have physically settled; only then may the
-    // target clip become the new accepted endpoint.
-    if (!work.trail_scratch.needs_render and work.trail_scratch_deadline == null) {
-        work.trails[slot_index].trail.endpoint_clip =
-            work.trails[slot_index].trail.target_clip;
-    }
-    work.trail_deadline = work.trail_scratch_deadline;
-    work.trail_scratch_tab = null;
-    work.trail_scratch_deadline = null;
-    work.trail_previous_deadline = null;
-    work.trail_scratch_transfer = false;
-    if (transfer_commit) {
-        if (work.trail_transfer) |transfer| {
-            if (transfer.to == tab_id) {
-                work.trail_transfer = null;
-                work.trail_transfer_previous_deadline = null;
-            }
-        }
-    }
-    work.accepted_trail_surface = .{
-        .owner = tab_id,
-        .trail = work.trails[slot_index].trail,
-        .initialized = work.trails[slot_index].initialized,
-    };
-    work.trail_frame_pending = work.trail_deadline != null;
-}
-
-fn discardTrailAnimation(work: *CanvasWork, retry_at_candidate_deadline: bool) void {
-    if (work.trail_scratch_tab == null) return;
-    work.trail_deadline = if (work.trail_scratch_transfer)
-        if (work.trail_transfer) |transfer| transfer.deadline else null
-    else if (retry_at_candidate_deadline)
-        work.trail_scratch_deadline
-    else
-        work.trail_previous_deadline;
-    work.trail_scratch_tab = null;
-    work.trail_scratch_deadline = null;
-    work.trail_previous_deadline = null;
-    work.trail_scratch_transfer = false;
-}
 
 const SlotOwnership = enum(u8) {
     reusable,
@@ -2280,8 +1098,6 @@ fn runFallible(
         ),
         .replay = &replay,
     };
-    resetTrailRecords(&canvas_work);
-    try reconcileTrailTopology(&canvas_work, &chrome);
     try retainTerminalScale(
         canvas_work.terminals,
         canvas_work.terminal_font_policy,
@@ -2591,11 +1407,7 @@ fn runFallible(
         const local_redraw_retry_turn = local_redraw_retry_pending;
         local_redraw_retry_pending = false;
         if (!local_redraw_retry_turn) {
-            const wake = try waitRenderWakeBlockingUntil(
-                boundary,
-                terminals,
-                canvas_work.trail_deadline,
-            );
+            const wake = try waitRenderWakeBlockingUntil(boundary, terminals, null);
             if (wake.terminal) {
                 terminal_redraw_pending = terminals.hasReadyUpdates() or
                     terminal_redraw_pending;
@@ -2623,11 +1435,6 @@ fn runFallible(
                     retained_configure,
                     wake.terminal,
                 );
-            }
-            if (wake.deadline and pending_topology == null and terminal_topology_committed) {
-                const now = try monotonicNow();
-                if (try prepareTrailAnimation(&canvas_work, &chrome, now))
-                    canvas_work.trail_frame_pending = true;
             }
         }
         const terminal_status = terminals.status();
@@ -2832,15 +1639,10 @@ fn runFallible(
                     const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
                     errdefer surface_residency.discard();
                     errdefer replay.discard();
-                    const resized_cursor_color = if (canvas_work.terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(admitted.candidate.state.focusedPaneId()))) |source|
-                        if (try cursorOverlayForBinding(&canvas_work, source)) |overlay| overlay.color else null
-                    else
-                        null;
                     const physical_resized_plan = try physicalPlanForBase(
                         &canvas_work,
                         resized_plan,
                         try session_chrome_adapter.toRenderPaneId(admitted.candidate.state.focusedPaneId()),
-                        null,
                     );
                     for (&rings[replacement], 0..) |*slot, index| {
                         try beginSlotRendering(slot);
@@ -2883,7 +1685,6 @@ fn runFallible(
                         try session_chrome_adapter.toRenderPaneId(
                             admitted.candidate.state.focusedPaneId(),
                         ),
-                        null,
                     );
                     try render(
                         &graphics,
@@ -2939,17 +1740,12 @@ fn runFallible(
                         .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
                     );
                     replay.commit(0);
-                    if (resized_cursor_color) |color| canvas_work.accepted_cursor_color = color;
                     next_acquire_point = candidate_acquire;
                     const old_ring = active_ring;
                     const old_generation = active_generation;
                     pending_topology = null;
                     active_ring = replacement;
                     active_generation = surface.generation;
-                    try reconcileTrailTopology(&canvas_work, &chrome);
-                    try syncAcceptedTrail(&canvas_work, &chrome, try monotonicNow(), true);
-                    if (canvas_work.trail_transfer == null)
-                        try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
                     reconcileFocusedCursor(
                         terminals,
                         try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
@@ -2963,7 +1759,6 @@ fn runFallible(
                     for (&rings[old_ring]) |*slot|
                         slot.deinit(device, drm_fd, &gpu_bytes);
                 } else if (admitted.phase == .admitted) {
-                    var trail_candidate_carried = false;
                     const redraw_result = try redrawChrome(
                         boundary,
                         &chrome,
@@ -2983,8 +1778,6 @@ fn runFallible(
                         acquire_handle,
                         &next_acquire_point,
                         admitted,
-                        false,
-                        &trail_candidate_carried,
                     );
                     switch (try scheduleRedraw(
                         redraw_result,
@@ -3004,20 +1797,6 @@ fn runFallible(
                                 &terminal_completion,
                                 .published,
                             );
-                            if (cursor_replay_pending) |publication|
-                                canvas_work.last_cursor_publication = publication;
-                            canvas_work.trail_frame_pending = false;
-                            discardTrailAnimation(&canvas_work, false);
-                            // redrawChrome commits the pending topology in
-                            // this branch.  Reconcile exact TabId trail
-                            // ownership before binding the newly active tab;
-                            // otherwise a same-surface tab creation reaches
-                            // syncAcceptedTrail without a slot and becomes a
-                            // fatal InvalidFrame.
-                            try reconcileTrailTopology(&canvas_work, &chrome);
-                            try syncAcceptedTrail(&canvas_work, &chrome, try monotonicNow(), false);
-                            if (canvas_work.trail_transfer == null)
-                                try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
                             dropPendingCursor(&cursor_replay_pending);
                             reconcileFocusedCursor(
                                 terminals,
@@ -3029,22 +1808,17 @@ fn runFallible(
                 }
             }
         }
-        if ((cursor_replay_pending != null or canvas_work.trail_frame_pending) and
+        if (cursor_replay_pending != null and
             !terminal_redraw_pending and pending_topology == null and
             terminal_topology_committed)
         {
             const focused_pane = chrome.focusedPaneId();
             const focused_source = canvas_work.terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(focused_pane));
-            const trail_only = cursor_replay_pending == null;
-            var trail_publication: ?terminal_handoff.CursorPublication =
-                if (trail_only) canvas_work.last_cursor_publication else null;
-            const replay_pending = if (trail_only) &trail_publication else &cursor_replay_pending;
             const replay_result = try replayCursorFrame(
                 boundary,
                 &canvas_work,
-                replay_pending,
+                &cursor_replay_pending,
                 focused_source,
-                trail_only,
                 &rings[active_ring],
                 active_generation,
                 &graphics,
@@ -3059,33 +1833,16 @@ fn runFallible(
             );
             switch (replay_result) {
                 .published => {
-                    if (trail_only) {
-                        commitTrailAnimation(&canvas_work);
-                        canvas_work.trail_frame_pending = false;
-                    } else {
-                        canvas_work.last_cursor_publication = replay_pending.*;
-                        dropPendingCursor(&cursor_replay_pending);
-                        try syncAcceptedTrail(&canvas_work, &chrome, try monotonicNow(), false);
-                        if (canvas_work.trail_transfer == null)
-                            try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
-                    }
+                    dropPendingCursor(&cursor_replay_pending);
                 },
                 .retry => {
-                    if (trail_only) discardTrailAnimation(&canvas_work, false);
                     local_redraw_retry_pending = true;
                 },
-                .rejected => {
-                    discardRejectedCursorReplay(
-                        &canvas_work,
-                        &cursor_replay_pending,
-                        trail_only,
-                    );
-                },
-                .blocked => if (trail_only) discardTrailAnimation(&canvas_work, true),
+                .rejected => discardRejectedCursorReplay(&cursor_replay_pending),
+                .blocked => {},
             }
         }
         if (terminal_redraw_pending and pending_topology == null) {
-            var trail_candidate_carried = false;
             const redraw_result = redrawChrome(
                 boundary,
                 &chrome,
@@ -3105,8 +1862,6 @@ fn runFallible(
                 acquire_handle,
                 &next_acquire_point,
                 null,
-                cursor_replay_pending == null,
-                &trail_candidate_carried,
             ) catch |failure| switch (failure) {
                 error.NoReleasedSlot => continue,
                 else => return failure,
@@ -3125,19 +1880,6 @@ fn runFallible(
                     terminal_redraw_pending = false;
                     if (terminals.hasReadyCompletion())
                         local_redraw_retry_pending = true;
-                    if (cursor_replay_pending) |publication|
-                        canvas_work.last_cursor_publication = publication;
-                    if (trail_candidate_carried) {
-                        commitTrailAnimation(&canvas_work);
-                        canvas_work.trail_frame_pending = false;
-                    } else {
-                        canvas_work.trail_frame_pending = false;
-                        discardTrailAnimation(&canvas_work, false);
-                    }
-                    if (!trail_candidate_carried)
-                        try syncAcceptedTrail(&canvas_work, &chrome, try monotonicNow(), false);
-                    if (!trail_candidate_carried and canvas_work.trail_transfer == null)
-                        try acceptTrailSurfaceSnapshot(&canvas_work, chrome.activeTabId());
                     dropPendingCursor(&cursor_replay_pending);
                 },
             }
@@ -3614,9 +2356,6 @@ test "Renderer copies only factual accepted DPI through terminal State" {
             .upload_bytes = 16,
             .cells = 4,
             .rows = 4,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 16,
             .glyphs = 4,
             .masks = 4,
             .resources_per_update = 4,
@@ -3741,9 +2480,6 @@ test "focused pane actions coalesce retained point state through real State" {
             .upload_bytes = 16,
             .cells = 4,
             .rows = 4,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 16,
             .glyphs = 4,
             .masks = 4,
             .resources_per_update = 4,
@@ -3805,9 +2541,6 @@ test "policy pruning retains hidden panes and removes a full stale table" {
             .upload_bytes = 16,
             .cells = 4,
             .rows = 4,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 16,
             .glyphs = 4,
             .masks = 4,
             .resources_per_update = 4,
@@ -3873,9 +2606,6 @@ test "window base actions preserve every pane offset through real State" {
             .upload_bytes = 16,
             .cells = 4,
             .rows = 4,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 16,
             .glyphs = 4,
             .masks = 4,
             .resources_per_update = 4,
@@ -4706,8 +3436,6 @@ test "accepted cursor geometry is fatal while publication mismatch rejects" {
             .col = 0,
             .visible = true,
             .shape = .block,
-            .blink = false,
-            .blink_fast = false,
             .cursor_color = .{},
             .text_color = .{},
         },
@@ -4722,24 +3450,9 @@ fn physicalPlanForBase(
     work: *CanvasWork,
     base: vk_surface.Plan,
     focused_pane: render_api.chrome.PaneId,
-    trail: ?*const CursorTrail,
 ) !vk_surface.Plan {
     const source = work.terminals.sourceFor(focused_pane) orelse return base;
-    var overlay = (try cursorOverlayForBinding(work, source)) orelse return base;
-    if (trail) |value| {
-        const trail_clip = try checkedTrailClipUnion(
-            value.endpoint_clip,
-            overlay.clip,
-        );
-        overlay.trail = .{
-            .corner_x = value.corner_x,
-            .corner_y = value.corner_y,
-            .clip = trail_clip,
-            .opacity = value.opacity,
-            .color = work.accepted_cursor_color orelse overlay.color,
-            .cursor_rect = overlay.rect,
-        };
-    }
+    const overlay = (try cursorOverlayForBinding(work, source)) orelse return base;
     const candidate = work.replay.candidate();
     return vk_surface.replayCursor(
         base,
@@ -5030,9 +3743,6 @@ test "Renderer poll preserves timeout ownership EINTR deadlines and wake classif
         .upload_bytes = 4096,
         .cells = 32,
         .rows = 4,
-        .images = 1,
-        .placements = 2,
-        .image_bytes = 4096,
         .glyphs = 8,
         .masks = 2,
         .resources_per_update = 8,
@@ -5823,9 +4533,6 @@ fn lifecycleShapeForTest(
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6009,9 +4716,6 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6077,9 +4781,6 @@ test "second pending pane creation preserves the first admitted candidate" {
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6162,9 +4863,6 @@ test "pending focus resize close and reorder folds issue fresh identities" {
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6310,9 +5008,6 @@ test "drainInput forwards capture overflow press and release explicitly" {
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6488,9 +5183,6 @@ test "drainInput propagates fatal session candidate invariants" {
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6536,9 +5228,6 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
             .upload_bytes = 4 * 1024 * 1024,
             .cells = 32_768,
             .rows = 128,
-            .images = 8,
-            .placements = 8,
-            .image_bytes = 256 * 1024,
             .glyphs = 512,
             .masks = 128,
             .resources_per_update = terminal_retained_resource_limit,
@@ -6750,9 +5439,6 @@ test "undersized pending topology rejection removes provisional source" {
             .upload_bytes = 64 * 1024,
             .cells = 128,
             .rows = 8,
-            .images = 1,
-            .placements = 8,
-            .image_bytes = 4096,
             .glyphs = 32,
             .masks = 8,
             .resources_per_update = 32,
@@ -6844,9 +5530,6 @@ test "cancelled topology replacements reuse Composer storage and retain accepted
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 4,
-            .images = 1,
-            .placements = 2,
-            .image_bytes = 4096,
             .glyphs = 8,
             .masks = 2,
             .resources_per_update = 8,
@@ -6925,9 +5608,6 @@ test "topology replacement distinguishes rejection retry progress and fatal fail
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 4,
-            .images = 1,
-            .placements = 2,
-            .image_bytes = 4096,
             .glyphs = 8,
             .masks = 2,
             .resources_per_update = 8,
@@ -7179,9 +5859,6 @@ test "owner retirement wakes and progresses one retained topology input" {
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 4,
-            .images = 1,
-            .placements = 2,
-            .image_bytes = 4096,
             .glyphs = 8,
             .masks = 2,
             .resources_per_update = 8,
@@ -7472,9 +6149,6 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 8,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 4096,
             .glyphs = 16,
             .masks = 8,
             .resources_per_update = 16,
@@ -7894,691 +6568,6 @@ test "Renderer Chrome retry cannot authorize a newer topology snapshot" {
     try terminals.cancelUpdate(reused);
 }
 
-test "CanvasWork cursor retention layout receipt" {
-    // d67cb4b baseline: 4096 bytes; the prior cursor view retained 56 bytes.
-    // Trail records, exact TabId slots, endpoint clips, scratch, deadlines,
-    // demand, accepted presentation ownership, transfer candidate, and the
-    // latest publication, accepted cursor color, and absolute-position
-    // timestamp add 1504 bytes, yielding the exact 5656-byte record.
-    const baseline_size: usize = 4096;
-    const prior_cursor_delta: usize = 56;
-    const trail_delta: usize = 1504;
-    try std.testing.expectEqual(@as(usize, 8), @alignOf(CanvasWork));
-    try std.testing.expectEqual(
-        baseline_size + prior_cursor_delta + trail_delta,
-        @sizeOf(CanvasWork),
-    );
-}
-
-test "active TabId transfers the accepted trail presentation" {
-    var topology = try session.SessionState.init(
-        .{ .width = 640, .height = 480 },
-    );
-    var work: CanvasWork = undefined;
-    resetTrailRecords(&work);
-    try reconcileTrailTopology(&work, &topology);
-    const first = topology.activeTabId();
-    const second = try topology.createTab("incoming");
-    try topology.switchTab(first); // incoming retains semantic state while hidden
-    try reconcileTrailTopology(&work, &topology);
-    const first_slot = findTrailSlot(&work, first).?;
-    const second_slot = findTrailSlot(&work, second).?;
-    work.trails[first_slot] = .{
-        .id = first,
-        .initialized = true,
-        .trail = .{
-            .needs_render = false,
-            .updated_at = 91,
-            .opacity = 0.75,
-            .corner_x = .{ 11, 21, 21, 11 },
-            .corner_y = .{ 12, 12, 32, 32 },
-            .endpoint_clip = .{ .x = 1, .y = 2, .width = 30, .height = 40 },
-            .target_clip = .{ .x = 5, .y = 6, .width = 20, .height = 24 },
-        },
-    };
-    work.trails[second_slot] = .{ .id = second };
-    work.accepted_trail_surface = .{
-        .owner = first,
-        .trail = work.trails[first_slot].trail,
-        .initialized = true,
-    };
-
-    // A -> B copies the last physically accepted state, then marks only the
-    // transferred presentation as due; exact semantic targets remain per tab.
-    var transfer = TrailTransferCandidate{ .from = first, .to = second };
-    transferTrailPresentation(&transfer, work.accepted_trail_surface, 2_000);
-    try std.testing.expect(transfer.initialized);
-    try std.testing.expect(transfer.trail.needs_render);
-    try std.testing.expectEqual(@as(u64, 2_000), transfer.trail.updated_at);
-    try std.testing.expectEqual(work.trails[first_slot].trail.corner_x, transfer.trail.corner_x);
-    try std.testing.expectEqual(work.trails[first_slot].trail.corner_y, transfer.trail.corner_y);
-    try std.testing.expectEqual(work.trails[first_slot].trail.endpoint_clip, transfer.trail.endpoint_clip);
-
-    // B -> A transfers the currently accepted B presentation, not A's stale
-    // historical record. This is the Kitty presentation-transfer rule.
-    transfer.trail.corner_x = .{ 101, 111, 111, 101 };
-    transfer.trail.corner_y = .{ 102, 102, 122, 122 };
-    transfer.trail.opacity = 0.4;
-    work.accepted_trail_surface = .{ .owner = second, .trail = transfer.trail, .initialized = true };
-    var reverse = TrailTransferCandidate{ .from = second, .to = first };
-    transferTrailPresentation(&reverse, work.accepted_trail_surface, 3_000);
-    try std.testing.expectEqual(transfer.trail.corner_x, reverse.trail.corner_x);
-    try std.testing.expectEqual(transfer.trail.corner_y, reverse.trail.corner_y);
-    try std.testing.expectEqual(transfer.trail.opacity, reverse.trail.opacity);
-    try std.testing.expect(reverse.trail.needs_render);
-    try std.testing.expectEqual(@as(u64, 3_000), reverse.trail.updated_at);
-
-    // A -> B superseded by C is rebased from A, not from speculative B.
-    work.accepted_trail_surface = .{ .owner = first, .trail = reverse.trail, .initialized = true };
-    work.trail_transfer = .{
-        .from = first,
-        .to = second,
-        .trail = transfer.trail,
-        .initialized = true,
-        .deadline = 400,
-    };
-    work.trail_transfer_previous_deadline = 300;
-    work.trail_deadline = 400;
-    try topology.closeTab(second);
-    try reconcileTrailTopology(&work, &topology);
-    const third = try topology.createTab("superseding");
-    prepareTrailTransferCandidate(&work, third, 5_000);
-    try std.testing.expectEqual(first, work.trail_transfer.?.from);
-    try std.testing.expectEqual(third, work.trail_transfer.?.to);
-    try std.testing.expectEqual(first, work.accepted_trail_surface.?.owner);
-    try std.testing.expectEqual(@as(u64, 300), work.trail_transfer_previous_deadline.?);
-
-    // Retiring the accepted semantic TabId does not retire the physical
-    // snapshot. A replacement can still animate from that accepted surface.
-    try topology.closeTab(first);
-    try reconcileTrailTopology(&work, &topology);
-    try topology.closeTab(third);
-    try reconcileTrailTopology(&work, &topology);
-    const closed_replacement = try topology.createTab("closed-replacement");
-    try reconcileTrailTopology(&work, &topology);
-    prepareTrailTransferCandidate(&work, closed_replacement, 6_000);
-    try std.testing.expectEqual(first, work.trail_transfer.?.from);
-    try std.testing.expect(work.trail_transfer.?.initialized);
-    try std.testing.expectEqual(first, work.accepted_trail_surface.?.owner);
-
-    // A closed TabId is retired before any slot can be reused, so a delayed
-    // transfer cannot leak its accepted presentation into the replacement.
-    try topology.closeTab(closed_replacement);
-    try reconcileTrailTopology(&work, &topology);
-    const replacement = try topology.createTab("replacement");
-    try reconcileTrailTopology(&work, &topology);
-    const replacement_slot = findTrailSlot(&work, replacement).?;
-    try std.testing.expect(!work.trails[replacement_slot].initialized);
-    try std.testing.expectEqual(@as(f32, 0), work.trails[replacement_slot].trail.opacity);
-    try std.testing.expectEqual(first, work.accepted_trail_surface.?.owner);
-}
-
-test "accepted topology tab transition transfers through Composer bindings" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-        .{
-            .commands = 16,
-            .upload_bytes = 1024,
-            .cells = 16,
-            .rows = 4,
-            .images = 1,
-            .placements = 4,
-            .image_bytes = 1024,
-            .glyphs = 8,
-            .masks = 4,
-            .resources_per_update = 4,
-            .raster_bytes = 1024,
-            .decoration_bytes = 1024,
-        },
-    );
-    defer terminals.deinit();
-    var composer = try render_api.canvas.Composer.init(
-        std.testing.allocator,
-        .{
-            .sources = 4,
-            .retained_resources = 4,
-            .retained_commands = 8,
-            .retained_pixel_bytes = 1024,
-            .composition_sources = 4,
-            .candidate_resources = 4,
-            .candidate_commands = 8,
-            .candidate_pixel_bytes = 1024,
-        },
-    );
-    defer composer.deinit();
-    var topology = try session.SessionState.init(
-        .{ .width = 640, .height = 480 },
-    );
-    const first_tab = topology.activeTabId();
-    const second_tab = try topology.createTab("incoming");
-    try topology.switchTab(first_tab);
-    const first_pane = topology.focusedPaneId();
-    try topology.switchTab(second_tab);
-    const second_pane = topology.focusedPaneId();
-    try topology.switchTab(first_tab);
-
-    const first_source = try composer.registerSource();
-    const second_source = try composer.registerSource();
-    const pane_ids = [_]render_api.chrome.PaneId{
-        try session_chrome_adapter.toRenderPaneId(first_pane),
-        try session_chrome_adapter.toRenderPaneId(second_pane),
-    };
-    const sources = [_]render_api.canvas.SourceId{ first_source, second_source };
-    var placements: [2]render_api.canvas.Composer.Placement = undefined;
-    const solid = render_api.canvas.Input{ .solid = .{
-        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
-    } };
-    for (pane_ids, sources, 0..) |pane, source, index| {
-        const semantic_pane = if (index == 0) first_pane else second_pane;
-        const rect = topology.paneRect(semantic_pane).?;
-        try terminals.register(pane, source, .{ .width = rect.width, .height = rect.height });
-        try std.testing.expect(terminals.takeLifecycle() != null);
-        const member = try terminals.activateTransfer(pane);
-        try std.testing.expectEqual(pane, member.pane_id);
-        try std.testing.expectEqual(source, member.source_id);
-        try terminals.markLive(pane);
-        try composer.apply(source, .{
-            .revision = @fromBackingInt(1),
-            .uploads = &.{},
-            .removals = &.{},
-            .commands = &.{solid},
-            .cursor_binding = .{
-                .pane = @backingInt(pane),
-                .source = source,
-                .terminal_sequence = 1,
-                .cursor_revision = 1,
-                .visible_set_revision = 1,
-                .lifecycle_revision = 1,
-                .rect = .{ .x = @intCast(index * 20), .y = 24, .width = 10, .height = 20 },
-                .cell_size = .{ .width = 10, .height = 20 },
-                .clip = .{ .x = 0, .y = 24, .width = 640, .height = 456 },
-                .visible = true,
-            },
-        });
-        placements[index] = .{
-            .source = source,
-            .origin = .{ .x = rect.x, .y = rect.y },
-            .clip = .{ .x = rect.x, .y = rect.y, .width = rect.width, .height = rect.height },
-        };
-    }
-    terminals.visible_members[0..2].* = .{
-        .{ .pane = pane_ids[0], .source = first_source },
-        .{ .pane = pane_ids[1], .source = second_source },
-    };
-    terminals.visible_member_count = 2;
-    terminals.visible_revision = 1;
-    terminals.visible_initialized = true;
-    try composer.setComposition(.{
-        .surface = .{ .width = 640, .height = 480 },
-        .sources = &placements,
-        .focused_source = first_source,
-    });
-
-    var replay = try ReplayState.init(std.testing.allocator);
-    defer replay.deinit();
-    var work: CanvasWork = undefined;
-    work.composer = &composer;
-    work.terminals = &terminals;
-    work.cursor_policy = dev_config.Config.defaults().presentationPolicy();
-    work.replay = &replay;
-    @memcpy(work.visible_placements[0..2], &placements);
-    work.visible_count = 2;
-    resetTrailRecords(&work);
-    try reconcileTrailTopology(&work, &topology);
-    try syncAcceptedTrail(&work, &topology, 1_000, true);
-    // Semantic synchronization alone does not establish a physical surface
-    // snapshot; the initial frame must cross the acceptance boundary first.
-    try std.testing.expect(work.accepted_trail_surface == null);
-    const first_slot = findTrailSlot(&work, first_tab).?;
-    work.trails[first_slot].trail.corner_x = .{ 11, 21, 21, 11 };
-    work.trails[first_slot].trail.corner_y = .{ 12, 12, 32, 32 };
-    work.trails[first_slot].trail.opacity = 0.6;
-    work.trails[first_slot].trail.needs_render = false;
-    try acceptTrailSurfaceSnapshot(&work, first_tab);
-
-    // A newer semantic target may update the tab-local candidate before its
-    // physical replay is accepted.  The surface snapshot must remain the
-    // last accepted presentation for a later tab transfer.
-    const accepted_surface_before_retarget = work.accepted_trail_surface.?;
-    work.trails[first_slot].trail.corner_x = .{ 31, 41, 41, 31 };
-    work.trails[first_slot].trail.corner_y = .{ 32, 32, 52, 52 };
-    try syncAcceptedTrail(&work, &topology, 1_500, false);
-    try std.testing.expectEqual(accepted_surface_before_retarget, work.accepted_trail_surface.?);
-
-    // The second tab retained its binding while hidden. Once the accepted
-    // topology switches to it, the production sync path copies the outgoing
-    // physical state and restarts the Kitty transition clock.
-    try topology.switchTab(second_tab);
-    try composer.setComposition(.{
-        .surface = .{ .width = 640, .height = 480 },
-        .sources = &placements,
-        .focused_source = second_source,
-    });
-    try syncAcceptedTrail(&work, &topology, 2_000, false);
-    const second_slot = findTrailSlot(&work, second_tab).?;
-    const pending_transfer = work.trail_transfer.?;
-    try std.testing.expectEqual(first_tab, pending_transfer.from);
-    try std.testing.expectEqual(second_tab, pending_transfer.to);
-    try std.testing.expect(pending_transfer.initialized);
-    try std.testing.expect(pending_transfer.trail.needs_render);
-    try std.testing.expectEqual(@as(u64, 2_000), pending_transfer.trail.updated_at);
-    try std.testing.expect(!work.trails[second_slot].initialized);
-    try std.testing.expectEqual(first_tab, work.accepted_trail_surface.?.owner);
-    try std.testing.expectEqual(accepted_surface_before_retarget.trail.corner_x, pending_transfer.trail.corner_x);
-    try std.testing.expectEqual(accepted_surface_before_retarget.trail.corner_y, pending_transfer.trail.corner_y);
-    try std.testing.expect(work.trail_deadline != null);
-
-    // A rejected physical replay leaves both the outgoing accepted state and
-    // the incoming transfer candidate byte-identical; the exact retry then
-    // commits the transfer and its owner together.
-    const accepted_before_rejection = work.trails[first_slot];
-    const transfer_before_rejection = work.trail_transfer.?;
-    const surface_before_rejection = work.accepted_trail_surface.?;
-    try std.testing.expect(try prepareTrailAnimation(&work, &topology, 2_000_000_000));
-    discardTrailAnimation(&work, false);
-    try std.testing.expectEqual(accepted_before_rejection, work.trails[first_slot]);
-    try std.testing.expectEqual(transfer_before_rejection, work.trail_transfer.?);
-    try std.testing.expectEqual(surface_before_rejection, work.accepted_trail_surface.?);
-    try std.testing.expect(try prepareTrailAnimation(&work, &topology, 3_000_000_000));
-    commitTrailAnimation(&work);
-    try std.testing.expect(work.trails[second_slot].initialized);
-    try std.testing.expectEqual(second_tab, work.accepted_trail_surface.?.owner);
-    try std.testing.expect(work.trail_transfer == null);
-
-    // B -> A with no accepted A binding retains the pending transfer rather
-    // than advancing ownership. Restoring the binding later retargets the
-    // retained B presentation and commits it only with the replay frame.
-    try topology.switchTab(first_tab);
-    try composer.setComposition(.{
-        .surface = .{ .width = 640, .height = 480 },
-        .sources = &placements,
-        .focused_source = first_source,
-    });
-    const first_before_missing_binding = work.trails[first_slot];
-    try composer.apply(first_source, .{
-        .revision = @fromBackingInt(2),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{solid},
-        .cursor_binding = null,
-    });
-    try syncAcceptedTrail(&work, &topology, 3_000, false);
-    try std.testing.expectEqual(first_before_missing_binding, work.trails[first_slot]);
-    try std.testing.expectEqual(second_tab, work.accepted_trail_surface.?.owner);
-    try std.testing.expectEqual(first_tab, work.trail_transfer.?.to);
-    try std.testing.expectEqual(work.trails[second_slot].trail.corner_x, work.trail_transfer.?.trail.corner_x);
-    try std.testing.expectEqual(work.trails[second_slot].trail.corner_y, work.trail_transfer.?.trail.corner_y);
-    try std.testing.expect(work.trail_transfer.?.deadline == null);
-    try composer.apply(first_source, .{
-        .revision = @fromBackingInt(3),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{solid},
-        .cursor_binding = .{
-            .pane = @backingInt(first_pane),
-            .source = first_source,
-            .terminal_sequence = 1,
-            .cursor_revision = 1,
-            .visible_set_revision = 1,
-            .lifecycle_revision = 1,
-            .rect = .{ .x = 0, .y = 24, .width = 10, .height = 20 },
-            .cell_size = .{ .width = 10, .height = 20 },
-            .clip = .{ .x = 0, .y = 24, .width = 640, .height = 456 },
-            .visible = true,
-        },
-    });
-    try syncAcceptedTrail(&work, &topology, 4_000, false);
-    const missing_transfer_before_rejection = work.trail_transfer.?;
-    try std.testing.expect(try prepareTrailAnimation(&work, &topology, 2_000_000_000));
-    discardTrailAnimation(&work, false);
-    try std.testing.expectEqual(second_tab, work.accepted_trail_surface.?.owner);
-    try std.testing.expectEqual(missing_transfer_before_rejection, work.trail_transfer.?);
-    try std.testing.expect(try prepareTrailAnimation(&work, &topology, 2_000_000_000));
-    commitTrailAnimation(&work);
-    try std.testing.expectEqual(first_tab, work.accepted_trail_surface.?.owner);
-    try std.testing.expect(work.trail_transfer == null);
-}
-
-test "cursor trail storage follows exact TabId lifecycle" {
-    var topology = try session.SessionState.init(
-        .{ .width = 640, .height = 480 },
-    );
-    var work: CanvasWork = undefined;
-    resetTrailRecords(&work);
-    try reconcileTrailTopology(&work, &topology);
-    const first = topology.activeTabId();
-    const second = try topology.createTab("hidden");
-    try reconcileTrailTopology(&work, &topology);
-    work.trails[findTrailSlot(&work, first).?].trail.opacity = 0.25;
-    work.trails[findTrailSlot(&work, second).?].trail.opacity = 0.75;
-    try topology.switchTab(first);
-    try reconcileTrailTopology(&work, &topology);
-    try std.testing.expectEqual(@as(f32, 0.25), work.trails[findTrailSlot(&work, first).?].trail.opacity);
-    try std.testing.expectEqual(@as(f32, 0.75), work.trails[findTrailSlot(&work, second).?].trail.opacity);
-    try topology.closeTab(second);
-    try reconcileTrailTopology(&work, &topology);
-    const third = try topology.createTab("replacement");
-    try reconcileTrailTopology(&work, &topology);
-    try std.testing.expect(third != second);
-    try std.testing.expectEqual(@as(f32, 0.25), work.trails[findTrailSlot(&work, first).?].trail.opacity);
-    try std.testing.expectEqual(@as(f32, 0), work.trails[findTrailSlot(&work, third).?].trail.opacity);
-}
-
-test "Host focus directions admit one physical trail quad" {
-    // This is a Host-only topology receipt: input_actions selects the real
-    // focus candidate, Composer owns the accepted source bindings, and the
-    // replay preparation must carry one trail quad for every cardinal move.
-    // It deliberately stops before Vulkan recording, so no PTY, GUI, or
-    // terminal-output fixture can mask a directional presentation defect.
-    const actions = [_]input_actions.Action{
-        .focus_up,
-        .focus_left,
-        .focus_down,
-        .focus_right,
-    };
-    var replay = try ReplayState.init(std.testing.allocator);
-    defer replay.deinit();
-    for (actions) |action| {
-        var terminals = try terminal_handoff.Boundary.init(
-            std.testing.io,
-            std.testing.allocator,
-            .{
-                .commands = 64,
-                .upload_bytes = 4096,
-                .cells = 64,
-                .rows = 16,
-                .images = 1,
-                .placements = 8,
-                .image_bytes = 4096,
-                .glyphs = 16,
-                .masks = 8,
-                .resources_per_update = 16,
-                .raster_bytes = 4096,
-                .decoration_bytes = 4096,
-            },
-        );
-        defer terminals.deinit();
-        var composer = try render_api.canvas.Composer.init(
-            std.testing.allocator,
-            .{
-                .sources = 8,
-                .retained_resources = 8,
-                .retained_commands = 16,
-                .retained_pixel_bytes = 4096,
-                .composition_sources = 8,
-                .candidate_resources = 8,
-                .candidate_commands = 16,
-                .candidate_pixel_bytes = 4096,
-            },
-        );
-        defer composer.deinit();
-
-        var accepted = try session.SessionState.init(
-            .{ .width = 640, .height = 480 },
-        );
-        const root = accepted.focusedPaneId();
-        const right = try accepted.split(root, .vertical);
-        const lower_right = try accepted.split(right, .horizontal);
-        const lower_left = try accepted.split(root, .horizontal);
-        switch (action) {
-            .focus_up, .focus_right => try accepted.focusPane(lower_left),
-            .focus_left => try accepted.focusPane(lower_right),
-            .focus_down => try accepted.focusPane(root),
-            else => unreachable,
-        }
-        const candidate = (try input_actions.candidate(&accepted, action)).?.state;
-
-        var panes: [4]render_api.chrome.PaneId = undefined;
-        var sources: [4]render_api.canvas.SourceId = undefined;
-        var placements: [4]render_api.canvas.Composer.Placement = undefined;
-        for (0..4) |index| {
-            panes[index] = try session_chrome_adapter.toRenderPaneId(accepted.paneId(0, index).?);
-            sources[index] = try composer.registerSource();
-            const pane_rect = accepted.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
-            try terminals.register(
-                panes[index],
-                sources[index],
-                .{ .width = pane_rect.width, .height = pane_rect.height },
-            );
-            try std.testing.expect(terminals.takeLifecycle() != null);
-            const member = try terminals.activateTransfer(panes[index]);
-            try std.testing.expectEqual(panes[index], member.pane_id);
-            try std.testing.expectEqual(sources[index], member.source_id);
-            try terminals.markLive(panes[index]);
-            placements[index] = .{
-                .source = sources[index],
-                .origin = .{ .x = pane_rect.x, .y = pane_rect.y },
-                .clip = .{
-                    .x = pane_rect.x,
-                    .y = pane_rect.y,
-                    .width = pane_rect.width,
-                    .height = pane_rect.height,
-                },
-            };
-        }
-        terminals.visible_members[0..4].* = .{
-            .{ .pane = panes[0], .source = sources[0] },
-            .{ .pane = panes[1], .source = sources[1] },
-            .{ .pane = panes[2], .source = sources[2] },
-            .{ .pane = panes[3], .source = sources[3] },
-        };
-        terminals.visible_member_count = 4;
-        terminals.visible_revision = 1;
-        terminals.visible_initialized = true;
-        const solid = render_api.canvas.Input{ .solid = .{
-            .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-            .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-            .color = .{ .r = 1, .g = 2, .b = 3, .a = 255 },
-        } };
-        for (0..4) |index| {
-            const pane_rect = accepted.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
-            try composer.apply(sources[index], .{
-                .revision = @fromBackingInt(1),
-                .uploads = &.{},
-                .removals = &.{},
-                .commands = &.{solid},
-                .cursor_binding = .{
-                    .pane = @backingInt(panes[index]),
-                    .source = sources[index],
-                    .terminal_sequence = 1,
-                    .cursor_revision = 1,
-                    .visible_set_revision = 1,
-                    .lifecycle_revision = 1,
-                    .rect = .{ .x = 0, .y = 0, .width = 10, .height = 20 },
-                    .cell_size = .{ .width = 10, .height = 20 },
-                    .clip = .{ .x = 0, .y = 0, .width = pane_rect.width, .height = pane_rect.height },
-                    .visible = true,
-                },
-            });
-        }
-        try composer.setComposition(.{
-            .surface = .{ .width = 640, .height = 480 },
-            .sources = &placements,
-            .focused_source = sources[0],
-        });
-
-        var work: CanvasWork = undefined;
-        work.composer = &composer;
-        work.terminals = &terminals;
-        work.cursor_policy = dev_config.Config.defaults().presentationPolicy();
-        work.replay = &replay;
-        @memcpy(work.visible_placements[0..4], &placements);
-        work.visible_count = 4;
-        resetTrailRecords(&work);
-        try reconcileTrailTopology(&work, &accepted);
-        try syncAcceptedTrail(&work, &accepted, 1_000_000, true);
-        const old_pane = accepted.focusedPaneId();
-        const old_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(old_pane)).?;
-        const old_overlay = (try cursorOverlayForBinding(&work, old_source)).?;
-        const accepted_before_target = work.trails[findTrailSlot(&work, accepted.activeTabId()).?].trail;
-
-        var candidate_placements = placements;
-        for (0..4) |index| {
-            const pane_rect = candidate.paneRect(try session_chrome_adapter.fromRenderPaneId(panes[index])).?;
-            candidate_placements[index].origin = .{ .x = pane_rect.x, .y = pane_rect.y };
-            candidate_placements[index].clip = .{
-                .x = pane_rect.x,
-                .y = pane_rect.y,
-                .width = pane_rect.width,
-                .height = pane_rect.height,
-            };
-        }
-        try composer.setComposition(.{
-            .surface = .{ .width = 640, .height = 480 },
-            .sources = &candidate_placements,
-            .focused_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId())),
-        });
-        @memcpy(work.visible_placements[0..4], &candidate_placements);
-        try reconcileTrailTopology(&work, &candidate);
-        try syncAcceptedTrail(&work, &candidate, 2_000_000, false);
-        const new_pane = candidate.focusedPaneId();
-        const new_source = terminals.sourceFor(try session_chrome_adapter.toRenderPaneId(new_pane)).?;
-        const new_overlay = (try cursorOverlayForBinding(&work, new_source)).?;
-        try std.testing.expect(old_pane != new_pane);
-        try std.testing.expect(old_source != new_source);
-        try std.testing.expect(!std.meta.eql(old_overlay.rect, new_overlay.rect));
-        const accepted_after_target = work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail;
-        try std.testing.expectEqual(accepted_before_target.corner_x, accepted_after_target.corner_x);
-        try std.testing.expectEqual(accepted_before_target.corner_y, accepted_after_target.corner_y);
-        try std.testing.expect(work.trail_deadline != null);
-        try std.testing.expect(try prepareTrailAnimation(&work, &candidate, 4_000_000));
-        const accepted_before_rejection = accepted_after_target;
-        work.trail_frame_pending = true;
-        const base = vk_surface.Plan{
-            .vertices = &.{},
-            .indices = &.{},
-            .commands = &.{},
-            .atlas_changed = false,
-        };
-        const physical = try physicalPlanForBase(
-            &work,
-            base,
-            try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-            &work.trail_scratch,
-        );
-        const expected_trail_clip = try checkedTrailClipUnion(
-            old_overlay.clip,
-            new_overlay.clip,
-        );
-        const expected_cursor_clip = intersectSurfaceRect(new_overlay.clip, new_overlay.rect).?;
-        try std.testing.expect(intersectSurfaceRect(expected_trail_clip, old_overlay.rect) != null);
-        try std.testing.expect(intersectSurfaceRect(expected_trail_clip, new_overlay.rect) != null);
-        try std.testing.expectEqual(expected_trail_clip, physical.commands[0].clip);
-        try std.testing.expectEqual(expected_cursor_clip, physical.commands[1].clip);
-        const expected_right = std.math.add(
-            i32,
-            expected_trail_clip.x,
-            @intCast(expected_trail_clip.width),
-        ) catch return error.InvalidFrame;
-        const expected_bottom = std.math.add(
-            i32,
-            expected_trail_clip.y,
-            @intCast(expected_trail_clip.height),
-        ) catch return error.InvalidFrame;
-        for (work.trail_scratch.corner_x, work.trail_scratch.corner_y) |x, y| {
-            try std.testing.expect(x >= @as(f32, @floatFromInt(expected_trail_clip.x)));
-            try std.testing.expect(y >= @as(f32, @floatFromInt(expected_trail_clip.y)));
-            try std.testing.expect(x <= @as(f32, @floatFromInt(expected_right)));
-            try std.testing.expect(y <= @as(f32, @floatFromInt(expected_bottom)));
-        }
-        const accepted_before_invalid_union = work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail;
-        const candidate_commands_before_invalid_union = replay.candidate().command_count;
-        var invalid_union_trail = work.trail_scratch;
-        invalid_union_trail.endpoint_clip.x = -1;
-        try std.testing.expectError(
-            error.InvalidFrame,
-            physicalPlanForBase(
-                &work,
-                base,
-                try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-                &invalid_union_trail,
-            ),
-        );
-        try std.testing.expectEqual(
-            accepted_before_invalid_union,
-            work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail,
-        );
-        try std.testing.expectEqual(candidate_commands_before_invalid_union, replay.candidate().command_count);
-        var trail_commands: usize = 0;
-        for (physical.commands) |command| {
-            if (command.kind == .trail) trail_commands += 1;
-        }
-        try std.testing.expectEqual(@as(usize, 1), trail_commands);
-        try std.testing.expectEqual(@as(usize, 2), physical.commands.len);
-        var rejected_overlay = (try cursorOverlayForBinding(&work, new_source)).?;
-        rejected_overlay.trail = .{
-            .corner_x = work.trail_scratch.corner_x,
-            .corner_y = work.trail_scratch.corner_y,
-            .clip = rejected_overlay.clip,
-            .opacity = work.trail_scratch.opacity,
-            .color = rejected_overlay.color,
-            .cursor_rect = rejected_overlay.rect,
-        };
-        var rejected_vertices: [4]vk_surface.Vertex = undefined;
-        var rejected_indices: [6]u32 = undefined;
-        var rejected_commands: [1]vk_surface.Command = undefined;
-        try std.testing.expectError(
-            error.ReplayCapacity,
-            vk_surface.replayCursor(
-                base,
-                rejected_overlay,
-                .{
-                    .vertices = &rejected_vertices,
-                    .indices = &rejected_indices,
-                    .commands = &rejected_commands,
-                },
-            ),
-        );
-        discardTrailAnimation(&work, false);
-        try std.testing.expectEqual(
-            accepted_before_rejection,
-            work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail,
-        );
-
-        // Every accepted in-flight frame retains the outgoing clip.  Only
-        // the frame whose corners and opacity are settled promotes the
-        // destination clip, after which the next physical plan collapses to
-        // the destination pane.
-        var accepted_frames: usize = 0;
-        var settled = false;
-        var animation_now: u64 = 5_000_000;
-        while (animation_now < 20_000_000_000) : (animation_now += 100_000_000) {
-            if (!try prepareTrailAnimation(&work, &candidate, animation_now)) continue;
-            const candidate_settled = !work.trail_scratch.needs_render and
-                work.trail_scratch_deadline == null;
-            const frame = try physicalPlanForBase(
-                &work,
-                base,
-                try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-                &work.trail_scratch,
-            );
-            try std.testing.expectEqual(expected_trail_clip, frame.commands[0].clip);
-            commitTrailAnimation(&work);
-            const accepted_frame = work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail;
-            if (candidate_settled) {
-                try std.testing.expectEqual(new_overlay.clip, accepted_frame.endpoint_clip);
-                settled = true;
-                break;
-            }
-            try std.testing.expectEqual(old_overlay.clip, accepted_frame.endpoint_clip);
-            accepted_frames += 1;
-        }
-        try std.testing.expect(accepted_frames >= 2);
-        try std.testing.expect(settled);
-        const settled_frame = work.trails[findTrailSlot(&work, candidate.activeTabId()).?].trail;
-        const collapsed = try physicalPlanForBase(
-            &work,
-            base,
-            try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-            &settled_frame,
-        );
-        try std.testing.expectEqual(new_overlay.clip, collapsed.commands[0].clip);
-    }
-}
-
 test "compact resource adaptation preserves local and shared namespaces mechanically" {
     try std.testing.expectEqual(
         @as(usize, 16),
@@ -8701,10 +6690,7 @@ fn redrawChrome(
     acquire_handle: u32,
     next_acquire_point: *u64,
     pending: ?*PendingTopology,
-    include_trail: bool,
-    trail_candidate_carried: *bool,
 ) !RedrawResult {
-    trail_candidate_carried.* = false;
     if (!try releaseReplayRetirementIfReady(
         boundary,
         canvas_work.replay,
@@ -8761,12 +6747,6 @@ fn redrawChrome(
     // Composer's accepted commands are cursor-free.  The only physical
     // presentation derived from this candidate is one focused overlay, and
     // it is translated through the exact terminal placement before replay.
-    const trail_candidate: ?*const CursorTrail = if (include_trail and pending == null and
-        canvas_work.trail_frame_pending and
-        canvas_work.trail_scratch_tab == candidate.activeTabId())
-        &canvas_work.trail_scratch
-    else
-        null;
     const focused_source = focusedSourceForCandidate(
         canvas_work,
         &candidate,
@@ -8780,14 +6760,11 @@ fn redrawChrome(
         canvas_work,
         focused_source,
     );
-    const accepted_cursor_color = if (accepted_cursor_overlay) |overlay| overlay.color else null;
     const physical_plan = try physicalPlanForBase(
         canvas_work,
         composer_plan,
         try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-        trail_candidate,
     );
-    trail_candidate_carried.* = trail_candidate != null;
     const slot_index = try releasedSlot(
         boundary,
         generation,
@@ -8849,7 +6826,6 @@ fn redrawChrome(
     );
     canvas_work.replay.commit(slot_index);
     candidate_guard.disarm();
-    if (accepted_cursor_color) |color| canvas_work.accepted_cursor_color = color;
     next_acquire_point.* = following_acquire_point;
     return .published;
 }
@@ -8862,7 +6838,6 @@ fn replayCursorFrame(
     work: *CanvasWork,
     pending: *?terminal_handoff.CursorPublication,
     focused_source: ?render_api.canvas.SourceId,
-    trail_only: bool,
     slots: *[presentation_state.slot_count]Slot,
     generation: u64,
     graphics: *vk_surface.Context,
@@ -8876,40 +6851,14 @@ fn replayCursorFrame(
     next_acquire_point: *u64,
 ) !CursorReplayResult {
     const publication = pending.*;
-    if (!trail_only and publication == null) return .blocked;
+    if (publication == null) return .blocked;
     if (focused_source == null) return .blocked;
-    if (publication) |value| {
-        if (focused_source.? != value.source and !trail_only) return .rejected;
-    }
-    const overlay_preparation: CursorOverlayPreparation = if (trail_only)
-        if (publication) |value|
-            if (value.source == focused_source.?)
-                try trailOverlayForPublication(work, value)
-            else
-                try acceptedCursorOverlay(work, focused_source.?)
-        else
-            try acceptedCursorOverlay(work, focused_source.?)
-    else
-        try publicationCursorOverlay(work, publication.?, true);
-    var accepted_overlay = switch (overlay_preparation) {
+    if (focused_source.? != publication.?.source) return .rejected;
+    const accepted_overlay = switch (try publicationCursorOverlay(work, publication.?, true)) {
         .blocked => return .blocked,
         .rejected => return .rejected,
         .prepared => |value| value,
     };
-    if (trail_only) {
-        const trail_clip = checkedTrailClipUnion(
-            work.trail_scratch.endpoint_clip,
-            accepted_overlay.clip,
-        ) catch return .rejected;
-        accepted_overlay.trail = .{
-            .corner_x = work.trail_scratch.corner_x,
-            .corner_y = work.trail_scratch.corner_y,
-            .clip = trail_clip,
-            .opacity = work.trail_scratch.opacity,
-            .color = work.accepted_cursor_color orelse accepted_overlay.color,
-            .cursor_rect = accepted_overlay.rect,
-        };
-    }
     // Reconcile the exact old replay role before asking the ring for any
     // candidate slot.  A different released slot must never be allowed to
     // hide an unreleased retiring cohort.
@@ -8976,7 +6925,7 @@ fn replayCursorFrame(
     // newer one is already waiting in the State inbox: transfer that
     // exact latest publication to the local pending slot and retry without a
     // terminal wake or a full Content/Pool/Composer rebuild.
-    if (!trail_only and takeNewerCursorReplay(
+    if (takeNewerCursorReplay(
         work.terminals,
         publication.?,
         pending,
@@ -9029,9 +6978,6 @@ fn replayCursorFrame(
     };
     commitCursorReplayAcceptance(
         work,
-        publication,
-        accepted_overlay,
-        trail_only,
         slot_index,
         slot,
         release_point,
@@ -9039,20 +6985,6 @@ fn replayCursorFrame(
         following_acquire_point,
     );
     return .published;
-}
-
-/// Selects the newest target available for a trail-only replay.  An older
-/// retained publication can legitimately lag a newer Composer binding after
-/// hidden-pane catch-up, so the accepted binding wins in that case.
-fn trailOverlayForPublication(
-    work: *const CanvasWork,
-    publication: terminal_handoff.CursorPublication,
-) !CursorOverlayPreparation {
-    const binding = work.composer.cursorBinding(publication.source) orelse
-        return .blocked;
-    const accepted = try acceptedCursorOverlay(work, publication.source);
-    if (publication.cursor_revision < binding.cursor_revision) return accepted;
-    return publicationCursorOverlay(work, publication, false);
 }
 
 fn takeNewerCursorReplay(
@@ -9076,9 +7008,6 @@ test "cursor replay supersession transfers the newest inbox target" {
             .upload_bytes = 16,
             .cells = 4,
             .rows = 4,
-            .images = 1,
-            .placements = 1,
-            .image_bytes = 16,
             .glyphs = 4,
             .masks = 4,
             .resources_per_update = 4,
@@ -9103,8 +7032,6 @@ test "cursor replay supersession transfers the newest inbox target" {
         .col = 3,
         .visible = true,
         .shape = .block,
-        .blink = false,
-        .blink_fast = false,
         .cursor_color = .{},
         .text_color = .{},
     };
@@ -9200,8 +7127,6 @@ test "focused cursor handoff drops A and accepts B without a terminal wake" {
         .col = 3,
         .visible = true,
         .shape = .block,
-        .blink = false,
-        .blink_fast = false,
         .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
         .text_color = .{ .r = 4, .g = 5, .b = 6 },
     };
@@ -10488,9 +8413,6 @@ test "terminal completion closes a non-final pane and completes only the final p
             .upload_bytes = 4096,
             .cells = 32,
             .rows = 4,
-            .images = 1,
-            .placements = 2,
-            .image_bytes = 4096,
             .glyphs = 8,
             .masks = 2,
             .resources_per_update = 8,

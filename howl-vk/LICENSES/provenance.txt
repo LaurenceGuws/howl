@@ -13,14 +13,7 @@ Surface shaders
 ---------------
 
 `src/shaders/*.spv` are the validated SPIR-V artifacts used by `src/surface.zig`;
-their source inventory is chrome.vert, solid.frag, text.frag, image.frag, and
-trail.frag. The trail artifact is reproducibly generated with
-`glslc -o trail.frag.spv trail.frag`; source SHA-256 is
-6830222961deebf9fa2aea66b53c4a2b13aa39e03471ecf75a8f1bd2ad245b66 and
-SPIR-V SHA-256 is
-c9ea5e2ffc78b12be9e4661990de4c6a4fd570733dd9fbe79c0ddde20d679d14.
-`tools/verify_shaders.sh` checks the command output, both hashes, and exact
-bytes.
+their source inventory is chrome.vert, solid.frag, text.frag, and image.frag.
 They are copied from the previously validated Howl shader set without changing
 bytes during the surface-owner move. Validation remains part of the surface
 package gate; no Host shader path is required at runtime.

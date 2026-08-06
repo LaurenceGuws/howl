@@ -21,9 +21,5 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run Vulkan ABI and dispatch proofs");
     test_step.dependOn(&run_tests.step);
-    const reproducibility = b.step("reproducibility", "Verify checked trail shader bytes");
-    reproducibility.dependOn(&b.addSystemCommand(&.{ "sh", "tools/verify_shaders.sh" }).step);
-    check.dependOn(reproducibility);
-    test_step.dependOn(reproducibility);
     b.default_step = check;
 }

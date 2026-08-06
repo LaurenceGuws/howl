@@ -698,12 +698,11 @@ references:
           libvterm.mode.cursor_blink: {raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while libvterm owns one terminal mode across banks,
             howl: {support: partial, disposition: excluded,
-              residual: libvterm owns one cross-bank mode while Howl presents each screen cursor's retained intent.,
-              rationale: Howl deliberately preserves per-screen cursor style and presents blink at a fixed 500 ms
-                executable cadence.,
-              source: howl-host/src/window.zig, symbol: resetCursorBlink, proof: {
-              path: howl-host/src/window.zig,
-              symbol: "cursor blink phase hides only blinking visible overlays"}}}
+              residual: libvterm owns one cross-bank mode while Howl retains per-screen cursor intent without animated Host presentation.,
+              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
+              path: howl-vt/test/unit/terminal_cursor_test.zig,
+              symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           libvterm.mode.dectcem: {raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
@@ -1616,9 +1615,9 @@ references:
               replies but omits iTerm2 selectable 8-bit replies and its broader platform color parser.",
             howl: &iterm2_dynamic_color_howl {support: partial, disposition: excluded,
               residual: Howl omits iTerm2 selectable 8-bit replies and its broader platform color parser.,
-              rationale: *howl_color_policy_difference, source: howl-render/src/terminal_projection.zig,
-              symbol: project, proof: {path: howl-render/src/terminal_test.zig,
-                symbol: "projection resolves indexed, RGB, dynamic-default, and reverse colors"}}}
+              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: Terminal.presentation, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           iterm2.osc.bg: {raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
             conditions: *iterm2_dynamic_color_condition, howl: *iterm2_dynamic_color_howl}
           iterm2.osc.cursor: {raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
@@ -1837,9 +1836,9 @@ references:
             howl: {support: partial, disposition: excluded,
               residual: Howl implements only represented deterministic color pairs and omits iTerm2 host policy.,
               rationale: *howl_color_policy_difference,
-              source: howl-render/src/terminal_projection.zig, symbol: project, proof: {
-                path: howl-render/src/terminal_test.zig,
-                symbol: "projection resolves indexed, RGB, dynamic-default, and reverse colors"}}}
+              source: howl-vt/src/terminal.zig, symbol: Terminal.presentation, proof: {
+                path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           iterm2.osc1337.shell_integration: {raw: "OSC 1337 ; ShellIntegrationVersion=Pt (BEL|ST)",
             effect: report shell integration identity, relevance: host metadata,
             conditions: Howl retains bounded typed identity without iTerm2 session policy.,
@@ -2178,11 +2177,10 @@ references:
           iterm2.mode.cursor_blink: {raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Howl retains blink with each screen cursor while iTerm2 delegates one host cursor property,
             howl: {support: partial, disposition: excluded,
-              residual: iTerm2 applies one host cursor property while Howl presents retained per-screen cursor intent.,
-              rationale: Howl deliberately preserves per-screen cursor style and presents blink at a fixed 500 ms
-                executable cadence.,
-              source: howl-host/src/window.zig, symbol: resetCursorBlink, proof: {path: howl-host/src/window.zig,
-                symbol: "cursor blink phase hides only blinking visible overlays"}}}
+              residual: iTerm2 applies one host cursor property while Howl retains per-screen cursor intent without animated Host presentation.,
+              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_cursor_test.zig,
+                symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           iterm2.mode.lnm_private: {raw: "CSI ? 20 h|l", effect: ignore private line mode,
             recognition: recognized_noop, howl: {support: full, source: howl-vt/src/terminal.zig,
               symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_modes_test.zig,
@@ -2669,11 +2667,10 @@ references:
           kitty.mode.cursor_blink: {raw: "CSI ? 12 h|l", effect: toggle cursor blink,
             conditions: Kitty resets its shared cursor on alternate entry while Howl retains per-screen cursor style,
             howl: {support: partial, disposition: excluded,
-              residual: Kitty resets one shared cursor while Howl presents retained per-screen cursor intent.,
-              rationale: Howl deliberately preserves per-screen cursor style and presents blink at a fixed 500 ms
-                executable cadence.,
-              source: howl-host/src/window.zig, symbol: resetCursorBlink, proof: {path: howl-host/src/window.zig,
-                symbol: "cursor blink phase hides only blinking visible overlays"}}}
+              residual: Kitty resets one shared cursor while Howl retains per-screen cursor intent without animated Host presentation.,
+              rationale: Howl preserves the VT semantic fact but presents a static cursor.,
+              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {path: howl-vt/test/unit/terminal_cursor_test.zig,
+                symbol: "terminal cursor: presentation modes preserve exact bank and lifetime truth"}}}
           kitty.mode.dectcem: {raw: "CSI ? 25 h|l", effect: toggle cursor visibility,
             howl: {support: full, source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
               path: howl-vt/test/unit/terminal_cursor_test.zig,
@@ -3280,9 +3277,9 @@ references:
               omits Kitty host dirtiness policy and accepts a narrower deterministic color grammar.",
             howl: &kitty_dynamic_color_howl {support: partial, disposition: excluded,
               residual: Howl accepts a narrower deterministic color grammar and omits Kitty host refresh policy.,
-              rationale: *howl_color_policy_difference, source: howl-render/src/terminal_projection.zig,
-              symbol: project, proof: {path: howl-render/src/terminal_test.zig,
-                symbol: "projection resolves indexed, RGB, dynamic-default, and reverse colors"}}}
+              rationale: *howl_color_policy_difference, source: howl-vt/src/terminal.zig,
+              symbol: Terminal.presentation, proof: {path: howl-vt/test/unit/terminal_osc_test.zig,
+                symbol: "xterm OSC colors set query and reset palette and dynamic colors"}}}
           kitty.osc.bg: {raw: "OSC 11 ; color (BEL|ST)", effect: set or query background,
             conditions: *kitty_dynamic_color_condition, howl: *kitty_dynamic_color_howl}
           kitty.osc.cursor: {raw: "OSC 12 ; color (BEL|ST)", effect: set or query cursor color,
@@ -3390,8 +3387,8 @@ references:
                 policy rather than unfinished protocol work.
               source: howl-vt/src/terminal.zig
               symbol: Screen.writeSizedText
-              proof: {path: howl-render/src/terminal_test.zig,
-                symbol: "OSC 66 projection copies complete sizing and expands selection appearance"}
+              proof: {path: howl-vt/src/terminal.zig,
+                symbol: "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically"}
           kitty.osc.drag_drop:
             raw: "OSC DND_CODE ; Pt (BEL|ST)"
             effect: drag and drop control
