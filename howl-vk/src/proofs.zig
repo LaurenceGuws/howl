@@ -297,6 +297,17 @@ test "consumed ABI sizes, alignments, constants, and signatures" {
     try std.testing.expectEqual(@as(c_int, 512), vk.abi.VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT);
     try std.testing.expectEqual(@as(usize, 8), @sizeOf(vk.abi.VkExtent2D));
     try std.testing.expectEqual(@as(usize, 4), @alignOf(vk.abi.VkExtent2D));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(vk.abi.VkDescriptorBufferInfo));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(vk.abi.VkDescriptorBufferInfo));
+    try std.testing.expectEqual(@as(usize, 56), @sizeOf(vk.abi.VkBufferMemoryBarrier));
+    try std.testing.expectEqual(@as(usize, 8), @alignOf(vk.abi.VkBufferMemoryBarrier));
+    const free_descriptor_sets: *const fn (
+        vk.abi.VkDevice,
+        vk.abi.VkDescriptorPool,
+        u32,
+        [*c]const vk.abi.VkDescriptorSet,
+    ) callconv(.c) vk.abi.VkResult = &vk.abi.vkFreeDescriptorSets;
+    try std.testing.expect(@intFromPtr(free_descriptor_sets) != 0);
     const device: vk.dispatch.ExternalImageDispatch = undefined;
     try std.testing.expect(@TypeOf(device.get_memory_fd) == @typeInfo(vk.abi.PFN_vkGetMemoryFdKHR).optional.child);
     try std.testing.expect(@TypeOf(device.get_modifier) == @typeInfo(vk.abi.PFN_vkGetImageDrmFormatModifierPropertiesEXT).optional.child);
@@ -306,7 +317,9 @@ test "consumed ABI sizes, alignments, constants, and signatures" {
 
 test "ABI declaration analysis and layout drift receipt" {
     const declarations = @typeInfo(vk.abi).@"struct".decl_names;
-    try std.testing.expectEqual(@as(usize, 520), declarations.len);
+    try std.testing.expectEqual(@as(usize, 529), declarations.len);
+    try std.testing.expectEqual(@as(c_int, 0), vk.abi.VK_FILTER_NEAREST);
+    try std.testing.expectEqual(@as(c_int, 0), vk.abi.VK_SAMPLER_MIPMAP_MODE_NEAREST);
     var layout_receipt: usize = 0;
     inline for (declarations) |name| {
         const value = @field(vk.abi, name);
@@ -318,5 +331,5 @@ test "ABI declaration analysis and layout drift receipt" {
             else => {},
         }
     }
-    try std.testing.expectEqual(@as(usize, 13028), layout_receipt);
+    try std.testing.expectEqual(@as(usize, 13060), layout_receipt);
 }

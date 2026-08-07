@@ -24,9 +24,9 @@ const wayland = @import("howl_wayland");
 const terminal_handoff = @import("terminal_handoff");
 const terminal_visual_fifo = @import("terminal_visual_fifo");
 const terminal_fonts = @import("terminal_fonts");
+const terminal_gpu = @import("terminal_gpu");
 const terminal_runtime = @import("terminal_runtime");
 const vt = @import("howl_vt");
-const config = @import("config");
 const chrome_appearance = session_chrome_adapter.Appearance{
     .style = .{
         .foreground = .{ .r = 230, .g = 235, .b = 245, .a = 255 },
@@ -74,6 +74,10 @@ const CanvasPlanResult = union(enum) {
 /// focused source or fail during physical preparation.
 const CandidateOwnershipGuard = struct {
     work: *CanvasWork,
+    generic_pending: bool = true,
+    grids_pending: bool = false,
+    terminal_pending: bool = false,
+    submitted: bool = false,
     armed: bool = true,
 
     fn disarm(self: *CandidateOwnershipGuard) void {
@@ -81,10 +85,27 @@ const CandidateOwnershipGuard = struct {
     }
 
     fn discard(self: *CandidateOwnershipGuard) void {
-        if (!self.armed) return;
-        self.work.residency.discard();
-        self.work.replay.discard();
+        if (!self.armed or self.submitted) return;
+        if (self.terminal_pending) {
+            self.work.terminal_gpu.discard() catch
+                @panic("terminal batch candidate vanished");
+            self.terminal_pending = false;
+        }
+        if (self.grids_pending) {
+            self.work.terminal_visual_state.discardGrids();
+            self.grids_pending = false;
+        }
+        if (self.generic_pending) {
+            self.work.residency.discard();
+            self.work.replay.discard();
+            self.generic_pending = false;
+        }
         self.armed = false;
+    }
+
+    fn markSubmitted(self: *CandidateOwnershipGuard) void {
+        std.debug.assert(self.armed and !self.submitted);
+        self.submitted = true;
     }
 
     fn deinit(self: *CandidateOwnershipGuard) void {
@@ -377,35 +398,6 @@ const ReplayState = struct {
         self.pending = false;
     }
 
-    /// Commits a physical cursor presentation without changing the canonical
-    /// cursor-free command cohort. The staging bytes have been restored to the
-    /// base before this method is called.
-    fn commitCursor(self: *ReplayState, slot_index: usize) void {
-        std.debug.assert(self.pending);
-        std.debug.assert(self.retiring_slot == null);
-        if (self.accepted_slot) |old_slot| {
-            self.retiring_slot = old_slot;
-        }
-        self.accepted_slot = slot_index;
-        self.pending = false;
-    }
-
-    /// Restores the staging role to an exact canonical base after its bytes
-    /// were used synchronously to record a cursor presentation.
-    fn restoreCandidateBase(self: *ReplayState, base: vk_surface.Plan) void {
-        const cohort = self.candidate();
-        @memcpy(cohort.vertices[0..base.vertices.len], base.vertices);
-        @memcpy(cohort.indices[0..base.indices.len], base.indices);
-        @memcpy(cohort.commands[0..base.commands.len], base.commands);
-        cohort.vertex_count = base.vertices.len;
-        cohort.index_count = base.indices.len;
-        cohort.command_count = base.commands.len;
-        // Replay never changes the candidate pin cohort.  Keeping it here is
-        // essential for an ordinary replacement: the candidate already owns
-        // the newly accepted base pins, while a cursor-only replay borrows the
-        // canonical accepted pins.
-    }
-
     fn releaseRetiring(self: *ReplayState, slot_index: usize) void {
         if (self.retiring_slot == slot_index) {
             self.retiring_cohort = null;
@@ -437,7 +429,7 @@ test "ReplayState.init rolls back every allocation position" {
     replay.deinit();
 }
 
-test "cursor replay cohorts role-swap and reject pressure transactionally" {
+test "generic plan cohorts role-swap and reject pressure transactionally" {
     var replay = try ReplayState.init(std.testing.allocator);
     defer replay.deinit();
 
@@ -450,7 +442,7 @@ test "cursor replay cohorts role-swap and reject pressure transactionally" {
     };
     const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
     const commands = [_]vk_surface.Command{.{
-        .kind = .alpha_mask_cursor,
+        .kind = .alpha_mask,
         .first_index = 0,
         .index_count = 6,
         .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
@@ -546,299 +538,17 @@ test "cursor replay cohorts role-swap and reject pressure transactionally" {
     try std.testing.expectEqual(@as(usize, 1), replay.cohorts[replay.accepted].pin_count);
 }
 
-test "cursor placement translates pane-local geometry and clips at Composer placement" {
-    const binding = render_api.canvas.CursorBinding{
-        .pane = 1,
-        .source = @fromBackingInt(2),
-        .terminal_sequence = 4,
-        .cursor_revision = 3,
-        .visible_set_revision = 5,
-        .lifecycle_revision = 6,
-        .rect = .{ .x = 8, .y = 0, .width = 8, .height = 16 },
-        .clip = .{ .x = 0, .y = 0, .width = 24, .height = 32 },
-        .shape = .block,
-        .visible = true,
-    };
-    const placement = render_api.canvas.Composer.Placement{
-        .source = binding.source,
-        .origin = .{ .x = 24, .y = 40 },
-        .clip = .{ .x = 24, .y = 40, .width = 16, .height = 24 },
-    };
-    const overlay = (try cursorOverlayForPlacement(binding, placement)).?;
-    try std.testing.expectEqual(@as(i32, 40), overlay.rect.y);
-    try std.testing.expectEqual(@as(i32, 40), overlay.clip.y);
-    try std.testing.expectEqual(@as(u32, 16), overlay.clip.width);
-    try std.testing.expectEqual(@as(u32, 24), overlay.clip.height);
-    try std.testing.expect(overlay.rect.y != 0);
-}
-
-test "cursor-only replay keeps the canonical base across ten updates" {
-    var replay = try ReplayState.init(std.testing.allocator);
-    defer replay.deinit();
-    const vertices = [_]vk_surface.Vertex{
-        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
-    };
-    const indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
-    const commands = [_]vk_surface.Command{.{
-        .kind = .solid,
-        .first_index = 0,
-        .index_count = 6,
-        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-    }};
-    const plan = vk_surface.Plan{
-        .vertices = &vertices,
-        .indices = &indices,
-        .commands = &commands,
-        .atlas_changed = false,
-    };
-    try replay.capture(plan, .{
-        .revision = 1,
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{},
-    });
-    replay.commit(0);
-    const canonical = replay.acceptedPlan();
-    const canonical_commands = canonical.commands[0];
-    var expected_count: ?usize = null;
-    for (0..10) |index| {
-        const candidate_cohort = replay.candidate();
-        const presented = try vk_surface.replayCursor(
-            canonical,
-            .{
-                .rect = .{ .x = @intCast(index), .y = 0, .width = 8, .height = 16 },
-                .clip = .{ .x = 0, .y = 0, .width = 32, .height = 16 },
-                .shape = .bar,
-                .color = .{ 0, 0, 0, 1 },
-                .text_color = .{ 1, 1, 1, 1 },
-                .visible = true,
-            },
-            .{
-                .vertices = candidate_cohort.vertices,
-                .indices = candidate_cohort.indices,
-                .commands = candidate_cohort.commands,
-            },
-        );
-        if (expected_count) |count|
-            try std.testing.expectEqual(count, presented.commands.len)
-        else
-            expected_count = presented.commands.len;
-        replay.pending = true;
-        replay.restoreCandidateBase(canonical);
-        replay.commitCursor(1);
-        if (replay.retiring_slot) |slot| replay.releaseRetiring(slot);
-        try std.testing.expectEqual(canonical_commands, replay.acceptedPlan().commands[0]);
-        try std.testing.expectEqual(@as(usize, 1), replay.acceptedPlan().commands.len);
-    }
-}
-
 const RedrawResult = enum {
     blocked,
     retry,
+    unchanged,
     published,
 };
-
-const CursorReplayResult = enum {
-    blocked,
-    rejected,
-    retry,
-    published,
-};
-
-const ReplayPublicationError = error{
-    Stopping,
-    StaleGeneration,
-    InvalidSlot,
-    InvalidRevision,
-    InvalidFrame,
-};
-
-const PostSubmitDisposition = enum { fatal };
-
-const CursorReplayPreparation = union(enum) {
-    rejected,
-    prepared: vk_surface.Plan,
-};
-
-const CursorOverlayPreparation = union(enum) {
-    blocked,
-    rejected,
-    prepared: vk_surface.CursorOverlay,
-};
-
-fn prepareCursorReplayCandidate(
-    base: vk_surface.Plan,
-    overlay: vk_surface.CursorOverlay,
-    buffers: vk_surface.CursorReplayBuffers,
-) !CursorReplayPreparation {
-    if (base.commands.len > frame_command_limit or
-        base.vertices.len > frame_command_limit * 4 or
-        base.indices.len > frame_command_limit * 6)
-        return error.InvalidReplayBase;
-    if (buffers.vertices.len != vk_surface.max_vertices or
-        buffers.indices.len != vk_surface.max_indices or
-        buffers.commands.len != vk_surface.max_commands)
-        return error.ReplayCapacity;
-    const candidate = vk_surface.replayCursor(
-        base,
-        overlay,
-        buffers,
-    ) catch |failure| switch (failure) {
-        error.InvalidCursorOverlay => return .rejected,
-        error.InvalidReplayBase,
-        error.ReplayCapacity,
-        => return failure,
-    };
-    return .{ .prepared = candidate };
-}
-
-fn classifyReplayPublicationFailure(
-    _: ReplayPublicationError,
-) PostSubmitDisposition {
-    return .fatal;
-}
-
-fn discardRejectedCursorReplay(
-    pending: *?terminal_handoff.CursorPublication,
-) void {
-    dropPendingCursor(pending);
-}
-
-fn commitCursorReplayAcceptance(
-    work: *CanvasWork,
-    slot_index: usize,
-    slot: *Slot,
-    release_point: u64,
-    next_acquire_point: *u64,
-    following_acquire_point: u64,
-) void {
-    work.replay.commitCursor(slot_index);
-    slot.release_point = release_point;
-    next_acquire_point.* = following_acquire_point;
-}
-
-test "cursor replay preparation rejects candidate state and preserves accepted ownership" {
-    try std.testing.expectEqual(
-        frame_command_limit * 2 + 1,
-        vk_surface.max_commands,
-    );
-    try std.testing.expectEqual(vk_surface.max_commands * 4, vk_surface.max_vertices);
-    try std.testing.expectEqual(vk_surface.max_commands * 6, vk_surface.max_indices);
-    var replay = try ReplayState.init(std.testing.allocator);
-    defer replay.deinit();
-    const base = replay.acceptedPlan();
-    const candidate = replay.candidate();
-    const buffers = vk_surface.CursorReplayBuffers{
-        .vertices = candidate.vertices,
-        .indices = candidate.indices,
-        .commands = candidate.commands,
-    };
-    const invalid_overlay = vk_surface.CursorOverlay{
-        .rect = .{ .x = 0, .y = 0, .width = 0, .height = 1 },
-        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .shape = .block,
-        .color = .{ 1, 1, 1, 1 },
-        .text_color = .{ 0, 0, 0, 1 },
-        .visible = true,
-    };
-    try std.testing.expectEqual(
-        CursorReplayPreparation.rejected,
-        try prepareCursorReplayCandidate(base, invalid_overlay, buffers),
-    );
-    try std.testing.expect(!replay.pending);
-    try std.testing.expect(replay.acceptedSlot() == null);
-    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().vertices.len);
-    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().indices.len);
-    try std.testing.expectEqual(@as(usize, 0), replay.acceptedPlan().commands.len);
-    try std.testing.expectEqual(@as(usize, 0), candidate.vertex_count);
-    try std.testing.expectEqual(@as(usize, 0), candidate.index_count);
-    try std.testing.expectEqual(@as(usize, 0), candidate.command_count);
-
-    var valid_overlay = invalid_overlay;
-    valid_overlay.rect.width = 1;
-    const prepared = try prepareCursorReplayCandidate(
-        base,
-        valid_overlay,
-        buffers,
-    );
-    try std.testing.expectEqual(@as(usize, 1), prepared.prepared.commands.len);
-
-    const publication = terminal_handoff.CursorPublication{
-        .pane = @fromBackingInt(41),
-        .source = @fromBackingInt(42),
-        .terminal_sequence = 7,
-        .cursor_revision = 8,
-        .visible_set_revision = 9,
-        .lifecycle_revision = @fromBackingInt(10),
-        .target = .{
-            .row = 0,
-            .col = 0,
-            .visible = true,
-            .shape = .block,
-            .cursor_color = .{},
-            .text_color = .{},
-        },
-    };
-    var work: CanvasWork = undefined;
-    work.replay = &replay;
-    var pending: ?terminal_handoff.CursorPublication = publication;
-    var slot = Slot{};
-    var next_acquire_point: u64 = 11;
-    discardRejectedCursorReplay(&pending);
-    try std.testing.expect(pending == null);
-    try std.testing.expect(replay.acceptedSlot() == null);
-    try std.testing.expectEqual(@as(u64, 0), slot.release_point);
-    try std.testing.expectEqual(@as(u64, 11), next_acquire_point);
-
-    replay.pending = true;
-    replay.restoreCandidateBase(base);
-    commitCursorReplayAcceptance(
-        &work,
-        1,
-        &slot,
-        12,
-        &next_acquire_point,
-        13,
-    );
-    try std.testing.expectEqual(@as(?usize, 1), replay.acceptedSlot());
-    try std.testing.expectEqual(@as(u64, 12), slot.release_point);
-    try std.testing.expectEqual(@as(u64, 13), next_acquire_point);
-
-    var oversized_base = base;
-    oversized_base.commands = candidate.commands[0 .. frame_command_limit + 1];
-    try std.testing.expectError(
-        error.InvalidReplayBase,
-        prepareCursorReplayCandidate(oversized_base, valid_overlay, buffers),
-    );
-    const short_buffers = vk_surface.CursorReplayBuffers{
-        .vertices = candidate.vertices[0 .. candidate.vertices.len - 1],
-        .indices = candidate.indices,
-        .commands = candidate.commands,
-    };
-    try std.testing.expectError(
-        error.ReplayCapacity,
-        prepareCursorReplayCandidate(base, valid_overlay, short_buffers),
-    );
-    try std.testing.expectEqual(
-        PostSubmitDisposition.fatal,
-        classifyReplayPublicationFailure(error.StaleGeneration),
-    );
-    try std.testing.expectEqual(
-        PostSubmitDisposition.fatal,
-        classifyReplayPublicationFailure(error.Stopping),
-    );
-    try std.testing.expectEqual(
-        PostSubmitDisposition.fatal,
-        classifyReplayPublicationFailure(error.InvalidRevision),
-    );
-}
 
 const RedrawSchedule = enum {
     wait,
     retry,
+    unchanged,
     published,
 };
 
@@ -852,6 +562,7 @@ fn scheduleRedraw(
             error.InvalidFrame
         else
             .retry,
+        .unchanged => .unchanged,
         .published => .published,
     };
 }
@@ -908,6 +619,12 @@ const CanvasWork = struct {
     source: render_api.canvas.SourceId,
     surface: render_api.canvas.Size = .{ .width = 0, .height = 0 },
     content_origin: session_chrome_adapter.ContentOrigin = .{ .y = 0 },
+    terminal_surface: terminal_gpu.Surface = .{
+        .logical_width = 0,
+        .logical_height = 0,
+        .physical_width = 0,
+        .physical_height = 0,
+    },
     producer_revision: u64 = 0,
     frame_uploads: []render_api.canvas.FrameResourceUpload,
     frame_removals: []render_api.canvas.FrameResourceRef,
@@ -924,8 +641,7 @@ const CanvasWork = struct {
     terminal_visuals: *terminal_visual_fifo.Fifo,
     terminal_visual_state: *TerminalVisualState,
     terminal_fonts: *terminal_fonts.Cache,
-    /// Startup-retained presentation view consumed by cursor geometry.
-    cursor_policy: config.CursorPresentationPolicy,
+    terminal_gpu: *terminal_gpu.Owner,
     terminal_font_policy: terminal_fonts.Policy,
     terminal_scale: ?terminal_fonts.ScaleSnapshot = null,
     terminal_font_candidate: ?TerminalFontCandidate = null,
@@ -951,14 +667,28 @@ const TerminalPaneVisual = struct {
     lifecycle_revision: terminal_handoff.LifecycleRevision,
     font: terminal_fonts.Ref,
     grid: render_api.terminal_cells.Grid,
+    backend: terminal_gpu.Pane,
+    grid_update: ?render_api.terminal_cells.Update = null,
     candidate_revision: ?terminal_handoff.LifecycleRevision = null,
     candidate_font: ?terminal_fonts.Ref = null,
+    candidate_backend: ?terminal_gpu.Pane = null,
+    retiring_font: ?terminal_fonts.Ref = null,
+    retiring_backend: ?terminal_gpu.Pane = null,
 
-    fn deinit(self: *TerminalPaneVisual, fonts: *terminal_fonts.Cache) void {
+    fn deinit(
+        self: *TerminalPaneVisual,
+        font_cache: *terminal_fonts.Cache,
+        gpu: *terminal_gpu.Owner,
+    ) void {
+        if (self.candidate_backend) |*backend| backend.deinit(gpu);
         if (self.candidate_font) |font|
-            fonts.release(font) catch @panic("candidate terminal font reference became stale");
+            font_cache.release(font) catch @panic("candidate terminal font reference became stale");
+        if (self.retiring_backend) |*backend| backend.deinit(gpu);
+        if (self.retiring_font) |font|
+            font_cache.release(font) catch @panic("retiring terminal font reference became stale");
+        self.backend.deinit(gpu);
         self.grid.deinit();
-        fonts.release(self.font) catch @panic("terminal font reference became stale");
+        font_cache.release(self.font) catch @panic("terminal font reference became stale");
         self.* = undefined;
     }
 
@@ -966,10 +696,24 @@ const TerminalPaneVisual = struct {
         self: *TerminalPaneVisual,
         revision: terminal_handoff.LifecycleRevision,
         font: terminal_fonts.Ref,
+        backend: terminal_gpu.Pane,
     ) !void {
         if (self.candidate_revision != null) return error.CandidatePending;
         self.candidate_revision = revision;
         self.candidate_font = font;
+        self.candidate_backend = backend;
+    }
+
+    fn finishRetiring(
+        self: *TerminalPaneVisual,
+        font_cache: *terminal_fonts.Cache,
+        gpu: *terminal_gpu.Owner,
+    ) void {
+        if (self.retiring_backend) |*backend| backend.deinit(gpu);
+        if (self.retiring_font) |font|
+            font_cache.release(font) catch @panic("retiring terminal font reference became stale");
+        self.retiring_backend = null;
+        self.retiring_font = null;
     }
 };
 
@@ -977,13 +721,14 @@ const TerminalPaneVisual = struct {
 const TerminalVisualState = struct {
     allocator: std.mem.Allocator,
     fonts: *terminal_fonts.Cache,
+    gpu: *terminal_gpu.Owner,
     panes: [session_chrome_adapter.max_live_panes]?TerminalPaneVisual = @splat(null),
 
     fn deinit(self: *TerminalVisualState) void {
         var index: usize = self.panes.len;
         while (index != 0) {
             index -= 1;
-            if (self.panes[index]) |*pane| pane.deinit(self.fonts);
+            if (self.panes[index]) |*pane| pane.deinit(self.fonts, self.gpu);
         }
         self.* = undefined;
     }
@@ -993,12 +738,51 @@ const TerminalVisualState = struct {
         return null;
     }
 
+    fn findSource(self: *TerminalVisualState, source: terminal_handoff.SourceId) ?usize {
+        for (self.panes, 0..) |entry, index|
+            if (entry != null and entry.?.source == source) return index;
+        return null;
+    }
+
+    fn prepareGrids(self: *TerminalVisualState) !usize {
+        var count: usize = 0;
+        for (&self.panes) |*entry| if (entry.*) |*pane| {
+            if (pane.grid_update != null) return error.CandidatePending;
+            pane.grid_update = try pane.grid.prepare();
+            count += @intFromBool(pane.grid_update != null);
+        };
+        return count;
+    }
+
+    fn discardGrids(self: *TerminalVisualState) void {
+        var index = self.panes.len;
+        while (index != 0) {
+            index -= 1;
+            if (self.panes[index]) |*pane| if (pane.grid_update != null) {
+                pane.grid.discard() catch @panic("terminal Grid candidate vanished");
+                pane.grid_update = null;
+            };
+        }
+    }
+
+    fn completeGrids(self: *TerminalVisualState) void {
+        for (&self.panes) |*entry| if (entry.*) |*pane| {
+            if (pane.grid_update != null) {
+                pane.grid.complete() catch @panic("terminal Grid candidate vanished");
+                pane.grid_update = null;
+                pane.finishRetiring(self.fonts, self.gpu);
+            }
+        };
+    }
+
     /// Applies every currently available journal in global FIFO order.
     ///
-    /// This boundary never prepares or completes Grid work. The future
-    /// physical terminal renderer owns candidate preparation and disposition
-    /// after this drain has folded all available journals into current state.
+    /// This boundary never prepares or completes Grid work. The Host physical
+    /// terminal renderer owns candidate preparation and disposition after this
+    /// drain has folded all available journals into current state.
     fn drain(self: *TerminalVisualState, fifo: *terminal_visual_fifo.Fifo) !void {
+        for (self.panes) |entry| if (entry != null and entry.?.grid_update != null)
+            return;
         while (fifo.take()) |entry| {
             const index = self.find(entry.identity.pane) orelse {
                 try fifo.complete(entry.handle);
@@ -1033,12 +817,18 @@ const TerminalVisualState = struct {
             try render_api.terminal_cells.applyTransaction(&pane.grid, entry.transaction);
             try fifo.complete(entry.handle);
             if (candidate) {
+                if (pane.retiring_backend != null or pane.retiring_font != null)
+                    return error.CandidatePending;
                 const old_font = pane.font;
+                const old_backend = pane.backend;
                 pane.font = pane.candidate_font.?;
                 pane.candidate_font = null;
+                pane.backend = pane.candidate_backend.?;
+                pane.candidate_backend = null;
+                pane.retiring_font = old_font;
+                pane.retiring_backend = old_backend;
                 pane.lifecycle_revision = entry.identity.lifecycle_revision;
                 pane.candidate_revision = null;
-                self.fonts.release(old_font) catch @panic("terminal font reference became stale");
             }
         }
     }
@@ -1046,7 +836,7 @@ const TerminalVisualState = struct {
     fn retire(self: *TerminalVisualState, pane: terminal_handoff.PaneId, source: terminal_handoff.SourceId) !void {
         const index = self.find(pane) orelse return error.UnknownPane;
         if (self.panes[index].?.source != source) return error.StaleTerminalVisual;
-        self.panes[index].?.deinit(self.fonts);
+        self.panes[index].?.deinit(self.fonts, self.gpu);
         self.panes[index] = null;
     }
 };
@@ -1073,21 +863,42 @@ fn initializeTerminalPaneForTest(
         .rows = 1,
         .columns = 1,
     };
+    var backend = try state.gpu.createPaneProof(
+        state.fonts,
+        .{ .pane = pane, .source = source, .lifecycle_revision = revision },
+        font,
+        grid.rows,
+        grid.columns,
+        .initialization,
+    );
+    errdefer backend.deinit(state.gpu);
+    var visual_grid = try initTerminalVisualGrid(state.allocator, grid);
+    errdefer visual_grid.deinit();
+    const initial = try visual_grid.prepare();
+    try std.testing.expect(initial != null);
+    _ = try state.gpu.prepare(state.fonts, &.{.{
+        .pane = &backend,
+        .grid_update = &initial.?,
+        .placement = null,
+        .surface = terminalProofSurface(1, 1),
+    }});
+    try state.gpu.complete();
+    try visual_grid.complete();
     state.panes[slot] = .{
         .pane = grid.pane,
         .source = @fromBackingInt(source),
         .lifecycle_revision = @fromBackingInt(revision),
         .font = font,
-        .grid = try initTerminalVisualGrid(state.allocator, grid),
+        .grid = visual_grid,
+        .backend = backend,
     };
-    const initial = try state.panes[slot].?.grid.prepare();
-    try std.testing.expect(initial != null);
-    try state.panes[slot].?.grid.complete();
 }
 
 const TerminalVisualTestFixture = struct {
     fifo: terminal_visual_fifo.Fifo,
     fonts: terminal_fonts.Cache,
+    gpu_bytes: u64,
+    gpu: terminal_gpu.Owner,
     visuals: TerminalVisualState,
     policy: terminal_fonts.Policy,
     scale: terminal_fonts.ScaleSnapshot,
@@ -1100,7 +911,17 @@ const TerminalVisualTestFixture = struct {
             "../howl-render/testdata/primary.ttf",
         );
         errdefer self.fonts.deinit();
-        self.visuals = .{ .allocator = std.testing.allocator, .fonts = &self.fonts };
+        self.gpu_bytes = 0;
+        self.gpu = try terminal_gpu.Owner.initProof(
+            std.testing.allocator,
+            &self.gpu_bytes,
+        );
+        errdefer self.gpu.deinit();
+        self.visuals = .{
+            .allocator = std.testing.allocator,
+            .fonts = &self.fonts,
+            .gpu = &self.gpu,
+        };
         self.policy = try terminal_fonts.Policy.init(6.0);
         self.scale = .{
             .revision = 1,
@@ -1111,6 +932,7 @@ const TerminalVisualTestFixture = struct {
 
     fn deinit(self: *TerminalVisualTestFixture) void {
         self.visuals.deinit();
+        self.gpu.deinit();
         self.fonts.deinit();
         self.fifo.deinit();
         self.* = undefined;
@@ -1142,13 +964,21 @@ const TerminalVisualTestFixture = struct {
         work.terminal_visuals = &self.fifo;
         work.terminal_visual_state = &self.visuals;
         work.terminal_fonts = &self.fonts;
+        work.terminal_gpu = &self.gpu;
         work.terminal_font_policy = self.policy;
         work.terminal_scale = self.scale;
         work.terminal_font_candidate = null;
+        // Topology-only proofs use a deterministic one-to-one coordinate
+        // space unless the case supplies an exact configured surface.
+        work.terminal_surface = terminalProofSurface(
+            std.math.maxInt(u16),
+            std.math.maxInt(u16),
+        );
+        work.content_origin = .{ .y = 0 };
     }
 };
 
-test "Renderer drains interleaved pane FIFO globally and final equality suppresses Render work" {
+test "T001 T002 global FIFO drain makes one batch and suppresses final equality work" {
     var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
     defer fifo.deinit();
     var fonts = try terminal_fonts.Cache.init(
@@ -1164,7 +994,10 @@ test "Renderer drains interleaved pane FIFO globally and final equality suppress
     const policy = try terminal_fonts.Policy.init(6.0);
     const first_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, @fromBackingInt(1)));
     const second_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, @fromBackingInt(2)));
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
     try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, first_font);
     try initializeTerminalPaneForTest(&state, 1, 2, 12, 1, second_font);
@@ -1177,24 +1010,151 @@ test "Renderer drains interleaved pane FIFO globally and final equality suppress
     try std.testing.expectEqual(@as(u64, 1), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
     try std.testing.expectEqual(@as(u64, 2), try fifo.enqueue(.{ .pane = @fromBackingInt(2), .source = @fromBackingInt(12), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &second_seven }));
     try state.drain(&fifo);
-    const first_update = try state.panes[0].?.grid.prepare();
-    try std.testing.expect(first_update != null);
-    try state.panes[0].?.grid.complete();
-    const second_update = try state.panes[1].?.grid.prepare();
-    try std.testing.expect(second_update != null);
-    try state.panes[1].?.grid.complete();
+    try std.testing.expectEqual(@as(usize, 2), try state.prepareGrids());
+    var work: CanvasWork = undefined;
+    work.terminal_visual_state = &state;
+    work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
+    work.visible_count = 2;
+    work.visible_placements[0] = .{
+        .source = @fromBackingInt(11),
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 32, .height = 32 },
+    };
+    work.visible_placements[1] = .{
+        .source = @fromBackingInt(12),
+        .origin = .{ .x = 32, .y = 0 },
+        .clip = .{ .x = 32, .y = 0, .width = 32, .height = 32 },
+    };
+    const batch = try prepareTerminalBatch(&work, false, terminalProofSurface(64, 32));
+    try std.testing.expectEqual(@as(u8, 2), batch.count);
+    try std.testing.expectEqual(@as(u64, 1), batch.candidates[0].identity.pane);
+    try std.testing.expectEqual(@as(u64, 2), batch.candidates[1].identity.pane);
+    try std.testing.expectEqual(@as(usize, 2), gpu.candidateCount());
+    try gpu.complete();
+    state.completeGrids();
     try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
     try std.testing.expectEqual(@as(u8, '7'), (try state.panes[1].?.grid.current(0, 0)).codepoint);
 
     const first_four = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &four } }};
-    try std.testing.expectEqual(@as(u64, 3), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_four }));
-    try std.testing.expectEqual(@as(u64, 4), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
+    try std.testing.expectEqual(@as(u64, 3), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
+    try std.testing.expectEqual(@as(u64, 4), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_four }));
+    try std.testing.expectEqual(@as(u64, 5), try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &first_five }));
     try state.drain(&fifo);
-    try std.testing.expect((try state.panes[0].?.grid.prepare()) == null);
+    try std.testing.expectEqual(@as(usize, 0), try state.prepareGrids());
+    try std.testing.expect(!gpu.batch_pending);
+    try std.testing.expectEqual(@as(usize, 0), gpu.candidateCount());
+    try std.testing.expectEqual(RedrawSchedule.unchanged, try scheduleRedraw(.unchanged, false));
     try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
 }
 
-test "same-grid resize replacement is the font epoch barrier and stale FIFO is rejected" {
+test "T008 pane N preflight failure reverses Store and Grid candidates" {
+    var fixture: TerminalVisualTestFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    try fixture.addPane(0, @fromBackingInt(1), @fromBackingInt(11), @fromBackingInt(1));
+    try fixture.addPane(1, @fromBackingInt(2), @fromBackingInt(12), @fromBackingInt(1));
+    try fixture.visuals.panes[0].?.grid.set(0, 0, render_api.terminal_cells.Cell.init(
+        'a',
+        .{ .r = 1, .g = 2, .b = 3 },
+        .{ .r = 4, .g = 5, .b = 6 },
+        .{ .r = 7, .g = 8, .b = 9 },
+        .{},
+    ));
+    try fixture.visuals.panes[1].?.grid.set(0, 0, render_api.terminal_cells.Cell.init(
+        'b',
+        .{ .r = 9, .g = 8, .b = 7 },
+        .{ .r = 6, .g = 5, .b = 4 },
+        .{ .r = 3, .g = 2, .b = 1 },
+        .{},
+    ));
+    const first_before = try fixture.visuals.panes[0].?.backend.store.accepted(0);
+    const second_before = try fixture.visuals.panes[1].?.backend.store.accepted(0);
+    try std.testing.expectEqual(@as(usize, 2), try fixture.visuals.prepareGrids());
+    fixture.visuals.panes[1].?.backend.pending = true;
+    defer fixture.visuals.panes[1].?.backend.pending = false;
+
+    var work: CanvasWork = undefined;
+    fixture.bind(&work);
+    work.visible_count = 2;
+    work.visible_placements[0] = .{
+        .source = @fromBackingInt(11),
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 16 },
+    };
+    work.visible_placements[1] = .{
+        .source = @fromBackingInt(12),
+        .origin = .{ .x = 16, .y = 0 },
+        .clip = .{ .x = 16, .y = 0, .width = 16, .height = 16 },
+    };
+    {
+        var guard = CandidateOwnershipGuard{
+            .work = &work,
+            .generic_pending = false,
+            .grids_pending = true,
+        };
+        defer guard.deinit();
+        try std.testing.expectError(
+            error.CandidatePending,
+            prepareTerminalBatch(&work, false, terminalProofSurface(32, 16)),
+        );
+    }
+    try std.testing.expect(!fixture.gpu.batch_pending);
+    try std.testing.expect(fixture.visuals.panes[0].?.grid_update == null);
+    try std.testing.expect(fixture.visuals.panes[1].?.grid_update == null);
+    try std.testing.expectEqualDeep(
+        first_before,
+        try fixture.visuals.panes[0].?.backend.store.accepted(0),
+    );
+    try std.testing.expectEqualDeep(
+        second_before,
+        try fixture.visuals.panes[1].?.backend.store.accepted(0),
+    );
+}
+
+test "FIFO waits behind one retained physical Grid candidate" {
+    var fixture: TerminalVisualTestFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    try fixture.addPane(0, @fromBackingInt(1), @fromBackingInt(11), @fromBackingInt(1));
+
+    var four = [_]vt.render_journal.Cell{terminalJournalCell('4')};
+    var five = [_]vt.render_journal.Cell{terminalJournalCell('5')};
+    const four_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{
+        .row = 0,
+        .col = 0,
+        .cells = &four,
+    } }};
+    const five_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{
+        .row = 0,
+        .col = 0,
+        .cells = &five,
+    } }};
+    const identity = terminal_visual_fifo.Identity{
+        .pane = @fromBackingInt(1),
+        .source = @fromBackingInt(11),
+        .lifecycle_revision = @fromBackingInt(1),
+    };
+    _ = try fixture.fifo.enqueue(identity, .{ .operations = &four_operation });
+    try fixture.visuals.drain(&fixture.fifo);
+    try std.testing.expectEqual(@as(usize, 1), try fixture.visuals.prepareGrids());
+
+    _ = try fixture.fifo.enqueue(identity, .{ .operations = &five_operation });
+    try fixture.visuals.drain(&fixture.fifo);
+    try std.testing.expectEqual(
+        @as(u8, '4'),
+        (try fixture.visuals.panes[0].?.grid.current(0, 0)).codepoint,
+    );
+
+    fixture.visuals.completeGrids();
+    try fixture.visuals.drain(&fixture.fifo);
+    try std.testing.expectEqual(
+        @as(u8, '5'),
+        (try fixture.visuals.panes[0].?.grid.current(0, 0)).codepoint,
+    );
+}
+
+test "T007 T012 resize replacement is the exact Store resource and font epoch barrier" {
     var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
     defer fifo.deinit();
     var fonts = try terminal_fonts.Cache.init(
@@ -1211,75 +1171,151 @@ test "same-grid resize replacement is the font epoch barrier and stale FIFO is r
     const new_policy = try terminal_fonts.Policy.init(7.0);
     const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(old_policy, scale, @fromBackingInt(1)));
     const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(new_policy, scale, @fromBackingInt(1)));
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
     try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
-    try state.panes[0].?.installCandidate(@fromBackingInt(2), new_font);
+    var work: CanvasWork = undefined;
+    work.terminal_visual_state = &state;
+    work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
+    work.visible_count = 1;
+    work.visible_placements[0] = .{
+        .source = @fromBackingInt(11),
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 32, .height = 32 },
+    };
+
+    const new_backend = try gpu.createPaneProof(
+        &fonts,
+        .{ .pane = 1, .source = 11, .lifecycle_revision = 2 },
+        new_font,
+        1,
+        1,
+        .resize,
+    );
+    try state.panes[0].?.installCandidate(@fromBackingInt(2), new_font, new_backend);
 
     var old_value = [_]vt.render_journal.Cell{terminalJournalCell('5')};
-    var replacement_cells = [_]vt.render_journal.Cell{terminalJournalCell('5')};
     const old_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &old_value } }};
-    const barrier = [_]vt.render_journal.Operation{.{ .replace = .{ .kind = .resize, .rows = 1, .cols = 1, .cells = &replacement_cells } }};
     _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &old_operation });
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(usize, 1), try state.prepareGrids());
+    var batch = try prepareTerminalBatch(&work, false, terminalProofSurface(32, 32));
+    try std.testing.expectEqual(old_font, batch.candidates[0].pane.font);
+    try gpu.complete();
+    state.completeGrids();
+    try std.testing.expectEqual(
+        try howl_vk.terminal_cells.stableGlyphSlot('5', false, false),
+        (try state.panes[0].?.backend.store.accepted(0)).glyph_slot,
+    );
+
+    var replacement_cells = [_]vt.render_journal.Cell{terminalJournalCell('5')};
+    const barrier = [_]vt.render_journal.Operation{.{ .replace = .{ .kind = .resize, .rows = 1, .cols = 1, .cells = &replacement_cells } }};
     _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &barrier });
     try state.drain(&fifo);
     try std.testing.expectEqual(@as(u64, 2), @backingInt(state.panes[0].?.lifecycle_revision));
     try std.testing.expectEqual(new_font, state.panes[0].?.font);
+    try std.testing.expectEqual(@as(u16, 1), state.panes[0].?.backend.rows);
+    try std.testing.expectEqual(@as(u16, 1), state.panes[0].?.backend.cols);
+    try std.testing.expect(state.panes[0].?.retiring_backend != null);
+    try std.testing.expectEqual(
+        try howl_vk.terminal_cells.stableGlyphSlot('5', false, false),
+        (try state.panes[0].?.retiring_backend.?.store.accepted(0)).glyph_slot,
+    );
+    try std.testing.expectEqual(@as(usize, 1), try state.prepareGrids());
+    batch = try prepareTerminalBatch(&work, false, terminalProofSurface(32, 32));
+    try std.testing.expectEqual(new_font, batch.candidates[0].pane.font);
+    try std.testing.expectEqual(
+        howl_vk.terminal_cells.ReplacementKind.resize,
+        state.panes[0].?.backend.prepared.replacement.?,
+    );
+    try gpu.complete();
+    state.completeGrids();
+    try std.testing.expect(state.panes[0].?.retiring_backend == null);
+    try std.testing.expect(state.panes[0].?.retiring_font == null);
 
     var poison = [_]vt.render_journal.Cell{terminalJournalCell('x')};
     const poison_operation = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &poison } }};
     _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(99), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &poison_operation });
     _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &poison_operation });
     try state.drain(&fifo);
+    try std.testing.expectEqual(@as(usize, 0), try state.prepareGrids());
     try std.testing.expectEqual(@as(u8, '5'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
-    const changed = try state.panes[0].?.grid.prepare();
-    try std.testing.expect(changed != null);
-    try std.testing.expectError(error.CandidatePending, state.panes[0].?.grid.set(
-        0,
-        0,
-        render_api.terminal_cells.Cell.blank(.{ .r = 1, .g = 2, .b = 3 }, .{ .r = 4, .g = 5, .b = 6 }),
-    ));
+
+    _ = try fifo.enqueue(.{ .pane = @fromBackingInt(1), .source = @fromBackingInt(11), .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &poison_operation });
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(usize, 1), try state.prepareGrids());
+    batch = try prepareTerminalBatch(&work, false, terminalProofSurface(32, 32));
+    try std.testing.expectEqual(new_font, batch.candidates[0].pane.font);
+    try gpu.complete();
+    state.completeGrids();
+    try std.testing.expectEqual(
+        try howl_vk.terminal_cells.stableGlyphSlot('x', false, false),
+        (try state.panes[0].?.backend.store.accepted(0)).glyph_slot,
+    );
 }
 
-test "alternate-grid replacement remains pending for the future physical renderer" {
+test "T007 alternate-grid replacement reaches the accepted physical Store" {
     var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
     defer fifo.deinit();
     var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
     defer fonts.deinit();
-    const scale = terminal_fonts.ScaleSnapshot{
-        .revision = 1,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
-    };
-    const old_policy = try terminal_fonts.Policy.init(6.0);
-    const new_policy = try terminal_fonts.Policy.init(7.0);
     const pane: terminal_handoff.PaneId = @fromBackingInt(1);
     const source: terminal_handoff.SourceId = @fromBackingInt(11);
-    const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(old_policy, scale, pane));
-    const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(new_policy, scale, pane));
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
+        try terminal_fonts.Policy.init(6.0),
+        .{
+            .revision = 1,
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
+        pane,
+    ));
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
-    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
-    try state.panes[0].?.installCandidate(@fromBackingInt(2), new_font);
+    try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, font);
 
-    var cells = [_]vt.render_journal.Cell{ terminalJournalCell('a'), terminalJournalCell('b') };
+    var cells = [_]vt.render_journal.Cell{terminalJournalCell('a')};
     const operations = [_]vt.render_journal.Operation{.{ .replace = .{
-        .kind = .resize,
+        .kind = .alternate,
         .rows = 1,
-        .cols = 2,
+        .cols = 1,
         .cells = &cells,
     } }};
-    _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
+    _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(1) }, .{ .operations = &operations });
     try state.drain(&fifo);
+    try std.testing.expectEqual(@as(usize, 1), try state.prepareGrids());
 
-    try std.testing.expectEqual(@as(u64, 2), @backingInt(state.panes[0].?.lifecycle_revision));
-    try std.testing.expectEqual(new_font, state.panes[0].?.font);
-    try std.testing.expectEqual(@as(u8, 'a'), (try state.panes[0].?.grid.current(0, 0)).codepoint);
-    try std.testing.expectEqual(@as(u8, 'b'), (try state.panes[0].?.grid.current(0, 1)).codepoint);
-    try std.testing.expect((try state.panes[0].?.grid.prepare()) != null);
+    var work: CanvasWork = undefined;
+    work.terminal_visual_state = &state;
+    work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
+    work.visible_count = 1;
+    work.visible_placements[0] = .{
+        .source = @fromBackingInt(11),
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 16 },
+    };
+    _ = try prepareTerminalBatch(&work, false, terminalProofSurface(16, 16));
+    try std.testing.expectEqual(
+        howl_vk.terminal_cells.ReplacementKind.alternate_grid,
+        state.panes[0].?.backend.prepared.replacement.?,
+    );
+    try gpu.complete();
+    state.completeGrids();
+    try std.testing.expectEqual(
+        try howl_vk.terminal_cells.stableGlyphSlot('a', false, false),
+        (try state.panes[0].?.backend.store.accepted(0)).glyph_slot,
+    );
 }
 
-test "retirement rejects queued stale identity before same-pane reuse" {
+test "T011 stale source lifecycle and retired FIFO entries mutate no visual or batch owner" {
     var fifo = try terminal_visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
     defer fifo.deinit();
     var fonts = try terminal_fonts.Cache.init(std.testing.allocator, "../howl-render/testdata/primary.ttf");
@@ -1293,7 +1329,10 @@ test "retirement rejects queued stale identity before same-pane reuse" {
     const pane: terminal_handoff.PaneId = @fromBackingInt(1);
     const old_source: terminal_handoff.SourceId = @fromBackingInt(11);
     const new_source: terminal_handoff.SourceId = @fromBackingInt(12);
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
     const old_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
     try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
@@ -1304,6 +1343,10 @@ test "retirement rejects queued stale identity before same-pane reuse" {
     try state.retire(pane, old_source);
     const new_font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
     try initializeTerminalPaneForTest(&state, 0, 1, 12, 2, new_font);
+    try state.drain(&fifo);
+    try std.testing.expectEqual(@as(u21, 0), (try state.panes[0].?.grid.current(0, 0)).codepoint);
+    try std.testing.expectEqual(@as(usize, 0), try state.prepareGrids());
+    try std.testing.expect(!gpu.batch_pending);
     var value = [_]vt.render_journal.Cell{terminalJournalCell('n')};
     const operations = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &value } }};
     _ = try fifo.enqueue(.{ .pane = pane, .source = new_source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
@@ -1330,10 +1373,25 @@ test "missing lifecycle barrier preserves pane state and FIFO ownership" {
         .dpi_x = scale.dpi_x,
         .dpi_y = scale.dpi_y,
     });
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
     try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, old_font);
-    try state.panes[0].?.installCandidate(@fromBackingInt(2), candidate_font);
+    const candidate_backend = try gpu.createPaneProof(
+        &fonts,
+        .{ .pane = 1, .source = 11, .lifecycle_revision = 2 },
+        candidate_font,
+        1,
+        1,
+        .resize,
+    );
+    try state.panes[0].?.installCandidate(
+        @fromBackingInt(2),
+        candidate_font,
+        candidate_backend,
+    );
     var poison = [_]vt.render_journal.Cell{terminalJournalCell('x')};
     const operations = [_]vt.render_journal.Operation{.{ .set_cells = .{ .row = 0, .col = 0, .cells = &poison } }};
     _ = try fifo.enqueue(.{ .pane = pane, .source = source, .lifecycle_revision = @fromBackingInt(2) }, .{ .operations = &operations });
@@ -1358,7 +1416,10 @@ test "malformed FIFO apply is invariant-fatal without rollback claims" {
     const pane: terminal_handoff.PaneId = @fromBackingInt(1);
     const source: terminal_handoff.SourceId = @fromBackingInt(11);
     const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(policy, scale, pane));
-    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var state = TerminalVisualState{ .allocator = std.testing.allocator, .fonts = &fonts, .gpu = &gpu };
     defer state.deinit();
     try initializeTerminalPaneForTest(&state, 0, 1, 11, 1, font);
     var first = [_]vt.render_journal.Cell{terminalJournalCell('a')};
@@ -1429,7 +1490,6 @@ pub fn run(
     terminal_visuals: *terminal_visual_fifo.Fifo,
     allocator: std.mem.Allocator,
     font_path: []const u8,
-    cursor_policy: config.CursorPresentationPolicy,
 ) void {
     runFallible(
         boundary,
@@ -1437,7 +1497,6 @@ pub fn run(
         terminal_visuals,
         allocator,
         font_path,
-        cursor_policy,
     ) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
@@ -1451,7 +1510,6 @@ fn runFallible(
     terminal_visuals: *terminal_visual_fifo.Fifo,
     allocator: std.mem.Allocator,
     font_path: []const u8,
-    cursor_policy: config.CursorPresentationPolicy,
 ) !void {
     const feedback = try waitFeedback(boundary);
     const initial_surface = try waitConfigure(boundary);
@@ -1518,17 +1576,19 @@ fn runFallible(
     defer replay.deinit();
     var terminal_font_cache = try terminal_fonts.Cache.init(allocator, font_path);
     defer terminal_font_cache.deinit();
+    var terminal_physical: terminal_gpu.Owner = undefined;
     var terminal_visual_state = TerminalVisualState{
         .allocator = allocator,
         .fonts = &terminal_font_cache,
+        .gpu = &terminal_physical,
     };
-    defer terminal_visual_state.deinit();
     var canvas_work = CanvasWork{
         .composer = &composer,
         .content = &chrome_content,
         .source = chrome_source,
         .surface = renderExtent(initial_surface),
         .content_origin = try session_chrome_adapter.contentOrigin(renderExtent(initial_surface), session_chrome_adapter.default_tab_bar_height),
+        .terminal_surface = terminalSurface(initial_surface),
         .frame_uploads = frame_uploads,
         .frame_removals = frame_removals,
         .frame_commands = frame_commands,
@@ -1544,7 +1604,7 @@ fn runFallible(
         .terminal_visuals = terminal_visuals,
         .terminal_visual_state = &terminal_visual_state,
         .terminal_fonts = &terminal_font_cache,
-        .cursor_policy = cursor_policy,
+        .terminal_gpu = &terminal_physical,
         .terminal_font_policy = try terminal_fonts.Policy.init(
             configured_terminal_base_points,
         ),
@@ -1629,6 +1689,16 @@ fn runFallible(
     var gpu_bytes: u64 = 0;
     var graphics = try vk_surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
+    terminal_physical = try terminal_gpu.Owner.init(
+        allocator,
+        device,
+        memory_properties,
+        graphics.render_pass,
+        &gpu_bytes,
+        gpu_memory_limit,
+    );
+    defer terminal_physical.deinit();
+    defer terminal_visual_state.deinit();
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -1703,7 +1773,7 @@ fn runFallible(
     for (&rings[0], 0..) |*slot, index| {
         try beginSlotRendering(slot);
         queue_active = true;
-        try render(&graphics, device, queue, family, command, slot, colors[index], initial_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, index + 1);
+        _ = try render(&graphics, device, queue, family, command, slot, colors[index], initial_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, index + 1, null, null);
         slot.release_point = 1;
         try discardUnpublishedInitialization(
             drm_fd,
@@ -1734,7 +1804,7 @@ fn runFallible(
     const startup_plan = try buildAcceptedCanvasPlan(&canvas_work);
     errdefer surface_residency.discard();
     errdefer replay.discard();
-    try render(
+    var startup_execution = try render(
         &graphics,
         device,
         queue,
@@ -1751,6 +1821,8 @@ fn runFallible(
         drm_fd,
         acquire_handle,
         next_acquire_point,
+        null,
+        null,
     );
     startup_slot.release_point = 2;
     try publishLatestReadyFrame(boundary, &rings[0], 0, .startup, .{
@@ -1760,6 +1832,7 @@ fn runFallible(
         .acquire_point = next_acquire_point,
         .release_point = 2,
     }, .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle });
+    try startup_execution.publish();
     replay.commit(0);
     next_acquire_point += 1;
 
@@ -1767,7 +1840,6 @@ fn runFallible(
     var active_generation = initial_surface.generation;
     var actions = input_actions.State{};
     var terminal_redraw_pending = false;
-    var cursor_replay_pending: ?terminal_handoff.CursorPublication = null;
     var local_redraw_retry_pending = false;
     var terminal_topology_committed = false;
     var initial_admission_retry_used = false;
@@ -1883,13 +1955,9 @@ fn runFallible(
             if (wake.visual) {
                 try terminal_visuals.drainReadyWake();
                 try terminal_visual_state.drain(terminal_visuals);
+                terminal_redraw_pending = true;
             }
             if (wake.terminal) {
-                reconcileFocusedCursor(
-                    terminals,
-                    try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
-                    &cursor_replay_pending,
-                );
                 if (deferred_topology_input != null) {
                     switch (try retryDeferredTopologyInput(
                         &canvas_work,
@@ -2014,6 +2082,7 @@ fn runFallible(
                                 &canvas_work,
                                 &admitted.candidate.state,
                                 admitted.bootstrap(),
+                                &admitted.lifecycle,
                                 admitted_origin,
                             )
                         else
@@ -2048,7 +2117,10 @@ fn runFallible(
                             continue;
                         },
                         .retry => return error.InvalidFrame,
-                        .accepted => surface_residency.discard(),
+                        .accepted => {
+                            surface_residency.discard();
+                            replay.discard();
+                        },
                     }
                     const replacement = 1 - active_ring;
                     for (&rings[replacement]) |*slot| slot.* = .{};
@@ -2114,16 +2186,15 @@ fn runFallible(
                     var candidate_acquire = next_acquire_point;
                     var newest_ready: presentation_state.ReadyFrame = undefined;
                     const resized_plan = try buildAcceptedCanvasPlan(&canvas_work);
-                    errdefer surface_residency.discard();
-                    errdefer replay.discard();
-                    const physical_resized_plan = try physicalPlanForBase(
-                        &canvas_work,
-                        resized_plan,
-                        try session_chrome_adapter.toRenderPaneId(admitted.candidate.state.focusedPaneId()),
-                    );
+                    var initialization_submitted = false;
+                    errdefer if (!initialization_submitted) {
+                        surface_residency.discard();
+                        replay.discard();
+                    };
                     for (&rings[replacement], 0..) |*slot, index| {
                         try beginSlotRendering(slot);
-                        try render(&graphics, device, queue, family, command, slot, product_clear_color, physical_resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, candidate_acquire);
+                        _ = try render(&graphics, device, queue, family, command, slot, product_clear_color, resized_plan, surface_builder.alpha_pixels, surface_builder.rgba_pixels, if (index == 0) @as(?*vk_surface.ResidencyStore, &surface_residency) else null, null, &dispatch, drm_fd, acquire_handle, candidate_acquire, null, null);
+                        initialization_submitted = true;
                         slot.release_point = 1;
                         try discardUnpublishedInitialization(
                             drm_fd,
@@ -2134,6 +2205,7 @@ fn runFallible(
                         candidate_acquire = std.math.add(u64, candidate_acquire, 1) catch
                             return error.RevisionOverflow;
                     }
+                    replay.discard();
                     const replacement_slot = &rings[replacement][0];
                     try beginSlotRendering(replacement_slot);
                     var replacement_release_fd: i32 = -1;
@@ -2156,14 +2228,22 @@ fn runFallible(
                     );
                     const replacement_product_base =
                         try buildAcceptedCanvasPlan(&canvas_work);
-                    const replacement_product_plan = try physicalPlanForBase(
+                    var replacement_guard = CandidateOwnershipGuard{
+                        .work = &canvas_work,
+                    };
+                    defer replacement_guard.deinit();
+                    _ = try prepareTerminalBatch(
                         &canvas_work,
-                        replacement_product_base,
-                        try session_chrome_adapter.toRenderPaneId(
-                            admitted.candidate.state.focusedPaneId(),
-                        ),
+                        true,
+                        .{
+                            .logical_width = admitted_surface_extent.width,
+                            .logical_height = admitted_surface_extent.height,
+                            .physical_width = replacement_slot.width,
+                            .physical_height = replacement_slot.height,
+                        },
                     );
-                    try render(
+                    replacement_guard.terminal_pending = true;
+                    var replacement_execution = try render(
                         &graphics,
                         device,
                         queue,
@@ -2171,7 +2251,7 @@ fn runFallible(
                         command,
                         replacement_slot,
                         product_clear_color,
-                        replacement_product_plan,
+                        replacement_product_base,
                         surface_builder.alpha_pixels,
                         surface_builder.rgba_pixels,
                         &surface_residency,
@@ -2180,6 +2260,8 @@ fn runFallible(
                         drm_fd,
                         acquire_handle,
                         candidate_acquire,
+                        &terminal_visual_state,
+                        &replacement_guard,
                     );
                     replacement_slot.release_point = 2;
                     newest_ready = .{
@@ -2194,17 +2276,13 @@ fn runFallible(
                         candidate_acquire,
                         1,
                     ) catch return error.RevisionOverflow;
-                    // The replacement ring has copied the cursor-bearing
-                    // candidate. Keep the replay cohort itself cursor-free so
-                    // the next physical cursor update starts from the new
-                    // canonical base.
-                    replay.restoreCandidateBase(resized_plan);
                     try commitPendingTopology(&chrome, admitted);
                     canvas_work.surface = renderExtent(surface);
                     canvas_work.content_origin = try session_chrome_adapter.contentOrigin(
                         canvas_work.surface,
                         session_chrome_adapter.default_tab_bar_height,
                     );
+                    canvas_work.terminal_surface = terminalSurface(surface);
                     terminal_topology_committed = true;
                     if (bootstrap_publication) |*publication|
                         publication.commit(&canvas_work);
@@ -2216,18 +2294,15 @@ fn runFallible(
                         newest_ready,
                         .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
                     );
+                    try replacement_execution.publish();
                     replay.commit(0);
+                    replacement_guard.disarm();
                     next_acquire_point = candidate_acquire;
                     const old_ring = active_ring;
                     const old_generation = active_generation;
                     pending_topology = null;
                     active_ring = replacement;
                     active_generation = surface.generation;
-                    reconcileFocusedCursor(
-                        terminals,
-                        try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
-                        &cursor_replay_pending,
-                    );
                     try waitReleasePoints(boundary, old_generation, &rings[old_ring], drm_fd);
                     boundary.requestWindowRingRetirement(old_generation);
                     try waitWindowRingRetired(boundary, old_generation);
@@ -2255,6 +2330,7 @@ fn runFallible(
                         acquire_handle,
                         &next_acquire_point,
                         admitted,
+                        false,
                     );
                     switch (try scheduleRedraw(
                         redraw_result,
@@ -2268,58 +2344,16 @@ fn runFallible(
                             terminal_redraw_pending = true;
                             continue;
                         },
+                        .unchanged => return error.InvalidFrame,
                         .published => {
                             pending_topology = null;
                             try applyTerminalCompletionDisposition(
                                 &terminal_completion,
                                 .published,
                             );
-                            dropPendingCursor(&cursor_replay_pending);
-                            reconcileFocusedCursor(
-                                terminals,
-                                try session_chrome_adapter.toRenderPaneId(chrome.focusedPaneId()),
-                                &cursor_replay_pending,
-                            );
                         },
                     }
                 }
-            }
-        }
-        if (cursor_replay_pending != null and
-            !terminal_redraw_pending and pending_topology == null and
-            terminal_topology_committed)
-        {
-            const focused_pane = chrome.focusedPaneId();
-            const focused_source = if (canvas_work.terminals.sourceFor(toTerminalPaneId(try session_chrome_adapter.toRenderPaneId(focused_pane)))) |source|
-                toRenderSourceId(source)
-            else
-                null;
-            const replay_result = try replayCursorFrame(
-                boundary,
-                &canvas_work,
-                &cursor_replay_pending,
-                focused_source,
-                &rings[active_ring],
-                active_generation,
-                &graphics,
-                device,
-                queue,
-                family,
-                command,
-                &dispatch,
-                drm_fd,
-                acquire_handle,
-                &next_acquire_point,
-            );
-            switch (replay_result) {
-                .published => {
-                    dropPendingCursor(&cursor_replay_pending);
-                },
-                .retry => {
-                    local_redraw_retry_pending = true;
-                },
-                .rejected => discardRejectedCursorReplay(&cursor_replay_pending),
-                .blocked => {},
             }
         }
         if (terminal_redraw_pending and pending_topology == null) {
@@ -2342,6 +2376,7 @@ fn runFallible(
                 acquire_handle,
                 &next_acquire_point,
                 null,
+                true,
             ) catch |failure| switch (failure) {
                 error.NoReleasedSlot => continue,
                 else => return failure,
@@ -2356,11 +2391,13 @@ fn runFallible(
                     terminal_redraw_pending = true;
                     continue;
                 },
+                .unchanged => {
+                    terminal_redraw_pending = false;
+                },
                 .published => {
                     terminal_redraw_pending = false;
                     if (terminals.hasReadyCompletion())
                         local_redraw_retry_pending = true;
-                    dropPendingCursor(&cursor_replay_pending);
                 },
             }
         }
@@ -2412,6 +2449,15 @@ fn renderExtent(surface: presentation_state.SurfaceConfig) render_api.canvas.Siz
     return .{
         .width = @intCast(surface.logical_width),
         .height = @intCast(surface.logical_height),
+    };
+}
+
+fn terminalSurface(surface: presentation_state.SurfaceConfig) terminal_gpu.Surface {
+    return .{
+        .logical_width = surface.logical_width,
+        .logical_height = surface.logical_height,
+        .physical_width = surface.physical_width,
+        .physical_height = surface.physical_height,
     };
 }
 
@@ -2798,6 +2844,170 @@ test "integer and fractional surfaces retain the logical Canvas extent" {
     };
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(integer));
     try std.testing.expectEqual(render_api.canvas.Size{ .width = 100, .height = 80 }, renderExtent(fractional));
+}
+
+test "T021 fractional terminal coordinates remain physical from Session through shader inputs" {
+    const logical_surface = render_api.canvas.Size{ .width = 100, .height = 80 };
+    const surface = terminal_gpu.Surface{
+        .logical_width = logical_surface.width,
+        .logical_height = logical_surface.height,
+        .physical_width = 160,
+        .physical_height = 128,
+    };
+    const origin = try session_chrome_adapter.contentOrigin(logical_surface, 24);
+    try std.testing.expectEqual(@as(u16, 24), origin.y);
+
+    var topology = try session.SessionState.init(.{ .width = 100, .height = 56 });
+    const semantic_pane = topology.focusedPaneId();
+    const local = topology.paneRect(semantic_pane).?;
+    const placement_rect = try session_chrome_adapter.toRenderRect(local, origin);
+    try std.testing.expectEqual(render_api.canvas.Rect{
+        .x = 0,
+        .y = 24,
+        .width = 100,
+        .height = 56,
+    }, placement_rect);
+    const physical = try terminal_gpu.physicalRect(placement_rect, surface);
+    try std.testing.expectEqual(terminal_gpu.PhysicalRect{
+        .x = 0,
+        .y = 38,
+        .width = 160,
+        .height = 90,
+    }, physical);
+
+    var split = topology;
+    const second = try split.split(semantic_pane, .vertical);
+    const first_physical = try terminalPanePhysicalRect(
+        split.paneRect(semantic_pane).?,
+        origin,
+        surface,
+    );
+    const second_physical = try terminalPanePhysicalRect(
+        split.paneRect(second).?,
+        origin,
+        surface,
+    );
+    try std.testing.expectEqual(
+        first_physical.x + first_physical.width,
+        second_physical.x,
+    );
+    try std.testing.expectEqual(physical.x + physical.width, second_physical.x + second_physical.width);
+
+    var fonts = try terminal_fonts.Cache.init(
+        std.testing.allocator,
+        "../howl-render/testdata/primary.ttf",
+    );
+    defer fonts.deinit();
+    const pane: terminal_handoff.PaneId = @fromBackingInt(@backingInt(semantic_pane));
+    const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
+        try terminal_fonts.Policy.init(6.0),
+        .{
+            .revision = 1,
+            .dpi_x = .{ .numerator = 768, .denominator = 5 },
+            .dpi_y = .{ .numerator = 768, .denominator = 5 },
+        },
+        pane,
+    ));
+    defer fonts.release(font) catch @panic("fractional terminal proof font vanished");
+    const metrics = try fonts.metrics(font);
+    try std.testing.expectEqual(@as(u16, 12), metrics.advance_width);
+    try std.testing.expectEqual(@as(u16, 18), metrics.line_height);
+    try std.testing.expectEqual(@as(u16, 14), metrics.baseline);
+    const geometry = try terminal_gpu.gridGeometry(physical, metrics);
+    try std.testing.expectEqual(physical, geometry.rect);
+    try std.testing.expectEqual(@as(u16, 5), geometry.rows);
+    try std.testing.expectEqual(@as(u16, 13), geometry.columns);
+    try std.testing.expectEqual(@as(u16, 4), geometry.remainder_x);
+    try std.testing.expectEqual(@as(u16, 0), geometry.remainder_y);
+    try std.testing.expectEqual(
+        physical.width,
+        @as(u32, geometry.columns) * metrics.advance_width + geometry.remainder_x,
+    );
+    try std.testing.expectEqual(
+        physical.height,
+        @as(u32, geometry.rows) * metrics.line_height + geometry.remainder_y,
+    );
+    try std.testing.expect(geometry.remainder_x < metrics.advance_width);
+    try std.testing.expect(geometry.remainder_y < metrics.line_height);
+
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
+    var backend_pane = try gpu.createPaneProof(
+        &fonts,
+        .{ .pane = @backingInt(pane), .source = 11, .lifecycle_revision = 1 },
+        font,
+        geometry.rows,
+        geometry.columns,
+        .initialization,
+    );
+    defer backend_pane.deinit(&gpu);
+    var grid = try initTerminalVisualGrid(std.testing.allocator, .{
+        .pane = pane,
+        .rows = geometry.rows,
+        .columns = geometry.columns,
+    });
+    defer grid.deinit();
+    const update = (try grid.prepare()).?;
+    const batch = try gpu.prepare(&fonts, &.{.{
+        .pane = &backend_pane,
+        .grid_update = &update,
+        .placement = .{
+            .source = @fromBackingInt(11),
+            .origin = .{ .x = placement_rect.x, .y = placement_rect.y },
+            .clip = placement_rect,
+        },
+        .surface = surface,
+    }});
+    errdefer gpu.discard() catch unreachable;
+    const draw = batch.candidates[0].pane.draw;
+    try std.testing.expectEqual(@as(i32, @intCast(physical.x)), draw.origin_x);
+    try std.testing.expectEqual(@as(i32, @intCast(physical.y)), draw.origin_y);
+    try std.testing.expectEqual(@as(i32, @intCast(physical.x)), draw.clip_x);
+    try std.testing.expectEqual(@as(i32, @intCast(physical.y)), draw.clip_y);
+    try std.testing.expectEqual(physical.width, draw.clip_width);
+    try std.testing.expectEqual(physical.height, draw.clip_height);
+    try std.testing.expectEqual(metrics.advance_width, draw.cell_width);
+    try std.testing.expectEqual(metrics.line_height, draw.cell_height);
+    try std.testing.expectEqual(
+        @as(u32, geometry.rows) * geometry.columns,
+        draw.instance_count,
+    );
+
+    const grid_right = @as(u32, @intCast(draw.origin_x)) +
+        @as(u32, geometry.columns) * draw.cell_width;
+    const grid_bottom = @as(u32, @intCast(draw.origin_y)) +
+        @as(u32, geometry.rows) * draw.cell_height;
+    try std.testing.expect(grid_right <= physical.x + physical.width);
+    try std.testing.expect(grid_bottom <= physical.y + physical.height);
+    try std.testing.expectEqual(@as(u32, 156), grid_right);
+    try std.testing.expectEqual(@as(u32, 128), grid_bottom);
+    const top_left_ndc_x = .{
+        .numerator = @as(i64, draw.origin_x) * 2 - surface.physical_width,
+        .denominator = surface.physical_width,
+    };
+    const top_left_ndc_y = .{
+        .numerator = @as(i64, surface.physical_height) - @as(i64, draw.origin_y) * 2,
+        .denominator = surface.physical_height,
+    };
+    try std.testing.expectEqual(@as(i64, -160), top_left_ndc_x.numerator);
+    try std.testing.expectEqual(@as(u32, 160), top_left_ndc_x.denominator);
+    try std.testing.expectEqual(@as(i64, 52), top_left_ndc_y.numerator);
+    try std.testing.expectEqual(@as(u32, 128), top_left_ndc_y.denominator);
+    const bottom_right_ndc_x = @as(i64, grid_right) * 2 - surface.physical_width;
+    const bottom_right_ndc_y = @as(i64, surface.physical_height) -
+        @as(i64, grid_bottom) * 2;
+    try std.testing.expectEqual(@as(i64, 152), bottom_right_ndc_x);
+    try std.testing.expectEqual(@as(i64, -128), bottom_right_ndc_y);
+    const atlas = try howl_vk.terminal_cells.glyphAtlasExtent(.{
+        .glyph_width = draw.cell_width,
+        .glyph_height = draw.cell_height,
+    });
+    try std.testing.expectEqual(@as(u32, 240), atlas.width);
+    try std.testing.expectEqual(@as(u32, 342), atlas.height);
+
+    try gpu.complete();
+    try grid.complete();
 }
 
 test "Renderer copies only accepted DPI through terminal State" {
@@ -3222,11 +3432,11 @@ fn buildCanvasPlanAt(
             if (desired_count == desired.len) return error.InvalidTopology;
             const rect = topology.paneRect(pane) orelse
                 return error.InvalidTopology;
-            const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
+            const logical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
             desired[desired_count] = .{
                 .source = render_source,
-                .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
-                .clip = physical_rect,
+                .origin = .{ .x = logical_rect.x, .y = logical_rect.y },
+                .clip = logical_rect,
             };
             if (bootstrap == null or render_source != bootstrap.?.source) {
                 desired_members[desired_count] = .{
@@ -3502,23 +3712,11 @@ fn updateVisibleComposition(
     work.pending_visible_revision = revision;
 }
 
-fn prepareBootstrapPublication(
-    work: *CanvasWork,
-    topology: *const session.SessionState,
-    bootstrap: ?BootstrapSource,
-) !PreparedBootstrapPublication {
-    return prepareBootstrapPublicationAt(
-        work,
-        topology,
-        bootstrap,
-        work.content_origin,
-    );
-}
-
 fn prepareBootstrapPublicationAt(
     work: *CanvasWork,
     topology: *const session.SessionState,
     bootstrap: ?BootstrapSource,
+    lifecycle: *terminal_handoff.Boundary.PreparedLifecycle,
     content_origin: session_chrome_adapter.ContentOrigin,
 ) !PreparedBootstrapPublication {
     var members: [terminal_handoff.visible_member_limit]terminal_handoff.VisibleMember =
@@ -3539,7 +3737,7 @@ fn prepareBootstrapPublicationAt(
             return error.InvalidTopology;
         const rect = topology.paneRect(pane) orelse
             return error.InvalidTopology;
-        const physical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
+        const logical_rect = try session_chrome_adapter.toRenderRect(rect, content_origin);
         if (count == members.len) return error.InvalidTopology;
         members[count] = .{
             .pane = toTerminalPaneId(render_pane),
@@ -3547,8 +3745,8 @@ fn prepareBootstrapPublicationAt(
         };
         placements[count] = .{
             .source = source,
-            .origin = .{ .x = physical_rect.x, .y = physical_rect.y },
-            .clip = physical_rect,
+            .origin = .{ .x = logical_rect.x, .y = logical_rect.y },
+            .clip = logical_rect,
         };
         count += 1;
     }
@@ -3556,7 +3754,7 @@ fn prepareBootstrapPublicationAt(
     work.next_visible_revision = std.math.add(u64, revision, 1) catch
         return error.RevisionOverflow;
     return .{
-        .boundary = try work.terminals.prepareVisibleSet(
+        .boundary = try lifecycle.prepareVisibleSet(
             revision,
             members[0..count],
         ),
@@ -3615,7 +3813,6 @@ fn adaptCanvasFrame(
             .resource = try surfaceResource(mask.resource.resource),
             .source = if (mask.resource.source) |source| .{ .x = source.x, .y = source.y, .width = source.width, .height = source.height } else null,
             .color = surfaceColor(mask.color),
-            .cursor_component = mask.cursor_component,
         } },
         .rgba => |rgba| .{ .rgba = .{
             .rect = surfaceRect(rgba.destination),
@@ -3659,270 +3856,8 @@ fn surfaceRect(value: render_api.canvas.Rect) vk_surface.Rect {
     return .{ .x = value.x, .y = value.y, .width = value.width, .height = value.height };
 }
 
-fn intersectSurfaceRect(left: vk_surface.Rect, right: vk_surface.Rect) ?vk_surface.Rect {
-    const left_x = @max(left.x, right.x);
-    const left_y = @max(left.y, right.y);
-    const left_width = std.math.cast(i32, left.width) orelse return null;
-    const right_width = std.math.cast(i32, right.width) orelse return null;
-    const left_height = std.math.cast(i32, left.height) orelse return null;
-    const right_height = std.math.cast(i32, right.height) orelse return null;
-    const right_x = @min(
-        std.math.add(i32, left.x, left_width) catch return null,
-        std.math.add(i32, right.x, right_width) catch return null,
-    );
-    const right_y = @min(
-        std.math.add(i32, left.y, left_height) catch return null,
-        std.math.add(i32, right.y, right_height) catch return null,
-    );
-    if (right_x <= left_x or right_y <= left_y) return null;
-    return .{
-        .x = left_x,
-        .y = left_y,
-        .width = @intCast(right_x - left_x),
-        .height = @intCast(right_y - left_y),
-    };
-}
-
-fn translateSurfaceRect(
-    local: vk_surface.Rect,
-    placement: render_api.canvas.Composer.Placement,
-) !vk_surface.Rect {
-    return .{
-        .x = std.math.add(i32, local.x, placement.origin.x) catch
-            return error.InvalidFrame,
-        .y = std.math.add(i32, local.y, placement.origin.y) catch
-            return error.InvalidFrame,
-        .width = local.width,
-        .height = local.height,
-    };
-}
-
-fn cursorOverlayForPlacement(
-    binding: render_api.canvas.CursorBinding,
-    placement: render_api.canvas.Composer.Placement,
-) !?vk_surface.CursorOverlay {
-    const local_rect = surfaceRect(binding.rect);
-    const local_clip = surfaceRect(binding.clip);
-    const rect = try translateSurfaceRect(local_rect, placement);
-    const translated_clip = try translateSurfaceRect(local_clip, placement);
-    const clip = intersectSurfaceRect(translated_clip, surfaceRect(placement.clip)) orelse
-        return null;
-    if (intersectSurfaceRect(rect, clip) == null) return null;
-    const shape: vk_surface.CursorOverlayShape = switch (binding.shape) {
-        .block => .block,
-        .underline => .underline,
-        .bar => .bar,
-        .none => .none,
-    };
-    var shaped_rect = rect;
-    switch (shape) {
-        .underline => {
-            shaped_rect.y = std.math.add(i32, shaped_rect.y, @intCast(shaped_rect.height - 1)) catch
-                return error.InvalidFrame;
-            shaped_rect.height = 1;
-        },
-        .bar => shaped_rect.width = 1,
-        .block, .none => {},
-    }
-    return .{
-        .rect = shaped_rect,
-        .clip = clip,
-        .shape = shape,
-        .color = surfaceColor(binding.color),
-        .text_color = surfaceColor(binding.text_color),
-        .visible = binding.visible and shape != .none,
-    };
-}
-
-fn placementForSource(
-    work: *const CanvasWork,
-    source: render_api.canvas.SourceId,
-) ?render_api.canvas.Composer.Placement {
-    for (work.visible_placements[0..work.visible_count]) |placement|
-        if (placement.source == source) return placement;
-    return null;
-}
-
 fn surfaceColor(value: render_api.canvas.Color) [4]f32 {
     return .{ @as(f32, @floatFromInt(value.r)) / 255.0, @as(f32, @floatFromInt(value.g)) / 255.0, @as(f32, @floatFromInt(value.b)) / 255.0, @as(f32, @floatFromInt(value.a)) / 255.0 };
-}
-
-fn cursorOverlayFor(
-    work: *const CanvasWork,
-    publication: terminal_handoff.CursorPublication,
-    require_newer: bool,
-) !?vk_surface.CursorOverlay {
-    const source = toRenderSourceId(publication.source);
-    const binding = work.composer.cursorBinding(source) orelse
-        return null;
-    if (binding.pane != @backingInt(publication.pane) or
-        binding.source != source or
-        binding.cell_size.width == 0 or binding.cell_size.height == 0 or
-        binding.visible_set_revision != publication.visible_set_revision or
-        binding.lifecycle_revision != @backingInt(publication.lifecycle_revision) or
-        (require_newer and publication.cursor_revision <= binding.cursor_revision) or
-        publication.terminal_sequence < binding.terminal_sequence)
-        return error.InvalidFrame;
-    const placement = placementForSource(work, source) orelse return null;
-    const x_offset = std.math.mul(
-        i32,
-        @intCast(publication.target.col),
-        @intCast(binding.cell_size.width),
-    ) catch return error.InvalidFrame;
-    const y_offset = std.math.mul(
-        i32,
-        @intCast(publication.target.row),
-        @intCast(binding.cell_size.height),
-    ) catch return error.InvalidFrame;
-    var target_binding = binding;
-    target_binding.rect = .{
-        .x = std.math.add(i32, binding.cell_origin.x, x_offset) catch
-            return error.InvalidFrame,
-        .y = std.math.add(i32, binding.cell_origin.y, y_offset) catch
-            return error.InvalidFrame,
-        .width = binding.cell_size.width,
-        .height = binding.cell_size.height,
-    };
-    target_binding.shape = switch (publication.target.shape) {
-        .block => .block,
-        .underline => .underline,
-        .bar => .bar,
-        .none => .none,
-    };
-    target_binding.color = .{
-        .r = publication.target.cursor_color.r,
-        .g = publication.target.cursor_color.g,
-        .b = publication.target.cursor_color.b,
-        .a = publication.target.cursor_color.a,
-    };
-    target_binding.text_color = .{
-        .r = publication.target.text_color.r,
-        .g = publication.target.text_color.g,
-        .b = publication.target.text_color.b,
-        .a = publication.target.text_color.a,
-    };
-    target_binding.visible = publication.target.visible;
-    return cursorOverlayForPlacement(target_binding, placement);
-}
-
-fn cursorOverlayForBinding(
-    work: *const CanvasWork,
-    source: render_api.canvas.SourceId,
-) !?vk_surface.CursorOverlay {
-    const binding = work.composer.cursorBinding(source) orelse return null;
-    const placement = placementForSource(work, source) orelse return null;
-    return cursorOverlayForPlacement(binding, placement);
-}
-
-fn acceptedCursorOverlay(
-    work: *const CanvasWork,
-    source: render_api.canvas.SourceId,
-) !CursorOverlayPreparation {
-    return .{ .prepared = (try cursorOverlayForBinding(work, source)) orelse
-        return .blocked };
-}
-
-fn publicationCursorOverlay(
-    work: *const CanvasWork,
-    publication: terminal_handoff.CursorPublication,
-    require_newer: bool,
-) !CursorOverlayPreparation {
-    // Validate accepted Composer binding and placement state independently.
-    // Any error here is accepted-state corruption and must remain observable.
-    if ((try cursorOverlayForBinding(work, toRenderSourceId(publication.source))) == null)
-        return .blocked;
-    const overlay = cursorOverlayFor(
-        work,
-        publication,
-        require_newer,
-    ) catch return .rejected;
-    return .{ .prepared = overlay orelse return .rejected };
-}
-
-test "accepted cursor geometry is fatal while publication mismatch rejects" {
-    var composer = try render_api.canvas.Composer.init(std.testing.allocator, .{
-        .sources = 1,
-        .retained_resources = 1,
-        .retained_commands = 1,
-        .retained_pixel_bytes = 1,
-        .composition_sources = 1,
-        .candidate_resources = 1,
-        .candidate_commands = 1,
-        .candidate_pixel_bytes = 1,
-    });
-    defer composer.deinit();
-    const source = try composer.registerSource();
-    try composer.apply(source, .{
-        .revision = @fromBackingInt(1),
-        .uploads = &.{},
-        .removals = &.{},
-        .commands = &.{},
-        .cursor_binding = .{
-            .pane = 1,
-            .source = source,
-            .terminal_sequence = 1,
-            .cursor_revision = 1,
-            .visible_set_revision = 1,
-            .lifecycle_revision = 1,
-            .rect = .{ .x = 1, .y = 0, .width = 1, .height = 1 },
-            .cell_size = .{ .width = 1, .height = 1 },
-            .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
-            .visible = true,
-        },
-    });
-    var work: CanvasWork = undefined;
-    work.composer = &composer;
-    work.visible_count = 1;
-    work.visible_placements[0] = .{
-        .source = source,
-        .origin = .{ .x = std.math.maxInt(i32), .y = 0 },
-        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
-    };
-    try std.testing.expectError(
-        error.InvalidFrame,
-        acceptedCursorOverlay(&work, source),
-    );
-
-    work.visible_placements[0].origin.x = 0;
-    const publication = terminal_handoff.CursorPublication{
-        .pane = @fromBackingInt(1),
-        .source = toTerminalSourceId(source),
-        .terminal_sequence = 1,
-        .cursor_revision = 2,
-        .visible_set_revision = 2,
-        .lifecycle_revision = @fromBackingInt(1),
-        .target = .{
-            .row = 0,
-            .col = 0,
-            .visible = true,
-            .shape = .block,
-            .cursor_color = .{},
-            .text_color = .{},
-        },
-    };
-    try std.testing.expectEqual(
-        CursorOverlayPreparation.rejected,
-        try publicationCursorOverlay(&work, publication, true),
-    );
-}
-
-fn physicalPlanForBase(
-    work: *CanvasWork,
-    base: vk_surface.Plan,
-    focused_pane: render_api.chrome.PaneId,
-) !vk_surface.Plan {
-    const source = work.terminals.sourceFor(toTerminalPaneId(focused_pane)) orelse return base;
-    const overlay = (try cursorOverlayForBinding(work, toRenderSourceId(source))) orelse return base;
-    const candidate = work.replay.candidate();
-    return vk_surface.replayCursor(
-        base,
-        overlay,
-        .{
-            .vertices = candidate.vertices,
-            .indices = candidate.indices,
-            .commands = candidate.commands,
-        },
-    );
 }
 
 fn waitFeedback(boundary: *presentation_state.State) !presentation_state.Feedback {
@@ -4483,6 +4418,7 @@ const PreparedTerminalVisual = struct {
     source: terminal_handoff.SourceId,
     grid: terminal_handoff.DerivedGrid,
     font: terminal_fonts.Ref,
+    backend: terminal_gpu.Pane,
     create: bool,
 };
 
@@ -4561,6 +4497,7 @@ const PendingTopology = struct {
                     .lifecycle_revision = self.revision,
                     .font = prepared.font,
                     .grid = self.created_grid.?,
+                    .backend = prepared.backend,
                 };
                 self.created_grid = null;
             } else {
@@ -4570,6 +4507,7 @@ const PendingTopology = struct {
                 std.debug.assert(self.visuals.panes[index].?.candidate_revision == null);
                 self.visuals.panes[index].?.candidate_revision = self.revision;
                 self.visuals.panes[index].?.candidate_font = prepared.font;
+                self.visuals.panes[index].?.candidate_backend = prepared.backend;
             }
         }
         self.visuals_committed = true;
@@ -4593,6 +4531,7 @@ const PendingTopology = struct {
         self.lifecycle.deinit();
         if (self.created_grid) |*grid| grid.deinit();
         if (!self.visuals_committed) for (self.prepared_visuals[0..self.prepared_visual_count]) |*prepared| {
+            prepared.backend.deinit(self.visuals.gpu);
             self.visuals.fonts.release(prepared.font) catch
                 @panic("prepared terminal font rollback failed");
         };
@@ -4619,6 +4558,17 @@ fn prepareTerminalTopologyWithFontBarrier(
     font_candidate: ?TerminalFontCandidate,
 ) !PendingTopology {
     const force_font_barrier = font_candidate != null;
+    const geometry_surface = if (surface) |value|
+        terminalSurface(value)
+    else
+        work.terminal_surface;
+    const geometry_origin = if (surface) |value|
+        try session_chrome_adapter.contentOrigin(
+            renderExtent(value),
+            session_chrome_adapter.default_tab_bar_height,
+        )
+    else
+        work.content_origin;
     var operations: [128]terminal_handoff.Lifecycle = undefined;
     var visual_panes: [128]terminal_handoff.PaneId = undefined;
     var visual_pixels: [128]terminal_handoff.PixelSize = undefined;
@@ -4636,15 +4586,20 @@ fn prepareTerminalTopologyWithFontBarrier(
             const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
             const rect = candidate.paneRect(pane) orelse
                 return error.InvalidTopology;
-            const pixels = try panePixelsLocal(rect);
+            const physical_rect = try terminalPanePhysicalRect(
+                rect,
+                geometry_origin,
+                geometry_surface,
+            );
+            const pixels = terminalPixels(physical_rect);
             if (!topologyContainsSemantic(current, pane)) {
                 operations[operation_count] = .{ .create = .{
                     .pane = toTerminalPaneId(render_pane),
-                    .pixels = toTerminalPixels(pixels),
+                    .pixels = pixels,
                 } };
                 operation_count += 1;
                 visual_panes[visual_count] = toTerminalPaneId(render_pane);
-                visual_pixels[visual_count] = toTerminalPixels(pixels);
+                visual_pixels[visual_count] = pixels;
                 visual_creates[visual_count] = true;
                 visual_count += 1;
                 new_panes += 1;
@@ -4652,15 +4607,19 @@ fn prepareTerminalTopologyWithFontBarrier(
             } else {
                 const old_rect = current.paneRect(pane) orelse
                     return error.InvalidTopology;
-                const old_pixels = try panePixelsLocal(old_rect);
+                const old_pixels = terminalPixels(try terminalPanePhysicalRect(
+                    old_rect,
+                    geometry_origin,
+                    geometry_surface,
+                ));
                 if (force_font_barrier or !std.meta.eql(old_pixels, pixels)) {
                     operations[operation_count] = .{ .resize = .{
                         .pane = toTerminalPaneId(render_pane),
-                        .pixels = toTerminalPixels(pixels),
+                        .pixels = pixels,
                     } };
                     operation_count += 1;
                     visual_panes[visual_count] = toTerminalPaneId(render_pane);
-                    visual_pixels[visual_count] = toTerminalPixels(pixels);
+                    visual_pixels[visual_count] = pixels;
                     visual_creates[visual_count] = false;
                     visual_count += 1;
                 }
@@ -4736,6 +4695,7 @@ fn prepareTerminalTopologyWithFontBarrier(
             .source = visual_source,
             .grid = derived.grid,
             .font = derived.font,
+            .backend = undefined,
             .create = visual_creates[index],
         };
         if (visual_creates[index]) {
@@ -4744,6 +4704,7 @@ fn prepareTerminalTopologyWithFontBarrier(
         }
         prepared_count += 1;
     }
+    try admitTerminalAggregate(work.terminal_visual_state, prepared_visuals[0..prepared_count]);
     var lifecycle = try work.terminals.prepareLifecycle(
         operations[0..operation_count],
         grids[0..visual_count],
@@ -4752,6 +4713,24 @@ fn prepareTerminalTopologyWithFontBarrier(
     );
     errdefer lifecycle.deinit();
     const revision = try lifecycle.publishAdmission();
+    var prepared_backend_count: usize = 0;
+    errdefer for (prepared_visuals[0..prepared_backend_count]) |*prepared|
+        prepared.backend.deinit(work.terminal_gpu);
+    for (prepared_visuals[0..prepared_count]) |*prepared| {
+        prepared.backend = try work.terminal_gpu.createPane(
+            work.terminal_fonts,
+            .{
+                .pane = @backingInt(prepared.pane),
+                .source = @backingInt(prepared.source),
+                .lifecycle_revision = @backingInt(revision),
+            },
+            prepared.font,
+            prepared.grid.rows,
+            prepared.grid.columns,
+            if (prepared.create) .initialization else .resize,
+        );
+        prepared_backend_count += 1;
+    }
     return .{
         .candidate = .{ .state = candidate.* },
         .composer = work.composer,
@@ -4803,12 +4782,22 @@ fn prepareInitialTerminalTopology(
     const pane = candidate.focusedPaneId();
     const render_pane = try session_chrome_adapter.toRenderPaneId(pane);
     const rect = candidate.paneRect(pane) orelse return error.InvalidTopology;
+    const geometry_surface = terminalSurface(surface);
+    const geometry_origin = try session_chrome_adapter.contentOrigin(
+        renderExtent(surface),
+        session_chrome_adapter.default_tab_bar_height,
+    );
+    const physical_rect = try terminalPanePhysicalRect(
+        rect,
+        geometry_origin,
+        geometry_surface,
+    );
     const source = try work.composer.registerSource();
     errdefer work.composer.removeSource(source) catch
         @panic("initial terminal source rollback failed");
     const operations = [_]terminal_handoff.Lifecycle{.{ .create = .{
         .pane = toTerminalPaneId(render_pane),
-        .pixels = toTerminalPixels(try panePixelsLocal(rect)),
+        .pixels = terminalPixels(physical_rect),
     } }};
     const derived = try deriveTerminalGrid(
         work,
@@ -4822,6 +4811,15 @@ fn prepareInitialTerminalTopology(
     var created_grid = try initTerminalVisualGrid(work.terminal_visual_state.allocator, derived.grid);
     errdefer created_grid.deinit();
     const grids = [_]terminal_handoff.DerivedGrid{derived.grid};
+    var aggregate_visuals: [1]PreparedTerminalVisual = .{.{
+        .pane = derived.grid.pane,
+        .source = toTerminalSourceId(source),
+        .grid = derived.grid,
+        .font = derived.font,
+        .backend = undefined,
+        .create = true,
+    }};
+    try admitTerminalAggregate(work.terminal_visual_state, &aggregate_visuals);
     var lifecycle = try work.terminals.prepareLifecycle(
         &operations,
         &grids,
@@ -4830,6 +4828,19 @@ fn prepareInitialTerminalTopology(
     );
     errdefer lifecycle.deinit();
     const revision = try lifecycle.publishAdmission();
+    var backend = try work.terminal_gpu.createPane(
+        work.terminal_fonts,
+        .{
+            .pane = @backingInt(derived.grid.pane),
+            .source = @backingInt(toTerminalSourceId(source)),
+            .lifecycle_revision = @backingInt(revision),
+        },
+        derived.font,
+        derived.grid.rows,
+        derived.grid.columns,
+        .initialization,
+    );
+    errdefer backend.deinit(work.terminal_gpu);
     return .{
         .candidate = .{ .state = candidate.* },
         .composer = work.composer,
@@ -4846,6 +4857,7 @@ fn prepareInitialTerminalTopology(
                 .source = toTerminalSourceId(source),
                 .grid = derived.grid,
                 .font = derived.font,
+                .backend = backend,
                 .create = true,
             };
             break :blk values;
@@ -4855,6 +4867,44 @@ fn prepareInitialTerminalTopology(
         .accepted_font_policy = &work.terminal_font_policy,
         .accepted_font_scale = &work.terminal_scale,
         .font_candidate = font_candidate,
+    };
+}
+
+fn admitTerminalAggregate(
+    state: *const TerminalVisualState,
+    prepared: []const PreparedTerminalVisual,
+) !void {
+    var cells: [terminal_gpu.pane_limit]usize = undefined;
+    var rows: [terminal_gpu.pane_limit]usize = undefined;
+    var count: usize = 0;
+    for (state.panes) |entry| if (entry) |pane| {
+        var replacement: ?terminal_handoff.DerivedGrid = null;
+        for (prepared) |candidate| {
+            if (!candidate.create and candidate.pane == pane.pane) {
+                replacement = candidate.grid;
+                break;
+            }
+        }
+        const grid_rows = if (replacement) |grid| grid.rows else pane.backend.rows;
+        const grid_cols = if (replacement) |grid| grid.columns else pane.backend.cols;
+        cells[count] = std.math.mul(usize, grid_rows, grid_cols) catch
+            return error.InvalidGeometry;
+        rows[count] = grid_rows;
+        count += 1;
+    };
+    for (prepared) |candidate| if (candidate.create) {
+        if (count == cells.len) return error.TerminalCapacity;
+        cells[count] = std.math.mul(
+            usize,
+            candidate.grid.rows,
+            candidate.grid.columns,
+        ) catch return error.InvalidGeometry;
+        rows[count] = candidate.grid.rows;
+        count += 1;
+    };
+    _ = terminal_gpu.checkedAggregate(cells[0..count], rows[0..count]) catch |failure| switch (failure) {
+        error.Capacity, error.InvalidGeometry, error.ArithmeticOverflow => return error.TerminalCapacity,
+        else => return failure,
     };
 }
 
@@ -4891,14 +4941,18 @@ fn deriveTerminalGrid(
     errdefer work.terminal_fonts.release(font) catch
         @panic("terminal font derivation rollback failed");
     const metrics = try work.terminal_fonts.metrics(font);
-    const rows_u32 = pixels.height / metrics.line_height;
-    const columns_u32 = pixels.width / metrics.advance_width;
-    if (rows_u32 == 0 or columns_u32 == 0 or rows_u32 > 128 or columns_u32 > std.math.maxInt(u16))
-        return error.InvalidGeometry;
-    const cells = std.math.mul(u32, rows_u32, columns_u32) catch return error.InvalidGeometry;
-    if (cells > render_api.terminal_cells.maximum_cells) return error.InvalidGeometry;
+    const geometry = try terminal_gpu.gridGeometry(.{
+        .x = 0,
+        .y = 0,
+        .width = pixels.width,
+        .height = pixels.height,
+    }, metrics);
     return .{
-        .grid = .{ .pane = pane, .rows = @intCast(rows_u32), .columns = @intCast(columns_u32) },
+        .grid = .{
+            .pane = pane,
+            .rows = geometry.rows,
+            .columns = geometry.columns,
+        },
         .font = font,
     };
 }
@@ -5286,9 +5340,13 @@ fn lifecycleShapeForTest(
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
     var visual_state = TerminalVisualState{
         .allocator = std.testing.allocator,
         .fonts = &fonts,
+        .gpu = &gpu,
     };
     defer visual_state.deinit();
     var visual_index: usize = 0;
@@ -5321,6 +5379,7 @@ fn lifecycleShapeForTest(
     work.terminals = &boundary;
     work.terminal_visual_state = &visual_state;
     work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
     work.terminal_font_policy = font_policy;
     work.terminal_scale = font_scale;
     var prepared = try prepareTerminalTopology(&work, current, candidate, null);
@@ -5510,9 +5569,13 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
     var visual_state = TerminalVisualState{
         .allocator = std.testing.allocator,
         .fonts = &fonts,
+        .gpu = &gpu,
     };
     defer visual_state.deinit();
     const font = try fonts.acquire(try terminal_fonts.Cache.keyFor(
@@ -5538,6 +5601,7 @@ test "terminal lifecycle copies exact pane pixels even when grid quantization co
     work.terminal_visuals = &fifo;
     work.terminal_visual_state = &visual_state;
     work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
     work.terminal_font_policy = font_policy;
     work.terminal_scale = font_scale;
     const candidate_policy = try terminal_fonts.Policy.init(7.0);
@@ -5618,7 +5682,7 @@ test "initial configure creates exact grid and commits accepted font ownership a
         .buffer_scale = 1,
         .use_viewport = false,
     };
-    const topology = try session.SessionState.init(.{ .width = 320, .height = 240 });
+    const topology = try session.SessionState.init(.{ .width = 320, .height = 216 });
     var pending = try prepareInitialTerminalTopology(
         &work,
         &topology,
@@ -5916,7 +5980,7 @@ test "pending focus resize close and reorder folds issue fresh identities" {
 }
 
 test "PendingTopology has one fixed allocation-free value" {
-    try std.testing.expectEqual(@as(usize, 25_632), @sizeOf(PendingTopology));
+    try std.testing.expectEqual(@as(usize, 66_056), @sizeOf(PendingTopology));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(PendingTopology));
     try std.testing.expectEqual(
         @as(usize, 544),
@@ -6169,7 +6233,7 @@ test "provisional startup frame exposes no terminal lifecycle or topology" {
     try std.testing.expect(terminals.takeAdmittedLifecycle() == null);
 
     const topology = try session.SessionState.init(
-        .{ .width = 320, .height = 240 },
+        .{ .width = 320, .height = 216 },
     );
     var work: CanvasWork = undefined;
     work.composer = &composer;
@@ -7145,6 +7209,70 @@ fn panePixelsLocal(rect: session.Rect) error{InvalidTopology}!render_api.canvas.
     };
 }
 
+fn terminalPanePhysicalRect(
+    rect: session.Rect,
+    origin: session_chrome_adapter.ContentOrigin,
+    surface: terminal_gpu.Surface,
+) !terminal_gpu.PhysicalRect {
+    return terminal_gpu.physicalRect(
+        try session_chrome_adapter.toRenderRect(rect, origin),
+        surface,
+    );
+}
+
+fn terminalPixels(rect: terminal_gpu.PhysicalRect) terminal_handoff.PixelSize {
+    return .{ .width = rect.width, .height = rect.height };
+}
+
+fn terminalProofSurface(width: u32, height: u32) terminal_gpu.Surface {
+    return .{
+        .logical_width = width,
+        .logical_height = height,
+        .physical_width = width,
+        .physical_height = height,
+    };
+}
+
+fn prepareTerminalBatch(
+    work: *CanvasWork,
+    allow_pending_source: bool,
+    surface: terminal_gpu.Surface,
+) !*const terminal_gpu.TerminalBatch {
+    var inputs: [terminal_gpu.pane_limit]terminal_gpu.Input = undefined;
+    var included: [terminal_gpu.pane_limit]bool = @splat(false);
+    var count: usize = 0;
+    for (work.visible_placements[0..work.visible_count]) |placement| {
+        const source = toTerminalSourceId(placement.source);
+        const index = work.terminal_visual_state.findSource(source) orelse {
+            if (allow_pending_source) continue;
+            return error.StaleTerminalVisual;
+        };
+        if (included[index]) return error.InvalidTopology;
+        const pane = &work.terminal_visual_state.panes[index].?;
+        inputs[count] = .{
+            .pane = &pane.backend,
+            .grid_update = if (pane.grid_update) |*update| update else null,
+            .placement = placement,
+            .surface = surface,
+        };
+        included[index] = true;
+        count += 1;
+    }
+    for (&work.terminal_visual_state.panes, 0..) |*entry, index| {
+        const pane = if (entry.*) |*value| value else continue;
+        if (included[index] or pane.grid_update == null) continue;
+        inputs[count] = .{
+            .pane = &pane.backend,
+            .grid_update = &pane.grid_update.?,
+            .placement = null,
+            .surface = surface,
+        };
+        included[index] = true;
+        count += 1;
+    }
+    return work.terminal_gpu.prepare(work.terminal_fonts, inputs[0..count]);
+}
+
 fn redrawChrome(
     boundary: *presentation_state.State,
     topology: *session.SessionState,
@@ -7164,6 +7292,7 @@ fn redrawChrome(
     acquire_handle: u32,
     next_acquire_point: *u64,
     pending: ?*PendingTopology,
+    prepare_terminals: bool,
 ) !RedrawResult {
     if (!try releaseReplayRetirementIfReady(
         boundary,
@@ -7186,6 +7315,26 @@ fn redrawChrome(
     else
         canvas_work.content_origin;
     try validateTerminalTopology(&candidate);
+    const slot_index = try releasedSlot(
+        boundary,
+        generation,
+        slots,
+        drm_fd,
+        canvas_work.replay.acceptedSlot(),
+    );
+    var candidate_guard = CandidateOwnershipGuard{
+        .work = canvas_work,
+        .generic_pending = false,
+    };
+    defer candidate_guard.deinit();
+    if (prepare_terminals) {
+        const prepared_count = try canvas_work.terminal_visual_state.prepareGrids();
+        candidate_guard.grids_pending = prepared_count != 0;
+        if (prepared_count == 0) {
+            candidate_guard.disarm();
+            return .unchanged;
+        }
+    }
     var bootstrap_publication: ?PreparedBootstrapPublication =
         if (pending) |value|
             if (value.new_source != null)
@@ -7193,6 +7342,7 @@ fn redrawChrome(
                     canvas_work,
                     &candidate,
                     value.bootstrap(),
+                    &value.lifecycle,
                     projection_origin,
                 )
             else
@@ -7216,22 +7366,19 @@ fn redrawChrome(
         .retry => return .retry,
         .accepted => |plan| plan,
     };
-    var candidate_guard = CandidateOwnershipGuard{ .work = canvas_work };
-    defer candidate_guard.deinit();
-    // Composer's accepted commands form the cursor-free physical base.
-    const physical_plan = try physicalPlanForBase(
-        canvas_work,
-        composer_plan,
-        try session_chrome_adapter.toRenderPaneId(candidate.focusedPaneId()),
-    );
-    const slot_index = try releasedSlot(
-        boundary,
-        generation,
-        slots,
-        drm_fd,
-        canvas_work.replay.acceptedSlot(),
-    );
+    candidate_guard.generic_pending = true;
     const slot = &slots[slot_index];
+    _ = try prepareTerminalBatch(
+        canvas_work,
+        pending != null,
+        .{
+            .logical_width = projection_surface.width,
+            .logical_height = projection_surface.height,
+            .physical_width = slot.width,
+            .physical_height = slot.height,
+        },
+    );
+    candidate_guard.terminal_pending = true;
     try beginSlotRendering(slot);
     const acquire_point = next_acquire_point.*;
     const following_acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
@@ -7241,7 +7388,7 @@ fn redrawChrome(
     errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
     const release_wait = try importReleaseSemaphore(device, dispatch, &release_sync_fd);
     defer vk.vkDestroySemaphore(device, release_wait, null);
-    try render(
+    var execution = try render(
         graphics,
         device,
         queue,
@@ -7249,7 +7396,7 @@ fn redrawChrome(
         command,
         slot,
         slot.clear_color,
-        physical_plan,
+        composer_plan,
         canvas_work.builder.alpha_pixels,
         canvas_work.builder.rgba_pixels,
         canvas_work.residency,
@@ -7258,10 +7405,10 @@ fn redrawChrome(
         drm_fd,
         acquire_handle,
         acquire_point,
+        canvas_work.terminal_visual_state,
+        &candidate_guard,
     );
-    // The candidate bytes were used only for this synchronous recording.  Do
-    // not let a cursor-bearing presentation become the next replay base.
-    canvas_work.replay.restoreCandidateBase(composer_plan);
+    candidate_guard.disarm();
     const ready_frame = presentation_state.ReadyFrame{
         .generation = generation,
         .revision = acquire_point,
@@ -7283,229 +7430,11 @@ fn redrawChrome(
         ready_frame,
         .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
     );
+    try execution.publish();
     canvas_work.replay.commit(slot_index);
     candidate_guard.disarm();
     next_acquire_point.* = following_acquire_point;
     return .published;
-}
-
-/// Records one physical cursor replacement without touching Composer or
-/// terminal visual state. The accepted replay cohort remains authoritative until
-/// completion preparation commits the replacement ring candidate.
-fn replayCursorFrame(
-    boundary: *presentation_state.State,
-    work: *CanvasWork,
-    pending: *?terminal_handoff.CursorPublication,
-    focused_source: ?render_api.canvas.SourceId,
-    slots: *[presentation_state.slot_count]Slot,
-    generation: u64,
-    graphics: *vk_surface.Context,
-    device: vk.VkDevice,
-    queue: vk.VkQueue,
-    family: u32,
-    command: vk.VkCommandBuffer,
-    dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
-    drm_fd: i32,
-    acquire_handle: u32,
-    next_acquire_point: *u64,
-) !CursorReplayResult {
-    const publication = pending.*;
-    if (publication == null) return .blocked;
-    if (focused_source == null) return .blocked;
-    if (focused_source.? != toRenderSourceId(publication.?.source)) return .rejected;
-    const accepted_overlay = switch (try publicationCursorOverlay(work, publication.?, true)) {
-        .blocked => return .blocked,
-        .rejected => return .rejected,
-        .prepared => |value| value,
-    };
-    // Reconcile the exact old replay role before asking the ring for any
-    // candidate slot.  A different released slot must never be allowed to
-    // hide an unreleased retiring cohort.
-    if (!try releaseReplayRetirementIfReady(
-        boundary,
-        work.replay,
-        generation,
-        slots,
-        drm_fd,
-    )) return .blocked;
-    const slot_index = releasedSlot(
-        boundary,
-        generation,
-        slots,
-        drm_fd,
-        work.replay.acceptedSlot(),
-    ) catch |failure| switch (failure) {
-        error.NoReleasedSlot => return .blocked,
-        else => return failure,
-    };
-    if (!work.replay.canCapture()) return .blocked;
-    const base = work.replay.acceptedPlan();
-    const candidate_cohort = work.replay.candidate();
-    const preparation = try prepareCursorReplayCandidate(
-        base,
-        accepted_overlay,
-        .{
-            .vertices = candidate_cohort.vertices,
-            .indices = candidate_cohort.indices,
-            .commands = candidate_cohort.commands,
-        },
-    );
-    const candidate = switch (preparation) {
-        .rejected => return .rejected,
-        .prepared => |value| value,
-    };
-    candidate_cohort.vertex_count = candidate.vertices.len;
-    candidate_cohort.index_count = candidate.indices.len;
-    candidate_cohort.command_count = candidate.commands.len;
-    candidate_cohort.pin_count = work.replay.cohorts[work.replay.accepted].pin_count;
-    @memcpy(
-        candidate_cohort.pins[0..candidate_cohort.pin_count],
-        work.replay.cohorts[work.replay.accepted].pins[0..candidate_cohort.pin_count],
-    );
-    work.replay.pending = true;
-    errdefer work.replay.discard();
-    const slot = &slots[slot_index];
-    const acquire_point = next_acquire_point.*;
-    const following_acquire_point = try std.math.add(u64, acquire_point, 1);
-    const release_point = try std.math.add(u64, slot.release_point, 1);
-    var release_sync_fd: i32 = -1;
-    if (c.drmSyncobjExportSyncFile(drm_fd, slot.release_handle, &release_sync_fd) != 0)
-        return error.Syncobj;
-    errdefer if (release_sync_fd >= 0) closeDescriptor(release_sync_fd);
-    const release_wait = try importReleaseSemaphore(
-        device,
-        dispatch,
-        &release_sync_fd,
-    );
-    defer vk.vkDestroySemaphore(device, release_wait, null);
-    // A preview-driven cursor burst can publish another target while this
-    // candidate is being prepared.  Revalidate at the last point before
-    // physical submission so an older target is never presented when the
-    // newer one is already waiting in the State inbox: transfer that
-    // exact latest publication to the local pending slot and retry without a
-    // terminal wake or a full Content/Pool/Composer rebuild.
-    if (takeNewerCursorReplay(
-        work.terminals,
-        publication.?,
-        pending,
-    )) {
-        work.replay.discard();
-        return .retry;
-    }
-    try beginSlotRendering(slot);
-    render(
-        graphics,
-        device,
-        queue,
-        family,
-        command,
-        slot,
-        slot.clear_color,
-        candidate,
-        work.builder.alpha_pixels,
-        work.builder.rgba_pixels,
-        null,
-        release_wait,
-        dispatch,
-        drm_fd,
-        acquire_handle,
-        acquire_point,
-    ) catch |failure| return failure;
-    // Restore the canonical cursor-free bytes before the physical slot is
-    // accepted.  The presented candidate remains owned by the ring slot; the
-    // replay cohort stays a stable base for the next cursor-only update.
-    work.replay.restoreCandidateBase(base);
-    const ready_frame = presentation_state.ReadyFrame{
-        .generation = generation,
-        .revision = acquire_point,
-        .slot = @intCast(slot_index),
-        .acquire_point = acquire_point,
-        .release_point = release_point,
-    };
-    // Submission has already occurred. Shared publication failure is fatal;
-    // retrying would submit the same physical slot twice without ownership.
-    slot.release_point = release_point;
-    publishLatestReadyFrame(
-        boundary,
-        slots,
-        slot_index,
-        .cursor_replay,
-        ready_frame,
-        .{ .drm_fd = drm_fd, .acquire_handle = acquire_handle },
-    ) catch |failure| {
-        return failure;
-    };
-    commitCursorReplayAcceptance(
-        work,
-        slot_index,
-        slot,
-        release_point,
-        next_acquire_point,
-        following_acquire_point,
-    );
-    return .published;
-}
-
-fn takeNewerCursorReplay(
-    terminals: *terminal_handoff.Boundary,
-    publication: terminal_handoff.CursorPublication,
-    pending: *?terminal_handoff.CursorPublication,
-) bool {
-    const newest = terminals.takeCursor(publication.pane) orelse return false;
-    std.debug.assert(newest.source == publication.source);
-    std.debug.assert(newest.cursor_revision > publication.cursor_revision);
-    pending.* = newest;
-    return true;
-}
-
-test "cursor replay supersession transfers the newest inbox target" {
-    var terminals = try terminal_handoff.Boundary.init(
-        std.testing.io,
-        std.testing.allocator,
-    );
-    defer terminals.deinit();
-
-    const pane: render_api.chrome.PaneId = @fromBackingInt(701);
-    const source: render_api.canvas.SourceId = @fromBackingInt(702);
-    _ = try registerTerminalForTest(&terminals, toTerminalPaneId(pane), toTerminalSourceId(source), .{ .width = 8, .height = 8 });
-    try terminals.markLive(toTerminalPaneId(pane));
-    terminals.visible_revision = 1;
-    terminals.visible_initialized = true;
-    terminals.visible_members[0] = .{ .pane = toTerminalPaneId(pane), .source = toTerminalSourceId(source) };
-    terminals.visible_member_count = 1;
-    const identity = (try terminals.cursorPublicationIdentity(toTerminalPaneId(pane), toTerminalSourceId(source))).?;
-    const target = terminal_handoff.CursorTarget{
-        .row = 2,
-        .col = 3,
-        .visible = true,
-        .shape = .block,
-        .cursor_color = .{},
-        .text_color = .{},
-    };
-    const first = terminal_handoff.CursorPublication{
-        .pane = toTerminalPaneId(pane),
-        .source = toTerminalSourceId(source),
-        .terminal_sequence = 1,
-        .cursor_revision = 1,
-        .visible_set_revision = identity.visible_set_revision,
-        .lifecycle_revision = identity.lifecycle_revision,
-        .target = target,
-    };
-    try terminals.publishCursor(first);
-    var pending: ?terminal_handoff.CursorPublication = terminals.takeCursor(toTerminalPaneId(pane)).?;
-    var second = first;
-    second.terminal_sequence = 2;
-    second.cursor_revision = 2;
-    second.target.col = 4;
-    try terminals.publishCursor(second);
-
-    try std.testing.expect(takeNewerCursorReplay(
-        &terminals,
-        first,
-        &pending,
-    ));
-    try std.testing.expectEqual(second, pending.?);
-    try std.testing.expect(terminals.takeCursor(toTerminalPaneId(pane)) == null);
 }
 
 fn validateTerminalTopology(candidate: *const session.SessionState) !void {
@@ -7519,91 +7448,6 @@ fn validateTerminalTopology(candidate: *const session.SessionState) !void {
                 return error.InvalidTopology;
         }
     }
-}
-
-/// Keeps only the newest cursor publication belonging to the currently
-/// focused live pane.  This is called both after terminal wakes and after an
-/// accepted topology/focus transition, because focus input can commit without
-/// a second PTY wake.
-fn reconcileFocusedCursor(
-    terminals: *terminal_handoff.Boundary,
-    focused_pane: render_api.chrome.PaneId,
-    pending: *?terminal_handoff.CursorPublication,
-) void {
-    const terminal_pane = toTerminalPaneId(focused_pane);
-    const focused_source = terminals.sourceFor(terminal_pane);
-    if (focused_source == null)
-        dropPendingCursor(pending)
-    else if (pending.* != null and pending.*.?.source != focused_source.?)
-        dropPendingCursor(pending);
-    retainFocusedCursor(focused_source, pending, null);
-    if (focused_source == null) return;
-    if (terminals.takeCursor(terminal_pane)) |publication| {
-        retainFocusedCursor(focused_source, pending, publication);
-    }
-}
-
-fn dropPendingCursor(pending: *?terminal_handoff.CursorPublication) void {
-    pending.* = null;
-}
-
-fn retainFocusedCursor(
-    focused_source: ?terminal_handoff.SourceId,
-    pending: *?terminal_handoff.CursorPublication,
-    newest: ?terminal_handoff.CursorPublication,
-) void {
-    if (pending.*) |publication| {
-        if (focused_source == null or publication.source != focused_source.?)
-            dropPendingCursor(pending);
-    }
-    if (newest) |publication| {
-        if (focused_source != null and publication.source == focused_source.?) {
-            if (pending.*) |old| if (!std.meta.eql(old, publication))
-                dropPendingCursor(pending);
-            pending.* = publication;
-        }
-    }
-}
-
-test "focused cursor handoff drops A and accepts B without a terminal wake" {
-    const pane_a: render_api.chrome.PaneId = @fromBackingInt(11);
-    const pane_b: render_api.chrome.PaneId = @fromBackingInt(12);
-    const source_a: render_api.canvas.SourceId = @fromBackingInt(21);
-    const source_b: render_api.canvas.SourceId = @fromBackingInt(22);
-    const target = terminal_handoff.CursorTarget{
-        .row = 2,
-        .col = 3,
-        .visible = true,
-        .shape = .block,
-        .cursor_color = .{ .r = 1, .g = 2, .b = 3 },
-        .text_color = .{ .r = 4, .g = 5, .b = 6 },
-    };
-    const publication_a = terminal_handoff.CursorPublication{
-        .pane = toTerminalPaneId(pane_a),
-        .source = toTerminalSourceId(source_a),
-        .terminal_sequence = 7,
-        .cursor_revision = 7,
-        .visible_set_revision = 1,
-        .lifecycle_revision = @fromBackingInt(1),
-        .target = target,
-    };
-    const publication_b = terminal_handoff.CursorPublication{
-        .pane = toTerminalPaneId(pane_b),
-        .source = toTerminalSourceId(source_b),
-        .terminal_sequence = 8,
-        .cursor_revision = 8,
-        .visible_set_revision = 1,
-        .lifecycle_revision = @fromBackingInt(1),
-        .target = target,
-    };
-    var pending: ?terminal_handoff.CursorPublication = publication_a;
-    retainFocusedCursor(toTerminalSourceId(source_a), &pending, null);
-    try std.testing.expectEqual(publication_a, pending.?);
-    // B's inbox publication is retained while A is focused. Once the Host
-    // focus transition is accepted, the same latest value is consumed without
-    // requiring another terminal descriptor wake.
-    retainFocusedCursor(toTerminalSourceId(source_b), &pending, publication_b);
-    try std.testing.expectEqual(publication_b, pending.?);
 }
 
 fn beginSlotRendering(slot: *Slot) error{InvalidFrame}!void {
@@ -7660,6 +7504,181 @@ const RenderAttempt = struct {
         self.complete = true;
     }
 };
+
+/// Carries the exact combined-frame shape across physical recording,
+/// submission, completion, and latest-ready publication. Production calls
+/// every transition; deterministic proofs exercise the same ordering guard.
+const PhysicalFrameExecution = struct {
+    terminal_candidates: usize,
+    command_buffers: u8 = 0,
+    render_passes: u8 = 0,
+    terminal_draws: u8 = 0,
+    generic_draws: u8 = 0,
+    submissions: u8 = 0,
+    completions: u8 = 0,
+    publications: u8 = 0,
+    phase: enum { before_pass, pass_open, terminal_drawn, generic_drawn, pass_closed } = .before_pass,
+
+    fn init(terminal_candidates: usize) PhysicalFrameExecution {
+        return .{ .terminal_candidates = terminal_candidates };
+    }
+
+    fn beginPass(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.command_buffers != 0 or self.render_passes != 0 or
+            self.terminal_draws != 0 or self.generic_draws != 0 or
+            self.submissions != 0 or self.completions != 0 or
+            self.publications != 0 or self.phase != .before_pass)
+            return error.InvalidFrame;
+        self.command_buffers = 1;
+        self.render_passes = 1;
+        self.phase = .pass_open;
+    }
+
+    fn recordTerminalDraws(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.phase != .pass_open or self.terminal_draws != 0 or
+            self.generic_draws != 0)
+            return error.InvalidFrame;
+        self.terminal_draws = 1;
+        self.phase = .terminal_drawn;
+    }
+
+    fn recordGenericDraws(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.generic_draws != 0 or
+            (self.phase != .pass_open and self.phase != .terminal_drawn) or
+            (self.terminal_candidates != 0 and self.terminal_draws != 1))
+            return error.InvalidFrame;
+        self.generic_draws = 1;
+        self.phase = .generic_drawn;
+    }
+
+    fn endPass(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.phase != .generic_drawn or self.command_buffers != 1 or
+            self.render_passes != 1)
+            return error.InvalidFrame;
+        self.phase = .pass_closed;
+    }
+
+    fn submit(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.command_buffers != 1 or self.render_passes != 1 or
+            self.generic_draws != 1 or self.phase != .pass_closed or
+            self.submissions != 0 or self.completions != 0 or
+            self.publications != 0)
+            return error.InvalidFrame;
+        self.submissions = 1;
+    }
+
+    fn complete(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.submissions != 1 or self.completions != 0 or
+            self.publications != 0)
+            return error.InvalidFrame;
+        self.completions = 1;
+    }
+
+    fn publish(self: *PhysicalFrameExecution) error{InvalidFrame}!void {
+        if (self.completions != 1 or self.publications != 0)
+            return error.InvalidFrame;
+        self.publications = 1;
+    }
+};
+
+test "T009 T013 T014 combined frame has one encoder submit completion and publication" {
+    const terminal_candidates = [_]usize{ 2, 0, 1 };
+    for (terminal_candidates) |count| {
+        var execution = PhysicalFrameExecution.init(count);
+        try execution.beginPass();
+        if (count != 0) try execution.recordTerminalDraws();
+        try execution.recordGenericDraws();
+        try execution.endPass();
+        try execution.submit();
+        try execution.complete();
+        try execution.publish();
+        try std.testing.expectEqual(count, execution.terminal_candidates);
+        try std.testing.expectEqual(@as(u8, 1), execution.command_buffers);
+        try std.testing.expectEqual(@as(u8, 1), execution.render_passes);
+        try std.testing.expectEqual(@as(u8, 1), execution.submissions);
+        try std.testing.expectEqual(@as(u8, 1), execution.completions);
+        try std.testing.expectEqual(@as(u8, 1), execution.publications);
+    }
+}
+
+test "T019 combined pass records terminal before generic exactly once" {
+    var terminal = PhysicalFrameExecution.init(1);
+    try terminal.beginPass();
+    try std.testing.expectError(error.InvalidFrame, terminal.recordGenericDraws());
+    try terminal.recordTerminalDraws();
+    try std.testing.expectError(error.InvalidFrame, terminal.recordTerminalDraws());
+    try terminal.recordGenericDraws();
+    try terminal.endPass();
+    try std.testing.expectError(error.InvalidFrame, terminal.recordGenericDraws());
+    try terminal.submit();
+    try std.testing.expectEqual(@as(u8, 1), terminal.terminal_draws);
+    try std.testing.expectEqual(@as(u8, 1), terminal.generic_draws);
+
+    var generic = PhysicalFrameExecution.init(0);
+    try generic.beginPass();
+    try generic.recordGenericDraws();
+    try generic.endPass();
+    try generic.submit();
+    try std.testing.expectEqual(@as(u8, 0), generic.terminal_draws);
+    try std.testing.expectEqual(@as(u8, 1), generic.generic_draws);
+}
+
+test "T010 post-submit terminal completion failure retains every candidate and fatal slot" {
+    var fixture: TerminalVisualTestFixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    try fixture.addPane(0, @fromBackingInt(1), @fromBackingInt(11), @fromBackingInt(1));
+    try fixture.visuals.panes[0].?.grid.set(0, 0, render_api.terminal_cells.Cell.init(
+        'x',
+        .{ .r = 1, .g = 2, .b = 3 },
+        .{ .r = 4, .g = 5, .b = 6 },
+        .{ .r = 7, .g = 8, .b = 9 },
+        .{},
+    ));
+    const accepted_before = try fixture.visuals.panes[0].?.backend.store.accepted(0);
+    try std.testing.expectEqual(@as(usize, 1), try fixture.visuals.prepareGrids());
+    var work: CanvasWork = undefined;
+    fixture.bind(&work);
+    work.visible_count = 1;
+    work.visible_placements[0] = .{
+        .source = @fromBackingInt(11),
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 16, .height = 16 },
+    };
+    _ = try prepareTerminalBatch(&work, false, terminalProofSurface(16, 16));
+    var guard = CandidateOwnershipGuard{
+        .work = &work,
+        .generic_pending = false,
+        .grids_pending = true,
+        .terminal_pending = true,
+    };
+    defer guard.deinit();
+    var slot = Slot{};
+    try beginSlotRendering(&slot);
+    var attempt = try RenderAttempt.init(&slot, 9);
+    var execution = PhysicalFrameExecution.init(fixture.gpu.candidateCount());
+    try execution.beginPass();
+    try execution.recordTerminalDraws();
+    try execution.recordGenericDraws();
+    try execution.endPass();
+    attempt.markSubmitted();
+    guard.markSubmitted();
+    try execution.submit();
+    fixture.visuals.panes[0].?.backend.pending = false;
+    try std.testing.expectError(error.NoCandidate, fixture.gpu.complete());
+    attempt.fail();
+    try std.testing.expectEqual(SlotOwnership.submitted_render_fatal, slot.ownership);
+    try std.testing.expectEqual(@as(u64, 9), slot.submitted_acquire_point);
+    try std.testing.expect(fixture.gpu.batch_pending);
+    try std.testing.expect(fixture.visuals.panes[0].?.backend.store.candidatePending());
+    try std.testing.expect(fixture.visuals.panes[0].?.grid_update != null);
+    try std.testing.expectEqualDeep(
+        accepted_before,
+        try fixture.visuals.panes[0].?.backend.store.accepted(0),
+    );
+    try std.testing.expectEqual(@as(u8, 0), execution.completions);
+    try std.testing.expectEqual(@as(u8, 0), execution.publications);
+}
 
 const ReclaimAttempt = struct {
     slot: *Slot,
@@ -7819,7 +7838,6 @@ const ReadyProducer = enum {
     startup,
     replacement,
     ordinary_redraw,
-    cursor_replay,
 };
 
 const ReclaimContext = struct {
@@ -7835,7 +7853,7 @@ fn publishLatestReadyFrame(
     frame: presentation_state.ReadyFrame,
     reclaim: ?ReclaimContext,
 ) !void {
-    std.debug.assert(@backingInt(producer) < 4);
+    std.debug.assert(@backingInt(producer) < 3);
     if (slot_index >= slots.len or frame.slot != slot_index or
         slots[slot_index].ownership != .rendering)
         return error.InvalidFrame;
@@ -8130,7 +8148,7 @@ test "P003 P005 P006 P007 slot reuse is supersession or exact release owned" {
     }, null);
     try beginSlotRendering(&slots[1]);
     slots[1].release_point = 1;
-    try publishLatestReadyFrame(&shared, &slots, 1, .cursor_replay, .{
+    try publishLatestReadyFrame(&shared, &slots, 1, .ordinary_redraw, .{
         .generation = 1,
         .revision = 2,
         .slot = 1,
@@ -8261,11 +8279,10 @@ test "P009 replacement and shutdown preserve every retained slot ownership" {
 
 test "P011 every rendered producer names one latest-ready protocol" {
     const names = @typeInfo(ReadyProducer).@"enum".field_names;
-    try std.testing.expectEqual(@as(usize, 4), names.len);
+    try std.testing.expectEqual(@as(usize, 3), names.len);
     try std.testing.expectEqualStrings("startup", names[0]);
     try std.testing.expectEqualStrings("replacement", names[1]);
     try std.testing.expectEqualStrings("ordinary_redraw", names[2]);
-    try std.testing.expectEqualStrings("cursor_replay", names[3]);
 }
 
 fn releasedSlot(
@@ -8566,10 +8583,32 @@ fn constructSlot(slot: *Slot, graphics: *const vk_surface.Context, device: vk.Vk
     offer.* = .{ .generation = surface.generation, .width = surface.physical_width, .height = surface.physical_height, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
 }
 
-fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue, family: u32, command: vk.VkCommandBuffer, slot: *Slot, color: [4]f32, surface_plan: vk_surface.Plan, alpha_pixels: []const u8, rgba_pixels: []const u8, residency_commit: ?*vk_surface.ResidencyStore, wait_semaphore: ?vk.VkSemaphore, dispatch: *const howl_vk.dispatch.ExternalImageDispatch, drm_fd: i32, acquire_handle: u32, acquire_point: u64) !void {
+fn render(
+    graphics: *vk_surface.Context,
+    device: vk.VkDevice,
+    queue: vk.VkQueue,
+    family: u32,
+    command: vk.VkCommandBuffer,
+    slot: *Slot,
+    color: [4]f32,
+    surface_plan: vk_surface.Plan,
+    alpha_pixels: []const u8,
+    rgba_pixels: []const u8,
+    residency_commit: ?*vk_surface.ResidencyStore,
+    wait_semaphore: ?vk.VkSemaphore,
+    dispatch: *const howl_vk.dispatch.ExternalImageDispatch,
+    drm_fd: i32,
+    acquire_handle: u32,
+    acquire_point: u64,
+    terminal_state: ?*TerminalVisualState,
+    candidate_guard: ?*CandidateOwnershipGuard,
+) !PhysicalFrameExecution {
     var attempt = try RenderAttempt.init(slot, acquire_point);
     errdefer attempt.fail();
-    errdefer if (residency_commit) |store| store.discard();
+    var execution = PhysicalFrameExecution.init(
+        if (terminal_state) |state| state.gpu.candidateCount() else 0,
+    );
+    errdefer if (candidate_guard == null) if (residency_commit) |store| store.discard();
     try graphics.stage(
         surface_plan,
         alpha_pixels,
@@ -8577,41 +8616,39 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
         slot.coordinate_width,
         slot.coordinate_height,
     );
+    if (terminal_state) |state| try state.gpu.stage();
     if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
     begin.sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     if (vk.vkBeginCommandBuffer(command, &begin) != vk.VK_SUCCESS) return error.Command;
-    const range = vk.VkImageSubresourceRange{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
-    var barrier = vk.VkImageMemoryBarrier{
-        .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .pNext = null,
-        .srcAccessMask = 0,
-        .dstAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .oldLayout = if (slot.external) vk.VK_IMAGE_LAYOUT_GENERAL else vk.VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .srcQueueFamilyIndex = if (slot.external) vk.VK_QUEUE_FAMILY_EXTERNAL else vk.VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = if (slot.external) family else vk.VK_QUEUE_FAMILY_IGNORED,
+    const target = vk_surface.FrameTarget{
         .image = slot.image,
-        .subresourceRange = range,
+        .attachment = slot.attachment,
+        .attachment_width = slot.width,
+        .attachment_height = slot.height,
+        .coordinate_width = slot.coordinate_width,
+        .coordinate_height = slot.coordinate_height,
+        .source_queue_family = if (slot.external) vk.VK_QUEUE_FAMILY_EXTERNAL else vk.VK_QUEUE_FAMILY_IGNORED,
+        .graphics_queue_family = family,
+        .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
-    vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, null, 0, null, 1, &barrier);
-    const recording = try graphics.record(
+    const recording_candidate = try graphics.recordPrelude(
         command,
-        slot.attachment,
-        slot.width,
-        slot.height,
-        slot.coordinate_width,
-        slot.coordinate_height,
+        target,
         surface_plan,
-        color,
     );
-    barrier.srcAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    barrier.dstAccessMask = 0;
-    barrier.oldLayout = vk.VK_IMAGE_LAYOUT_GENERAL;
-    barrier.newLayout = vk.VK_IMAGE_LAYOUT_GENERAL;
-    barrier.srcQueueFamilyIndex = family;
-    barrier.dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_EXTERNAL;
-    vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, vk.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, null, 0, null, 1, &barrier);
+    if (terminal_state) |state| try state.gpu.recordTransfers(command);
+    graphics.beginPass(command, target, color);
+    try execution.beginPass();
+    if (terminal_state) |state| try state.gpu.recordDraws(command, .{
+        .physical_width = slot.width,
+        .physical_height = slot.height,
+    });
+    if (terminal_state != null) try execution.recordTerminalDraws();
+    graphics.recordGenericDraws(command, target, surface_plan);
+    try execution.recordGenericDraws();
+    const recording = graphics.endPass(command, target, recording_candidate);
+    try execution.endPass();
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
     var export_info = std.mem.zeroes(vk.VkExportSemaphoreCreateInfo);
     export_info.sType = vk.VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO;
@@ -8636,6 +8673,8 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
     submit.pSignalSemaphores = &completion;
     if (vk.vkQueueSubmit(queue, 1, &submit, null) != vk.VK_SUCCESS) return error.Submit;
     attempt.markSubmitted();
+    if (candidate_guard) |guard| guard.markSubmitted();
+    try execution.submit();
     var fd_info = std.mem.zeroes(vk.VkSemaphoreGetFdInfoKHR);
     fd_info.sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR;
     fd_info.semaphore = completion;
@@ -8649,13 +8688,20 @@ fn render(graphics: *vk_surface.Context, device: vk.VkDevice, queue: vk.VkQueue,
     if (c.drmSyncobjImportSyncFile(drm_fd, temporary, sync_fd) != 0) return error.Syncobj;
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
-    graphics.complete(recording);
-    if (residency_commit) |store| try store.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
+    if (terminal_state) |state| {
+        try state.gpu.complete();
+        state.completeGrids();
+    }
+    graphics.complete(recording);
+    if (residency_commit) |store| store.complete() catch
+        @panic("generic residency candidate vanished");
     slot.external = true;
     slot.clear_color = color;
+    try execution.complete();
     attempt.succeed();
+    return execution;
 }
 
 fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {
@@ -8880,9 +8926,13 @@ test "terminal completion closes a non-final pane and completes only the final p
         .dpi_x = .{ .numerator = 96, .denominator = 1 },
         .dpi_y = .{ .numerator = 96, .denominator = 1 },
     };
+    var gpu_bytes: u64 = 0;
+    var gpu = try terminal_gpu.Owner.initProof(std.testing.allocator, &gpu_bytes);
+    defer gpu.deinit();
     var visual_state = TerminalVisualState{
         .allocator = std.testing.allocator,
         .fonts = &fonts,
+        .gpu = &gpu,
     };
     defer visual_state.deinit();
     for ([_]session.PaneId{ first, second }, 0..) |semantic_pane, index| {
@@ -8914,6 +8964,7 @@ test "terminal completion closes a non-final pane and completes only the final p
     work.terminals = &terminals;
     work.terminal_visual_state = &visual_state;
     work.terminal_fonts = &fonts;
+    work.terminal_gpu = &gpu;
     work.terminal_font_policy = font_policy;
     work.terminal_scale = font_scale;
     var pending: ?PendingTopology = null;

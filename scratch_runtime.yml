@@ -1,56 +1,124 @@
 schema: 1
 marathon: runtime_hot_paths
-sprint: terminal_render_foundation
-slice: host_terminal_fifo_grid_integration
-status: accepted
-base: 55fff601aa26f513129b4cfea8ef4ee32ee23361
+sprint: physical_terminal_renderer
+slice: sprint_acceptance_review
+status: review_ready
+base: 109a4f5102a28a81b117f79d572fae12a224f1de
 
 changed_product_paths:
   added:
-    - howl-host/src/terminal_fonts.zig
+    - howl-host/src/terminal_gpu.zig
+    - howl-vk/src/shaders/terminal.vert
+    - howl-vk/src/shaders/terminal.vert.spv
+    - howl-vk/src/shaders/terminal.frag
+    - howl-vk/src/shaders/terminal.frag.spv
   modified:
+    - .howl/config/howl.conf
     - howl-host/build.zig
+    - howl-host/src/config.zig
     - howl-host/src/main.zig
     - howl-host/src/renderer.zig
+    - howl-host/src/session_chrome_adapter.zig
     - howl-host/src/terminal.zig
+    - howl-host/src/terminal_fonts.zig
     - howl-host/src/terminal_handoff.zig
-  retained:
-    - howl-host/src/terminal_visual_fifo.zig
     - howl-render/src/terminal_cells.zig
-    - howl-vt render journal APIs
+    - howl-vk/build.zig
+    - howl-vk/src/abi.zig
+    - howl-vk/src/proofs.zig
+    - howl-vk/src/surface.zig
+    - howl-vk/src/terminal_cells.zig
+    - howl-vt/src/terminal.zig
+  proof_and_authority:
+    - howl-vk/tools/verify_terminal_shaders.sh
+    - howl-vk/tools/verify_terminal_shader_interface.sh
+    - tools/verify_physical_terminal_renderer.sh
+    - tools/source_audit.allow
+    - sprint_runtime_physical_terminal_renderer.yml
+    - marathon_runtime.yml
+    - scratch_runtime.yml
+    - project_source_map.yml
+    - project_design.yml
+    - project_version_scope.yml
+  unchanged_boundaries:
+    - howl-host/src/terminal_visual_fifo.zig
+    - howl-render Canvas and Chrome APIs
+    - howl-vt packages outside howl-vt/src/terminal.zig
+  preserved_unclassified_dirty_paths:
+    - "-"
   forbidden_and_absent:
     - compatibility transport
-    - physical terminal Vulkan integration
     - terminal images above VT
     - animation and blink scheduling
     - cursor trails
     - ligatures, selection, and hyperlinks
+    - per-pane submit, publication, or wake
+    - terminal Canvas ProducerUpdate
+    - capacity widening
 
 accepted_state:
   runtime_owner: PTY, VT, input, replies, consequences, child exit, lifecycle grids
-  renderer_owner: terminal FontSet cache and pane Grid table
+  renderer_owner: terminal FontSet cache, pane Grid and Store table, FontGpu epochs, and one TerminalBatch
   transport_owner: one global terminal visual FIFO
-  lifecycle_barrier: same-grid font changes use resize revision and VT replace resize
-  lower_boundary: terminal_cells.Grid final equality
-  upper_effect: no Canvas, GPU, frame, or Window publication
+  lifecycle_barrier: same-grid font changes use one resize replacement across Grid, Store, resources, and font epoch
+  physical_boundary: one combined terminal-below-Chrome command buffer, render pass, submit, completion, and latest publication
+  terminal_canvas_updates: 0
 
 review_notes:
-  - standalone Renderer tests use explicit Host to Render identity conversions
-  - obsolete completed-Canvas Chrome retry proof was deleted rather than adapted
-  - FIFO stale identities are consumed without Grid mutation
-  - fallible Grid apply retains the borrowed FIFO head for fatal owner handling
-  - Runtime is the sole production journal source; an unexpected Grid apply failure is invariant-fatal and may leave partial current-state mutation
-  - no Grid apply rollback is claimed
-  - candidate Grid and font ownership is prepared before lifecycle commit
-  - one production-shaped proof chains admitted create and resize through Runtime, FIFO, and Renderer Grid ownership
+  - global FIFO drain completes before at most one Grid.prepare per live pane
+  - checked aggregate admission precedes pane Store and physical resource construction
+  - TerminalBatch borrows at most 64 descriptors and owns no copy-region arrays
+  - distinct FontGpu candidates discard before Stores; Stores and Grids discard in reverse pane order
+  - post-submit failure retains exact fatal candidates without completion, discard, retry, or publication
+  - generic terminal cursor replay is removed after static cursor integration in the terminal shader path
+  - physical execution counters are production-consumed by the one render path
+  - blank-only first FontGpu candidates record one direct readable-layout transition and accept it only after GPU completion
+  - pre-submit atlas rollback and missing-command fatal ownership retain undefined accepted layout
+  - regular, bold, italic, and bold-italic raster tiles differ through bounded physical treatment when pixels permit
+  - obsolete cursor publication storage, Renderer drains, and cursor configuration plumbing are deleted
+  - terminal SPIR-V PushConstants and Zig use exact offsets 0, 8, 16, 24, 32, 48, 64, 80 with an 88-byte range
+  - the pure two-by-two oracle fixes instance-to-row-map, pixel/NDC, atlas, and packed-instance expectations before any runtime gate
+  - PaneResources retains exact descriptor-set, instance-buffer, row-buffer, range, sampler, view, and atlas identities after construction; bindings rejects every mismatch without descriptor rewrite
+  - PaneResources grows from 64 to 128 bytes; 64 retained pane slots add exactly 4,096 bytes and pin PendingTopology at 66,056 bytes
+  - terminal_gpu owns exact integer logical-edge to physical-attachment conversion; generic Canvas and Chrome remain logical
+  - T018 proves only already-physical grid/scissor fit and no longer overstates fractional conversion
+  - T021 carries a 100x80 logical, 160x128 physical surface and content origin 24 through Session placement, physical grid admission, Draw, NDC inputs, atlas metrics, and shared boundaries
+  - PhysicalFrameExecution is consumed at the begin-pass, terminal, generic, and end-pass calls and rejects out-of-order recording
+  - resource separation is static construction/call-graph closure; no runtime opaque-handle equality interface exists or is introduced
+
+closed_proof_blockers:
+  - T017 exact terminal descriptor bindings and storage/image ranges
+  - T018 already-physical grid/scissor admission
+  - T019 terminal-before-Chrome command ordering in one render pass
+  - T020 static terminal-resource separation construction/call-graph closure
+  - T021 full-chain fractional terminal coordinate ownership
+  - T022 absolute aggregate row-staging transfer with nonzero offset and transactional preflight
 
 validation:
-  debug_host_check: passed
-  debug_host_test: passed
-  four_mode_host: passed
-  four_mode_workspace: passed
+  four_mode_howl_vk_check_test: passed
+  four_mode_howl_render_check_test: passed
+  four_mode_host_check_test: passed
+  four_mode_workspace_check_test: passed
+  T001_through_T014: passed
+  shader_reproducibility: passed
+  terminal_shader_abi_receipt: passed
+  terminal_cpu_two_by_two_oracle: passed
+  terminal_physical_recording_proofs_T017_through_T022: passed
+  abi_layout_receipts: passed
+  accepted_layout_receipt_reproduction: passed
+  negative_census: passed
   source_audit: passed
   protocol: passed
   strict_yaml: passed
   formatting: passed
-  diff_check: passed
+  whitespace_and_conflict_census: passed
+  git_diff_check: passed
+  operator_minimal_render_rerun: passed
+  T022_runtime_evidence: >-
+    The reviewed 34-record Capture 3 carried absolute staged-row origin and
+    VkBufferCopy source offset 67,108,864 through GPU completion and frame
+    publication. The operator accepted the restored minimal one-pane visual.
+  child_exit_limitation: >-
+    Typed exit is operator-reported only; the removed temporary schema did not
+    observe child exit, PTY EOF, or terminal completion consumption.
+  temporary_terminal_render_tracing: removed

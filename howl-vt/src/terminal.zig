@@ -6171,7 +6171,10 @@ fn renderBudgetForSemantic(
             .operations = 4,
             .auxiliary_bytes = 2 * ((cell_count + 7) / 8),
         },
+        .erase_line,
         .selective_erase_line,
+        .erase_chars,
+        .rect_erase,
         .rect_selective_erase,
         .erase_display_below,
         .erase_display_above,
@@ -10786,4 +10789,35 @@ test "alternate-screen reset keeps default cursor shape for synchronized visibil
     try std.testing.expect(view.cursor_visible);
     try std.testing.expectEqual(Screen.CursorShape.block, view.cursor_shape);
     try std.testing.expect(view.cursor_blink);
+}
+
+test "ordinary CSI K budgets an exact ISO-protection mask" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 477);
+    defer terminal.deinit();
+    try terminal.enableRenderJournal();
+    terminal.consumeRenderTransaction();
+
+    const setup = "\x1bVX\x1bWY\x1b[2";
+    var setup_state_changed = false;
+    for (setup) |byte| {
+        const summary = try terminal.feedRenderByte(byte, 0);
+        setup_state_changed = setup_state_changed or summary.stateChanged();
+        if (terminal.renderTransaction() != null)
+            terminal.consumeRenderTransaction();
+    }
+    try std.testing.expect(setup_state_changed);
+
+    const erased = try terminal.feedRenderByte('K', 0);
+    try std.testing.expect(erased.stateChanged());
+    const transaction = terminal.renderTransaction().?;
+    try std.testing.expectEqual(@as(usize, 1), transaction.operations.len);
+    const masked = transaction.operations[0].masked_fill;
+    try std.testing.expectEqual(
+        RenderJournal.Rect{ .row = 0, .col = 0, .rows = 1, .cols = 477 },
+        masked.rect,
+    );
+    try std.testing.expectEqual(@as(usize, 60), masked.mask.len);
+    try std.testing.expectEqual(@as(u8, 0xfe), masked.mask[0]);
+    try std.testing.expectEqualSlices(u8, &(@as([58]u8, @splat(0xff))), masked.mask[1..59]);
+    try std.testing.expectEqual(@as(u8, 0x1f), masked.mask[59]);
 }

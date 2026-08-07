@@ -68,7 +68,10 @@ const Logical = struct {
     last_visual_sequence: u64 = 0,
     pending_completion: ?handoff.TerminalCompletion = null,
 
-    fn init(
+    /// Constructs this owner in its final Runtime slot before enabling VT's
+    /// self-referential inline journal storage.
+    fn initInPlace(
+        destination: *?Logical,
         allocator: std.mem.Allocator,
         pane: handoff.PaneId,
         source: handoff.SourceId,
@@ -76,7 +79,8 @@ const Logical = struct {
         shell: []const u8,
         command: ?[]const u8,
         grid: handoff.DerivedGrid,
-    ) !Logical {
+    ) !void {
+        std.debug.assert(destination.* == null);
         try validateGrid(grid, pane);
         var transport = try pty.Owned.init(
             allocator,
@@ -85,12 +89,13 @@ const Logical = struct {
             null,
             .{ .term = "xterm-256color", .colorterm = "truecolor" },
         );
-        errdefer transport.deinit();
+        var transport_owned = true;
+        errdefer if (transport_owned) transport.deinit();
         try transport.start(grid.columns, grid.rows);
         var machine = try vt.Terminal.init(allocator, grid.rows, grid.columns);
-        errdefer machine.deinit();
-        try machine.enableRenderJournal();
-        return .{
+        var machine_owned = true;
+        errdefer if (machine_owned) machine.deinit();
+        destination.* = .{
             .allocator = allocator,
             .pane = pane,
             .source = source,
@@ -98,6 +103,13 @@ const Logical = struct {
             .transport = transport,
             .machine = machine,
         };
+        transport_owned = false;
+        machine_owned = false;
+        errdefer {
+            destination.*.?.deinit();
+            destination.* = null;
+        }
+        try destination.*.?.machine.enableRenderJournal();
     }
 
     fn deinit(self: *Logical) void {
@@ -287,6 +299,25 @@ const Runtime = struct {
     pending_input: ?handoff.TerminalInput = null,
     pending_close: ?handoff.PaneId = null,
 
+    /// Allocates the complete bounded Runtime as one owner outside the terminal
+    /// pthread stack. Logical owners remain embedded in this single allocation.
+    fn allocate(
+        allocator: std.mem.Allocator,
+        fifo: *visual_fifo.Fifo,
+        first_command: ?[]const u8,
+    ) !*Runtime {
+        const self = try allocator.create(Runtime);
+        self.* = .{ .allocator = allocator, .fifo = fifo, .first_command = first_command };
+        return self;
+    }
+
+    /// Releases embedded Logical owners before freeing the sole Runtime allocation.
+    fn destroy(self: *Runtime) void {
+        const allocator = self.allocator;
+        self.deinit();
+        allocator.destroy(self);
+    }
+
     fn deinit(self: *Runtime) void {
         var index: usize = self.owners.len;
         while (index != 0) {
@@ -365,7 +396,8 @@ const Runtime = struct {
                 const grid = admitted.grid orelse return error.InvalidGrid;
                 const source = boundary.sourceFor(create.pane) orelse return error.UnknownPane;
                 const index = self.freeIndex() orelse return error.OwnerLimit;
-                var owner = try Logical.init(
+                try Logical.initInPlace(
+                    &self.owners[index],
                     self.allocator,
                     create.pane,
                     source,
@@ -374,9 +406,11 @@ const Runtime = struct {
                     self.first_command,
                     grid,
                 );
-                errdefer owner.deinit();
+                errdefer {
+                    self.owners[index].?.deinit();
+                    self.owners[index] = null;
+                }
                 try boundary.markLive(create.pane);
-                self.owners[index] = owner;
                 self.count += 1;
                 self.first_command = null;
             },
@@ -465,12 +499,35 @@ const Runtime = struct {
             owner.pending_completion = null;
         }
     }
+
+    /// Returns one copied validation result to its exact lifecycle candidate.
+    /// Renderer cancellation may retire that revision while Runtime validates;
+    /// only that stale copied result is obsolete. A same-revision phase error
+    /// remains an invariant failure.
+    fn completeAdmission(
+        self: *Runtime,
+        boundary: *handoff.Boundary,
+        request: handoff.RuntimeAdmissionCopy,
+    ) !void {
+        boundary.completeLifecycleAdmission(
+            request.revision,
+            self.validateAdmission(request),
+        ) catch |failure| switch (failure) {
+            error.StaleRevision => return,
+            error.CandidatePhase, error.Stopping => return failure,
+        };
+    }
 };
 
 /// Exposes the real Runtime owner only to cross-owner test builds.
 pub const testing = if (builtin.is_test) struct {
     /// Names the production Runtime storage used by integration proofs.
     pub const Owner = Runtime;
+
+    /// Returns the exact bounded Runtime allocation size for layout receipts.
+    pub fn ownerSize() usize {
+        return @sizeOf(Runtime);
+    }
     const ApplyError = switch (@typeInfo(@typeInfo(@TypeOf(Runtime.applyLifecycle)).@"fn".return_type.?)) {
         .error_union => |info| info.error_set,
         else => unreachable,
@@ -531,13 +588,13 @@ fn runFallible(
     shell: []const u8,
     first_command: ?[]const u8,
 ) !void {
-    var runtime = Runtime{ .allocator = allocator, .fifo = fifo, .first_command = first_command };
-    defer runtime.deinit();
+    const runtime = try Runtime.allocate(allocator, fifo, first_command);
+    defer runtime.destroy();
     while (true) {
         _ = try runtime.flushJournals();
 
         if (boundary.takeLifecycleAdmission()) |request| {
-            try boundary.completeLifecycleAdmission(request.revision, runtime.validateAdmission(request));
+            try runtime.completeAdmission(boundary, request);
         }
         if (runtime.pending_lifecycle == null) runtime.pending_lifecycle = boundary.takeAdmittedLifecycle();
         if (runtime.pending_lifecycle != null) _ = try runtime.applyLifecycle(boundary, shell);
@@ -701,6 +758,91 @@ test "grid validation is independent of font and pixel ownership" {
     try std.testing.expectError(error.InvalidGrid, validateGrid(.{ .pane = pane, .rows = 129, .columns = 1 }, pane));
 }
 
+test "production Runtime is one allocator-owned bounded object" {
+    try std.testing.expectEqual(@as(usize, 14_437_632), @sizeOf(Runtime));
+
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const runtime = try Runtime.allocate(std.testing.allocator, &fifo, null);
+    try std.testing.expectEqual(@as(u8, 0), runtime.count);
+    try std.testing.expect(runtime.owners[0] == null);
+    runtime.destroy();
+}
+
+test "production Runtime allocation failure propagates without partial ownership" {
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
+    try std.testing.expectError(error.OutOfMemory, Runtime.allocate(failing.allocator(), &fifo, null));
+}
+
+test "in-place Logical preserves initial journal through FIFO deep copy" {
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    var owner: ?Logical = null;
+    try Logical.initInPlace(
+        &owner,
+        std.testing.allocator,
+        @fromBackingInt(1),
+        @fromBackingInt(11),
+        @fromBackingInt(1),
+        "/bin/sh",
+        "sleep 30",
+        .{ .pane = @fromBackingInt(1), .rows = 2, .columns = 3 },
+    );
+    defer owner.?.deinit();
+
+    const borrowed = owner.?.machine.renderTransaction().?;
+    try std.testing.expectEqual(@as(usize, 2), borrowed.operations.len);
+    try std.testing.expectEqual(vt.render_journal.ReplacementKind.initialization, borrowed.operations[0].replace.kind);
+    try std.testing.expectEqual(@as(u16, 2), borrowed.operations[0].replace.rows);
+    try std.testing.expectEqual(@as(u16, 3), borrowed.operations[0].replace.cols);
+    try std.testing.expectEqual(@as(usize, 6), borrowed.operations[0].replace.cells.len);
+    try std.testing.expectEqual(std.meta.activeTag(vt.render_journal.Operation{ .cursor = .{} }), std.meta.activeTag(borrowed.operations[1]));
+
+    try std.testing.expect(try owner.?.flushJournal(&fifo));
+    const copied = fifo.take().?;
+    try std.testing.expectEqual(@as(usize, 2), copied.transaction.operations.len);
+    try std.testing.expectEqual(vt.render_journal.ReplacementKind.initialization, copied.transaction.operations[0].replace.kind);
+    try std.testing.expectEqual(@as(u16, 2), copied.transaction.operations[0].replace.rows);
+    try std.testing.expectEqual(@as(u16, 3), copied.transaction.operations[0].replace.cols);
+    try std.testing.expectEqual(@as(usize, 6), copied.transaction.operations[0].replace.cells.len);
+    try std.testing.expectEqual(std.meta.activeTag(vt.render_journal.Operation{ .cursor = .{} }), std.meta.activeTag(copied.transaction.operations[1]));
+    try fifo.complete(copied.handle);
+}
+
+test "Runtime discards only a copied validation result cancelled by Renderer" {
+    var boundary = try handoff.Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
+    defer fifo.deinit();
+    const runtime = try Runtime.allocate(std.testing.allocator, &fifo, null);
+    defer runtime.destroy();
+
+    var first = try boundary.prepareLifecycle(&.{}, &.{}, &.{}, null);
+    const first_revision = try first.publishAdmission();
+    const copied = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(first_revision, copied.revision);
+    first.deinit();
+
+    var replacement = try boundary.prepareLifecycle(&.{}, &.{}, &.{}, null);
+    defer replacement.deinit();
+    const replacement_revision = try replacement.publishAdmission();
+    try std.testing.expectEqual(
+        @backingInt(first_revision) + 1,
+        @backingInt(replacement_revision),
+    );
+    try runtime.completeAdmission(&boundary, copied);
+
+    const current = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(replacement_revision, current.revision);
+    try runtime.completeAdmission(&boundary, current);
+    try std.testing.expectEqual(
+        handoff.LifecycleAdmissionResult.admitted,
+        replacement.admissionResult().?,
+    );
+}
+
 test "FIFO pressure preserves pending VT state before any later byte mutation" {
     var fifo = try visual_fifo.Fifo.init(std.testing.io, std.testing.allocator);
     defer fifo.deinit();
@@ -796,7 +938,9 @@ test "retained input retries after PTY queue progress before later input" {
     defer fifo.deinit();
     const pane: handoff.PaneId = @fromBackingInt(1);
     const source: handoff.SourceId = @fromBackingInt(11);
-    const owner = try Logical.init(
+    var runtime = Runtime{ .allocator = std.testing.allocator, .fifo = &fifo, .first_command = null };
+    try Logical.initInPlace(
+        &runtime.owners[0],
         std.testing.allocator,
         pane,
         source,
@@ -805,8 +949,6 @@ test "retained input retries after PTY queue progress before later input" {
         "cat >/dev/null",
         .{ .pane = pane, .rows = 1, .columns = 1 },
     );
-    var runtime = Runtime{ .allocator = std.testing.allocator, .fifo = &fifo, .first_command = null };
-    runtime.owners[0] = owner;
     runtime.count = 1;
     defer runtime.deinit();
     runtime.owners[0].?.writes.count = write_queue_bytes;
@@ -883,7 +1025,9 @@ test "trailing VT journal enters FIFO before child completion ownership" {
     defer fifo.deinit();
     const pane: handoff.PaneId = @fromBackingInt(1);
     const source: handoff.SourceId = @fromBackingInt(11);
-    var owner = try Logical.init(
+    var maybe_owner: ?Logical = null;
+    try Logical.initInPlace(
+        &maybe_owner,
         std.testing.allocator,
         pane,
         source,
@@ -892,6 +1036,7 @@ test "trailing VT journal enters FIFO before child completion ownership" {
         "sleep 30",
         .{ .pane = pane, .rows = 1, .columns = 1 },
     );
+    const owner = &maybe_owner.?;
     defer owner.deinit();
     try std.testing.expect(try owner.flushJournal(&fifo));
     const initial = fifo.take().?;

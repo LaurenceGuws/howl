@@ -29,50 +29,6 @@ pub const PixelSize = struct { width: u32, height: u32 };
 /// Identifies one exact visible terminal owner.
 pub const VisibleMember = struct { pane: PaneId, source: SourceId };
 
-/// Stores one resolved cursor color.
-pub const CursorColor = packed struct(u32) { r: u8 = 0, g: u8 = 0, b: u8 = 0, a: u8 = 255 };
-
-/// Selects one static cursor shape.
-pub const CursorShape = enum(u8) { block, underline, bar, none };
-
-/// Copies one complete static semantic cursor target.
-pub const CursorTarget = struct {
-    row: u16,
-    col: u16,
-    visible: bool,
-    shape: CursorShape,
-    cursor_color: CursorColor,
-    text_color: CursorColor,
-};
-
-/// Identifies one latest cursor observation for a live source.
-pub const CursorPublication = struct {
-    pane: PaneId,
-    source: SourceId,
-    terminal_sequence: u64,
-    cursor_revision: u64,
-    visible_set_revision: u64,
-    lifecycle_revision: LifecycleRevision,
-    target: CursorTarget,
-};
-
-/// Binds a cursor target to accepted lifecycle and visibility.
-pub const CursorPublicationIdentity = struct {
-    lifecycle_revision: LifecycleRevision,
-    visible_set_revision: u64,
-};
-
-/// Reports exact cursor identity rejection.
-pub const CursorPublishError = error{
-    Stopping,
-    InvalidCursorPublication,
-    UnknownPane,
-    RetiredPane,
-    SourceStale,
-    LifecycleStale,
-    CursorRevisionStale,
-};
-
 /// Copies one bounded visible-set request.
 pub const VisibleSetRequest = struct {
     revision: u64,
@@ -173,11 +129,6 @@ pub const InitError = error{Signal};
 
 const EntryState = enum(u8) { registered, live, closing, retired, removing };
 const Entry = struct { pane: PaneId, source: SourceId, lifecycle_revision: LifecycleRevision, state: EntryState = .registered };
-const CursorSlot = struct {
-    terminal_sequence_high_water: u64 = 0,
-    cursor_revision_high_water: u64 = 0,
-    pending: ?CursorPublication = null,
-};
 const CompletionState = union(enum) { empty, pending: TerminalCompletion, consumed };
 const AdmissionPhase = enum(u8) { none, requested, validating, admitted, rejected };
 const VisiblePhase = enum(u8) { requested, prepared, committing };
@@ -220,7 +171,6 @@ pub const Boundary = struct {
     visible_member_count: u8 = 0,
     visible_revision: u64 = 0,
     visible_initialized: bool = false,
-    cursors: [owner_limit]CursorSlot = @splat(.{}),
     completions: [owner_limit]CompletionState = @splat(.empty),
     stopping: bool = false,
     stopped: bool = false,
@@ -271,6 +221,38 @@ pub const Boundary = struct {
                 .admitted, .rejected => b.admission_result,
                 else => null,
             };
+        }
+
+        /// Retains bootstrap visibility against this exact admitted create.
+        /// The registration becomes an accepted entry only when lifecycle
+        /// commit runs before visible-set commit.
+        pub fn prepareVisibleSet(
+            self: *PreparedLifecycle,
+            revision: u64,
+            members: []const VisibleMember,
+        ) error{
+            InvalidCandidateRevision,
+            InvalidPane,
+            DuplicatePane,
+            CandidatePending,
+            Stopping,
+            NotAdmitted,
+            StaleRevision,
+        }!PreparedVisibleSet {
+            const b = self.boundary;
+            b.mutex.lockUncancelable(b.io);
+            defer b.mutex.unlock(b.io);
+            if (b.stopping) return error.Stopping;
+            if (!b.candidate_active or b.admission_revision != self.revision)
+                return error.StaleRevision;
+            if (b.admission_phase != .admitted) return error.NotAdmitted;
+            try b.validateVisibleLocked(revision, members, b.admission_registration);
+            if (b.prepared_visible != null or b.visible_request != null)
+                return error.CandidatePending;
+            const request = copyVisible(revision, members);
+            b.prepared_visible = request;
+            b.visible_high_water = revision;
+            return .{ .boundary = b, .revision = revision };
         }
 
         /// Commits exactly one admitted candidate into the bounded rings.
@@ -515,7 +497,7 @@ pub const Boundary = struct {
     pub fn prepareVisibleSet(self: *Boundary, revision: u64, members: []const VisibleMember) error{ InvalidCandidateRevision, InvalidPane, DuplicatePane, CandidatePending, Stopping }!PreparedVisibleSet {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        try self.validateVisibleLocked(revision, members);
+        try self.validateVisibleLocked(revision, members, null);
         if (self.prepared_visible != null or self.visible_request != null)
             return error.CandidatePending;
         const request = copyVisible(revision, members);
@@ -528,7 +510,7 @@ pub const Boundary = struct {
     pub fn publishVisibleSet(self: *Boundary, revision: u64, members: []const VisibleMember) error{ InvalidCandidateRevision, InvalidPane, DuplicatePane, CandidatePending, Stopping }!void {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        try self.validateVisibleLocked(revision, members);
+        try self.validateVisibleLocked(revision, members, null);
         if (self.prepared_visible != null or self.visible_request != null)
             return error.CandidatePending;
         self.visible_request = .{ .request = copyVisible(revision, members) };
@@ -608,45 +590,6 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return null;
         return self.entries[index].?.source;
     }
-    /// Returns the accepted static-cursor identity for one visible live source.
-    pub fn cursorPublicationIdentity(self: *Boundary, pane: PaneId, source: SourceId) CursorPublishError!?CursorPublicationIdentity {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const index = self.find(pane) orelse return error.UnknownPane;
-        const entry = self.entries[index].?;
-        if (entry.source != source) return error.SourceStale;
-        if (entry.state != .live) return error.RetiredPane;
-        if (!self.isVisible(pane, source)) return null;
-        return .{ .lifecycle_revision = entry.lifecycle_revision, .visible_set_revision = self.visible_revision };
-    }
-    /// Replaces one pane's pending cursor after monotonic validation.
-    pub fn publishCursor(self: *Boundary, publication: CursorPublication) CursorPublishError!void {
-        if (publication.terminal_sequence == 0 or publication.cursor_revision == 0) return error.InvalidCursorPublication;
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        if (self.stopping) return error.Stopping;
-        const index = self.find(publication.pane) orelse return error.UnknownPane;
-        const entry = self.entries[index].?;
-        if (entry.source != publication.source) return error.SourceStale;
-        if (entry.state != .live) return error.RetiredPane;
-        if (entry.lifecycle_revision != publication.lifecycle_revision) return error.LifecycleStale;
-        const slot = &self.cursors[index];
-        if (publication.cursor_revision <= slot.cursor_revision_high_water or publication.terminal_sequence < slot.terminal_sequence_high_water) return error.CursorRevisionStale;
-        slot.cursor_revision_high_water = publication.cursor_revision;
-        slot.terminal_sequence_high_water = publication.terminal_sequence;
-        slot.pending = publication;
-        signal(self.renderer_fd);
-    }
-    /// Takes one pane's newest pending cursor.
-    pub fn takeCursor(self: *Boundary, pane: PaneId) ?CursorPublication {
-        self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const index = self.find(pane) orelse return null;
-        const result = self.cursors[index].pending;
-        self.cursors[index].pending = null;
-        return result;
-    }
-
     /// Publishes one at-most-once child completion for a live identity.
     pub fn publishCompletion(self: *Boundary, completion: TerminalCompletion) CompletionPublishError!void {
         if (completion.render_sequence == 0) return error.InvalidCompletion;
@@ -717,7 +660,6 @@ pub const Boundary = struct {
         const index = self.find(pane) orelse return error.UnknownPane;
         if (self.entries[index].?.state != .removing) return error.UnknownPane;
         self.entries[index] = null;
-        self.cursors[index] = .{};
         self.completions[index] = .empty;
         signal(self.renderer_fd);
     }
@@ -766,13 +708,24 @@ pub const Boundary = struct {
         return .{ .stopped = self.stopped, .failed = self.failed };
     }
 
-    fn validateVisibleLocked(self: *Boundary, revision: u64, members: []const VisibleMember) error{ InvalidCandidateRevision, InvalidPane, DuplicatePane, Stopping }!void {
+    fn validateVisibleLocked(
+        self: *Boundary,
+        revision: u64,
+        members: []const VisibleMember,
+        registration: ?Registration,
+    ) error{ InvalidCandidateRevision, InvalidPane, DuplicatePane, Stopping }!void {
         if (revision == 0 or members.len > visible_member_limit) return error.InvalidCandidateRevision;
         if (self.stopping) return error.Stopping;
         if (revision <= self.visible_high_water) return error.InvalidCandidateRevision;
         for (members, 0..) |member, index| {
-            const owner = self.find(member.pane) orelse return error.InvalidPane;
-            if (self.entries[owner].?.source != member.source) return error.InvalidPane;
+            if (self.find(member.pane)) |owner| {
+                if (self.entries[owner].?.source != member.source) return error.InvalidPane;
+            } else if (registration == null or
+                registration.?.pane != member.pane or
+                registration.?.source != member.source)
+            {
+                return error.InvalidPane;
+            }
             for (members[0..index]) |prior| if (prior.pane == member.pane or prior.source == member.source) return error.DuplicatePane;
         }
     }
@@ -836,7 +789,6 @@ pub const Boundary = struct {
         if (self.entries[index].?.state != from) return error.UnknownPane;
         self.entries[index].?.state = to;
         if (to == .retired) {
-            self.cursors[index].pending = null;
             self.completions[index] = .empty;
         }
         signal(self.renderer_fd);
@@ -930,23 +882,20 @@ fn registerForTest(
 }
 
 test "boundary layout is bounded and contains no payload bank" {
-    try std.testing.expectEqual(@as(usize, 55_448), @sizeOf(Boundary));
+    try std.testing.expectEqual(@as(usize, 49_816), @sizeOf(Boundary));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(Boundary));
 }
 
-test "registration input visibility cursor completion and retirement preserve identity" {
+test "registration input visibility completion and retirement preserve identity" {
     var b = try Boundary.init(std.testing.io, std.testing.allocator);
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(1);
     const source: SourceId = @fromBackingInt(1);
-    _ = try registerForTest(&b, pane, source);
+    const created = try registerForTest(&b, pane, source);
     try b.markLive(pane);
     var visible = try b.prepareVisibleSet(1, &.{.{ .pane = pane, .source = source }});
     visible.commit();
-    const identity = (try b.cursorPublicationIdentity(pane, source)).?;
-    try b.publishCursor(.{ .pane = pane, .source = source, .terminal_sequence = 1, .cursor_revision = 1, .visible_set_revision = identity.visible_set_revision, .lifecycle_revision = identity.lifecycle_revision, .target = .{ .row = 0, .col = 0, .visible = true, .shape = .block, .cursor_color = .{}, .text_color = .{} } });
-    try std.testing.expect(b.takeCursor(pane) != null);
-    try b.publishCompletion(.{ .pane = pane, .source = source, .lifecycle_revision = identity.lifecycle_revision, .render_sequence = 1, .termination = .{ .code = 0 } });
+    try b.publishCompletion(.{ .pane = pane, .source = source, .lifecycle_revision = created.revision, .render_sequence = 1, .termination = .{ .code = 0 } });
     const completion = b.takeCompletion().?;
     try std.testing.expect(b.completionIsCurrent(completion));
     var close = try b.prepareLifecycle(&.{.{ .close = pane }}, &.{}, &.{}, null);
@@ -982,6 +931,85 @@ test "lifecycle pressure cancellation frees capacity and signals progress" {
     const admitted = b.takeAdmittedLifecycle().?;
     try std.testing.expectEqual(pane, admitted.operation.create.pane);
     try std.testing.expectEqual(@as(u16, 24), admitted.grid.?.rows);
+}
+
+test "cancelled copied admission is stale while same revision wrong phase is fatal" {
+    var boundary = try Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+
+    var first = try boundary.prepareLifecycle(&.{}, &.{}, &.{}, null);
+    const first_revision = try first.publishAdmission();
+    const copied = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(first_revision, copied.revision);
+    first.deinit();
+
+    var replacement = try boundary.prepareLifecycle(&.{}, &.{}, &.{}, null);
+    defer replacement.deinit();
+    const replacement_revision = try replacement.publishAdmission();
+    try std.testing.expectEqual(
+        @backingInt(first_revision) + 1,
+        @backingInt(replacement_revision),
+    );
+    try std.testing.expectError(
+        error.StaleRevision,
+        boundary.completeLifecycleAdmission(copied.revision, .admitted),
+    );
+
+    const current = boundary.takeLifecycleAdmission().?;
+    try std.testing.expectEqual(replacement_revision, current.revision);
+    try boundary.completeLifecycleAdmission(current.revision, .admitted);
+    try std.testing.expectError(
+        error.CandidatePhase,
+        boundary.completeLifecycleAdmission(current.revision, .admitted),
+    );
+}
+
+test "bootstrap visibility is qualified by exact admitted lifecycle registration" {
+    var boundary = try Boundary.init(std.testing.io, std.testing.allocator);
+    defer boundary.deinit();
+    const pane: PaneId = @fromBackingInt(1);
+    const source: SourceId = @fromBackingInt(11);
+    const operations = [_]Lifecycle{.{ .create = .{
+        .pane = pane,
+        .pixels = .{ .width = 80, .height = 24 },
+    } }};
+    const grids = [_]DerivedGrid{.{ .pane = pane, .rows = 24, .columns = 80 }};
+    var lifecycle = try boundary.prepareLifecycle(
+        &operations,
+        &grids,
+        &.{},
+        .{ .pane = pane, .source = source },
+    );
+    defer lifecycle.deinit();
+    const lifecycle_revision = try lifecycle.publishAdmission();
+    const admission = boundary.takeLifecycleAdmission().?;
+    try boundary.completeLifecycleAdmission(admission.revision, .admitted);
+
+    try std.testing.expectError(
+        error.InvalidPane,
+        boundary.prepareVisibleSet(1, &.{.{ .pane = pane, .source = source }}),
+    );
+    try std.testing.expectError(
+        error.InvalidPane,
+        lifecycle.prepareVisibleSet(1, &.{.{
+            .pane = pane,
+            .source = @fromBackingInt(12),
+        }}),
+    );
+    var visible = try lifecycle.prepareVisibleSet(1, &.{.{
+        .pane = pane,
+        .source = source,
+    }});
+    defer visible.deinit();
+
+    try lifecycle.commitAdmitted();
+    visible.commit();
+    try std.testing.expectEqual(lifecycle_revision, boundary.takeAdmittedLifecycle().?.revision);
+    try std.testing.expectEqual(source, boundary.sourceFor(pane).?);
+    const accepted = boundary.acceptedVisibleSet().?;
+    try std.testing.expectEqual(@as(u8, 1), accepted.count);
+    try std.testing.expectEqual(pane, accepted.members[0].pane);
+    try std.testing.expectEqual(source, accepted.members[0].source);
 }
 
 test "lifecycle admission rejects mismatched derived ownership transactionally" {
@@ -1059,31 +1087,17 @@ test "published visibility follows requested prepared committing accepted phases
     try std.testing.expectEqual(source, accepted.members[0].source);
 }
 
-test "stale cursor and completion identities reject" {
+test "stale completion identity rejects" {
     var b = try Boundary.init(std.testing.io, std.testing.allocator);
     defer b.deinit();
     const pane: PaneId = @fromBackingInt(4);
     const source: SourceId = @fromBackingInt(4);
-    _ = try registerForTest(&b, pane, source);
+    const created = try registerForTest(&b, pane, source);
     try b.markLive(pane);
-    var visible = try b.prepareVisibleSet(1, &.{.{ .pane = pane, .source = source }});
-    visible.commit();
-    const identity = (try b.cursorPublicationIdentity(pane, source)).?;
-    const cursor = CursorPublication{
-        .pane = pane,
-        .source = source,
-        .terminal_sequence = 1,
-        .cursor_revision = 1,
-        .visible_set_revision = 1,
-        .lifecycle_revision = identity.lifecycle_revision,
-        .target = .{ .row = 0, .col = 0, .visible = true, .shape = .bar, .cursor_color = .{}, .text_color = .{} },
-    };
-    try b.publishCursor(cursor);
-    try std.testing.expectError(error.CursorRevisionStale, b.publishCursor(cursor));
     try std.testing.expectError(error.LifecycleStale, b.publishCompletion(.{
         .pane = pane,
         .source = source,
-        .lifecycle_revision = @fromBackingInt(@backingInt(identity.lifecycle_revision) + 1),
+        .lifecycle_revision = @fromBackingInt(@backingInt(created.revision) + 1),
         .render_sequence = 1,
         .termination = .{ .code = 0 },
     }));

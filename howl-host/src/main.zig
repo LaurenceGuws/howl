@@ -29,7 +29,6 @@ pub fn main(init: std.process.Init) MainError!void {
     }
     const parsed = try config.parseArguments(args[0..arg_count]);
     const loaded_config = try config.loadFile(init.io, init.gpa, parsed.config_path);
-    const owner_views = loaded_config.ownerViews();
     var boundary = try presentation_state.State.init(init.io);
     defer boundary.deinit();
     var terminals = try terminal_runtime.initBoundary(init.io, init.gpa);
@@ -53,7 +52,6 @@ pub fn main(init: std.process.Init) MainError!void {
         &terminal_visuals,
         init.gpa,
         loaded_config.fontPath(),
-        owner_views.renderer,
     }) catch |failure| {
         boundary.requestStop(.render);
         terminals.shutdown();

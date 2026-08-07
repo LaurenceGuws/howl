@@ -12,7 +12,7 @@ capabilities:
     role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
   executable:
     role: first-party Wayland, Vulkan, DMA-BUF, and explicit-synchronization lifetime foundation
-    status: persistent compositor-configured three-slot surface with Renderer-owned chrome and a multi-pane terminal runtime; terminal input and static physical cursor replay are accepted while terminal rendering is being replaced
+    status: persistent compositor-configured three-slot surface with Renderer-owned Chrome and multi-pane terminal runtime; the physical blank and printable-ASCII terminal renderer has deterministic fractional-coordinate closure and an accepted minimal operator render gate
 
 ownership:
   allocation: every module allocation uses an explicit caller-provided allocator
@@ -30,4 +30,4 @@ workspace:
   embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
 
 reconstruction:
-  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface/chrome, multi-pane terminal runtime, and static physical cursor replay; terminal rendering is intentionally absent pending replacement
+  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface and Chrome, multi-pane terminal runtime, and one bounded combined physical terminal renderer with accepted minimal operator rendering

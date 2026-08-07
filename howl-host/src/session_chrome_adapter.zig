@@ -32,7 +32,7 @@ pub const Appearance = struct {
 /// Physical surface geometry supplied by Host configure.
 pub const SurfaceGeometry = chrome.Size;
 
-/// Host-owned physical origin of content below the tab bar.
+/// Host-owned surface-logical origin of content below the tab bar.
 pub const ContentOrigin = struct { y: u16 };
 
 /// Converts a nonzero semantic tab identity to its checked Render form.
@@ -68,7 +68,7 @@ pub fn toRenderRect(local: session.Rect, origin: ContentOrigin) chrome.Error!chr
     return .{ .x = local.x, .y = @intCast(y), .width = local.width, .height = local.height };
 }
 
-/// Derives the checked physical content origin from surface and tab-bar geometry.
+/// Derives the checked surface-logical content origin from tab-bar geometry.
 pub fn contentOrigin(surface: SurfaceGeometry, tab_bar_height: u16) chrome.Error!ContentOrigin {
     if (surface.width == 0 or surface.height == 0) return error.InvalidSurface;
     return .{ .y = @min(tab_bar_height, surface.height - 1) };

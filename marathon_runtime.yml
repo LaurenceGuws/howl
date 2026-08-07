@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.5-dev
     sprint_pattern: feature/runtime_hot_paths/<sprint>
-  active_sprint: terminal_render_foundation
+  active_sprint: physical_terminal_renderer
   objective: >-
     Measure and correct the first unnecessary amplification between exact
     terminal output, semantic mutation, rendering work, GPU submission, and
@@ -60,6 +60,33 @@ sprints:
       - no generic Canvas Plan replacement
       - no physical Vulkan execution claim before Host integration
       - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks above VT
+  - id: physical_terminal_renderer
+    status: acceptance_review_ready
+    outcome: >-
+      One bounded Host adapter and physical owner lower the globally folded
+      pane Grids into exact Store and FontGpu candidates, record terminal panes
+      below Chrome in one combined render pass and submission, and publish at
+      most one latest-ready frame after exact GPU completion.
+    proof_cases: T001-T022
+    completed_slice: absolute_row_staging_transfer_correction
+    active_slice: sprint_acceptance_review
+    next_gate: >-
+      Review the tracing-free product and accepted T022 correction before the
+      physical-terminal-renderer sprint acceptance audit.
+    descriptor_ownership: >-
+      Each PaneResources retains 64 bytes of exact descriptor-set, buffer,
+      range, sampler, view, and atlas identity; later draw bindings reject a
+      mismatched pane, Resources, or FontGpu tuple without rewriting the descriptor.
+    accepted_operator_gate: >-
+      The minimal one-pane shell is visually restored. The reviewed 34-record
+      Capture 3 proved absolute row staging and VkBufferCopy source offset
+      67,108,864 through GPU completion and frame publication. Typed shell
+      exit remains operator-reported because the temporary schema did not
+      observe child-exit lifecycle ownership.
+    exclusions:
+      - no Terminal Runtime, FIFO, VT, Canvas, presentation, or Window ownership change
+      - no per-pane submit, publication, or wake
+      - no excluded terminal feature restoration or capacity widening
   - id: update_amplification
     status: pending
     outcome: exact bytes-to-presentation amplification receipt locating the first disproportionate owner

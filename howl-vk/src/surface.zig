@@ -10,7 +10,7 @@ pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
 pub const Kind = enum { solid, alpha_mask, rgba };
 const PipelineKind = enum { solid, alpha_mask, rgba };
 /// Selects one generic pipeline draw.
-pub const CommandKind = enum { solid, alpha_mask, alpha_mask_cursor, rgba };
+pub const CommandKind = enum { solid, alpha_mask, rgba };
 /// Caller-owned vertex in surface-pixel coordinates and normalized texture coordinates.
 pub const Vertex = extern struct { position: [2]f32, uv: [2]f32, color: [4]f32 };
 /// Ordered indexed draw with an exact clip rectangle.
@@ -34,6 +34,19 @@ pub const Plan = struct {
 pub const Recording = struct {
     alpha_initialized: bool,
     image_initialized: bool,
+};
+
+/// Qualifies one exported attachment for the single combined frame encoder.
+pub const FrameTarget = struct {
+    image: vk.VkImage,
+    attachment: Attachment,
+    attachment_width: u32,
+    attachment_height: u32,
+    coordinate_width: u32,
+    coordinate_height: u32,
+    source_queue_family: u32,
+    graphics_queue_family: u32,
+    destination_queue_family: u32,
 };
 
 /// Identifies one exact generic resource generation.
@@ -124,7 +137,7 @@ pub const Removal = struct { resource: ResourceGeneration };
 /// Borrows one ordered generic surface command.
 pub const FrameCommand = union(enum) {
     solid: struct { rect: Rect, clip: Rect, color: [4]f32 },
-    alpha_mask: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null, color: [4]f32, cursor_component: bool = false },
+    alpha_mask: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null, color: [4]f32 },
     rgba: struct { rect: Rect, clip: Rect, resource: ResourceGeneration, source: ?Rect = null },
 };
 /// A complete frame plus sparse resource mutations, independent of Render.
@@ -158,35 +171,6 @@ pub const max_indices: usize = max_quads * 6;
 /// Maximum ordered draw commands accepted in one plan.
 pub const max_commands: usize = max_quads;
 
-/// Selects the backend-neutral cursor overlay shape used by physical replay.
-pub const CursorOverlayShape = enum { block, underline, bar, none };
-
-/// Supplies one complete focused cursor overlay without terminal policy.
-pub const CursorOverlay = struct {
-    /// Rectangle occupied by the accepted cursor shape.
-    rect: Rect,
-    /// Surface clip inherited from the focused pane.
-    clip: Rect,
-    /// Selects the physical cursor shape.
-    shape: CursorOverlayShape,
-    /// Cursor background color.
-    color: [4]f32,
-    /// Recolor used for intersecting marked glyph components.
-    text_color: [4]f32,
-    /// Whether this overlay contributes presentation.
-    visible: bool,
-};
-
-/// Supplies fixed candidate storage for one cursor replay.
-pub const CursorReplayBuffers = struct {
-    /// Candidate vertices copied from the accepted base and overlay.
-    vertices: []Vertex,
-    /// Candidate indices copied from the accepted base and overlay.
-    indices: []u32,
-    /// Candidate draw commands copied from the accepted base and overlay.
-    commands: []Command,
-};
-
 const vertex_shader align(4) = @embedFile("shaders/chrome.vert.spv").*;
 const solid_shader align(4) = @embedFile("shaders/solid.frag.spv").*;
 const text_shader align(4) = @embedFile("shaders/text.frag.spv").*;
@@ -213,14 +197,6 @@ pub const Error = error{
     Pipeline,
     Framebuffer,
     StagingMap,
-};
-
-/// Distinguishes canonical accepted-state corruption from rejectable cursor
-/// input and from fixed replay-capacity invariants.
-pub const ReplayError = error{
-    InvalidReplayBase,
-    InvalidCursorOverlay,
-    ReplayCapacity,
 };
 
 /// Owns one exported slot's image view and compatible framebuffer.
@@ -343,26 +319,56 @@ pub const Context = struct {
             @memcpy(mapped[image_atlas_offset .. image_atlas_offset + image_atlas_pixels.len], image_atlas_pixels);
     }
 
-    /// Records atlas upload barriers, a physical-attachment clear, and ordered
-    /// draws whose logical clips are projected mechanically to that attachment.
-    /// It owns no submission, presentation, or scale policy.
-    pub fn record(
+    /// Preflights the complete generic plan, acquires the exported attachment,
+    /// and records generic atlas transfers before the one shared render pass.
+    pub fn recordPrelude(
         self: *Context,
         command: vk.VkCommandBuffer,
-        attachment: Attachment,
-        attachment_width: u32,
-        attachment_height: u32,
-        coordinate_width: u32,
-        coordinate_height: u32,
+        target: FrameTarget,
         plan: Plan,
-        clear: [4]f32,
     ) Error!Recording {
+        if (command == null or target.image == null or
+            target.attachment.framebuffer == null)
+            return error.InvalidPlan;
         const recording = try self.preflightRecording(
             plan,
-            coordinate_width,
-            coordinate_height,
-            attachment_width,
-            attachment_height,
+            target.coordinate_width,
+            target.coordinate_height,
+            target.attachment_width,
+            target.attachment_height,
+        );
+        const range = vk.VkImageSubresourceRange{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        };
+        var attachment_barrier = vk.VkImageMemoryBarrier{
+            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .oldLayout = if (target.source_queue_family == vk.VK_QUEUE_FAMILY_IGNORED)
+                vk.VK_IMAGE_LAYOUT_UNDEFINED
+            else
+                vk.VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .srcQueueFamilyIndex = target.source_queue_family,
+            .dstQueueFamilyIndex = target.graphics_queue_family,
+            .image = target.image,
+            .subresourceRange = range,
+        };
+        vk.vkCmdPipelineBarrier(
+            command,
+            vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &attachment_barrier,
         );
         if (recording.alpha_initialized) {
             const atlas_range = vk.VkImageSubresourceRange{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
@@ -396,21 +402,40 @@ pub const Context = struct {
         if (recording.image_initialized) {
             self.uploadAtlas(command, self.image_atlas_image, image_atlas_extent, image_atlas_offset, self.image_atlas_initialized);
         }
+        return recording;
+    }
+
+    /// Begins the one render pass and establishes the shared physical viewport.
+    pub fn beginPass(
+        self: *const Context,
+        command: vk.VkCommandBuffer,
+        target: FrameTarget,
+        clear: [4]f32,
+    ) void {
         const clear_value = vk.VkClearValue{ .color = .{ .float32 = clear } };
         var begin = vk.VkRenderPassBeginInfo{
             .renderPass = self.render_pass,
-            .framebuffer = attachment.framebuffer,
-            .renderArea = .{ .extent = .{ .width = attachment_width, .height = attachment_height } },
+            .framebuffer = target.attachment.framebuffer,
+            .renderArea = .{ .extent = .{ .width = target.attachment_width, .height = target.attachment_height } },
             .clearValueCount = 1,
             .pClearValues = &clear_value,
         };
         vk.vkCmdBeginRenderPass(command, &begin, vk.VK_SUBPASS_CONTENTS_INLINE);
         var viewport = vk.VkViewport{
-            .y = @floatFromInt(attachment_height),
-            .width = @floatFromInt(attachment_width),
-            .height = -@as(f32, @floatFromInt(attachment_height)),
+            .y = @floatFromInt(target.attachment_height),
+            .width = @floatFromInt(target.attachment_width),
+            .height = -@as(f32, @floatFromInt(target.attachment_height)),
         };
         vk.vkCmdSetViewport(command, 0, 1, &viewport);
+    }
+
+    /// Records generic Chrome and retained Canvas draws above terminal panes.
+    pub fn recordGenericDraws(
+        self: *const Context,
+        command: vk.VkCommandBuffer,
+        target: FrameTarget,
+        plan: Plan,
+    ) void {
         var buffers = [_]vk.VkBuffer{self.staging_buffer};
         var offsets = [_]vk.VkDeviceSize{0};
         vk.vkCmdBindVertexBuffers(command, 0, 1, &buffers, &offsets);
@@ -419,7 +444,7 @@ pub const Context = struct {
         for (plan.commands) |item| {
             const pipeline_kind: PipelineKind = switch (item.kind) {
                 .solid => .solid,
-                .alpha_mask, .alpha_mask_cursor => .alpha_mask,
+                .alpha_mask => .alpha_mask,
                 .rgba => .rgba,
             };
             if (bound == null or bound.? != pipeline_kind) {
@@ -432,17 +457,51 @@ pub const Context = struct {
                     vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
                 bound = pipeline_kind;
             }
-            var scissor = physicalScissorValidated(
-                item.clip,
-                coordinate_width,
-                coordinate_height,
-                attachment_width,
-                attachment_height,
-            );
+            var scissor = recordingScissor(item.clip, target);
             vk.vkCmdSetScissor(command, 0, 1, &scissor);
             vk.vkCmdDrawIndexed(command, item.index_count, 1, item.first_index, 0, 0);
         }
+    }
+
+    /// Ends the one render pass, releases the attachment, and returns the
+    /// already-preflighted generic recording candidate.
+    pub fn endPass(
+        _: *const Context,
+        command: vk.VkCommandBuffer,
+        target: FrameTarget,
+        recording: Recording,
+    ) Recording {
         vk.vkCmdEndRenderPass(command);
+        const range = vk.VkImageSubresourceRange{
+            .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        };
+        var barrier = vk.VkImageMemoryBarrier{
+            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = vk.VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = 0,
+            .oldLayout = vk.VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = vk.VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = target.graphics_queue_family,
+            .dstQueueFamilyIndex = target.destination_queue_family,
+            .image = target.image,
+            .subresourceRange = range,
+        };
+        vk.vkCmdPipelineBarrier(
+            command,
+            vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            vk.VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+            0,
+            0,
+            null,
+            0,
+            null,
+            1,
+            &barrier,
+        );
         return recording;
     }
 
@@ -1019,7 +1078,7 @@ pub const FrameBuilder = struct {
         for (frame.commands) |item| {
             const kind: CommandKind, const rect: Rect, const clip: Rect, const color: [4]f32, const packed_entry = switch (item) {
                 .solid => |v| .{ .solid, v.rect, v.clip, v.color, @as(?Packed, null) },
-                .alpha_mask => |v| .{ if (v.cursor_component) .alpha_mask_cursor else .alpha_mask, v.rect, v.clip, v.color, findPacked(self.entries[0..packed_count], v.resource) },
+                .alpha_mask => |v| .{ .alpha_mask, v.rect, v.clip, v.color, findPacked(self.entries[0..packed_count], v.resource) },
                 .rgba => |v| .{ .rgba, v.rect, v.clip, .{ 1, 1, 1, 1 }, findPacked(self.entries[0..packed_count], v.resource) },
             };
             if (kind != .solid and packed_entry == null) return error.InvalidFrame;
@@ -1054,461 +1113,15 @@ fn findPacked(values: []const FrameBuilder.Packed, resource: ResourceGeneration)
     return null;
 }
 
-/// Replays one accepted physical base and appends exactly one focused cursor
-/// overlay.
-///
-/// The accepted plan and its resource generations are borrowed read-only. All
-/// candidate arithmetic and component traversal completes before the first
-/// candidate byte is written, so rejection leaves both cohorts unchanged.
-pub fn replayCursor(
-    base: Plan,
-    overlay: CursorOverlay,
-    buffers: CursorReplayBuffers,
-) ReplayError!Plan {
-    return replayCursorWithCopier(ReplayBaseCopier, base, overlay, buffers);
-}
-
-const ReplayBaseCopier = struct {
-    fn copy(base: Plan, buffers: CursorReplayBuffers) void {
-        @memcpy(buffers.vertices[0..base.vertices.len], base.vertices);
-        @memcpy(buffers.indices[0..base.indices.len], base.indices);
-        @memcpy(buffers.commands[0..base.commands.len], base.commands);
-    }
-};
-
-fn replayCursorWithCopier(
-    comptime Copier: type,
-    base: Plan,
-    overlay: CursorOverlay,
-    buffers: CursorReplayBuffers,
-) ReplayError!Plan {
-    try validateReplayBase(base);
-    const active = overlay.visible and overlay.shape != .none;
-    var cursor_clip: Rect = undefined;
-    if (active)
-        cursor_clip = intersectRect(overlay.clip, overlay.rect) orelse
-            return error.InvalidCursorOverlay;
-    var extra: usize = 0;
-    if (active) {
-        extra = std.math.add(usize, extra, 1) catch return error.ReplayCapacity;
-        if (overlay.shape == .block) {
-            for (base.commands) |command| {
-                if (command.kind != .alpha_mask_cursor)
-                    continue;
-                const quad = commandRectAssumeValid(base, command);
-                if (intersectRect(quad, overlay.rect) != null and
-                    intersectRect(command.clip, overlay.clip) != null)
-                    extra = std.math.add(usize, extra, 1) catch return error.ReplayCapacity;
-            }
-        }
-    }
-    const extra_vertices = std.math.mul(usize, extra, 4) catch
-        return error.ReplayCapacity;
-    const extra_indices = std.math.mul(usize, extra, 6) catch
-        return error.ReplayCapacity;
-    const vertex_count = std.math.add(usize, base.vertices.len, extra_vertices) catch
-        return error.ReplayCapacity;
-    const index_count = std.math.add(usize, base.indices.len, extra_indices) catch
-        return error.ReplayCapacity;
-    const command_count = std.math.add(usize, base.commands.len, extra) catch
-        return error.ReplayCapacity;
-    if (vertex_count > buffers.vertices.len or
-        index_count > buffers.indices.len or
-        command_count > buffers.commands.len or
-        command_count > max_commands or
-        vertex_count > max_vertices or
-        index_count > max_indices)
-        return error.ReplayCapacity;
-
-    Copier.copy(base, buffers);
-    var vertices_used = base.vertices.len;
-    var indices_used = base.indices.len;
-    var commands_used = base.commands.len;
-    if (active) {
-        appendQuad(
-            buffers.vertices,
-            buffers.indices,
-            buffers.commands,
-            &vertices_used,
-            &indices_used,
-            &commands_used,
-            overlay.rect,
-            cursor_clip,
-            overlay.color,
-            .solid,
-            false,
-        );
-        if (overlay.shape == .block) {
-            for (base.commands) |command| {
-                if (command.kind != .alpha_mask_cursor)
-                    continue;
-                const quad = commandRectAssumeValid(base, command);
-                const clip = intersectRect(
-                    intersectRect(command.clip, overlay.clip) orelse continue,
-                    overlay.rect,
-                ) orelse continue;
-                if (intersectRect(quad, overlay.rect) == null) continue;
-                const source_vertices = quadVerticesAssumeValid(base, command);
-                const destination = buffers.vertices[vertices_used .. vertices_used + 4];
-                @memcpy(destination, source_vertices);
-                for (destination) |*vertex| vertex.color = overlay.text_color;
-                const base_index = indices_used;
-                const vertex_base: u32 = @intCast(vertices_used);
-                @memcpy(
-                    buffers.indices[indices_used .. indices_used + 6],
-                    &[_]u32{ vertex_base, vertex_base + 1, vertex_base + 2, vertex_base, vertex_base + 2, vertex_base + 3 },
-                );
-                buffers.commands[commands_used] = .{
-                    .kind = .alpha_mask,
-                    .first_index = @intCast(base_index),
-                    .index_count = 6,
-                    .clip = clip,
-                };
-                vertices_used += 4;
-                indices_used += 6;
-                commands_used += 1;
-            }
-        }
-    }
-    return .{
-        .vertices = buffers.vertices[0..vertices_used],
-        .indices = buffers.indices[0..indices_used],
-        .commands = buffers.commands[0..commands_used],
-        // An ordinary replacement may introduce a new atlas. Preserve that
-        // state through the physical cursor append; cursor-only replay bases
-        // are already accepted and therefore carry false here.
-        .atlas_changed = base.atlas_changed,
-        .image_atlas_changed = base.image_atlas_changed,
-    };
-}
-
-fn validateReplayBase(base: Plan) ReplayError!void {
-    if (base.vertices.len > max_vertices or base.indices.len > max_indices or
-        base.commands.len > max_commands)
-        return error.InvalidReplayBase;
-    for (base.vertices) |vertex| {
-        if (!validCoordinate(vertex.position[0]) or
-            !validCoordinate(vertex.position[1]))
-            return error.InvalidReplayBase;
-    }
-    for (base.indices) |index| {
-        if (@as(usize, index) >= base.vertices.len) return error.InvalidReplayBase;
-    }
-    for (base.commands) |command| {
-        if (command.index_count != 6) return error.InvalidReplayBase;
-        const end = std.math.add(usize, command.first_index, command.index_count) catch
-            return error.InvalidReplayBase;
-        if (end > base.indices.len) return error.InvalidReplayBase;
-        if (command.clip.width == 0 or command.clip.height == 0 or
-            command.clip.x < 0 or command.clip.y < 0)
-            return error.InvalidReplayBase;
-        const rectangle = commandRect(base, command) catch
-            return error.InvalidReplayBase;
-        if (rectangle.width == 0 or rectangle.height == 0)
-            return error.InvalidReplayBase;
-    }
-}
-
-fn quadVertices(base: Plan, command: Command) ?[]const Vertex {
-    const start = @as(usize, command.first_index);
-    const end = std.math.add(usize, start, 6) catch return null;
-    if (end > base.indices.len) return null;
-    const first = base.indices[start];
-    const first_plus_one = std.math.add(u32, first, 1) catch return null;
-    const first_plus_two = std.math.add(u32, first, 2) catch return null;
-    const first_plus_three = std.math.add(u32, first, 3) catch return null;
-    if (base.indices[start + 1] != first_plus_one or
-        base.indices[start + 2] != first_plus_two or
-        base.indices[start + 3] != first or
-        base.indices[start + 4] != first_plus_two or
-        base.indices[start + 5] != first_plus_three)
-        return null;
-    const vertex_start = @as(usize, first);
-    const vertex_end = std.math.add(usize, vertex_start, 4) catch return null;
-    if (vertex_end > base.vertices.len) return null;
-    return base.vertices[vertex_start..vertex_end];
-}
-
-fn quadVerticesAssumeValid(base: Plan, command: Command) []const Vertex {
-    return quadVertices(base, command) orelse unreachable;
-}
-
-fn commandRect(base: Plan, command: Command) Error!Rect {
-    const vertices = quadVertices(base, command) orelse return error.InvalidPlan;
-    var left: f32 = vertices[0].position[0];
-    var right = left;
-    var top: f32 = vertices[0].position[1];
-    var bottom = top;
-    for (vertices[1..]) |vertex| {
-        left = @min(left, vertex.position[0]);
-        right = @max(right, vertex.position[0]);
-        top = @min(top, vertex.position[1]);
-        bottom = @max(bottom, vertex.position[1]);
-    }
-    const x_value = checkedCoordinate(left) orelse return error.InvalidPlan;
-    const y_value = checkedCoordinate(top) orelse return error.InvalidPlan;
-    const right_value = checkedCoordinate(right) orelse return error.InvalidPlan;
-    const bottom_value = checkedCoordinate(bottom) orelse return error.InvalidPlan;
-    const x = std.math.cast(i32, x_value) orelse return error.InvalidPlan;
-    const y = std.math.cast(i32, y_value) orelse return error.InvalidPlan;
-    if (right_value <= x_value or bottom_value <= y_value)
-        return error.InvalidPlan;
-    const width = std.math.cast(u32, std.math.sub(i64, right_value, x_value) catch
-        return error.InvalidPlan) orelse return error.InvalidPlan;
-    const height = std.math.cast(u32, std.math.sub(i64, bottom_value, y_value) catch
-        return error.InvalidPlan) orelse return error.InvalidPlan;
-    return .{ .x = x, .y = y, .width = width, .height = height };
-}
-
-fn validCoordinate(value: f32) bool {
-    return checkedCoordinate(value) != null;
-}
-
-fn checkedCoordinate(value: f32) ?i64 {
-    if (!std.math.isFinite(value)) return null;
-    const as_f64 = @as(f64, @floatCast(value));
-    const max_i64 = @as(f64, @floatFromInt(std.math.maxInt(i64)));
-    if (as_f64 <= -max_i64 or as_f64 >= max_i64) return null;
-    return @intFromFloat(value);
-}
-
-fn commandRectAssumeValid(base: Plan, command: Command) Rect {
-    return commandRect(base, command) catch unreachable;
-}
-
-fn intersectRect(left: Rect, right: Rect) ?Rect {
-    const x = @max(left.x, right.x);
-    const y = @max(left.y, right.y);
-    const right_x = @min(@as(i64, left.x) + left.width, @as(i64, right.x) + right.width);
-    const bottom_y = @min(@as(i64, left.y) + left.height, @as(i64, right.y) + right.height);
-    if (right_x <= x or bottom_y <= y) return null;
-    return .{ .x = x, .y = y, .width = @intCast(right_x - x), .height = @intCast(bottom_y - y) };
-}
-
-test "cursor replay copies the accepted base exactly once after preflight" {
-    const CountingCopier = struct {
-        var calls: usize = 0;
-
-        fn copy(base: Plan, buffers: CursorReplayBuffers) void {
-            calls += 1;
-            ReplayBaseCopier.copy(base, buffers);
-        }
-    };
-    const base = Plan{
-        .vertices = &.{},
-        .indices = &.{},
-        .commands = &.{},
-        .atlas_changed = false,
-    };
-    var vertices: [4]Vertex = undefined;
-    var indices: [6]u32 = undefined;
-    var commands: [1]Command = undefined;
-    const buffers = CursorReplayBuffers{
-        .vertices = &vertices,
-        .indices = &indices,
-        .commands = &commands,
-    };
-    const valid = CursorOverlay{
-        .rect = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .clip = .{ .x = 0, .y = 0, .width = 1, .height = 1 },
-        .shape = .block,
-        .color = .{ 1, 1, 1, 1 },
-        .text_color = .{ 0, 0, 0, 1 },
-        .visible = true,
-    };
-    CountingCopier.calls = 0;
-    const replayed = try replayCursorWithCopier(
-        CountingCopier,
-        base,
-        valid,
-        buffers,
+/// Returns the exact physical scissor consumed by generic draw recording.
+fn recordingScissor(logical: Rect, target: FrameTarget) vk.VkRect2D {
+    return physicalScissorValidated(
+        logical,
+        target.coordinate_width,
+        target.coordinate_height,
+        target.attachment_width,
+        target.attachment_height,
     );
-    try std.testing.expectEqual(@as(usize, 1), CountingCopier.calls);
-    try std.testing.expectEqual(@as(usize, 1), replayed.commands.len);
-
-    var invalid = valid;
-    invalid.rect.width = 0;
-    CountingCopier.calls = 0;
-    try std.testing.expectError(
-        error.InvalidCursorOverlay,
-        replayCursorWithCopier(CountingCopier, base, invalid, buffers),
-    );
-    try std.testing.expectEqual(@as(usize, 0), CountingCopier.calls);
-}
-
-test "cursor replay recolors marked components and rolls back undersized output" {
-    const base_vertices = [_]Vertex{
-        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
-    };
-    const base_indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
-    const base_commands = [_]Command{.{
-        .kind = .alpha_mask,
-        .first_index = 0,
-        .index_count = 6,
-        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-    }};
-    const base = Plan{
-        .vertices = &base_vertices,
-        .indices = &base_indices,
-        .commands = &base_commands,
-        .atlas_changed = true,
-        .image_atlas_changed = true,
-    };
-    var vertices: [16]Vertex = undefined;
-    var indices: [24]u32 = undefined;
-    var commands: [4]Command = undefined;
-    const replayed = try replayCursor(base, .{
-        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-        .shape = .block,
-        .color = .{ 0, 0, 0, 1 },
-        .text_color = .{ 0, 1, 0, 1 },
-        .visible = true,
-    }, .{ .vertices = &vertices, .indices = &indices, .commands = &commands });
-    try std.testing.expectEqual(@as(usize, 3), replayed.commands.len);
-    try std.testing.expectEqual(@as(usize, 12), replayed.vertices.len);
-    try std.testing.expect(replayed.atlas_changed);
-    try std.testing.expect(replayed.image_atlas_changed);
-    try std.testing.expectEqual(@as(f32, 0), replayed.vertices[8].color[0]);
-    try std.testing.expectEqual(@as(f32, 1), replayed.vertices[8].color[1]);
-
-    @memset(@as([]u8, @ptrCast(&vertices)), 0xa5);
-    @memset(@as([]u8, @ptrCast(&indices)), 0xa5);
-    @memset(@as([]u8, @ptrCast(&commands)), 0xa5);
-    try std.testing.expectError(error.ReplayCapacity, replayCursor(base, .{
-        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-        .shape = .block,
-        .color = .{ 0, 0, 0, 1 },
-        .text_color = .{ 0, 1, 0, 1 },
-        .visible = true,
-    }, .{ .vertices = vertices[0..4], .indices = indices[0..6], .commands = commands[0..2] }));
-    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&vertices[0])).*);
-    try std.testing.expectEqual(@as(u8, 0xa5), @as(*const u8, @ptrCast(&commands[0])).*);
-}
-
-test "cursor replay rejects malformed geometry before candidate mutation" {
-    const base_vertices = [_]Vertex{
-        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 8, 16 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
-        .{ .position = .{ 0, 16 }, .uv = .{ 0, 1 }, .color = .{ 1, 1, 1, 1 } },
-    };
-    const base_indices = [_]u32{ 0, 1, 2, 0, 2, 3 };
-    const base_commands = [_]Command{.{
-        .kind = .alpha_mask_cursor,
-        .first_index = 0,
-        .index_count = 6,
-        .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-    }};
-    var vertices: [16]Vertex = undefined;
-    var indices: [24]u32 = undefined;
-    var commands: [4]Command = undefined;
-    const poison = struct {
-        fn apply(vertex_storage: []Vertex, index_storage: []u32, command_storage: []Command) void {
-            @memset(@as([]u8, @ptrCast(vertex_storage)), 0xa5);
-            @memset(@as([]u8, @ptrCast(index_storage)), 0xa5);
-            @memset(@as([]u8, @ptrCast(command_storage)), 0xa5);
-        }
-        fn expect(vertex_storage: []Vertex, index_storage: []u32, command_storage: []Command) !void {
-            for (std.mem.asBytes(vertex_storage)) |byte|
-                try std.testing.expectEqual(@as(u8, 0xa5), byte);
-            for (std.mem.asBytes(index_storage)) |byte|
-                try std.testing.expectEqual(@as(u8, 0xa5), byte);
-            for (std.mem.asBytes(command_storage)) |byte|
-                try std.testing.expectEqual(@as(u8, 0xa5), byte);
-        }
-    }{};
-    const overlay = CursorOverlay{
-        .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 },
-        .clip = .{ .x = 32, .y = 32, .width = 8, .height = 16 },
-        .shape = .block,
-        .color = .{ 0, 0, 0, 1 },
-        .text_color = .{ 1, 1, 1, 1 },
-        .visible = true,
-    };
-    poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidCursorOverlay, replayCursor(
-        .{ .vertices = &base_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
-        overlay,
-        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
-    ));
-    try poison.expect(&vertices, &indices, &commands);
-
-    var nan_vertices = base_vertices;
-    nan_vertices[0].position[0] = std.math.nan(f32);
-    poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
-        .{ .vertices = &nan_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
-        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
-        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
-    ));
-    try poison.expect(&vertices, &indices, &commands);
-
-    var infinite_vertices = base_vertices;
-    infinite_vertices[1].position[0] = std.math.inf(f32);
-    poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
-        .{ .vertices = &infinite_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
-        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
-        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
-    ));
-    try poison.expect(&vertices, &indices, &commands);
-
-    var out_of_range_vertices = base_vertices;
-    out_of_range_vertices[2].position[0] = 3.0e20;
-    poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
-        .{ .vertices = &out_of_range_vertices, .indices = &base_indices, .commands = &base_commands, .atlas_changed = false },
-        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
-        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
-    ));
-    try poison.expect(&vertices, &indices, &commands);
-
-    var malformed_indices = base_indices;
-    malformed_indices[1] = 3;
-    poison.apply(&vertices, &indices, &commands);
-    try std.testing.expectError(error.InvalidReplayBase, replayCursor(
-        .{ .vertices = &base_vertices, .indices = &malformed_indices, .commands = &base_commands, .atlas_changed = false },
-        .{ .rect = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .clip = .{ .x = 0, .y = 0, .width = 8, .height = 16 }, .shape = .block, .color = .{ 0, 0, 0, 1 }, .text_color = .{ 1, 1, 1, 1 }, .visible = true },
-        .{ .vertices = &vertices, .indices = &indices, .commands = &commands },
-    ));
-    try poison.expect(&vertices, &indices, &commands);
-}
-
-fn appendQuad(
-    vertices: []Vertex,
-    indices: []u32,
-    commands: []Command,
-    vertex_count: *usize,
-    index_count: *usize,
-    command_count: *usize,
-    rect: Rect,
-    clip: Rect,
-    color: [4]f32,
-    kind: Kind,
-    cursor_component: bool,
-) void {
-    const vertex_base: u32 = @intCast(vertex_count.*);
-    vertices[vertex_count.* + 0] = .{ .position = .{ @floatFromInt(rect.x), @floatFromInt(rect.y) }, .uv = .{ 0, 0 }, .color = color };
-    vertices[vertex_count.* + 1] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(rect.y) }, .uv = .{ 0, 0 }, .color = color };
-    vertices[vertex_count.* + 2] = .{ .position = .{ @floatFromInt(@as(i64, rect.x) + rect.width), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ 0, 0 }, .color = color };
-    vertices[vertex_count.* + 3] = .{ .position = .{ @floatFromInt(rect.x), @floatFromInt(@as(i64, rect.y) + rect.height) }, .uv = .{ 0, 0 }, .color = color };
-    @memcpy(indices[index_count.* .. index_count.* + 6], &[_]u32{ vertex_base, vertex_base + 1, vertex_base + 2, vertex_base, vertex_base + 2, vertex_base + 3 });
-    const command_kind: CommandKind = if (cursor_component)
-        .alpha_mask_cursor
-    else switch (kind) {
-        .solid => .solid,
-        .alpha_mask => .alpha_mask,
-        .rgba => .rgba,
-    };
-    commands[command_count.*] = .{ .kind = command_kind, .first_index = @intCast(index_count.*), .index_count = 6, .clip = clip };
-    vertex_count.* += 4;
-    index_count.* += 6;
-    command_count.* += 1;
 }
 
 fn pixelToNdc(position: [2]f32, width: u32, height: u32) Error![2]f32 {
@@ -2085,8 +1698,20 @@ test "recording preflight rejects a late collapsing physical scissor" {
     try std.testing.expect(!context.image_atlas_initialized);
 }
 
-test "record rejects malformed plans without changing atlas state" {
+test "record prelude rejects malformed plans without changing atlas state" {
     var context = Context{};
+    const target = FrameTarget{
+        .image = @ptrFromInt(1),
+        .attachment = .{ .framebuffer = @ptrFromInt(1) },
+        .attachment_width = 1,
+        .attachment_height = 1,
+        .coordinate_width = 1,
+        .coordinate_height = 1,
+        .source_queue_family = vk.VK_QUEUE_FAMILY_IGNORED,
+        .graphics_queue_family = 0,
+        .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
+    };
+    const command: vk.VkCommandBuffer = @ptrFromInt(1);
     const before_alpha = context.atlas_initialized;
     const before_image = context.image_atlas_initialized;
     const malformed = Plan{
@@ -2096,14 +1721,14 @@ test "record rejects malformed plans without changing atlas state" {
         .atlas_changed = true,
         .image_atlas_changed = true,
     };
-    try std.testing.expectError(error.InvalidPlan, context.record(null, .{}, 1, 1, 1, 1, malformed, .{ 0, 0, 0, 1 }));
+    try std.testing.expectError(error.InvalidPlan, context.recordPrelude(command, target, malformed));
     try std.testing.expectEqual(before_alpha, context.atlas_initialized);
     try std.testing.expectEqual(before_image, context.image_atlas_initialized);
     var mapped_bytes = [_]u8{ 0x5a, 0xa5 };
     context.mapped = mapped_bytes[0..].ptr;
     try std.testing.expectError(error.InvalidPlan, context.stage(malformed, &.{}, &.{}, 1, 1));
     try std.testing.expectEqualSlices(u8, &.{ 0x5a, 0xa5 }, &mapped_bytes);
-    try std.testing.expectError(error.InvalidPlan, context.record(null, .{}, 1, 1, 1, 1, .{ .vertices = malformed.vertices, .indices = malformed.indices, .commands = &.{.{ .kind = .solid, .first_index = 0, .index_count = 1, .clip = .{ .x = 0, .y = 0, .width = 2, .height = 1 } }}, .atlas_changed = true }, .{ 0, 0, 0, 1 }));
+    try std.testing.expectError(error.InvalidPlan, context.recordPrelude(command, target, .{ .vertices = malformed.vertices, .indices = malformed.indices, .commands = &.{.{ .kind = .solid, .first_index = 0, .index_count = 1, .clip = .{ .x = 0, .y = 0, .width = 2, .height = 1 } }}, .atlas_changed = true }));
     try Context.validatePlan(.{
         .vertices = &.{
             .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },

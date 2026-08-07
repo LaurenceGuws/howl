@@ -29,14 +29,14 @@ settled_capabilities:
   - name: render
     acceptance: reusable native text, generated glyphs, generic Canvas composition, and Chrome composition
   - name: executable
-    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, session topology, and static physical cursor presentation; terminal rendering is intentionally absent pending replacement
+    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, session topology, and an accepted bounded blank and printable-ASCII physical terminal path
 
 accepted_implementation:
   - The tracked Zig pin drives every workspace and child command.
   - Window alone dispatches Wayland and presents completed copied slots.
   - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
   - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
-  - Cursor presentation is independent of terminal text publication and accepted frame replacement.
+  - Static cursor state is lowered with terminal cells into the pane Store and terminal shader path; the superseded generic terminal cursor replay is absent.
   - Every maintained package and Host manifest uses version 0.1.6-dev.
 
 historical_manifests:
@@ -51,6 +51,7 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
+  - Complete the physical terminal renderer acceptance audit before any cast workload.
   - Make child exit an exact pane lifecycle event and final-Host completion boundary.
   - Establish reproducible Neovim-scroll and rain workloads.
   - Measure external CPU/GPU cost before adding bounded owner instrumentation.

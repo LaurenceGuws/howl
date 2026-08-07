@@ -217,9 +217,8 @@ pub fn retainedCpuBytes(limits: Limits) Error!usize {
         rows * @sizeOf(u16),
         ((rows + 63) / 64) * @sizeOf(u64),
         rows * @sizeOf(u16),
-        structured * @sizeOf(RowRotation),
         structured * @sizeOf(FillHint),
-        structured * @sizeOf(RowRotation),
+        rows * @sizeOf(RowRotation),
         structured * @sizeOf(FillUpdate),
         sparse * @sizeOf(CellUpdate),
         sparse * @sizeOf(bool),
@@ -233,7 +232,6 @@ pub const Error = error{
     InvalidLimits,
     InvalidGeometry,
     InvalidIdentity,
-    StructuredOperationLimit,
     SparseUpdateLimit,
     CandidatePending,
     NoCandidate,
@@ -396,8 +394,6 @@ pub const Grid = struct {
     touched_rows: []u16,
     touched_row_count: usize = 0,
     row_dirty_count: usize = 0,
-    row_history: []RowRotation,
-    row_history_count: usize = 0,
     fill_hints: []FillHint,
     fill_hint_count: usize = 0,
     candidate_rows: []RowRotation,
@@ -443,11 +439,9 @@ pub const Grid = struct {
         errdefer allocator.free(row_tracked_words);
         const touched_rows = allocator.alloc(u16, limits.rows) catch return error.OutOfMemory;
         errdefer allocator.free(touched_rows);
-        const row_history = allocator.alloc(RowRotation, limits.structured_operations) catch return error.OutOfMemory;
-        errdefer allocator.free(row_history);
         const fill_hints = allocator.alloc(FillHint, limits.structured_operations) catch return error.OutOfMemory;
         errdefer allocator.free(fill_hints);
-        const candidate_rows = allocator.alloc(RowRotation, limits.structured_operations) catch return error.OutOfMemory;
+        const candidate_rows = allocator.alloc(RowRotation, limits.rows) catch return error.OutOfMemory;
         errdefer allocator.free(candidate_rows);
         const candidate_fills = allocator.alloc(FillUpdate, limits.structured_operations) catch return error.OutOfMemory;
         errdefer allocator.free(candidate_fills);
@@ -477,7 +471,6 @@ pub const Grid = struct {
             .row_baselines = row_baselines,
             .row_tracked_words = row_tracked_words,
             .touched_rows = touched_rows,
-            .row_history = row_history,
             .fill_hints = fill_hints,
             .candidate_rows = candidate_rows,
             .candidate_fills = candidate_fills,
@@ -495,7 +488,6 @@ pub const Grid = struct {
         self.allocator.free(self.candidate_fills);
         self.allocator.free(self.candidate_rows);
         self.allocator.free(self.fill_hints);
-        self.allocator.free(self.row_history);
         self.allocator.free(self.touched_rows);
         self.allocator.free(self.row_tracked_words);
         self.allocator.free(self.row_baselines);
@@ -535,8 +527,9 @@ pub const Grid = struct {
             @as(usize, row) + row_count > self.rows or
             @as(usize, col) + col_count > self.cols)
             return error.InvalidGeometry;
-        if (self.fill_hint_count + row_count > self.fill_hints.len)
-            return error.StructuredOperationLimit;
+        const retain_hints = row_count <= self.fill_hints.len;
+        if (retain_hints and self.fill_hint_count + row_count > self.fill_hints.len)
+            self.fill_hint_count = 0;
         if (!self.replacement_pending and self.rendered_valid) {
             var additional: usize = 0;
             var preflight_row: u16 = 0;
@@ -554,12 +547,14 @@ pub const Grid = struct {
         var row_offset: u16 = 0;
         while (row_offset < row_count) : (row_offset += 1) {
             const first = try self.physicalIndex(row + row_offset, col);
-            self.fill_hints[self.fill_hint_count] = .{
-                .first = first,
-                .count = col_count,
-                .cell = cell,
-            };
-            self.fill_hint_count += 1;
+            if (retain_hints) {
+                self.fill_hints[self.fill_hint_count] = .{
+                    .first = first,
+                    .count = col_count,
+                    .cell = cell,
+                };
+                self.fill_hint_count += 1;
+            }
             for (first..first + col_count) |index| try self.applyCell(index, cell);
         }
     }
@@ -580,11 +575,7 @@ pub const Grid = struct {
             source_first - destination_first
         else
             destination_first - source_first;
-        if (distance > count or self.row_history_count == self.row_history.len)
-            return if (distance > count)
-                error.InvalidGeometry
-            else
-                error.StructuredOperationLimit;
+        if (distance > count) return error.InvalidGeometry;
         const first = @min(source_first, destination_first);
         const region_count = count + distance;
         self.trackRows(first, region_count);
@@ -596,12 +587,6 @@ pub const Grid = struct {
             @intCast(distance);
         rotateRows(self.current_row_map[first .. first + region_count], self.row_work[0..region_count], signed_shift);
         self.addRowDifferences(first, region_count);
-        self.row_history[self.row_history_count] = .{
-            .first = first,
-            .count = region_count,
-            .shift = signed_shift,
-        };
-        self.row_history_count += 1;
     }
 
     /// Applies one overlapping rectangular copy in logical terminal order.
@@ -850,13 +835,7 @@ pub const Grid = struct {
         }
 
         if (rows_changed) {
-            if (self.row_history_count > self.candidate_rows.len)
-                return error.StructuredOperationLimit;
-            @memcpy(
-                self.candidate_rows[0..self.row_history_count],
-                self.row_history[0..self.row_history_count],
-            );
-            self.candidate_row_count = self.row_history_count;
+            self.deriveRowRotations();
         }
         @memset(self.candidate_covered[0..self.touched_cell_count], false);
         var hint_index = self.fill_hint_count;
@@ -864,8 +843,7 @@ pub const Grid = struct {
             hint_index -= 1;
             const hint = self.fill_hints[hint_index];
             if (!self.fillContributes(hint)) continue;
-            if (self.candidate_fill_count == self.candidate_fills.len)
-                return error.StructuredOperationLimit;
+            std.debug.assert(self.candidate_fill_count < self.candidate_fills.len);
             self.candidate_fills[self.candidate_fill_count] = .{
                 .first = @intCast(hint.first),
                 .count = @intCast(hint.count),
@@ -1024,6 +1002,64 @@ pub const Grid = struct {
         self.candidate_glyph_count += 1;
     }
 
+    fn deriveRowRotations(self: *Grid) void {
+        std.debug.assert(self.candidate_rows.len >= self.rows);
+        for (self.row_work[0..self.rows], 0..) |*row, logical| {
+            row.* = if (bit(self.row_tracked_words, logical))
+                self.row_baselines[logical]
+            else
+                self.current_row_map[logical];
+        }
+        var first: usize = 0;
+        while (first < self.rows and self.row_work[first] == self.current_row_map[first])
+            first += 1;
+        if (first == self.rows) return;
+        var last: usize = self.rows - 1;
+        while (self.row_work[last] == self.current_row_map[last]) last -= 1;
+        const rotation_count = last - first + 1;
+        var source_offset: usize = 1;
+        while (self.row_work[first + source_offset] != self.current_row_map[first])
+            source_offset += 1;
+        var exact_rotation = true;
+        for (0..rotation_count) |offset| {
+            if (self.current_row_map[first + offset] !=
+                self.row_work[first + (offset + source_offset) % rotation_count])
+            {
+                exact_rotation = false;
+                break;
+            }
+        }
+        if (exact_rotation) {
+            self.candidate_rows[0] = .{
+                .first = @intCast(first),
+                .count = @intCast(rotation_count),
+                .shift = -@as(i16, @intCast(source_offset)),
+            };
+            self.candidate_row_count = 1;
+            return;
+        }
+        for (0..self.rows) |logical| {
+            const desired = self.current_row_map[logical];
+            if (self.row_work[logical] == desired) continue;
+            var found = logical + 1;
+            while (self.row_work[found] != desired) : (found += 1) {}
+            const count = found - logical + 1;
+            std.debug.assert(self.candidate_row_count < self.candidate_rows.len);
+            self.candidate_rows[self.candidate_row_count] = .{
+                .first = @intCast(logical),
+                .count = @intCast(count),
+                .shift = -1,
+            };
+            self.candidate_row_count += 1;
+            std.mem.rotate(u16, self.row_work[logical .. found + 1], 1);
+        }
+        std.debug.assert(std.mem.eql(
+            u16,
+            self.row_work[0..self.rows],
+            self.current_row_map[0..self.rows],
+        ));
+    }
+
     fn clearMutationTracking(self: *Grid) void {
         clearTouchedCellSlots(self.cell_slots, self.touched_cells[0..self.touched_cell_count]);
         clearTouchedRows(self.row_tracked_words, self.touched_rows[0..self.touched_row_count]);
@@ -1031,7 +1067,6 @@ pub const Grid = struct {
         self.touched_row_count = 0;
         self.dirty_count = 0;
         self.row_dirty_count = 0;
-        self.row_history_count = 0;
         self.fill_hint_count = 0;
     }
 
@@ -1339,8 +1374,8 @@ test "maximum-cell retained CPU memory equation is exact" {
         .structured_operations = maximum_cells,
         .sparse_cell_updates = maximum_cells,
     };
-    try std.testing.expectEqual(@as(usize, 400), @sizeOf(Grid));
-    try std.testing.expectEqual(@as(usize, 7_342_232), try retainedCpuBytes(limits));
+    try std.testing.expectEqual(@as(usize, 376), @sizeOf(Grid));
+    try std.testing.expectEqual(@as(usize, 6_556_544), try retainedCpuBytes(limits));
 }
 
 test "every construction allocation failure retains no partial owner" {
@@ -1365,6 +1400,30 @@ test "ordered four then five cancels before backend work" {
     try std.testing.expectEqual(@as(u8, '4'), (try grid.current(0, 0)).codepoint);
     try grid.set(0, 0, testCell('5'));
     try std.testing.expectEqual(@as(u8, '5'), (try grid.current(0, 0)).codepoint);
+    try std.testing.expect((try grid.prepare()) == null);
+}
+
+test "more than 128 ordered scrolls and fills coalesce to final equality" {
+    var grid = try Grid.init(
+        std.testing.allocator,
+        .{ .rows = 4, .cols = 4, .structured_operations = 8, .sparse_cell_updates = 16 },
+        4,
+        4,
+        testCell('5'),
+    );
+    defer grid.deinit();
+    try acceptInitial(&grid);
+
+    for (0..80) |_| {
+        try grid.copyRows(1, 0, 3);
+        try grid.fill(3, 0, 1, 4, testCell('4'));
+        try grid.fill(3, 0, 1, 4, testCell('5'));
+    }
+    for (0..4) |row| for (0..4) |col|
+        try std.testing.expectEqual(
+            @as(u8, '5'),
+            (try grid.current(@intCast(row), @intCast(col))).codepoint,
+        );
     try std.testing.expect((try grid.prepare()) == null);
 }
 

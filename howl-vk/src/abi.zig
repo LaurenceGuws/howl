@@ -135,6 +135,7 @@ pub const VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO: c_int = 40;
 pub const VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO: c_int = 42;
 
 pub const VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER: c_int = 45;
+pub const VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER: c_int = 44;
 
 pub const VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO: c_int = 1000127001;
 
@@ -270,6 +271,8 @@ pub const VK_MEMORY_PROPERTY_HOST_COHERENT_BIT: c_int = 4;
 pub const VkMemoryPropertyFlags = VkFlags;
 
 pub const VK_BUFFER_USAGE_TRANSFER_SRC_BIT: c_int = 1;
+pub const VK_BUFFER_USAGE_TRANSFER_DST_BIT: c_int = 2;
+pub const VK_BUFFER_USAGE_STORAGE_BUFFER_BIT: c_int = 32;
 pub const VK_BUFFER_USAGE_INDEX_BUFFER_BIT: c_int = 64;
 pub const VK_BUFFER_USAGE_VERTEX_BUFFER_BIT: c_int = 128;
 pub const VkBufferUsageFlags = VkFlags;
@@ -284,6 +287,8 @@ pub const VkDeviceCreateFlags = VkFlags;
 pub const VkDeviceQueueCreateFlags = VkFlags;
 
 pub const VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT: c_int = 1;
+
+pub const VK_PIPELINE_STAGE_VERTEX_SHADER_BIT: c_int = 8;
 
 pub const VK_PIPELINE_STAGE_TRANSFER_BIT: c_int = 4096;
 
@@ -340,11 +345,14 @@ pub const VK_ATTACHMENT_STORE_OP_STORE: c_int = 0;
 pub const VK_ATTACHMENT_STORE_OP_DONT_CARE: c_int = 1;
 pub const VK_SUBPASS_CONTENTS_INLINE: c_int = 0;
 pub const VK_SUBPASS_EXTERNAL: u32 = ~@as(u32, 0);
+pub const VK_FILTER_NEAREST: c_int = 0;
 pub const VK_FILTER_LINEAR: c_int = 1;
+pub const VK_SAMPLER_MIPMAP_MODE_NEAREST: c_int = 0;
 pub const VK_SAMPLER_MIPMAP_MODE_LINEAR: c_int = 1;
 pub const VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE: c_int = 2;
 pub const VK_BORDER_COLOR_FLOAT_TRANSPARENT_BLACK: c_int = 0;
 pub const VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: c_int = 1;
+pub const VK_DESCRIPTOR_TYPE_STORAGE_BUFFER: c_int = 7;
 
 pub const VkAccessFlags = VkFlags;
 
@@ -379,6 +387,7 @@ pub const VkFramebufferCreateFlags = VkFlags;
 pub const VkSamplerCreateFlags = VkFlags;
 pub const VkDescriptorSetLayoutCreateFlags = VkFlags;
 pub const VkDescriptorPoolCreateFlags = VkFlags;
+pub const VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT: c_int = 1;
 pub const VkCullModeFlags = VkFlags;
 pub const VkColorComponentFlags = VkFlags;
 pub const VkShaderStageFlags = VkFlags;
@@ -689,7 +698,11 @@ pub const VkDescriptorImageInfo = extern struct {
     imageView: VkImageView = null,
     imageLayout: VkImageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
 };
-pub const VkDescriptorBufferInfo = opaque {};
+pub const VkDescriptorBufferInfo = extern struct {
+    buffer: VkBuffer = null,
+    offset: VkDeviceSize = 0,
+    range: VkDeviceSize = 0,
+};
 pub const VkWriteDescriptorSet = extern struct {
     sType: VkStructureType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
     pNext: ?*const VkBaseInStructure = null,
@@ -1308,6 +1321,7 @@ pub extern fn vkDestroyDescriptorSetLayout(device: VkDevice, descriptorSetLayout
 pub extern fn vkCreateDescriptorPool(device: VkDevice, pCreateInfo: [*c]const VkDescriptorPoolCreateInfo, pAllocator: ?*const VkAllocationCallbacks, pDescriptorPool: [*c]VkDescriptorPool) VkResult;
 pub extern fn vkDestroyDescriptorPool(device: VkDevice, descriptorPool: VkDescriptorPool, pAllocator: ?*const VkAllocationCallbacks) void;
 pub extern fn vkAllocateDescriptorSets(device: VkDevice, pAllocateInfo: [*c]const VkDescriptorSetAllocateInfo, pDescriptorSets: [*c]VkDescriptorSet) VkResult;
+pub extern fn vkFreeDescriptorSets(device: VkDevice, descriptorPool: VkDescriptorPool, descriptorSetCount: u32, pDescriptorSets: [*c]const VkDescriptorSet) VkResult;
 pub extern fn vkUpdateDescriptorSets(device: VkDevice, descriptorWriteCount: u32, pDescriptorWrites: [*c]const VkWriteDescriptorSet, descriptorCopyCount: u32, pDescriptorCopies: ?*const opaque {}) void;
 pub extern fn vkCmdBeginRenderPass(commandBuffer: VkCommandBuffer, pRenderPassBegin: [*c]const VkRenderPassBeginInfo, contents: VkSubpassContents) void;
 pub extern fn vkCmdEndRenderPass(commandBuffer: VkCommandBuffer) void;

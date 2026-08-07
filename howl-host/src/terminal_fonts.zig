@@ -154,6 +154,16 @@ pub const Cache = struct {
         return (try self.getEntry(reference)).font.metrics;
     }
 
+    /// Borrows the exact live native font for one synchronous Renderer batch.
+    pub fn borrow(self: *Cache, reference: Ref) error{StaleReference}!*render.text.FontSet {
+        return &(try self.getEntry(reference)).font;
+    }
+
+    /// Returns the exact point and DPI identity retained by a live reference.
+    pub fn keyForRef(self: *Cache, reference: Ref) error{StaleReference}!Key {
+        return (try self.getEntry(reference)).key;
+    }
+
     fn getEntry(self: *Cache, reference: Ref) error{StaleReference}!*Entry {
         const index: usize = reference.slot;
         if (index >= self.entries.len or self.entries[index] == null or

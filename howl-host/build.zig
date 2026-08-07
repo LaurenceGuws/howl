@@ -99,6 +99,17 @@ pub fn build(b: *std.Build) void {
     });
     terminal_fonts.addImport("howl_render", render.module("howl_render"));
     terminal_fonts.addImport("terminal_handoff", terminal_handoff);
+    const terminal_gpu = b.createModule(.{
+        .root_source_file = b.path("src/terminal_gpu.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    terminal_gpu.addImport("howl_render", render.module("howl_render"));
+    terminal_gpu.addImport("howl_vk", vk.module("howl_vk"));
+    terminal_gpu.addImport("terminal_fonts", terminal_fonts);
+    terminal_gpu.addImport("terminal_handoff", terminal_handoff);
+    terminal_gpu.linkSystemLibrary("vulkan", .{});
     const terminal_runtime = b.createModule(.{
         .root_source_file = b.path("src/terminal.zig"),
         .target = target,
@@ -114,6 +125,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("terminal_handoff", terminal_handoff);
     root.addImport("terminal_visual_fifo", terminal_visual_fifo);
     root.addImport("terminal_fonts", terminal_fonts);
+    root.addImport("terminal_gpu", terminal_gpu);
     root.addImport("howl_vt", vt.module("howl_vt"));
     root.addImport("terminal_runtime", terminal_runtime);
     root.addImport("session_chrome_adapter", session_chrome_adapter);
@@ -130,6 +142,12 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile the host");
     check.dependOn(&executable.step);
+    const physical_terminal_audit = b.addSystemCommand(&.{
+        "sh",
+        "../tools/verify_physical_terminal_renderer.sh",
+    });
+    physical_terminal_audit.setCwd(b.path("."));
+    check.dependOn(&physical_terminal_audit.step);
     const fixture_classifier_module = b.createModule(.{
         .root_source_file = b.path("manual-fixtures/generated-classifier.zig"),
         .target = target,
@@ -174,6 +192,7 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("terminal_handoff", terminal_handoff);
     test_module.addImport("terminal_visual_fifo", terminal_visual_fifo);
     test_module.addImport("terminal_fonts", terminal_fonts);
+    test_module.addImport("terminal_gpu", terminal_gpu);
     test_module.addImport("terminal_runtime", terminal_runtime);
     test_module.addImport("howl_render", render.module("howl_render"));
     test_module.addImport("howl_vt", vt.module("howl_vt"));
@@ -182,6 +201,7 @@ pub fn build(b: *std.Build) void {
     const run_tests = b.addRunArtifact(tests);
     const test_step = b.step("test", "Run deterministic host-owner proofs");
     test_step.dependOn(&run_tests.step);
+    test_step.dependOn(&physical_terminal_audit.step);
     const config_tests = b.addTest(.{ .root_module = config, .use_llvm = false, .use_lld = false });
     test_step.dependOn(&b.addRunArtifact(config_tests).step);
     test_step.dependOn(&fixture_check.step);
@@ -207,9 +227,9 @@ pub fn build(b: *std.Build) void {
     renderer_test_module.addImport("terminal_handoff", terminal_handoff);
     renderer_test_module.addImport("terminal_visual_fifo", terminal_visual_fifo);
     renderer_test_module.addImport("terminal_fonts", terminal_fonts);
+    renderer_test_module.addImport("terminal_gpu", terminal_gpu);
     renderer_test_module.addImport("terminal_runtime", terminal_runtime);
     renderer_test_module.addImport("howl_vt", vt.module("howl_vt"));
-    renderer_test_module.addImport("config", config);
     renderer_test_module.addImport("session_chrome_adapter", session_chrome_adapter);
     renderer_test_module.addImport("session_domain", session_domain);
     renderer_test_module.addImport("input_actions", input_actions);
@@ -226,6 +246,12 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     test_step.dependOn(&b.addRunArtifact(renderer_tests).step);
+    const terminal_gpu_tests = b.addTest(.{
+        .root_module = terminal_gpu,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    test_step.dependOn(&b.addRunArtifact(terminal_gpu_tests).step);
     const session_chrome_adapter_tests = b.addTest(.{ .root_module = session_chrome_adapter, .use_llvm = false, .use_lld = false });
     const run_session_chrome_adapter_tests = b.addRunArtifact(session_chrome_adapter_tests);
     test_step.dependOn(&run_session_chrome_adapter_tests.step);

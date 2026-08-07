@@ -31,10 +31,20 @@ pub fn build(b: *std.Build) void {
     const check = b.step("check", "Compile the curated Vulkan module");
     check.dependOn(&tests.step);
     check.dependOn(&terminal_tests.step);
+    const shader_receipt = b.step(
+        "shader-reproducibility",
+        "Rebuild, inspect, and validate the tracked terminal SPIR-V ABI",
+    );
+    shader_receipt.dependOn(&b.addSystemCommand(&.{
+        "sh",
+        "tools/verify_terminal_shader_interface.sh",
+    }).step);
+    check.dependOn(shader_receipt);
     const run_tests = b.addRunArtifact(tests);
     const run_terminal_tests = b.addRunArtifact(terminal_tests);
     const test_step = b.step("test", "Run Vulkan ABI and dispatch proofs");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_terminal_tests.step);
+    test_step.dependOn(shader_receipt);
     b.default_step = check;
 }
