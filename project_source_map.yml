@@ -6,8 +6,6 @@ accepted:
   sprint_runtime_measurement.yml: accepted workload completion and external baseline-measurement contract
   sprint_runtime_presentation_state.yml: implemented latest-ready presentation-state ownership, bounds, proof map, and static acceptance gate
   sprint_runtime_terminal_render_foundation.yml: accepted terminal Runtime, global FIFO, Renderer Grid, and font foundation
-  sprint_runtime_physical_terminal_renderer.yml: physical terminal ownership, finite bounds, T001-T022 proof map, deterministic recording and coordinate closure, accepted operator gate, and exclusions
-  scratch_runtime.yml: closed physical recording proof paths, static validation, and exact static-resource-separation scope
   tools/audit_source.sh: maintained-source audit
   tools/source_audit.allow: reviewed sensitive-source sites
   tools/verify_physical_terminal_renderer.sh: negative feature census, single-submit and ProducerUpdate site census, T001-T022 proof presence, and terminal/generic construction-call-graph closure

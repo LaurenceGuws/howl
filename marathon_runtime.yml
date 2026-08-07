@@ -8,7 +8,7 @@ marathon:
     integration: main
     prior_release_snapshot: release/0.1.5-dev
     sprint_pattern: feature/runtime_hot_paths/<sprint>
-  active_sprint: physical_terminal_renderer
+  active_sprint: update_amplification
   objective: >-
     Measure and correct the first unnecessary amplification between exact
     terminal output, semantic mutation, rendering work, GPU submission, and
@@ -61,18 +61,31 @@ sprints:
       - no physical Vulkan execution claim before Host integration
       - no terminal images, animation, blink scheduling, trails, ligatures, selection, or hyperlinks above VT
   - id: physical_terminal_renderer
-    status: acceptance_review_ready
+    status: accepted
+    implementation_commit: e75cd92606924714e536c22d0b60b3373002674f
     outcome: >-
-      One bounded Host adapter and physical owner lower the globally folded
-      pane Grids into exact Store and FontGpu candidates, record terminal panes
-      below Chrome in one combined render pass and submission, and publish at
-      most one latest-ready frame after exact GPU completion.
+      One bounded Host adapter and physical owner lower globally folded blank
+      and printable-ASCII pane Grids, static styles, and one static cursor into
+      exact Store and FontGpu candidates. Renderer records all terminal panes
+      below Chrome in one combined render pass and queue submission, completes
+      candidates only after exact GPU completion, and publishes at most one
+      latest-ready frame.
     proof_cases: T001-T022
-    completed_slice: absolute_row_staging_transfer_correction
-    active_slice: sprint_acceptance_review
-    next_gate: >-
-      Review the tracing-free product and accepted T022 correction before the
-      physical-terminal-renderer sprint acceptance audit.
+    limits:
+      pane_descriptors: 64
+      pane_cells: 65536
+      pane_rows: 128
+      aggregate_cells: 4194304
+      aggregate_rows: 8192
+      batch_descriptor_bytes: 6664
+      shared_instance_staging_bytes: 67108864
+      shared_row_staging_bytes: 32768
+      glyph_slots_per_font_epoch: 380
+    accepted_evidence:
+      boundary_census_sha256: 1cd688dc4ef6660950bd53c61d902a7b92f7d29480dcb719499726e4100ab6f8
+      finite_contract_sha256: 47cb8d2215f2c116379fd31951ba3bf00f9d0f91c4fc34d9691a9a0973a49545
+      layout_receipt_source_sha256: 2cca2b32152d8147fad45c3de0532abe18afa997db593b8f7ecaa4133215550b
+      layout_receipt_sha256: 73e7df0199e29953b8a453c197395b491c8c2788988cb4951e7347e65985908d
     descriptor_ownership: >-
       Each PaneResources retains 64 bytes of exact descriptor-set, buffer,
       range, sampler, view, and atlas identity; later draw bindings reject a
@@ -88,7 +101,7 @@ sprints:
       - no per-pane submit, publication, or wake
       - no excluded terminal feature restoration or capacity widening
   - id: update_amplification
-    status: pending
+    status: active
     outcome: exact bytes-to-presentation amplification receipt locating the first disproportionate owner
   - id: first_owner_correction
     status: pending

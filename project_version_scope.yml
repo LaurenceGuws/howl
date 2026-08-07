@@ -51,7 +51,7 @@ invariants:
   - Source audit and protocol catalogue validation pass without diagnostics.
 
 active:
-  - Complete the physical terminal renderer acceptance audit before any cast workload.
+  - Measure exact bytes-to-presentation update amplification and locate the first disproportionate owner.
   - Make child exit an exact pane lifecycle event and final-Host completion boundary.
   - Establish reproducible Neovim-scroll and rain workloads.
   - Measure external CPU/GPU cost before adding bounded owner instrumentation.
