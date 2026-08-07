@@ -3,6 +3,8 @@ accepted:
   protocol_coverage.yml: pinned protocol evidence and normalized ownership records
   protocol_coverage.nu: catalogue normalization, validation, and query commands
   marathon_runtime.yml: active 0.1.6-dev runtime hot-path intervention, workloads, sprint order, invariants, and exclusions
+  sprint_runtime_update_amplification.yml: active exact bytes-to-presentation amplification census and finite measurement contract
+  scratch_runtime.yml: disposable current update-amplification census findings, commands, unknowns, and validation
   sprint_runtime_measurement.yml: accepted workload completion and external baseline-measurement contract
   sprint_runtime_presentation_state.yml: implemented latest-ready presentation-state ownership, bounds, proof map, and static acceptance gate
   sprint_runtime_terminal_render_foundation.yml: accepted terminal Runtime, global FIFO, Renderer Grid, and font foundation

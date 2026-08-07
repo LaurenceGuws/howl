@@ -1,0 +1,92 @@
+schema: 1
+sprint:
+  id: update_amplification
+  marathon: runtime_hot_paths
+  version: 0.1.6-dev
+  status: active
+  active_slice: current_update_path_census
+  objective: exact bytes-to-presentation amplification receipt locating the first disproportionate owner
+
+ownership:
+  terminal_threads:
+    own:
+      - PTY and VT
+      - ordered visual-journal publication into one global FIFO
+  render:
+    owns:
+      - per-pane terminal Grids
+      - terminal GPU state
+      - draining and folding all available global FIFO work
+      - all batched work below Window wake
+  window:
+    owns:
+      - latest-ready frame take
+      - Wayland frame pacing and surface commit
+    invariant: intermediate terminal states create no obsolete Window presentation obligation
+
+active_slice:
+  id: current_update_path_census
+  kind: evidence_only
+  review_state: corrected_evidence_review
+  outputs:
+    - .zig/work/runtime-hot-path/update-amplification/current_update_path_census.yml
+    - .zig/work/runtime-hot-path/update-amplification/finite_measurement_contract.yml
+  scope:
+    - census the complete PTY-bytes-to-Window-commit production path
+    - define finite quantities, equations, evidence sources, and deterministic prerequisites
+    - cover all panes in one globally ordered pipeline
+    - preserve processing of intermediate shared terminal and Render state
+    - distinguish shared-state processing from Window presentation obligations
+    - use at most one aggregate summary per fixed live terminal and pane identity
+    - classify Render and Render-derived presentation totals as startup, replacement/configure, generic-only, terminal-driven, or mixed terminal plus generic while Window reports only global owned totals
+  example_semantics: >-
+    If one cell transitions 5 to 4 to 5 before a rendered state is made
+    available, shared terminal and Render state may process both 4 and 5 while
+    Window receives no obsolete intermediate presentation obligation.
+  fixtures_are_not_scope:
+    - Neovim relative-number scrolling
+    - one gutter
+    - one row
+    - one pane
+  forbidden:
+    - product changes
+    - optimization or correction proposals
+    - instrumentation
+    - GUI or runtime execution
+    - changing, deleting, or replacing an owner
+
+later_slices:
+  status: pending_review_authorization
+  policy: >-
+    Instrumentation and runtime measurement may be shaped only by the reviewed
+    finite measurement contract. Their implementation is not authorized here.
+
+preserved_invariants:
+  - PTY, VT, Render, Vulkan, Window, Terminal, and Renderer ownership remains unchanged unless exact evidence proves a boundary defect.
+  - Measurement excludes Zig compilation and uses one prebuilt ReleaseFast executable.
+  - External process, thread, and GPU measurements are preferred before product instrumentation.
+  - Temporary runtime events are bounded, typed, auto-rotated, and removed only after their reviewed capture is closed.
+  - One semantic workload and one physical configuration identify every comparison receipt.
+  - A performance correction never converts a fatal invariant into rejection, retry, or silent disposal.
+  - All panes share one ordered terminal visual pipeline.
+  - All work below Window wake is batched.
+  - Window retains at most one latest-ready frame and no catch-up sequence.
+
+preserved_exclusions:
+  - no keyboard, repeat, mouse, terminal identity, or multiplexer capability
+  - no cursor animation polish
+  - no broad renderer rewrite or package extraction
+  - no capacity widening to conceal pressure
+  - no generic profiler framework
+  - no optimization justified only by source appearance
+
+acceptance_gate:
+  - both ignored artifacts parse as strict duplicate-key YAML
+  - every census path and symbol resolves to current production source
+  - every census record appears in exact reverse indexes
+  - measurement equations distinguish every owner quantity from PTY bytes through wl_surface_commit
+  - missing observations and temporary instrumentation requirements are explicit
+  - deterministic synthetic prerequisites precede any GUI measurement
+  - no causal claim or optimization proposal appears
+  - source audit and protocol validation pass
+  - formatting and git diff --check pass

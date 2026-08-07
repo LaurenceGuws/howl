@@ -1,0 +1,96 @@
+schema: 1
+scratch:
+  marathon: runtime_hot_paths
+  sprint: update_amplification
+  version: 0.1.6-dev
+  status: active
+  active_slice: current_update_path_census
+  kind: evidence_only
+  objective: exact bytes-to-presentation amplification receipt locating the first disproportionate owner
+
+authority:
+  branch: feature/runtime_hot_paths/update_amplification
+  base: 0d38e01e8d0b3e67df27fed803ec1d356757653d
+  upstream: origin/feature/runtime_hot_paths/update_amplification
+  preserved_unrelated_state:
+    - path: "-"
+      status: untracked
+      disposition: untouched
+
+outputs:
+  current_update_path_census: .zig/work/runtime-hot-path/update-amplification/current_update_path_census.yml
+  finite_measurement_contract: .zig/work/runtime-hot-path/update-amplification/finite_measurement_contract.yml
+
+commands:
+  read_only:
+    - git status --short --branch
+    - git rev-parse HEAD
+    - git rev-parse '@{upstream}'
+    - rg and sed production ownership census
+  validation:
+    - strict duplicate-key YAML parsing
+    - path, symbol, and reverse-index closure
+    - tools/audit_source.sh
+    - ../.zig/zig build protocol
+    - ../.zig/zig fmt --check on changed Zig files when any exist
+    - git diff --check
+  validation_result:
+    strict_duplicate_key_YAML: passed
+    path_symbol_reverse_index_closure: passed
+    source_audit: passed
+    protocol_validation: passed
+    formatting: passed
+    git_diff_check: passed
+
+current_findings:
+  - Terminal threads own PTY and VT and enqueue complete visual journals into one global ordered FIFO.
+  - Renderer drains every currently available FIFO entry before preparing per-pane Grid candidates.
+  - Grid.prepare lowers final differences and returns null when retained current state equals the accepted rendered baseline.
+  - Host terminal GPU ownership aggregates changed panes into one staging and recording batch.
+  - Renderer owns one combined terminal-before-generic render pass and one vkQueueSubmit call site.
+  - presentation_state retains one latest-ready frame and signals Window only on empty-to-ready.
+  - Window takes only the newest retained frame when Wayland pacing permits and commits that frame once.
+  - Future runtime evidence is bounded to 142 aggregate records and 581632 complete JSONL bytes, not scheduling turns.
+  - Render and Render-derived presentation totals are separated into startup, replacement/configure, generic-only, terminal-driven, and mixed terminal plus generic classes.
+  - Window reports one global summary because ReadyFrame owns no frame classification.
+  - External idle/background context is excluded from first-owner causal counting.
+  - Existing source contains counters and revisions for several boundaries but no complete joined bytes-to-presentation receipt.
+
+unknowns:
+  - exact workload ratios between PTY bytes, VT operations, FIFO entries, folded pane mutations, and prepared Grid updates
+  - exact staging bytes and copy-region counts per rendered opportunity under the accepted workload
+  - how often final-equal terminal work stops before Store preparation in production
+  - exact completed-frame to latest-ready replacement to Window-take ratios
+  - which first owner contributes disproportionate work after quantities are joined
+
+constraints:
+  - no product edit
+  - no optimization or correction proposal
+  - no instrumentation
+  - no GUI, runtime, or cast launch
+  - no Git operation
+  - no owner deletion or replacement
+  - Neovim is only a later fixture, not the defect definition
+
+progress:
+  authority_setup: complete
+  source_census: corrected_evidence_review
+  measurement_contract: corrected_evidence_review
+  instrumentation: not_authorized
+  runtime_measurement: not_authorized
+  optimization: not_authorized
+
+evidence:
+  current_update_path_census:
+    records: 14
+    bytes: 27113
+    sha256: 814b6d181e6d6852a03db5cd8260cc4c5705d7d4997b971f78c3efaa8d7ca2f9
+  finite_measurement_contract:
+    quantities: 36
+    equations: 22
+    events: 9
+    deterministic_prerequisites: 6
+    maximum_records: 142
+    maximum_JSONL_bytes: 581632
+    bytes: 33217
+    sha256: 45e120affc87f9263141b6fa547dfdb3d351ac9876ec017e82e2844b344046d8
