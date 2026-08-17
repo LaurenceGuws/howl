@@ -1,6 +1,6 @@
 # Howl Agent Contract
 
-Howl is a private native Zig terminal family with no downstream compatibility obligation. Build it Foot-direct and TigerBeetle-defensive. Every tracked character is debt unless it buys capability, correctness, clarity, or deterministic evidence.
+Howl is a native Zig terminal family with no downstream compatibility obligation. Build it Foot-direct and TigerBeetle-defensive. Every tracked character is debt unless it buys capability, correctness, clarity, or deterministic evidence.
 
 ## Authority
 
@@ -40,7 +40,7 @@ Do not turn profiling, logging, test scaffolding, or one host's presentation nee
 
 ## Git
 
-`main` is accepted integration. `release/$VERSION` is historical. Use one short-lived task branch for unfinished work, keep unrelated dirty work untouched, and commit only coherent green checkpoints. Push important state so it does not live only in an agent session.
+`main` is accepted integration. `release/$VERSION` is historical. Work directly on `main`; do not create worktrees or task branches unless Captain explicitly asks for one. Keep unrelated dirty work untouched, commit only coherent green checkpoints, and push important state so it does not live only in an agent session.
 
 Before a checkpoint: run the affected package proofs, root core gate, protocol validation when relevant, source audit, formatting, and `git diff --check`.
 
