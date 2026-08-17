@@ -12,7 +12,7 @@ const howl = @import("howl_session");
 const protocol = howl.protocol;
 
 const maximum_clients: usize = 8;
-const maximum_request_payload: usize = 64 * 1024;
+const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
 const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
@@ -313,6 +313,12 @@ const Server = struct {
                     try self.queueResult(client, .observe, .malformed);
                     return;
                 };
+                if (request.history_offset != 0 and
+                    client.features & protocol.feature(.history_window) == 0)
+                {
+                    try self.queueResult(client, .observe, .unsupported);
+                    return;
+                }
                 if (request.after_revision > self.observation_revision) {
                     try self.queueResult(client, .observe, .malformed);
                     return;
@@ -1920,6 +1926,93 @@ test "typed input is negotiated and encoded by live terminal modes" {
     var done = try observeUntilContains(&peer, &server, revision, "DONE");
     defer done.deinit();
     try std.testing.expect(std.mem.indexOf(u8, done.text, "kitty_release:1b5b39373b313a3375") != null);
+}
+
+test "history windows require their negotiated feature" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-history-feature.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        path,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
+            .rows = 4,
+            .columns = 16,
+            .history_rows = 16,
+        },
+    );
+    defer server.deinit();
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const welcome = try handshakeWithFeatures(
+        &peer,
+        &server,
+        protocol.feature(.grid_snapshot),
+    );
+    try std.testing.expect(welcome.features & protocol.feature(.history_window) == 0);
+
+    var observe: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&observe, .{ .history_offset = 1 });
+    try peer.sendFrame(&server, .observe, &observe);
+    try expectResult(&peer, &server, .observe, .unsupported);
+
+    protocol.encodeObserve(&observe, .{});
+    try peer.sendFrame(&server, .observe, &observe);
+    var snapshot = try receiveSnapshot(&peer, &server);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(u32, 0), snapshot.begin.history_offset);
+}
+
+test "request payload above endpoint limit closes before body read" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-request-limit.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        path,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; cat",
+            .rows = 4,
+            .columns = 16,
+            .history_rows = 16,
+        },
+    );
+    defer server.deinit();
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    var header: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&header, .{
+        .kind = .hello,
+        .payload_len = protocol.maximum_request_payload_bytes + 1,
+    });
+    try peer.sendAll(&server, &header);
+    var closed = false;
+    var attempts: usize = 0;
+    while (attempts < 16 and !closed) : (attempts += 1) {
+        try server.turn(0);
+        peer.readAvailable() catch |err| switch (err) {
+            error.TestPeerClosed => closed = true,
+            else => return err,
+        };
+    }
+    try std.testing.expect(closed);
 }
 
 test "text_v1 preserves renderer-complete terminal text semantics" {

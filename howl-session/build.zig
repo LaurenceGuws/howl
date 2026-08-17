@@ -43,7 +43,17 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const wire_command = b.addSystemCommand(&.{
+        "python3",
+        "tools/validate_vectors.py",
+        "protocol/v1-vectors.json",
+    });
+    wire_command.setName("howl-session wire vectors");
+    wire_command.setCwd(b.path("."));
+    const wire = b.step("wire", "Validate the language-neutral session v1 wire corpus");
+    wire.dependOn(&wire_command.step);
     const check = b.step("check", "Compile the canonical PTY and VT session owner");
+    check.dependOn(wire);
     check.dependOn(&tests.step);
     check.dependOn(&server.step);
     check.dependOn(&server_tests.step);
@@ -56,6 +66,7 @@ pub fn build(b: *std.Build) void {
     const run_bridge_tests = b.addRunArtifact(bridge_tests);
     run_bridge_tests.addPassthruArgs();
     const test_step = b.step("test", "Run canonical session ownership proofs");
+    test_step.dependOn(wire);
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_server_tests.step);
     test_step.dependOn(&run_bridge_tests.step);

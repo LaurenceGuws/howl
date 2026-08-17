@@ -13,6 +13,8 @@ The core idea is simple: **the session lives on the node, not in the client.** O
 | `howl-pty` | Linux-kernel PTY transport and child-process lifecycle, used directly on Linux and Android |
 | `howl-text` | Standalone pinned package for native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization |
 
+The portable session v1 client contract and language-neutral golden vectors live in `howl-session/README.md`.
+
 The session API is deliberately opaque. Embedders can inspect semantic state and submit input or explicit control mutations, but cannot reach the PTY or VT owner directly. A disconnected or slow observer must never block the shell.
 
 ## Attachment model
@@ -40,3 +42,7 @@ ln -sfn "$HOME/.local/share/zigup/$version/files/zig" .zig/zig
 Each local child package owns its own `build.zig` and proofs. `howl-text` lives
 in its own repository; the root, renderer, and GTK pressure client consume the
 exact published commit pinned in their package metadata.
+
+Core `check`/`test` gates also use Python 3's standard library to validate the
+language-neutral session wire corpus. Python is build-time evidence only and is
+not a Howl runtime dependency.

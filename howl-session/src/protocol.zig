@@ -24,6 +24,8 @@ pub const protocol_max_version: u16 = 1;
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
 pub const maximum_payload_bytes: u32 = 1024 * 1024;
+/// Hard upper bound the node-local endpoint admits for one client request payload.
+pub const maximum_request_payload_bytes: u32 = 64 * 1024;
 /// Hard upper bound materialized for one observer snapshot response.
 pub const maximum_snapshot_bytes: usize = 4 * 1024 * 1024;
 /// Sentinel used only where an optional client identity is serialized.
@@ -333,8 +335,9 @@ pub const SnapshotFormat = enum(u16) {
 
 /// Record classes carried inside `snapshot_data` for `SnapshotFormat.text_v1`.
 ///
-/// Each record starts with one fixed eight-byte header so clients can validate
-/// and skip a complete record without depending on Zig struct layout.
+/// Each `snapshot_data` frame carries exactly one record. Every record starts
+/// with one fixed eight-byte header so clients can validate it without
+/// depending on Zig struct layout.
 pub const TextRecordKind = enum(u8) {
     presentation = 1,
     row = 2,
