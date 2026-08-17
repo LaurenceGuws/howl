@@ -47,10 +47,18 @@ flutter build apk --release \
   --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
 ```
 
-The same `HOWL_ENDPOINT` define works for `flutter run` on an Android device. During
-transport parity, the older Unix oracle remains available on Linux as either a bare
-path or `unix:/path/to/session.sock`. `HOWL_SOCKET` is accepted only as a temporary
-legacy launch fallback while that oracle remains.
+The same `HOWL_ENDPOINT` define works for `flutter run` on an Android device. Primary-screen
+finger drag is client-local scrollback over the negotiated history window. Live
+observation continues on its original long-poll while a third observer is opened
+only for nonzero history offsets; history requests use revision zero so they return
+immediately, and the viewport anchors by retained row identity while new PTY output
+arrives. Returning to offset zero closes that history connection. Touch scroll is
+intentionally inert on the alternate screen until the client has explicit canonical
+mouse-tracking state; Howl does not guess application mouse policy from screen mode.
+
+During transport parity, the older Unix oracle remains available on Linux as either a
+bare path or `unix:/path/to/session.sock`. `HOWL_SOCKET` is accepted only as a
+temporary legacy launch fallback while that oracle remains.
 
 Protocol tests consume the tracked language-neutral vectors from
 `../howl-session/protocol/v1-vectors.json`.

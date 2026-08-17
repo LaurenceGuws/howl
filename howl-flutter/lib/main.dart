@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
+import 'history_viewport.dart';
 import 'protocol.dart';
 import 'text_input.dart';
+import 'touch_surface.dart';
 
 void main(List<String> args) {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
@@ -73,12 +76,18 @@ final class HowlTerminal extends StatefulWidget {
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
+  final HistoryViewport _history = HistoryViewport();
   late final TerminalTextInputClient _textInput;
   HowlConnection? _observer;
+  HowlConnection? _historyObserver;
   HowlConnection? _control;
+  HowlSnapshot? _liveSnapshot;
   HowlSnapshot? _snapshot;
   Object? _failure;
   bool _stopping = false;
+  bool _historyRequestRunning = false;
+  bool _historyRequestPending = false;
+  int _historyGeneration = 0;
   bool _leaderAssigned = false;
   int _proposedRows = 0;
   int _proposedColumns = 0;
@@ -90,9 +99,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       onCommit: (text) {
+        _returnToLiveForInput();
         _queueControl((control) => control.sendCommittedText(text));
       },
       onEditKey: (key) {
+        _returnToLiveForInput();
         final keyName = switch (key) {
           TerminalEditKey.enter => HowlWire.namedEnter,
           TerminalEditKey.backspace => HowlWire.namedBackspace,
@@ -128,7 +139,22 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         final next = await observer.observeText(revision);
         revision = next.revision;
         if (!mounted || _stopping) break;
-        setState(() => _snapshot = next);
+        _liveSnapshot = next;
+        if (_history.active) {
+          _history.followLive(
+            historyCount: next.begin.historyCount,
+            historyRowBase: next.begin.historyRowBase,
+            alternateScreen: next.begin.alternateScreen,
+          );
+          _historyGeneration += 1;
+          if (_history.active) {
+            _scheduleHistorySnapshot();
+          } else {
+            _leaveHistory();
+          }
+        } else {
+          setState(() => _snapshot = next);
+        }
       }
     } catch (error) {
       _reportFailure(error);
@@ -152,6 +178,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
     final keyName = howlNamedKey(event.physicalKey);
     if (keyName == null) return KeyEventResult.ignored;
+    _returnToLiveForInput();
     final action = switch (event) {
       KeyDownEvent() => HowlWire.keyPress,
       KeyRepeatEvent() => HowlWire.keyRepeat,
@@ -186,11 +213,122 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     }
   }
 
-  void _onPointerDown(PointerDownEvent event) {
+  void _activateTextInput() {
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (_control == null) return;
     _textInput.attach(viewId: View.of(context).viewId);
     _scheduleTextInputShow();
+  }
+
+  void _onPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.touch) return;
+    _activateTextInput();
+  }
+
+  void _beginHistoryDrag(DragStartDetails _) {
+    _history.beginDrag();
+  }
+
+  void _updateHistoryDrag(DragUpdateDetails details) {
+    final live = _liveSnapshot;
+    final deltaY = details.primaryDelta;
+    if (live == null || deltaY == null) return;
+    final changed = _history.drag(
+      deltaY: deltaY,
+      rowHeight: TerminalPainter.lineHeight,
+      historyCount: live.begin.historyCount,
+      historyRowBase: live.begin.historyRowBase,
+      alternateScreen: live.begin.alternateScreen,
+    );
+    if (!changed) return;
+    _historyGeneration += 1;
+    if (_history.active) {
+      _scheduleHistorySnapshot();
+    } else {
+      _leaveHistory();
+    }
+  }
+
+  void _endHistoryDrag(DragEndDetails _) {
+    _history.endDrag();
+  }
+
+  void _scheduleHistorySnapshot() {
+    if (_stopping || !_history.active) return;
+    if (_historyRequestRunning) {
+      _historyRequestPending = true;
+      return;
+    }
+    unawaited(_drainHistorySnapshots());
+  }
+
+  Future<void> _drainHistorySnapshots() async {
+    if (_historyRequestRunning || _stopping || !_history.active) return;
+    _historyRequestRunning = true;
+    try {
+      while (!_stopping && _history.active) {
+        _historyRequestPending = false;
+        final generation = _historyGeneration;
+        var historyObserver = _historyObserver;
+        if (historyObserver == null) {
+          final connected = await HowlConnection.connect(widget.endpoint);
+          if (!mounted || _stopping || !_history.active) {
+            connected.close();
+            return;
+          }
+          _historyObserver = connected;
+          historyObserver = connected;
+        }
+
+        final next = await historyObserver.observeText(
+          0,
+          historyOffset: _history.targetOffset,
+        );
+        if (!mounted || _stopping || !_history.active) return;
+        if (generation != _historyGeneration) continue;
+
+        _history.acceptSnapshot(
+          historyOffset: next.begin.historyOffset,
+          historyCount: next.begin.historyCount,
+          historyRowBase: next.begin.historyRowBase,
+          alternateScreen: next.begin.alternateScreen,
+        );
+        if (!_history.active) {
+          _leaveHistory();
+          return;
+        }
+        setState(() => _snapshot = next);
+        if (generation == _historyGeneration) return;
+      }
+    } catch (error) {
+      if (!_stopping && _history.active) {
+        _leaveHistory();
+        _reportFailure(error);
+      }
+    } finally {
+      _historyRequestRunning = false;
+      if (_historyRequestPending && !_stopping && _history.active) {
+        _historyRequestPending = false;
+        _scheduleHistorySnapshot();
+      }
+    }
+  }
+
+  void _returnToLiveForInput() {
+    if (_history.active) _leaveHistory();
+  }
+
+  void _leaveHistory() {
+    _history.reset();
+    _historyGeneration += 1;
+    _historyRequestPending = false;
+    final historyObserver = _historyObserver;
+    _historyObserver = null;
+    historyObserver?.close();
+    final live = _liveSnapshot;
+    if (mounted && !_stopping && live != null) {
+      setState(() => _snapshot = live);
+    }
   }
 
   void _onFocusChange(bool focused) {
@@ -237,6 +375,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _textInput.detach();
     _focusNode.dispose();
     _observer?.close();
+    _historyObserver?.close();
     _control?.close();
     super.dispose();
   }
@@ -283,15 +422,21 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         },
       );
     }
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: _onPointerDown,
-      child: Focus(
-        focusNode: _focusNode,
-        autofocus: true,
-        onFocusChange: _onFocusChange,
-        onKeyEvent: _onKeyEvent,
-        child: content,
+    return TerminalTouchSurface(
+      onTap: _activateTextInput,
+      onVerticalDragStart: _beginHistoryDrag,
+      onVerticalDragUpdate: _updateHistoryDrag,
+      onVerticalDragEnd: _endHistoryDrag,
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _onPointerDown,
+        child: Focus(
+          focusNode: _focusNode,
+          autofocus: true,
+          onFocusChange: _onFocusChange,
+          onKeyEvent: _onKeyEvent,
+          child: content,
+        ),
       ),
     );
   }
