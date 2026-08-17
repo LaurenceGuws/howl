@@ -1,5 +1,5 @@
 STARTFONT 2.1
-COMMENT Deterministic howl-render native-text monochrome and metric-fallback proof.
+COMMENT Deterministic howl-text monochrome and metric-fallback proof.
 FONT -howl-test-mono-medium-r-normal--16-160-72-72-c-80-iso10646-1
 SIZE 16 72 72
 FONTBOUNDINGBOX 8 16 0 -3

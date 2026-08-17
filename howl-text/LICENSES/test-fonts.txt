@@ -1,4 +1,4 @@
-howl-render deterministic native-text test font data:
+howl-text deterministic native test font data:
 
 - primary.ttf copied from /usr/share/fonts/noto/NotoSans-Regular.ttf
 - symbols.ttf copied from /usr/share/fonts/TTF/IosevkaTermNerdFont-Regular.ttf
@@ -22,8 +22,8 @@ Redistributed binary provenance:
 - symbols.ttf package description: `Patched font Iosevka Term from nerd fonts library`
 - symbols.ttf upstream project URL from installed package metadata: `https://github.com/ryanoasis/nerd-fonts`
 - symbols.ttf local package build date from installed package metadata: `Mon Jan 26 22:28:36 2026`
-- fira-code-medium.otf is Kitty's unmodified deterministic Fira Code
-  grouping fixture and is licensed under SIL OFL 1.1
+- fira-code-medium.otf is the unmodified Fira Code fixture copied from the
+  pinned Kitty reference checkout and is licensed under SIL OFL 1.1
 Attribution note:
 
 - `symbols.ttf` is a patched Nerd Fonts binary for the Iosevka Term family, redistributed here exactly as copied from the installed `ttf-iosevkaterm-nerd 3.4.0-2` package.
