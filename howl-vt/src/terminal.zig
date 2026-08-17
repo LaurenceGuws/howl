@@ -6428,6 +6428,8 @@ pub const Terminal = struct {
     pub const Rgb = Screen.Rgb;
     /// Uses the canonical default, indexed, or RGB cell color.
     pub const Color = Screen.Color;
+    /// Uses the semantic terminal-color class without exposing storage layout.
+    pub const ColorKind = Screen.ColorKind;
     /// Uses the canonical complete cell attribute value.
     pub const CellAttrs = Screen.CellAttrs;
     /// Borrows one complete terminal cell.
@@ -6444,6 +6446,10 @@ pub const Terminal = struct {
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
     pub const default_presentation = defaultPresentation();
+    /// Bounds one retained OSC 8 hyperlink target in bytes.
+    pub const maximum_hyperlink_uri_bytes = properties.hyperlink_target_max_bytes;
+    /// Bounds stable one-based OSC 8 hyperlink identities.
+    pub const maximum_hyperlinks = properties.hyperlink_target_max_count;
     /// Borrows one immutable decoded terminal image.
     pub const Image = graphics_mod.ImageView;
     /// Copies one image placement resolved into the visible terminal view.

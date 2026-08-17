@@ -55,6 +55,7 @@ pub const Feature = enum(u6) {
     typed_input = 1,
     resize_leader = 2,
     history_window = 3,
+    text_snapshot = 4,
 };
 
 /// Returns the negotiated bit mask for one feature.
@@ -65,7 +66,8 @@ pub fn feature(feature_value: Feature) u64 {
 /// Features implemented by the current endpoint contract.
 pub const supported_features = feature(.grid_snapshot) |
     feature(.resize_leader) |
-    feature(.history_window);
+    feature(.history_window) |
+    feature(.text_snapshot);
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
 pub const Header = struct {
@@ -143,10 +145,113 @@ pub const Result = struct {
 ///
 /// `grid_v1` intentionally freezes only the canonical spatial grid needed by
 /// the first shared-session client: row wrap/DEC geometry and each cell's
-/// codepoint plus multicell occupancy. Styling, complete grapheme sidecars,
-/// images, and presentation defaults remain future negotiated formats.
+/// codepoint plus multicell occupancy. `text_v1` adds complete renderer-neutral
+/// text semantics; terminal images remain a separate future capability.
 pub const SnapshotFormat = enum(u16) {
     grid_v1 = 1,
+    text_v1 = 2,
+};
+
+/// Record classes carried inside `snapshot_data` for `SnapshotFormat.text_v1`.
+///
+/// Each record starts with one fixed eight-byte header so clients can validate
+/// and skip a complete record without depending on Zig struct layout.
+pub const TextRecordKind = enum(u8) {
+    presentation = 1,
+    row = 2,
+    hyperlink = 3,
+};
+
+/// One self-delimiting `text_v1` record header. Reserved bytes are always zero.
+pub const TextRecordHeader = struct {
+    kind: TextRecordKind,
+    payload_len: u32,
+};
+
+/// Stable language-neutral terminal color classes used by `text_v1` cells.
+pub const TextColorKind = enum(u8) {
+    default = 0,
+    indexed = 1,
+    rgb = 2,
+};
+
+/// One semantic terminal color. RGB values use the low 24 bits as 0xRRGGBB.
+pub const TextColor = struct {
+    kind: TextColorKind,
+    value: u32,
+};
+
+/// Frozen byte grammar and bounds for the renderer-neutral rich text snapshot.
+pub const text_v1 = struct {
+    /// Fixed record header: kind:u8, reserved:u24=0, payload_len:u32 big-endian.
+    pub const record_header_bytes: usize = 8;
+    /// Semantic color: kind:u8 followed by value:u32 big-endian.
+    pub const color_bytes: usize = 5;
+    /// Exact fixed presentation payload; this record has no variable suffix.
+    pub const presentation_bytes: usize = 8 + 1 + 1 + 2 +
+        256 * 4 + 2 * 4 + 4 * 4;
+    /// Cursor-age sentinel when no tracked absolute movement has occurred.
+    pub const no_cursor_movement_age_ns: u64 = std.math.maxInt(u64);
+    /// Row prefix: wrapped:u8, DEC line geometry:u8, columns:u16 big-endian.
+    pub const row_header_bytes: usize = 4;
+    /// Fixed cell prefix followed by `scalar_count` big-endian u32 scalars.
+    pub const cell_header_bytes: usize = 35;
+    /// Hyperlink prefix: stable link_id:u32 + uri_len:u16, both big-endian.
+    pub const hyperlink_header_bytes: usize = 6;
+    /// Frozen maximum Unicode scalars transported for one terminal grapheme.
+    pub const maximum_cell_scalars: u8 = 24;
+    /// Frozen maximum referenced OSC 8 identities in one snapshot.
+    pub const maximum_hyperlinks: u16 = 4096;
+    /// Frozen maximum URI bytes for one transported OSC 8 target.
+    pub const maximum_hyperlink_uri_bytes: u16 = 2048;
+
+    /// Optional presentation colors whose four RGBA slots are always present.
+    pub const presentation_presence = struct {
+        /// Cursor-color RGBA slot is semantically present.
+        pub const cursor: u8 = 1 << 0;
+        /// Cursor-text RGBA slot is semantically present.
+        pub const cursor_text: u8 = 1 << 1;
+        /// Selection-background RGBA slot is semantically present.
+        pub const selection_background: u8 = 1 << 2;
+        /// Selection-foreground RGBA slot is semantically present.
+        pub const selection_foreground: u8 = 1 << 3;
+        /// Mask of every accepted `text_v1` presentation-presence bit.
+        pub const known: u8 = cursor | cursor_text |
+            selection_background | selection_foreground;
+    };
+
+    /// Terminal-wide presentation flags.
+    pub const presentation_flags = struct {
+        /// DEC reverse-video mode applies to the complete presentation.
+        pub const reverse_screen: u8 = 1 << 0;
+        /// Mask of every accepted `text_v1` presentation flag.
+        pub const known: u8 = reverse_screen;
+    };
+
+    /// Cell style flags. Spare bits must remain zero for `text_v1`.
+    pub const style = struct {
+        /// SGR bold rendition is active.
+        pub const bold: u16 = 1 << 0;
+        /// SGR dim rendition is active.
+        pub const dim: u16 = 1 << 1;
+        /// SGR italic rendition is active.
+        pub const italic: u16 = 1 << 2;
+        /// Slow blink rendition is active.
+        pub const blink: u16 = 1 << 3;
+        /// Fast blink rendition is active.
+        pub const blink_fast: u16 = 1 << 4;
+        /// Cell foreground/background semantic reversal is active.
+        pub const reverse: u16 = 1 << 5;
+        /// Invisible/conceal rendition is active.
+        pub const invisible: u16 = 1 << 6;
+        /// Underline rendition is active; style is carried separately.
+        pub const underline: u16 = 1 << 7;
+        /// Strikethrough rendition is active.
+        pub const strikethrough: u16 = 1 << 8;
+        /// Mask of every accepted `text_v1` cell-style bit.
+        pub const known: u16 = bold | dim | italic | blink | blink_fast |
+            reverse | invisible | underline | strikethrough;
+    };
 };
 
 /// Starts one coherent snapshot. All following data/end frames share revision.
@@ -356,6 +461,55 @@ pub fn decodeSnapshotBegin(input: []const u8) PayloadError!SnapshotBegin {
     };
 }
 
+/// Encodes one self-delimiting `text_v1` record header.
+pub fn encodeTextRecordHeader(
+    output: *[text_v1.record_header_bytes]u8,
+    value: TextRecordHeader,
+) void {
+    output.* = @splat(0);
+    output[0] = @backingInt(value.kind);
+    writeU32(output[4..8], value.payload_len);
+}
+
+/// Decodes one `text_v1` record header and rejects every reserved bit.
+pub fn decodeTextRecordHeader(
+    input: *const [text_v1.record_header_bytes]u8,
+) PayloadError!TextRecordHeader {
+    if (input[1] != 0 or input[2] != 0 or input[3] != 0)
+        return error.InvalidPayload;
+    return .{
+        .kind = enumFromInt(TextRecordKind, input[0]) orelse
+            return error.InvalidPayload,
+        .payload_len = readU32(input[4..8]),
+    };
+}
+
+/// Encodes one semantic `text_v1` terminal color.
+pub fn encodeTextColor(
+    output: *[text_v1.color_bytes]u8,
+    value: TextColor,
+) PayloadError!void {
+    switch (value.kind) {
+        .default => if (value.value != 0) return error.InvalidPayload,
+        .indexed => if (value.value > 255) return error.InvalidPayload,
+        .rgb => if (value.value > 0x00ff_ffff) return error.InvalidPayload,
+    }
+    output[0] = @backingInt(value.kind);
+    writeU32(output[1..5], value.value);
+}
+
+/// Decodes and validates one semantic `text_v1` terminal color.
+pub fn decodeTextColor(input: *const [text_v1.color_bytes]u8) PayloadError!TextColor {
+    const value = TextColor{
+        .kind = enumFromInt(TextColorKind, input[0]) orelse
+            return error.InvalidPayload,
+        .value = readU32(input[1..5]),
+    };
+    var canonical: [text_v1.color_bytes]u8 = undefined;
+    try encodeTextColor(&canonical, value);
+    return value;
+}
+
 /// Encodes one completed snapshot revision.
 pub fn encodeSnapshotEnd(output: *[payload_bytes.snapshot_end]u8, value: SnapshotEnd) void {
     writeU64(output, value.revision);
@@ -530,6 +684,71 @@ test "wire integers round trip beyond one byte" {
     const resize = try decodeResize(&resize_bytes);
     try std.testing.expectEqual(@as(u16, 512), resize.rows);
     try std.testing.expectEqual(@as(u16, 1025), resize.columns);
+}
+
+test "grid_v1 snapshot begin bytes stay frozen" {
+    var encoded: [payload_bytes.snapshot_begin]u8 = undefined;
+    encodeSnapshotBegin(&encoded, .{
+        .revision = 0x0102_0304_0506_0708,
+        .terminal_revision = 0x1112_1314_1516_1718,
+        .history_offset = 0x2122_2324,
+        .history_count = 0x3132_3334,
+        .history_row_base = 0x4142_4344,
+        .rows = 0x5152,
+        .columns = 0x6162,
+        .cursor_row = 0x7172,
+        .cursor_column = 0x8182,
+        .cursor_shape = 0x91,
+        .cursor_visible = true,
+        .cursor_blink = true,
+        .alternate_screen = true,
+        .stream_closed = true,
+        .child_exited = true,
+        .leader_present = true,
+        .you_are_leader = true,
+    });
+    try std.testing.expectEqualSlices(u8, &.{
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x00, 0x01, 0x21, 0x22, 0x23, 0x24, 0x31, 0x32,
+        0x33, 0x34, 0x41, 0x42, 0x43, 0x44, 0x51, 0x52,
+        0x61, 0x62, 0x71, 0x72, 0x81, 0x82, 0x91, 0x7f,
+    }, &encoded);
+}
+
+test "text_v1 record and color grammar is exact and hostile-safe" {
+    var record: [text_v1.record_header_bytes]u8 = undefined;
+    encodeTextRecordHeader(&record, .{ .kind = .row, .payload_len = 0x0102_0304 });
+    try std.testing.expectEqualSlices(u8, &.{
+        0x02, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+    }, &record);
+    const decoded_record = try decodeTextRecordHeader(&record);
+    try std.testing.expectEqual(TextRecordKind.row, decoded_record.kind);
+    try std.testing.expectEqual(@as(u32, 0x0102_0304), decoded_record.payload_len);
+    var bad_record = record;
+    bad_record[2] = 1;
+    try std.testing.expectError(error.InvalidPayload, decodeTextRecordHeader(&bad_record));
+    bad_record = record;
+    bad_record[0] = 0xff;
+    try std.testing.expectError(error.InvalidPayload, decodeTextRecordHeader(&bad_record));
+
+    var color: [text_v1.color_bytes]u8 = undefined;
+    try encodeTextColor(&color, .{ .kind = .rgb, .value = 0x00ab_cdef });
+    try std.testing.expectEqualSlices(u8, &.{ 2, 0, 0xab, 0xcd, 0xef }, &color);
+    try std.testing.expectEqualDeep(
+        TextColor{ .kind = .rgb, .value = 0x00ab_cdef },
+        try decodeTextColor(&color),
+    );
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeTextColor(&color, .{ .kind = .default, .value = 1 }),
+    );
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeTextColor(&color, .{ .kind = .indexed, .value = 256 }),
+    );
+    color = .{ 2, 1, 0, 0, 0 };
+    try std.testing.expectError(error.InvalidPayload, decodeTextColor(&color));
 }
 
 test "version negotiation is explicit before protocol v1" {

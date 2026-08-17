@@ -40,9 +40,9 @@ const max_metadata_bytes: u32 = 1024;
 /// Maximum retained title-stack depth.
 const title_stack_limit: u8 = 10;
 /// Maximum bytes in one retained hyperlink target.
-const hyperlink_target_max_bytes: u32 = 2 * 1024;
+pub const hyperlink_target_max_bytes: u32 = 2 * 1024;
 /// Maximum retained hyperlink identities.
-const hyperlink_target_max_count: u32 = 4096;
+pub const hyperlink_target_max_count: u32 = 4096;
 
 /// Owns one bounded shell mark.
 pub const ShellMark = struct {

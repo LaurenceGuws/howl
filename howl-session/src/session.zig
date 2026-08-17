@@ -20,12 +20,18 @@ pub const Input = vt.Terminal.InputEvent;
 pub const Cell = vt.Terminal.Cell;
 /// Copies one resolved terminal cursor shape.
 pub const CursorShape = vt.Terminal.CursorShape;
+/// Copies the semantic terminal-color class used by cell attributes.
+pub const ColorKind = vt.Terminal.ColorKind;
 /// Copies terminal palette and dynamic visual defaults.
 pub const Presentation = vt.Terminal.Presentation;
 /// Copies one row's DEC presentation geometry.
 pub const LineGeometry = vt.Terminal.LineGeometry;
 /// Maximum scalars retained by one bounded terminal grapheme.
 pub const maximum_cell_scalars = vt.scalar.maximum_scalars;
+/// Bounds one retained OSC 8 hyperlink target in bytes.
+pub const maximum_hyperlink_uri_bytes = vt.Terminal.maximum_hyperlink_uri_bytes;
+/// Bounds stable one-based OSC 8 hyperlink identities.
+pub const maximum_hyperlinks = vt.Terminal.maximum_hyperlinks;
 /// Fixed process-group signal vocabulary.
 pub const Signal = pty.Signal;
 /// Exact process-group signal delivery outcome.
@@ -167,6 +173,11 @@ pub fn copyCellScalars(
 /// Copies the terminal palette and dynamic visual defaults.
 pub fn presentation(session: *const Session) Presentation {
     return stateConst(session).terminal.presentation();
+}
+
+/// Borrows the URI interned for one nonzero terminal-cell hyperlink identity.
+pub fn hyperlinkUri(session: *const Session, link_id: u32) ?[]const u8 {
+    return stateConst(session).terminal.hyperlinkUri(link_id);
 }
 
 /// Copies one visible row's DEC presentation geometry.

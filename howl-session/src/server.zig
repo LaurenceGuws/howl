@@ -18,6 +18,15 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
+comptime {
+    if (howl.maximum_cell_scalars != protocol.text_v1.maximum_cell_scalars)
+        @compileError("text_v1 scalar bound must match canonical VT grapheme bound");
+    if (howl.maximum_hyperlinks != protocol.text_v1.maximum_hyperlinks)
+        @compileError("text_v1 hyperlink identity bound must match canonical VT bound");
+    if (howl.maximum_hyperlink_uri_bytes != protocol.text_v1.maximum_hyperlink_uri_bytes)
+        @compileError("text_v1 hyperlink URI bound must match canonical VT bound");
+}
+
 const Client = struct {
     fd: posix.fd_t,
     id: protocol.ClientId,
@@ -428,6 +437,12 @@ const Server = struct {
     }
 
     fn queueSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
+        if (client.features & protocol.feature(.text_snapshot) != 0)
+            return self.queueTextSnapshot(client, history_offset);
+        return self.queueGridSnapshot(client, history_offset);
+    }
+
+    fn queueGridSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
         const status = howl.status(self.session, history_offset);
         const row_bytes = std.math.add(usize, 4, std.math.mul(usize, status.columns, 8) catch
             return error.SnapshotTooLarge) catch return error.SnapshotTooLarge;
@@ -517,6 +532,282 @@ const Server = struct {
         client.output_offset = 0;
     }
 
+    fn queueTextSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
+        const status = howl.status(self.session, history_offset);
+        const observed_ns = nowNs(self.io);
+        const cursor_age_ns = if (status.cursor_movement_timestamp_ns == 0)
+            protocol.text_v1.no_cursor_movement_age_ns
+        else
+            observed_ns -| status.cursor_movement_timestamp_ns;
+        var referenced_links: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+        var referenced_link_count: usize = 0;
+        const cells = try self.allocator.alloc(howl.Cell, status.columns);
+        defer self.allocator.free(cells);
+
+        var body_bytes: usize = protocol.text_v1.record_header_bytes +
+            protocol.text_v1.presentation_bytes;
+        var row: u16 = 0;
+        while (row < status.rows) : (row += 1) {
+            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
+            var row_payload_bytes: usize = protocol.text_v1.row_header_bytes;
+            for (copied, 0..) |cell, column| {
+                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
+                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
+                    howl.copyCellScalars(
+                        self.session,
+                        status.history_offset,
+                        row,
+                        @intCast(column),
+                        &scalar_storage,
+                    )
+                else
+                    &.{};
+                if (scalars.len > protocol.text_v1.maximum_cell_scalars)
+                    return error.InvalidSnapshot;
+                if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
+                    if (scalars.len == 0 or scalars[0] != cell.codepoint)
+                        return error.InvalidSnapshot;
+                } else if (scalars.len != 0) return error.InvalidSnapshot;
+
+                const scalar_bytes = std.math.mul(usize, scalars.len, 4) catch
+                    return error.SnapshotTooLarge;
+                row_payload_bytes = std.math.add(
+                    usize,
+                    row_payload_bytes,
+                    protocol.text_v1.cell_header_bytes + scalar_bytes,
+                ) catch return error.SnapshotTooLarge;
+
+                if (cell.attrs.link_id != 0) {
+                    if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
+                        return error.InvalidSnapshot;
+                    const link_index: usize = @intCast(cell.attrs.link_id);
+                    if (!referenced_links[link_index]) {
+                        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
+                            return error.InvalidSnapshot;
+                        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
+                            return error.InvalidSnapshot;
+                        referenced_links[link_index] = true;
+                        referenced_link_count += 1;
+                    }
+                }
+            }
+            const record_bytes = std.math.add(
+                usize,
+                protocol.text_v1.record_header_bytes,
+                row_payload_bytes,
+            ) catch return error.SnapshotTooLarge;
+            if (record_bytes > protocol.maximum_payload_bytes) return error.SnapshotTooLarge;
+            body_bytes = std.math.add(usize, body_bytes, record_bytes) catch
+                return error.SnapshotTooLarge;
+        }
+
+        var link_id: usize = 1;
+        while (link_id < referenced_links.len) : (link_id += 1) {
+            if (!referenced_links[link_id]) continue;
+            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
+                return error.InvalidSnapshot;
+            const link_payload_bytes = std.math.add(
+                usize,
+                protocol.text_v1.hyperlink_header_bytes,
+                uri.len,
+            ) catch return error.SnapshotTooLarge;
+            body_bytes = std.math.add(
+                usize,
+                body_bytes,
+                protocol.text_v1.record_header_bytes + link_payload_bytes,
+            ) catch return error.SnapshotTooLarge;
+        }
+
+        const data_frame_count = std.math.add(
+            usize,
+            @as(usize, status.rows) + 1,
+            referenced_link_count,
+        ) catch return error.SnapshotTooLarge;
+        const frame_count = std.math.add(usize, data_frame_count, 2) catch
+            return error.SnapshotTooLarge;
+        const frame_headers = std.math.mul(usize, frame_count, protocol.header_bytes) catch
+            return error.SnapshotTooLarge;
+        const fixed_payloads = protocol.payload_bytes.snapshot_begin +
+            protocol.payload_bytes.snapshot_end;
+        const total_bound = std.math.add(
+            usize,
+            std.math.add(usize, body_bytes, frame_headers) catch return error.SnapshotTooLarge,
+            fixed_payloads,
+        ) catch return error.SnapshotTooLarge;
+        if (total_bound > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+
+        client.resetOutput(self.allocator);
+        errdefer client.resetOutput(self.allocator);
+        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+
+        var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
+        protocol.encodeSnapshotBegin(&begin_payload, .{
+            .revision = self.observation_revision,
+            .terminal_revision = status.revision,
+            .format = .text_v1,
+            .history_offset = status.history_offset,
+            .history_count = status.history_count,
+            .history_row_base = status.history_row_base,
+            .rows = status.rows,
+            .columns = status.columns,
+            .cursor_row = status.cursor_row,
+            .cursor_column = status.cursor_column,
+            .cursor_shape = @intCast(@backingInt(status.cursor_shape)),
+            .cursor_visible = status.cursor_visible,
+            .cursor_blink = status.cursor_blink,
+            .alternate_screen = status.alternate_screen,
+            .stream_closed = self.stream_closed,
+            .child_exited = self.child_exited,
+            .leader_present = self.authority.leader() != null,
+            .you_are_leader = self.authority.mayResize(client.id),
+        });
+        try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
+
+        try self.appendPresentationRecord(&client.output, cursor_age_ns);
+
+        row = 0;
+        while (row < status.rows) : (row += 1) {
+            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
+            const record = try self.beginTextRecord(&client.output, .row);
+            var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
+                @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
+                richLineGeometry(howl.lineGeometry(self.session, status.history_offset, row)),
+                @truncate(status.columns >> 8),
+                @truncate(status.columns),
+            };
+            try client.output.appendSlice(self.allocator, &row_header);
+            for (copied, 0..) |cell, column| {
+                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
+                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
+                    howl.copyCellScalars(
+                        self.session,
+                        status.history_offset,
+                        row,
+                        @intCast(column),
+                        &scalar_storage,
+                    )
+                else
+                    &.{};
+                try self.appendTextCell(&client.output, cell, scalars);
+            }
+            try finishTextRecord(&client.output, record);
+        }
+
+        link_id = 1;
+        while (link_id < referenced_links.len) : (link_id += 1) {
+            if (!referenced_links[link_id]) continue;
+            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
+                return error.InvalidSnapshot;
+            const record = try self.beginTextRecord(&client.output, .hyperlink);
+            var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
+            encodeU32(link_header[0..4], @intCast(link_id));
+            link_header[4] = @truncate(uri.len >> 8);
+            link_header[5] = @truncate(uri.len);
+            try client.output.appendSlice(self.allocator, &link_header);
+            try client.output.appendSlice(self.allocator, uri);
+            try finishTextRecord(&client.output, record);
+        }
+
+        var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
+        protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
+        try self.appendFrame(&client.output, .snapshot_end, &end_payload);
+        std.debug.assert(client.output.items.len == total_bound);
+        client.output_offset = 0;
+    }
+
+    fn appendPresentationRecord(
+        self: *Server,
+        output: *std.ArrayList(u8),
+        cursor_age_ns: u64,
+    ) !void {
+        const record = try self.beginTextRecord(output, .presentation);
+        const payload_start = output.items.len;
+        const presentation = howl.presentation(self.session);
+        var fixed: [12]u8 = @splat(0);
+        encodeU64(fixed[0..8], cursor_age_ns);
+        if (presentation.cursor != null)
+            fixed[8] |= protocol.text_v1.presentation_presence.cursor;
+        if (presentation.cursor_text != null)
+            fixed[8] |= protocol.text_v1.presentation_presence.cursor_text;
+        if (presentation.selection_background != null)
+            fixed[8] |= protocol.text_v1.presentation_presence.selection_background;
+        if (presentation.selection_foreground != null)
+            fixed[8] |= protocol.text_v1.presentation_presence.selection_foreground;
+        if (presentation.reverse_screen)
+            fixed[9] |= protocol.text_v1.presentation_flags.reverse_screen;
+        try output.appendSlice(self.allocator, &fixed);
+        for (presentation.palette) |rgb| try appendRgba(self.allocator, output, rgb);
+        try appendRgba(self.allocator, output, presentation.foreground);
+        try appendRgba(self.allocator, output, presentation.background);
+        try appendOptionalRgba(self.allocator, output, presentation.cursor);
+        try appendOptionalRgba(self.allocator, output, presentation.cursor_text);
+        try appendOptionalRgba(self.allocator, output, presentation.selection_background);
+        try appendOptionalRgba(self.allocator, output, presentation.selection_foreground);
+        if (output.items.len - payload_start != protocol.text_v1.presentation_bytes)
+            return error.InvalidSnapshot;
+        try finishTextRecord(output, record);
+    }
+
+    fn appendTextCell(
+        self: *Server,
+        output: *std.ArrayList(u8),
+        cell: howl.Cell,
+        scalars: []const u21,
+    ) !void {
+        var encoded: [protocol.text_v1.cell_header_bytes]u8 = @splat(0);
+        encoded[0] = @intCast(scalars.len);
+        encoded[1] = cell.width;
+        encoded[2] = cell.height;
+        encoded[3] = cell.x;
+        encoded[4] = cell.y;
+        encoded[5] = cell.subscale_n;
+        encoded[6] = cell.subscale_d;
+        encoded[7] = cell.vertical_align;
+        encoded[8] = cell.horizontal_align;
+        encoded[9] = @intFromBool(cell.semantic_width);
+        encoded[10] = cell.attrs.font;
+        encoded[11] = richBaseline(cell.attrs.baseline);
+        encoded[12] = richUnderlineStyle(cell.attrs.underline_style);
+        encoded[13] = richProtection(cell.attrs.protected);
+        const style = richStyle(cell.attrs);
+        encoded[14] = @truncate(style >> 8);
+        encoded[15] = @truncate(style);
+        try encodeRichColor(encoded[16..21], cell.attrs.fg);
+        try encodeRichColor(encoded[21..26], cell.attrs.bg);
+        try encodeRichColor(encoded[26..31], cell.attrs.underline_color);
+        encodeU32(encoded[31..35], cell.attrs.link_id);
+        try output.appendSlice(self.allocator, &encoded);
+        for (scalars) |scalar| {
+            var scalar_bytes: [4]u8 = undefined;
+            encodeU32(&scalar_bytes, scalar);
+            try output.appendSlice(self.allocator, &scalar_bytes);
+        }
+    }
+
+    const TextRecordOffsets = struct {
+        frame_header: usize,
+        record_header: usize,
+        payload_start: usize,
+        kind: protocol.TextRecordKind,
+    };
+
+    fn beginTextRecord(
+        self: *Server,
+        output: *std.ArrayList(u8),
+        kind: protocol.TextRecordKind,
+    ) !TextRecordOffsets {
+        const frame_header = output.items.len;
+        try output.appendNTimes(self.allocator, 0, protocol.header_bytes);
+        const record_header = output.items.len;
+        try output.appendNTimes(self.allocator, 0, protocol.text_v1.record_header_bytes);
+        return .{
+            .frame_header = frame_header,
+            .record_header = record_header,
+            .payload_start = output.items.len,
+            .kind = kind,
+        };
+    }
+
     fn queueResult(self: *Server, client: *Client, request_kind: protocol.Kind, code: protocol.ResultCode) !void {
         var payload: [protocol.payload_bytes.result]u8 = undefined;
         protocol.encodeResult(&payload, .{ .request_kind = request_kind, .code = code });
@@ -545,6 +836,129 @@ fn finishDataFrame(output: *std.ArrayList(u8), header_offset: usize, payload_sta
     var header: [protocol.header_bytes]u8 = undefined;
     try protocol.encodeHeader(&header, .{ .kind = .snapshot_data, .payload_len = @intCast(payload_len) });
     @memcpy(output.items[header_offset..payload_start], &header);
+}
+
+fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffsets) !void {
+    const payload_len = output.items.len - offsets.payload_start;
+    const frame_payload_len = std.math.add(
+        usize,
+        protocol.text_v1.record_header_bytes,
+        payload_len,
+    ) catch return error.PayloadTooLarge;
+    if (frame_payload_len > protocol.maximum_payload_bytes) return error.PayloadTooLarge;
+
+    var record_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    protocol.encodeTextRecordHeader(&record_header, .{
+        .kind = offsets.kind,
+        .payload_len = @intCast(payload_len),
+    });
+    @memcpy(
+        output.items[offsets.record_header..offsets.payload_start],
+        &record_header,
+    );
+
+    var frame_header: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&frame_header, .{
+        .kind = .snapshot_data,
+        .payload_len = @intCast(frame_payload_len),
+    });
+    @memcpy(
+        output.items[offsets.frame_header..offsets.record_header],
+        &frame_header,
+    );
+}
+
+fn richLineGeometry(value: howl.LineGeometry) u8 {
+    return switch (value) {
+        .single_width => 0,
+        .double_width => 1,
+        .double_height_top => 2,
+        .double_height_bottom => 3,
+    };
+}
+
+fn richBaseline(value: @TypeOf(@as(howl.Cell, undefined).attrs.baseline)) u8 {
+    return switch (value) {
+        .normal => 0,
+        .raised => 1,
+        .lowered => 2,
+    };
+}
+
+fn richUnderlineStyle(value: @TypeOf(@as(howl.Cell, undefined).attrs.underline_style)) u8 {
+    return switch (value) {
+        .straight => 0,
+        .double => 1,
+        .curly => 2,
+        .dotted => 3,
+        .dashed => 4,
+    };
+}
+
+fn richProtection(value: @TypeOf(@as(howl.Cell, undefined).attrs.protected)) u8 {
+    return switch (value) {
+        .none => 0,
+        .iso => 1,
+        .dec => 2,
+    };
+}
+
+fn richStyle(attrs: @TypeOf(@as(howl.Cell, undefined).attrs)) u16 {
+    var result: u16 = 0;
+    if (attrs.bold) result |= protocol.text_v1.style.bold;
+    if (attrs.dim) result |= protocol.text_v1.style.dim;
+    if (attrs.italic) result |= protocol.text_v1.style.italic;
+    if (attrs.blink) result |= protocol.text_v1.style.blink;
+    if (attrs.blink_fast) result |= protocol.text_v1.style.blink_fast;
+    if (attrs.reverse) result |= protocol.text_v1.style.reverse;
+    if (attrs.invisible) result |= protocol.text_v1.style.invisible;
+    if (attrs.underline) result |= protocol.text_v1.style.underline;
+    if (attrs.strikethrough) result |= protocol.text_v1.style.strikethrough;
+    return result;
+}
+
+fn encodeRichColor(output: []u8, color: @TypeOf(@as(howl.Cell, undefined).attrs.fg)) !void {
+    std.debug.assert(output.len == protocol.text_v1.color_bytes);
+    const kind: protocol.TextColorKind = switch (color.colorKind()) {
+        .default => .default,
+        .indexed => .indexed,
+        .rgb => .rgb,
+    };
+    var encoded: [protocol.text_v1.color_bytes]u8 = undefined;
+    try protocol.encodeTextColor(&encoded, .{
+        .kind = kind,
+        .value = color.colorValue(),
+    });
+    @memcpy(output, &encoded);
+}
+
+fn appendRgba(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    rgb: @TypeOf(@as(howl.Presentation, undefined).palette[0]),
+) !void {
+    try output.appendSlice(allocator, &.{ rgb.r, rgb.g, rgb.b, rgb.a });
+}
+
+fn appendOptionalRgba(
+    allocator: std.mem.Allocator,
+    output: *std.ArrayList(u8),
+    rgb: ?@TypeOf(@as(howl.Presentation, undefined).palette[0]),
+) !void {
+    if (rgb) |value| return appendRgba(allocator, output, value);
+    try output.appendSlice(allocator, &.{ 0, 0, 0, 0 });
+}
+
+fn encodeU64(output: []u8, value: u64) void {
+    std.debug.assert(output.len == 8);
+    output[0] = @truncate(value >> 56);
+    output[1] = @truncate(value >> 48);
+    output[2] = @truncate(value >> 40);
+    output[3] = @truncate(value >> 32);
+    output[4] = @truncate(value >> 24);
+    output[5] = @truncate(value >> 16);
+    output[6] = @truncate(value >> 8);
+    output[7] = @truncate(value);
 }
 
 fn listenUnix(path: []const u8) !posix.fd_t {
@@ -745,6 +1159,21 @@ const TestSnapshot = struct {
     }
 };
 
+const TestTextSnapshot = struct {
+    begin: protocol.SnapshotBegin,
+    presentation_seen: bool = false,
+    cursor_age_ns: u64 = protocol.text_v1.no_cursor_movement_age_ns,
+    row_count: u16 = 0,
+    styled_link_id: u32 = 0,
+    saw_styled_a: bool = false,
+    saw_combining: bool = false,
+    saw_wide_lead: bool = false,
+    saw_wide_continuation: bool = false,
+    saw_osc66_lead: bool = false,
+    saw_osc66_continuation: bool = false,
+    saw_hyperlink: bool = false,
+};
+
 fn setNonBlocking(fd: posix.fd_t) !void {
     const flags_result = linux.fcntl(fd, linux.F.GETFL, 0);
     if (linux.errno(flags_result) != .SUCCESS) return error.TestSocketConfigureFailed;
@@ -774,9 +1203,17 @@ fn awaitFrame(peer: *TestPeer, server: *Server) !TestFrame {
     return error.TestTimeout;
 }
 
-fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
+const legacy_test_features = protocol.feature(.grid_snapshot) |
+    protocol.feature(.resize_leader) |
+    protocol.feature(.history_window);
+
+fn handshakeWithFeatures(
+    peer: *TestPeer,
+    server: *Server,
+    features: u64,
+) !protocol.Welcome {
     var payload: [protocol.payload_bytes.hello]u8 = undefined;
-    protocol.encodeHello(&payload, .{});
+    protocol.encodeHello(&payload, .{ .features = features });
     try peer.sendFrame(server, .hello, &payload);
     var frame = try awaitFrame(peer, server);
     defer frame.deinit();
@@ -784,6 +1221,12 @@ fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
     const welcome = try protocol.decodeWelcome(frame.payload);
     try std.testing.expectEqual(protocol.protocol_max_version, welcome.version);
     try std.testing.expect(welcome.features & protocol.feature(.grid_snapshot) != 0);
+    return welcome;
+}
+
+fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
+    const welcome = try handshakeWithFeatures(peer, server, legacy_test_features);
+    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) == 0);
     return welcome;
 }
 
@@ -798,6 +1241,7 @@ fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
     defer begin_frame.deinit();
     try std.testing.expectEqual(protocol.Kind.snapshot_begin, begin_frame.kind);
     const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
+    if (begin.format != .grid_v1) return error.MalformedTestSnapshot;
 
     var body: std.ArrayList(u8) = .empty;
     defer body.deinit(peer.allocator);
@@ -843,6 +1287,191 @@ fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
         try text.append(peer.allocator, '\n');
     }
     return .{ .allocator = peer.allocator, .begin = begin, .text = try text.toOwnedSlice(peer.allocator) };
+}
+
+fn receiveTextSnapshot(peer: *TestPeer, server: *Server) !TestTextSnapshot {
+    var begin_frame = try awaitFrame(peer, server);
+    defer begin_frame.deinit();
+    if (begin_frame.kind != .snapshot_begin) return error.UnexpectedTestFrame;
+    const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
+    if (begin.format != .text_v1) return error.MalformedTestSnapshot;
+
+    var result = TestTextSnapshot{ .begin = begin };
+    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var phase: enum { presentation, rows, hyperlinks } = .presentation;
+
+    while (true) {
+        var frame = try awaitFrame(peer, server);
+        defer frame.deinit();
+        switch (frame.kind) {
+            .snapshot_data => {
+                if (frame.payload.len < protocol.text_v1.record_header_bytes)
+                    return error.MalformedTestSnapshot;
+                var header_bytes: [protocol.text_v1.record_header_bytes]u8 = undefined;
+                @memcpy(&header_bytes, frame.payload[0..protocol.text_v1.record_header_bytes]);
+                const record = protocol.decodeTextRecordHeader(&header_bytes) catch
+                    return error.MalformedTestSnapshot;
+                if (record.payload_len != frame.payload.len - protocol.text_v1.record_header_bytes)
+                    return error.MalformedTestSnapshot;
+                const payload = frame.payload[protocol.text_v1.record_header_bytes..];
+                switch (record.kind) {
+                    .presentation => {
+                        if (phase != .presentation or result.presentation_seen or
+                            payload.len != protocol.text_v1.presentation_bytes)
+                            return error.MalformedTestSnapshot;
+                        if (payload[8] & ~protocol.text_v1.presentation_presence.known != 0 or
+                            payload[9] & ~protocol.text_v1.presentation_flags.known != 0 or
+                            payload[10] != 0 or payload[11] != 0)
+                            return error.MalformedTestSnapshot;
+                        result.cursor_age_ns = readU64(payload[0..8]);
+                        result.presentation_seen = true;
+                        phase = .rows;
+                    },
+                    .row => {
+                        if (phase != .rows or !result.presentation_seen or
+                            result.row_count >= begin.rows)
+                            return error.MalformedTestSnapshot;
+                        try inspectTextRow(
+                            begin,
+                            payload,
+                            &result,
+                            &referenced,
+                        );
+                        result.row_count += 1;
+                        if (result.row_count == begin.rows) phase = .hyperlinks;
+                    },
+                    .hyperlink => {
+                        if (phase != .hyperlinks or payload.len < protocol.text_v1.hyperlink_header_bytes)
+                            return error.MalformedTestSnapshot;
+                        const id = readU32(payload[0..4]);
+                        const uri_len = readU16(payload[4..6]);
+                        if (id == 0 or id > protocol.text_v1.maximum_hyperlinks or
+                            uri_len == 0 or uri_len > protocol.text_v1.maximum_hyperlink_uri_bytes or
+                            payload.len != protocol.text_v1.hyperlink_header_bytes + uri_len or
+                            resolved[id])
+                            return error.MalformedTestSnapshot;
+                        resolved[id] = true;
+                        if (id == result.styled_link_id and
+                            std.mem.eql(u8, payload[6..], "https://howl.example"))
+                            result.saw_hyperlink = true;
+                    },
+                }
+            },
+            .snapshot_end => {
+                const end = protocol.decodeSnapshotEnd(frame.payload) catch
+                    return error.MalformedTestSnapshot;
+                if (end.revision != begin.revision or !result.presentation_seen or
+                    result.row_count != begin.rows)
+                    return error.MalformedTestSnapshot;
+                for (referenced, resolved) |needed, present| if (needed != present)
+                    return error.MalformedTestSnapshot;
+                return result;
+            },
+            else => return error.UnexpectedTestFrame,
+        }
+    }
+}
+
+fn inspectTextRow(
+    begin: protocol.SnapshotBegin,
+    payload: []const u8,
+    result: *TestTextSnapshot,
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+) !void {
+    if (payload.len < protocol.text_v1.row_header_bytes or payload[0] > 1 or
+        payload[1] > 3 or readU16(payload[2..4]) != begin.columns)
+        return error.MalformedTestSnapshot;
+    var offset: usize = protocol.text_v1.row_header_bytes;
+    var column: u16 = 0;
+    while (column < begin.columns) : (column += 1) {
+        if (payload.len - offset < protocol.text_v1.cell_header_bytes)
+            return error.MalformedTestSnapshot;
+        const cell = payload[offset..][0..protocol.text_v1.cell_header_bytes];
+        const scalar_count = cell[0];
+        if (scalar_count > protocol.text_v1.maximum_cell_scalars or
+            cell[1] == 0 or cell[2] == 0 or cell[3] >= cell[1] or cell[4] >= cell[2] or
+            cell[5] > 15 or cell[6] > 15 or cell[7] > 3 or cell[8] > 3 or
+            cell[9] > 1 or cell[10] > 15 or cell[11] > 2 or cell[12] > 4 or cell[13] > 2)
+            return error.MalformedTestSnapshot;
+        const style = readU16(cell[14..16]);
+        if (style & ~protocol.text_v1.style.known != 0)
+            return error.MalformedTestSnapshot;
+        try validateTextColorBytes(cell[16..21]);
+        try validateTextColorBytes(cell[21..26]);
+        try validateTextColorBytes(cell[26..31]);
+        const link_id = readU32(cell[31..35]);
+        if (link_id > protocol.text_v1.maximum_hyperlinks)
+            return error.MalformedTestSnapshot;
+        if (link_id != 0) referenced[link_id] = true;
+
+        const scalar_bytes = @as(usize, scalar_count) * 4;
+        offset += protocol.text_v1.cell_header_bytes;
+        if (payload.len - offset < scalar_bytes) return error.MalformedTestSnapshot;
+        const scalars = payload[offset..][0..scalar_bytes];
+        if ((cell[3] != 0 or cell[4] != 0) and scalar_count != 0)
+            return error.MalformedTestSnapshot;
+        var scalar_index: usize = 0;
+        while (scalar_index < scalar_count) : (scalar_index += 1) {
+            const scalar = readU32(scalars[scalar_index * 4 ..][0..4]);
+            if (scalar > 0x10ffff or scalar >= 0xd800 and scalar <= 0xdfff)
+                return error.MalformedTestSnapshot;
+        }
+
+        if (scalar_count == 1 and readU32(scalars[0..4]) == 'A') {
+            var fg_bytes: [protocol.text_v1.color_bytes]u8 = undefined;
+            var bg_bytes: [protocol.text_v1.color_bytes]u8 = undefined;
+            var underline_bytes: [protocol.text_v1.color_bytes]u8 = undefined;
+            @memcpy(&fg_bytes, cell[16..21]);
+            @memcpy(&bg_bytes, cell[21..26]);
+            @memcpy(&underline_bytes, cell[26..31]);
+            const fg = try protocol.decodeTextColor(&fg_bytes);
+            const bg = try protocol.decodeTextColor(&bg_bytes);
+            const underline = try protocol.decodeTextColor(&underline_bytes);
+            if (style & protocol.text_v1.style.bold != 0 and
+                style & protocol.text_v1.style.italic != 0 and
+                style & protocol.text_v1.style.underline != 0 and
+                cell[12] == 2 and
+                fg.kind == .rgb and fg.value == 0x112233 and
+                bg.kind == .indexed and bg.value == 4 and
+                underline.kind == .rgb and underline.value == 0x445566 and
+                link_id != 0)
+            {
+                result.saw_styled_a = true;
+                result.styled_link_id = link_id;
+            }
+        }
+        if (scalar_count == 2 and readU32(scalars[0..4]) == 'e' and
+            readU32(scalars[4..8]) == 0x0301)
+            result.saw_combining = true;
+        if (scalar_count == 1 and readU32(scalars[0..4]) == 0x4e2d and
+            cell[1] == 2 and cell[3] == 0 and cell[9] == 1)
+            result.saw_wide_lead = true;
+        if (scalar_count == 0 and cell[1] == 2 and cell[3] == 1 and cell[9] == 1)
+            result.saw_wide_continuation = true;
+        if (scalar_count == 2 and readU32(scalars[0..4]) == 'H' and
+            readU32(scalars[4..8]) == 'i' and cell[1] == 4 and cell[2] == 2 and
+            cell[3] == 0 and cell[4] == 0 and cell[5] == 1 and cell[6] == 2 and
+            cell[7] == 1 and cell[8] == 2)
+            result.saw_osc66_lead = true;
+        if (scalar_count == 0 and cell[1] == 4 and cell[2] == 2 and
+            (cell[3] != 0 or cell[4] != 0) and cell[5] == 1 and cell[6] == 2 and
+            cell[7] == 1 and cell[8] == 2)
+            result.saw_osc66_continuation = true;
+
+        offset += scalar_bytes;
+    }
+    if (offset != payload.len) return error.MalformedTestSnapshot;
+}
+
+fn validateTextColorBytes(bytes: []const u8) !void {
+    if (bytes.len != protocol.text_v1.color_bytes) return error.MalformedTestSnapshot;
+    var encoded: [protocol.text_v1.color_bytes]u8 = undefined;
+    @memcpy(&encoded, bytes);
+    const color = protocol.decodeTextColor(&encoded) catch return error.MalformedTestSnapshot;
+    switch (color.kind) {
+        .default, .indexed, .rgb => {},
+    }
 }
 
 fn observeUntilContains(
@@ -916,6 +1545,75 @@ fn readU32(input: []const u8) u32 {
         (@as(u32, input[1]) << 16) |
         (@as(u32, input[2]) << 8) |
         @as(u32, input[3]);
+}
+
+fn readU64(input: []const u8) u64 {
+    std.debug.assert(input.len == 8);
+    var value: u64 = 0;
+    for (input) |byte| value = (value << 8) | byte;
+    return value;
+}
+
+test "text_v1 preserves renderer-complete terminal text semantics" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-text-v1.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        path,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "printf '\\033[1;1H'; " ++
+                "printf '\\033[1;3;4:3;38;2;17;34;51;48;5;4;58;2;68;85;102m'; " ++
+                "printf '\\033]8;id=rich;https://howl.example\\033\\\\'; " ++
+                "printf 'A'; " ++
+                "printf '\\033]8;;\\033\\\\'; " ++
+                "printf 'e\\314\\201\\344\\270\\255'; " ++
+                "printf '\\033]66;s=2:w=2:n=1:d=2:v=1:h=2;Hi\\033\\\\'; " ++
+                "printf '\\033[0m\\n'; cat",
+            .rows = 6,
+            .columns = 16,
+            .history_rows = 64,
+        },
+    );
+    defer server.deinit();
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const welcome = try handshakeWithFeatures(
+        &peer,
+        &server,
+        legacy_test_features | protocol.feature(.text_snapshot),
+    );
+    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) != 0);
+
+    var attempts: usize = 0;
+    var revision: u64 = 0;
+    while (attempts < 256) : (attempts += 1) {
+        try sendObserve(&peer, &server, revision);
+        const snapshot = try receiveTextSnapshot(&peer, &server);
+        revision = snapshot.begin.revision;
+        if (!snapshot.saw_styled_a or !snapshot.saw_combining or
+            !snapshot.saw_wide_lead or !snapshot.saw_wide_continuation or
+            !snapshot.saw_osc66_lead or !snapshot.saw_osc66_continuation or
+            !snapshot.saw_hyperlink)
+            continue;
+
+        try std.testing.expect(snapshot.presentation_seen);
+        try std.testing.expectEqual(@as(u16, 6), snapshot.begin.rows);
+        try std.testing.expectEqual(@as(u16, 16), snapshot.begin.columns);
+        try std.testing.expect(snapshot.styled_link_id != 0);
+        try std.testing.expect(snapshot.cursor_age_ns != protocol.text_v1.no_cursor_movement_age_ns);
+        return;
+    }
+    return error.TestTimeout;
 }
 
 test "Unix clients share one session and explicit geometry authority" {
@@ -1086,6 +1784,53 @@ test "oversized observation is local rejection not session failure" {
 
     var recovered = try observeUntilContains(&peer, &server, 0, "ALIVE");
     defer recovered.deinit();
+    try std.testing.expectEqual(@as(u16, 8), recovered.begin.rows);
+    try std.testing.expectEqual(@as(u16, 40), recovered.begin.columns);
+    try std.testing.expect(recovered.begin.you_are_leader);
+}
+
+test "oversized text_v1 observation is local rejection and recovers" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-text-oversize.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        path,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; printf 'TEXT-ALIVE\\n'; cat",
+            .rows = 512,
+            .columns = 1024,
+            .history_rows = 16,
+        },
+    );
+    defer server.deinit();
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const welcome = try handshakeWithFeatures(
+        &peer,
+        &server,
+        legacy_test_features | protocol.feature(.text_snapshot),
+    );
+    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) != 0);
+
+    try sendObserve(&peer, &server, 0);
+    try expectResult(&peer, &server, .observe, .rejected);
+
+    try sendAssignLeader(&peer, &server, welcome.client_id);
+    try expectResult(&peer, &server, .assign_leader, .ok);
+    try sendResize(&peer, &server, 8, 40);
+    try expectResult(&peer, &server, .resize, .ok);
+
+    try sendObserve(&peer, &server, 0);
+    const recovered = try receiveTextSnapshot(&peer, &server);
     try std.testing.expectEqual(@as(u16, 8), recovered.begin.rows);
     try std.testing.expectEqual(@as(u16, 40), recovered.begin.columns);
     try std.testing.expect(recovered.begin.you_are_leader);

@@ -101,6 +101,8 @@ pub const Screen = struct {
     pub const Rgb = ScreenRgb;
     /// Uses the canonical default, indexed, or RGB terminal color.
     pub const Color = ScreenColor;
+    /// Uses the semantic terminal-color class without exposing storage layout.
+    pub const ColorKind = ScreenColorKind;
     /// Uses the canonical terminal underline style.
     pub const UnderlineStyle = ScreenUnderlineStyle;
     /// Uses the canonical terminal baseline displacement.
@@ -5714,16 +5716,29 @@ const ScreenRgb = struct {
     a: u8 = 255,
 };
 
-const Kind = enum(u8) {
+/// Classifies one terminal color independently from its internal storage.
+pub const ScreenColorKind = enum(u8) {
     default,
     indexed,
     rgb,
 };
 
+const Kind = ScreenColorKind;
+
 // Stores a default, indexed, or RGB terminal color.
 const ScreenColor = struct {
     kind: Kind,
     value: u32,
+
+    /// Returns the semantic terminal-color class.
+    pub fn colorKind(self: ScreenColor) ScreenColorKind {
+        return self.kind;
+    }
+
+    /// Returns zero for default, palette index for indexed, or 0xRRGGBB for RGB.
+    pub fn colorValue(self: ScreenColor) u32 {
+        return self.value;
+    }
 
     /// Constructs an indexed terminal color.
     pub fn indexed(idx: u8) ScreenColor {

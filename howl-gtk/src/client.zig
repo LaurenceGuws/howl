@@ -10,6 +10,10 @@ pub const maximum_columns: u16 = 256;
 pub const maximum_cells: usize = @as(usize, maximum_rows) * maximum_columns;
 pub const maximum_input_bytes: usize = 4096;
 
+const legacy_features = protocol.feature(.grid_snapshot) |
+    protocol.feature(.resize_leader) |
+    protocol.feature(.history_window);
+
 pub const Cell = struct {
     codepoint: u32,
     width: u8,
@@ -64,7 +68,7 @@ pub const Connection = struct {
         errdefer closeFd(fd);
 
         var hello: [protocol.payload_bytes.hello]u8 = undefined;
-        protocol.encodeHello(&hello, .{});
+        protocol.encodeHello(&hello, .{ .features = legacy_features });
         try writeFrame(fd, .hello, &hello);
         var welcome_frame = try readFrame(allocator, fd);
         defer welcome_frame.deinit();
@@ -323,8 +327,10 @@ test "snapshot row parser preserves cell occupancy" {
     };
     const payload = [_]u8{
         0, 0, 0, 2,
-        0, 0, 0, 'A', 1, 1, 0, 0,
-        0, 0, 0, 0, 2, 1, 1, 0,
+        0, 0, 0, 'A',
+        1, 1, 0, 0,
+        0, 0, 0, 0,
+        2, 1, 1, 0,
     };
     var cells: [2]Cell = undefined;
     var rows: u16 = 0;
