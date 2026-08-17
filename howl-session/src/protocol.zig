@@ -36,7 +36,7 @@ const magic = [4]u8{ 'H', 'W', 'L', 'S' };
 /// Stable connection-local identity. Zero means no client/leader.
 pub const ClientId = u64;
 
-/// Frames carried unchanged over a Unix socket or an SSH stdio bridge.
+/// Frames carried unchanged over any ordered byte stream, including Unix or TCP sockets.
 pub const Kind = enum(u8) {
     hello = 1,
     welcome = 2,

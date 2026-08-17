@@ -19,7 +19,7 @@ The session API is deliberately opaque. Embedders can inspect semantic state and
 
 ## Attachment model
 
-The target local boundary is a Unix socket per session. A local client attaches directly. Remote syntax such as `host:session_id` will use SSH only as transport to a small bridge into the same node-local socket. SSH remains responsible for remote authentication and encryption.
+The session/client boundary is the frozen Howl framed byte stream, independent of the kernel PTY underneath it. Unix sockets remain a temporary local oracle, while `howl-sessiond` now also supports IPv4 loopback TCP as the portable native-client transport under active Linux/Android proof. SSH remains an optional secure way to reach a remote byte stream; the existing Unix stdio bridge stays until a TCP remote replacement is independently proven.
 
 Attaching is observational. It never silently resizes the PTY. Geometry is explicit canonical session state.
 

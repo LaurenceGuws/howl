@@ -1,9 +1,12 @@
 # howl-session wire contract
 
 `howl-session` owns one node-local PTY and one canonical `howl-vt` terminal.
-Clients attach over a Unix stream socket, or through `howl-session-bridge` over
-ordinary SSH stdio. The bridge is protocol-blind: the bytes described here are
-identical on the Unix socket and over SSH.
+The framing below is transport-neutral. `howl-sessiond` currently accepts either
+its established Unix stream path or an IPv4 loopback TCP listener selected with
+`tcp:PORT`; `tcp:0` asks the kernel for a free port and prints the resolved
+`tcp://127.0.0.1:PORT` endpoint. The existing `howl-session-bridge` remains a
+protocol-blind SSH/stdio adapter for the Unix path while TCP remote reachability
+is still being proved.
 
 This document is the client contract for framing version 1 and session protocol
 version 1. All multi-byte integers are unsigned big-endian unless a field is

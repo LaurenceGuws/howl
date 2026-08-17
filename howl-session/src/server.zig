@@ -1,6 +1,6 @@
-//! Runs one node-local shared Howl session behind one Unix-domain socket.
+//! Runs one node-local shared Howl session behind one byte-stream listener.
 //!
-//! One process owns one PTY, one VT, and one socket. Clients are bounded
+//! One process owns one PTY, one VT, and one listener. Clients are bounded
 //! observers/controllers. Socket output is always nonblocking and each client
 //! owns at most one materialized response, so an observer cannot pace PTY/VT
 //! progress.
@@ -17,6 +17,39 @@ const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payloa
 const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
+
+const ListenerSpec = union(enum) {
+    unix: []const u8,
+    tcp_loopback: u16,
+};
+
+const Listener = struct {
+    fd: posix.fd_t,
+    unix_path: [108]u8 = @splat(0),
+    unix_path_len: u8 = 0,
+    tcp_port: ?u16 = null,
+
+    fn init(spec: ListenerSpec) !Listener {
+        return switch (spec) {
+            .unix => |path| blk: {
+                const fd = try listenUnix(path);
+                var listener = Listener{ .fd = fd, .unix_path_len = @intCast(path.len) };
+                @memcpy(listener.unix_path[0..path.len], path);
+                break :blk listener;
+            },
+            .tcp_loopback => |requested_port| blk: {
+                const bound = try listenTcpLoopback(requested_port);
+                break :blk .{ .fd = bound.fd, .tcp_port = bound.port };
+            },
+        };
+    }
+
+    fn deinit(self: *Listener) void {
+        closeFd(self.fd);
+        if (self.unix_path_len != 0) unlinkPath(self.unix_path[0..self.unix_path_len]);
+        self.* = undefined;
+    }
+};
 
 comptime {
     if (howl.maximum_cell_scalars != protocol.text_v1.maximum_cell_scalars)
@@ -63,9 +96,7 @@ const Server = struct {
     allocator: std.mem.Allocator,
     io: std.Io,
     session: *howl.Session,
-    listener: posix.fd_t,
-    socket_path: [108]u8 = @splat(0),
-    socket_path_len: u8,
+    listener: Listener,
     clients: [maximum_clients]?Client = @splat(null),
     next_client_id: protocol.ClientId = 1,
     authority: protocol.ResizeAuthority = .{},
@@ -79,25 +110,21 @@ const Server = struct {
         allocator: std.mem.Allocator,
         io: std.Io,
         inherited_environment: std.process.Environ,
-        socket_path: []const u8,
+        listener_spec: ListenerSpec,
         launch: howl.Launch,
     ) !Server {
         const session = try howl.init(allocator, inherited_environment, launch);
         errdefer howl.deinit(session);
-        const listener = try listenUnix(socket_path);
-        errdefer closeFd(listener);
-        errdefer unlinkPath(socket_path);
+        var listener = try Listener.init(listener_spec);
+        errdefer listener.deinit();
 
-        var server = Server{
+        return .{
             .allocator = allocator,
             .io = io,
             .session = session,
             .listener = listener,
-            .socket_path_len = @intCast(socket_path.len),
             .terminal_revision = howl.revision(session),
         };
-        @memcpy(server.socket_path[0..socket_path.len], socket_path);
-        return server;
     }
 
     fn deinit(self: *Server) void {
@@ -105,8 +132,7 @@ const Server = struct {
             if (client.*) |*active| active.deinit(self.allocator);
             client.* = null;
         }
-        closeFd(self.listener);
-        unlinkPath(self.socket_path[0..self.socket_path_len]);
+        self.listener.deinit();
         howl.deinit(self.session);
         self.* = undefined;
     }
@@ -116,7 +142,7 @@ const Server = struct {
         try self.processBufferedRequests();
 
         var descriptors: [2 + maximum_clients]posix.pollfd = undefined;
-        descriptors[0] = .{ .fd = self.listener, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 };
+        descriptors[0] = .{ .fd = self.listener.fd, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 };
         var pty_poll_events: i16 = 0;
         if (!self.stream_closed) pty_poll_events |= posix.POLL.IN | posix.POLL.HUP;
         if (self.pty_write_pending) pty_poll_events |= posix.POLL.OUT;
@@ -175,7 +201,7 @@ const Server = struct {
     fn acceptClients(self: *Server) !void {
         while (true) {
             const accepted = linux.accept4(
-                self.listener,
+                self.listener.fd,
                 null,
                 null,
                 linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK,
@@ -189,6 +215,10 @@ const Server = struct {
             const fd: posix.fd_t = @intCast(accepted);
             errdefer closeFd(fd);
             setSendBuffer(fd, client_send_buffer_bytes) catch {
+                closeFd(fd);
+                continue;
+            };
+            if (self.listener.tcp_port != null) setTcpNoDelay(fd) catch {
                 closeFd(fd);
                 continue;
             };
@@ -1122,6 +1152,44 @@ fn encodeU64(output: []u8, value: u64) void {
     output[7] = @truncate(value);
 }
 
+const TcpListener = struct {
+    fd: posix.fd_t,
+    port: u16,
+};
+
+fn loopbackAddress(port: u16) linux.sockaddr.in {
+    const bytes = [4]u8{ 127, 0, 0, 1 };
+    const address: *align(1) const u32 = @ptrCast(&bytes);
+    return .{
+        .port = std.mem.nativeToBig(u16, port),
+        .addr = address.*,
+    };
+}
+
+fn listenTcpLoopback(requested_port: u16) !TcpListener {
+    const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
+    if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+    const fd: posix.fd_t = @intCast(raw);
+    errdefer closeFd(fd);
+
+    var address = loopbackAddress(requested_port);
+    if (linux.errno(linux.bind(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))) != .SUCCESS)
+        return error.SocketBindFailed;
+    if (linux.errno(linux.listen(fd, listen_backlog)) != .SUCCESS) return error.SocketListenFailed;
+
+    var bound: linux.sockaddr.in = .{ .port = 0, .addr = 0 };
+    var bound_len: linux.socklen_t = @sizeOf(linux.sockaddr.in);
+    if (linux.errno(linux.getsockname(fd, @ptrCast(&bound), &bound_len)) != .SUCCESS)
+        return error.SocketNameFailed;
+    if (bound_len != @sizeOf(linux.sockaddr.in) or bound.family != linux.AF.INET)
+        return error.SocketNameFailed;
+    const expected = loopbackAddress(0);
+    if (bound.addr != expected.addr) return error.SocketNameFailed;
+    const port = std.mem.bigToNative(u16, bound.port);
+    if (port == 0) return error.SocketNameFailed;
+    return .{ .fd = fd, .port = port };
+}
+
 fn listenUnix(path: []const u8) !posix.fd_t {
     const raw = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
@@ -1144,6 +1212,18 @@ fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTo
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
     return @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
+}
+
+fn setTcpNoDelay(fd: posix.fd_t) !void {
+    const enabled: c_int = 1;
+    const result = linux.setsockopt(
+        fd,
+        linux.IPPROTO.TCP,
+        linux.TCP.NODELAY,
+        std.mem.asBytes(&enabled).ptr,
+        @sizeOf(c_int),
+    );
+    if (linux.errno(result) != .SUCCESS) return error.SocketOptionFailed;
 }
 
 fn setSendBuffer(fd: posix.fd_t, bytes: c_int) !void {
@@ -1184,8 +1264,39 @@ fn encodeU32(output: []u8, value: u32) void {
     output[3] = @truncate(value);
 }
 
+fn parseListenerSpec(text: []const u8) error{InvalidListenerSpec}!ListenerSpec {
+    if (std.mem.startsWith(u8, text, "tcp:")) {
+        const port_text = text["tcp:".len..];
+        if (port_text.len == 0) return error.InvalidListenerSpec;
+        const port = std.fmt.parseInt(u16, port_text, 10) catch return error.InvalidListenerSpec;
+        return .{ .tcp_loopback = port };
+    }
+    if (text.len == 0) return error.InvalidListenerSpec;
+    return .{ .unix = text };
+}
+
+fn announceTcpEndpoint(port: u16) !void {
+    var buffer: [64]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "HOWL_ENDPOINT=tcp://127.0.0.1:{d}\n", .{port}) catch unreachable;
+    var offset: usize = 0;
+    while (offset < message.len) {
+        const result = linux.write(posix.STDOUT_FILENO, message[offset..].ptr, message.len - offset);
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > message.len - offset) return error.EndpointAnnouncementFailed;
+                offset += result;
+            },
+            .INTR => continue,
+            else => return error.EndpointAnnouncementFailed,
+        }
+    }
+}
+
 /// Starts one shared session process. Usage:
-/// `howl-sessiond SOCKET SHELL ROWS COLUMNS [COMMAND]`.
+/// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [COMMAND]`.
+///
+/// A bare first argument retains the Unix-path transport. `tcp:PORT` binds
+/// IPv4 loopback only; `tcp:0` asks the kernel for a free port and reports it.
 pub fn main(init: std.process.Init) error{
     InvalidArguments,
     InvalidRows,
@@ -1194,15 +1305,17 @@ pub fn main(init: std.process.Init) error{
 }!void {
     const argv = init.minimal.args.vector;
     if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
+    const listener_spec = parseListenerSpec(std.mem.span(argv[1])) catch return error.InvalidArguments;
     const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
     const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
-    var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, std.mem.span(argv[1]), .{
+    var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, listener_spec, .{
         .shell = std.mem.span(argv[2]),
         .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
         .rows = rows,
         .columns = columns,
     }) catch return error.SessionServerFailed;
     defer server.deinit();
+    if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
     while (true) server.turn(-1) catch return error.SessionServerFailed;
 }
 
@@ -1238,6 +1351,27 @@ const TestPeer = struct {
                 else => return error.TestSocketConnectFailed,
             }
         }
+        try setNonBlocking(fd);
+        return .{ .allocator = allocator, .fd = fd };
+    }
+
+    fn connectTcp(allocator: std.mem.Allocator, port: u16) !TestPeer {
+        if (port == 0) return error.TestSocketConnectFailed;
+        const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
+        if (linux.errno(raw) != .SUCCESS) return error.TestSocketCreateFailed;
+        const fd: posix.fd_t = @intCast(raw);
+        errdefer closeFd(fd);
+
+        var address = loopbackAddress(port);
+        while (true) {
+            const result = linux.connect(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in));
+            switch (linux.errno(result)) {
+                .SUCCESS => break,
+                .INTR => continue,
+                else => return error.TestSocketConnectFailed,
+            }
+        }
+        try setTcpNoDelay(fd);
         try setNonBlocking(fd);
         return .{ .allocator = allocator, .fd = fd };
     }
@@ -1752,6 +1886,78 @@ fn readU64(input: []const u8) u64 {
     return value;
 }
 
+test "TCP listener is fixed to IPv4 loopback and resolves ephemeral port" {
+    const parsed_tcp = try parseListenerSpec("tcp:0");
+    try std.testing.expectEqual(@as(u16, 0), parsed_tcp.tcp_loopback);
+    const parsed_unix = try parseListenerSpec("/tmp/howl.sock");
+    try std.testing.expectEqualStrings("/tmp/howl.sock", parsed_unix.unix);
+    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:"));
+    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:65536"));
+    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp://0.0.0.0:1234"));
+
+    var listener = try Listener.init(.{ .tcp_loopback = 0 });
+    defer listener.deinit();
+    const port = listener.tcp_port orelse return error.MissingTcpPort;
+    try std.testing.expect(port != 0);
+
+    var bound: linux.sockaddr.in = .{ .port = 0, .addr = 0 };
+    var bound_len: linux.socklen_t = @sizeOf(linux.sockaddr.in);
+    try std.testing.expectEqual(
+        linux.E.SUCCESS,
+        linux.errno(linux.getsockname(listener.fd, @ptrCast(&bound), &bound_len)),
+    );
+    try std.testing.expectEqual(@as(linux.sa_family_t, linux.AF.INET), bound.family);
+    try std.testing.expectEqual(port, std.mem.bigToNative(u16, bound.port));
+    try std.testing.expectEqual(loopbackAddress(0).addr, bound.addr);
+}
+
+test "TCP client shares canonical session over the unchanged frame loop" {
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .tcp_loopback = 0 },
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; printf 'TCP-READY\\n'; cat",
+            .rows = 6,
+            .columns = 32,
+            .history_rows = 32,
+        },
+    );
+    defer server.deinit();
+    const port = server.listener.tcp_port orelse return error.MissingTcpPort;
+
+    const features = legacy_test_features | protocol.feature(.typed_input);
+    var peer = try TestPeer.connectTcp(std.testing.allocator, port);
+    defer peer.deinit();
+    const welcome = try handshakeWithFeatures(&peer, &server, features);
+    try std.testing.expectEqual(features, welcome.features);
+
+    var ready = try observeUntilContains(&peer, &server, 0, "TCP-READY");
+    const revision = ready.begin.revision;
+    ready.deinit();
+
+    try sendInput(&peer, &server, "tcp-input");
+    try expectResult(&peer, &server, .input, .ok);
+    var echoed = try observeUntilContains(&peer, &server, revision, "tcp-input");
+    defer echoed.deinit();
+    const terminal_revision = echoed.begin.terminal_revision;
+    try std.testing.expect(terminal_revision != 0);
+
+    peer.closeSocket();
+    var turns: usize = 0;
+    while (turns < 8) : (turns += 1) try server.turn(0);
+
+    var fresh = try TestPeer.connectTcp(std.testing.allocator, port);
+    defer fresh.deinit();
+    const fresh_welcome = try handshakeWithFeatures(&fresh, &server, features);
+    try std.testing.expect(fresh_welcome.client_id != welcome.client_id);
+    var recovered = try observeUntilContains(&fresh, &server, 0, "tcp-input");
+    defer recovered.deinit();
+    try std.testing.expectEqual(terminal_revision, recovered.begin.terminal_revision);
+}
+
 test "typed input is negotiated and encoded by live terminal modes" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
@@ -1764,7 +1970,7 @@ test "typed input is negotiated and encoded by live terminal modes" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        path,
+        .{ .unix = path },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; " ++
@@ -1940,7 +2146,7 @@ test "history windows require their negotiated feature" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        path,
+        .{ .unix = path },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
@@ -1984,7 +2190,7 @@ test "request payload above endpoint limit closes before body read" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        path,
+        .{ .unix = path },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; cat",
@@ -2027,7 +2233,7 @@ test "text_v1 preserves renderer-complete terminal text semantics" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        path,
+        .{ .unix = path },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; " ++
@@ -2083,7 +2289,7 @@ test "Unix clients share one session and explicit geometry authority" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-shared.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .unix = path }, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
         .rows = 8,
@@ -2180,7 +2386,7 @@ test "slow Unix observer cannot pace PTY or healthy client" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-slow.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .unix = path }, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; cat",
         .rows = 512,
@@ -2222,7 +2428,7 @@ test "oversized observation is local rejection not session failure" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-oversize.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .unix = path }, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; printf 'ALIVE\\n'; cat",
         .rows = 512,
@@ -2262,7 +2468,7 @@ test "oversized text_v1 observation is local rejection and recovers" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        path,
+        .{ .unix = path },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; printf 'TEXT-ALIVE\\n'; cat",
