@@ -456,7 +456,6 @@ pub const Content = struct {
             fixed.allocator(),
             face,
             glyph_id,
-            self.fonts.metrics().advance_width,
         );
         defer raster.deinit();
         const resource = if (raster.width == 0 or raster.height == 0)

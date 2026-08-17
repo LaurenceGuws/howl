@@ -20,7 +20,6 @@ test "public font operations retain exact error sets" {
         std.mem.Allocator,
         u8,
         u32,
-        u16,
     ) text.RasterError!text.Raster = &text.FontSet.rasterize;
     try std.testing.expect(init == &text.FontSet.init);
     try std.testing.expect(shape == &text.FontSet.shape);
@@ -73,80 +72,31 @@ test "font set shapes primary and ordered whole-sequence fallback" {
     for (variation_fallback.glyphs) |glyph| try std.testing.expect(glyph.id != 0);
 }
 
-test "Kitty spacer detection distinguishes normal and Iosevka grouping" {
-    const normal = try text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.primary_font,
-        .size = .{ .pixels = 32 },
-    });
-    defer normal.deinit();
-    const iosevka = try text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.symbol_font,
-        .size = .{ .pixels = 32 },
-    });
-    defer iosevka.deinit();
-    const shaper = try text.ShapeBuffer.init(std.testing.allocator, 16);
-    defer shaper.deinit();
-    var glyphs: [16]text.Glyph = undefined;
-
-    const normal_strategy = try normal.spacerStrategy(
-        shaper,
-        &glyphs,
-        0,
-    );
-    try std.testing.expect(normal_strategy != .iosevka);
-    try std.testing.expectEqual(
-        normal_strategy,
-        try normal.spacerStrategy(shaper, &glyphs, 0),
-    );
-    try std.testing.expectEqual(
-        text.SpacerStrategy.iosevka,
-        try iosevka.spacerStrategy(shaper, &glyphs, 0),
-    );
-}
-
-test "variation sentinel and Fira normal components use native classification" {
+test "OpenType shaping preserves caller clusters and applies substitutions" {
     const fira = try text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.normal_ligature_font,
         .size = .{ .pixels = 32 },
     });
     defer fira.deinit();
-    const shaper = try text.ShapeBuffer.init(std.testing.allocator, 16);
-    defer shaper.deinit();
-    var glyphs: [16]text.Glyph = undefined;
-
-    try std.testing.expect(
-        try fira.spacerStrategy(shaper, &glyphs, 0) != .iosevka,
-    );
-    const codepoints = [_]u32{ '#', '_', '(' };
-    const clusters = [_]u32{ 0, 1, 2 };
-    const run = try fira.shapeFace(
-        shaper,
-        .{ .codepoints = &codepoints, .clusters = &clusters },
-        &glyphs,
-        0,
-        false,
-    );
-    try std.testing.expectEqual(@as(usize, 3), run.glyphs.len);
-    var special_count: usize = 0;
-    var empty_count: usize = 0;
-    for (run.glyphs) |glyph| {
-        const scalar_index: usize = @intCast(glyph.scalar_index);
-        try std.testing.expect(scalar_index < codepoints.len);
-        const special = try fira.glyphIsSpecial(
-            0,
-            glyph.id,
-            codepoints[scalar_index],
-        );
-        if (special) {
-            special_count += 1;
-            if (try fira.glyphIsEmpty(0, glyph.id)) empty_count += 1;
-        }
-        // Native classification must honor Kitty's variation-selector
-        // sentinel rather than comparing against the face's glyph for NUL.
-        try std.testing.expect(!try fira.glyphIsSpecial(0, glyph.id, 0));
+    const codepoints = [_]u32{ '-', '>' };
+    const clusters = [_]u32{ 17, 23 };
+    var shaped = try shapeOwned(fira, std.testing.allocator, .{
+        .codepoints = &codepoints,
+        .clusters = &clusters,
+    });
+    defer shaped.deinit();
+    try std.testing.expect(shaped.glyphs.len > 0);
+    var substituted = false;
+    for (shaped.glyphs) |glyph| {
+        const scalar: u21 = switch (glyph.cluster) {
+            17 => '-',
+            23 => '>',
+            else => return error.TestUnexpectedResult,
+        };
+        if (glyph.id != try fira.glyphForCodepoint(shaped.face_index, scalar))
+            substituted = true;
     }
-    try std.testing.expectEqual(@as(usize, 3), special_count);
-    try std.testing.expectEqual(@as(usize, 2), empty_count);
+    try std.testing.expect(substituted);
 }
 
 test "font configuration validates every path before allocation or native access" {
@@ -321,25 +271,16 @@ test "font set raster owns a bounded alpha mask" {
         std.testing.allocator,
         text.max_fallbacks + 1,
         run.glyphs[0].id,
-        1,
-    ));
-    try std.testing.expectError(error.InvalidWidth, set.rasterize(
-        std.testing.allocator,
-        run.face_index,
-        run.glyphs[0].id,
-        0,
     ));
     try std.testing.expectError(error.InvalidRaster, set.rasterize(
         std.testing.allocator,
         run.face_index,
         0,
-        set.metrics().advance_width,
     ));
     var raster = try set.rasterize(
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
-        set.metrics().advance_width,
     );
     defer raster.deinit();
     try std.testing.expectEqual(
@@ -395,7 +336,6 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
         std.testing.allocator,
         underscore_run.face_index,
         underscore_run.glyphs[0].id,
-        scalable.metrics().advance_width,
     );
     defer underscore.deinit();
     const underscore_top =
@@ -430,7 +370,6 @@ test "font metrics use native lines and bitmap fonts use bounded fallbacks" {
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
-        bitmap.metrics().advance_width,
     );
     defer raster.deinit();
     try std.testing.expectEqual(@as(u16, 8), raster.width);
@@ -507,7 +446,6 @@ test "empty FreeType glyph produces an owned empty raster" {
         std.testing.allocator,
         run.face_index,
         run.glyphs[0].id,
-        1,
     );
     defer raster.deinit();
     try std.testing.expectEqual(@as(usize, 0), raster.pixels.len);
@@ -618,7 +556,6 @@ test "raster allocation failures preserve reusable native faces" {
         std.testing.allocator,
         0,
         run.glyphs[0].id,
-        set.metrics().advance_width,
     );
     raster.deinit();
 
@@ -641,7 +578,6 @@ test "raster allocation failures preserve reusable native faces" {
         std.testing.allocator,
         icon.face_index,
         icon.glyphs[0].id,
-        symbols.metrics().advance_width,
     );
     reused.deinit();
 }
@@ -685,6 +621,6 @@ fn rasterAllocation(
     set: *text.FontSet,
     glyph_id: u32,
 ) !void {
-    var raster = try set.rasterize(allocator, 0, glyph_id, set.metrics().advance_width);
+    var raster = try set.rasterize(allocator, 0, glyph_id);
     raster.deinit();
 }

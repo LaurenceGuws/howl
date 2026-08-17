@@ -196,7 +196,6 @@ fn drawCell(state: *State, cr: *native.Cairo, row: u16, column: u16, codepoint: 
         state.allocator,
         face,
         glyph,
-        state.metrics.advance_width,
     ) catch return;
     defer raster.deinit();
     if (raster.width == 0 or raster.height == 0) return;

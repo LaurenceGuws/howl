@@ -35,7 +35,6 @@ pub const InitError = error{
 
 /// Names failures while shaping one borrowed Unicode sequence.
 pub const ShapeError = error{
-    FontState,
     InvalidText,
     TextTooLong,
     GlyphLimit,
@@ -53,47 +52,23 @@ pub const ShapeBufferInitError = error{ InvalidCapacity, HarfBuzzBuffer };
 /// Names failures while producing one owned native glyph alpha mask.
 pub const RasterError = error{
     OutOfMemory,
-    FontState,
     InvalidRaster,
-    InvalidWidth,
     GlyphLoad,
     GlyphRender,
-    FontSize,
     UnsupportedPixelMode,
     RasterTooLarge,
     InvalidBitmap,
     InvalidPlacement,
 };
 
-/// Names exact failures while measuring one selected glyph for symbol span.
-pub const GlyphWidthError = error{
-    FontState,
-    InvalidRaster,
-    GlyphLoad,
-    InvalidMetrics,
-};
-
-/// Names exact native metrics required by Kitty ligature grouping.
-pub const GroupError = ShapeError || error{ GlyphLoad, InvalidRaster };
-
-/// Owns one normalized positive rational DPI value.
-pub const Dpi = struct {
-    numerator: u32,
-    denominator: u32,
-
-    /// Validates nonzero reduced storage before native conversion.
-    pub fn validate(self: Dpi) error{InvalidConfig}!void {
-        if (self.numerator == 0 or self.denominator == 0 or
-            std.math.gcd(self.numerator, self.denominator) != 1)
-            return error.InvalidConfig;
-    }
-};
+/// Names failures while resolving one Unicode scalar to one configured face.
+pub const GlyphLookupError = error{ InvalidFace, MissingGlyph };
 
 /// Preserves one canonical point-size and DPI construction identity.
 pub const PointSize = struct {
     points: f64,
-    dpi_x: Dpi,
-    dpi_y: Dpi,
+    dpi_x: u32,
+    dpi_y: u32,
 
     /// Validates every canonical and derived FreeType/metric input.
     pub fn validate(self: PointSize) error{InvalidConfig}!void {
@@ -107,7 +82,7 @@ pub const PointSize = struct {
     }
 };
 
-/// Separates independent pixel-configured users from terminal point/DPI users.
+/// Selects either exact pixel sizing or point sizing at an integer DPI.
 pub const Size = union(enum) {
     pixels: u16,
     points: PointSize,
@@ -120,7 +95,7 @@ pub const Config = struct {
     primary: []const u8,
     /// Borrows ordered fallback font paths for construction only.
     fallbacks: []const []const u8 = &.{},
-    /// Selects an independent pixel size or a canonical terminal point/DPI size.
+    /// Selects exact pixel sizing or point/DPI sizing.
     size: Size,
 };
 
@@ -158,8 +133,6 @@ pub const Glyph = struct {
     id: u32,
     /// Retains the caller's source identity for this glyph.
     cluster: u32,
-    /// Retains HarfBuzz's exact scalar index before caller cluster mapping.
-    scalar_index: u32 = 0,
     /// Reports horizontal pen movement in FreeType 26.6 units.
     x_advance: i32,
     /// Reports vertical pen movement in FreeType 26.6 units.
@@ -178,8 +151,8 @@ pub const ShapeBuffer = struct {
     capacity: u32,
 
     /// Requests native storage once for up to `capacity` shaped glyphs.
-    /// HarfBuzz owns its internal allocation behavior; Howl rejects input or
-    /// output beyond this accepted ceiling.
+    /// HarfBuzz owns its internal allocation behavior; the library rejects
+    /// input or output beyond this accepted ceiling.
     pub fn init(capacity: u32) ShapeBufferInitError!ShapeBuffer {
         if (capacity == 0 or capacity > max_glyphs) return error.InvalidCapacity;
         const handle = try createHbBuffer();
@@ -231,23 +204,6 @@ const Face = struct {
     path: [:0]u8,
     ft: c.FT_Face,
     hb: *c.hb_font_t,
-    spacer_strategy: SpacerStrategy = .unknown,
-};
-
-/// Identifies Kitty's detected empty-glyph placement convention.
-pub const SpacerStrategy = enum {
-    unknown,
-    before,
-    after,
-    iosevka,
-};
-
-/// Classifies variable-length ligature glyph-name components.
-pub const LigatureType = enum {
-    unknown,
-    start,
-    middle,
-    end,
 };
 
 // Native font construction, shaping, and rasterization.
@@ -255,8 +211,7 @@ pub const LigatureType = enum {
 /// Owns copied paths, one FT library, and initialized FT/HB faces in fallback
 /// order. Its mutable native faces support one exclusive caller at a time;
 /// methods borrow the owner for the call, and returned values retain no owner
-/// state. A failed restoration after temporary raster fitting invalidates
-/// shaping and rasterization while preserving exact cleanup through deinit.
+/// state.
 pub const FontSet = struct {
     /// Owns all Zig allocations retained by this font set.
     allocator: std.mem.Allocator,
@@ -266,10 +221,6 @@ pub const FontSet = struct {
     faces: []Face,
     /// Retains validated font metrics for the configured size.
     metrics: Metrics,
-    /// Retains the exact accepted construction identity for restoration.
-    size: Size,
-    /// Prevents native reuse after an unrecoverable size-restoration failure.
-    usable: bool,
 
     /// Copies and transactionally opens the complete config. Invalid config,
     /// native initialization, metrics, and allocation failures release all
@@ -313,8 +264,6 @@ pub const FontSet = struct {
             .library = library,
             .faces = faces,
             .metrics = metrics,
-            .size = config.size,
-            .usable = true,
         };
     }
 
@@ -342,32 +291,26 @@ pub const FontSet = struct {
         text: Text,
         glyph_storage: []Glyph,
     ) ShapeError!Run {
-        if (!self.usable) return error.FontState;
         try validateText(text);
         if (text.codepoints.len > buffer.capacity)
             return error.InsufficientShapeBuffer;
         const face_index = self.selectFace(text.codepoints) orelse
             return error.MissingGlyph;
-        return self.shapeFace(
+        return self.shapeOnFace(
             buffer,
             text,
             glyph_storage,
             @intCast(face_index),
-            false,
         );
     }
 
-    /// Shapes one complete sequence on an already selected face and optionally
-    /// disables contextual alternates exactly as Kitty does.
-    pub fn shapeFace(
+    fn shapeOnFace(
         self: *FontSet,
         buffer: *ShapeBuffer,
         text: Text,
         glyph_storage: []Glyph,
         face_index: u8,
-        disable_contextual: bool,
     ) ShapeError!Run {
-        if (!self.usable) return error.FontState;
         try validateText(text);
         if (text.codepoints.len > buffer.capacity)
             return error.InsufficientShapeBuffer;
@@ -385,13 +328,7 @@ pub const FontSet = struct {
         try requireHbBuffer(buffer.handle);
         c.hb_buffer_guess_segment_properties(buffer.handle);
         try requireHbBuffer(buffer.handle);
-        var feature: c.hb_feature_t = undefined;
-        const features: [*c]const c.hb_feature_t = if (disable_contextual) blk: {
-            if (c.hb_feature_from_string("-calt", -1, &feature) == 0)
-                return error.HarfBuzzBuffer;
-            break :blk &feature;
-        } else null;
-        c.hb_shape(face.hb, buffer.handle, features, @intFromBool(disable_contextual));
+        c.hb_shape(face.hb, buffer.handle, null, 0);
         try requireHbBuffer(buffer.handle);
 
         var info_count: c_uint = 0;
@@ -416,7 +353,6 @@ pub const FontSet = struct {
             glyph.* = .{
                 .id = infos[i].codepoint,
                 .cluster = text.clusters[cp_index],
-                .scalar_index = @intCast(cp_index),
                 .x_advance = positions[i].x_advance,
                 .y_advance = positions[i].y_advance,
                 .x_offset = positions[i].x_offset,
@@ -442,314 +378,28 @@ pub const FontSet = struct {
         return @intCast(index);
     }
 
-    /// Returns Kitty-compatible loaded bitmap width when present, otherwise
-    /// the truncated horizontal glyph metric width in pixels.
-    pub fn glyphWidth(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-    ) GlyphWidthError!u16 {
-        if (!self.usable) return error.FontState;
-        if (face_index >= self.faces.len or glyph_id == 0)
-            return error.InvalidRaster;
-        const face = self.faces[face_index].ft;
-        if (c.FT_Load_Glyph(face, glyph_id, c.FT_LOAD_DEFAULT) != 0)
-            return error.GlyphLoad;
-        const slot = face.*.glyph orelse return error.InvalidMetrics;
-        const width = if (slot.*.bitmap.width != 0)
-            slot.*.bitmap.width
-        else blk: {
-            const metric_width = @field(slot.*, "metrics").width;
-            if (metric_width < 0) return error.InvalidMetrics;
-            break :blk @divTrunc(metric_width, 64);
-        };
-        if (width < 0 or width > std.math.maxInt(u16))
-            return error.InvalidMetrics;
-        return @intCast(width);
-    }
-
     /// Returns the exact selected-face glyph for one Unicode scalar.
     pub fn glyphForCodepoint(
         self: *FontSet,
         face_index: u8,
         codepoint: u21,
-    ) GlyphWidthError!u32 {
-        if (!self.usable) return error.FontState;
-        if (face_index >= self.faces.len) return error.InvalidRaster;
+    ) GlyphLookupError!u32 {
+        if (face_index >= self.faces.len) return error.InvalidFace;
         const glyph = c.FT_Get_Char_Index(self.faces[face_index].ft, codepoint);
-        if (glyph == 0) return error.InvalidRaster;
+        if (glyph == 0) return error.MissingGlyph;
         return glyph;
     }
 
-    /// Returns whether one shaped glyph differs from the selected face's
-    /// direct glyph for the exact current scalar.
-    pub fn glyphIsSpecial(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-        codepoint: u32,
-    ) error{InvalidRaster}!bool {
-        if (!self.usable or face_index >= self.faces.len or glyph_id == 0 or
-            codepoint > std.math.maxInt(u21))
-            return error.InvalidRaster;
-        // Kitty removes VS15/VS16 from current-codepoint classification by
-        // passing zero. Zero is a sentinel here, never a cmap comparison.
-        if (codepoint == 0) return false;
-        return glyph_id != c.FT_Get_Char_Index(
-            self.faces[face_index].ft,
-            @intCast(codepoint),
-        );
-    }
-
-    /// Returns Kitty's exact zero-horizontal-metric empty-glyph result.
-    pub fn glyphIsEmpty(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-    ) error{ GlyphLoad, InvalidRaster }!bool {
-        if (!self.usable or face_index >= self.faces.len or glyph_id == 0)
-            return error.InvalidRaster;
-        const face = self.faces[face_index].ft;
-        if (c.FT_Load_Glyph(face, glyph_id, c.FT_LOAD_DEFAULT) != 0)
-            return error.GlyphLoad;
-        const slot = face.*.glyph orelse return error.InvalidRaster;
-        return @field(slot.*, "metrics").width == 0;
-    }
-
-    /// Classifies Kitty's normal or Iosevka variable-ligature glyph suffix.
-    pub fn glyphLigatureType(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-        strategy: SpacerStrategy,
-    ) error{InvalidRaster}!LigatureType {
-        if (!self.usable or face_index >= self.faces.len or glyph_id == 0)
-            return error.InvalidRaster;
-        var name: [128]u8 = @splat(0);
-        c.hb_font_glyph_to_string(
-            self.faces[face_index].hb,
-            glyph_id,
-            &name,
-            name.len - 1,
-        );
-        const text = std.mem.sliceTo(&name, 0);
-        const separator: u8 = if (strategy == .iosevka) '.' else '_';
-        const suffix = if (std.mem.lastIndexOfScalar(u8, text, separator)) |index|
-            text[index..]
-        else
-            return .unknown;
-        if (strategy == .iosevka) {
-            if (std.mem.eql(u8, suffix, ".join-l")) return .start;
-            if (std.mem.eql(u8, suffix, ".join-m")) return .middle;
-            if (std.mem.eql(u8, suffix, ".join-r")) return .end;
-        } else {
-            if (std.mem.eql(u8, suffix, "_start.seq")) return .start;
-            if (std.mem.eql(u8, suffix, "_middle.seq")) return .middle;
-            if (std.mem.eql(u8, suffix, "_end.seq")) return .end;
-        }
-        return .unknown;
-    }
-
-    /// Detects and retains Kitty's per-face spacer convention using the same
-    /// bounded probe set and caller-owned shaping scratch.
-    pub fn spacerStrategy(
-        self: *FontSet,
-        buffer: *ShapeBuffer,
-        glyph_storage: []Glyph,
-        face_index: u8,
-    ) GroupError!SpacerStrategy {
-        if (!self.usable or face_index >= self.faces.len)
-            return error.InvalidRaster;
-        if (self.faces[face_index].spacer_strategy != .unknown)
-            return self.faces[face_index].spacer_strategy;
-        const probes = [_][]const u8{ "==", "->", "<-", "<<=", "<==>" };
-        var strategy: SpacerStrategy = .before;
-        if (try self.probeEndsEmpty(
-            buffer,
-            glyph_storage,
-            face_index,
-            "===",
-        )) strategy = .after;
-        for (probes) |probe| {
-            const run = try self.shapeAsciiProbe(
-                buffer,
-                glyph_storage,
-                face_index,
-                probe,
-            );
-            for (run.glyphs) |glyph| {
-                const kind = try self.glyphLigatureType(
-                    face_index,
-                    glyph.id,
-                    .iosevka,
-                );
-                if (kind != .unknown) {
-                    strategy = .iosevka;
-                    break;
-                }
-            }
-            if (strategy == .iosevka) break;
-        }
-        if (strategy == .before and try self.probeEndsEmpty(
-            buffer,
-            glyph_storage,
-            face_index,
-            "###",
-        )) strategy = .after;
-        self.faces[face_index].spacer_strategy = strategy;
-        return strategy;
-    }
-
-    fn probeEndsEmpty(
-        self: *FontSet,
-        buffer: *ShapeBuffer,
-        glyph_storage: []Glyph,
-        face_index: u8,
-        probe: []const u8,
-    ) GroupError!bool {
-        const run = try self.shapeAsciiProbe(
-            buffer,
-            glyph_storage,
-            face_index,
-            probe,
-        );
-        if (run.glyphs.len <= 1) return false;
-        const last = run.glyphs[run.glyphs.len - 1];
-        const scalar_index: usize = @intCast(last.scalar_index);
-        if (scalar_index >= probe.len) return error.InvalidShapeResult;
-        const special = try self.glyphIsSpecial(
-            face_index,
-            last.id,
-            probe[scalar_index],
-        );
-        return special and try self.glyphIsEmpty(face_index, last.id);
-    }
-
-    fn shapeAsciiProbe(
-        self: *FontSet,
-        buffer: *ShapeBuffer,
-        glyph_storage: []Glyph,
-        face_index: u8,
-        probe: []const u8,
-    ) ShapeError!Run {
-        var codepoints: [5]u32 = undefined;
-        var clusters: [5]u32 = undefined;
-        if (probe.len > codepoints.len) return error.TextTooLong;
-        for (probe, 0..) |value, index| {
-            codepoints[index] = value;
-            clusters[index] = @intCast(index);
-        }
-        return self.shapeFace(
-            buffer,
-            .{
-                .codepoints = codepoints[0..probe.len],
-                .clusters = clusters[0..probe.len],
-            },
-            glyph_storage,
-            face_index,
-            false,
-        );
-    }
-
-    /// Exclusively borrows one native face and rasterizes monochrome or gray
-    /// coverage into the requested pixel width. Scalable glyphs wider than
-    /// that width are proportionally rerendered, while fixed bitmaps are
-    /// clipped. Invalid identity, width, native rendering, geometry, placement,
-    /// bounds, allocation, and native-size restoration fail exactly. Failed
-    /// restoration invalidates later shaping and rasterization on this owner.
+    /// Rasterizes one selected glyph at the configured font size into one
+    /// tightly packed bounded alpha mask with its natural bearings.
     pub fn rasterize(
         self: *FontSet,
         allocator: std.mem.Allocator,
         face_index: u8,
         glyph_id: u32,
-        maximum_width_px: u16,
     ) RasterError!Raster {
-        return self.rasterizeBounded(
-            allocator,
-            face_index,
-            glyph_id,
-            maximum_width_px,
-            true,
-        );
-    }
-
-    /// Rasterizes one glyph for later placement inside complete multi-cell
-    /// bounds. Width fitting remains bounded by the group, while native
-    /// bearings and overhang remain intact for group-level clipping.
-    pub fn rasterizeGroup(
-        self: *FontSet,
-        allocator: std.mem.Allocator,
-        face_index: u8,
-        glyph_id: u32,
-        maximum_width_px: u16,
-    ) RasterError!Raster {
-        return self.rasterizeBounded(
-            allocator,
-            face_index,
-            glyph_id,
-            maximum_width_px,
-            false,
-        );
-    }
-
-    fn rasterizeBounded(
-        self: *FontSet,
-        allocator: std.mem.Allocator,
-        face_index: u8,
-        glyph_id: u32,
-        maximum_width_px: u16,
-        normalize_to_cell: bool,
-    ) RasterError!Raster {
-        if (!self.usable) return error.FontState;
-        if (maximum_width_px == 0) return error.InvalidWidth;
         if (face_index >= self.faces.len or glyph_id == 0) return error.InvalidRaster;
-        const face = self.faces[face_index].ft;
-        var raster = try rasterizeFace(allocator, face, glyph_id);
-        errdefer raster.deinit();
-
-        if (raster.width > maximum_width_px and
-            face.*.face_flags & c.FT_FACE_FLAG_SCALABLE != 0)
-        {
-            try setFittedSize(face, self.size, maximum_width_px, raster.width);
-            const fit_result = rasterizeFace(allocator, face, glyph_id);
-            const restore_error = restoreConfiguredSize(face, self.size);
-            const fitted = try self.finishTemporaryRaster(
-                fit_result,
-                restore_error,
-            );
-            raster.deinit();
-            raster = fitted;
-        }
-        if (raster.width > maximum_width_px)
-            try cropRaster(&raster, 0, maximum_width_px);
-        if (!normalize_to_cell) return raster;
-        if (raster.left < 0) {
-            const clipped = @min(
-                raster.width,
-                std.math.cast(u16, -@as(i32, raster.left)) orelse
-                    raster.width,
-            );
-            try cropRaster(&raster, clipped, raster.width - clipped);
-            raster.left = 0;
-        }
-        const right = @as(u32, @intCast(raster.left)) + raster.width;
-        if (right > maximum_width_px)
-            raster.left = @intCast(maximum_width_px - raster.width);
-        return raster;
-    }
-
-    fn finishTemporaryRaster(
-        self: *FontSet,
-        result: RasterError!Raster,
-        restore_error: c.FT_Error,
-    ) RasterError!Raster {
-        if (restore_error == 0) return result;
-        if (result) |value| {
-            var owned = value;
-            owned.deinit();
-        } else |_| {}
-        self.usable = false;
-        return error.FontState;
+        return rasterizeFace(allocator, self.faces[face_index].ft, glyph_id);
     }
 
     fn selectFace(self: *FontSet, codepoints: []const u32) ?usize {
@@ -798,28 +448,10 @@ fn rasterizeFace(
     };
 }
 
-fn cropRaster(raster: *Raster, source_x: u16, width: u16) RasterError!void {
-    const count = try rasterByteCount(width, raster.height);
-    const pixels = raster.allocator.alloc(u8, count) catch
-        return error.OutOfMemory;
-    errdefer raster.allocator.free(pixels);
-    for (0..raster.height) |row|
-        std.mem.copyForwards(
-            u8,
-            pixels[row * width ..][0..width],
-            raster.pixels[row * raster.width + source_x ..][0..width],
-        );
-    raster.allocator.free(raster.pixels);
-    raster.pixels = pixels;
-    raster.width = width;
-}
-
 fn pointHeight26Dot6(value: PointSize) error{InvalidConfig}!c.FT_F26Dot6 {
     if (!std.math.isFinite(value.points) or std.math.isNan(value.points) or
         value.points <= 0.0)
         return error.InvalidConfig;
-    try value.dpi_x.validate();
-    try value.dpi_y.validate();
     const scaled = @ceil(value.points * 64.0);
     if (!std.math.isFinite(scaled) or scaled <= 0.0 or
         scaled > @as(f64, @floatFromInt(std.math.maxInt(c.FT_F26Dot6))))
@@ -827,11 +459,10 @@ fn pointHeight26Dot6(value: PointSize) error{InvalidConfig}!c.FT_F26Dot6 {
     return @intFromFloat(scaled);
 }
 
-fn dpiArgument(value: Dpi) error{InvalidConfig}!c.FT_UInt {
-    try value.validate();
-    const result = value.numerator / value.denominator;
-    if (result == 0) return error.InvalidConfig;
-    return result;
+fn dpiArgument(value: u32) error{InvalidConfig}!c.FT_UInt {
+    if (value == 0 or value > std.math.maxInt(c.FT_UInt))
+        return error.InvalidConfig;
+    return @intCast(value);
 }
 
 fn nominalPixelHeight(size: Size) error{InvalidConfig}!u16 {
@@ -880,59 +511,6 @@ fn setConfiguredSize(face: c.FT_Face, size: Size) InitError!void {
             try dpiArgument(value.dpi_x),
             try dpiArgument(value.dpi_y),
         ),
-    };
-    if (result != 0) return error.FontSize;
-}
-
-fn restoreConfiguredSize(face: c.FT_Face, size: Size) c.FT_Error {
-    return switch (size) {
-        .pixels => |height| c.FT_Set_Pixel_Sizes(face, 0, height),
-        .points => |value| c.FT_Set_Char_Size(
-            face,
-            0,
-            pointHeight26Dot6(value) catch return 1,
-            dpiArgument(value.dpi_x) catch return 1,
-            dpiArgument(value.dpi_y) catch return 1,
-        ),
-    };
-}
-
-fn setFittedSize(
-    face: c.FT_Face,
-    size: Size,
-    maximum_width_px: u16,
-    raster_width: u16,
-) RasterError!void {
-    const result = switch (size) {
-        .pixels => |height| blk: {
-            const scaled = @max(
-                @as(u32, 1),
-                @as(u32, height) * maximum_width_px / raster_width,
-            );
-            const fitted = std.math.cast(u16, scaled) orelse
-                return error.FontSize;
-            break :blk c.FT_Set_Pixel_Sizes(face, 0, fitted);
-        },
-        .points => |value| blk: {
-            const accepted = pointHeight26Dot6(value) catch
-                return error.FontSize;
-            const product = std.math.mul(
-                i64,
-                accepted,
-                maximum_width_px,
-            ) catch return error.FontSize;
-            const scaled = @max(
-                @as(i64, 1),
-                @divTrunc(product, raster_width),
-            );
-            break :blk c.FT_Set_Char_Size(
-                face,
-                0,
-                scaled,
-                dpiArgument(value.dpi_x) catch return error.FontSize,
-                dpiArgument(value.dpi_y) catch return error.FontSize,
-            );
-        },
     };
     if (result != 0) return error.FontSize;
 }
@@ -1534,8 +1112,8 @@ test "native metric extraction is stable without allocator input" {
 test "point and DPI conversion is exact and separately derived" {
     const value = PointSize{
         .points = 10.1,
-        .dpi_x = .{ .numerator = 768, .denominator = 5 },
-        .dpi_y = .{ .numerator = 192, .denominator = 1 },
+        .dpi_x = 153,
+        .dpi_y = 192,
     };
     try std.testing.expectEqual(@as(c.FT_F26Dot6, 647), try pointHeight26Dot6(value));
     try std.testing.expectEqual(@as(c.FT_UInt, 153), try dpiArgument(value.dpi_x));
@@ -1543,34 +1121,31 @@ test "point and DPI conversion is exact and separately derived" {
     try std.testing.expectEqual(@as(u16, 27), try nominalPixelHeight(.{ .points = value }));
     try std.testing.expectEqual(@as(u16, 34), try nominalPixelHeight(.{ .points = .{
         .points = 16.0,
-        .dpi_x = .{ .numerator = 768, .denominator = 5 },
-        .dpi_y = .{ .numerator = 768, .denominator = 5 },
+        .dpi_x = 153,
+        .dpi_y = 153,
     } }));
-    try std.testing.expectError(
-        error.InvalidConfig,
-        dpiArgument(.{ .numerator = 192, .denominator = 2 }),
-    );
+    try std.testing.expectError(error.InvalidConfig, dpiArgument(0));
     try std.testing.expectError(
         error.InvalidConfig,
         pointHeight26Dot6(.{
             .points = std.math.inf(f64),
-            .dpi_x = .{ .numerator = 96, .denominator = 1 },
-            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+            .dpi_x = 96,
+            .dpi_y = 96,
         }),
     );
 }
 
-test "DPI changes terminal metrics and raster while fitting restores exact size" {
+test "DPI changes configured metrics and natural raster" {
     const fonts = @import("test_fonts");
     const low = PointSize{
         .points = 12.0,
-        .dpi_x = .{ .numerator = 96, .denominator = 1 },
-        .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        .dpi_x = 96,
+        .dpi_y = 96,
     };
     const high = PointSize{
         .points = 12.0,
-        .dpi_x = .{ .numerator = 192, .denominator = 1 },
-        .dpi_y = .{ .numerator = 192, .denominator = 1 },
+        .dpi_x = 192,
+        .dpi_y = 192,
     };
     var low_set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
@@ -1589,14 +1164,12 @@ test "DPI changes terminal metrics and raster while fitting restores exact size"
         std.testing.allocator,
         0,
         low_glyph_id,
-        low_set.metrics.advance_width,
     );
     defer low_raster.deinit();
     var high_raster = try high_set.rasterize(
         std.testing.allocator,
         0,
         high_glyph_id,
-        high_set.metrics.advance_width,
     );
     defer high_raster.deinit();
     try std.testing.expect(
@@ -1604,28 +1177,6 @@ test "DPI changes terminal metrics and raster while fitting restores exact size"
             low_raster.height != high_raster.height or
             !std.mem.eql(u8, low_raster.pixels, high_raster.pixels),
     );
-    const before = @field(high_set.faces[0].ft.*.size.?.*, "metrics");
-    const fitted_width = @max(@as(u16, 1), high_set.metrics.advance_width / 2);
-    var raw = try rasterizeFace(
-        std.testing.allocator,
-        high_set.faces[0].ft,
-        high_glyph_id,
-    );
-    defer raw.deinit();
-    try std.testing.expect(raw.width > fitted_width);
-    var raster = try high_set.rasterize(
-        std.testing.allocator,
-        0,
-        high_glyph_id,
-        fitted_width,
-    );
-    defer raster.deinit();
-    const after = @field(high_set.faces[0].ft.*.size.?.*, "metrics");
-    try std.testing.expectEqual(before.x_ppem, after.x_ppem);
-    try std.testing.expectEqual(before.y_ppem, after.y_ppem);
-    try std.testing.expectEqual(before.x_scale, after.x_scale);
-    try std.testing.expectEqual(before.y_scale, after.y_scale);
-    try std.testing.expect(raster.pixels.len != 0);
 }
 
 test "normal FreeType owner produces only retained monochrome and gray modes" {
@@ -1645,7 +1196,6 @@ test "normal FreeType owner produces only retained monochrome and gray modes" {
             std.testing.allocator,
             0,
             glyph_id,
-            set.metrics.advance_width,
         );
         raster.deinit();
         const slot = set.faces[0].ft.*.glyph orelse return error.TestUnexpectedResult;
@@ -1653,7 +1203,7 @@ test "normal FreeType owner produces only retained monochrome and gray modes" {
     }
 }
 
-test "Nerd icon native bitmap exposes bounded source coverage" {
+test "symbol glyph natural raster preserves source overhang" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,
@@ -1670,98 +1220,6 @@ test "Nerd icon native bitmap exposes bounded source coverage" {
     try std.testing.expect(
         native.left < 0 or
             @as(i32, native.left) + native.width > set.metrics.advance_width,
-    );
-}
-
-test "native raster honors an arbitrary pixel bound" {
-    const fonts = @import("test_fonts");
-    var set = try FontSet.init(std.testing.allocator, .{
-        .primary = fonts.symbol_font,
-        .size = .{ .pixels = 18 },
-    });
-    defer set.deinit();
-    const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf303);
-    var raster = try set.rasterize(std.testing.allocator, 0, glyph_id, 7);
-    defer raster.deinit();
-    try std.testing.expect(raster.width <= 7);
-    try std.testing.expect(raster.left >= 0);
-    try std.testing.expect(
-        @as(u32, @intCast(raster.left)) + raster.width <= 7,
-    );
-}
-
-test "one-cell native raster shifts a positive bearing inside its cell" {
-    const fonts = @import("test_fonts");
-    var set = try FontSet.init(std.testing.allocator, .{
-        .primary = fonts.symbol_font,
-        .size = .{ .points = .{
-            .points = 16.0,
-            .dpi_x = .{ .numerator = 768, .denominator = 5 },
-            .dpi_y = .{ .numerator = 768, .denominator = 5 },
-        } },
-    });
-    defer set.deinit();
-    const glyph_id = c.FT_Get_Char_Index(set.faces[0].ft, 0xf460);
-    var native = try rasterizeFace(
-        std.testing.allocator,
-        set.faces[0].ft,
-        glyph_id,
-    );
-    defer native.deinit();
-    try std.testing.expectEqual(@as(u16, 13), native.width);
-    try std.testing.expectEqual(@as(i16, 12), native.left);
-    try std.testing.expectEqual(@as(u16, 17), set.metrics.advance_width);
-
-    var placed = try set.rasterize(
-        std.testing.allocator,
-        0,
-        glyph_id,
-        set.metrics.advance_width,
-    );
-    defer placed.deinit();
-    try std.testing.expectEqual(native.width, placed.width);
-    try std.testing.expectEqual(@as(i16, 4), placed.left);
-    try std.testing.expectEqual(
-        set.metrics.advance_width,
-        @as(u16, @intCast(placed.left)) + placed.width,
-    );
-}
-
-test "failed size restoration invalidates native use and preserves cleanup" {
-    const fonts = @import("test_fonts");
-    var set = try FontSet.init(std.testing.allocator, .{
-        .primary = fonts.symbol_font,
-        .size = .{ .pixels = 18 },
-    });
-    defer set.deinit();
-    const pixels = try std.testing.allocator.alloc(u8, 1);
-    const fitted = Raster{
-        .allocator = std.testing.allocator,
-        .width = 1,
-        .height = 1,
-        .left = 0,
-        .top = 1,
-        .pixels = pixels,
-    };
-    try std.testing.expectError(
-        error.FontState,
-        set.finishTemporaryRaster(fitted, 1),
-    );
-    try std.testing.expect(!set.usable);
-    var shaper = try ShapeBuffer.init(1);
-    defer shaper.deinit();
-    var glyphs: [1]Glyph = undefined;
-    try std.testing.expectError(error.FontState, set.shape(
-        &shaper,
-        .{
-            .codepoints = &.{'A'},
-            .clusters = &.{0},
-        },
-        &glyphs,
-    ));
-    try std.testing.expectError(
-        error.FontState,
-        set.rasterize(std.testing.allocator, 0, 1, set.metrics.advance_width),
     );
 }
 

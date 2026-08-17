@@ -1,4 +1,4 @@
-//! Public renderer-neutral boundary for native font shaping and rasterization.
+//! Public boundary for bounded native font shaping and alpha rasterization.
 
 const std = @import("std");
 const engine = @import("engine.zig");
@@ -13,10 +13,8 @@ pub const InitError = engine.InitError;
 pub const ShapeError = engine.ShapeError;
 pub const ShapeBufferInitError = engine.ShapeBufferInitError || error{OutOfMemory};
 pub const RasterError = engine.RasterError;
-pub const GlyphWidthError = engine.GlyphWidthError;
-pub const GroupError = engine.GroupError;
+pub const GlyphLookupError = engine.GlyphLookupError;
 
-pub const Dpi = engine.Dpi;
 pub const PointSize = engine.PointSize;
 pub const Size = engine.Size;
 pub const Config = engine.Config;
@@ -25,8 +23,6 @@ pub const Text = engine.Text;
 pub const Glyph = engine.Glyph;
 pub const Run = engine.Run;
 pub const Raster = engine.Raster;
-pub const SpacerStrategy = engine.SpacerStrategy;
-pub const LigatureType = engine.LigatureType;
 
 const FontOwner = struct {
     value: engine.FontSet,
@@ -70,24 +66,6 @@ pub const FontSet = opaque {
         );
     }
 
-    /// Shapes one sequence on one already selected fallback face.
-    pub fn shapeFace(
-        self: *FontSet,
-        buffer: *ShapeBuffer,
-        text: Text,
-        glyph_storage: []Glyph,
-        face_index: u8,
-        disable_contextual: bool,
-    ) ShapeError!Run {
-        return fontOwner(self).value.shapeFace(
-            &shapeOwner(buffer).value,
-            text,
-            glyph_storage,
-            face_index,
-            disable_contextual,
-        );
-    }
-
     /// Returns the first configured face covering one complete valid sequence.
     pub fn faceFor(
         self: *FontSet,
@@ -96,96 +74,26 @@ pub const FontSet = opaque {
         return fontOwner(self).value.faceFor(codepoints);
     }
 
-    /// Returns the selected native glyph's bounded pixel width.
-    pub fn glyphWidth(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-    ) GlyphWidthError!u16 {
-        return fontOwner(self).value.glyphWidth(face_index, glyph_id);
-    }
-
     /// Returns the selected face's exact glyph identity for one scalar.
     pub fn glyphForCodepoint(
         self: *FontSet,
         face_index: u8,
         codepoint: u21,
-    ) GlyphWidthError!u32 {
+    ) GlyphLookupError!u32 {
         return fontOwner(self).value.glyphForCodepoint(face_index, codepoint);
     }
 
-    /// Reports whether a shaped glyph differs from the direct scalar glyph.
-    pub fn glyphIsSpecial(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-        codepoint: u32,
-    ) error{InvalidRaster}!bool {
-        return fontOwner(self).value.glyphIsSpecial(face_index, glyph_id, codepoint);
-    }
-
-    /// Reports Kitty's exact zero-horizontal-metric empty-glyph result.
-    pub fn glyphIsEmpty(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-    ) error{ GlyphLoad, InvalidRaster }!bool {
-        return fontOwner(self).value.glyphIsEmpty(face_index, glyph_id);
-    }
-
-    /// Classifies one variable-length ligature glyph-name component.
-    pub fn glyphLigatureType(
-        self: *FontSet,
-        face_index: u8,
-        glyph_id: u32,
-        strategy: SpacerStrategy,
-    ) error{InvalidRaster}!LigatureType {
-        return fontOwner(self).value.glyphLigatureType(face_index, glyph_id, strategy);
-    }
-
-    /// Detects and retains one face's bounded ligature spacer convention.
-    pub fn spacerStrategy(
-        self: *FontSet,
-        buffer: *ShapeBuffer,
-        glyph_storage: []Glyph,
-        face_index: u8,
-    ) GroupError!SpacerStrategy {
-        return fontOwner(self).value.spacerStrategy(
-            &shapeOwner(buffer).value,
-            glyph_storage,
-            face_index,
-        );
-    }
-
-    /// Rasterizes one glyph into one bounded cell-normalized alpha mask.
+    /// Rasterizes one glyph at the configured size with natural bearings.
     pub fn rasterize(
         self: *FontSet,
         allocator: std.mem.Allocator,
         face_index: u8,
         glyph_id: u32,
-        maximum_width_px: u16,
     ) RasterError!Raster {
         return fontOwner(self).value.rasterize(
             allocator,
             face_index,
             glyph_id,
-            maximum_width_px,
-        );
-    }
-
-    /// Rasterizes one glyph with bearings retained for multi-cell clipping.
-    pub fn rasterizeGroup(
-        self: *FontSet,
-        allocator: std.mem.Allocator,
-        face_index: u8,
-        glyph_id: u32,
-        maximum_width_px: u16,
-    ) RasterError!Raster {
-        return fontOwner(self).value.rasterizeGroup(
-            allocator,
-            face_index,
-            glyph_id,
-            maximum_width_px,
         );
     }
 };
