@@ -1,0 +1,105 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:howl_flutter/protocol.dart';
+
+final Map<String, dynamic> vectors = jsonDecode(
+  File('../howl-session/protocol/v1-vectors.json').readAsStringSync(),
+) as Map<String, dynamic>;
+
+Map<String, dynamic> vector(String id) => (vectors['cases'] as List<dynamic>)
+    .cast<Map<String, dynamic>>()
+    .singleWhere((value) => value['id'] == id);
+
+void main() {
+  test('frozen hello and welcome vectors decode independently', () {
+    final hello = decodeFrames(
+      hexBytes(vector('hello_all_features')['hex'] as String),
+    );
+    expect(hello, hasLength(1));
+    expect(hello.single.kind, HowlWire.hello);
+    expect(hello.single.payload, hasLength(12));
+
+    final welcomeFrames = decodeFrames(
+      hexBytes(vector('welcome_all_features')['hex'] as String),
+    );
+    final welcome = decodeWelcome(welcomeFrames.single.payload);
+    expect(welcome.version, 1);
+    expect(welcome.features, 31);
+    expect(welcome.clientId, 0x0102030405060708);
+  });
+
+  test('frozen text_v1 vector preserves rich semantic state', () {
+    final snapshots = decodeTextSnapshots(
+      hexBytes(vector('snapshot_text_v1_complete')['hex'] as String),
+    );
+    expect(snapshots, hasLength(1));
+    final snapshot = snapshots.single;
+    expect(snapshot.revision, 10);
+    expect(snapshot.terminalRevision, 23);
+    expect(snapshot.begin.rows, 1);
+    expect(snapshot.begin.columns, 3);
+    expect(snapshot.presentation.reverseScreen, isTrue);
+    expect(snapshot.presentation.cursor?.r, 7);
+    expect(snapshot.rows.single.wrapped, isTrue);
+
+    final combining = snapshot.rows.single.cells[0];
+    expect(combining.scalars, <int>[101, 769]);
+    expect(combining.style, 133);
+    expect(combining.foreground.kind, 2);
+    expect(combining.foreground.value, 0x112233);
+    expect(combining.background.kind, 1);
+    expect(combining.background.value, 4);
+    expect(combining.linkId, 1);
+
+    final wideLead = snapshot.rows.single.cells[1];
+    final wideContinuation = snapshot.rows.single.cells[2];
+    expect(wideLead.scalars, <int>[0x4e2d]);
+    expect(wideLead.width, 2);
+    expect(wideLead.semanticWidth, isTrue);
+    expect(wideContinuation.scalars, isEmpty);
+    expect(wideContinuation.x, 1);
+    expect(hyperlinkText(snapshot.hyperlinks[1]!), 'https://howl.example');
+  });
+
+  for (final id in <String>[
+    'bad_magic',
+    'payload_over_limit',
+    'text_record_reserved_bit',
+    'text_unknown_style_bit',
+    'text_unresolved_hyperlink',
+    'text_multiple_records_one_frame',
+  ]) {
+    test('hostile frozen vector $id keeps its contract error', () {
+      final item = vector(id);
+      final bytes = hexBytes(item['hex'] as String);
+      final expected = item['error'] as String;
+      try {
+        if (id == 'bad_magic' || id == 'payload_over_limit') {
+          decodeFrames(bytes);
+        } else {
+          decodeTextSnapshots(bytes);
+        }
+        fail('expected $expected');
+      } on HowlProtocolException catch (error) {
+        expect(error.code, expected);
+      }
+    });
+  }
+
+  test('live client dimensions are explicitly bounded', () {
+    validateClientDimensions(1, 1);
+    validateClientDimensions(HowlWire.maximumRows, HowlWire.maximumColumns);
+    expect(
+      () => validateClientDimensions(HowlWire.maximumRows + 1, 80),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'snapshot_dimensions',
+        ),
+      ),
+    );
+  });
+}

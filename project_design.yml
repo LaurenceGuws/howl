@@ -21,6 +21,8 @@ experimental:
   - howl-render
   - howl-vk
   - howl-wayland
+  - howl-gtk
+  - howl-flutter
 
 ownership:
   - a session lives on the node, not in a client

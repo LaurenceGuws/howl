@@ -17,5 +17,6 @@ external:
 experimental:
   howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate
   howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate
+  howl-flutter: disposable Flutter/Linux visual client pressure-testing the frozen howl-session text/input/geometry contract directly from Dart; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
