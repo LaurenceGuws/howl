@@ -11,10 +11,10 @@ core:
     invariant: observers never own, pace, or block canonical session progress
   howl-pty:
     role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
+  howl-text:
+    role: native font metrics, fallback, shaping, source-cluster identity, ligature classification, and bounded alpha rasterization
 
 planned:
-  howl-text: native text shaping and rasterization worthy of the core boundary
-  session_endpoint: Unix-socket access to one node-local session; SSH only transports remote client bytes
   clients: Linux and Android first; iOS is SSH-only
 
 experimental:
@@ -31,6 +31,6 @@ ownership:
   - renderer and platform policy stay outside VT and session
 
 workspace:
-  root_gate: [howl-vt, howl-session, howl-pty]
+  root_gate: [howl-vt, howl-session, howl-pty, howl-text]
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module

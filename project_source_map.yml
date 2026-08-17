@@ -5,6 +5,7 @@ accepted:
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs
   howl-session: opaque canonical PTY/VT session owner and observer-independent lifecycle proofs
   howl-pty: Linux PTY and child-process lifecycle
+  howl-text: native font metrics, fallback, shaping, source-cluster identity, ligature classification, and bounded alpha rasterization
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
   tools/audit_source.sh: maintained-source structural audit
@@ -12,6 +13,6 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
-  howl-render: rendering experiments; not part of the core gate
+  howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate

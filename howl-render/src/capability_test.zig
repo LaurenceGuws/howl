@@ -22,6 +22,5 @@ comptime {
     std.testing.refAllDecls(@import("canvas_test.zig"));
     std.testing.refAllDecls(@import("chrome_test.zig"));
     if (selected.native_text) std.testing.refAllDecls(@import("chrome_reuse_test.zig"));
-    if (selected.native_text) std.testing.refAllDecls(@import("native_test.zig"));
     if (selected.generated_glyphs) std.testing.refAllDecls(@import("generated_test.zig"));
 }

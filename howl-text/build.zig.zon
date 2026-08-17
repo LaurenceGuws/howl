@@ -1,11 +1,9 @@
 .{
-    .name = .howl_render,
+    .name = .howl_text,
     .version = "0.1.6-dev",
-    .fingerprint = 0x42f92313e3ee4de0,
+    .fingerprint = 0xfe0c84403ee39e7e,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
-    .dependencies = .{
-        .howl_text = .{ .path = "../howl-text" },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",

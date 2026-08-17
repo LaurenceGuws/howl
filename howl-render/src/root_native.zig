@@ -6,4 +6,4 @@ pub const canvas = @import("canvas");
 pub const chrome = @import("chrome");
 
 /// Owns native font loading, shaping, metrics, and alpha rasterization.
-pub const text = @import("native_text");
+pub const text = @import("howl_text");

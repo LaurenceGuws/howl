@@ -26,17 +26,17 @@ fn content() !render.chrome.Content {
 }
 
 test "editor-like frame shapes text and projects selection without terminal state" {
-    var font = try render.text.FontSet.init(std.testing.allocator, .{
+    const font = try render.text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .size = .{ .pixels = 16 },
     });
     defer font.deinit();
-    var scratch = try render.text.ShapeBuffer.init(16);
+    const scratch = try render.text.ShapeBuffer.init(std.testing.allocator, 16);
     defer scratch.deinit();
     const codepoints = [_]u32{ 'e', 'd', 'i', 't' };
     const clusters = [_]u32{ 0, 1, 2, 3 };
     var glyphs: [16]render.text.Glyph = undefined;
-    const run = try font.shape(&scratch, .{ .codepoints = &codepoints, .clusters = &clusters }, &glyphs);
+    const run = try font.shape(scratch, .{ .codepoints = &codepoints, .clusters = &clusters }, &glyphs);
     try std.testing.expect(run.glyphs.len != 0);
 
     const frame = render.chrome.Input{

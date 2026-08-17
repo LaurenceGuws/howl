@@ -51,43 +51,17 @@ pub fn build(b: *std.Build) void {
     });
     chrome.addImport("canvas", canvas);
 
-    var test_fonts: ?*std.Build.Module = null;
-    var production_native: ?*std.Build.Module = null;
-    var tested_native: ?*std.Build.Module = null;
+    var text: ?*std.Build.Module = null;
+    var text_test_fonts: ?*std.Build.Module = null;
     if (native_enabled) {
-        const native_c = nativeCModule(b, target, optimize);
-        const fonts = b.addOptions();
-        fonts.addOption(
-            []const u8,
-            "primary_font",
-            b.root.joinString(b.allocator, "testdata/primary.ttf") catch @panic("OOM"),
-        );
-        fonts.addOption(
-            []const u8,
-            "symbol_font",
-            b.root.joinString(b.allocator, "testdata/symbols.ttf") catch @panic("OOM"),
-        );
-        fonts.addOption(
-            []const u8,
-            "normal_ligature_font",
-            b.root.joinString(
-                b.allocator,
-                "testdata/fira-code-medium.otf",
-            ) catch @panic("OOM"),
-        );
-        fonts.addOption(
-            []const u8,
-            "mono_font",
-            b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"),
-        );
-        test_fonts = fonts.createModule();
-        const native = nativeModule(b, target, optimize, native_c);
-        production_native = native;
-        module.addImport("native_text", native);
-        const tested = nativeModule(b, target, optimize, native_c);
-        tested.addImport("test_fonts", test_fonts.?);
-        tested_native = tested;
-        test_module.addImport("native_text", tested);
+        const dependency = b.dependency("howl_text", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        text = dependency.module("howl_text");
+        text_test_fonts = dependency.module("howl_text_test_fonts");
+        module.addImport("howl_text", text.?);
+        test_module.addImport("howl_text", text.?);
     }
     if (native_enabled) {
         const production_chrome = chromeNativeModule(
@@ -96,7 +70,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             chrome,
             canvas,
-            production_native.?,
+            text.?,
         );
         module.addImport("chrome", production_chrome);
         const tested_chrome = chromeNativeModule(
@@ -105,7 +79,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             chrome,
             canvas,
-            tested_native.?,
+            text.?,
         );
         test_module.addImport("chrome", tested_chrome);
     } else {
@@ -132,7 +106,7 @@ pub fn build(b: *std.Build) void {
     capability_tests.addImport("howl_render", test_module);
     capability_tests.addImport("canvas", canvas);
     capability_tests.addImport("selected_capabilities", selected.createModule());
-    if (test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
+    if (text_test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
 
     const tests = b.addTest(.{
         .name = "howl-render-capabilities",
@@ -155,7 +129,7 @@ fn chromeNativeModule(
     optimize: std.builtin.OptimizeMode,
     chrome: *std.Build.Module,
     canvas: *std.Build.Module,
-    native: *std.Build.Module,
+    text: *std.Build.Module,
 ) *std.Build.Module {
     const wrapper = b.createModule(.{
         .root_source_file = b.path("src/chrome_native.zig"),
@@ -164,48 +138,6 @@ fn chromeNativeModule(
     });
     wrapper.addImport("chrome_impl", chrome);
     wrapper.addImport("canvas", canvas);
-    wrapper.addImport("native_text", native);
+    wrapper.addImport("howl_text", text);
     return wrapper;
-}
-
-fn nativeModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    native_c: *std.Build.Module,
-) *std.Build.Module {
-    const module = b.createModule(.{
-        .root_source_file = b.path("src/native_text.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
-    module.addImport("native_c", native_c);
-    module.linkSystemLibrary("freetype", .{});
-    module.linkSystemLibrary("harfbuzz", .{});
-    return module;
-}
-
-fn nativeCModule(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-) *std.Build.Module {
-    const headers = b.addWriteFiles();
-    const header = headers.add("howl-render-native.h",
-        \\#include <ft2build.h>
-        \\#include <freetype/freetype.h>
-        \\#include <freetype/tttables.h>
-        \\#include <harfbuzz/hb.h>
-        \\#include <harfbuzz/hb-ft.h>
-        \\
-    );
-    const translate = b.addTranslateC(.{
-        .root_source_file = header,
-        .target = target,
-        .optimize = optimize,
-    });
-    translate.linkSystemLibrary("freetype", .{});
-    translate.linkSystemLibrary("harfbuzz", .{});
-    return translate.createModule();
 }

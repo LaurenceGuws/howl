@@ -673,8 +673,8 @@ pub const FontSet = struct {
         );
     }
 
-    /// Rasterizes one glyph for later placement inside a complete multi-cell
-    /// group canvas. Width fitting remains bounded by the group, while native
+    /// Rasterizes one glyph for later placement inside complete multi-cell
+    /// bounds. Width fitting remains bounded by the group, while native
     /// bearings and overhang remain intact for group-level clipping.
     pub fn rasterizeGroup(
         self: *FontSet,
@@ -698,7 +698,7 @@ pub const FontSet = struct {
         face_index: u8,
         glyph_id: u32,
         maximum_width_px: u16,
-        normalize_to_canvas: bool,
+        normalize_to_cell: bool,
     ) RasterError!Raster {
         if (!self.usable) return error.FontState;
         if (maximum_width_px == 0) return error.InvalidWidth;
@@ -722,7 +722,7 @@ pub const FontSet = struct {
         }
         if (raster.width > maximum_width_px)
             try cropRaster(&raster, 0, maximum_width_px);
-        if (!normalize_to_canvas) return raster;
+        if (!normalize_to_cell) return raster;
         if (raster.left < 0) {
             const clipped = @min(
                 raster.width,
@@ -937,7 +937,7 @@ fn setFittedSize(
     if (result != 0) return error.FontSize;
 }
 
-fn validateConfig(config: Config) error{InvalidConfig}!void {
+pub fn validateConfig(config: Config) error{InvalidConfig}!void {
     if (config.fallbacks.len > max_fallbacks)
         return error.InvalidConfig;
     const nominal_height = try nominalPixelHeight(config.size);
@@ -1690,7 +1690,7 @@ test "native raster honors an arbitrary pixel bound" {
     );
 }
 
-test "one-cell native raster shifts a positive bearing inside its canvas" {
+test "one-cell native raster shifts a positive bearing inside its cell" {
     const fonts = @import("test_fonts");
     var set = try FontSet.init(std.testing.allocator, .{
         .primary = fonts.symbol_font,

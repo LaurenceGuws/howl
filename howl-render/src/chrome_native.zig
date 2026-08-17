@@ -3,7 +3,7 @@
 const std = @import("std");
 const canonical = @import("chrome_impl");
 const canvas = @import("canvas");
-const text = @import("native_text");
+const text = @import("howl_text");
 
 /// Projects canonical Chrome failures directly.
 pub const Error = canonical.Error;
@@ -114,8 +114,8 @@ pub const Content = struct {
 
     allocator: std.mem.Allocator,
     limits: Limits,
-    fonts: text.FontSet,
-    shape: text.ShapeBuffer,
+    fonts: *text.FontSet,
+    shape: *text.ShapeBuffer,
     primitives_a: []Primitive,
     primitives_b: []Primitive,
     text_a: []u8,
@@ -195,9 +195,10 @@ pub const Content = struct {
         const raster_arena = allocator.alloc(u8, limits.raster_bytes) catch
             return error.OutOfMemory;
         errdefer allocator.free(raster_arena);
-        var fonts = try text.FontSet.init(allocator, font);
+        const fonts = try text.FontSet.init(allocator, font);
         errdefer fonts.deinit();
-        const shape = try text.ShapeBuffer.init(@intCast(limits.shaped_glyphs));
+        const shape = try text.ShapeBuffer.init(allocator, @intCast(limits.shaped_glyphs));
+        errdefer shape.deinit();
         return .{
             .allocator = allocator,
             .limits = limits,
@@ -356,7 +357,7 @@ pub const Content = struct {
     ) TakeError!void {
         const scalar_count = try self.decode(value.text);
         const run = try self.fonts.shape(
-            &self.shape,
+            self.shape,
             .{
                 .codepoints = self.codepoints[0..scalar_count],
                 .clusters = self.clusters[0..scalar_count],
@@ -364,7 +365,7 @@ pub const Content = struct {
             self.shaped,
         );
         var pen_x = @as(i64, value.rect.x) * 64;
-        const baseline = (@as(i64, value.rect.y) + self.fonts.metrics.baseline) * 64;
+        const baseline = (@as(i64, value.rect.y) + self.fonts.metrics().baseline) * 64;
         for (run.glyphs) |shaped_glyph| {
             const entry = try self.glyph(
                 run.face_index,
@@ -455,7 +456,7 @@ pub const Content = struct {
             fixed.allocator(),
             face,
             glyph_id,
-            self.fonts.metrics.advance_width,
+            self.fonts.metrics().advance_width,
         );
         defer raster.deinit();
         const resource = if (raster.width == 0 or raster.height == 0)

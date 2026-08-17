@@ -11,8 +11,7 @@ The core idea is simple: **the session lives on the node, not in the client.** O
 | `howl-vt` | Terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences |
 | `howl-session` | One canonical PTY/VT lifetime, ordered I/O, explicit geometry, signals, child state, and headless policy |
 | `howl-pty` | Linux-kernel PTY transport and child-process lifecycle, used directly on Linux and Android |
-
-`howl-text` is the next intended core package.
+| `howl-text` | Native font metrics, fallback, shaping, source-cluster identity, ligature classification, and bounded alpha rasterization |
 
 The session API is deliberately opaque. Embedders can inspect semantic state and submit input or explicit control mutations, but cannot reach the PTY or VT owner directly. A disconnected or slow observer must never block the shell.
 

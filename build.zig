@@ -6,6 +6,7 @@ const children = [_][]const u8{
     "howl-vt",
     "howl-session",
     "howl-pty",
+    "howl-text",
 };
 
 pub fn build(b: *std.Build) void {

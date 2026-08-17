@@ -9,6 +9,7 @@
         "build.zig.zon",
         "howl-pty",
         "howl-session",
+        "howl-text",
         "howl-vt",
         "protocol_coverage.nu",
         "protocol_coverage.yml",
