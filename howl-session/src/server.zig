@@ -1,0 +1,1091 @@
+//! Runs one node-local shared Howl session behind one Unix-domain socket.
+//!
+//! One process owns one PTY, one VT, and one socket. Clients are bounded
+//! observers/controllers. Socket output is always nonblocking and each client
+//! owns at most one materialized response, so an observer cannot pace PTY/VT
+//! progress.
+
+const std = @import("std");
+const posix = std.posix;
+const linux = std.os.linux;
+const howl = @import("howl_session");
+const protocol = howl.protocol;
+
+const maximum_clients: usize = 8;
+const maximum_request_payload: usize = 64 * 1024;
+const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
+const client_send_buffer_bytes: c_int = 64 * 1024;
+const listen_backlog: u32 = 16;
+const lifecycle_poll_ms: i32 = 100;
+
+const Client = struct {
+    fd: posix.fd_t,
+    id: protocol.ClientId,
+    phase: enum { hello, ready } = .hello,
+    features: u64 = 0,
+    input: [input_buffer_bytes]u8 = undefined,
+    input_len: usize = 0,
+    output: std.ArrayList(u8) = .empty,
+    output_offset: usize = 0,
+    observe: ?protocol.Observe = null,
+
+    fn outputPending(self: *const Client) bool {
+        return self.output_offset < self.output.items.len;
+    }
+
+    fn resetOutput(self: *Client, allocator: std.mem.Allocator) void {
+        self.output.deinit(allocator);
+        self.output = .empty;
+        self.output_offset = 0;
+    }
+
+    fn deinit(self: *Client, allocator: std.mem.Allocator) void {
+        closeFd(self.fd);
+        self.output.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+const Server = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    session: *howl.Session,
+    listener: posix.fd_t,
+    socket_path: [108]u8 = @splat(0),
+    socket_path_len: u8,
+    clients: [maximum_clients]?Client = @splat(null),
+    next_client_id: protocol.ClientId = 1,
+    authority: protocol.ResizeAuthority = .{},
+    observation_revision: u64 = 1,
+    terminal_revision: u64,
+    stream_closed: bool = false,
+    child_exited: bool = false,
+    pty_write_pending: bool = false,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        socket_path: []const u8,
+        launch: howl.Launch,
+    ) !Server {
+        const session = try howl.init(allocator, launch);
+        errdefer howl.deinit(session);
+        const listener = try listenUnix(socket_path);
+        errdefer closeFd(listener);
+        errdefer unlinkPath(socket_path);
+
+        var server = Server{
+            .allocator = allocator,
+            .io = io,
+            .session = session,
+            .listener = listener,
+            .socket_path_len = @intCast(socket_path.len),
+            .terminal_revision = howl.revision(session),
+        };
+        @memcpy(server.socket_path[0..socket_path.len], socket_path);
+        return server;
+    }
+
+    fn deinit(self: *Server) void {
+        for (&self.clients) |*client| {
+            if (client.*) |*active| active.deinit(self.allocator);
+            client.* = null;
+        }
+        closeFd(self.listener);
+        unlinkPath(self.socket_path[0..self.socket_path_len]);
+        howl.deinit(self.session);
+        self.* = undefined;
+    }
+
+    fn turn(self: *Server, timeout_ms: i32) !void {
+        try self.materializeObservers();
+        try self.processBufferedRequests();
+
+        var descriptors: [2 + maximum_clients]posix.pollfd = undefined;
+        descriptors[0] = .{ .fd = self.listener, .events = posix.POLL.IN | posix.POLL.HUP, .revents = 0 };
+        var pty_poll_events: i16 = 0;
+        if (!self.stream_closed) pty_poll_events |= posix.POLL.IN | posix.POLL.HUP;
+        if (self.pty_write_pending) pty_poll_events |= posix.POLL.OUT;
+        descriptors[1] = .{
+            .fd = if (self.stream_closed and !self.pty_write_pending) -1 else try howl.descriptor(self.session),
+            .events = pty_poll_events,
+            .revents = 0,
+        };
+        for (self.clients, 0..) |client, index| {
+            var client_poll_events: i16 = posix.POLL.HUP | posix.POLL.ERR;
+            if (client) |active| {
+                client_poll_events |= if (active.outputPending()) posix.POLL.OUT else posix.POLL.IN;
+            }
+            descriptors[2 + index] = if (client) |active| .{
+                .fd = active.fd,
+                .events = client_poll_events,
+                .revents = 0,
+            } else .{ .fd = -1, .events = 0, .revents = 0 };
+        }
+
+        const poll_timeout = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
+            lifecycle_poll_ms
+        else
+            timeout_ms;
+        const ready_count = try posix.poll(&descriptors, poll_timeout);
+        std.debug.assert(ready_count <= descriptors.len);
+
+        const pty_events = descriptors[1].revents;
+        const pty_present = descriptors[1].fd >= 0;
+        const result = try howl.service(
+            self.session,
+            pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0,
+            pty_present and pty_events & posix.POLL.OUT != 0,
+            nowNs(self.io),
+        );
+        self.applyServiceResult(result);
+
+        if (descriptors[0].revents & posix.POLL.IN != 0) try self.acceptClients();
+
+        var index: usize = 0;
+        while (index < self.clients.len) : (index += 1) {
+            const events = descriptors[2 + index].revents;
+            if (events == 0 or self.clients[index] == null) continue;
+            if (events & (posix.POLL.HUP | posix.POLL.ERR | posix.POLL.NVAL) != 0) {
+                self.closeClient(index);
+                continue;
+            }
+            if (events & posix.POLL.OUT != 0) self.writeClient(index);
+            if (self.clients[index] != null and events & posix.POLL.IN != 0) self.readClient(index);
+        }
+
+        try self.processBufferedRequests();
+        try self.materializeObservers();
+    }
+
+    fn acceptClients(self: *Server) !void {
+        while (true) {
+            const accepted = linux.accept4(
+                self.listener,
+                null,
+                null,
+                linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK,
+            );
+            switch (linux.errno(accepted)) {
+                .SUCCESS => {},
+                .AGAIN => return,
+                .INTR => continue,
+                else => return error.AcceptFailed,
+            }
+            const fd: posix.fd_t = @intCast(accepted);
+            errdefer closeFd(fd);
+            setSendBuffer(fd, client_send_buffer_bytes) catch {
+                closeFd(fd);
+                continue;
+            };
+            const slot = self.freeClientSlot() orelse {
+                closeFd(fd);
+                continue;
+            };
+            const id = self.nextClientId();
+            self.clients[slot] = .{ .fd = fd, .id = id };
+        }
+    }
+
+    fn freeClientSlot(self: *Server) ?usize {
+        for (self.clients, 0..) |client, index| if (client == null) return index;
+        return null;
+    }
+
+    fn nextClientId(self: *Server) protocol.ClientId {
+        const id = self.next_client_id;
+        self.next_client_id = std.math.add(protocol.ClientId, id, 1) catch 1;
+        if (self.next_client_id == protocol.no_client) self.next_client_id = 1;
+        return id;
+    }
+
+    fn readClient(self: *Server, index: usize) void {
+        const client = if (self.clients[index]) |*active| active else return;
+        if (client.outputPending() or client.input_len == client.input.len) return;
+        const room = client.input[client.input_len..];
+        const result = linux.read(client.fd, room.ptr, room.len);
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > room.len) {
+                    self.closeClient(index);
+                    return;
+                }
+                client.input_len += result;
+            },
+            .AGAIN, .INTR => {},
+            else => self.closeClient(index),
+        }
+    }
+
+    fn writeClient(self: *Server, index: usize) void {
+        const client = if (self.clients[index]) |*active| active else return;
+        if (!client.outputPending()) return;
+        const bytes = client.output.items[client.output_offset..];
+        const result = linux.write(client.fd, bytes.ptr, bytes.len);
+        switch (linux.errno(result)) {
+            .SUCCESS => {
+                if (result == 0 or result > bytes.len) {
+                    self.closeClient(index);
+                    return;
+                }
+                client.output_offset += result;
+                if (!client.outputPending()) client.resetOutput(self.allocator);
+            },
+            .AGAIN, .INTR => {},
+            .PIPE, .CONNRESET => self.closeClient(index),
+            else => self.closeClient(index),
+        }
+    }
+
+    fn processBufferedRequests(self: *Server) !void {
+        var index: usize = 0;
+        while (index < self.clients.len) : (index += 1) {
+            while (self.clients[index]) |*client| {
+                if (client.outputPending() or client.observe != null) break;
+                if (client.input_len < protocol.header_bytes) break;
+                var header_bytes: [protocol.header_bytes]u8 = undefined;
+                @memcpy(&header_bytes, client.input[0..protocol.header_bytes]);
+                const header = protocol.decodeHeader(&header_bytes) catch {
+                    self.closeClient(index);
+                    break;
+                };
+                if (header.payload_len > maximum_request_payload) {
+                    self.closeClient(index);
+                    break;
+                }
+                const frame_len = protocol.header_bytes + @as(usize, header.payload_len);
+                if (client.input_len < frame_len) break;
+                var payload: [maximum_request_payload]u8 = undefined;
+                @memcpy(payload[0..header.payload_len], client.input[protocol.header_bytes..frame_len]);
+                const remaining = client.input_len - frame_len;
+                std.mem.copyForwards(u8, client.input[0..remaining], client.input[frame_len..client.input_len]);
+                client.input_len = remaining;
+                try self.handleFrame(index, header.kind, payload[0..header.payload_len]);
+            }
+        }
+    }
+
+    fn handleFrame(self: *Server, index: usize, kind: protocol.Kind, payload: []const u8) !void {
+        const client = if (self.clients[index]) |*active| active else return;
+        if (client.phase == .hello) {
+            if (kind != .hello) {
+                self.closeClient(index);
+                return;
+            }
+            const hello = protocol.decodeHello(payload) catch {
+                self.closeClient(index);
+                return;
+            };
+            const version = protocol.negotiateVersion(hello) orelse {
+                self.closeClient(index);
+                return;
+            };
+            const features = protocol.negotiateFeatures(hello);
+            if (features & protocol.feature(.grid_snapshot) == 0) {
+                self.closeClient(index);
+                return;
+            }
+            client.phase = .ready;
+            client.features = features;
+            var encoded: [protocol.payload_bytes.welcome]u8 = undefined;
+            protocol.encodeWelcome(&encoded, .{ .version = version, .features = features, .client_id = client.id });
+            try self.queueFrame(client, .welcome, &encoded);
+            return;
+        }
+
+        switch (kind) {
+            .observe => {
+                const request = protocol.decodeObserve(payload) catch {
+                    try self.queueResult(client, .observe, .malformed);
+                    return;
+                };
+                if (request.after_revision > self.observation_revision) {
+                    try self.queueResult(client, .observe, .malformed);
+                    return;
+                }
+                client.observe = request;
+            },
+            .input => try self.handleInput(client, payload),
+            .assign_leader => try self.handleAssignLeader(client, payload),
+            .resize => try self.handleResize(client, payload),
+            .signal => try self.handleSignal(client, payload),
+            else => try self.queueResult(client, kind, .unsupported),
+        }
+    }
+
+    fn handleInput(self: *Server, client: *Client, payload: []const u8) !void {
+        if (payload.len == 0) return self.queueResult(client, .input, .malformed);
+        const kind: protocol.InputKind = switch (payload[0]) {
+            @backingInt(protocol.InputKind.bytes) => .bytes,
+            @backingInt(protocol.InputKind.paste) => .paste,
+            @backingInt(protocol.InputKind.key) => .key,
+            @backingInt(protocol.InputKind.mouse) => .mouse,
+            @backingInt(protocol.InputKind.focus) => .focus,
+            else => return self.queueResult(client, .input, .unsupported),
+        };
+        const event: howl.Input = switch (kind) {
+            .bytes => .{ .bytes = payload[1..] },
+            .paste => .{ .paste = payload[1..] },
+            .key, .mouse, .focus => return self.queueResult(client, .input, .unsupported),
+        };
+        howl.input(self.session, event) catch return self.queueResult(client, .input, .rejected);
+        const serviced = try howl.service(self.session, false, true, nowNs(self.io));
+        self.applyServiceResult(serviced);
+        try self.queueResult(client, .input, .ok);
+    }
+
+    fn handleAssignLeader(self: *Server, client: *Client, payload: []const u8) !void {
+        if (client.features & protocol.feature(.resize_leader) == 0)
+            return self.queueResult(client, .assign_leader, .unsupported);
+        const request = protocol.decodeAssignLeader(payload) catch
+            return self.queueResult(client, .assign_leader, .malformed);
+        if (request.client_id != protocol.no_client and !self.hasClient(request.client_id))
+            return self.queueResult(client, .assign_leader, .no_such_client);
+        if (self.authority.assign(request.client_id)) self.bumpObservation();
+        try self.queueResult(client, .assign_leader, .ok);
+    }
+
+    fn handleResize(self: *Server, client: *Client, payload: []const u8) !void {
+        if (client.features & protocol.feature(.resize_leader) == 0)
+            return self.queueResult(client, .resize, .unsupported);
+        if (!self.authority.mayResize(client.id)) return self.queueResult(client, .resize, .not_leader);
+        const request = protocol.decodeResize(payload) catch return self.queueResult(client, .resize, .malformed);
+        howl.resize(self.session, request.rows, request.columns) catch
+            return self.queueResult(client, .resize, .rejected);
+        self.refreshObservation();
+        try self.queueResult(client, .resize, .ok);
+    }
+
+    fn handleSignal(self: *Server, client: *Client, payload: []const u8) !void {
+        const requested = protocol.decodeSignal(payload) catch return self.queueResult(client, .signal, .malformed);
+        const native: howl.Signal = switch (requested) {
+            .hangup => .hangup,
+            .interrupt => .interrupt,
+            .resize_notify => .resize_notify,
+            .kill => .kill,
+            .terminate => .terminate,
+        };
+        const result = howl.signal(self.session, native);
+        try self.queueResult(client, .signal, if (result == .delivered) .ok else .rejected);
+    }
+
+    fn hasClient(self: *Server, id: protocol.ClientId) bool {
+        for (self.clients) |client| if (client) |active| if (active.id == id) return true;
+        return false;
+    }
+
+    fn closeClient(self: *Server, index: usize) void {
+        const client = if (self.clients[index]) |*active| active else return;
+        const id = client.id;
+        client.deinit(self.allocator);
+        self.clients[index] = null;
+        if (self.authority.disconnected(id)) self.bumpObservation();
+    }
+
+    fn refreshObservation(self: *Server) void {
+        const current = howl.revision(self.session);
+        if (current == self.terminal_revision) return;
+        self.terminal_revision = current;
+        self.bumpObservation();
+    }
+
+    fn applyServiceResult(self: *Server, result: howl.Service) void {
+        const next_stream_closed = result.stream_closed;
+        const next_child_exited = result.child_exit != null;
+        const lifecycle_changed = self.stream_closed != next_stream_closed or
+            self.child_exited != next_child_exited;
+        self.pty_write_pending = result.write_pending;
+        self.stream_closed = next_stream_closed;
+        self.child_exited = next_child_exited;
+
+        const current_terminal_revision = howl.revision(self.session);
+        const terminal_changed = current_terminal_revision != self.terminal_revision;
+        if (terminal_changed) self.terminal_revision = current_terminal_revision;
+        if (terminal_changed or lifecycle_changed) self.bumpObservation();
+    }
+
+    fn bumpObservation(self: *Server) void {
+        self.observation_revision = std.math.add(u64, self.observation_revision, 1) catch
+            @panic("session observation revision exhausted");
+    }
+
+    fn materializeObservers(self: *Server) !void {
+        var index: usize = 0;
+        while (index < self.clients.len) : (index += 1) {
+            const client = if (self.clients[index]) |*active| active else continue;
+            const request = client.observe orelse continue;
+            if (client.outputPending()) continue;
+            if (request.after_revision != 0 and request.after_revision >= self.observation_revision) continue;
+            self.queueSnapshot(client, request.history_offset) catch |err| {
+                if (err != error.SnapshotTooLarge) return err;
+                client.observe = null;
+                try self.queueResult(client, .observe, .rejected);
+                continue;
+            };
+            client.observe = null;
+        }
+    }
+
+    fn queueSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
+        const status = howl.status(self.session, history_offset);
+        const row_bytes = std.math.add(usize, 4, std.math.mul(usize, status.columns, 8) catch
+            return error.SnapshotTooLarge) catch return error.SnapshotTooLarge;
+        const body_bytes = std.math.mul(usize, status.rows, row_bytes) catch return error.SnapshotTooLarge;
+        const maximum_payload: usize = protocol.maximum_payload_bytes;
+        if (row_bytes > maximum_payload) return error.SnapshotTooLarge;
+        const rows_per_frame = @max(@as(usize, 1), maximum_payload / row_bytes);
+        const row_count: usize = status.rows;
+        const data_frames = if (row_count == 0) 0 else (row_count + rows_per_frame - 1) / rows_per_frame;
+        const frame_count = std.math.add(usize, data_frames, 2) catch return error.SnapshotTooLarge;
+        const frame_headers = std.math.mul(usize, frame_count, protocol.header_bytes) catch
+            return error.SnapshotTooLarge;
+        const fixed_payloads = std.math.add(
+            usize,
+            protocol.payload_bytes.snapshot_begin,
+            protocol.payload_bytes.snapshot_end,
+        ) catch return error.SnapshotTooLarge;
+        const framed_body = std.math.add(usize, body_bytes, frame_headers) catch return error.SnapshotTooLarge;
+        const total_bound = std.math.add(usize, framed_body, fixed_payloads) catch return error.SnapshotTooLarge;
+        if (total_bound > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+
+        client.resetOutput(self.allocator);
+        errdefer client.resetOutput(self.allocator);
+        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+
+        var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
+        protocol.encodeSnapshotBegin(&begin_payload, .{
+            .revision = self.observation_revision,
+            .terminal_revision = status.revision,
+            .history_offset = status.history_offset,
+            .history_count = status.history_count,
+            .history_row_base = status.history_row_base,
+            .rows = status.rows,
+            .columns = status.columns,
+            .cursor_row = status.cursor_row,
+            .cursor_column = status.cursor_column,
+            .cursor_shape = @intCast(@backingInt(status.cursor_shape)),
+            .cursor_visible = status.cursor_visible,
+            .cursor_blink = status.cursor_blink,
+            .alternate_screen = status.alternate_screen,
+            .stream_closed = self.stream_closed,
+            .child_exited = self.child_exited,
+            .leader_present = self.authority.leader() != null,
+            .you_are_leader = self.authority.mayResize(client.id),
+        });
+        try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
+
+        if (status.rows != 0) {
+            const cells = try self.allocator.alloc(howl.Cell, status.columns);
+            defer self.allocator.free(cells);
+            var frame_header_offset: ?usize = null;
+            var frame_payload_start: usize = 0;
+            var row: u16 = 0;
+            while (row < status.rows) : (row += 1) {
+                if (frame_header_offset == null or
+                    client.output.items.len - frame_payload_start + row_bytes > protocol.maximum_payload_bytes)
+                {
+                    if (frame_header_offset) |offset| try finishDataFrame(&client.output, offset, frame_payload_start);
+                    frame_header_offset = client.output.items.len;
+                    try client.output.appendNTimes(self.allocator, 0, protocol.header_bytes);
+                    frame_payload_start = client.output.items.len;
+                }
+                var row_header: [4]u8 = .{
+                    @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
+                    @intCast(@backingInt(howl.lineGeometry(self.session, status.history_offset, row))),
+                    @truncate(status.columns >> 8),
+                    @truncate(status.columns),
+                };
+                try client.output.appendSlice(self.allocator, &row_header);
+                const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
+                for (copied) |cell| {
+                    var encoded: [8]u8 = undefined;
+                    encodeU32(encoded[0..4], cell.codepoint);
+                    encoded[4] = cell.width;
+                    encoded[5] = cell.height;
+                    encoded[6] = cell.x;
+                    encoded[7] = cell.y;
+                    try client.output.appendSlice(self.allocator, &encoded);
+                }
+            }
+            if (frame_header_offset) |offset| try finishDataFrame(&client.output, offset, frame_payload_start);
+        }
+
+        var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
+        protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
+        try self.appendFrame(&client.output, .snapshot_end, &end_payload);
+        client.output_offset = 0;
+    }
+
+    fn queueResult(self: *Server, client: *Client, request_kind: protocol.Kind, code: protocol.ResultCode) !void {
+        var payload: [protocol.payload_bytes.result]u8 = undefined;
+        protocol.encodeResult(&payload, .{ .request_kind = request_kind, .code = code });
+        try self.queueFrame(client, .result, &payload);
+    }
+
+    fn queueFrame(self: *Server, client: *Client, kind: protocol.Kind, payload: []const u8) !void {
+        if (client.outputPending()) return error.ResponseAlreadyPending;
+        client.resetOutput(self.allocator);
+        errdefer client.resetOutput(self.allocator);
+        try self.appendFrame(&client.output, kind, payload);
+        client.output_offset = 0;
+    }
+
+    fn appendFrame(self: *Server, output: *std.ArrayList(u8), kind: protocol.Kind, payload: []const u8) !void {
+        if (payload.len > protocol.maximum_payload_bytes) return error.PayloadTooLarge;
+        var header: [protocol.header_bytes]u8 = undefined;
+        try protocol.encodeHeader(&header, .{ .kind = kind, .payload_len = @intCast(payload.len) });
+        try output.appendSlice(self.allocator, &header);
+        try output.appendSlice(self.allocator, payload);
+    }
+};
+
+fn finishDataFrame(output: *std.ArrayList(u8), header_offset: usize, payload_start: usize) !void {
+    const payload_len = output.items.len - payload_start;
+    var header: [protocol.header_bytes]u8 = undefined;
+    try protocol.encodeHeader(&header, .{ .kind = .snapshot_data, .payload_len = @intCast(payload_len) });
+    @memcpy(output.items[header_offset..payload_start], &header);
+}
+
+fn listenUnix(path: []const u8) !posix.fd_t {
+    const raw = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
+    if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+    const fd: posix.fd_t = @intCast(raw);
+    errdefer closeFd(fd);
+
+    var address: linux.sockaddr.un = undefined;
+    const length = try unixAddress(path, &address);
+    if (linux.errno(linux.bind(fd, @ptrCast(&address), length)) != .SUCCESS) return error.SocketBindFailed;
+    var path_buffer: [109]u8 = @splat(0);
+    @memcpy(path_buffer[0..path.len], path);
+    if (linux.errno(linux.chmod(@ptrCast(&path_buffer), 0o600)) != .SUCCESS) return error.SocketModeFailed;
+    if (linux.errno(linux.listen(fd, listen_backlog)) != .SUCCESS) return error.SocketListenFailed;
+    return fd;
+}
+
+fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTooLong}!linux.socklen_t {
+    if (path.len == 0 or path.len >= address.path.len) return error.SocketPathTooLong;
+    address.family = linux.AF.UNIX;
+    @memset(&address.path, 0);
+    @memcpy(address.path[0..path.len], path);
+    return @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
+}
+
+fn setSendBuffer(fd: posix.fd_t, bytes: c_int) !void {
+    const result = linux.setsockopt(
+        fd,
+        linux.SOL.SOCKET,
+        linux.SO.SNDBUF,
+        std.mem.asBytes(&bytes).ptr,
+        @sizeOf(c_int),
+    );
+    if (linux.errno(result) != .SUCCESS) return error.SocketOptionFailed;
+}
+
+fn closeFd(fd: posix.fd_t) void {
+    const result = linux.close(fd);
+    const errno = linux.errno(result);
+    std.debug.assert(errno == .SUCCESS or errno == .INTR);
+}
+
+fn unlinkPath(path: []const u8) void {
+    if (path.len == 0 or path.len >= 108) return;
+    var buffer: [109]u8 = @splat(0);
+    @memcpy(buffer[0..path.len], path);
+    const result = linux.unlink(@ptrCast(&buffer));
+    const errno = linux.errno(result);
+    std.debug.assert(errno == .SUCCESS or errno == .NOENT);
+}
+
+fn nowNs(io: std.Io) u64 {
+    return @intCast(std.Io.Clock.awake.now(io).toNanoseconds());
+}
+
+fn encodeU32(output: []u8, value: u32) void {
+    std.debug.assert(output.len == 4);
+    output[0] = @truncate(value >> 24);
+    output[1] = @truncate(value >> 16);
+    output[2] = @truncate(value >> 8);
+    output[3] = @truncate(value);
+}
+
+/// Starts one shared session process. Usage:
+/// `howl-sessiond SOCKET SHELL ROWS COLUMNS [COMMAND]`.
+pub fn main(init: std.process.Init) error{
+    InvalidArguments,
+    InvalidRows,
+    InvalidColumns,
+    SessionServerFailed,
+}!void {
+    const argv = init.minimal.args.vector;
+    if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
+    const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
+    const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
+    var server = Server.init(std.heap.page_allocator, init.io, std.mem.span(argv[1]), .{
+        .shell = std.mem.span(argv[2]),
+        .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
+        .rows = rows,
+        .columns = columns,
+    }) catch return error.SessionServerFailed;
+    defer server.deinit();
+    while (true) server.turn(-1) catch return error.SessionServerFailed;
+}
+
+const TestFrame = struct {
+    allocator: std.mem.Allocator,
+    kind: protocol.Kind,
+    payload: []u8,
+
+    fn deinit(self: *TestFrame) void {
+        self.allocator.free(self.payload);
+        self.* = undefined;
+    }
+};
+
+const TestPeer = struct {
+    allocator: std.mem.Allocator,
+    fd: posix.fd_t,
+    incoming: std.ArrayList(u8) = .empty,
+
+    fn connect(allocator: std.mem.Allocator, path: []const u8) !TestPeer {
+        const raw = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
+        if (linux.errno(raw) != .SUCCESS) return error.TestSocketCreateFailed;
+        const fd: posix.fd_t = @intCast(raw);
+        errdefer closeFd(fd);
+
+        var address: linux.sockaddr.un = undefined;
+        const length = try unixAddress(path, &address);
+        while (true) {
+            const result = linux.connect(fd, @ptrCast(&address), length);
+            switch (linux.errno(result)) {
+                .SUCCESS => break,
+                .INTR => continue,
+                else => return error.TestSocketConnectFailed,
+            }
+        }
+        try setNonBlocking(fd);
+        return .{ .allocator = allocator, .fd = fd };
+    }
+
+    fn deinit(self: *TestPeer) void {
+        self.closeSocket();
+        self.incoming.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    fn closeSocket(self: *TestPeer) void {
+        if (self.fd < 0) return;
+        closeFd(self.fd);
+        self.fd = -1;
+    }
+
+    fn sendFrame(self: *TestPeer, server: *Server, kind: protocol.Kind, payload: []const u8) !void {
+        var header: [protocol.header_bytes]u8 = undefined;
+        try protocol.encodeHeader(&header, .{ .kind = kind, .payload_len = @intCast(payload.len) });
+        try self.sendAll(server, &header);
+        try self.sendAll(server, payload);
+    }
+
+    fn sendAll(self: *TestPeer, server: *Server, bytes: []const u8) !void {
+        var offset: usize = 0;
+        while (offset < bytes.len) {
+            const result = linux.write(self.fd, bytes[offset..].ptr, bytes.len - offset);
+            switch (linux.errno(result)) {
+                .SUCCESS => {
+                    if (result == 0 or result > bytes.len - offset) return error.TestSocketWriteFailed;
+                    offset += result;
+                },
+                .INTR => continue,
+                .AGAIN => try server.turn(0),
+                else => return error.TestSocketWriteFailed,
+            }
+        }
+    }
+
+    fn readAvailable(self: *TestPeer) !void {
+        var scratch: [64 * 1024]u8 = undefined;
+        while (true) {
+            const result = linux.read(self.fd, &scratch, scratch.len);
+            switch (linux.errno(result)) {
+                .SUCCESS => {
+                    if (result == 0) return error.TestPeerClosed;
+                    if (result > scratch.len) return error.TestSocketReadFailed;
+                    try self.incoming.appendSlice(self.allocator, scratch[0..result]);
+                },
+                .INTR => continue,
+                .AGAIN => return,
+                else => return error.TestSocketReadFailed,
+            }
+        }
+    }
+
+    fn popFrame(self: *TestPeer) !?TestFrame {
+        if (self.incoming.items.len < protocol.header_bytes) return null;
+        var encoded_header: [protocol.header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, self.incoming.items[0..protocol.header_bytes]);
+        const header = try protocol.decodeHeader(&encoded_header);
+        const frame_bytes = protocol.header_bytes + @as(usize, header.payload_len);
+        if (self.incoming.items.len < frame_bytes) return null;
+        const payload = try self.allocator.dupe(u8, self.incoming.items[protocol.header_bytes..frame_bytes]);
+        const remaining = self.incoming.items.len - frame_bytes;
+        std.mem.copyForwards(u8, self.incoming.items[0..remaining], self.incoming.items[frame_bytes..]);
+        self.incoming.shrinkRetainingCapacity(remaining);
+        return .{ .allocator = self.allocator, .kind = header.kind, .payload = payload };
+    }
+};
+
+const TestSnapshot = struct {
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    text: []u8,
+
+    fn deinit(self: *TestSnapshot) void {
+        self.allocator.free(self.text);
+        self.* = undefined;
+    }
+};
+
+fn setNonBlocking(fd: posix.fd_t) !void {
+    const flags_result = linux.fcntl(fd, linux.F.GETFL, 0);
+    if (linux.errno(flags_result) != .SUCCESS) return error.TestSocketConfigureFailed;
+    const nonblock: usize = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
+    const set_result = linux.fcntl(fd, linux.F.SETFL, flags_result | nonblock);
+    if (linux.errno(set_result) != .SUCCESS) return error.TestSocketConfigureFailed;
+}
+
+fn setReceiveBuffer(fd: posix.fd_t, bytes: c_int) !void {
+    const result = linux.setsockopt(
+        fd,
+        linux.SOL.SOCKET,
+        linux.SO.RCVBUF,
+        std.mem.asBytes(&bytes).ptr,
+        @sizeOf(c_int),
+    );
+    if (linux.errno(result) != .SUCCESS) return error.TestSocketConfigureFailed;
+}
+
+fn awaitFrame(peer: *TestPeer, server: *Server) !TestFrame {
+    var turns: usize = 0;
+    while (turns < 20_000) : (turns += 1) {
+        try peer.readAvailable();
+        if (try peer.popFrame()) |frame| return frame;
+        try server.turn(1);
+    }
+    return error.TestTimeout;
+}
+
+fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
+    var payload: [protocol.payload_bytes.hello]u8 = undefined;
+    protocol.encodeHello(&payload, .{});
+    try peer.sendFrame(server, .hello, &payload);
+    var frame = try awaitFrame(peer, server);
+    defer frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.welcome, frame.kind);
+    const welcome = try protocol.decodeWelcome(frame.payload);
+    try std.testing.expectEqual(protocol.protocol_max_version, welcome.version);
+    try std.testing.expect(welcome.features & protocol.feature(.grid_snapshot) != 0);
+    return welcome;
+}
+
+fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
+    var payload: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&payload, .{ .after_revision = after_revision });
+    try peer.sendFrame(server, .observe, &payload);
+}
+
+fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
+    var begin_frame = try awaitFrame(peer, server);
+    defer begin_frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.snapshot_begin, begin_frame.kind);
+    const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
+
+    var body: std.ArrayList(u8) = .empty;
+    defer body.deinit(peer.allocator);
+    while (true) {
+        var frame = try awaitFrame(peer, server);
+        defer frame.deinit();
+        switch (frame.kind) {
+            .snapshot_data => try body.appendSlice(peer.allocator, frame.payload),
+            .snapshot_end => {
+                const end = try protocol.decodeSnapshotEnd(frame.payload);
+                try std.testing.expectEqual(begin.revision, end.revision);
+                break;
+            },
+            else => return error.UnexpectedTestFrame,
+        }
+    }
+
+    const row_bytes = 4 + @as(usize, begin.columns) * 8;
+    const expected_body = @as(usize, begin.rows) * row_bytes;
+    if (body.items.len != expected_body) return error.MalformedTestSnapshot;
+    var text: std.ArrayList(u8) = .empty;
+    errdefer text.deinit(peer.allocator);
+    try text.ensureTotalCapacity(peer.allocator, @as(usize, begin.rows) * (@as(usize, begin.columns) + 1));
+    var offset: usize = 0;
+    var row: u16 = 0;
+    while (row < begin.rows) : (row += 1) {
+        if (body.items[offset] > 1) return error.MalformedTestSnapshot;
+        if (readU16(body.items[offset + 2 .. offset + 4]) != begin.columns) return error.MalformedTestSnapshot;
+        offset += 4;
+        var column: u16 = 0;
+        while (column < begin.columns) : (column += 1) {
+            const cell = body.items[offset .. offset + 8];
+            const codepoint = readU32(cell[0..4]);
+            const byte: u8 = if (cell[6] != 0 or cell[7] != 0 or codepoint == 0)
+                ' '
+            else if (codepoint <= 0x7f)
+                @intCast(codepoint)
+            else
+                '?';
+            try text.append(peer.allocator, byte);
+            offset += 8;
+        }
+        try text.append(peer.allocator, '\n');
+    }
+    return .{ .allocator = peer.allocator, .begin = begin, .text = try text.toOwnedSlice(peer.allocator) };
+}
+
+fn observeUntilContains(
+    peer: *TestPeer,
+    server: *Server,
+    after_revision: u64,
+    needle: []const u8,
+) !TestSnapshot {
+    var revision = after_revision;
+    var attempts: usize = 0;
+    while (attempts < 256) : (attempts += 1) {
+        try sendObserve(peer, server, revision);
+        var snapshot = try receiveSnapshot(peer, server);
+        if (std.mem.indexOf(u8, snapshot.text, needle) != null) return snapshot;
+        revision = snapshot.begin.revision;
+        snapshot.deinit();
+    }
+    return error.TestTimeout;
+}
+
+fn sendInput(peer: *TestPeer, server: *Server, bytes: []const u8) !void {
+    const payload = try peer.allocator.alloc(u8, bytes.len + 1);
+    defer peer.allocator.free(payload);
+    payload[0] = @backingInt(protocol.InputKind.bytes);
+    @memcpy(payload[1..], bytes);
+    try peer.sendFrame(server, .input, payload);
+}
+
+fn sendAssignLeader(peer: *TestPeer, server: *Server, client_id: protocol.ClientId) !void {
+    var payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
+    protocol.encodeAssignLeader(&payload, .{ .client_id = client_id });
+    try peer.sendFrame(server, .assign_leader, &payload);
+}
+
+fn sendResize(peer: *TestPeer, server: *Server, rows: u16, columns: u16) !void {
+    var payload: [protocol.payload_bytes.resize]u8 = undefined;
+    protocol.encodeResize(&payload, .{ .rows = rows, .columns = columns });
+    try peer.sendFrame(server, .resize, &payload);
+}
+
+fn sendSignal(peer: *TestPeer, server: *Server, signal_value: protocol.Signal) !void {
+    var payload: [protocol.payload_bytes.signal]u8 = undefined;
+    protocol.encodeSignal(&payload, signal_value);
+    try peer.sendFrame(server, .signal, &payload);
+}
+
+fn expectResult(peer: *TestPeer, server: *Server, kind: protocol.Kind, code: protocol.ResultCode) !void {
+    var frame = try awaitFrame(peer, server);
+    defer frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.result, frame.kind);
+    const result = try protocol.decodeResult(frame.payload);
+    try std.testing.expectEqual(kind, result.request_kind);
+    try std.testing.expectEqual(code, result.code);
+}
+
+fn serverClient(server: *Server, client_id: protocol.ClientId) ?*Client {
+    for (&server.clients) |*slot| {
+        if (slot.*) |*client| if (client.id == client_id) return client;
+    }
+    return null;
+}
+
+fn readU16(input: []const u8) u16 {
+    std.debug.assert(input.len == 2);
+    return (@as(u16, input[0]) << 8) | @as(u16, input[1]);
+}
+
+fn readU32(input: []const u8) u32 {
+    std.debug.assert(input.len == 4);
+    return (@as(u32, input[0]) << 24) |
+        (@as(u32, input[1]) << 16) |
+        (@as(u32, input[2]) << 8) |
+        @as(u32, input[3]);
+}
+
+test "Unix clients share one session and explicit geometry authority" {
+    var stage: []const u8 = "server init";
+    errdefer std.debug.print("shared-session proof failed during {s}\n", .{stage});
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-shared.sock", .{linux.getpid()});
+    unlinkPath(path);
+    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
+        .rows = 8,
+        .columns = 40,
+        .history_rows = 512,
+    });
+    defer server.deinit();
+
+    var first = try TestPeer.connect(std.testing.allocator, path);
+    defer first.deinit();
+    var second = try TestPeer.connect(std.testing.allocator, path);
+    defer second.deinit();
+    stage = "handshake";
+    const first_welcome = try handshake(&first, &server);
+    const second_welcome = try handshake(&second, &server);
+    try std.testing.expect(first_welcome.client_id != second_welcome.client_id);
+
+    stage = "initial observation";
+    var first_ready = try observeUntilContains(&first, &server, 0, "READY");
+    defer first_ready.deinit();
+    var second_ready = try observeUntilContains(&second, &server, 0, "READY");
+    defer second_ready.deinit();
+
+    stage = "shared input";
+    try sendInput(&first, &server, "SHARED-LINE\n");
+    try expectResult(&first, &server, .input, .ok);
+    var shared = try observeUntilContains(&second, &server, second_ready.begin.revision, "SHARED-LINE");
+    defer shared.deinit();
+
+    stage = "resize authority";
+    try sendAssignLeader(&first, &server, first_welcome.client_id);
+    try expectResult(&first, &server, .assign_leader, .ok);
+    try sendResize(&second, &server, 10, 50);
+    try expectResult(&second, &server, .resize, .not_leader);
+    try sendResize(&first, &server, 10, 50);
+    try expectResult(&first, &server, .resize, .ok);
+
+    stage = "resized observation";
+    try sendObserve(&second, &server, shared.begin.revision);
+    var resized = try receiveSnapshot(&second, &server);
+    defer resized.deinit();
+    try std.testing.expectEqual(@as(u16, 10), resized.begin.rows);
+    try std.testing.expectEqual(@as(u16, 50), resized.begin.columns);
+    try std.testing.expect(resized.begin.leader_present);
+    try std.testing.expect(!resized.begin.you_are_leader);
+
+    stage = "loaded continuation";
+    var load: std.ArrayList(u8) = .empty;
+    defer load.deinit(std.testing.allocator);
+    try load.appendNTimes(std.testing.allocator, 'x', 12_000);
+    try load.appendSlice(std.testing.allocator, "\nFINAL-REATTACH\n");
+    try sendInput(&second, &server, load.items);
+    try expectResult(&second, &server, .input, .ok);
+    var loaded = try observeUntilContains(&second, &server, resized.begin.revision, "FINAL-REATTACH");
+    defer loaded.deinit();
+
+    stage = "leader disconnect";
+    first.closeSocket();
+    try sendObserve(&second, &server, loaded.begin.revision);
+    var leader_gone = try receiveSnapshot(&second, &server);
+    defer leader_gone.deinit();
+    try std.testing.expect(!leader_gone.begin.leader_present);
+    try std.testing.expectEqual(@as(u16, 10), leader_gone.begin.rows);
+    try std.testing.expectEqual(@as(u16, 50), leader_gone.begin.columns);
+
+    stage = "reattach";
+    var reattached = try TestPeer.connect(std.testing.allocator, path);
+    defer reattached.deinit();
+    const reattached_welcome = try handshake(&reattached, &server);
+    try std.testing.expect(reattached_welcome.client_id != protocol.no_client);
+    var current = try observeUntilContains(&reattached, &server, 0, "FINAL-REATTACH");
+    defer current.deinit();
+    try std.testing.expectEqual(@as(u16, 10), current.begin.rows);
+    try std.testing.expectEqual(@as(u16, 50), current.begin.columns);
+    try std.testing.expect(!current.begin.leader_present);
+
+    stage = "child exit";
+    try sendSignal(&reattached, &server, .terminate);
+    try expectResult(&reattached, &server, .signal, .ok);
+    var lifecycle_revision = current.begin.revision;
+    var observed_exit = false;
+    var attempts: usize = 0;
+    while (attempts < 16 and !observed_exit) : (attempts += 1) {
+        try sendObserve(&reattached, &server, lifecycle_revision);
+        var exited = try receiveSnapshot(&reattached, &server);
+        defer exited.deinit();
+        lifecycle_revision = exited.begin.revision;
+        observed_exit = exited.begin.child_exited;
+    }
+    try std.testing.expect(observed_exit);
+}
+
+test "slow Unix observer cannot pace PTY or healthy client" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-slow.sock", .{linux.getpid()});
+    unlinkPath(path);
+    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo -icanon min 1 time 0; cat",
+        .rows = 512,
+        .columns = 512,
+        .history_rows = 16,
+    });
+    defer server.deinit();
+
+    var slow = try TestPeer.connect(std.testing.allocator, path);
+    defer slow.deinit();
+    var healthy = try TestPeer.connect(std.testing.allocator, path);
+    defer healthy.deinit();
+    const slow_welcome = try handshake(&slow, &server);
+    const healthy_welcome = try handshake(&healthy, &server);
+    try std.testing.expect(healthy_welcome.client_id != protocol.no_client);
+    try setReceiveBuffer(slow.fd, 4096);
+
+    try sendObserve(&slow, &server, 0);
+    var turn: usize = 0;
+    while (turn < 64) : (turn += 1) try server.turn(0);
+    const blocked = serverClient(&server, slow_welcome.client_id) orelse return error.SlowClientMissing;
+    try std.testing.expect(blocked.output.items.len > 1024 * 1024);
+    try std.testing.expect(blocked.outputPending());
+    try std.testing.expect(blocked.output_offset < blocked.output.items.len);
+
+    try sendInput(&healthy, &server, "FLOW-CONTINUES\n");
+    try expectResult(&healthy, &server, .input, .ok);
+    var progressed = try observeUntilContains(&healthy, &server, 0, "FLOW-CONTINUES");
+    defer progressed.deinit();
+    try std.testing.expectEqual(@as(u16, 512), progressed.begin.rows);
+    try std.testing.expectEqual(@as(u16, 512), progressed.begin.columns);
+
+    const still_blocked = serverClient(&server, slow_welcome.client_id) orelse return error.SlowClientMissing;
+    try std.testing.expect(still_blocked.outputPending());
+    try std.testing.expect(still_blocked.output_offset < still_blocked.output.items.len);
+}
+
+test "oversized observation is local rejection not session failure" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-oversize.sock", .{linux.getpid()});
+    unlinkPath(path);
+    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo -icanon min 1 time 0; printf 'ALIVE\\n'; cat",
+        .rows = 512,
+        .columns = 1024,
+        .history_rows = 16,
+    });
+    defer server.deinit();
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const welcome = try handshake(&peer, &server);
+
+    try sendObserve(&peer, &server, 0);
+    try expectResult(&peer, &server, .observe, .rejected);
+
+    try sendAssignLeader(&peer, &server, welcome.client_id);
+    try expectResult(&peer, &server, .assign_leader, .ok);
+    try sendResize(&peer, &server, 8, 40);
+    try expectResult(&peer, &server, .resize, .ok);
+
+    var recovered = try observeUntilContains(&peer, &server, 0, "ALIVE");
+    defer recovered.deinit();
+    try std.testing.expectEqual(@as(u16, 8), recovered.begin.rows);
+    try std.testing.expectEqual(@as(u16, 40), recovered.begin.columns);
+    try std.testing.expect(recovered.begin.you_are_leader);
+}

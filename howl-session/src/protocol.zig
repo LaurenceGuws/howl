@@ -24,6 +24,8 @@ pub const protocol_max_version: u16 = 1;
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
 pub const maximum_payload_bytes: u32 = 1024 * 1024;
+/// Hard upper bound materialized for one observer snapshot response.
+pub const maximum_snapshot_bytes: usize = 4 * 1024 * 1024;
 /// Sentinel used only where an optional client identity is serialized.
 pub const no_client: ClientId = 0;
 
@@ -49,7 +51,7 @@ pub const Kind = enum(u8) {
 
 /// Features are negotiated independently of protocol version.
 pub const Feature = enum(u6) {
-    semantic_snapshot = 0,
+    grid_snapshot = 0,
     typed_input = 1,
     resize_leader = 2,
     history_window = 3,
@@ -61,7 +63,7 @@ pub fn feature(feature_value: Feature) u64 {
 }
 
 /// Features implemented by the current endpoint contract.
-pub const supported_features = feature(.semantic_snapshot) |
+pub const supported_features = feature(.grid_snapshot) |
     feature(.resize_leader) |
     feature(.history_window);
 
@@ -79,6 +81,9 @@ pub const HeaderError = error{
     UnknownKind,
     PayloadTooLarge,
 };
+
+/// Rejects a fixed message payload whose size or enum values are invalid.
+pub const PayloadError = error{InvalidPayload};
 
 /// Handshake sent before any session request.
 pub const Hello = struct {
@@ -134,9 +139,14 @@ pub const Result = struct {
     code: ResultCode,
 };
 
-/// Stable terminal snapshot representation carried by snapshot_data frames.
+/// Stable first terminal snapshot representation carried by snapshot_data frames.
+///
+/// `grid_v1` intentionally freezes only the canonical spatial grid needed by
+/// the first shared-session client: row wrap/DEC geometry and each cell's
+/// codepoint plus multicell occupancy. Styling, complete grapheme sidecars,
+/// images, and presentation defaults remain future negotiated formats.
 pub const SnapshotFormat = enum(u16) {
-    semantic_cells_v1 = 1,
+    grid_v1 = 1,
 };
 
 /// Starts one coherent snapshot. All following data/end frames share revision.
@@ -145,7 +155,7 @@ pub const SnapshotBegin = struct {
     revision: u64,
     /// Canonical VT semantic revision captured inside this observation.
     terminal_revision: u64,
-    format: SnapshotFormat = .semantic_cells_v1,
+    format: SnapshotFormat = .grid_v1,
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -177,6 +187,28 @@ pub const Resize = struct {
 /// Explicit leader assignment. `no_client` clears leadership.
 pub const AssignLeader = struct {
     client_id: ClientId,
+};
+
+/// Exact fixed payload widths for v1 messages.
+pub const payload_bytes = struct {
+    /// `Hello` payload bytes.
+    pub const hello: usize = 12;
+    /// `Welcome` payload bytes.
+    pub const welcome: usize = 18;
+    /// `Observe` payload bytes.
+    pub const observe: usize = 12;
+    /// `SnapshotBegin` payload bytes.
+    pub const snapshot_begin: usize = 40;
+    /// `SnapshotEnd` payload bytes.
+    pub const snapshot_end: usize = 8;
+    /// `AssignLeader` payload bytes.
+    pub const assign_leader: usize = 8;
+    /// `Resize` payload bytes.
+    pub const resize: usize = 4;
+    /// `Signal` payload bytes.
+    pub const signal: usize = 1;
+    /// `Result` payload bytes.
+    pub const result: usize = 2;
 };
 
 /// Owns only geometry authority. Client discovery/rosters remain endpoint policy.
@@ -224,6 +256,166 @@ pub fn negotiateFeatures(hello: Hello) u64 {
     return hello.features & supported_features;
 }
 
+/// Encodes one hello payload with explicit endian order.
+pub fn encodeHello(output: *[payload_bytes.hello]u8, value: Hello) void {
+    writeU16(output[0..2], value.min_version);
+    writeU16(output[2..4], value.max_version);
+    writeU64(output[4..12], value.features);
+}
+
+/// Decodes one exact hello payload.
+pub fn decodeHello(input: []const u8) PayloadError!Hello {
+    if (input.len != payload_bytes.hello) return error.InvalidPayload;
+    return .{
+        .min_version = readU16(input[0..2]),
+        .max_version = readU16(input[2..4]),
+        .features = readU64(input[4..12]),
+    };
+}
+
+/// Encodes one welcome payload with explicit endian order.
+pub fn encodeWelcome(output: *[payload_bytes.welcome]u8, value: Welcome) void {
+    writeU16(output[0..2], value.version);
+    writeU64(output[2..10], value.features);
+    writeU64(output[10..18], value.client_id);
+}
+
+/// Decodes one exact welcome payload.
+pub fn decodeWelcome(input: []const u8) PayloadError!Welcome {
+    if (input.len != payload_bytes.welcome) return error.InvalidPayload;
+    return .{
+        .version = readU16(input[0..2]),
+        .features = readU64(input[2..10]),
+        .client_id = readU64(input[10..18]),
+    };
+}
+
+/// Encodes one observation request.
+pub fn encodeObserve(output: *[payload_bytes.observe]u8, value: Observe) void {
+    writeU64(output[0..8], value.after_revision);
+    writeU32(output[8..12], value.history_offset);
+}
+
+/// Decodes one exact observation request.
+pub fn decodeObserve(input: []const u8) PayloadError!Observe {
+    if (input.len != payload_bytes.observe) return error.InvalidPayload;
+    return .{
+        .after_revision = readU64(input[0..8]),
+        .history_offset = readU32(input[8..12]),
+    };
+}
+
+/// Encodes one snapshot metadata boundary.
+pub fn encodeSnapshotBegin(output: *[payload_bytes.snapshot_begin]u8, value: SnapshotBegin) void {
+    output.* = @splat(0);
+    writeU64(output[0..8], value.revision);
+    writeU64(output[8..16], value.terminal_revision);
+    writeU16(output[16..18], @backingInt(value.format));
+    writeU32(output[18..22], value.history_offset);
+    writeU32(output[22..26], value.history_count);
+    writeU32(output[26..30], value.history_row_base);
+    writeU16(output[30..32], value.rows);
+    writeU16(output[32..34], value.columns);
+    writeU16(output[34..36], value.cursor_row);
+    writeU16(output[36..38], value.cursor_column);
+    output[38] = value.cursor_shape;
+    output[39] = (@as(u8, @intFromBool(value.cursor_visible)) << 0) |
+        (@as(u8, @intFromBool(value.cursor_blink)) << 1) |
+        (@as(u8, @intFromBool(value.alternate_screen)) << 2) |
+        (@as(u8, @intFromBool(value.stream_closed)) << 3) |
+        (@as(u8, @intFromBool(value.child_exited)) << 4) |
+        (@as(u8, @intFromBool(value.leader_present)) << 5) |
+        (@as(u8, @intFromBool(value.you_are_leader)) << 6);
+}
+
+/// Decodes one exact snapshot metadata boundary.
+pub fn decodeSnapshotBegin(input: []const u8) PayloadError!SnapshotBegin {
+    if (input.len != payload_bytes.snapshot_begin) return error.InvalidPayload;
+    const format = enumFromInt(SnapshotFormat, readU16(input[16..18])) orelse
+        return error.InvalidPayload;
+    if (input[39] & 0x80 != 0) return error.InvalidPayload;
+    return .{
+        .revision = readU64(input[0..8]),
+        .terminal_revision = readU64(input[8..16]),
+        .format = format,
+        .history_offset = readU32(input[18..22]),
+        .history_count = readU32(input[22..26]),
+        .history_row_base = readU32(input[26..30]),
+        .rows = readU16(input[30..32]),
+        .columns = readU16(input[32..34]),
+        .cursor_row = readU16(input[34..36]),
+        .cursor_column = readU16(input[36..38]),
+        .cursor_shape = input[38],
+        .cursor_visible = input[39] & (1 << 0) != 0,
+        .cursor_blink = input[39] & (1 << 1) != 0,
+        .alternate_screen = input[39] & (1 << 2) != 0,
+        .stream_closed = input[39] & (1 << 3) != 0,
+        .child_exited = input[39] & (1 << 4) != 0,
+        .leader_present = input[39] & (1 << 5) != 0,
+        .you_are_leader = input[39] & (1 << 6) != 0,
+    };
+}
+
+/// Encodes one completed snapshot revision.
+pub fn encodeSnapshotEnd(output: *[payload_bytes.snapshot_end]u8, value: SnapshotEnd) void {
+    writeU64(output, value.revision);
+}
+
+/// Decodes one completed snapshot revision.
+pub fn decodeSnapshotEnd(input: []const u8) PayloadError!SnapshotEnd {
+    if (input.len != payload_bytes.snapshot_end) return error.InvalidPayload;
+    return .{ .revision = readU64(input) };
+}
+
+/// Encodes one explicit geometry-leader assignment.
+pub fn encodeAssignLeader(output: *[payload_bytes.assign_leader]u8, value: AssignLeader) void {
+    writeU64(output, value.client_id);
+}
+
+/// Decodes one explicit geometry-leader assignment.
+pub fn decodeAssignLeader(input: []const u8) PayloadError!AssignLeader {
+    if (input.len != payload_bytes.assign_leader) return error.InvalidPayload;
+    return .{ .client_id = readU64(input) };
+}
+
+/// Encodes one explicit canonical geometry.
+pub fn encodeResize(output: *[payload_bytes.resize]u8, value: Resize) void {
+    writeU16(output[0..2], value.rows);
+    writeU16(output[2..4], value.columns);
+}
+
+/// Decodes one explicit canonical geometry.
+pub fn decodeResize(input: []const u8) PayloadError!Resize {
+    if (input.len != payload_bytes.resize) return error.InvalidPayload;
+    return .{ .rows = readU16(input[0..2]), .columns = readU16(input[2..4]) };
+}
+
+/// Encodes one fixed process-group signal.
+pub fn encodeSignal(output: *[payload_bytes.signal]u8, value: Signal) void {
+    output[0] = @backingInt(value);
+}
+
+/// Decodes one fixed process-group signal.
+pub fn decodeSignal(input: []const u8) PayloadError!Signal {
+    if (input.len != payload_bytes.signal) return error.InvalidPayload;
+    return enumFromInt(Signal, input[0]) orelse error.InvalidPayload;
+}
+
+/// Encodes one bounded command result.
+pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) void {
+    output[0] = @backingInt(value.request_kind);
+    output[1] = @backingInt(value.code);
+}
+
+/// Decodes one bounded command result.
+pub fn decodeResult(input: []const u8) PayloadError!Result {
+    if (input.len != payload_bytes.result) return error.InvalidPayload;
+    return .{
+        .request_kind = enumFromInt(Kind, input[0]) orelse return error.InvalidPayload,
+        .code = enumFromInt(ResultCode, input[1]) orelse return error.InvalidPayload,
+    };
+}
+
 /// Encodes one fixed header without allocation.
 pub fn encodeHeader(output: *[header_bytes]u8, header: Header) error{PayloadTooLarge}!void {
     if (header.payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
@@ -239,7 +431,7 @@ pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
     if (!std.mem.eql(u8, input[0..4], &magic)) return error.InvalidMagic;
     if (input[4] != framing_version) return error.UnsupportedFramingVersion;
     if (input[6] != 0 or input[7] != 0) return error.InvalidReservedBits;
-    const kind = std.meta.intToEnum(Kind, input[5]) catch return error.UnknownKind;
+    const kind = enumFromInt(Kind, input[5]) orelse return error.UnknownKind;
     const payload_len = readU32(input[8..12]);
     if (payload_len > maximum_payload_bytes) return error.PayloadTooLarge;
     return .{ .kind = kind, .payload_len = payload_len };
@@ -247,10 +439,25 @@ pub fn decodeHeader(input: *const [header_bytes]u8) HeaderError!Header {
 
 fn writeU32(output: []u8, value: u32) void {
     std.debug.assert(output.len == 4);
-    output[0] = @intCast(value >> 24);
-    output[1] = @intCast(value >> 16);
-    output[2] = @intCast(value >> 8);
-    output[3] = @intCast(value);
+    output[0] = @truncate(value >> 24);
+    output[1] = @truncate(value >> 16);
+    output[2] = @truncate(value >> 8);
+    output[3] = @truncate(value);
+}
+
+fn writeU16(output: []u8, value: u16) void {
+    std.debug.assert(output.len == 2);
+    output[0] = @truncate(value >> 8);
+    output[1] = @truncate(value);
+}
+
+fn writeU64(output: []u8, value: u64) void {
+    std.debug.assert(output.len == 8);
+    var shift: u6 = 56;
+    for (output) |*byte| {
+        byte.* = @truncate(value >> shift);
+        shift -|= 8;
+    }
 }
 
 fn readU32(input: []const u8) u32 {
@@ -259,6 +466,26 @@ fn readU32(input: []const u8) u32 {
         (@as(u32, input[1]) << 16) |
         (@as(u32, input[2]) << 8) |
         @as(u32, input[3]);
+}
+
+fn readU16(input: []const u8) u16 {
+    std.debug.assert(input.len == 2);
+    return (@as(u16, input[0]) << 8) | @as(u16, input[1]);
+}
+
+fn readU64(input: []const u8) u64 {
+    std.debug.assert(input.len == 8);
+    var value: u64 = 0;
+    for (input) |byte| value = (value << 8) | @as(u64, byte);
+    return value;
+}
+
+fn enumFromInt(comptime Enum: type, value: @typeInfo(Enum).@"enum".tag_type) ?Enum {
+    const info = @typeInfo(Enum).@"enum";
+    inline for (info.field_values) |field_value| {
+        if (value == field_value) return @fromBackingInt(@intCast(value));
+    }
+    return null;
 }
 
 fn advance(value: *u64) void {
@@ -278,6 +505,31 @@ test "header round trips and rejects framing ambiguity" {
     invalid = bytes;
     invalid[5] = 0xff;
     try std.testing.expectError(error.UnknownKind, decodeHeader(&invalid));
+}
+
+test "wire integers round trip beyond one byte" {
+    var header_bytes_out: [header_bytes]u8 = undefined;
+    try encodeHeader(&header_bytes_out, .{ .kind = .snapshot_data, .payload_len = 0x00f1_a2b3 });
+    const header = try decodeHeader(&header_bytes_out);
+    try std.testing.expectEqual(@as(u32, 0x00f1_a2b3), header.payload_len);
+
+    var hello_bytes: [payload_bytes.hello]u8 = undefined;
+    const hello = Hello{
+        .min_version = 0x0123,
+        .max_version = 0x4567,
+        .features = 0xf123_4567_89ab_cdef,
+    };
+    encodeHello(&hello_bytes, hello);
+    const decoded_hello = try decodeHello(&hello_bytes);
+    try std.testing.expectEqual(hello.min_version, decoded_hello.min_version);
+    try std.testing.expectEqual(hello.max_version, decoded_hello.max_version);
+    try std.testing.expectEqual(hello.features, decoded_hello.features);
+
+    var resize_bytes: [payload_bytes.resize]u8 = undefined;
+    encodeResize(&resize_bytes, .{ .rows = 512, .columns = 1025 });
+    const resize = try decodeResize(&resize_bytes);
+    try std.testing.expectEqual(@as(u16, 512), resize.rows);
+    try std.testing.expectEqual(@as(u16, 1025), resize.columns);
 }
 
 test "version negotiation is explicit before protocol v1" {

@@ -81,6 +81,7 @@ pub const Service = struct {
     changed: bool,
     stream_closed: bool,
     child_exit: ?ChildExit,
+    write_pending: bool,
 };
 
 /// Constructs one PTY and VT owner and returns its opaque handle.
@@ -376,6 +377,7 @@ const State = struct {
             .changed = self.terminal.semanticSequence() != revision_before,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
+            .write_pending = self.writes.count != 0,
         };
     }
 };
