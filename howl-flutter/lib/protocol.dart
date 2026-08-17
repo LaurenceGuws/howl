@@ -49,6 +49,16 @@ final class HowlWire {
   static const keyPress = 1;
   static const keyRepeat = 2;
   static const keyRelease = 3;
+  static const mousePress = 1;
+  static const mouseRelease = 2;
+  static const mouseMove = 3;
+  static const mouseWheel = 4;
+  static const mouseNone = 0;
+  static const mouseLeft = 1;
+  static const mouseMiddle = 2;
+  static const mouseRight = 3;
+  static const mouseWheelUp = 4;
+  static const mouseWheelDown = 5;
   static const namedEnter = 1;
   static const namedBackspace = 3;
   static const namedDelete = 10;
@@ -185,6 +195,64 @@ Uint8List encodeCommittedTextInput(String text) {
   final payload = Uint8List(encoded.length + 1);
   payload[0] = HowlWire.inputBytes;
   payload.setRange(1, payload.length, encoded);
+  return payload;
+}
+
+final class HowlMouseInput {
+  const HowlMouseInput({
+    required this.kind,
+    required this.button,
+    required this.modifiers,
+    required this.buttonsDown,
+    required this.row,
+    required this.column,
+    this.pixelX,
+    this.pixelY,
+  });
+
+  final int kind;
+  final int button;
+  final int modifiers;
+  final int buttonsDown;
+  final int row;
+  final int column;
+  final int? pixelX;
+  final int? pixelY;
+}
+
+Uint8List encodeMouseInput(HowlMouseInput input) {
+  _require(
+    input.kind >= HowlWire.mousePress && input.kind <= HowlWire.mouseWheel,
+    'mouse_kind',
+  );
+  _require(
+    input.button >= HowlWire.mouseNone &&
+        input.button <= HowlWire.mouseWheelDown,
+    'mouse_button',
+  );
+  _require(input.modifiers >= 0 && input.modifiers <= 0xff, 'mouse_modifiers');
+  _require(input.buttonsDown & ~0x07 == 0, 'mouse_buttons_down');
+  _require(input.row >= -0x80000000 && input.row <= 0x7fffffff, 'mouse_row');
+  _require(input.column >= 0 && input.column <= 0xffff, 'mouse_column');
+  _require((input.pixelX == null) == (input.pixelY == null), 'mouse_pixels');
+  final pixelX = input.pixelX;
+  final pixelY = input.pixelY;
+  if (pixelX != null && pixelY != null) {
+    _require(pixelX >= 0 && pixelX <= 0xffffffff, 'mouse_pixel_x');
+    _require(pixelY >= 0 && pixelY <= 0xffffffff, 'mouse_pixel_y');
+  }
+
+  final payload = Uint8List(20);
+  payload[0] = HowlWire.inputMouse;
+  payload[1] = input.kind;
+  payload[2] = input.button;
+  payload[3] = input.modifiers;
+  payload[4] = input.buttonsDown;
+  _putU32(payload, 5, input.row & 0xffffffff);
+  _putU16(payload, 9, input.column);
+  if (pixelX != null) payload[11] = 1;
+  _putU32(payload, 12, pixelX ?? 0);
+  _putU32(payload, 16, pixelY ?? 0);
   return payload;
 }
 
@@ -783,6 +851,14 @@ final class HowlConnection {
 
   Future<void> sendCommittedText(String text) async {
     await _command(HowlWire.input, encodeCommittedTextInput(text));
+  }
+
+  Future<void> sendMouse(HowlMouseInput input) async {
+    _require(
+      welcome.features & HowlWire.typedInput != 0,
+      'typed_input_feature_missing',
+    );
+    await _command(HowlWire.input, encodeMouseInput(input));
   }
 
   Future<void> sendFocus(bool focused) async {

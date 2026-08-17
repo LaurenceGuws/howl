@@ -171,6 +171,61 @@ void main() {
     );
   });
 
+  test('semantic mouse encoding matches the frozen pixel vector', () {
+    final payload = encodeMouseInput(
+      const HowlMouseInput(
+        kind: HowlWire.mouseMove,
+        button: HowlWire.mouseNone,
+        modifiers: 2,
+        buttonsDown: 5,
+        row: -2,
+        column: 0x1234,
+        pixelX: 0x01020304,
+        pixelY: 0xa1a2a3a4,
+      ),
+    );
+    expect(payload, hexBytes('0403000205fffffffe12340101020304a1a2a3a4'));
+    expect(
+      () => encodeMouseInput(
+        const HowlMouseInput(
+          kind: HowlWire.mousePress,
+          button: HowlWire.mouseLeft,
+          modifiers: 0,
+          buttonsDown: 8,
+          row: 0,
+          column: 0,
+        ),
+      ),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'mouse_buttons_down',
+        ),
+      ),
+    );
+    expect(
+      () => encodeMouseInput(
+        const HowlMouseInput(
+          kind: HowlWire.mousePress,
+          button: HowlWire.mouseLeft,
+          modifiers: 0,
+          buttonsDown: 1,
+          row: 0,
+          column: 0,
+          pixelX: 1,
+        ),
+      ),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'mouse_pixels',
+        ),
+      ),
+    );
+  });
+
   test('live client dimensions are explicitly bounded', () {
     validateClientDimensions(1, 1);
     validateClientDimensions(HowlWire.maximumRows, HowlWire.maximumColumns);

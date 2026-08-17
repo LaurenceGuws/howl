@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
 import 'history_viewport.dart';
+import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
 import 'touch_surface.dart';
@@ -76,6 +77,7 @@ final class HowlTerminal extends StatefulWidget {
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
+  final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
   final HistoryViewport _history = HistoryViewport();
   late final TerminalTextInputClient _textInput;
   HowlConnection? _observer;
@@ -220,9 +222,49 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _scheduleTextInputShow();
   }
 
-  void _onPointerDown(PointerDownEvent event) {
+  void _onPointerDown(PointerDownEvent event, Size viewport) {
     if (event.kind == PointerDeviceKind.touch) return;
     _activateTextInput();
+    _sendPointer(event, viewport);
+  }
+
+  void _onPointerMove(PointerMoveEvent event, Size viewport) {
+    if (_history.active) return;
+    _sendPointer(event, viewport);
+  }
+
+  void _onPointerHover(PointerHoverEvent event, Size viewport) {
+    if (_history.active) return;
+    _sendPointer(event, viewport);
+  }
+
+  void _onPointerUp(PointerUpEvent event, Size viewport) {
+    _sendPointer(event, viewport);
+  }
+
+  void _onPointerCancel(PointerCancelEvent event, Size viewport) {
+    _sendPointer(event, viewport);
+  }
+
+  void _sendPointer(PointerEvent event, Size viewport) {
+    final snapshot = _liveSnapshot;
+    if (snapshot == null) return;
+    final events = _pointerInput.translate(
+      event,
+      geometry: TerminalPointerGeometry(
+        viewport: viewport,
+        rows: snapshot.begin.rows,
+        columns: snapshot.begin.columns,
+        cellWidth: TerminalPainter.cellWidth,
+        rowHeight: TerminalPainter.lineHeight,
+      ),
+      modifiers: howlModifierBits(),
+    );
+    if (events.isEmpty) return;
+    _returnToLiveForInput();
+    for (final input in events) {
+      _queueControl((control) => control.sendMouse(input));
+    }
   }
 
   void _beginHistoryDrag(DragStartDetails _) {
@@ -422,20 +464,28 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         },
       );
     }
-    return TerminalTouchSurface(
-      onTap: _activateTextInput,
-      onVerticalDragStart: _beginHistoryDrag,
-      onVerticalDragUpdate: _updateHistoryDrag,
-      onVerticalDragEnd: _endHistoryDrag,
-      child: Listener(
-        behavior: HitTestBehavior.opaque,
-        onPointerDown: _onPointerDown,
-        child: Focus(
-          focusNode: _focusNode,
-          autofocus: true,
-          onFocusChange: _onFocusChange,
-          onKeyEvent: _onKeyEvent,
-          child: content,
+    return LayoutBuilder(
+      builder: (context, constraints) => TerminalTouchSurface(
+        onTap: _activateTextInput,
+        onVerticalDragStart: _beginHistoryDrag,
+        onVerticalDragUpdate: _updateHistoryDrag,
+        onVerticalDragEnd: _endHistoryDrag,
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: (event) => _onPointerDown(event, constraints.biggest),
+          onPointerMove: (event) => _onPointerMove(event, constraints.biggest),
+          onPointerHover: (event) =>
+              _onPointerHover(event, constraints.biggest),
+          onPointerUp: (event) => _onPointerUp(event, constraints.biggest),
+          onPointerCancel: (event) =>
+              _onPointerCancel(event, constraints.biggest),
+          child: Focus(
+            focusNode: _focusNode,
+            autofocus: true,
+            onFocusChange: _onFocusChange,
+            onKeyEvent: _onKeyEvent,
+            child: content,
+          ),
         ),
       ),
     );

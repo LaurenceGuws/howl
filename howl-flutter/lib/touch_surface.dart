@@ -4,8 +4,9 @@ import 'package:flutter/widgets.dart';
 /// Touch-only terminal gesture policy.
 ///
 /// A tap is intentionally distinct from a vertical drag so scrolling history
-/// does not also summon the platform text editor. Mouse/stylus input remains
-/// outside this gesture recognizer for a later semantic-pointer slice.
+/// does not also summon the platform text editor. Mouse/stylus input deliberately
+/// bypasses this recognizer and is translated separately into frozen semantic
+/// mouse input.
 final class TerminalTouchSurface extends StatelessWidget {
   const TerminalTouchSurface({
     super.key,
