@@ -1,77 +1,35 @@
-version:
-  current: 0.1.6-dev
-  prior:
-    version: 0.1.5-dev
-    status: frozen
-    release_branch: release/0.1.5-dev
-    release_base: b5057fbfbb927f5d0bb3ad2b5683513d2002415a
-    capability: >-
-      Structural debt payoff removed redundant native boundaries, narrowed
-      generated-C ownership, corrected ownership vocabulary and five finite
-      error dispositions, preserved cohesive large-file owners, and removed
-      five obsolete private declarations.
-    deferred_capability:
-      - ordered keyboard protocol expansion and repeat policy
-      - mouse and terminal mouse protocol routing
-      - terminal identity and child-environment negotiation
-      - input hot-path measurement and optimization
+schema: 1
+version: 0.1.6-dev
 
 objective: >-
-  Measure and correct the first unnecessary amplification between exact
-  terminal output, semantic mutation, rendering work, GPU submission, and
-  presentation while preserving the accepted 0.1.5-dev correctness boundary.
+  Establish one observer-independent canonical PTY/VT session and remove the
+  renderer-shaped publication machinery that had entered VT and the product gate.
 
-settled_capabilities:
-  - name: vt
-    acceptance: caller-neutral terminal emulation, replies, input encoding, ordered semantic consequences, Unicode 17 occupancy, and bounded grapheme ownership
-  - name: pty
-    acceptance: caller-polled Linux PTY and child-process lifecycle
-  - name: render
-    acceptance: reusable native text, generated glyphs, generic Canvas composition, and Chrome composition
-  - name: executable
-    acceptance: compositor-configured generation-tagged DMA-BUF rings, explicit synchronization, session topology, and an accepted bounded blank and printable-ASCII physical terminal path
-
-accepted_implementation:
-  - The tracked Zig pin drives every workspace and child command.
-  - Window alone dispatches Wayland and presents completed copied slots.
-  - Renderer alone mutates Vulkan and observes per-slot DRM release timelines.
-  - Terminal runtime exclusively owns every live PTY, VT, projection baseline, and terminal publication.
-  - Static cursor state is lowered with terminal cells into the pane Store and terminal shader path; the superseded generic terminal cursor replay is absent.
-  - Every maintained package and Host manifest uses version 0.1.6-dev.
-
-historical_manifests:
-  - howl-vt/examples/0.1.4-dev/build.zig.zon remains a versioned example fixture and is not a maintained package manifest.
+accepted:
+  vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
+  pty: caller-polled Linux PTY and child-process lifecycle
+  session: opaque owner of one PTY and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
 
 invariants:
-  - Bounds, errors, rollback, cleanup, and ownership are exact at each capability boundary.
-  - Render owns no runtime threads, Wayland objects, PTYs, or presentation policy.
-  - Window never owns session, terminal, or Vulkan mutation.
-  - Session-domain transitions acquire no Wayland or Vulkan dependency.
-  - Every exported descriptor has one owner and every ownership transfer is explicit.
-  - Source audit and protocol catalogue validation pass without diagnostics.
+  - one node-local session has one authoritative PTY and VT
+  - observers cannot mutate VT directly and cannot pace session progress
+  - attaching an observer never changes canonical geometry
+  - renderer and platform code are not core dependencies
+  - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - Measure exact bytes-to-presentation update amplification and locate the first disproportionate owner.
-  - Make child exit an exact pane lifecycle event and final-Host completion boundary.
-  - Establish reproducible Neovim-scroll and rain workloads.
-  - Measure external CPU/GPU cost before adding bounded owner instrumentation.
-  - Correct only the first causally proven update-amplification owner.
+  - define the minimal Unix-socket session endpoint from Linux, Android, and headless embedder pressure
+  - preserve SSH as remote transport rather than inventing Howl networking or authentication
+  - design semantic attach/rebase without reintroducing a per-observer journal into VT
 
 deferred:
-  - Ordered keyboard protocol expansion and repeat policy.
-  - Mouse, pointer protocol, and terminal mouse routing expansion.
-  - Terminal identity and child-environment negotiation.
-  - Input hot-path measurement and optimization.
-  - Detached, remote, or cooperative multiplexer sessions.
-  - Public Host compatibility guarantees and packaging.
-  - Configuration hot reload and scripting.
-  - New experimental terminal protocols.
-  - Maximum sixteen-pane Composer/Vulkan/atlas admission.
+  - graphical Linux client
+  - Android client and app-private Unix userland
+  - howl-text core package
+  - iOS SSH client
+  - renderer backend selection and presentation polish
 
 gates:
-  - Tracked authorities parse without duplicate keys.
-  - Root and affected child checks/tests pass in every required optimization mode.
-  - Source audit, protocol validation, formatting, and git diff checks pass.
-  - Each debt slice preserves existing product behavior and has bounded evidence.
-
-schema: 1
+  - root core checks and tests pass
+  - VT simulation, fuzz, and protocol validation pass
+  - source audit, formatting, and git diff checks pass

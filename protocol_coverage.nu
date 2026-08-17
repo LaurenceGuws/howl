@@ -4,7 +4,7 @@ const protocol_root = (path self | path dirname)
 const catalogue_path = ($protocol_root | path join protocol_coverage.yml)
 export const protocol_support = [full partial missing unassessed]
 export const protocol_disposition = ["none" active delegated deferred excluded]
-export const protocol_owner = [howl-vt howl-host howl-render howl-pty]
+export const protocol_owner = [howl-vt howl-session howl-pty]
 export const protocol_cheatsheet = [
   "protocol                         compact coverage summary"
   "protocol gaps                    active partial/missing/unassessed records"

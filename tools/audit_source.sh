@@ -8,7 +8,6 @@ status=0
 root_publics=(
     'pub const Terminal = terminal.Terminal;'
     'pub const MutationSet = terminal.MutationSet;'
-    'pub const render_journal = render_journal_mod;'
     'pub const ScalarStorage = scalar_storage.Storage;'
     'pub const UnicodeProperties = unicode_17.Properties;'
     'pub const unicodeProperties = unicode_17.properties;'
@@ -64,7 +63,7 @@ while IFS= read -r file; do
         { previous = $0 }
         END { exit failed }
     ' "$file" || status=1
-done < <(find howl-vt/src howl-host/src -type f -name '*.zig' -print | sort)
+done < <(find howl-vt/src howl-session/src howl-pty/src -type f -name '*.zig' -print | sort)
 
 # Empty lifecycle names preserve no behavior or ownership and therefore add no contract.
 empty_lifecycle_pattern='^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+(deinit|reset|clear)'

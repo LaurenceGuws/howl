@@ -4,11 +4,8 @@ const std = @import("std");
 
 const children = [_][]const u8{
     "howl-vt",
+    "howl-session",
     "howl-pty",
-    "howl-render",
-    "howl-host",
-    "howl-vk",
-    "howl-wayland",
 };
 
 pub fn build(b: *std.Build) void {
@@ -16,8 +13,8 @@ pub fn build(b: *std.Build) void {
     const target = b.option([]const u8, "target", "Forward the target triple to every child");
     const cpu = b.option([]const u8, "cpu", "Forward target CPU features to every child");
 
-    const check = b.step("check", "Compile every surviving child and validate root evidence");
-    const test_step = b.step("test", "Run every surviving child's proofs");
+    const check = b.step("check", "Compile the Howl core and validate root evidence");
+    const test_step = b.step("test", "Run every Howl core proof");
     inline for (children) |child| {
         addChildBuild(b, check, child, "check", optimize, target, cpu, false);
         addChildBuild(b, test_step, child, "test", optimize, target, cpu, true);
@@ -60,8 +57,6 @@ pub fn build(b: *std.Build) void {
     addChildBuild(b, fuzz, "howl-vt", "fuzz", optimize, target, cpu, true);
     const benchmark = b.step("benchmark:m7", "Run the VT m7 benchmark");
     addChildBuild(b, benchmark, "howl-vt", "benchmark", optimize, target, cpu, true);
-    const host = b.step("run:host", "Run the first-party Wayland host");
-    addChildBuild(b, host, "howl-host", "run", optimize, target, cpu, true);
     b.default_step = check;
 }
 

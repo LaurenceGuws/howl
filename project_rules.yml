@@ -1,21 +1,18 @@
 rules:
   - Every retained character buys capability, correctness, clarity, or deterministic evidence.
+  - Prefer one direct code lane; abstractions must reduce total complexity rather than relocate it.
   - Terminal protocol behavior follows primary evidence and exact owned state.
-  - Implemented support, residual disposition, and concrete owner remain orthogonal protocol-catalogue fields.
-  - Every module allocation uses an explicit caller-provided allocator.
-  - Inputs, retained state, queues, payloads, grids, and platform consequences have explicit bounds.
+  - Inputs, retained state, queues, payloads, grids, and consequences have explicit bounds.
   - Construction failure and deinitialization release completed resources in reverse ownership order.
-  - usize represents indexes, lengths, capacities, byte counts, and standard-library boundaries.
-  - Domain quantities use types sized for their meaning.
-  - VT owns terminal semantics, state and mutation sets, input encoding, replies, and terminal consequences.
-  - PTY owns Linux transport, descriptors, child processes, process-group cleanup, and foreground termios signaling.
-  - Render owns backend-neutral terminal visual knowledge and plain values without runtime policy.
-  - Howl-host owns its concrete Wayland, Vulkan, DMA-BUF, explicit synchronization, render-thread, and presentation lifecycle.
-  - Terminal font size is one Host terminal base plus one pane-local signed mutation; new terminal panes start at zero mutation, hidden panes retain it, and Chrome font state remains independent.
-  - Equal resolved terminal font configurations may share immutable cache entries, but changing or retiring one pane never mutates another pane's accepted font state or resources.
-  - Terminal font caches retain active working sets only; zero-user entries begin deterministic retirement subject to copied-update and GPU-release ownership.
-  - Each surviving library package exposes a curated Zig module and owns its direct build and native dependencies.
-  - The root workspace reconstructs no child module, dependency, native interface, proof, executable, or artifact.
-  - Every concrete artifact explicitly selects self-hosted Zig code generation and linking under the tracked compiler pin.
-  - Tests prove behavior, failure, cleanup, bounds, and deterministic semantics rather than rejected architecture.
+  - usize is for indexes, lengths, capacities, byte counts, and standard-library boundaries; domain quantities use sized types.
+  - VT owns terminal semantics, history, images, input encoding, replies, and protocol consequences; it owns no observer or renderer publication queue.
+  - Session owns one canonical PTY and VT, ordered process I/O, explicit geometry, signals, child lifetime, and deterministic headless consequence policy.
+  - Session exposes no mutable PTY or VT escape hatch; its public handle is opaque.
+  - An observer may disconnect, stall, or disappear without blocking canonical session progress.
+  - PTY owns Linux descriptors, child process groups, native resize, signals, and cleanup.
+  - Attaching an observer never resizes the PTY; geometry changes are explicit serialized session mutations.
+  - Rendering, UI, platform lifecycle, networking, authentication, and multiplexing presentation remain outside VT and session.
+  - Each core package owns its direct build identity, dependencies, native interfaces, and proofs.
+  - Every concrete core artifact uses the tracked Zig compiler with self-hosted code generation and linking.
+  - Tests prove behavior, failure, cleanup, bounds, and ownership rather than rejected architecture.
   - Sensitive Zig constructs appear only at exact reviewed sites recorded by the source audit.

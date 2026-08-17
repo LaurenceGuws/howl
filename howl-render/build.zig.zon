@@ -3,9 +3,7 @@
     .version = "0.1.6-dev",
     .fingerprint = 0x42f92313e3ee4de0,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
-    .dependencies = .{
-        .howl_vt = .{ .path = "../howl-vt", .lazy = true },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",

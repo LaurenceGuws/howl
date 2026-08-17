@@ -1,33 +1,36 @@
 project:
   name: howl
-  mission: an exceptionally small, correct, embeddable native Zig terminal family
-  shape: atomic monorepo of independently useful capabilities with a development-only root curator
+  mission: small, correct native terminal sessions shared by humans and agents
+  shape: independent Zig packages in one atomic development workspace
 
-capabilities:
-  vt:
-    role: terminal parsing, semantic state and mutation sets, input encoding, replies, and terminal consequences
-  pty:
-    role: Linux PTY transport and child-process lifecycle
-  render:
-    role: backend-neutral terminal visual knowledge and plain rendering values without runtime policy
-  executable:
-    role: first-party Wayland, Vulkan, DMA-BUF, and explicit-synchronization lifetime foundation
-    status: persistent compositor-configured three-slot surface with Renderer-owned Chrome and multi-pane terminal runtime; one bounded physical blank and printable-ASCII terminal renderer records below Chrome in the combined submission and has deterministic fractional-coordinate closure plus an accepted minimal operator render gate
+core:
+  howl-vt:
+    role: terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences
+  howl-session:
+    role: one canonical PTY, VT, ordered I/O lifetime, geometry, signals, and headless environment policy
+    invariant: observers never own, pace, or block canonical session progress
+  howl-pty:
+    role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
+
+planned:
+  howl-text: native text shaping and rasterization worthy of the core boundary
+  session_endpoint: Unix-socket access to one node-local session; SSH only transports remote client bytes
+  clients: Linux and Android first; iOS is SSH-only
+
+experimental:
+  - howl-render
+  - howl-vk
+  - howl-wayland
 
 ownership:
-  allocation: every module allocation uses an explicit caller-provided allocator
-  composition:
-    - embedders may use VT and PTY independently
-    - render owns no threads, publication lifecycle, GPU device, window, layout, or presentation policy
-    - howl-host is one concrete first-party composition, not the only valid route through the family
+  - a session lives on the node, not in a client
+  - one session owns exactly one authoritative PTY and VT
+  - clients observe semantic state and submit serialized input or explicit control mutations
+  - attaching a client never changes canonical terminal geometry
+  - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
+  - renderer and platform policy stay outside VT and session
 
 workspace:
-  purpose: Git, agent, and development ergonomics plus atomic history
-  children: each surviving capability owns its package identity, direct dependencies, native interfaces, and proofs
-  root: exports no product module or artifact
-  toolchain: exact tracked Zig pin resolved through ignored .zig/zig; product and proof artifacts use self-hosted codegen and linker
-  evidence: protocol evidence is family-owned at the root
-  embedder: QAgent is the first real embedder and supplies integration pressure without owning Howl policy
-
-reconstruction:
-  status: reusable Vulkan and Wayland packages plus persistent Vulkan surface and Chrome, multi-pane terminal runtime, and one bounded physical terminal renderer in the combined submission with accepted minimal operator rendering
+  root_gate: [howl-vt, howl-session, howl-pty]
+  toolchain: exact tracked Zig pin with self-hosted code generation and linking
+  root: development curator only; exports no product module
