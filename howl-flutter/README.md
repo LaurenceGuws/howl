@@ -26,10 +26,18 @@ Run a Linux client against a loopback TCP session with:
 HOWL_ENDPOINT=tcp://127.0.0.1:43127 flutter run -d linux
 ```
 
-For Android, the checked-in shell is the stock `FlutterActivity` embedding plus the
-normal `INTERNET` permission. Networking remains `dart:io`; there is no Kotlin IPC,
-networking plugin, or Zig FFI transport. A Termux-owned `howl-sessiond` on the same
-phone can therefore be reached directly over Android loopback:
+For Android, networking remains `dart:io`; there is no Kotlin networking, protocol,
+or terminal implementation. The one native leaf is IME visibility. Android terminal
+text intentionally advertises `TYPE_NULL` through Flutter `TextInputType.none`,
+matching Termux's default terminal editor contract. Flutter normally suppresses the
+IME for that type, so `MainActivity` receives one `show` MethodChannel request and
+applies the Termux-shaped native sequence to the real `FlutterView`: coalesced 300 ms
+delay, `requestFocus`, `restartInput`, then `showSoftInput(view, 0)`. Composition and
+committed Unicode remain entirely in Dart's `TextInputClient`.
+
+The Android shell otherwise remains the stock `FlutterActivity` embedding plus the
+normal `INTERNET` permission. A Termux-owned `howl-sessiond` on the same phone can
+therefore be reached directly over Android loopback:
 
 ```sh
 flutter build apk --release \

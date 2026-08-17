@@ -1,5 +1,7 @@
 import 'package:flutter/services.dart';
 
+import 'platform_input.dart';
+
 final class CommittedTextStager {
   TextEditingValue _value = TextEditingValue.empty;
 
@@ -20,9 +22,13 @@ final class CommittedTextStager {
 }
 
 final class TerminalTextInputClient with TextInputClient {
-  TerminalTextInputClient({required this.onCommit});
+  TerminalTextInputClient({
+    required this.onCommit,
+    this.inputType = TextInputType.text,
+  });
 
   final void Function(String text) onCommit;
+  final TextInputType inputType;
   final CommittedTextStager _stager = CommittedTextStager();
   TextInputConnection? _connection;
   int? _viewId;
@@ -31,7 +37,7 @@ final class TerminalTextInputClient with TextInputClient {
 
   TextInputConfiguration _configuration(int viewId) => TextInputConfiguration(
     viewId: viewId,
-    inputType: TextInputType.text,
+    inputType: inputType,
     inputAction: TextInputAction.none,
     autocorrect: false,
     smartDashesType: SmartDashesType.disabled,
@@ -57,10 +63,10 @@ final class TerminalTextInputClient with TextInputClient {
     connection.setEditingState(_stager.value);
   }
 
-  void show() {
+  Future<void> show(TerminalPlatformInput platformInput) async {
     final connection = _connection;
     if (connection == null || !connection.attached) return;
-    connection.show();
+    await platformInput.show(connection.show);
   }
 
   void detach() {

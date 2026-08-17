@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'platform_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
 
@@ -71,6 +72,7 @@ final class HowlTerminal extends StatefulWidget {
 
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
+  final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   late final TerminalTextInputClient _textInput;
   HowlConnection? _observer;
   HowlConnection? _control;
@@ -86,6 +88,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void initState() {
     super.initState();
     _textInput = TerminalTextInputClient(
+      inputType: _platformInput.inputType,
       onCommit: (text) {
         _queueControl((control) => control.sendCommittedText(text));
       },
@@ -160,8 +163,16 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (!mounted || _stopping || !_focusNode.hasFocus || _control == null) {
         return;
       }
-      _textInput.show();
+      unawaited(_showTextInput());
     });
+  }
+
+  Future<void> _showTextInput() async {
+    try {
+      await _textInput.show(_platformInput);
+    } catch (error) {
+      _reportFailure(error);
+    }
   }
 
   void _onPointerDown(PointerDownEvent event) {
