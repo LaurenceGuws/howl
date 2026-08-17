@@ -14,5 +14,6 @@ accepted:
 
 experimental:
   howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate
+  howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate

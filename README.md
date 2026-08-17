@@ -23,7 +23,7 @@ Attaching is observational. It never silently resizes the PTY. Geometry is expli
 
 ## Experimental packages
 
-`howl-render`, `howl-vk`, and `howl-wayland` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
+`howl-render`, `howl-vk`, `howl-wayland`, and `howl-gtk` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
 
 ## Build
 
