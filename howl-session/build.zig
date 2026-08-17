@@ -31,17 +31,35 @@ pub fn build(b: *std.Build) void {
         .use_llvm = false,
         .use_lld = false,
     });
+    const bridge_module = b.createModule(.{
+        .root_source_file = b.path("src/bridge.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const bridge = b.addExecutable(.{ .name = "howl-session-bridge", .root_module = bridge_module });
+    const bridge_tests = b.addTest(.{
+        .name = "howl-session-bridge",
+        .root_module = bridge_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
     const check = b.step("check", "Compile the canonical PTY and VT session owner");
     check.dependOn(&tests.step);
     check.dependOn(&server.step);
     check.dependOn(&server_tests.step);
+    check.dependOn(&bridge.step);
+    check.dependOn(&bridge_tests.step);
     const run_tests = b.addRunArtifact(tests);
     run_tests.addPassthruArgs();
     const run_server_tests = b.addRunArtifact(server_tests);
     run_server_tests.addPassthruArgs();
+    const run_bridge_tests = b.addRunArtifact(bridge_tests);
+    run_bridge_tests.addPassthruArgs();
     const test_step = b.step("test", "Run canonical session ownership proofs");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_server_tests.step);
+    test_step.dependOn(&run_bridge_tests.step);
     b.installArtifact(server);
+    b.installArtifact(bridge);
     b.default_step = check;
 }
