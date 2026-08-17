@@ -1171,6 +1171,7 @@ fn listenTcpLoopback(requested_port: u16) !TcpListener {
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
+    try setReuseAddress(fd);
 
     var address = loopbackAddress(requested_port);
     if (linux.errno(linux.bind(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))) != .SUCCESS)
@@ -1212,6 +1213,18 @@ fn unixAddress(path: []const u8, address: *linux.sockaddr.un) error{SocketPathTo
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
     return @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
+}
+
+fn setReuseAddress(fd: posix.fd_t) !void {
+    const enabled: c_int = 1;
+    const result = linux.setsockopt(
+        fd,
+        linux.SOL.SOCKET,
+        linux.SO.REUSEADDR,
+        @ptrCast(&enabled),
+        @sizeOf(c_int),
+    );
+    if (linux.errno(result) != .SUCCESS) return error.SocketOptionFailed;
 }
 
 fn setTcpNoDelay(fd: posix.fd_t) !void {
@@ -1909,6 +1922,44 @@ test "TCP listener is fixed to IPv4 loopback and resolves ephemeral port" {
     try std.testing.expectEqual(@as(linux.sa_family_t, linux.AF.INET), bound.family);
     try std.testing.expectEqual(port, std.mem.bigToNative(u16, bound.port));
     try std.testing.expectEqual(loopbackAddress(0).addr, bound.addr);
+}
+
+test "TCP listener can restart while an old peer still holds the dead connection" {
+    var first = try listenTcpLoopback(0);
+    const port = first.port;
+
+    const client_raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
+    if (linux.errno(client_raw) != .SUCCESS) return error.TestSocketCreateFailed;
+    const client_fd: posix.fd_t = @intCast(client_raw);
+    defer closeFd(client_fd);
+
+    var address = loopbackAddress(port);
+    while (true) {
+        const result = linux.connect(client_fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in));
+        switch (linux.errno(result)) {
+            .SUCCESS => break,
+            .INTR => continue,
+            else => return error.TestSocketConnectFailed,
+        }
+    }
+
+    var accepted_fd: posix.fd_t = -1;
+    while (accepted_fd < 0) {
+        const accepted = linux.accept4(first.fd, null, null, linux.SOCK.CLOEXEC);
+        switch (linux.errno(accepted)) {
+            .SUCCESS => accepted_fd = @intCast(accepted),
+            .INTR => continue,
+            else => return error.AcceptFailed,
+        }
+    }
+
+    closeFd(accepted_fd);
+    closeFd(first.fd);
+    first.fd = -1;
+
+    const restarted = try listenTcpLoopback(port);
+    defer closeFd(restarted.fd);
+    try std.testing.expectEqual(port, restarted.port);
 }
 
 test "TCP client shares canonical session over the unchanged frame loop" {
