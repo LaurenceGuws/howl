@@ -14,8 +14,10 @@ VT. It owns no PTY, VT, shell, network/auth layer, or session lifetime.
 Canonical resize is opt-in. With `HOWL_GEOMETRY_LEADER=1`, this client explicitly
 assigns its control connection as resize leader before sending rows/columns. Desktop
 launches may use the environment variable; Android builds use
-`--dart-define=HOWL_GEOMETRY_LEADER=1`. Without that flag, window resizing is
-presentation-only. Platform text input now
+`--dart-define=HOWL_GEOMETRY_LEADER=1`. Android IME insets are excluded from the
+terminal viewport, so an authority-enabled client resizes canonical rows to the
+unobscured surface while the keyboard is visible. Without the authority flag, the
+same inset handling remains presentation-only. Platform text input now
 stages active IME composition locally and sends committed Unicode through the
 existing committed-text lane. Printable text is never inferred from physical key
 labels. The editor keeps two private guard scalars around the platform cursor so

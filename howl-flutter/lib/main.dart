@@ -12,6 +12,7 @@ import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
 import 'touch_surface.dart';
+import 'visible_viewport.dart';
 
 void main(List<String> args) {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
@@ -469,27 +470,31 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         },
       );
     }
-    return LayoutBuilder(
-      builder: (context, constraints) => TerminalTouchSurface(
-        onTap: _activateTextInput,
-        onVerticalDragStart: _beginHistoryDrag,
-        onVerticalDragUpdate: _updateHistoryDrag,
-        onVerticalDragEnd: _endHistoryDrag,
-        child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: (event) => _onPointerDown(event, constraints.biggest),
-          onPointerMove: (event) => _onPointerMove(event, constraints.biggest),
-          onPointerHover: (event) =>
-              _onPointerHover(event, constraints.biggest),
-          onPointerUp: (event) => _onPointerUp(event, constraints.biggest),
-          onPointerCancel: (event) =>
-              _onPointerCancel(event, constraints.biggest),
-          child: Focus(
-            focusNode: _focusNode,
-            autofocus: true,
-            onFocusChange: _onFocusChange,
-            onKeyEvent: _onKeyEvent,
-            child: content,
+    return TerminalVisibleViewport(
+      child: LayoutBuilder(
+        builder: (context, constraints) => TerminalTouchSurface(
+          onTap: _activateTextInput,
+          onVerticalDragStart: _beginHistoryDrag,
+          onVerticalDragUpdate: _updateHistoryDrag,
+          onVerticalDragEnd: _endHistoryDrag,
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) =>
+                _onPointerDown(event, constraints.biggest),
+            onPointerMove: (event) =>
+                _onPointerMove(event, constraints.biggest),
+            onPointerHover: (event) =>
+                _onPointerHover(event, constraints.biggest),
+            onPointerUp: (event) => _onPointerUp(event, constraints.biggest),
+            onPointerCancel: (event) =>
+                _onPointerCancel(event, constraints.biggest),
+            child: Focus(
+              focusNode: _focusNode,
+              autofocus: true,
+              onFocusChange: _onFocusChange,
+              onKeyEvent: _onKeyEvent,
+              child: content,
+            ),
           ),
         ),
       ),
