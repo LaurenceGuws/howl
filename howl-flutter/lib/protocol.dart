@@ -633,6 +633,54 @@ List<HowlSnapshot> decodeTextSnapshots(Uint8List stream) {
   return snapshots;
 }
 
+final class HowlEndpoint {
+  const HowlEndpoint._({this.unixPath, this.tcpPort});
+
+  final String? unixPath;
+  final int? tcpPort;
+
+  static HowlEndpoint parse(String text) {
+    if (text.startsWith('tcp://')) {
+      final uri = Uri.tryParse(text);
+      _require(uri != null, 'endpoint_uri');
+      _require(uri!.scheme == 'tcp', 'endpoint_scheme');
+      _require(uri.userInfo.isEmpty, 'endpoint_userinfo');
+      _require(uri.host == '127.0.0.1', 'endpoint_host');
+      _require(
+        uri.hasPort && uri.port >= 1 && uri.port <= 65535,
+        'endpoint_port',
+      );
+      _require(uri.path.isEmpty, 'endpoint_path');
+      _require(!uri.hasQuery && !uri.hasFragment, 'endpoint_suffix');
+      return HowlEndpoint._(tcpPort: uri.port);
+    }
+    _require(!text.contains('://'), 'endpoint_scheme');
+    final path = text.startsWith('unix:')
+        ? text.substring('unix:'.length)
+        : text;
+    _require(path.isNotEmpty, 'endpoint_path');
+    return HowlEndpoint._(unixPath: path);
+  }
+
+  Future<Socket> connect() {
+    final port = tcpPort;
+    if (port != null) return Socket.connect(InternetAddress.loopbackIPv4, port);
+    final path = unixPath;
+    _require(path != null && path.isNotEmpty, 'endpoint_path');
+    return Socket.connect(
+      InternetAddress(path!, type: InternetAddressType.unix),
+      0,
+    );
+  }
+
+  @override
+  String toString() {
+    final port = tcpPort;
+    if (port != null) return 'tcp://127.0.0.1:$port';
+    return 'unix:${unixPath!}';
+  }
+}
+
 final class HowlConnection {
   HowlConnection._(this._socket, this._reader, this.welcome);
 
@@ -642,11 +690,10 @@ final class HowlConnection {
   bool _closed = false;
 
   static Future<HowlConnection> connect(
-    String socketPath, {
+    HowlEndpoint endpoint, {
     int features = HowlWire.allFeatures,
   }) async {
-    final address = InternetAddress(socketPath, type: InternetAddressType.unix);
-    final socket = await Socket.connect(address, 0);
+    final socket = await endpoint.connect();
     final reader = _SocketByteReader(socket);
     try {
       await _writeFrame(

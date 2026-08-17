@@ -8,17 +8,31 @@ import 'protocol.dart';
 import 'text_input.dart';
 
 void main(List<String> args) {
-  final socketPath = args.isNotEmpty
+  const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
+  final endpointText = args.isNotEmpty
       ? args.first
-      : Platform.environment['HOWL_SOCKET'];
-  if (socketPath == null || socketPath.isEmpty) {
-    stderr.writeln('usage: howl_flutter SOCKET   (or set HOWL_SOCKET)');
+      : compiledEndpoint.isNotEmpty
+      ? compiledEndpoint
+      : Platform.environment['HOWL_ENDPOINT'] ??
+            Platform.environment['HOWL_SOCKET'];
+  if (endpointText == null || endpointText.isEmpty) {
+    stderr.writeln(
+      'usage: howl_flutter ENDPOINT   (or set HOWL_ENDPOINT / --dart-define)',
+    );
+    exitCode = 64;
+    return;
+  }
+  final HowlEndpoint endpoint;
+  try {
+    endpoint = HowlEndpoint.parse(endpointText);
+  } on HowlProtocolException catch (error) {
+    stderr.writeln('invalid Howl endpoint: ${error.code}');
     exitCode = 64;
     return;
   }
   runApp(
     HowlApp(
-      socketPath: socketPath,
+      endpoint: endpoint,
       geometryLeader: Platform.environment['HOWL_GEOMETRY_LEADER'] == '1',
     ),
   );
@@ -27,10 +41,10 @@ void main(List<String> args) {
 final class HowlApp extends StatelessWidget {
   const HowlApp({
     super.key,
-    required this.socketPath,
+    required this.endpoint,
     required this.geometryLeader,
   });
-  final String socketPath;
+  final HowlEndpoint endpoint;
   final bool geometryLeader;
 
   @override
@@ -38,17 +52,17 @@ final class HowlApp extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     title: 'Howl',
     theme: ThemeData.dark(useMaterial3: false),
-    home: HowlTerminal(socketPath: socketPath, geometryLeader: geometryLeader),
+    home: HowlTerminal(endpoint: endpoint, geometryLeader: geometryLeader),
   );
 }
 
 final class HowlTerminal extends StatefulWidget {
   const HowlTerminal({
     super.key,
-    required this.socketPath,
+    required this.endpoint,
     required this.geometryLeader,
   });
-  final String socketPath;
+  final HowlEndpoint endpoint;
   final bool geometryLeader;
 
   @override
@@ -81,8 +95,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   Future<void> _observe() async {
     try {
-      final observer = await HowlConnection.connect(widget.socketPath);
-      final control = await HowlConnection.connect(widget.socketPath);
+      final observer = await HowlConnection.connect(widget.endpoint);
+      final control = await HowlConnection.connect(widget.endpoint);
       if (_stopping) {
         observer.close();
         control.close();

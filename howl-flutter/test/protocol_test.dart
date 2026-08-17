@@ -13,6 +13,39 @@ Map<String, dynamic> vector(String id) => (vectors['cases'] as List<dynamic>)
     .singleWhere((value) => value['id'] == id);
 
 void main() {
+  test('client endpoint keeps Unix oracle and exact TCP loopback', () {
+    final bareUnix = HowlEndpoint.parse('/tmp/howl.sock');
+    expect(bareUnix.unixPath, '/tmp/howl.sock');
+    expect(bareUnix.tcpPort, isNull);
+    expect(bareUnix.toString(), 'unix:/tmp/howl.sock');
+
+    final explicitUnix = HowlEndpoint.parse('unix:/tmp/howl.sock');
+    expect(explicitUnix.unixPath, '/tmp/howl.sock');
+
+    final tcp = HowlEndpoint.parse('tcp://127.0.0.1:43127');
+    expect(tcp.unixPath, isNull);
+    expect(tcp.tcpPort, 43127);
+    expect(tcp.toString(), 'tcp://127.0.0.1:43127');
+
+    for (final value in <String>[
+      '',
+      'tcp://localhost:43127',
+      'http://127.0.0.1:43127',
+      'unix:',
+      'tcp://0.0.0.0:43127',
+      'tcp://127.0.0.1',
+      'tcp://127.0.0.1:0',
+      'tcp://127.0.0.1:43127/',
+      'tcp://127.0.0.1:43127?x=1',
+    ]) {
+      expect(
+        () => HowlEndpoint.parse(value),
+        throwsA(isA<HowlProtocolException>()),
+        reason: value,
+      );
+    }
+  });
+
   test('frozen hello and welcome vectors decode independently', () {
     final hello = decodeFrames(
       hexBytes(vector('hello_all_features')['hex'] as String),
