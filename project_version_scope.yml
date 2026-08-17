@@ -3,13 +3,13 @@ version: 0.1.6-dev
 
 objective: >-
   Keep one observer-independent canonical PTY/VT session while promoting native
-  text shaping and rasterization into a renderer-neutral core boundary.
+  text shaping and rasterization as a small standalone pinned package boundary.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
   pty: caller-polled Linux PTY and child-process lifecycle
   session: opaque owner of one PTY and one VT with bounded ordered I/O, explicit resize, signals, child observation, and deterministic headless consequence handling
-  text: bounded native font metrics, fallback, shaping, source-cluster identity, ligature classification, and alpha rasterization
+  text: standalone bounded native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and natural alpha rasterization
 
 invariants:
   - one node-local session has one authoritative PTY and VT
@@ -20,7 +20,6 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - harden howl-text as the native renderer-neutral text primitive
   - pressure the text/session boundaries with the first disposable visual client
   - preserve SSH as remote transport rather than inventing Howl networking or authentication
 
@@ -31,6 +30,6 @@ deferred:
   - renderer backend selection and presentation polish
 
 gates:
-  - root core checks and tests pass
+  - root local-core checks/tests and delegated exact-pinned howl-text checks/tests pass
   - VT simulation, fuzz, and protocol validation pass
   - source audit, formatting, and git diff checks pass

@@ -1,16 +1,18 @@
 accepted:
   .zigversion: exact Zig compiler pin
-  build.zig: development-only core curator
-  build.zig.zon: core workspace source boundary
+  build.zig: development-only core curator plus delegated pinned howl-text gates
+  build.zig.zon: local core workspace source boundary plus exact howl-text package pin
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs
   howl-session: opaque canonical PTY/VT session owner and observer-independent lifecycle proofs
   howl-pty: Linux PTY and child-process lifecycle
-  howl-text: native font metrics, fallback, shaping, source-cluster identity, ligature classification, and bounded alpha rasterization
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
   tools/audit_source.sh: maintained-source structural audit
   tools/source_audit.allow: reviewed sensitive Zig sites
   tools/json_logger.zig: reusable bounded JSONL evidence writer
+
+external:
+  howl-text: standalone pinned repository owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 experimental:
   howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate

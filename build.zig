@@ -6,7 +6,6 @@ const children = [_][]const u8{
     "howl-vt",
     "howl-session",
     "howl-pty",
-    "howl-text",
 };
 
 pub fn build(b: *std.Build) void {
@@ -16,6 +15,17 @@ pub fn build(b: *std.Build) void {
 
     const check = b.step("check", "Compile the Howl core and validate root evidence");
     const test_step = b.step("test", "Run every Howl core proof");
+
+    // howl-text owns its own repository and gates. The workspace pin remains
+    // executable evidence by delegating to those exact published package steps.
+    const text = b.dependency("howl_text", .{ .optimize = optimize });
+    const text_check = text.builder.top_level_steps.get("check") orelse
+        @panic("howl-text package has no check step");
+    const text_test = text.builder.top_level_steps.get("test") orelse
+        @panic("howl-text package has no test step");
+    check.dependOn(&text_check.step);
+    test_step.dependOn(&text_test.step);
+
     inline for (children) |child| {
         addChildBuild(b, check, child, "check", optimize, target, cpu, false);
         addChildBuild(b, test_step, child, "test", optimize, target, cpu, true);

@@ -11,7 +11,7 @@ The core idea is simple: **the session lives on the node, not in the client.** O
 | `howl-vt` | Terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences |
 | `howl-session` | One canonical PTY/VT lifetime, ordered I/O, explicit geometry, signals, child state, and headless policy |
 | `howl-pty` | Linux-kernel PTY transport and child-process lifecycle, used directly on Linux and Android |
-| `howl-text` | Native font metrics, fallback, shaping, source-cluster identity, ligature classification, and bounded alpha rasterization |
+| `howl-text` | Standalone pinned package for native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization |
 
 The session API is deliberately opaque. Embedders can inspect semantic state and submit input or explicit control mutations, but cannot reach the PTY or VT owner directly. A disconnected or slow observer must never block the shell.
 
@@ -37,4 +37,6 @@ ln -sfn "$HOME/.local/share/zigup/$version/files/zig" .zig/zig
 ./.zig/zig build test
 ```
 
-Each child package also owns its own `build.zig` and proofs.
+Each local child package owns its own `build.zig` and proofs. `howl-text` lives
+in its own repository; the root, renderer, and GTK pressure client consume the
+exact published commit pinned in their package metadata.
