@@ -4,6 +4,9 @@ const std = @import("std");
 const pty = @import("howl_pty");
 const vt = @import("howl_vt");
 
+/// Shared-session wire and geometry-authority contract.
+pub const protocol = @import("protocol.zig");
+
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;
 const write_bytes_per_turn: usize = 64 * 1024;
@@ -164,6 +167,11 @@ pub fn presentation(session: *const Session) Presentation {
 /// Copies one visible row's DEC presentation geometry.
 pub fn lineGeometry(session: *const Session, history_offset: u32, row: u16) LineGeometry {
     return stateConst(session).terminal.semanticView(history_offset).lineGeometry(row);
+}
+
+/// Reports whether one visible row is a soft continuation of its predecessor.
+pub fn rowWrapped(session: *const Session, history_offset: u32, row: u16) bool {
+    return stateConst(session).terminal.semanticView(history_offset).rowWrapped(row);
 }
 
 /// Encodes and admits one input event in canonical session order.
