@@ -2,34 +2,121 @@ import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
 
-final class CommittedTextStager {
-  TextEditingValue _value = TextEditingValue.empty;
+enum TerminalEditKey { enter, backspace, delete }
+
+sealed class TerminalInputAction {
+  const TerminalInputAction();
+}
+
+final class TerminalCommittedText extends TerminalInputAction {
+  const TerminalCommittedText(this.text);
+
+  final String text;
+}
+
+final class TerminalEditKeyAction extends TerminalInputAction {
+  const TerminalEditKeyAction(this.key);
+
+  final TerminalEditKey key;
+}
+
+/// Small platform-editing model for a terminal, not a retained text document.
+///
+/// Android IMEs commonly express Backspace/Delete as document edits rather than
+/// key events. Two private-use guard scalars keep those edits observable while
+/// the cursor sits between them. Guards never leave this model. Active IME
+/// composition remains local; once composition commits, only the text between
+/// the guards is emitted and the canonical guard value is restored.
+final class TerminalInputStager {
+  static const leftGuard = '\uE000';
+  static const rightGuard = '\uE001';
+  static const guardText = '$leftGuard$rightGuard';
+  static const canonicalValue = TextEditingValue(
+    text: guardText,
+    selection: TextSelection.collapsed(offset: 1),
+  );
+
+  TextEditingValue _value = canonicalValue;
 
   TextEditingValue get value => _value;
 
-  String? update(TextEditingValue next) {
+  List<TerminalInputAction> update(TextEditingValue next) {
     _value = next;
-    if (next.composing.isValid && !next.composing.isCollapsed) return null;
-    if (next.text.isEmpty) return null;
-    final committed = next.text;
-    _value = TextEditingValue.empty;
-    return committed;
+    if (next.composing.isValid && !next.composing.isCollapsed) {
+      return const <TerminalInputAction>[];
+    }
+
+    final text = next.text;
+    final actions = <TerminalInputAction>[];
+    if (text == rightGuard) {
+      actions.add(const TerminalEditKeyAction(TerminalEditKey.backspace));
+    } else if (text == leftGuard) {
+      actions.add(const TerminalEditKeyAction(TerminalEditKey.delete));
+    } else if (text.startsWith(leftGuard) && text.endsWith(rightGuard)) {
+      final committed = text.substring(
+        leftGuard.length,
+        text.length - rightGuard.length,
+      );
+      if (!committed.contains(leftGuard) && !committed.contains(rightGuard)) {
+        actions.addAll(_committedActions(committed));
+      }
+    } else if (!text.contains(leftGuard) && !text.contains(rightGuard)) {
+      // Some IMEs replace the entire editable on commit instead of preserving
+      // surrounding content. Empty replacement is ambiguous and intentionally
+      // produces no terminal action.
+      actions.addAll(_committedActions(text));
+    }
+
+    _value = canonicalValue;
+    return actions;
   }
 
   void reset() {
-    _value = TextEditingValue.empty;
+    _value = canonicalValue;
+  }
+
+  static List<TerminalInputAction> _committedActions(String text) {
+    if (text.isEmpty) return const <TerminalInputAction>[];
+    final actions = <TerminalInputAction>[];
+    var segmentStart = 0;
+    var index = 0;
+    while (index < text.length) {
+      final codeUnit = text.codeUnitAt(index);
+      if (codeUnit != 0x0a && codeUnit != 0x0d) {
+        index += 1;
+        continue;
+      }
+      if (segmentStart < index) {
+        actions.add(TerminalCommittedText(text.substring(segmentStart, index)));
+      }
+      actions.add(const TerminalEditKeyAction(TerminalEditKey.enter));
+      if (codeUnit == 0x0d &&
+          index + 1 < text.length &&
+          text.codeUnitAt(index + 1) == 0x0a) {
+        index += 2;
+      } else {
+        index += 1;
+      }
+      segmentStart = index;
+    }
+    if (segmentStart < text.length) {
+      actions.add(TerminalCommittedText(text.substring(segmentStart)));
+    }
+    return actions;
   }
 }
 
 final class TerminalTextInputClient with TextInputClient {
   TerminalTextInputClient({
     required this.onCommit,
+    required this.onEditKey,
     this.inputType = TextInputType.text,
   });
 
   final void Function(String text) onCommit;
+  final void Function(TerminalEditKey key) onEditKey;
   final TextInputType inputType;
-  final CommittedTextStager _stager = CommittedTextStager();
+  final TerminalInputStager _stager = TerminalInputStager();
   TextInputConnection? _connection;
   int? _viewId;
 
@@ -84,14 +171,24 @@ final class TerminalTextInputClient with TextInputClient {
 
   @override
   void updateEditingValue(TextEditingValue value) {
-    final committed = _stager.update(value);
-    if (committed == null) return;
-    _connection?.setEditingState(_stager.value);
-    onCommit(committed);
+    final actions = _stager.update(value);
+    if (_stager.value != value) {
+      _connection?.setEditingState(_stager.value);
+    }
+    for (final action in actions) {
+      switch (action) {
+        case TerminalCommittedText(:final text):
+          onCommit(text);
+        case TerminalEditKeyAction(:final key):
+          onEditKey(key);
+      }
+    }
   }
 
   @override
-  void performAction(TextInputAction action) {}
+  void performAction(TextInputAction action) {
+    if (action == TextInputAction.newline) onEditKey(TerminalEditKey.enter);
+  }
 
   @override
   void performPrivateCommand(String action, Map<String, dynamic> data) {}

@@ -3,10 +3,11 @@ import 'package:flutter/services.dart';
 
 /// Host-only policy for exposing the terminal's platform text editor.
 ///
-/// Android terminals use TYPE_NULL, matching Termux's default editor contract.
-/// Flutter intentionally refuses to show an IME for TextInputType.none, so the
-/// Android activity owns only the native show/restart operation. Composition
-/// and committed text still flow through Flutter's TextInputClient in Dart.
+/// Android uses a character editor so Flutter's editable state can expose IME
+/// deletion as semantic terminal actions. This mirrors Termux's optional
+/// character-based input strategy. The Android activity still owns only the
+/// delayed native show/restart operation; composition and committed text remain
+/// in Flutter's TextInputClient in Dart.
 final class TerminalPlatformInput {
   const TerminalPlatformInput({this.platformOverride});
 
@@ -18,13 +19,13 @@ final class TerminalPlatformInput {
 
   TargetPlatform get platform => platformOverride ?? defaultTargetPlatform;
 
-  bool get usesAndroidTerminalEditor => platform == TargetPlatform.android;
+  bool get usesAndroidImeHost => platform == TargetPlatform.android;
 
   TextInputType get inputType =>
-      usesAndroidTerminalEditor ? TextInputType.none : TextInputType.text;
+      usesAndroidImeHost ? TextInputType.visiblePassword : TextInputType.text;
 
   Future<void> show(VoidCallback flutterShow) async {
-    if (usesAndroidTerminalEditor) {
+    if (usesAndroidImeHost) {
       await _androidIme.invokeMethod<void>('show');
       return;
     }

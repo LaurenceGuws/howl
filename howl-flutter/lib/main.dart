@@ -92,6 +92,17 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       onCommit: (text) {
         _queueControl((control) => control.sendCommittedText(text));
       },
+      onEditKey: (key) {
+        final keyName = switch (key) {
+          TerminalEditKey.enter => HowlWire.namedEnter,
+          TerminalEditKey.backspace => HowlWire.namedBackspace,
+          TerminalEditKey.delete => HowlWire.namedDelete,
+        };
+        _queueControl(
+          (control) =>
+              control.sendNamedKey(keyName: keyName, action: HowlWire.keyPress),
+        );
+      },
     );
     unawaited(_observe());
   }
@@ -456,16 +467,16 @@ Color rgbaColor(HowlRgba value) =>
     Color.fromARGB(value.a, value.r, value.g, value.b);
 
 final howlNamedKeys = <PhysicalKeyboardKey, int>{
-  PhysicalKeyboardKey.enter: 1,
+  PhysicalKeyboardKey.enter: HowlWire.namedEnter,
   PhysicalKeyboardKey.tab: 2,
-  PhysicalKeyboardKey.backspace: 3,
+  PhysicalKeyboardKey.backspace: HowlWire.namedBackspace,
   PhysicalKeyboardKey.escape: 4,
   PhysicalKeyboardKey.arrowUp: 5,
   PhysicalKeyboardKey.arrowDown: 6,
   PhysicalKeyboardKey.arrowLeft: 7,
   PhysicalKeyboardKey.arrowRight: 8,
   PhysicalKeyboardKey.insert: 9,
-  PhysicalKeyboardKey.delete: 10,
+  PhysicalKeyboardKey.delete: HowlWire.namedDelete,
   PhysicalKeyboardKey.home: 11,
   PhysicalKeyboardKey.end: 12,
   PhysicalKeyboardKey.pageUp: 13,

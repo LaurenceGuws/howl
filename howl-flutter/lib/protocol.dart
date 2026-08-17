@@ -49,6 +49,9 @@ final class HowlWire {
   static const keyPress = 1;
   static const keyRepeat = 2;
   static const keyRelease = 3;
+  static const namedEnter = 1;
+  static const namedBackspace = 3;
+  static const namedDelete = 10;
   static const allFeatures =
       gridSnapshot | typedInput | resizeLeader | historyWindow | textSnapshot;
   static const gridV1 = 1;

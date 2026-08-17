@@ -14,11 +14,13 @@ shell, network/auth layer, or session lifetime.
 Canonical resize is opt-in. With `HOWL_GEOMETRY_LEADER=1`, this client explicitly
 assigns its control connection as resize leader before sending rows/columns.
 Without that flag, window resizing is presentation-only. Platform text input now
-stages active IME composition locally and sends only committed Unicode text through
-the existing committed-text input lane. Printable text is never inferred from
-physical key labels. Soft-keyboard editing actions such as Enter, Backspace, Delete,
-suggestions, and autocorrect remain deliberately unclaimed. Android pressure has
-proved the composition-safe committed-text lane itself through a real platform IME.
+stages active IME composition locally and sends committed Unicode through the
+existing committed-text lane. Printable text is never inferred from physical key
+labels. The editor keeps two private guard scalars around the platform cursor so
+IME document edits become observable without leaking editor state: left/right guard
+deletion maps to semantic Backspace/Delete, while committed CR/LF maps to semantic
+Enter. Stock Android LatinIME has proved Backspace, Enter, and printable text through
+that path; suggestions and autocorrect remain deliberately disabled.
 
 Run a Linux client against a loopback TCP session with:
 
@@ -27,13 +29,14 @@ HOWL_ENDPOINT=tcp://127.0.0.1:43127 flutter run -d linux
 ```
 
 For Android, networking remains `dart:io`; there is no Kotlin networking, protocol,
-or terminal implementation. The one native leaf is IME visibility. Android terminal
-text intentionally advertises `TYPE_NULL` through Flutter `TextInputType.none`,
-matching Termux's default terminal editor contract. Flutter normally suppresses the
-IME for that type, so `MainActivity` receives one `show` MethodChannel request and
-applies the Termux-shaped native sequence to the real `FlutterView`: coalesced 300 ms
-delay, `requestFocus`, `restartInput`, then `showSoftInput(view, 0)`. Composition and
-committed Unicode remain entirely in Dart's `TextInputClient`.
+or terminal implementation. The one native leaf is IME visibility. Android uses
+Flutter's visible-password/no-suggestions character editor, matching the intent of
+Termux's optional `enforce-char-based-input` mode rather than its default `TYPE_NULL`
+path. That lets Flutter expose document deletion to Dart while keeping suggestions
+out of the terminal editor. `MainActivity` receives one `show` MethodChannel request
+and applies the Termux-shaped native sequence to the real `FlutterView`: coalesced
+300 ms delay, `requestFocus`, `restartInput`, then `showSoftInput(view, 0)`. All
+composition, committed Unicode, and terminal edit semantics remain in Dart.
 
 The Android shell otherwise remains the stock `FlutterActivity` embedding plus the
 normal `INTERNET` permission. A Termux-owned `howl-sessiond` on the same phone can
