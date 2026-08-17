@@ -65,10 +65,11 @@ const Server = struct {
     fn init(
         allocator: std.mem.Allocator,
         io: std.Io,
+        inherited_environment: std.process.Environ,
         socket_path: []const u8,
         launch: howl.Launch,
     ) !Server {
-        const session = try howl.init(allocator, launch);
+        const session = try howl.init(allocator, inherited_environment, launch);
         errdefer howl.deinit(session);
         const listener = try listenUnix(socket_path);
         errdefer closeFd(listener);
@@ -620,7 +621,7 @@ pub fn main(init: std.process.Init) error{
     if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
     const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
     const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
-    var server = Server.init(std.heap.page_allocator, init.io, std.mem.span(argv[1]), .{
+    var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, std.mem.span(argv[1]), .{
         .shell = std.mem.span(argv[2]),
         .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
         .rows = rows,
@@ -923,7 +924,7 @@ test "Unix clients share one session and explicit geometry authority" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-shared.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
         .rows = 8,
@@ -1020,7 +1021,7 @@ test "slow Unix observer cannot pace PTY or healthy client" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-slow.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; cat",
         .rows = 512,
@@ -1062,7 +1063,7 @@ test "oversized observation is local rejection not session failure" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(&path_buffer, "/tmp/howl-session-{d}-oversize.sock", .{linux.getpid()});
     unlinkPath(path);
-    var server = try Server.init(std.testing.allocator, std.testing.io, path, .{
+    var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, path, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; printf 'ALIVE\\n'; cat",
         .rows = 512,

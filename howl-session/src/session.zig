@@ -84,11 +84,15 @@ pub const Service = struct {
     write_pending: bool,
 };
 
-/// Constructs one PTY and VT owner and returns its opaque handle.
-pub fn init(allocator: std.mem.Allocator, launch: Launch) InitError!*Session {
+/// Constructs one PTY and VT owner from an explicit inherited environment.
+pub fn init(
+    allocator: std.mem.Allocator,
+    inherited_environment: std.process.Environ,
+    launch: Launch,
+) InitError!*Session {
     const state = try allocator.create(State);
     errdefer allocator.destroy(state);
-    state.* = try State.init(allocator, launch);
+    state.* = try State.init(allocator, inherited_environment, launch);
     return @ptrCast(state);
 }
 
@@ -232,10 +236,15 @@ const State = struct {
     child_exit: ?ChildExit = null,
     stream_closed: bool = false,
 
-    fn init(allocator: std.mem.Allocator, launch: Launch) InitError!State {
+    fn init(
+        allocator: std.mem.Allocator,
+        inherited_environment: std.process.Environ,
+        launch: Launch,
+    ) InitError!State {
         if (launch.rows == 0 or launch.columns == 0) return error.InvalidDimensions;
         var transport = try pty.Owned.init(
             allocator,
+            inherited_environment,
             launch.shell,
             launch.command,
             launch.cwd,
@@ -467,7 +476,7 @@ fn serviceUntilContains(session: *Session, needle: []const u8) !void {
 }
 
 test "headless session drains host consequences without an observer" {
-    const session = try init(std.testing.allocator, .{
+    const session = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "cat",
         .rows = 4,
@@ -495,7 +504,7 @@ test "headless session drains host consequences without an observer" {
 }
 
 test "one PTY and VT remain canonical for independent observers" {
-    const session = try init(std.testing.allocator, .{
+    const session = try init(std.testing.allocator, std.testing.environ, .{
         .shell = "/bin/sh",
         .command = "stty -echo; printf 'READY\\n'; cat",
         .rows = 8,

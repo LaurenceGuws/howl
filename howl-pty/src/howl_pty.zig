@@ -5,43 +5,8 @@ const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
 
-const c = @import("pty_c");
-
 const linux_nonblock_flag: c_int = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
 const control_character_disabled: posix.cc_t = 0;
-const CWinSize = @typeInfo(@typeInfo(@TypeOf(c.openpty)).@"fn".param_types[4].?).pointer.child;
-const CTermios = @typeInfo(@typeInfo(@TypeOf(c.openpty)).@"fn".param_types[3].?).pointer.child;
-const CTermiosInputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_0);
-const CTermiosOutputSpeed = @TypeOf(@as(CTermios, undefined).unnamed_1);
-const CTermiosInputSpeedValue = @TypeOf(@as(CTermiosInputSpeed, undefined).c_ispeed);
-const CTermiosOutputSpeedValue = @TypeOf(@as(CTermiosOutputSpeed, undefined).c_ospeed);
-
-comptime {
-    if (@sizeOf(posix.winsize) != @sizeOf(CWinSize) or
-        @alignOf(posix.winsize) != @alignOf(CWinSize) or
-        @offsetOf(posix.winsize, "row") != @offsetOf(CWinSize, "ws_row") or
-        @offsetOf(posix.winsize, "col") != @offsetOf(CWinSize, "ws_col") or
-        @offsetOf(posix.winsize, "xpixel") != @offsetOf(CWinSize, "ws_xpixel") or
-        @offsetOf(posix.winsize, "ypixel") != @offsetOf(CWinSize, "ws_ypixel"))
-        @compileError("posix.winsize/openpty layout mismatch");
-    if (@sizeOf(posix.termios) != @sizeOf(CTermios) or
-        @alignOf(posix.termios) != @alignOf(CTermios) or
-        @offsetOf(posix.termios, "iflag") != @offsetOf(CTermios, "c_iflag") or
-        @offsetOf(posix.termios, "oflag") != @offsetOf(CTermios, "c_oflag") or
-        @offsetOf(posix.termios, "cflag") != @offsetOf(CTermios, "c_cflag") or
-        @offsetOf(posix.termios, "lflag") != @offsetOf(CTermios, "c_lflag") or
-        @offsetOf(posix.termios, "line") != @offsetOf(CTermios, "c_line") or
-        @offsetOf(posix.termios, "cc") != @offsetOf(CTermios, "c_cc") or
-        @offsetOf(posix.termios, "ispeed") != @offsetOf(CTermios, "unnamed_0") or
-        @offsetOf(posix.termios, "ospeed") != @offsetOf(CTermios, "unnamed_1") or
-        @sizeOf(CTermiosInputSpeedValue) != @sizeOf(posix.speed_t) or
-        @sizeOf(CTermiosOutputSpeedValue) != @sizeOf(posix.speed_t) or
-        @alignOf(CTermiosInputSpeedValue) != @alignOf(posix.speed_t) or
-        @alignOf(CTermiosOutputSpeedValue) != @alignOf(posix.speed_t) or
-        !@hasField(CTermiosInputSpeed, "c_ispeed") or
-        !@hasField(CTermiosOutputSpeed, "c_ospeed"))
-        @compileError("posix.termios/tcgetattr layout mismatch");
-}
 
 const RawIoResult = union(enum) {
     success: usize,
@@ -409,18 +374,42 @@ fn childLaunchError(value: u8) StartError {
 }
 
 fn openTransport(cols: u16, rows: u16) StartError!Open {
-    var master_fd: c_int = -1;
-    var slave_fd: c_int = -1;
+    const master_raw = linux.open(
+        "/dev/ptmx",
+        .{ .ACCMODE = .RDWR, .NOCTTY = true, .CLOEXEC = true },
+        0,
+    );
+    if (linux.errno(master_raw) != .SUCCESS) return error.OpenPtyFailed;
+    const master_fd: posix.fd_t = @intCast(master_raw);
+    errdefer closeOwned(master_fd);
+
+    var unlock: c_int = 0;
+    if (!ioctlSucceeded(linux.ioctl(master_fd, linux.T.IOCSPTLCK, @intFromPtr(&unlock))))
+        return error.OpenPtyFailed;
+
+    const slave_flags: usize = @as(u32, @bitCast(linux.O{
+        .ACCMODE = .RDWR,
+        .NOCTTY = true,
+        .CLOEXEC = true,
+    }));
+    const slave_raw = linux.ioctl(
+        master_fd,
+        linux.T.IOCGPTPEER,
+        slave_flags,
+    );
+    if (linux.errno(slave_raw) != .SUCCESS) return error.OpenPtyFailed;
+    const slave_fd: posix.fd_t = @intCast(slave_raw);
+    errdefer closeOwned(slave_fd);
+
     var winsize = posix.winsize{
         .row = rows,
         .col = cols,
         .xpixel = 0,
         .ypixel = 0,
     };
-    if (c.openpty(&master_fd, &slave_fd, null, null, @ptrCast(&winsize)) != 0) {
+    if (!ioctlSucceeded(linux.ioctl(slave_fd, linux.T.IOCSWINSZ, @intFromPtr(&winsize))))
         return error.OpenPtyFailed;
-    }
-    return .{ .master_fd = @intCast(master_fd), .slave_fd = @intCast(slave_fd) };
+    return .{ .master_fd = master_fd, .slave_fd = slave_fd };
 }
 
 /// Owns copied launch values, one Linux PTY, and its child process group.
@@ -456,6 +445,7 @@ pub const Owned = struct {
     /// Copies launch strings and initializes an idle PTY owner.
     pub fn init(
         allocator: std.mem.Allocator,
+        inherited_environment: std.process.Environ,
         shell_path: []const u8,
         command: ?[]const u8,
         start_path: ?[]const u8,
@@ -465,8 +455,7 @@ pub const Owned = struct {
 
         var inherited: [environment_max_entries][]const u8 = undefined;
         var inherited_count: usize = 0;
-        var cursor = std.c.environ;
-        while (cursor[0]) |entry| : (cursor += 1) {
+        for (inherited_environment.block.view().slice) |entry| {
             if (inherited_count == inherited.len) return error.EnvironmentCountLimit;
             inherited[inherited_count] = std.mem.span(entry);
             inherited_count += 1;
@@ -565,13 +554,13 @@ pub const Owned = struct {
     }
 
     fn configureMaster(master_fd: posix.fd_t) StartError!void {
-        setCloseOnExec(master_fd) catch return error.MasterConfigureFailed;
         setNonBlocking(master_fd) catch return error.MasterConfigureFailed;
     }
 
     fn forkChild(self: *Self, transport: Open, pipes: StartPipes) StartError!posix.pid_t {
-        const pid = posix.system.fork();
-        if (pid < 0) return error.ForkFailed;
+        const fork_result = linux.fork();
+        if (linux.errno(fork_result) != .SUCCESS) return error.ForkFailed;
+        const pid: posix.pid_t = @intCast(fork_result);
         if (pid == 0) {
             if (!closeChildFdIfNeeded(pipes.launch_status.read_fd)) {
                 childLaunchExit(pipes.launch_status.write_fd, .stdio);
@@ -903,7 +892,7 @@ fn resetChildSignalDispositions() bool {
         posix.SIG.PIPE, posix.SIG.QUIT, posix.SIG.SEGV, posix.SIG.TERM,
         posix.SIG.TRAP,
     }) |signal| {
-        if (posix.system.sigaction(signal, @ptrCast(&sa), null) != 0) return false;
+        if (linux.errno(linux.sigaction(signal, &sa, null)) != .SUCCESS) return false;
     }
     return true;
 }
@@ -1112,7 +1101,7 @@ fn descriptorCount() !usize {
 }
 
 fn initAllocation(allocator: std.mem.Allocator) !void {
-    var owned = try Owned.init(allocator, "/bin/sh", "printf allocation", "/tmp", test_environment);
+    var owned = try Owned.init(allocator, std.testing.environ, "/bin/sh", "printf allocation", "/tmp", test_environment);
     owned.deinit();
 }
 
@@ -1252,7 +1241,7 @@ test "child receives selected identities and retained environment across restart
 
 test "idle owner rejects descriptors and dimensions before start" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "cat", null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "cat", null, test_environment);
     defer owned.deinit();
     var buffer: [16]u8 = undefined;
     try std.testing.expectError(error.NotStarted, owned.masterFd());
@@ -1268,6 +1257,7 @@ test "start rejects unavailable and duplicate child transitions without descript
     const before = try descriptorCount();
     var unavailable = try Owned.init(
         std.testing.allocator,
+        std.testing.environ,
         "/definitely/missing/howl-shell",
         null,
         null,
@@ -1279,6 +1269,7 @@ test "start rejects unavailable and duplicate child transitions without descript
 
     var invalid_cwd = try Owned.init(
         std.testing.allocator,
+        std.testing.environ,
         "/bin/sh",
         null,
         "/definitely/missing/howl-cwd",
@@ -1289,12 +1280,12 @@ test "start rejects unavailable and duplicate child transitions without descript
     try std.testing.expectEqual(before, try descriptorCount());
 
     // A searchable executable directory passes access(X_OK) but cannot execve.
-    var unlaunchable = try Owned.init(std.testing.allocator, "/tmp", null, null, test_environment);
+    var unlaunchable = try Owned.init(std.testing.allocator, std.testing.environ, "/tmp", null, null, test_environment);
     try std.testing.expectError(error.ChildExecFailed, unlaunchable.start(test_cols, test_rows));
     unlaunchable.deinit();
     try std.testing.expectEqual(before, try descriptorCount());
 
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 30", null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "sleep 30", null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try std.testing.expectError(error.AlreadyStarted, owned.start(test_cols, test_rows));
@@ -1305,7 +1296,7 @@ test "resize write and process-group signal share one owner" {
     const command =
         "trap 'printf interrupted; exit 0' INT; printf ready; read line; " ++
         "stty size; printf '%s' \"$line\"; while :; do sleep 1; done";
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", command, null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
@@ -1323,7 +1314,7 @@ test "foreground termios assignments route exact bytes to process-group signals"
         "stty intr '^X' quit '^Y' susp '^Z'; " ++
         "trap 'printf interrupt' INT; trap 'printf quit' QUIT; trap 'printf suspend' TSTP; " ++
         "printf ready; while :; do sleep 1; done";
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", command, null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", command, null, test_environment);
     defer owned.deinit();
     try std.testing.expectError(error.NotStarted, owned.handleTermiosSignal(0x18));
     try owned.start(test_cols, test_rows);
@@ -1338,6 +1329,7 @@ test "foreground termios assignments route exact bytes to process-group signals"
 
     var disabled = try Owned.init(
         std.testing.allocator,
+        std.testing.environ,
         "/bin/sh",
         "stty -isig; printf ready; sleep 30",
         null,
@@ -1351,7 +1343,7 @@ test "foreground termios assignments route exact bytes to process-group signals"
 
 test "failed termios query preserves owner state and delivers no signal" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "trap 'printf trapped' INT; printf ready; sleep 30", null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "trap 'printf trapped' INT; printf ready; sleep 30", null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try expectOutput(&owned, "ready");
@@ -1385,47 +1377,24 @@ test "failed termios query preserves owner state and delivers no signal" {
     }
 }
 
-test "translated syscall census is migrated while openpty remains" {
-    var input_speed: CTermiosInputSpeed = undefined;
-    var output_speed: CTermiosOutputSpeed = undefined;
-    try std.testing.expectEqual(@intFromPtr(&input_speed), @intFromPtr(&input_speed.c_ispeed));
-    try std.testing.expectEqual(@intFromPtr(&output_speed), @intFromPtr(&output_speed.c_ospeed));
+test "PTY owner has no libc or C shim dependency" {
     const source = @embedFile("howl_pty.zig");
     inline for (.{
-        "FD_CLOEXEC", "F_GETFD",    "F_GETFL",         "F_SETFD",        "F_SETFL",        "WNOHANG",   "X_OK",
-        "TIOCSCTTY",  "TIOCSWINSZ", "ISIG",            "SIGINT",         "SIGQUIT",        "SIGTSTP",   "VINTR",
-        "VQUIT",      "VSUSP",      "_POSIX_VDISABLE", "struct_termios", "struct_winsize", "access",    "chdir",
-        "close",      "dup2",       "execve",          "fcntl",          "fork",           "ioctl",     "kill",
-        "pipe",       "read",       "setsid",          "sigaction",      "tcgetattr",      "tcgetpgrp", "waitpid",
-        "write",
-    }) |name| {
+        .{ "pty", "_c" },
+        .{ "std", ".c." },
+        .{ "posix.system.", "fork" },
+        .{ "posix.system.", "sigaction" },
+        .{ "open", "pty(" },
+    }) |parts| {
         var token: [64]u8 = undefined;
-        const rendered = try std.fmt.bufPrint(&token, "c.{s}", .{name});
+        const rendered = try std.fmt.bufPrint(&token, "{s}{s}", .{ parts[0], parts[1] });
         try std.testing.expect(std.mem.indexOf(u8, source, rendered) == null);
     }
-    var openpty_token: [32]u8 = undefined;
-    const rendered_openpty = try std.fmt.bufPrint(&openpty_token, "c.{s}", .{"openpty("});
-    try std.testing.expectEqual(@as(usize, 1), std.mem.count(u8, source, rendered_openpty));
+    inline for (.{ "/dev/ptmx", "IOCSPTLCK", "IOCGPTPEER" }) |token|
+        try std.testing.expect(std.mem.indexOf(u8, source, token) != null);
 }
 
 test "raw syscall classifiers preserve bounded owner dispositions" {
-    const LibcFork = *const fn () callconv(.c) c_int;
-    const LibcSigaction = *const fn (
-        posix.SIG,
-        noalias ?*const posix.Sigaction,
-        noalias ?*posix.Sigaction,
-    ) callconv(.c) c_int;
-    const libc_fork_surface: LibcFork = posix.system.fork;
-    const libc_sigaction_surface: LibcSigaction = posix.system.sigaction;
-    const LinuxExit = *const fn (i32) noreturn;
-    const LinuxNanosleep = *const fn (*const linux.timespec, ?*linux.timespec) usize;
-    const linux_exit_surface: LinuxExit = linux.exit;
-    const linux_nanosleep_surface: LinuxNanosleep = linux.nanosleep;
-    try std.testing.expectEqual(@intFromPtr(&posix.system.fork), @intFromPtr(libc_fork_surface));
-    try std.testing.expectEqual(@intFromPtr(&posix.system.sigaction), @intFromPtr(libc_sigaction_surface));
-    try std.testing.expectEqual(@intFromPtr(&linux.exit), @intFromPtr(linux_exit_surface));
-    try std.testing.expectEqual(@intFromPtr(&linux.nanosleep), @intFromPtr(linux_nanosleep_surface));
-
     try std.testing.expectEqual(@as(usize, 4), try mapReadResult(4, 8));
     try std.testing.expectError(error.EndOfStream, mapReadResult(0, 8));
     try std.testing.expectError(error.ReadFailed, mapReadResult(9, 8));
@@ -1496,7 +1465,7 @@ test "child exit and cleanup sleep retain bounded conversion semantics" {
 
 test "failed ioctl preserves accepted dimensions" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", null, null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", null, null, test_environment);
     defer owned.deinit();
     owned.master_fd = -1;
     defer owned.master_fd = null;
@@ -1507,9 +1476,9 @@ test "failed ioctl preserves accepted dimensions" {
 
 test "multiple owners interleave output through one caller poll set" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var first = try Owned.init(std.testing.allocator, "/bin/sh", "printf first; sleep 1", null, test_environment);
+    var first = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "printf first; sleep 1", null, test_environment);
     defer first.deinit();
-    var second = try Owned.init(std.testing.allocator, "/bin/sh", "printf second; sleep 1", null, test_environment);
+    var second = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "printf second; sleep 1", null, test_environment);
     defer second.deinit();
     try first.start(test_cols, test_rows);
     try second.start(test_cols, test_rows);
@@ -1554,7 +1523,7 @@ test "multiple owners interleave output through one caller poll set" {
 
 test "nonblocking write preserves empty and partial outcomes for caller retry" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var owned = try Owned.init(std.testing.allocator, "/bin/sh", "stty raw -echo; kill -STOP $$", null, test_environment);
+    var owned = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "stty raw -echo; kill -STOP $$", null, test_environment);
     defer owned.deinit();
     try owned.start(test_cols, test_rows);
     try std.testing.expectEqual(@as(usize, 0), try owned.write(""));
@@ -1580,7 +1549,7 @@ test "nonblocking write preserves empty and partial outcomes for caller retry" {
     }
     try std.testing.expect(saw_would_block);
 
-    var draining = try Owned.init(std.testing.allocator, "/bin/sh", "cat >/dev/null", null, test_environment);
+    var draining = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "cat >/dev/null", null, test_environment);
     defer draining.deinit();
     try draining.start(test_cols, test_rows);
     const retry_bytes = bytes[0 .. 64 * 1024];
@@ -1603,7 +1572,7 @@ test "nonblocking write preserves empty and partial outcomes for caller retry" {
 
 test "child observation distinguishes running normal exit and signal exit while draining" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var normal = try Owned.init(std.testing.allocator, "/bin/sh", "printf final; exit 7", null, test_environment);
+    var normal = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "printf final; exit 7", null, test_environment);
     defer normal.deinit();
     try normal.start(test_cols, test_rows);
     var normal_exit: ?ChildObservation = null;
@@ -1642,7 +1611,7 @@ test "child observation distinguishes running normal exit and signal exit while 
     }
     try std.testing.expect(saw_final);
 
-    var signaled = try Owned.init(std.testing.allocator, "/bin/sh", "sleep 30", null, test_environment);
+    var signaled = try Owned.init(std.testing.allocator, std.testing.environ, "/bin/sh", "sleep 30", null, test_environment);
     defer signaled.deinit();
     try signaled.start(test_cols, test_rows);
     try std.testing.expectEqual(SignalResult.delivered, signaled.signal(.terminate));

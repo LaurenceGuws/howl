@@ -2,7 +2,7 @@
 
 Howl is a small native Zig terminal family for persistent Unix work shared by humans and agents.
 
-The core idea is simple: **the session lives on the node, not in the client.** One session owns one authoritative PTY and one authoritative VT. Linux, Android, agents, and later iOS clients attach to that same work instead of reconstructing terminal truth from byte streams or duplicating terminal state.
+The core idea is simple: **the session lives on the node, not in the client.** One session owns one authoritative PTY and one authoritative VT. Linux and Android nodes can own that work; Linux, Android, agents, and later iOS clients attach to it instead of reconstructing terminal truth from byte streams or duplicating terminal state.
 
 ## Core
 
@@ -10,7 +10,7 @@ The core idea is simple: **the session lives on the node, not in the client.** O
 | --- | --- |
 | `howl-vt` | Terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences |
 | `howl-session` | One canonical PTY/VT lifetime, ordered I/O, explicit geometry, signals, child state, and headless policy |
-| `howl-pty` | Linux PTY transport and child-process lifecycle |
+| `howl-pty` | Linux-kernel PTY transport and child-process lifecycle, used directly on Linux and Android |
 
 `howl-text` is the next intended core package.
 
