@@ -65,6 +65,7 @@ pub fn feature(feature_value: Feature) u64 {
 
 /// Features implemented by the current endpoint contract.
 pub const supported_features = feature(.grid_snapshot) |
+    feature(.typed_input) |
     feature(.resize_leader) |
     feature(.history_window) |
     feature(.text_snapshot);
@@ -114,6 +115,184 @@ pub const InputKind = enum(u8) {
     key = 3,
     mouse = 4,
     focus = 5,
+};
+
+/// Distinguishes named physical keys from Unicode physical-key identities.
+pub const InputKeyKind = enum(u8) {
+    named = 1,
+    unicode = 2,
+};
+
+/// Stable language-neutral names for physical keys with non-Unicode identity.
+pub const InputKeyName = enum(u8) {
+    enter = 1,
+    tab = 2,
+    backspace = 3,
+    escape = 4,
+    up = 5,
+    down = 6,
+    left = 7,
+    right = 8,
+    insert = 9,
+    delete = 10,
+    home = 11,
+    end = 12,
+    page_up = 13,
+    page_down = 14,
+    left_shift = 15,
+    right_shift = 16,
+    left_control = 17,
+    right_control = 18,
+    left_alt = 19,
+    right_alt = 20,
+    left_super = 21,
+    right_super = 22,
+    left_hyper = 23,
+    right_hyper = 24,
+    left_meta = 25,
+    right_meta = 26,
+    caps_lock = 27,
+    num_lock = 28,
+    f1 = 29,
+    f2 = 30,
+    f3 = 31,
+    f4 = 32,
+    f5 = 33,
+    f6 = 34,
+    f7 = 35,
+    f8 = 36,
+    f9 = 37,
+    f10 = 38,
+    f11 = 39,
+    f12 = 40,
+    keypad_0 = 41,
+    keypad_1 = 42,
+    keypad_2 = 43,
+    keypad_3 = 44,
+    keypad_4 = 45,
+    keypad_5 = 46,
+    keypad_6 = 47,
+    keypad_7 = 48,
+    keypad_8 = 49,
+    keypad_9 = 50,
+    keypad_decimal = 51,
+    keypad_add = 52,
+    keypad_subtract = 53,
+    keypad_multiply = 54,
+    keypad_divide = 55,
+    keypad_separator = 56,
+    keypad_equal = 57,
+    keypad_enter = 58,
+};
+
+/// Stable physical-key transition actions.
+pub const InputKeyAction = enum(u8) {
+    press = 1,
+    repeat = 2,
+    release = 3,
+};
+
+/// Stable semantic mouse button identities.
+pub const InputMouseButton = enum(u8) {
+    none = 0,
+    left = 1,
+    middle = 2,
+    right = 3,
+    wheel_up = 4,
+    wheel_down = 5,
+};
+
+/// Stable semantic mouse event classes.
+pub const InputMouseKind = enum(u8) {
+    press = 1,
+    release = 2,
+    move = 3,
+    wheel = 4,
+};
+
+/// Stable semantic focus transitions.
+pub const InputFocus = enum(u8) {
+    in = 1,
+    out = 2,
+};
+
+/// One borrowed physical-key payload decoded from the typed-input wire grammar.
+pub const KeyInput = struct {
+    kind: InputKeyKind,
+    key_value: u32,
+    action: InputKeyAction,
+    modifiers: u8 = 0,
+    shifted: ?u32 = null,
+    alternate: ?u32 = null,
+    legacy_text: []const u8 = "",
+    text: []const u8 = "",
+};
+
+/// One semantic mouse payload decoded from the typed-input wire grammar.
+pub const MouseInput = struct {
+    kind: InputMouseKind,
+    button: InputMouseButton,
+    modifiers: u8 = 0,
+    buttons_down: u8 = 0,
+    row: i32,
+    column: u16,
+    pixel_x: ?u32 = null,
+    pixel_y: ?u32 = null,
+};
+
+/// Frozen byte grammar and bounds for capability-gated typed input.
+pub const typed_input = struct {
+    /// Fixed physical-key header before bounded legacy and committed-text bytes.
+    pub const key_header_bytes: usize = 20;
+    /// Maximum exact legacy key bytes while retaining canonical Meta prefix room.
+    pub const maximum_legacy_key_bytes: u16 = 511;
+    /// Maximum committed UTF-8 text carried by one physical key event.
+    pub const maximum_key_text_bytes: u8 = 64;
+    /// Fixed semantic mouse payload bytes.
+    pub const mouse_bytes: usize = 19;
+    /// Fixed focus payload bytes.
+    pub const focus_bytes: usize = 1;
+
+    /// Modifier bits, independent of any language's packed-struct layout.
+    pub const modifiers = struct {
+        /// Shift is held.
+        pub const shift: u8 = 1 << 0;
+        /// Alt/Option is held.
+        pub const alt: u8 = 1 << 1;
+        /// Control is held.
+        pub const control: u8 = 1 << 2;
+        /// Super/Command/Windows is held.
+        pub const super: u8 = 1 << 3;
+        /// Hyper is held.
+        pub const hyper: u8 = 1 << 4;
+        /// Meta is held.
+        pub const meta: u8 = 1 << 5;
+        /// Caps Lock is active.
+        pub const caps_lock: u8 = 1 << 6;
+        /// Num Lock is active.
+        pub const num_lock: u8 = 1 << 7;
+        /// Mask of every accepted modifier bit.
+        pub const known: u8 = shift | alt | control | super | hyper | meta |
+            caps_lock | num_lock;
+    };
+
+    /// Optional physical-key scalar fields.
+    pub const key_presence = struct {
+        /// Shift-produced Unicode identity is present.
+        pub const shifted: u8 = 1 << 0;
+        /// Alternate-layout Unicode identity is present.
+        pub const alternate: u8 = 1 << 1;
+        /// Mask of every accepted key-presence bit.
+        pub const known: u8 = shifted | alternate;
+    };
+
+    /// Optional mouse coordinate fields.
+    pub const mouse_presence = struct {
+        /// Both pixel coordinates are present.
+        pub const pixels: u8 = 1 << 0;
+        /// Mask of every accepted mouse-presence bit.
+        pub const known: u8 = pixels;
+    };
 };
 
 /// Signals accepted by the session process-group boundary.
@@ -510,6 +689,158 @@ pub fn decodeTextColor(input: *const [text_v1.color_bytes]u8) PayloadError!TextC
     return value;
 }
 
+/// Reports malformed typed input or insufficient caller-provided encode storage.
+pub const InputEncodeError = PayloadError || error{OutputTooSmall};
+
+/// Returns the exact typed-key body bytes after validating its canonical form.
+pub fn keyInputBytes(value: KeyInput) PayloadError!usize {
+    try validateKeyInput(value);
+    return typed_input.key_header_bytes + value.legacy_text.len + value.text.len;
+}
+
+/// Encodes one physical-key body after the outer `InputKind.key` byte.
+pub fn encodeKeyInput(output: []u8, value: KeyInput) InputEncodeError![]const u8 {
+    const needed = try keyInputBytes(value);
+    if (output.len < needed) return error.OutputTooSmall;
+    const encoded = output[0..needed];
+    @memset(encoded[0..typed_input.key_header_bytes], 0);
+    encoded[0] = @backingInt(value.kind);
+    encoded[1] = @backingInt(value.action);
+    encoded[2] = value.modifiers;
+    encoded[3] = (@as(u8, @intFromBool(value.shifted != null)) * typed_input.key_presence.shifted) |
+        (@as(u8, @intFromBool(value.alternate != null)) * typed_input.key_presence.alternate);
+    writeU32(encoded[4..8], value.key_value);
+    writeU32(encoded[8..12], value.shifted orelse 0);
+    writeU32(encoded[12..16], value.alternate orelse 0);
+    writeU16(encoded[16..18], @intCast(value.legacy_text.len));
+    writeU16(encoded[18..20], @intCast(value.text.len));
+    @memcpy(encoded[20 .. 20 + value.legacy_text.len], value.legacy_text);
+    @memcpy(encoded[20 + value.legacy_text.len ..], value.text);
+    return encoded;
+}
+
+/// Decodes one exact physical-key body and borrows its trailing text slices.
+pub fn decodeKeyInput(input: []const u8) PayloadError!KeyInput {
+    if (input.len < typed_input.key_header_bytes) return error.InvalidPayload;
+    const presence = input[3];
+    if (presence & ~typed_input.key_presence.known != 0) return error.InvalidPayload;
+    const legacy_len = readU16(input[16..18]);
+    const text_len = readU16(input[18..20]);
+    if (legacy_len > typed_input.maximum_legacy_key_bytes or
+        text_len > typed_input.maximum_key_text_bytes)
+        return error.InvalidPayload;
+    const expected = std.math.add(
+        usize,
+        typed_input.key_header_bytes,
+        @as(usize, legacy_len) + text_len,
+    ) catch return error.InvalidPayload;
+    if (input.len != expected) return error.InvalidPayload;
+    const shifted_raw = readU32(input[8..12]);
+    const alternate_raw = readU32(input[12..16]);
+    const value = KeyInput{
+        .kind = enumFromInt(InputKeyKind, input[0]) orelse return error.InvalidPayload,
+        .action = enumFromInt(InputKeyAction, input[1]) orelse return error.InvalidPayload,
+        .modifiers = input[2],
+        .key_value = readU32(input[4..8]),
+        .shifted = if (presence & typed_input.key_presence.shifted != 0)
+            shifted_raw
+        else if (shifted_raw == 0)
+            null
+        else
+            return error.InvalidPayload,
+        .alternate = if (presence & typed_input.key_presence.alternate != 0)
+            alternate_raw
+        else if (alternate_raw == 0)
+            null
+        else
+            return error.InvalidPayload,
+        .legacy_text = input[20 .. 20 + legacy_len],
+        .text = input[20 + legacy_len ..],
+    };
+    try validateKeyInput(value);
+    return value;
+}
+
+/// Encodes one semantic mouse body after the outer `InputKind.mouse` byte.
+pub fn encodeMouseInput(
+    output: *[typed_input.mouse_bytes]u8,
+    value: MouseInput,
+) PayloadError!void {
+    try validateMouseInput(value);
+    output.* = @splat(0);
+    output[0] = @backingInt(value.kind);
+    output[1] = @backingInt(value.button);
+    output[2] = value.modifiers;
+    output[3] = value.buttons_down;
+    writeI32(output[4..8], value.row);
+    writeU16(output[8..10], value.column);
+    if (value.pixel_x != null) output[10] = typed_input.mouse_presence.pixels;
+    writeU32(output[11..15], value.pixel_x orelse 0);
+    writeU32(output[15..19], value.pixel_y orelse 0);
+}
+
+/// Decodes one exact semantic mouse body.
+pub fn decodeMouseInput(input: []const u8) PayloadError!MouseInput {
+    if (input.len != typed_input.mouse_bytes or
+        input[10] & ~typed_input.mouse_presence.known != 0)
+        return error.InvalidPayload;
+    const pixels_present = input[10] & typed_input.mouse_presence.pixels != 0;
+    const pixel_x = readU32(input[11..15]);
+    const pixel_y = readU32(input[15..19]);
+    if (!pixels_present and (pixel_x != 0 or pixel_y != 0))
+        return error.InvalidPayload;
+    const value = MouseInput{
+        .kind = enumFromInt(InputMouseKind, input[0]) orelse return error.InvalidPayload,
+        .button = enumFromInt(InputMouseButton, input[1]) orelse return error.InvalidPayload,
+        .modifiers = input[2],
+        .buttons_down = input[3],
+        .row = readI32(input[4..8]),
+        .column = readU16(input[8..10]),
+        .pixel_x = if (pixels_present) pixel_x else null,
+        .pixel_y = if (pixels_present) pixel_y else null,
+    };
+    try validateMouseInput(value);
+    return value;
+}
+
+/// Encodes one semantic focus body after the outer `InputKind.focus` byte.
+pub fn encodeFocusInput(output: *[typed_input.focus_bytes]u8, value: InputFocus) void {
+    output[0] = @backingInt(value);
+}
+
+/// Decodes one exact semantic focus body.
+pub fn decodeFocusInput(input: []const u8) PayloadError!InputFocus {
+    if (input.len != typed_input.focus_bytes) return error.InvalidPayload;
+    return enumFromInt(InputFocus, input[0]) orelse error.InvalidPayload;
+}
+
+fn validateKeyInput(value: KeyInput) PayloadError!void {
+    switch (value.kind) {
+        .named => {
+            const wire_name = std.math.cast(u8, value.key_value) orelse
+                return error.InvalidPayload;
+            if (enumFromInt(InputKeyName, wire_name) == null) return error.InvalidPayload;
+        },
+        .unicode => try validateScalar(value.key_value),
+    }
+    if (value.shifted) |scalar| try validateScalar(scalar);
+    if (value.alternate) |scalar| try validateScalar(scalar);
+    if (value.legacy_text.len > typed_input.maximum_legacy_key_bytes or
+        value.text.len > typed_input.maximum_key_text_bytes or
+        !std.unicode.utf8ValidateSlice(value.text))
+        return error.InvalidPayload;
+}
+
+fn validateMouseInput(value: MouseInput) PayloadError!void {
+    if (value.buttons_down & ~@as(u8, 0b111) != 0) return error.InvalidPayload;
+    if ((value.pixel_x == null) != (value.pixel_y == null)) return error.InvalidPayload;
+}
+
+fn validateScalar(value: u32) PayloadError!void {
+    if (value > 0x10ffff or value >= 0xd800 and value <= 0xdfff)
+        return error.InvalidPayload;
+}
+
 /// Encodes one completed snapshot revision.
 pub fn encodeSnapshotEnd(output: *[payload_bytes.snapshot_end]u8, value: SnapshotEnd) void {
     writeU64(output, value.revision);
@@ -599,6 +930,10 @@ fn writeU32(output: []u8, value: u32) void {
     output[3] = @truncate(value);
 }
 
+fn writeI32(output: []u8, value: i32) void {
+    writeU32(output, @bitCast(value));
+}
+
 fn writeU16(output: []u8, value: u16) void {
     std.debug.assert(output.len == 2);
     output[0] = @truncate(value >> 8);
@@ -620,6 +955,10 @@ fn readU32(input: []const u8) u32 {
         (@as(u32, input[1]) << 16) |
         (@as(u32, input[2]) << 8) |
         @as(u32, input[3]);
+}
+
+fn readI32(input: []const u8) i32 {
+    return @bitCast(readU32(input));
 }
 
 fn readU16(input: []const u8) u16 {
@@ -751,15 +1090,157 @@ test "text_v1 record and color grammar is exact and hostile-safe" {
     try std.testing.expectError(error.InvalidPayload, decodeTextColor(&color));
 }
 
+test "typed key grammar is exact and rejects noncanonical payloads" {
+    const value = KeyInput{
+        .kind = .unicode,
+        .key_value = 'a',
+        .action = .repeat,
+        .modifiers = typed_input.modifiers.shift | typed_input.modifiers.control,
+        .shifted = 'A',
+        .alternate = 0x00e4,
+        .legacy_text = "\x1ba",
+        .text = "A",
+    };
+    var storage: [64]u8 = undefined;
+    const encoded = try encodeKeyInput(&storage, value);
+    try std.testing.expectEqualSlices(u8, &.{
+        0x02, 0x02, 0x05, 0x03,
+        0x00, 0x00, 0x00, 0x61,
+        0x00, 0x00, 0x00, 0x41,
+        0x00, 0x00, 0x00, 0xe4,
+        0x00, 0x02, 0x00, 0x01,
+        0x1b, 0x61, 0x41,
+    }, encoded);
+    const decoded = try decodeKeyInput(encoded);
+    try std.testing.expectEqual(value.kind, decoded.kind);
+    try std.testing.expectEqual(value.key_value, decoded.key_value);
+    try std.testing.expectEqual(value.action, decoded.action);
+    try std.testing.expectEqual(value.modifiers, decoded.modifiers);
+    try std.testing.expectEqual(value.shifted, decoded.shifted);
+    try std.testing.expectEqual(value.alternate, decoded.alternate);
+    try std.testing.expectEqualStrings(value.legacy_text, decoded.legacy_text);
+    try std.testing.expectEqualStrings(value.text, decoded.text);
+
+    var invalid = storage;
+    invalid[0] = 0xff;
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(invalid[0..encoded.len]));
+    invalid = storage;
+    invalid[1] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(invalid[0..encoded.len]));
+    invalid = storage;
+    invalid[3] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(invalid[0..encoded.len]));
+    invalid = storage;
+    invalid[4] = 0;
+    invalid[5] = 0;
+    invalid[6] = 0xd8;
+    invalid[7] = 0x00;
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(invalid[0..encoded.len]));
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(encoded[0 .. encoded.len - 1]));
+
+    var named_storage: [typed_input.key_header_bytes]u8 = undefined;
+    const named = try encodeKeyInput(&named_storage, .{
+        .kind = .named,
+        .key_value = @backingInt(InputKeyName.up),
+        .action = .press,
+    });
+    named_storage[7] = 59;
+    try std.testing.expectError(error.InvalidPayload, decodeKeyInput(named));
+
+    const bad_text = [_]u8{0xff};
+    try std.testing.expectError(error.InvalidPayload, keyInputBytes(.{
+        .kind = .unicode,
+        .key_value = 'x',
+        .action = .press,
+        .text = &bad_text,
+    }));
+    var maximum_legacy: [typed_input.maximum_legacy_key_bytes]u8 = @splat('x');
+    try std.testing.expectEqual(
+        typed_input.key_header_bytes + maximum_legacy.len,
+        try keyInputBytes(.{
+            .kind = .unicode,
+            .key_value = 'x',
+            .action = .press,
+            .legacy_text = &maximum_legacy,
+        }),
+    );
+    var oversized_legacy: [typed_input.maximum_legacy_key_bytes + 1]u8 = @splat('x');
+    try std.testing.expectError(error.InvalidPayload, keyInputBytes(.{
+        .kind = .unicode,
+        .key_value = 'x',
+        .action = .press,
+        .legacy_text = &oversized_legacy,
+    }));
+    var tiny: [typed_input.key_header_bytes - 1]u8 = undefined;
+    try std.testing.expectError(error.OutputTooSmall, encodeKeyInput(&tiny, .{
+        .kind = .unicode,
+        .key_value = 0,
+        .action = .press,
+    }));
+}
+
+test "typed mouse and focus grammars are exact and hostile-safe" {
+    const value = MouseInput{
+        .kind = .move,
+        .button = .none,
+        .modifiers = typed_input.modifiers.alt,
+        .buttons_down = 0b101,
+        .row = -2,
+        .column = 0x1234,
+        .pixel_x = 0x0102_0304,
+        .pixel_y = 0xa1a2_a3a4,
+    };
+    var encoded: [typed_input.mouse_bytes]u8 = undefined;
+    try encodeMouseInput(&encoded, value);
+    try std.testing.expectEqualSlices(u8, &.{
+        0x03, 0x00, 0x02, 0x05,
+        0xff, 0xff, 0xff, 0xfe,
+        0x12, 0x34, 0x01, 0x01,
+        0x02, 0x03, 0x04, 0xa1,
+        0xa2, 0xa3, 0xa4,
+    }, &encoded);
+    try std.testing.expectEqualDeep(value, try decodeMouseInput(&encoded));
+
+    var invalid = encoded;
+    invalid[0] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeMouseInput(&invalid));
+    invalid = encoded;
+    invalid[1] = 0xff;
+    try std.testing.expectError(error.InvalidPayload, decodeMouseInput(&invalid));
+    invalid = encoded;
+    invalid[3] = 0x80;
+    try std.testing.expectError(error.InvalidPayload, decodeMouseInput(&invalid));
+    invalid = encoded;
+    invalid[10] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeMouseInput(&invalid));
+    try std.testing.expectError(error.InvalidPayload, encodeMouseInput(&encoded, .{
+        .kind = .press,
+        .button = .left,
+        .row = 0,
+        .column = 0,
+        .pixel_x = 1,
+    }));
+
+    var focus: [typed_input.focus_bytes]u8 = undefined;
+    encodeFocusInput(&focus, .in);
+    try std.testing.expectEqualSlices(u8, &.{1}, &focus);
+    try std.testing.expectEqual(InputFocus.in, try decodeFocusInput(&focus));
+    focus[0] = 3;
+    try std.testing.expectError(error.InvalidPayload, decodeFocusInput(&focus));
+}
+
 test "version negotiation is explicit before protocol v1" {
     try std.testing.expectEqual(@as(?u16, 1), negotiateVersion(.{}));
     try std.testing.expectEqual(@as(?u16, 1), negotiateVersion(.{ .min_version = 0, .max_version = 2 }));
     try std.testing.expectEqual(@as(?u16, null), negotiateVersion(.{ .min_version = 2, .max_version = 3 }));
     try std.testing.expectEqual(@as(?u16, null), negotiateVersion(.{ .min_version = 2, .max_version = 1 }));
     try std.testing.expectEqual(supported_features, negotiateFeatures(.{}));
-    try std.testing.expectEqual(feature(.resize_leader), negotiateFeatures(.{
-        .features = feature(.resize_leader) | feature(.typed_input),
-    }));
+    try std.testing.expectEqual(
+        feature(.resize_leader) | feature(.typed_input),
+        negotiateFeatures(.{
+            .features = feature(.resize_leader) | feature(.typed_input),
+        }),
+    );
 }
 
 test "resize leadership is explicit and disappears with its client" {

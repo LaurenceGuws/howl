@@ -25,6 +25,10 @@ comptime {
         @compileError("text_v1 hyperlink identity bound must match canonical VT bound");
     if (howl.maximum_hyperlink_uri_bytes != protocol.text_v1.maximum_hyperlink_uri_bytes)
         @compileError("text_v1 hyperlink URI bound must match canonical VT bound");
+    if (howl.maximum_key_text_bytes != protocol.typed_input.maximum_key_text_bytes)
+        @compileError("typed key committed-text bound must match canonical VT bound");
+    if (howl.maximum_legacy_key_bytes != protocol.typed_input.maximum_legacy_key_bytes)
+        @compileError("typed key legacy-text bound must match canonical VT scratch bound");
 }
 
 const Client = struct {
@@ -336,7 +340,53 @@ const Server = struct {
         const event: howl.Input = switch (kind) {
             .bytes => .{ .bytes = payload[1..] },
             .paste => .{ .paste = payload[1..] },
-            .key, .mouse, .focus => return self.queueResult(client, .input, .unsupported),
+            .key => blk: {
+                if (client.features & protocol.feature(.typed_input) == 0)
+                    return self.queueResult(client, .input, .unsupported);
+                const value = protocol.decodeKeyInput(payload[1..]) catch
+                    return self.queueResult(client, .input, .malformed);
+                const key: howl.Key = switch (value.kind) {
+                    .named => .{ .named = typedKeyName(value.key_value) orelse
+                        return self.queueResult(client, .input, .malformed) },
+                    .unicode => howl.Key.initUnicode(@intCast(value.key_value)) catch
+                        return self.queueResult(client, .input, .malformed),
+                };
+                break :blk .{ .key = .{
+                    .key = key,
+                    .mods = typedModifiers(value.modifiers),
+                    .action = typedKeyAction(value.action),
+                    .shifted = if (value.shifted) |scalar| @intCast(scalar) else null,
+                    .alternate = if (value.alternate) |scalar| @intCast(scalar) else null,
+                    .legacy_text = value.legacy_text,
+                    .text = value.text,
+                } };
+            },
+            .mouse => blk: {
+                if (client.features & protocol.feature(.typed_input) == 0)
+                    return self.queueResult(client, .input, .unsupported);
+                const value = protocol.decodeMouseInput(payload[1..]) catch
+                    return self.queueResult(client, .input, .malformed);
+                break :blk .{ .mouse = .{
+                    .kind = typedMouseKind(value.kind),
+                    .button = typedMouseButton(value.button),
+                    .row = value.row,
+                    .col = value.column,
+                    .pixel_x = value.pixel_x,
+                    .pixel_y = value.pixel_y,
+                    .mod = typedModifiers(value.modifiers),
+                    .buttons_down = value.buttons_down,
+                } };
+            },
+            .focus => blk: {
+                if (client.features & protocol.feature(.typed_input) == 0)
+                    return self.queueResult(client, .input, .unsupported);
+                const value = protocol.decodeFocusInput(payload[1..]) catch
+                    return self.queueResult(client, .input, .malformed);
+                break :blk .{ .focus = switch (value) {
+                    .in => .in,
+                    .out => .out,
+                } };
+            },
         };
         howl.input(self.session, event) catch return self.queueResult(client, .input, .rejected);
         const serviced = try howl.service(self.session, false, true, nowNs(self.io));
@@ -838,6 +888,111 @@ fn finishDataFrame(output: *std.ArrayList(u8), header_offset: usize, payload_sta
     @memcpy(output.items[header_offset..payload_start], &header);
 }
 
+fn typedKeyName(value: u32) ?howl.KeyName {
+    return switch (value) {
+        @backingInt(protocol.InputKeyName.enter) => .enter,
+        @backingInt(protocol.InputKeyName.tab) => .tab,
+        @backingInt(protocol.InputKeyName.backspace) => .backspace,
+        @backingInt(protocol.InputKeyName.escape) => .escape,
+        @backingInt(protocol.InputKeyName.up) => .up,
+        @backingInt(protocol.InputKeyName.down) => .down,
+        @backingInt(protocol.InputKeyName.left) => .left,
+        @backingInt(protocol.InputKeyName.right) => .right,
+        @backingInt(protocol.InputKeyName.insert) => .insert,
+        @backingInt(protocol.InputKeyName.delete) => .delete,
+        @backingInt(protocol.InputKeyName.home) => .home,
+        @backingInt(protocol.InputKeyName.end) => .end,
+        @backingInt(protocol.InputKeyName.page_up) => .page_up,
+        @backingInt(protocol.InputKeyName.page_down) => .page_down,
+        @backingInt(protocol.InputKeyName.left_shift) => .left_shift,
+        @backingInt(protocol.InputKeyName.right_shift) => .right_shift,
+        @backingInt(protocol.InputKeyName.left_control) => .left_control,
+        @backingInt(protocol.InputKeyName.right_control) => .right_control,
+        @backingInt(protocol.InputKeyName.left_alt) => .left_alt,
+        @backingInt(protocol.InputKeyName.right_alt) => .right_alt,
+        @backingInt(protocol.InputKeyName.left_super) => .left_super,
+        @backingInt(protocol.InputKeyName.right_super) => .right_super,
+        @backingInt(protocol.InputKeyName.left_hyper) => .left_hyper,
+        @backingInt(protocol.InputKeyName.right_hyper) => .right_hyper,
+        @backingInt(protocol.InputKeyName.left_meta) => .left_meta,
+        @backingInt(protocol.InputKeyName.right_meta) => .right_meta,
+        @backingInt(protocol.InputKeyName.caps_lock) => .caps_lock,
+        @backingInt(protocol.InputKeyName.num_lock) => .num_lock,
+        @backingInt(protocol.InputKeyName.f1) => .f1,
+        @backingInt(protocol.InputKeyName.f2) => .f2,
+        @backingInt(protocol.InputKeyName.f3) => .f3,
+        @backingInt(protocol.InputKeyName.f4) => .f4,
+        @backingInt(protocol.InputKeyName.f5) => .f5,
+        @backingInt(protocol.InputKeyName.f6) => .f6,
+        @backingInt(protocol.InputKeyName.f7) => .f7,
+        @backingInt(protocol.InputKeyName.f8) => .f8,
+        @backingInt(protocol.InputKeyName.f9) => .f9,
+        @backingInt(protocol.InputKeyName.f10) => .f10,
+        @backingInt(protocol.InputKeyName.f11) => .f11,
+        @backingInt(protocol.InputKeyName.f12) => .f12,
+        @backingInt(protocol.InputKeyName.keypad_0) => .keypad_0,
+        @backingInt(protocol.InputKeyName.keypad_1) => .keypad_1,
+        @backingInt(protocol.InputKeyName.keypad_2) => .keypad_2,
+        @backingInt(protocol.InputKeyName.keypad_3) => .keypad_3,
+        @backingInt(protocol.InputKeyName.keypad_4) => .keypad_4,
+        @backingInt(protocol.InputKeyName.keypad_5) => .keypad_5,
+        @backingInt(protocol.InputKeyName.keypad_6) => .keypad_6,
+        @backingInt(protocol.InputKeyName.keypad_7) => .keypad_7,
+        @backingInt(protocol.InputKeyName.keypad_8) => .keypad_8,
+        @backingInt(protocol.InputKeyName.keypad_9) => .keypad_9,
+        @backingInt(protocol.InputKeyName.keypad_decimal) => .keypad_decimal,
+        @backingInt(protocol.InputKeyName.keypad_add) => .keypad_add,
+        @backingInt(protocol.InputKeyName.keypad_subtract) => .keypad_subtract,
+        @backingInt(protocol.InputKeyName.keypad_multiply) => .keypad_multiply,
+        @backingInt(protocol.InputKeyName.keypad_divide) => .keypad_divide,
+        @backingInt(protocol.InputKeyName.keypad_separator) => .keypad_separator,
+        @backingInt(protocol.InputKeyName.keypad_equal) => .keypad_equal,
+        @backingInt(protocol.InputKeyName.keypad_enter) => .keypad_enter,
+        else => null,
+    };
+}
+
+fn typedKeyAction(value: protocol.InputKeyAction) howl.KeyAction {
+    return switch (value) {
+        .press => .press,
+        .repeat => .repeat,
+        .release => .release,
+    };
+}
+
+fn typedModifiers(value: u8) howl.InputModifier {
+    return .{
+        .shift = value & protocol.typed_input.modifiers.shift != 0,
+        .alt = value & protocol.typed_input.modifiers.alt != 0,
+        .control = value & protocol.typed_input.modifiers.control != 0,
+        .super = value & protocol.typed_input.modifiers.super != 0,
+        .hyper = value & protocol.typed_input.modifiers.hyper != 0,
+        .meta = value & protocol.typed_input.modifiers.meta != 0,
+        .caps_lock = value & protocol.typed_input.modifiers.caps_lock != 0,
+        .num_lock = value & protocol.typed_input.modifiers.num_lock != 0,
+    };
+}
+
+fn typedMouseKind(value: protocol.InputMouseKind) howl.MouseEventKind {
+    return switch (value) {
+        .press => .press,
+        .release => .release,
+        .move => .move,
+        .wheel => .wheel,
+    };
+}
+
+fn typedMouseButton(value: protocol.InputMouseButton) howl.MouseButton {
+    return switch (value) {
+        .none => .none,
+        .left => .left,
+        .middle => .middle,
+        .right => .right,
+        .wheel_up => .wheel_up,
+        .wheel_down => .wheel_down,
+    };
+}
+
 fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffsets) !void {
     const payload_len = output.items.len - offsets.payload_start;
     const frame_payload_len = std.math.add(
@@ -1227,6 +1382,7 @@ fn handshakeWithFeatures(
 fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
     const welcome = try handshakeWithFeatures(peer, server, legacy_test_features);
     try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) == 0);
+    try std.testing.expect(welcome.features & protocol.feature(.typed_input) == 0);
     return welcome;
 }
 
@@ -1500,6 +1656,42 @@ fn sendInput(peer: *TestPeer, server: *Server, bytes: []const u8) !void {
     try peer.sendFrame(server, .input, payload);
 }
 
+fn sendPaste(peer: *TestPeer, server: *Server, bytes: []const u8) !void {
+    const payload = try peer.allocator.alloc(u8, bytes.len + 1);
+    defer peer.allocator.free(payload);
+    payload[0] = @backingInt(protocol.InputKind.paste);
+    @memcpy(payload[1..], bytes);
+    try peer.sendFrame(server, .input, payload);
+}
+
+fn sendTypedKey(peer: *TestPeer, server: *Server, value: protocol.KeyInput) !void {
+    const body_bytes = try protocol.keyInputBytes(value);
+    const payload = try peer.allocator.alloc(u8, body_bytes + 1);
+    defer peer.allocator.free(payload);
+    payload[0] = @backingInt(protocol.InputKind.key);
+    const encoded = try protocol.encodeKeyInput(payload[1..], value);
+    std.debug.assert(encoded.len == body_bytes);
+    try peer.sendFrame(server, .input, payload);
+}
+
+fn sendTypedMouse(peer: *TestPeer, server: *Server, value: protocol.MouseInput) !void {
+    var payload: [1 + protocol.typed_input.mouse_bytes]u8 = undefined;
+    payload[0] = @backingInt(protocol.InputKind.mouse);
+    var encoded: [protocol.typed_input.mouse_bytes]u8 = undefined;
+    try protocol.encodeMouseInput(&encoded, value);
+    @memcpy(payload[1..], &encoded);
+    try peer.sendFrame(server, .input, &payload);
+}
+
+fn sendTypedFocus(peer: *TestPeer, server: *Server, value: protocol.InputFocus) !void {
+    var payload: [1 + protocol.typed_input.focus_bytes]u8 = undefined;
+    payload[0] = @backingInt(protocol.InputKind.focus);
+    var encoded: [protocol.typed_input.focus_bytes]u8 = undefined;
+    protocol.encodeFocusInput(&encoded, value);
+    @memcpy(payload[1..], &encoded);
+    try peer.sendFrame(server, .input, &payload);
+}
+
 fn sendAssignLeader(peer: *TestPeer, server: *Server, client_id: protocol.ClientId) !void {
     var payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
     protocol.encodeAssignLeader(&payload, .{ .client_id = client_id });
@@ -1552,6 +1744,182 @@ fn readU64(input: []const u8) u64 {
     var value: u64 = 0;
     for (input) |byte| value = (value << 8) | byte;
     return value;
+}
+
+test "typed input is negotiated and encoded by live terminal modes" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-typed-input.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        path,
+        .{
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "capture() { printf '%s:' \"$1\"; " ++
+                "dd bs=1 count=\"$2\" 2>/dev/null | od -An -tx1 -v | tr -d '[:space:]'; " ++
+                "printf '\\n'; }; " ++
+                "printf 'NORMAL\\n'; capture normal 3; " ++
+                "printf '\\033[?1hAPP_CURSOR\\n'; capture app_cursor 3; " ++
+                "printf '\\033=APP_KEYPAD\\n'; capture app_keypad 3; " ++
+                "printf '\\033[?1004hFOCUS\\n'; capture focus 3; " ++
+                "printf '\\033[?1003h\\033[?1016hMOUSE\\n'; capture mouse 14; " ++
+                "printf '\\033[?2004hPASTE\\n'; capture paste 15; " ++
+                "printf '\\033[=31uKITTY_PRESS\\n'; capture kitty_press 5; " ++
+                "printf 'KITTY_REPEAT\\n'; capture kitty_repeat 19; " ++
+                "printf 'KITTY_RELEASE\\n'; capture kitty_release 9; " ++
+                "printf 'DONE\\n'; cat",
+            .rows = 24,
+            .columns = 96,
+            .history_rows = 64,
+        },
+    );
+    defer server.deinit();
+
+    var legacy = try TestPeer.connect(std.testing.allocator, path);
+    defer legacy.deinit();
+    const legacy_welcome = try handshake(&legacy, &server);
+    try std.testing.expect(legacy_welcome.client_id != protocol.no_client);
+    try std.testing.expect(legacy_welcome.features & protocol.feature(.typed_input) == 0);
+    try sendTypedKey(&legacy, &server, .{
+        .kind = .named,
+        .key_value = @backingInt(protocol.InputKeyName.up),
+        .action = .press,
+    });
+    try expectResult(&legacy, &server, .input, .unsupported);
+
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const welcome = try handshakeWithFeatures(
+        &peer,
+        &server,
+        legacy_test_features | protocol.feature(.typed_input),
+    );
+    try std.testing.expect(welcome.features & protocol.feature(.typed_input) != 0);
+
+    try peer.sendFrame(&server, .input, &.{ @backingInt(protocol.InputKind.key), 0xff });
+    try expectResult(&peer, &server, .input, .malformed);
+
+    var ready = try observeUntilContains(&peer, &server, 0, "NORMAL");
+    var revision = ready.begin.revision;
+    ready.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .named,
+        .key_value = @backingInt(protocol.InputKeyName.up),
+        .action = .press,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var app_cursor = try observeUntilContains(&peer, &server, revision, "APP_CURSOR");
+    try std.testing.expect(std.mem.indexOf(u8, app_cursor.text, "normal:1b5b41") != null);
+    revision = app_cursor.begin.revision;
+    app_cursor.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .named,
+        .key_value = @backingInt(protocol.InputKeyName.up),
+        .action = .press,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var app_keypad = try observeUntilContains(&peer, &server, revision, "APP_KEYPAD");
+    try std.testing.expect(std.mem.indexOf(u8, app_keypad.text, "app_cursor:1b4f41") != null);
+    revision = app_keypad.begin.revision;
+    app_keypad.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .named,
+        .key_value = @backingInt(protocol.InputKeyName.keypad_add),
+        .action = .press,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var focus = try observeUntilContains(&peer, &server, revision, "FOCUS");
+    try std.testing.expect(std.mem.indexOf(u8, focus.text, "app_keypad:1b4f6b") != null);
+    revision = focus.begin.revision;
+    focus.deinit();
+
+    try sendTypedFocus(&peer, &server, .in);
+    try expectResult(&peer, &server, .input, .ok);
+    var mouse = try observeUntilContains(&peer, &server, revision, "MOUSE");
+    try std.testing.expect(std.mem.indexOf(u8, mouse.text, "focus:1b5b49") != null);
+    revision = mouse.begin.revision;
+    mouse.deinit();
+
+    try sendTypedMouse(&peer, &server, .{
+        .kind = .press,
+        .button = .left,
+        .modifiers = protocol.typed_input.modifiers.control,
+        .buttons_down = 1,
+        .row = 1,
+        .column = 2,
+        .pixel_x = 319,
+        .pixel_y = 239,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var paste = try observeUntilContains(&peer, &server, revision, "PASTE");
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        paste.text,
+        "mouse:1b5b3c31363b3332303b3234304d",
+    ) != null);
+    revision = paste.begin.revision;
+    paste.deinit();
+
+    try sendPaste(&peer, &server, "x\x00y");
+    try expectResult(&peer, &server, .input, .ok);
+    var kitty_press = try observeUntilContains(&peer, &server, revision, "KITTY_PRESS");
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        kitty_press.text,
+        "paste:1b5b3230307e7800791b5b3230317e",
+    ) != null);
+    revision = kitty_press.begin.revision;
+    kitty_press.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .unicode,
+        .key_value = 'a',
+        .action = .press,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var kitty_repeat = try observeUntilContains(&peer, &server, revision, "KITTY_REPEAT");
+    try std.testing.expect(std.mem.indexOf(u8, kitty_repeat.text, "kitty_press:1b5b393775") != null);
+    revision = kitty_repeat.begin.revision;
+    kitty_repeat.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .unicode,
+        .key_value = 'a',
+        .action = .repeat,
+        .modifiers = protocol.typed_input.modifiers.shift,
+        .shifted = 'A',
+        .alternate = 'q',
+        .text = "A",
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var kitty_release = try observeUntilContains(&peer, &server, revision, "KITTY_RELEASE");
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        kitty_release.text,
+        "kitty_repeat:1b5b39373a36353a3131333b323a323b363575",
+    ) != null);
+    revision = kitty_release.begin.revision;
+    kitty_release.deinit();
+
+    try sendTypedKey(&peer, &server, .{
+        .kind = .unicode,
+        .key_value = 'a',
+        .action = .release,
+    });
+    try expectResult(&peer, &server, .input, .ok);
+    var done = try observeUntilContains(&peer, &server, revision, "DONE");
+    defer done.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, done.text, "kitty_release:1b5b39373b313a3375") != null);
 }
 
 test "text_v1 preserves renderer-complete terminal text semantics" {

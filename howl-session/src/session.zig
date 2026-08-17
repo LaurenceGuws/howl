@@ -16,6 +16,22 @@ const write_calls_per_turn: usize = 4;
 pub const Session = opaque {};
 /// Host-neutral input accepted by the canonical VT owner.
 pub const Input = vt.Terminal.InputEvent;
+/// Names physical non-Unicode key identities accepted by canonical input encoding.
+pub const KeyName = vt.Terminal.NamedKey;
+/// Validates Unicode or named physical-key identity.
+pub const Key = vt.Terminal.Key;
+/// Names one key press/repeat/release transition.
+pub const KeyAction = vt.Terminal.KeyAction;
+/// Copies full keyboard/mouse modifier state.
+pub const InputModifier = vt.Terminal.InputModifier;
+/// Names one mouse event class.
+pub const MouseEventKind = vt.Terminal.MouseEventKind;
+/// Names one mouse button identity.
+pub const MouseButton = vt.Terminal.MouseButton;
+/// Bounds committed key text accepted by the canonical VT encoder.
+pub const maximum_key_text_bytes = vt.Terminal.maximum_key_text_bytes;
+/// Bounds legacy key bytes while leaving canonical Meta prefix headroom.
+pub const maximum_legacy_key_bytes = vt.Terminal.maximum_legacy_key_bytes;
 /// Copies one complete terminal cell without exposing VT storage.
 pub const Cell = vt.Terminal.Cell;
 /// Copies one resolved terminal cursor shape.

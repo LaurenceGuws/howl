@@ -6364,8 +6364,20 @@ pub const Terminal = struct {
     pub const NamedKey = input.KeyName;
     /// Validates Unicode physical-key identities before input encoding.
     pub const Key = input.InputKey;
+    /// Exposes one physical-key transition action.
+    pub const KeyAction = input.Action;
+    /// Exposes the complete keyboard/mouse modifier state.
+    pub const InputModifier = input.Modifier;
+    /// Exposes one mouse event class.
+    pub const MouseEventKind = input.MouseEventKind;
+    /// Exposes one mouse button identity.
+    pub const MouseButton = input.MouseButton;
+    /// Bounds committed text carried by one physical-key event.
+    pub const maximum_key_text_bytes = input.max_text_bytes;
     /// Provides caller-owned fixed scratch storage for allocation-free input encoding.
     pub const InputScratch = input.Scratch;
+    /// Bounds legacy key bytes while always leaving room for Meta escape prefixing.
+    pub const maximum_legacy_key_bytes = @sizeOf(InputScratch) - 1;
     /// Returns encoded input with explicit borrowed-or-owned byte lifetime.
     pub const EncodedInput = input.Encoded;
     /// Reports paste construction or bounded locator-report retention failure.

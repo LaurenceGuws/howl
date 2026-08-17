@@ -228,8 +228,8 @@ pub const InputKey = union(enum) {
 /// Identifies one physical key transition for Kitty event reporting.
 pub const Action = enum(u2) { press = 1, repeat = 2, release = 3 };
 
-/// Bounds committed key text before decimal Kitty encoding.
-const max_text_bytes: u8 = 64;
+/// Bounds committed key text accepted by one physical key event.
+pub const max_text_bytes: u8 = 64;
 
 /// Complete modifier state accepted by terminal keyboard and mouse protocols.
 ///
