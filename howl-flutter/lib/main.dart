@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
 import 'history_viewport.dart';
+import 'launch_config.dart';
 import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
@@ -35,10 +36,14 @@ void main(List<String> args) {
     exitCode = 64;
     return;
   }
+  const compiledGeometryLeader = String.fromEnvironment('HOWL_GEOMETRY_LEADER');
   runApp(
     HowlApp(
       endpoint: endpoint,
-      geometryLeader: Platform.environment['HOWL_GEOMETRY_LEADER'] == '1',
+      geometryLeader: geometryLeaderEnabled(
+        compiledValue: compiledGeometryLeader,
+        environmentValue: Platform.environment['HOWL_GEOMETRY_LEADER'],
+      ),
     ),
   );
 }

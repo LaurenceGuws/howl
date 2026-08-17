@@ -12,8 +12,10 @@ negotiated `typed_input`; terminal escape encoding remains owned by the canonica
 VT. It owns no PTY, VT, shell, network/auth layer, or session lifetime.
 
 Canonical resize is opt-in. With `HOWL_GEOMETRY_LEADER=1`, this client explicitly
-assigns its control connection as resize leader before sending rows/columns.
-Without that flag, window resizing is presentation-only. Platform text input now
+assigns its control connection as resize leader before sending rows/columns. Desktop
+launches may use the environment variable; Android builds use
+`--dart-define=HOWL_GEOMETRY_LEADER=1`. Without that flag, window resizing is
+presentation-only. Platform text input now
 stages active IME composition locally and sends committed Unicode through the
 existing committed-text lane. Printable text is never inferred from physical key
 labels. The editor keeps two private guard scalars around the platform cursor so
@@ -44,7 +46,8 @@ therefore be reached directly over Android loopback:
 
 ```sh
 flutter build apk --release \
-  --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+  --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127 \
+  --dart-define=HOWL_GEOMETRY_LEADER=1
 ```
 
 The same `HOWL_ENDPOINT` define works for `flutter run` on an Android device. Primary-screen
