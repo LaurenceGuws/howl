@@ -1,6 +1,6 @@
 # howl-flutter
 
-Disposable Flutter/Linux pressure client for the frozen `howl-session` v1 wire.
+Disposable Flutter native pressure client for the frozen `howl-session` v1 wire, currently proven on Linux and Android.
 
 This package is deliberately experimental, not core. It connects directly to an
 already-running Howl byte-stream endpoint, negotiates `text_snapshot`, strictly
@@ -17,22 +17,27 @@ Without that flag, window resizing is presentation-only. Platform text input now
 stages active IME composition locally and sends only committed Unicode text through
 the existing committed-text input lane. Printable text is never inferred from
 physical key labels. Soft-keyboard editing actions such as Enter, Backspace, Delete,
-suggestions, and autocorrect remain deliberately unclaimed until Android pressure
-proves their semantics.
+suggestions, and autocorrect remain deliberately unclaimed. Android pressure has
+proved the composition-safe committed-text lane itself through a real platform IME.
 
-Run against a loopback TCP session with:
+Run a Linux client against a loopback TCP session with:
 
 ```sh
 HOWL_ENDPOINT=tcp://127.0.0.1:43127 flutter run -d linux
 ```
 
-The same endpoint may be compiled into a native build without a platform plugin:
+For Android, the checked-in shell is the stock `FlutterActivity` embedding plus the
+normal `INTERNET` permission. Networking remains `dart:io`; there is no Kotlin IPC,
+networking plugin, or Zig FFI transport. A Termux-owned `howl-sessiond` on the same
+phone can therefore be reached directly over Android loopback:
 
 ```sh
-flutter build linux --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+flutter build apk --release \
+  --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
 ```
 
-During transport parity, the older Unix oracle remains available as either a bare
+The same `HOWL_ENDPOINT` define works for `flutter run` on an Android device. During
+transport parity, the older Unix oracle remains available on Linux as either a bare
 path or `unix:/path/to/session.sock`. `HOWL_SOCKET` is accepted only as a temporary
 legacy launch fallback while that oracle remains.
 

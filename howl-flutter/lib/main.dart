@@ -97,14 +97,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     try {
       final observer = await HowlConnection.connect(widget.endpoint);
       final control = await HowlConnection.connect(widget.endpoint);
-      if (_stopping) {
+      if (!mounted || _stopping) {
         observer.close();
         control.close();
         return;
       }
       _observer = observer;
       _control = control;
-      if (_focusNode.hasFocus) _textInput.attach();
+      if (_focusNode.hasFocus) {
+        _textInput.attach(viewId: View.of(context).viewId);
+        _scheduleTextInputShow();
+        _queueControl((control) => control.sendFocus(true));
+      }
       var revision = 0;
       while (!_stopping) {
         final next = await observer.observeText(revision);
@@ -151,9 +155,26 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     return KeyEventResult.handled;
   }
 
+  void _scheduleTextInputShow() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _stopping || !_focusNode.hasFocus || _control == null) {
+        return;
+      }
+      _textInput.show();
+    });
+  }
+
+  void _onPointerDown(PointerDownEvent event) {
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
+    if (_control == null) return;
+    _textInput.attach(viewId: View.of(context).viewId);
+    _scheduleTextInputShow();
+  }
+
   void _onFocusChange(bool focused) {
     if (focused && _control != null) {
-      _textInput.attach();
+      _textInput.attach(viewId: View.of(context).viewId);
+      _scheduleTextInputShow();
     } else {
       _textInput.detach();
     }
@@ -240,12 +261,16 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         },
       );
     }
-    return Focus(
-      focusNode: _focusNode,
-      autofocus: true,
-      onFocusChange: _onFocusChange,
-      onKeyEvent: _onKeyEvent,
-      child: content,
+    return Listener(
+      behavior: HitTestBehavior.opaque,
+      onPointerDown: _onPointerDown,
+      child: Focus(
+        focusNode: _focusNode,
+        autofocus: true,
+        onFocusChange: _onFocusChange,
+        onKeyEvent: _onKeyEvent,
+        child: content,
+      ),
     );
   }
 }

@@ -25,33 +25,48 @@ final class TerminalTextInputClient with TextInputClient {
   final void Function(String text) onCommit;
   final CommittedTextStager _stager = CommittedTextStager();
   TextInputConnection? _connection;
+  int? _viewId;
 
   bool get attached => _connection?.attached ?? false;
 
-  void attach() {
-    if (attached) return;
+  TextInputConfiguration _configuration(int viewId) => TextInputConfiguration(
+    viewId: viewId,
+    inputType: TextInputType.text,
+    inputAction: TextInputAction.none,
+    autocorrect: false,
+    smartDashesType: SmartDashesType.disabled,
+    smartQuotesType: SmartQuotesType.disabled,
+    enableSuggestions: false,
+    enableInteractiveSelection: false,
+    enableIMEPersonalizedLearning: false,
+  );
+
+  void attach({required int viewId}) {
+    final existing = _connection;
+    if (existing != null && existing.attached) {
+      if (_viewId != viewId) {
+        existing.updateConfig(_configuration(viewId));
+        _viewId = viewId;
+      }
+      return;
+    }
     _stager.reset();
-    final connection = TextInput.attach(
-      this,
-      const TextInputConfiguration(
-        inputType: TextInputType.text,
-        inputAction: TextInputAction.none,
-        autocorrect: false,
-        smartDashesType: SmartDashesType.disabled,
-        smartQuotesType: SmartQuotesType.disabled,
-        enableSuggestions: false,
-        enableInteractiveSelection: false,
-        enableIMEPersonalizedLearning: false,
-      ),
-    );
+    final connection = TextInput.attach(this, _configuration(viewId));
     _connection = connection;
+    _viewId = viewId;
     connection.setEditingState(_stager.value);
+  }
+
+  void show() {
+    final connection = _connection;
+    if (connection == null || !connection.attached) return;
     connection.show();
   }
 
   void detach() {
     _connection?.close();
     _connection = null;
+    _viewId = null;
     _stager.reset();
   }
 
@@ -84,6 +99,7 @@ final class TerminalTextInputClient with TextInputClient {
   @override
   void connectionClosed() {
     _connection = null;
+    _viewId = null;
     _stager.reset();
   }
 

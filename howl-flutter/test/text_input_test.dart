@@ -68,8 +68,12 @@ void main() {
     (tester) async {
       final committed = <String>[];
       final client = TerminalTextInputClient(onCommit: committed.add);
-      client.attach();
+      client.attach(viewId: tester.view.viewId);
       addTearDown(client.detach);
+      expect(tester.testTextInput.setClientArgs?['viewId'], tester.view.viewId);
+      expect(tester.testTextInput.isVisible, isFalse);
+      client.show();
+      expect(tester.testTextInput.isVisible, isTrue);
 
       tester.testTextInput.updateEditingValue(
         const TextEditingValue(
