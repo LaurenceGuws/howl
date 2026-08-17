@@ -88,6 +88,56 @@ void main() {
     });
   }
 
+  test('committed text uses the bounded raw text input family', () {
+    const text = 'café e\u0301 中 🐺';
+    final payload = encodeCommittedTextInput(text);
+    expect(payload.first, HowlWire.inputBytes);
+    expect(utf8.decode(payload.sublist(1)), text);
+
+    expect(
+      () => encodeCommittedTextInput(''),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'committed_text_empty',
+        ),
+      ),
+    );
+    expect(
+      () => encodeCommittedTextInput(String.fromCharCode(0xd800)),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'committed_text_unicode',
+        ),
+      ),
+    );
+
+    final maximum = List<String>.filled(
+      HowlWire.maximumCommittedTextBytes,
+      'x',
+    ).join();
+    expect(
+      encodeCommittedTextInput(maximum),
+      hasLength(HowlWire.maximumRequestPayloadBytes),
+    );
+    expect(
+      () => encodeCommittedTextInput(
+        '$maximum'
+        'x',
+      ),
+      throwsA(
+        isA<HowlProtocolException>().having(
+          (error) => error.code,
+          'code',
+          'committed_text_limit',
+        ),
+      ),
+    );
+  });
+
   test('live client dimensions are explicitly bounded', () {
     validateClientDimensions(1, 1);
     validateClientDimensions(HowlWire.maximumRows, HowlWire.maximumColumns);

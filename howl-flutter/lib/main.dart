@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'protocol.dart';
+import 'text_input.dart';
 
 void main(List<String> args) {
   final socketPath = args.isNotEmpty
@@ -55,6 +56,8 @@ final class HowlTerminal extends StatefulWidget {
 }
 
 final class _HowlTerminalState extends State<HowlTerminal> {
+  final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
+  late final TerminalTextInputClient _textInput;
   HowlConnection? _observer;
   HowlConnection? _control;
   HowlSnapshot? _snapshot;
@@ -68,6 +71,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void initState() {
     super.initState();
+    _textInput = TerminalTextInputClient(
+      onCommit: (text) {
+        _queueControl((control) => control.sendCommittedText(text));
+      },
+    );
     unawaited(_observe());
   }
 
@@ -82,6 +90,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       }
       _observer = observer;
       _control = control;
+      if (_focusNode.hasFocus) _textInput.attach();
       var revision = 0;
       while (!_stopping) {
         final next = await observer.observeText(revision);
@@ -129,6 +138,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _onFocusChange(bool focused) {
+    if (focused && _control != null) {
+      _textInput.attach();
+    } else {
+      _textInput.detach();
+    }
     _queueControl((control) => control.sendFocus(focused));
   }
 
@@ -163,6 +177,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    _textInput.detach();
+    _focusNode.dispose();
     _observer?.close();
     _control?.close();
     super.dispose();
@@ -211,6 +227,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       );
     }
     return Focus(
+      focusNode: _focusNode,
       autofocus: true,
       onFocusChange: _onFocusChange,
       onKeyEvent: _onKeyEvent,

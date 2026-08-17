@@ -11,8 +11,12 @@ network/auth layer, or session lifetime.
 
 Canonical resize is opt-in. With `HOWL_GEOMETRY_LEADER=1`, this client explicitly
 assigns its control connection as resize leader before sending rows/columns.
-Without that flag, window resizing is presentation-only. Ordinary text/IME input
-is intentionally outside this first pressure slice.
+Without that flag, window resizing is presentation-only. Platform text input now
+stages active IME composition locally and sends only committed Unicode text through
+the existing committed-text input lane. Printable text is never inferred from
+physical key labels. Soft-keyboard editing actions such as Enter, Backspace, Delete,
+suggestions, and autocorrect remain deliberately unclaimed until Android pressure
+proves their semantics.
 
 Run against a local session with:
 

@@ -21,6 +21,7 @@ final class HowlWire {
   static const headerBytes = 12;
   static const maximumPayloadBytes = 1024 * 1024;
   static const maximumRequestPayloadBytes = 64 * 1024;
+  static const maximumCommittedTextBytes = maximumRequestPayloadBytes - 1;
   static const maximumSnapshotBytes = 4 * 1024 * 1024;
   static const hello = 1;
   static const welcome = 2;
@@ -167,6 +168,20 @@ Uint8List encodeObserve(int afterRevision, {int historyOffset = 0}) {
   final payload = Uint8List(12);
   _putU64(payload, 0, afterRevision);
   _putU32(payload, 8, historyOffset);
+  return payload;
+}
+
+Uint8List encodeCommittedTextInput(String text) {
+  _require(text.isNotEmpty, 'committed_text_empty');
+  _require(_wellFormedUtf16(text), 'committed_text_unicode');
+  final encoded = utf8.encode(text);
+  _require(
+    encoded.length <= HowlWire.maximumCommittedTextBytes,
+    'committed_text_limit',
+  );
+  final payload = Uint8List(encoded.length + 1);
+  payload[0] = HowlWire.inputBytes;
+  payload.setRange(1, payload.length, encoded);
   return payload;
 }
 
@@ -716,6 +731,10 @@ final class HowlConnection {
     await _command(HowlWire.input, payload);
   }
 
+  Future<void> sendCommittedText(String text) async {
+    await _command(HowlWire.input, encodeCommittedTextInput(text));
+  }
+
   Future<void> sendFocus(bool focused) async {
     _require(
       welcome.features & HowlWire.typedInput != 0,
@@ -816,6 +835,22 @@ Future<void> _writeFrame(Socket socket, int kind, Uint8List payload) async {
   socket.add(encodeHeader(kind, payload.length));
   socket.add(payload);
   await socket.flush();
+}
+
+bool _wellFormedUtf16(String text) {
+  final units = text.codeUnits;
+  var index = 0;
+  while (index < units.length) {
+    final unit = units[index++];
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      if (index == units.length) return false;
+      final low = units[index++];
+      if (low < 0xdc00 || low > 0xdfff) return false;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool _validScalar(int value) =>

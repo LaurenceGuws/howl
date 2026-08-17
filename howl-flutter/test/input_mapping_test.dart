@@ -9,5 +9,6 @@ void main() {
     expect(howlNamedKey(PhysicalKeyboardKey.arrowRight), 8);
     expect(howlNamedKey(PhysicalKeyboardKey.f12), 40);
     expect(howlNamedKey(PhysicalKeyboardKey.numpadEnter), 58);
+    expect(howlNamedKey(PhysicalKeyboardKey.keyA), isNull);
   });
 }
