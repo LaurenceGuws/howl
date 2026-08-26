@@ -29,15 +29,15 @@ Attaching is observational. It never silently resizes the PTY. Geometry is expli
 
 ## Build
 
-Howl uses the exact Zig version in `.zigversion`:
+Howl uses the exact Zig version in `.zigversion`, supplied by Fleet on `PATH`:
 
 ```sh
-version=$(cat .zigversion)
-mkdir -p .zig
-ln -sfn "$HOME/.local/share/zigup/$version/files/zig" .zig/zig
-./.zig/zig build
-./.zig/zig build test
+test "$(zig version)" = "$(cat .zigversion)"
+zig build
+zig build test
 ```
+
+Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed compiler; the repository owns only the version pin.
 
 Each local child package owns its own `build.zig` and proofs. `howl-text` lives
 in its own repository; the root, renderer, and GTK pressure client consume the

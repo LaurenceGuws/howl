@@ -90,5 +90,11 @@ verify_module src/shaders/terminal.frag.spv atlas_extent
 
 # This test reads the same SPIR-V bytes and checks their member decorations
 # against the private Zig struct offsets and exact 88-byte push range.
-../.zig/zig test src/terminal_cells.zig -lc -lvulkan \
+expected_zig=$(cat ../.zigversion)
+actual_zig=$(zig version)
+[ "$actual_zig" = "$expected_zig" ] || {
+    printf 'Howl Zig mismatch: expected %s, got %s\n' "$expected_zig" "$actual_zig" >&2
+    exit 1
+}
+zig test src/terminal_cells.zig -lc -lvulkan \
     --test-filter 'terminal shader push constant ABI has exact tracked SPIR-V layout'

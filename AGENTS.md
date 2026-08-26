@@ -17,7 +17,7 @@ Official docs and maintained references are local development inputs:
 - `/home/home/personal/projects/official_docs`
 - `/home/home/personal/projects/dev_references`
 
-Use the tracked Zig pin through `.zig/zig`; never substitute ambient Zig.
+Use Fleet's installed `zig` from `PATH` and require `zig version` to match the tracked `.zigversion`; never create a project-local Zig symlink or substitute a mismatched compiler.
 
 ## Core bars
 
