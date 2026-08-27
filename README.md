@@ -32,6 +32,8 @@ TCP endpoints remain IPv4 loopback only. Remote agents first reach the node thro
 existing transport, then run the same CLI a human would.
 
 ```text
+howl start NAME [--rows ROWS] [--columns COLUMNS] [--cwd PATH] [--shell PATH] [--command COMMAND] [--json]
+howl stop NAME [--json]
 howl sessions [--json]
 howl observe SESSION [--json]
 howl paste SESSION TEXT|--stdin
@@ -49,8 +51,14 @@ a wait. Sequence steps are only `down KEY`, `repeat KEY`, `up KEY`, and
 `wait DURATION`; controlled failure releases still-held keys in reverse press
 order. The canonical VT continues to decide terminal escape/control encoding.
 
-Named daemons opt into discovery with `HOWL_SESSION_NAME`; `howl sessions`
-validates the daemon PID and real session handshake before reporting it.
+`howl start NAME` is the normal lifecycle entrypoint. It launches `howl-sessiond`
+with null stdio, moves the daemon into its own Unix session, and returns only after
+the same daemon PID has published discovery state and answered the Howl handshake.
+Initial geometry defaults to 24x80 until an explicit client claims resize leadership.
+`howl stop NAME` targets the validated daemon through a Linux pidfd, requests graceful
+TERM, and waits for normal PTY/session cleanup; it does not silently escalate to
+SIGKILL. Direct `HOWL_SESSION_NAME=... howl-sessiond ...` remains available for
+low-level/manual runs and does not detach unless the internal CLI marker is present.
 
 Install or verify candidates with:
 
