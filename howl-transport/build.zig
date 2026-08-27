@@ -32,5 +32,11 @@ pub fn build(b: *std.Build) void {
     check.dependOn(&tests.step);
     const test_step = b.step("test", "Run AX transport proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
+    const composition = b.addSystemCommand(&.{ "python3", "test/composition.py" });
+    composition.setName("howl-transport state-machine composition");
+    composition.setCwd(b.path("."));
+    composition.addArtifactArg(executable);
+    composition.addArtifactArg(session.artifact("howl-sessiond"));
+    test_step.dependOn(&composition.step);
     b.default_step = check;
 }

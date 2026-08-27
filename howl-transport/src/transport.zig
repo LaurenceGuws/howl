@@ -6,3 +6,4 @@
 
 pub const wire = @import("wire.zig");
 pub const observe = @import("observe.zig");
+pub const stream = @import("stream.zig");

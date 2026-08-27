@@ -131,7 +131,14 @@ pub fn emitSnapshot(
     var observe_payload: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&observe_payload, .{ .after_revision = 0, .history_offset = history_offset });
     try connection.send(.observe, &observe_payload);
+    return receiveAndEmitSnapshot(connection, allocator, writer);
+}
 
+pub fn receiveAndEmitSnapshot(
+    connection: *wire.Connection,
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+) !void {
     var total_bytes: usize = 0;
     var begin_frame = try connection.receive();
     defer begin_frame.deinit();

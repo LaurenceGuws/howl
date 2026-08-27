@@ -6,5 +6,5 @@
     .dependencies = .{
         .howl_session = .{ .path = "../howl-session" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
+    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src", "test" },
 }
