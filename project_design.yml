@@ -14,11 +14,6 @@ core:
   howl-text:
     role: standalone native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
-clients:
-  howl-cli:
-    role: bounded human and agent client of the frozen session wire; owns framing, local command state, and presentation only
-    invariant: CLI failure, delay, or disconnect never changes PTY/VT authority or canonical progress
-
 planned:
   clients: Linux and Android first; iOS is SSH-only
 

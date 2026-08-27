@@ -5,7 +5,6 @@ accepted:
   howl-vt: terminal semantics, state, protocol input/output, history, graphics, and conformance proofs
   howl-session: opaque canonical PTY/VT session owner and observer-independent lifecycle proofs
   howl-pty: Linux PTY and child-process lifecycle
-  howl-cli: bounded operator and agent client of the frozen howl-session wire; owns no terminal or transport-policy semantics
   protocol_coverage.yml: pinned terminal-protocol census
   protocol_coverage.nu: protocol query and validation surface
   tools/audit_source.sh: maintained-source structural audit

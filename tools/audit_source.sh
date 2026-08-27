@@ -63,7 +63,7 @@ while IFS= read -r file; do
         { previous = $0 }
         END { exit failed }
     ' "$file" || status=1
-done < <(find howl-vt/src howl-session/src howl-pty/src howl-cli/src -type f -name '*.zig' -print | sort)
+done < <(find howl-vt/src howl-session/src howl-pty/src -type f -name '*.zig' -print | sort)
 
 # Empty lifecycle names preserve no behavior or ownership and therefore add no contract.
 empty_lifecycle_pattern='^[[:space:]]*(pub[[:space:]]+)?fn[[:space:]]+(deinit|reset|clear)'

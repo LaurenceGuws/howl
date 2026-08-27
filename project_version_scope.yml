@@ -20,7 +20,6 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - maintain the bounded howl CLI as the ordinary human/agent client of shared sessions
   - pressure the text/session boundaries with the first disposable visual client
   - preserve SSH as remote transport rather than inventing Howl networking or authentication
 

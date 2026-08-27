@@ -10,7 +10,6 @@ const posix = std.posix;
 const linux = std.os.linux;
 const howl = @import("howl_session");
 const protocol = howl.protocol;
-const discovery = howl.discovery;
 
 const maximum_clients: usize = 8;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
@@ -18,38 +17,6 @@ const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payloa
 const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
-
-const detach_marker = "1";
-
-fn parseDetachMarker(value: ?[]const u8) error{InvalidDetachMarker}!bool {
-    const text = value orelse return false;
-    if (!std.mem.eql(u8, text, detach_marker)) return error.InvalidDetachMarker;
-    return true;
-}
-
-fn detachProcess() error{DetachFailed}!void {
-    const result = linux.setsid();
-    if (linux.errno(result) != .SUCCESS) return error.DetachFailed;
-    std.debug.assert(result == @as(usize, @intCast(linux.getpid())));
-}
-
-// POSIX signal handlers cannot borrow server ownership. They request that the
-// normal bounded poll loop return through its existing cleanup path instead.
-var stop_requested = std.atomic.Value(bool).init(false);
-
-fn requestStop(_: posix.SIG) callconv(.c) void {
-    stop_requested.store(true, .release);
-}
-
-fn installStopHandlers() void {
-    const action: posix.Sigaction = .{
-        .handler = .{ .handler = requestStop },
-        .mask = posix.sigemptyset(),
-        .flags = 0,
-    };
-    posix.sigaction(.TERM, &action, null);
-    posix.sigaction(.INT, &action, null);
-}
 
 const ListenerSpec = union(enum) {
     unix: []const u8,
@@ -1349,17 +1316,11 @@ pub fn main(init: std.process.Init) error{
     InvalidColumns,
     SessionServerFailed,
 }!void {
-    stop_requested.store(false, .release);
-    installStopHandlers();
     const argv = init.minimal.args.vector;
     if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
     const listener_spec = parseListenerSpec(std.mem.span(argv[1])) catch return error.InvalidArguments;
     const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
     const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
-    const detached = parseDetachMarker(
-        std.process.Environ.getPosix(init.minimal.environ, "HOWL_SESSION_DETACHED"),
-    ) catch return error.SessionServerFailed;
-    if (detached) detachProcess() catch return error.SessionServerFailed;
     var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, listener_spec, .{
         .shell = std.mem.span(argv[2]),
         .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
@@ -1367,41 +1328,8 @@ pub fn main(init: std.process.Init) error{
         .columns = columns,
     }) catch return error.SessionServerFailed;
     defer server.deinit();
-    var publication: ?discovery.Publication = null;
-    defer if (publication) |*active| active.deinit();
-    if (std.process.Environ.getPosix(init.minimal.environ, "HOWL_SESSION_NAME")) |name| {
-        const runtime_dir = std.process.Environ.getPosix(init.minimal.environ, "XDG_RUNTIME_DIR") orelse
-            return error.SessionServerFailed;
-        const port = server.listener.tcp_port orelse return error.SessionServerFailed;
-        var endpoint_buffer: [discovery.maximum_endpoint_bytes]u8 = undefined;
-        const endpoint = std.fmt.bufPrint(&endpoint_buffer, "tcp://127.0.0.1:{d}", .{port}) catch
-            return error.SessionServerFailed;
-        const pid = std.math.cast(u32, linux.getpid()) orelse return error.SessionServerFailed;
-        publication = discovery.Publication.init(init.io, runtime_dir, .{
-            .name = name,
-            .pid = pid,
-            .endpoint = endpoint,
-            .rows = rows,
-            .columns = columns,
-        }) catch return error.SessionServerFailed;
-    }
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
-    while (!stop_requested.load(.acquire))
-        server.turn(-1) catch return error.SessionServerFailed;
-}
-
-test "termination signal handler only requests normal cleanup" {
-    stop_requested.store(false, .release);
-    requestStop(.TERM);
-    try std.testing.expect(stop_requested.load(.acquire));
-    stop_requested.store(false, .release);
-}
-
-test "detached startup marker is explicit and rejects accidental values" {
-    try std.testing.expect(!(try parseDetachMarker(null)));
-    try std.testing.expect(try parseDetachMarker("1"));
-    try std.testing.expectError(error.InvalidDetachMarker, parseDetachMarker("true"));
-    try std.testing.expectError(error.InvalidDetachMarker, parseDetachMarker("0"));
+    while (true) server.turn(-1) catch return error.SessionServerFailed;
 }
 
 const TestFrame = struct {
