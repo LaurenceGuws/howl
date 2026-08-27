@@ -110,21 +110,20 @@ pub fn list(
     return result;
 }
 
-/// Reports an absent, duplicated, or currently unreachable named session.
-pub const ResolveError = Error || error{
+/// Reports an absent or duplicated validated live session name.
+pub const FindError = Error || error{
     InvalidSessionName,
     NoSuchSession,
     AmbiguousSession,
-    SessionUnreachable,
 };
 
-/// Resolves one exact safe session name from validated runtime state.
-pub fn resolve(
+/// Finds one exact process-validated session without requiring its endpoint to answer.
+pub fn find(
     allocator: std.mem.Allocator,
     io: std.Io,
     runtime_dir: []const u8,
     name: []const u8,
-) ResolveError!Session {
+) FindError!Session {
     session_discovery.validateName(name) catch return error.InvalidSessionName;
     const listed = try list(allocator, io, runtime_dir);
     var found: ?Session = null;
@@ -133,7 +132,20 @@ pub fn resolve(
         if (found != null) return error.AmbiguousSession;
         found = session;
     }
-    const session = found orelse return error.NoSuchSession;
+    return found orelse error.NoSuchSession;
+}
+
+/// Reports an absent, duplicated, or currently unreachable named session.
+pub const ResolveError = FindError || error{SessionUnreachable};
+
+/// Resolves one exact safe session name and requires its Howl handshake to answer.
+pub fn resolve(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    runtime_dir: []const u8,
+    name: []const u8,
+) ResolveError!Session {
+    const session = try find(allocator, io, runtime_dir, name);
     if (!session.reachable) return error.SessionUnreachable;
     return session;
 }

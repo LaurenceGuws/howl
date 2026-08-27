@@ -4,6 +4,8 @@
 pub const client = @import("client.zig");
 /// Owns validated ephemeral runtime session discovery.
 pub const discovery = @import("discovery.zig");
+/// Owns detached named session daemon start/stop requests.
+pub const lifecycle = @import("lifecycle.zig");
 
 /// Owns physical key parsing, held-key state, chords, and timed sequences.
 pub const input = @import("input.zig");

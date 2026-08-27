@@ -24,6 +24,8 @@ fn run(init: std.process.Init) !Exit {
     const argv = init.minimal.args.vector;
     if (argv.len < 2) return usage();
     const command = std.mem.span(argv[1]);
+    if (std.mem.eql(u8, command, "start")) return startCommand(init);
+    if (std.mem.eql(u8, command, "stop")) return stopCommand(init);
     if (std.mem.eql(u8, command, "sessions")) return sessionsCommand(init);
     if (std.mem.eql(u8, command, "observe")) return observeCommand(init);
     if (std.mem.eql(u8, command, "paste")) return pasteCommand(init);
@@ -39,6 +41,8 @@ fn run(init: std.process.Init) !Exit {
 fn usage() error{OutputFailed}!Exit {
     try writeStderr(
         "usage:\n" ++
+            "  howl start NAME [--rows ROWS] [--columns COLUMNS] [--cwd PATH] [--shell PATH] [--command COMMAND] [--json]\n" ++
+            "  howl stop NAME [--json]\n" ++
             "  howl sessions [--json]\n" ++
             "  howl observe SESSION [--json]\n" ++
             "  howl paste SESSION TEXT|--stdin\n" ++
@@ -50,6 +54,103 @@ fn usage() error{OutputFailed}!Exit {
             "  howl resize SESSION ROWS COLUMNS\n",
     );
     return .usage;
+}
+
+fn startCommand(init: std.process.Init) !Exit {
+    const argv = init.minimal.args.vector;
+    if (argv.len < 3) return usage();
+    const runtime_dir = std.process.Environ.getPosix(init.minimal.environ, "XDG_RUNTIME_DIR") orelse
+        return error.RuntimeDirectoryUnavailable;
+    var options = howl.lifecycle.StartOptions{
+        .name = std.mem.span(argv[2]),
+        .shell = std.process.Environ.getPosix(init.minimal.environ, "SHELL") orelse "/bin/sh",
+    };
+    var json = false;
+    var rows_seen = false;
+    var columns_seen = false;
+    var cwd_seen = false;
+    var shell_seen = false;
+    var command_seen = false;
+    var index: usize = 3;
+    while (index < argv.len) {
+        const argument = std.mem.span(argv[index]);
+        if (std.mem.eql(u8, argument, "--json")) {
+            if (json) return usage();
+            json = true;
+            index += 1;
+            continue;
+        }
+        if (index + 1 >= argv.len) return usage();
+        const value = std.mem.span(argv[index + 1]);
+        if (std.mem.eql(u8, argument, "--rows")) {
+            if (rows_seen) return usage();
+            options.rows = std.fmt.parseInt(u16, value, 10) catch return error.InvalidGeometry;
+            rows_seen = true;
+        } else if (std.mem.eql(u8, argument, "--columns")) {
+            if (columns_seen) return usage();
+            options.columns = std.fmt.parseInt(u16, value, 10) catch return error.InvalidGeometry;
+            columns_seen = true;
+        } else if (std.mem.eql(u8, argument, "--cwd")) {
+            if (cwd_seen) return usage();
+            options.cwd = value;
+            cwd_seen = true;
+        } else if (std.mem.eql(u8, argument, "--shell")) {
+            if (shell_seen) return usage();
+            options.shell = value;
+            shell_seen = true;
+        } else if (std.mem.eql(u8, argument, "--command")) {
+            if (command_seen) return usage();
+            options.command = value;
+            command_seen = true;
+        } else return usage();
+        index += 2;
+    }
+    const session = try howl.lifecycle.start(
+        std.heap.page_allocator,
+        init.io,
+        init.minimal.environ,
+        runtime_dir,
+        options,
+    );
+    if (json) {
+        var buffer: [320]u8 = undefined;
+        const encoded = std.fmt.bufPrint(
+            &buffer,
+            "{{\"name\":\"{s}\",\"pid\":{d},\"endpoint\":\"{s}\",\"rows\":{d},\"columns\":{d}}}\n",
+            .{ session.name(), session.pid, session.endpoint(), session.rows, session.columns },
+        ) catch return error.OutputFailed;
+        try writeStdout(encoded);
+    } else {
+        var buffer: [256]u8 = undefined;
+        const line = std.fmt.bufPrint(
+            &buffer,
+            "started {s} pid={d} size={d}x{d} endpoint={s}\n",
+            .{ session.name(), session.pid, session.rows, session.columns, session.endpoint() },
+        ) catch return error.OutputFailed;
+        try writeStdout(line);
+    }
+    return .ok;
+}
+
+fn stopCommand(init: std.process.Init) !Exit {
+    const argv = init.minimal.args.vector;
+    if (argv.len != 3 and argv.len != 4) return usage();
+    const json = argv.len == 4 and std.mem.eql(u8, std.mem.span(argv[3]), "--json");
+    if (argv.len == 4 and !json) return usage();
+    const runtime_dir = std.process.Environ.getPosix(init.minimal.environ, "XDG_RUNTIME_DIR") orelse
+        return error.RuntimeDirectoryUnavailable;
+    const name = std.mem.span(argv[2]);
+    try howl.lifecycle.stop(std.heap.page_allocator, init.io, runtime_dir, name);
+    if (json) {
+        try writeStdout("{\"stopped\":true,\"name\":");
+        try writeJsonString(name);
+        try writeStdout("}\n");
+    } else {
+        try writeStdout("stopped ");
+        try writeStdout(name);
+        try writeStdout("\n");
+    }
+    return .ok;
 }
 
 fn sessionsCommand(init: std.process.Init) !Exit {
