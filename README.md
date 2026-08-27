@@ -27,9 +27,18 @@ Attaching is observational. It never silently resizes the PTY. Geometry is expli
 ## Operator and agent CLI
 
 The installed non-GUI entrypoint is `~/.local/bin/howl`. It is an ordinary client
-of `howl-sessiond`; Remoter and Captain Control do not relay or own terminal state.
-TCP endpoints remain IPv4 loopback only. Remote agents first reach the node through
-existing transport, then run the same CLI a human would.
+of `howl-sessiond`; no outer application owns terminal state. TCP endpoints remain
+IPv4 loopback only. Remote agents first reach the node through existing transport,
+then run the same CLI a human would.
+
+Captain Control's first remote GUI adapter deliberately does the same thing through
+each configured node's existing Remoter `command` transport. Remoter does not
+interpret Howl/session semantics and Captain Control does not expose Howl TCP.
+Because generic command calls are Activity evidence, that dogfood adapter is
+event-driven: activation, Refresh, selection and explicit actions cause reads; no
+background terminal polling is part of this boundary. A direct frozen-wire client
+or narrower Remoter tool should be promoted only if measured latency/Activity noise
+justifies it.
 
 ```text
 howl start NAME [--rows ROWS] [--columns COLUMNS] [--cwd PATH] [--shell PATH] [--command COMMAND] [--json]
