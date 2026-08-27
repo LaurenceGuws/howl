@@ -22,10 +22,7 @@ Use Fleet's installed `zig` from `PATH` and require `zig version` to match the t
 The installed operator/agent entrypoint is `~/.local/bin/howl`. It is a client of
 `howl-sessiond`, not a second session authority. Agents normally reach a node
 through Remoter and invoke this CLI there; do not add Remoter, SSH, Cloudflare,
-or node-discovery policy to Howl's session client. Captain Control currently
-dogfoods that exact CLI-through-Remoter path with explicit/event-driven reads.
-That is an outer-client choice, not permission to move Remoter policy into Howl
-or to promote the experimental Dart socket client without measured need.
+or node-discovery policy to Howl's session client.
 
 ## Core bars
 
