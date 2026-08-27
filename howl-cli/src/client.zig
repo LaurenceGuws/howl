@@ -20,6 +20,12 @@ pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.Pa
     RequiredFeatureMissing,
 };
 
+/// Reports a negotiated command capability, encoding, or bounded response failure.
+pub const CommandError = Error || protocol.InputEncodeError || error{
+    MissingFeature,
+    UnexpectedResponse,
+};
+
 /// Owns one received frame payload until deinitialized.
 pub const Frame = struct {
     allocator: std.mem.Allocator,
@@ -85,6 +91,71 @@ pub const Connection = struct {
         errdefer self.allocator.free(payload);
         try readExact(self.fd, payload);
         return .{ .allocator = self.allocator, .kind = header.kind, .payload = payload };
+    }
+
+    /// Sends one semantic paste event and returns the endpoint's exact bounded result.
+    pub fn paste(self: *Connection, bytes: []const u8) CommandError!protocol.ResultCode {
+        if (bytes.len == 0 or bytes.len >= protocol.maximum_request_payload_bytes)
+            return error.InvalidPayload;
+        const payload = try self.allocator.alloc(u8, bytes.len + 1);
+        defer self.allocator.free(payload);
+        payload[0] = @backingInt(protocol.InputKind.paste);
+        @memcpy(payload[1..], bytes);
+        try self.send(.input, payload);
+        return self.receiveResult(.input);
+    }
+
+    /// Sends one exact physical key transition without synthesizing terminal bytes.
+    pub fn key(self: *Connection, value: protocol.KeyInput) CommandError!protocol.ResultCode {
+        try self.requireFeature(.typed_input);
+        var payload: [
+            1 + protocol.typed_input.key_header_bytes +
+                protocol.typed_input.maximum_legacy_key_bytes +
+                protocol.typed_input.maximum_key_text_bytes
+        ]u8 = undefined;
+        payload[0] = @backingInt(protocol.InputKind.key);
+        const encoded = try protocol.encodeKeyInput(payload[1..], value);
+        try self.send(.input, payload[0 .. encoded.len + 1]);
+        return self.receiveResult(.input);
+    }
+
+    /// Assigns this connection as canonical resize leader.
+    pub fn claimResize(self: *Connection) CommandError!protocol.ResultCode {
+        try self.requireFeature(.resize_leader);
+        var payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
+        protocol.encodeAssignLeader(&payload, .{ .client_id = self.client_id });
+        try self.send(.assign_leader, &payload);
+        return self.receiveResult(.assign_leader);
+    }
+
+    /// Sends one explicit canonical geometry mutation after leadership is claimed.
+    pub fn resize(self: *Connection, rows: u16, columns: u16) CommandError!protocol.ResultCode {
+        try self.requireFeature(.resize_leader);
+        var payload: [protocol.payload_bytes.resize]u8 = undefined;
+        protocol.encodeResize(&payload, .{ .rows = rows, .columns = columns });
+        try self.send(.resize, &payload);
+        return self.receiveResult(.resize);
+    }
+
+    /// Sends one fixed process-group signal request.
+    pub fn signal(self: *Connection, value: protocol.Signal) CommandError!protocol.ResultCode {
+        var payload: [protocol.payload_bytes.signal]u8 = undefined;
+        protocol.encodeSignal(&payload, value);
+        try self.send(.signal, &payload);
+        return self.receiveResult(.signal);
+    }
+
+    fn requireFeature(self: *const Connection, feature_value: protocol.Feature) error{MissingFeature}!void {
+        if (self.features & protocol.feature(feature_value) == 0) return error.MissingFeature;
+    }
+
+    fn receiveResult(self: *Connection, request_kind: protocol.Kind) CommandError!protocol.ResultCode {
+        var frame = try self.receive();
+        defer frame.deinit();
+        if (frame.kind != .result) return error.UnexpectedResponse;
+        const result = try protocol.decodeResult(frame.payload);
+        if (result.request_kind != request_kind) return error.UnexpectedResponse;
+        return result.code;
     }
 };
 

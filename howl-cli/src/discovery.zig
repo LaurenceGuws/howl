@@ -110,6 +110,34 @@ pub fn list(
     return result;
 }
 
+/// Reports an absent, duplicated, or currently unreachable named session.
+pub const ResolveError = Error || error{
+    InvalidSessionName,
+    NoSuchSession,
+    AmbiguousSession,
+    SessionUnreachable,
+};
+
+/// Resolves one exact safe session name from validated runtime state.
+pub fn resolve(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    runtime_dir: []const u8,
+    name: []const u8,
+) ResolveError!Session {
+    session_discovery.validateName(name) catch return error.InvalidSessionName;
+    const listed = try list(allocator, io, runtime_dir);
+    var found: ?Session = null;
+    for (listed.items()) |session| {
+        if (!std.mem.eql(u8, session.name(), name)) continue;
+        if (found != null) return error.AmbiguousSession;
+        found = session;
+    }
+    const session = found orelse return error.NoSuchSession;
+    if (!session.reachable) return error.SessionUnreachable;
+    return session;
+}
+
 fn copySession(record: session_discovery.Record, reachable: bool) Session {
     var session = Session{
         .name_len = @intCast(record.name.len),
