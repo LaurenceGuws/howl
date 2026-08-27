@@ -19,6 +19,24 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
+// POSIX signal handlers cannot borrow server ownership. They request that the
+// normal bounded poll loop return through its existing cleanup path instead.
+var stop_requested = std.atomic.Value(bool).init(false);
+
+fn requestStop(_: posix.SIG) callconv(.c) void {
+    stop_requested.store(true, .release);
+}
+
+fn installStopHandlers() void {
+    const action: posix.Sigaction = .{
+        .handler = .{ .handler = requestStop },
+        .mask = posix.sigemptyset(),
+        .flags = 0,
+    };
+    posix.sigaction(.TERM, &action, null);
+    posix.sigaction(.INT, &action, null);
+}
+
 const ListenerSpec = union(enum) {
     unix: []const u8,
     tcp_loopback: u16,
@@ -1317,6 +1335,8 @@ pub fn main(init: std.process.Init) error{
     InvalidColumns,
     SessionServerFailed,
 }!void {
+    stop_requested.store(false, .release);
+    installStopHandlers();
     const argv = init.minimal.args.vector;
     if (argv.len < 5 or argv.len > 6) return error.InvalidArguments;
     const listener_spec = parseListenerSpec(std.mem.span(argv[1])) catch return error.InvalidArguments;
@@ -1348,7 +1368,15 @@ pub fn main(init: std.process.Init) error{
         }) catch return error.SessionServerFailed;
     }
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
-    while (true) server.turn(-1) catch return error.SessionServerFailed;
+    while (!stop_requested.load(.acquire))
+        server.turn(-1) catch return error.SessionServerFailed;
+}
+
+test "termination signal handler only requests normal cleanup" {
+    stop_requested.store(false, .release);
+    requestStop(.TERM);
+    try std.testing.expect(stop_requested.load(.acquire));
+    stop_requested.store(false, .release);
 }
 
 const TestFrame = struct {
