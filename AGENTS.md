@@ -19,6 +19,11 @@ Official docs and maintained references are local development inputs:
 
 Use Fleet's installed `zig` from `PATH` and require `zig version` to match the tracked `.zigversion`; never create a project-local Zig symlink or substitute a mismatched compiler.
 
+The installed operator/agent entrypoint is `~/.local/bin/howl`. It is a client of
+`howl-sessiond`, not a second session authority. Agents normally reach a node
+through Remoter and invoke this CLI there; do not add Remoter, SSH, Cloudflare,
+or node-discovery policy to Howl's session client.
+
 ## Core bars
 
 1. Prefer direct singular code lanes and deletion. Foot is the simplicity reference.
@@ -48,4 +53,4 @@ Before a checkpoint: run the affected package proofs, root core gate, protocol v
 
 This repository is the session/VT/PTY workspace, not an authority boundary for every Howl-named package. Cairn carries substantial cross-repository context; repository adjacency is only development convenience.
 
-The root gate owns local `howl-vt`, `howl-session`, and `howl-pty`, and delegates the exact pinned standalone `howl-text` package's own checks and tests. Other local packages are experiments until explicitly promoted. QAgent and other embedders may pressure the core but never own its policy.
+The root gate owns local `howl-vt`, `howl-session`, `howl-pty`, and `howl-cli`, and delegates the exact pinned standalone `howl-text` package's own checks and tests. Other local packages are experiments until explicitly promoted. QAgent and other embedders may pressure the core but never own its policy.

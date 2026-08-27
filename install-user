@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+mode=${1:---check}
+bin_dir=${HOME}/.local/bin
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/howl
+receipt=${state_dir}/installed.sha256
+zig=${HOME}/.local/bin/zig
+
+[[ $mode == --check || $mode == --promote ]] || {
+  echo 'usage: ./install-user --check|--promote' >&2
+  exit 2
+}
+[[ $# == 1 ]] || exit 2
+[[ -x $zig ]] || { echo "howl install: missing Fleet Zig: $zig" >&2; exit 1; }
+[[ $($zig version) == $(<"$root/.zigversion") ]] || {
+  echo 'howl install: Fleet Zig does not match .zigversion' >&2
+  exit 1
+}
+
+if [[ $mode == --promote ]]; then
+  [[ $(git -C "$root" branch --show-current) == main ]] || {
+    echo 'howl install: checkout is not on main' >&2
+    exit 1
+  }
+  [[ -z $(git -C "$root" status --porcelain) ]] || {
+    echo 'howl install: checkout is dirty' >&2
+    exit 1
+  }
+  head=$(git -C "$root" rev-parse HEAD)
+  origin=$(git -C "$root" rev-parse origin/main 2>/dev/null) || {
+    echo 'howl install: origin/main unavailable' >&2
+    exit 1
+  }
+  [[ $head == "$origin" ]] || {
+    echo 'howl install: HEAD is not pushed to origin/main' >&2
+    exit 1
+  }
+fi
+
+tmp=$(mktemp -d /tmp/howl-install.XXXXXX)
+cleanup() { rm -rf -- "$tmp"; }
+trap cleanup EXIT HUP INT TERM
+
+cd "$root"
+"$zig" build check
+"$zig" build test
+./tools/audit_source.sh
+git diff --check
+(
+  cd howl-cli
+  "$zig" build install -Doptimize=ReleaseSafe --prefix "$tmp/prefix"
+)
+(
+  cd howl-session
+  "$zig" build install -Doptimize=ReleaseSafe --prefix "$tmp/prefix"
+)
+
+names=(howl howl-sessiond howl-session-bridge)
+for name in "${names[@]}"; do
+  candidate="$tmp/prefix/bin/$name"
+  [[ -x $candidate ]] || { echo "howl install: missing candidate: $name" >&2; exit 1; }
+done
+
+if [[ $mode == --check ]]; then
+  echo 'howl install: candidate ready'
+  exit 0
+fi
+
+mkdir -p -- "$bin_dir" "$state_dir"
+previous_sha() {
+  local name=$1
+  [[ -f $receipt ]] || return 0
+  awk -v wanted="$name" '$2 == wanted { print $1; exit }' "$receipt"
+}
+sha() { sha256sum -- "$1" | awk '{print $1}'; }
+
+for name in "${names[@]}"; do
+  target="$bin_dir/$name"
+  candidate="$tmp/prefix/bin/$name"
+  candidate_sha=$(sha "$candidate")
+  if [[ -e $target || -L $target ]]; then
+    [[ -f $target && ! -L $target ]] || {
+      echo "howl install: refusing unexpected install target: $target" >&2
+      exit 1
+    }
+    installed_sha=$(sha "$target")
+    prior=$(previous_sha "$name")
+    [[ $installed_sha == "$candidate_sha" || ( -n $prior && $installed_sha == "$prior" ) ]] || {
+      echo "howl install: refusing locally changed installed binary: $target" >&2
+      exit 1
+    }
+  fi
+done
+
+receipt_tmp=$(mktemp "$state_dir/.installed.XXXXXX")
+for name in "${names[@]}"; do
+  target="$bin_dir/$name"
+  candidate="$tmp/prefix/bin/$name"
+  stage=$(mktemp "$bin_dir/.${name}.XXXXXX")
+  install -m 0755 -- "$candidate" "$stage"
+  mv -f -- "$stage" "$target"
+  candidate_sha=$(sha "$candidate")
+  [[ ! -L $target && -x $target && $(sha "$target") == "$candidate_sha" ]] || {
+    echo "howl install: installed binary verification failed: $target" >&2
+    exit 1
+  }
+  printf '%s %s\n' "$candidate_sha" "$name" >>"$receipt_tmp"
+done
+chmod 0600 "$receipt_tmp"
+mv -f -- "$receipt_tmp" "$receipt"
+printf 'howl install: installed %s\n' "${names[*]}"
