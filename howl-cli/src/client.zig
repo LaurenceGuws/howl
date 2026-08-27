@@ -3,9 +3,9 @@
 const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
-const protocol = @import("howl_session").protocol;
-
-const loopback_prefix = "tcp://127.0.0.1:";
+const session = @import("howl_session");
+const protocol = session.protocol;
+const discovery = session.discovery;
 
 /// Reports endpoint parsing, connection, framing, allocation, or negotiation failure.
 pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.PayloadError || error{
@@ -43,7 +43,7 @@ pub const Connection = struct {
 
     /// Connects only to the Howl node-local IPv4 loopback endpoint form.
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
-        const port = try endpointPort(endpoint);
+        const port = discovery.endpointPort(endpoint) catch return error.InvalidEndpoint;
         const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
         if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
         const fd: posix.fd_t = @intCast(raw);
@@ -110,15 +110,6 @@ fn initOwnedFd(allocator: std.mem.Allocator, fd: posix.fd_t) Error!Connection {
     connection.features = welcome.features;
     connection.client_id = welcome.client_id;
     return connection;
-}
-
-fn endpointPort(endpoint: []const u8) error{InvalidEndpoint}!u16 {
-    if (!std.mem.startsWith(u8, endpoint, loopback_prefix)) return error.InvalidEndpoint;
-    const text = endpoint[loopback_prefix.len..];
-    if (text.len == 0 or std.mem.indexOfScalar(u8, text, '/') != null) return error.InvalidEndpoint;
-    const port = std.fmt.parseInt(u16, text, 10) catch return error.InvalidEndpoint;
-    if (port == 0) return error.InvalidEndpoint;
-    return port;
 }
 
 fn loopbackAddress(port: u16) linux.sockaddr.in {
@@ -233,11 +224,11 @@ fn testSocketPair() [2]posix.fd_t {
 }
 
 test "loopback endpoint parser rejects ambiguous or remote forms" {
-    try std.testing.expectEqual(@as(u16, 7777), try endpointPort("tcp://127.0.0.1:7777"));
-    try std.testing.expectError(error.InvalidEndpoint, endpointPort("tcp://0.0.0.0:7777"));
-    try std.testing.expectError(error.InvalidEndpoint, endpointPort("tcp://127.0.0.1:0"));
-    try std.testing.expectError(error.InvalidEndpoint, endpointPort("tcp://127.0.0.1:7777/path"));
-    try std.testing.expectError(error.InvalidEndpoint, endpointPort("/tmp/howl.sock"));
+    try std.testing.expectEqual(@as(u16, 7777), try discovery.endpointPort("tcp://127.0.0.1:7777"));
+    try std.testing.expectError(error.InvalidEndpoint, discovery.endpointPort("tcp://0.0.0.0:7777"));
+    try std.testing.expectError(error.InvalidEndpoint, discovery.endpointPort("tcp://127.0.0.1:0"));
+    try std.testing.expectError(error.InvalidEndpoint, discovery.endpointPort("tcp://127.0.0.1:7777/path"));
+    try std.testing.expectError(error.InvalidEndpoint, discovery.endpointPort("/tmp/howl.sock"));
 }
 
 test "handshake survives fragmented stream reads and owns negotiated identity" {

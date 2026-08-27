@@ -6,6 +6,8 @@ const vt = @import("howl_vt");
 
 /// Shared-session wire and geometry-authority contract.
 pub const protocol = @import("protocol.zig");
+/// Bounded node-local runtime discovery record contract.
+pub const discovery = @import("discovery.zig");
 
 const write_queue_bytes: usize = 64 * 1024;
 const read_buffer_bytes: usize = 16 * 1024;

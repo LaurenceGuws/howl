@@ -10,6 +10,7 @@ const posix = std.posix;
 const linux = std.os.linux;
 const howl = @import("howl_session");
 const protocol = howl.protocol;
+const discovery = howl.discovery;
 
 const maximum_clients: usize = 8;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
@@ -1328,6 +1329,24 @@ pub fn main(init: std.process.Init) error{
         .columns = columns,
     }) catch return error.SessionServerFailed;
     defer server.deinit();
+    var publication: ?discovery.Publication = null;
+    defer if (publication) |*active| active.deinit();
+    if (std.process.Environ.getPosix(init.minimal.environ, "HOWL_SESSION_NAME")) |name| {
+        const runtime_dir = std.process.Environ.getPosix(init.minimal.environ, "XDG_RUNTIME_DIR") orelse
+            return error.SessionServerFailed;
+        const port = server.listener.tcp_port orelse return error.SessionServerFailed;
+        var endpoint_buffer: [discovery.maximum_endpoint_bytes]u8 = undefined;
+        const endpoint = std.fmt.bufPrint(&endpoint_buffer, "tcp://127.0.0.1:{d}", .{port}) catch
+            return error.SessionServerFailed;
+        const pid = std.math.cast(u32, linux.getpid()) orelse return error.SessionServerFailed;
+        publication = discovery.Publication.init(init.io, runtime_dir, .{
+            .name = name,
+            .pid = pid,
+            .endpoint = endpoint,
+            .rows = rows,
+            .columns = columns,
+        }) catch return error.SessionServerFailed;
+    }
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
     while (true) server.turn(-1) catch return error.SessionServerFailed;
 }
