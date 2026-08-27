@@ -10,3 +10,6 @@ pub const input = @import("input.zig");
 
 /// Re-exports the frozen session protocol used by CLI command parsing.
 pub const protocol = @import("howl_session").protocol;
+
+/// Owns bounded semantic `text_v1` observation for agents and operators.
+pub const observe = @import("observe.zig");

@@ -25,6 +25,7 @@ fn run(init: std.process.Init) !Exit {
     if (argv.len < 2) return usage();
     const command = std.mem.span(argv[1]);
     if (std.mem.eql(u8, command, "sessions")) return sessionsCommand(init);
+    if (std.mem.eql(u8, command, "observe")) return observeCommand(init);
     if (std.mem.eql(u8, command, "paste")) return pasteCommand(init);
     if (std.mem.eql(u8, command, "key")) return keyCommand(init);
     if (std.mem.eql(u8, command, "chord")) return chordCommand(init);
@@ -39,6 +40,7 @@ fn usage() error{OutputFailed}!Exit {
     try writeStderr(
         "usage:\n" ++
             "  howl sessions [--json]\n" ++
+            "  howl observe SESSION [--json]\n" ++
             "  howl paste SESSION TEXT|--stdin\n" ++
             "  howl key SESSION KEY [press|repeat|release] [--mods MODS]\n" ++
             "  howl chord SESSION MOD+KEY\n" ++
@@ -56,6 +58,28 @@ fn sessionsCommand(init: std.process.Init) !Exit {
     if (argv.len == 3 and std.mem.eql(u8, std.mem.span(argv[2]), "--json"))
         return sessions(init, true);
     return usage();
+}
+
+fn observeCommand(init: std.process.Init) !Exit {
+    const argv = init.minimal.args.vector;
+    if (argv.len != 3 and argv.len != 4) return usage();
+    const json = argv.len == 4 and std.mem.eql(u8, std.mem.span(argv[3]), "--json");
+    if (argv.len == 4 and !json) return usage();
+    const name = std.mem.span(argv[2]);
+    var connection = try connectNamed(init, name);
+    defer connection.deinit();
+    var snapshot = try howl.observe.current(&connection);
+    defer snapshot.deinit();
+    if (json) {
+        try writeSnapshotJson(name, &snapshot);
+    } else {
+        for (0..snapshot.begin.rows) |row_index| {
+            const row = snapshot.row(@intCast(row_index));
+            try writeStdout(std.mem.trimEnd(u8, row, " "));
+            try writeStdout("\n");
+        }
+    }
+    return .ok;
 }
 
 fn pasteCommand(init: std.process.Init) !Exit {
@@ -178,12 +202,16 @@ fn sessions(init: std.process.Init, json: bool) !Exit {
         try writeStdout("[");
         for (listed.items(), 0..) |session, index| {
             if (index != 0) try writeStdout(",");
+            const geometry = liveGeometry(session.endpoint()) catch Geometry{
+                .rows = session.rows,
+                .columns = session.columns,
+            };
             var buffer: [320]u8 = undefined;
             const encoded = std.fmt.bufPrint(
                 &buffer,
                 "{{\"name\":\"{s}\",\"pid\":{d},\"endpoint\":\"{s}\",\"rows\":{d},\"columns\":{d},\"reachable\":{s}}}",
                 .{
-                    session.name(),                             session.pid, session.endpoint(), session.rows, session.columns,
+                    session.name(),                             session.pid, session.endpoint(), geometry.rows, geometry.columns,
                     if (session.reachable) "true" else "false",
                 },
             ) catch return error.OutputFailed;
@@ -194,15 +222,94 @@ fn sessions(init: std.process.Init, json: bool) !Exit {
     }
     try writeStdout("NAME\tPID\tSIZE\tREACHABLE\tENDPOINT\n");
     for (listed.items()) |session| {
+        const geometry = liveGeometry(session.endpoint()) catch Geometry{
+            .rows = session.rows,
+            .columns = session.columns,
+        };
         var buffer: [256]u8 = undefined;
         const line = std.fmt.bufPrint(
             &buffer,
             "{s}\t{d}\t{d}x{d}\t{s}\t{s}\n",
-            .{ session.name(), session.pid, session.rows, session.columns, if (session.reachable) "yes" else "no", session.endpoint() },
+            .{ session.name(), session.pid, geometry.rows, geometry.columns, if (session.reachable) "yes" else "no", session.endpoint() },
         ) catch return error.OutputFailed;
         try writeStdout(line);
     }
     return .ok;
+}
+
+const Geometry = struct { rows: u16, columns: u16 };
+
+fn liveGeometry(endpoint: []const u8) !Geometry {
+    var connection = try howl.client.Connection.connect(std.heap.page_allocator, endpoint);
+    defer connection.deinit();
+    var snapshot = try howl.observe.current(&connection);
+    defer snapshot.deinit();
+    return .{ .rows = snapshot.begin.rows, .columns = snapshot.begin.columns };
+}
+
+fn writeSnapshotJson(name: []const u8, snapshot: *const howl.observe.Snapshot) error{OutputFailed}!void {
+    var metadata: [512]u8 = undefined;
+    const begin = snapshot.begin;
+    const prefix = std.fmt.bufPrint(
+        &metadata,
+        "{{\"name\":\"{s}\",\"revision\":{d},\"terminal_revision\":{d},\"rows\":{d},\"columns\":{d}," ++
+            "\"cursor\":{{\"row\":{d},\"column\":{d},\"shape\":{d},\"visible\":{s},\"blink\":{s}}}," ++
+            "\"alternate_screen\":{s},\"stream_closed\":{s},\"child_exited\":{s},\"rows_text\":[",
+        .{
+            name,
+            begin.revision,
+            begin.terminal_revision,
+            begin.rows,
+            begin.columns,
+            begin.cursor_row,
+            begin.cursor_column,
+            begin.cursor_shape,
+            jsonBool(begin.cursor_visible),
+            jsonBool(begin.cursor_blink),
+            jsonBool(begin.alternate_screen),
+            jsonBool(begin.stream_closed),
+            jsonBool(begin.child_exited),
+        },
+    ) catch return error.OutputFailed;
+    try writeStdout(prefix);
+    for (0..begin.rows) |row_index| {
+        if (row_index != 0) try writeStdout(",");
+        try writeJsonString(snapshot.row(@intCast(row_index)));
+    }
+    try writeStdout("]}\n");
+}
+
+fn writeJsonString(bytes: []const u8) error{OutputFailed}!void {
+    try writeStdout("\"");
+    var plain_start: usize = 0;
+    for (bytes, 0..) |byte, index| {
+        const escape: ?[]const u8 = switch (byte) {
+            '"' => "\\\"",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            else => null,
+        };
+        if (escape == null and byte >= 0x20) continue;
+        if (index > plain_start) try writeStdout(bytes[plain_start..index]);
+        if (escape) |encoded| {
+            try writeStdout(encoded);
+        } else {
+            var encoded: [6]u8 = .{ '\\', 'u', '0', '0', 0, 0 };
+            const hex = "0123456789abcdef";
+            encoded[4] = hex[byte >> 4];
+            encoded[5] = hex[byte & 0x0f];
+            try writeStdout(&encoded);
+        }
+        plain_start = index + 1;
+    }
+    if (plain_start < bytes.len) try writeStdout(bytes[plain_start..]);
+    try writeStdout("\"");
+}
+
+fn jsonBool(value: bool) []const u8 {
+    return if (value) "true" else "false";
 }
 
 fn parseKeyAction(text: []const u8) ?session_protocol.InputKeyAction {

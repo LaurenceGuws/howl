@@ -19,7 +19,9 @@ a 1..64 byte `[A-Za-z0-9._-]` name. With `XDG_RUNTIME_DIR` present,
 `howl-sessiond` publishes one mode-0600 record below
 `$XDG_RUNTIME_DIR/howl/sessions/` after binding its loopback TCP endpoint. The
 record contains only the safe name, daemon PID, exact loopback endpoint, and
-canonical rows/columns. Normal daemon cleanup removes its record; a later daemon
+launch rows/columns. Those dimensions are discovery hints, not live geometry;
+clients observe the canonical session for current rows/columns. Normal daemon
+cleanup removes its record; a later daemon
 startup performs a bounded pass that removes dead or malformed Howl-owned record
 files left by hard termination. Clients validate records but do not mutate this
 runtime directory.
