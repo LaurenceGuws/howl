@@ -19,6 +19,20 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
+const detach_marker = "1";
+
+fn parseDetachMarker(value: ?[]const u8) error{InvalidDetachMarker}!bool {
+    const text = value orelse return false;
+    if (!std.mem.eql(u8, text, detach_marker)) return error.InvalidDetachMarker;
+    return true;
+}
+
+fn detachProcess() error{DetachFailed}!void {
+    const result = linux.setsid();
+    if (linux.errno(result) != .SUCCESS) return error.DetachFailed;
+    std.debug.assert(result == @as(usize, @intCast(linux.getpid())));
+}
+
 // POSIX signal handlers cannot borrow server ownership. They request that the
 // normal bounded poll loop return through its existing cleanup path instead.
 var stop_requested = std.atomic.Value(bool).init(false);
@@ -1342,6 +1356,10 @@ pub fn main(init: std.process.Init) error{
     const listener_spec = parseListenerSpec(std.mem.span(argv[1])) catch return error.InvalidArguments;
     const rows = std.fmt.parseInt(u16, std.mem.span(argv[3]), 10) catch return error.InvalidRows;
     const columns = std.fmt.parseInt(u16, std.mem.span(argv[4]), 10) catch return error.InvalidColumns;
+    const detached = parseDetachMarker(
+        std.process.Environ.getPosix(init.minimal.environ, "HOWL_SESSION_DETACHED"),
+    ) catch return error.SessionServerFailed;
+    if (detached) detachProcess() catch return error.SessionServerFailed;
     var server = Server.init(std.heap.page_allocator, init.io, init.minimal.environ, listener_spec, .{
         .shell = std.mem.span(argv[2]),
         .command = if (argv.len == 6) std.mem.span(argv[5]) else null,
@@ -1377,6 +1395,13 @@ test "termination signal handler only requests normal cleanup" {
     requestStop(.TERM);
     try std.testing.expect(stop_requested.load(.acquire));
     stop_requested.store(false, .release);
+}
+
+test "detached startup marker is explicit and rejects accidental values" {
+    try std.testing.expect(!(try parseDetachMarker(null)));
+    try std.testing.expect(try parseDetachMarker("1"));
+    try std.testing.expectError(error.InvalidDetachMarker, parseDetachMarker("true"));
+    try std.testing.expectError(error.InvalidDetachMarker, parseDetachMarker("0"));
 }
 
 const TestFrame = struct {
