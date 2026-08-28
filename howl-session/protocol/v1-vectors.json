@@ -5,7 +5,7 @@
   "cases": [
     {
       "id": "hello_all_features",
-      "note": "Client offers protocol v1 and every currently defined feature bit.",
+      "note": "Original protocol-v1 feature cohort through text_v1; retained byte-for-byte as an old-client compatibility fixture.",
       "hex": "48574c53010100000000000c00010001000000000000001f",
       "expect": {
         "frames": [
@@ -23,7 +23,7 @@
     },
     {
       "id": "welcome_all_features",
-      "note": "Endpoint returns negotiated v1 features and connection-local client id.",
+      "note": "Original negotiated protocol-v1 feature cohort through text_v1; retained byte-for-byte as an old-client compatibility fixture.",
       "hex": "48574c5301020000000000120001000000000000001f0102030405060708",
       "expect": {
         "frames": [
@@ -55,6 +55,61 @@
         ],
         "snapshots": []
       }
+    },
+    {
+      "id": "interaction_state_request",
+      "note": "Negotiated interaction-state observation is an explicit zero-byte request, separate from text_v1.",
+      "hex": "48574c53010c000000000000",
+      "expect": {
+        "frames": [
+          {
+            "kind": "interaction_state",
+            "payload": {}
+          }
+        ],
+        "snapshots": []
+      }
+    },
+    {
+      "id": "interaction_state_snapshot",
+      "note": "Mode-directed caller interaction state is correlated to one canonical terminal revision without changing text_v1.",
+      "hex": "48574c53010d000000000014010203040506070800001ffd0403ff7f12340300",
+      "expect": {
+        "frames": [
+          {
+            "kind": "interaction_state_snapshot",
+            "payload": {
+              "terminal_revision": 72623859790382856,
+              "mouse_tracking": "any_event",
+              "mouse_protocol": "sgr_pixel",
+              "modify_other_keys": -1,
+              "kitty_keyboard_flags": 127,
+              "key_format_resource_4": 4660,
+              "pointer_mode": 3,
+              "keyboard_action_mode": true,
+              "auto_repeat": false,
+              "newline_mode": true,
+              "application_cursor_keys": true,
+              "application_keypad": true,
+              "meta_sends_escape": true,
+              "report_key_up": true,
+              "bracketed_paste": true,
+              "focus_reporting": true,
+              "termios_signals": true,
+              "alternate_scroll": true,
+              "paste_events": true,
+              "inband_resize_notifications": true
+            }
+          }
+        ],
+        "snapshots": []
+      }
+    },
+    {
+      "id": "interaction_state_reserved_byte",
+      "note": "Reserved interaction-state bytes remain canonical zero.",
+      "hex": "48574c53010d000000000014010203040506070800001ffd0403ff7f12340301",
+      "error": "interaction_reserved"
     },
     {
       "id": "input_raw_bytes_binary",

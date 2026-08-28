@@ -359,6 +359,7 @@ const Server = struct {
             .assign_leader => try self.handleAssignLeader(client, payload),
             .resize => try self.handleResize(client, payload),
             .signal => try self.handleSignal(client, payload),
+            .interaction_state => try self.handleInteractionState(client, payload),
             else => try self.queueResult(client, kind, .unsupported),
         }
     }
@@ -428,6 +429,50 @@ const Server = struct {
         const serviced = try howl.service(self.session, false, true, nowNs(self.io));
         self.applyServiceResult(serviced);
         try self.queueResult(client, .input, .ok);
+    }
+
+    fn handleInteractionState(self: *Server, client: *Client, payload: []const u8) !void {
+        if (client.features & protocol.feature(.interaction_state) == 0)
+            return self.queueResult(client, .interaction_state, .unsupported);
+        if (payload.len != protocol.payload_bytes.interaction_state)
+            return self.queueResult(client, .interaction_state, .malformed);
+        const state = howl.interactionState(self.session);
+        var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
+        protocol.encodeInteractionStateSnapshot(&encoded, .{
+            .terminal_revision = howl.revision(self.session),
+            .keyboard_action_mode = state.keyboard_action_mode,
+            .auto_repeat = state.auto_repeat,
+            .newline_mode = state.newline_mode,
+            .application_cursor_keys = state.application_cursor_keys,
+            .application_keypad = state.application_keypad,
+            .meta_sends_escape = state.meta_sends_escape,
+            .report_key_up = state.report_key_up,
+            .bracketed_paste = state.bracketed_paste,
+            .focus_reporting = state.focus_reporting,
+            .termios_signals = state.termios_signals,
+            .alternate_scroll = state.alternate_scroll,
+            .paste_events = state.paste_events,
+            .inband_resize_notifications = state.inband_resize_notifications,
+            .mouse_tracking = switch (state.mouse_tracking) {
+                .off => .off,
+                .x10 => .x10,
+                .normal => .normal,
+                .button_event => .button_event,
+                .any_event => .any_event,
+            },
+            .mouse_protocol = switch (state.mouse_protocol) {
+                .none => .none,
+                .utf8 => .utf8,
+                .sgr => .sgr,
+                .sgr_pixel => .sgr_pixel,
+                .urxvt => .urxvt,
+            },
+            .modify_other_keys = state.modify_other_keys,
+            .kitty_keyboard_flags = state.kitty_keyboard_flags,
+            .key_format_resource_4 = state.key_format_resource_4,
+            .pointer_mode = state.pointer_mode,
+        });
+        try self.queueFrame(client, .interaction_state_snapshot, &encoded);
     }
 
     fn handleAssignLeader(self: *Server, client: *Client, payload: []const u8) !void {
@@ -1537,6 +1582,60 @@ fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
     try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) == 0);
     try std.testing.expect(welcome.features & protocol.feature(.typed_input) == 0);
     return welcome;
+}
+
+test "interaction state is negotiated and exposes invisible input modes" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-interaction-state.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "printf '\\033[?2004h'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    const features = protocol.feature(.grid_snapshot) | protocol.feature(.interaction_state);
+    const welcome = try handshakeWithFeatures(&peer, &server, features);
+    try std.testing.expect(welcome.features & protocol.feature(.interaction_state) != 0);
+
+    var turns: usize = 0;
+    while (!howl.interactionState(server.session).bracketed_paste and turns < 1000) : (turns += 1)
+        try server.turn(1);
+    try std.testing.expect(howl.interactionState(server.session).bracketed_paste);
+
+    try peer.sendFrame(&server, .interaction_state, &.{});
+    var frame = try awaitFrame(&peer, &server);
+    defer frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.interaction_state_snapshot, frame.kind);
+    const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
+    try std.testing.expect(state.bracketed_paste);
+    try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
+
+    var legacy = try TestPeer.connect(std.testing.allocator, path);
+    defer legacy.deinit();
+    const legacy_welcome = try handshakeWithFeatures(&legacy, &server, protocol.feature(.grid_snapshot));
+    try std.testing.expectEqual(protocol.feature(.grid_snapshot), legacy_welcome.features);
+    try legacy.sendFrame(&server, .interaction_state, &.{});
+    var rejected = try awaitFrame(&legacy, &server);
+    defer rejected.deinit();
+    try std.testing.expectEqual(protocol.Kind.result, rejected.kind);
+    const result = try protocol.decodeResult(rejected.payload);
+    try std.testing.expectEqual(protocol.Kind.interaction_state, result.request_kind);
+    try std.testing.expectEqual(protocol.ResultCode.unsupported, result.code);
 }
 
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {

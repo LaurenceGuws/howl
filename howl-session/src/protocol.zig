@@ -49,6 +49,8 @@ pub const Kind = enum(u8) {
     resize = 9,
     signal = 10,
     result = 11,
+    interaction_state = 12,
+    interaction_state_snapshot = 13,
 };
 
 /// Features are negotiated independently of protocol version.
@@ -58,6 +60,7 @@ pub const Feature = enum(u6) {
     resize_leader = 2,
     history_window = 3,
     text_snapshot = 4,
+    interaction_state = 5,
 };
 
 /// Returns the negotiated bit mask for one feature.
@@ -70,7 +73,8 @@ pub const supported_features = feature(.grid_snapshot) |
     feature(.typed_input) |
     feature(.resize_leader) |
     feature(.history_window) |
-    feature(.text_snapshot);
+    feature(.text_snapshot) |
+    feature(.interaction_state);
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
 pub const Header = struct {
@@ -306,6 +310,80 @@ pub const Signal = enum(u8) {
     terminate = 15,
 };
 
+/// Frozen mouse-event selection retained by one interaction-state snapshot.
+pub const InteractionMouseTracking = enum(u8) {
+    off = 0,
+    x10 = 1,
+    normal = 2,
+    button_event = 3,
+    any_event = 4,
+};
+
+/// Frozen mouse-report encoding retained by one interaction-state snapshot.
+pub const InteractionMouseProtocol = enum(u8) {
+    none = 0,
+    utf8 = 1,
+    sgr = 2,
+    sgr_pixel = 3,
+    urxvt = 4,
+};
+
+/// Coherent mode-directed caller interaction state at one terminal revision.
+pub const InteractionStateSnapshot = struct {
+    terminal_revision: u64,
+    keyboard_action_mode: bool,
+    auto_repeat: bool,
+    newline_mode: bool,
+    application_cursor_keys: bool,
+    application_keypad: bool,
+    meta_sends_escape: bool,
+    report_key_up: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    termios_signals: bool,
+    alternate_scroll: bool,
+    paste_events: bool,
+    inband_resize_notifications: bool,
+    mouse_tracking: InteractionMouseTracking,
+    mouse_protocol: InteractionMouseProtocol,
+    modify_other_keys: i8,
+    kitty_keyboard_flags: u8,
+    key_format_resource_4: u16,
+    pointer_mode: u2,
+};
+
+/// Bit positions in the fixed interaction-state flags word.
+pub const interaction_state_flags = struct {
+    /// Keyboard action mode suppresses ordinary key encoding.
+    pub const keyboard_action_mode: u32 = 1 << 0;
+    /// Physical key repeat transitions are currently admitted.
+    pub const auto_repeat: u32 = 1 << 1;
+    /// Enter uses CRLF rather than CR when legacy encoding applies.
+    pub const newline_mode: u32 = 1 << 2;
+    /// Cursor keys use application-cursor encoding.
+    pub const application_cursor_keys: u32 = 1 << 3;
+    /// Keypad keys use application-keypad encoding.
+    pub const application_keypad: u32 = 1 << 4;
+    /// Alt-modified legacy bytes receive an Escape prefix.
+    pub const meta_sends_escape: u32 = 1 << 5;
+    /// Legacy key-release reporting is enabled.
+    pub const report_key_up: u32 = 1 << 6;
+    /// Semantic paste is wrapped in bracketed-paste delimiters.
+    pub const bracketed_paste: u32 = 1 << 7;
+    /// Focus in/out input is reported to the child.
+    pub const focus_reporting: u32 = 1 << 8;
+    /// Matching control bytes may be delivered as foreground termios signals.
+    pub const termios_signals: u32 = 1 << 9;
+    /// Alternate-screen wheel input uses alternate-scroll behavior.
+    pub const alternate_scroll: u32 = 1 << 10;
+    /// Kitty paste-event exchange is enabled.
+    pub const paste_events: u32 = 1 << 11;
+    /// Resize commits generate in-band terminal resize notification bytes.
+    pub const inband_resize_notifications: u32 = 1 << 12;
+    /// Mask of every defined interaction-state flag bit.
+    pub const known: u32 = (1 << 13) - 1;
+};
+
 /// Bounded request outcome without transporting host-specific errno values.
 pub const ResultCode = enum(u8) {
     ok = 0,
@@ -496,6 +574,10 @@ pub const payload_bytes = struct {
     pub const signal: usize = 1;
     /// `Result` payload bytes.
     pub const result: usize = 2;
+    /// `interaction_state` request payload bytes.
+    pub const interaction_state: usize = 0;
+    /// `interaction_state_snapshot` payload bytes.
+    pub const interaction_state_snapshot: usize = 20;
 };
 
 /// Owns only geometry authority. Client discovery/rosters remain endpoint policy.
@@ -889,6 +971,67 @@ pub fn decodeSignal(input: []const u8) PayloadError!Signal {
     return enumFromInt(Signal, input[0]) orelse error.InvalidPayload;
 }
 
+/// Encodes one coherent interaction-state snapshot.
+pub fn encodeInteractionStateSnapshot(
+    output: *[payload_bytes.interaction_state_snapshot]u8,
+    value: InteractionStateSnapshot,
+) void {
+    output.* = @splat(0);
+    writeU64(output[0..8], value.terminal_revision);
+    var flags: u32 = 0;
+    if (value.keyboard_action_mode) flags |= interaction_state_flags.keyboard_action_mode;
+    if (value.auto_repeat) flags |= interaction_state_flags.auto_repeat;
+    if (value.newline_mode) flags |= interaction_state_flags.newline_mode;
+    if (value.application_cursor_keys) flags |= interaction_state_flags.application_cursor_keys;
+    if (value.application_keypad) flags |= interaction_state_flags.application_keypad;
+    if (value.meta_sends_escape) flags |= interaction_state_flags.meta_sends_escape;
+    if (value.report_key_up) flags |= interaction_state_flags.report_key_up;
+    if (value.bracketed_paste) flags |= interaction_state_flags.bracketed_paste;
+    if (value.focus_reporting) flags |= interaction_state_flags.focus_reporting;
+    if (value.termios_signals) flags |= interaction_state_flags.termios_signals;
+    if (value.alternate_scroll) flags |= interaction_state_flags.alternate_scroll;
+    if (value.paste_events) flags |= interaction_state_flags.paste_events;
+    if (value.inband_resize_notifications) flags |= interaction_state_flags.inband_resize_notifications;
+    writeU32(output[8..12], flags);
+    output[12] = @backingInt(value.mouse_tracking);
+    output[13] = @backingInt(value.mouse_protocol);
+    output[14] = @bitCast(value.modify_other_keys);
+    output[15] = value.kitty_keyboard_flags;
+    writeU16(output[16..18], value.key_format_resource_4);
+    output[18] = value.pointer_mode;
+}
+
+/// Decodes and validates one coherent interaction-state snapshot.
+pub fn decodeInteractionStateSnapshot(input: []const u8) PayloadError!InteractionStateSnapshot {
+    if (input.len != payload_bytes.interaction_state_snapshot) return error.InvalidPayload;
+    const flags = readU32(input[8..12]);
+    if (flags & ~interaction_state_flags.known != 0 or input[19] != 0 or
+        input[15] & 0x80 != 0 or input[18] > 3)
+        return error.InvalidPayload;
+    return .{
+        .terminal_revision = readU64(input[0..8]),
+        .keyboard_action_mode = flags & interaction_state_flags.keyboard_action_mode != 0,
+        .auto_repeat = flags & interaction_state_flags.auto_repeat != 0,
+        .newline_mode = flags & interaction_state_flags.newline_mode != 0,
+        .application_cursor_keys = flags & interaction_state_flags.application_cursor_keys != 0,
+        .application_keypad = flags & interaction_state_flags.application_keypad != 0,
+        .meta_sends_escape = flags & interaction_state_flags.meta_sends_escape != 0,
+        .report_key_up = flags & interaction_state_flags.report_key_up != 0,
+        .bracketed_paste = flags & interaction_state_flags.bracketed_paste != 0,
+        .focus_reporting = flags & interaction_state_flags.focus_reporting != 0,
+        .termios_signals = flags & interaction_state_flags.termios_signals != 0,
+        .alternate_scroll = flags & interaction_state_flags.alternate_scroll != 0,
+        .paste_events = flags & interaction_state_flags.paste_events != 0,
+        .inband_resize_notifications = flags & interaction_state_flags.inband_resize_notifications != 0,
+        .mouse_tracking = enumFromInt(InteractionMouseTracking, input[12]) orelse return error.InvalidPayload,
+        .mouse_protocol = enumFromInt(InteractionMouseProtocol, input[13]) orelse return error.InvalidPayload,
+        .modify_other_keys = @bitCast(input[14]),
+        .kitty_keyboard_flags = input[15],
+        .key_format_resource_4 = readU16(input[16..18]),
+        .pointer_mode = @intCast(input[18]),
+    };
+}
+
 /// Encodes one bounded command result.
 pub fn encodeResult(output: *[payload_bytes.result]u8, value: Result) void {
     output[0] = @backingInt(value.request_kind);
@@ -1230,6 +1373,49 @@ test "typed mouse and focus grammars are exact and hostile-safe" {
     try std.testing.expectEqual(InputFocus.in, try decodeFocusInput(&focus));
     focus[0] = 3;
     try std.testing.expectError(error.InvalidPayload, decodeFocusInput(&focus));
+}
+
+test "interaction state snapshot is fixed and rejects reserved drift" {
+    var encoded: [payload_bytes.interaction_state_snapshot]u8 = undefined;
+    encodeInteractionStateSnapshot(&encoded, .{
+        .terminal_revision = 0x0102_0304_0506_0708,
+        .keyboard_action_mode = true,
+        .auto_repeat = false,
+        .newline_mode = true,
+        .application_cursor_keys = true,
+        .application_keypad = true,
+        .meta_sends_escape = true,
+        .report_key_up = true,
+        .bracketed_paste = true,
+        .focus_reporting = true,
+        .termios_signals = true,
+        .alternate_scroll = true,
+        .paste_events = true,
+        .inband_resize_notifications = true,
+        .mouse_tracking = .any_event,
+        .mouse_protocol = .sgr_pixel,
+        .modify_other_keys = -1,
+        .kitty_keyboard_flags = 0x7f,
+        .key_format_resource_4 = 0x1234,
+        .pointer_mode = 3,
+    });
+    try std.testing.expectEqualSlices(u8, &.{
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x00, 0x00, 0x1f, 0xfd, 0x04, 0x03, 0xff, 0x7f,
+        0x12, 0x34, 0x03, 0x00,
+    }, &encoded);
+    const decoded = try decodeInteractionStateSnapshot(&encoded);
+    try std.testing.expect(decoded.keyboard_action_mode);
+    try std.testing.expect(!decoded.auto_repeat);
+    try std.testing.expect(decoded.bracketed_paste);
+    try std.testing.expectEqual(@as(i8, -1), decoded.modify_other_keys);
+    try std.testing.expectEqual(InteractionMouseProtocol.sgr_pixel, decoded.mouse_protocol);
+    var bad = encoded;
+    bad[19] = 1;
+    try std.testing.expectError(error.InvalidPayload, decodeInteractionStateSnapshot(&bad));
+    bad = encoded;
+    bad[15] = 0x80;
+    try std.testing.expectError(error.InvalidPayload, decodeInteractionStateSnapshot(&bad));
 }
 
 test "version negotiation is explicit before protocol v1" {

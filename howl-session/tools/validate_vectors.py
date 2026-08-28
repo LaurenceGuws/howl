@@ -32,6 +32,8 @@ KINDS = {
     9: "resize",
     10: "signal",
     11: "result",
+    12: "interaction_state",
+    13: "interaction_state_snapshot",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -78,6 +80,25 @@ TYPED_MAXIMUM_LEGACY_KEY_BYTES = 511
 TYPED_MAXIMUM_KEY_TEXT_BYTES = 64
 TYPED_MOUSE_BYTES = 19
 TYPED_FOCUS_BYTES = 1
+
+INTERACTION_STATE_FLAGS = {
+    0: "keyboard_action_mode",
+    1: "auto_repeat",
+    2: "newline_mode",
+    3: "application_cursor_keys",
+    4: "application_keypad",
+    5: "meta_sends_escape",
+    6: "report_key_up",
+    7: "bracketed_paste",
+    8: "focus_reporting",
+    9: "termios_signals",
+    10: "alternate_scroll",
+    11: "paste_events",
+    12: "inband_resize_notifications",
+}
+INTERACTION_MOUSE_TRACKING = {0: "off", 1: "x10", 2: "normal", 3: "button_event", 4: "any_event"}
+INTERACTION_MOUSE_PROTOCOL = {0: "none", 1: "utf8", 2: "sgr", 3: "sgr_pixel", 4: "urxvt"}
+INTERACTION_STATE_BYTES = 20
 
 NAMED_KEY_MAXIMUM = 58
 
@@ -194,6 +215,35 @@ def decode_signal(payload: bytes) -> dict:
     require(len(payload) == 1, "signal_size")
     require(payload[0] in SIGNALS, "signal_value")
     return {"signal": SIGNALS[payload[0]]}
+
+
+def decode_interaction_state(payload: bytes) -> dict:
+    require(len(payload) == 0, "interaction_state_size")
+    return {}
+
+
+def decode_interaction_state_snapshot(payload: bytes) -> dict:
+    require(len(payload) == INTERACTION_STATE_BYTES, "interaction_state_snapshot_size")
+    flags = u32(payload[8:12])
+    known_mask = (1 << len(INTERACTION_STATE_FLAGS)) - 1
+    require(flags & ~known_mask == 0, "interaction_state_flags")
+    require(payload[12] in INTERACTION_MOUSE_TRACKING, "interaction_mouse_tracking")
+    require(payload[13] in INTERACTION_MOUSE_PROTOCOL, "interaction_mouse_protocol")
+    require(payload[15] & 0x80 == 0, "interaction_kitty_flags")
+    require(payload[18] <= 3, "interaction_pointer_mode")
+    require(payload[19] == 0, "interaction_reserved")
+    result = {
+        "terminal_revision": u64(payload[0:8]),
+        "mouse_tracking": INTERACTION_MOUSE_TRACKING[payload[12]],
+        "mouse_protocol": INTERACTION_MOUSE_PROTOCOL[payload[13]],
+        "modify_other_keys": struct.unpack("b", payload[14:15])[0],
+        "kitty_keyboard_flags": payload[15],
+        "key_format_resource_4": u16(payload[16:18]),
+        "pointer_mode": payload[18],
+    }
+    for bit, name in INTERACTION_STATE_FLAGS.items():
+        result[name] = bool(flags & (1 << bit))
+    return result
 
 
 def decode_result(payload: bytes) -> dict:
@@ -588,6 +638,10 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_signal(payload)
     if kind == 11:
         return decode_result(payload)
+    if kind == 12:
+        return decode_interaction_state(payload)
+    if kind == 13:
+        return decode_interaction_state_snapshot(payload)
     reject("snapshot_data_without_begin")
 
 

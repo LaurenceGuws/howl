@@ -50,6 +50,8 @@ Frame kinds are:
 | 9 | `resize` | client → endpoint |
 | 10 | `signal` | client → endpoint |
 | 11 | `result` | endpoint → client |
+| 12 | `interaction_state` | client → endpoint |
+| 13 | `interaction_state_snapshot` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -78,8 +80,9 @@ Feature bits are independent of protocol version:
 | 2 | `0x04` | `resize_leader` | leader assignment and canonical resize |
 | 3 | `0x08` | `history_window` | nonzero observation history offsets |
 | 4 | `0x10` | `text_snapshot` | selects renderer-complete `text_v1` snapshots |
+| 5 | `0x20` | `interaction_state` | observes mode state that directs caller input/resize interaction |
 
-The endpoint currently supports mask `0x1f`. It replies with the intersection
+The endpoint currently supports mask `0x3f`. It replies with the intersection
 of requested and supported bits. `grid_snapshot` must be present in that
 intersection or the endpoint closes the connection.
 
@@ -93,6 +96,53 @@ intersection or the endpoint closes the connection.
 
 The client id is not a durable node identity. It exists only for this endpoint
 connection lifetime and for geometry leadership.
+
+## Interaction state
+
+`text_v1` remains the renderer-complete terminal snapshot format and is unchanged by
+this feature. Some terminal modes do not alter visible cells but do alter how the
+same next semantic input is encoded. A client that negotiated `interaction_state`
+may therefore send an empty `interaction_state` frame to observe that coherent
+mode-directed state without perturbing the terminal.
+
+The endpoint replies with one `interaction_state_snapshot` payload of exactly 20
+bytes:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 8 | canonical `terminal_revision` at which this state was copied |
+| 8 | 4 | interaction boolean flags below |
+| 12 | 1 | mouse tracking: `0=off`, `1=x10`, `2=normal`, `3=button_event`, `4=any_event` |
+| 13 | 1 | mouse protocol: `0=none`, `1=utf8`, `2=sgr`, `3=sgr_pixel`, `4=urxvt` |
+| 14 | 1 | signed `modify_other_keys` state, two's-complement `i8` |
+| 15 | 1 | active-screen Kitty keyboard flags, high bit reserved zero |
+| 16 | 2 | xterm key-format resource 4 value |
+| 18 | 1 | xterm pointer mode, `0..3` |
+| 19 | 1 | reserved, zero |
+
+The flags word uses these bits:
+
+| Bit | Meaning |
+| ---: | --- |
+| 0 | keyboard action mode |
+| 1 | auto repeat |
+| 2 | newline mode |
+| 3 | application cursor keys |
+| 4 | application keypad |
+| 5 | Meta sends Escape |
+| 6 | report key-up |
+| 7 | bracketed paste |
+| 8 | focus reporting |
+| 9 | termios signals |
+| 10 | alternate scroll |
+| 11 | paste events |
+| 12 | in-band resize notifications |
+
+Bits 13..31 are reserved and must be zero. This is a separately negotiated
+observation surface, not an extension of `text_v1`: clients that do not request
+feature bit `0x20` retain their existing protocol-v1 behavior and receive
+`result(request_kind=interaction_state, code=unsupported)` if they send the new
+request anyway.
 
 ## Observation model
 
