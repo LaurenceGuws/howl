@@ -5984,6 +5984,57 @@ test "discarded string controls stream without retaining payload bytes" {
     try std.testing.expectEqual(@as(u21, 'k'), view.cellAt(0, 1));
 }
 
+test "interaction state copies every mode that directs caller interaction" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const initial = terminal.interactionState();
+    try std.testing.expect(!initial.application_cursor_keys);
+    try std.testing.expect(!initial.bracketed_paste);
+    try std.testing.expectEqual(input.MouseTrackingMode.off, initial.mouse_tracking);
+
+    const configured = try terminal.feed(
+        "\x1b[2h" ++
+            "\x1b[20h" ++
+            "\x1b[?1h" ++
+            "\x1b=" ++
+            "\x1b[>4;2m" ++
+            "\x1b[>4;1f" ++
+            "\x1b[=31u" ++
+            "\x1b[?1036h" ++
+            "\x1b[?1337h" ++
+            "\x1b[?2004h" ++
+            "\x1b[?1004h" ++
+            "\x1b[?1003h" ++
+            "\x1b[?1016h" ++
+            "\x1b[?19997h" ++
+            "\x1b[?1007h" ++
+            "\x1b[?5522h" ++
+            "\x1b[?2048h" ++
+            "\x1b[>2p",
+    );
+    try std.testing.expect(configured.stateChanged());
+    const state = terminal.interactionState();
+    try std.testing.expect(state.keyboard_action_mode);
+    try std.testing.expect(state.newline_mode);
+    try std.testing.expect(state.application_cursor_keys);
+    try std.testing.expect(state.application_keypad);
+    try std.testing.expectEqual(@as(i8, 2), state.modify_other_keys);
+    try std.testing.expectEqual(@as(u16, 1), state.key_format_resource_4);
+    try std.testing.expectEqual(@as(u8, 31), state.kitty_keyboard_flags);
+    try std.testing.expect(state.meta_sends_escape);
+    try std.testing.expect(state.report_key_up);
+    try std.testing.expect(state.bracketed_paste);
+    try std.testing.expect(state.focus_reporting);
+    try std.testing.expectEqual(input.MouseTrackingMode.any_event, state.mouse_tracking);
+    try std.testing.expectEqual(input.MouseProtocol.sgr_pixel, state.mouse_protocol);
+    try std.testing.expect(state.termios_signals);
+    try std.testing.expect(state.alternate_scroll);
+    try std.testing.expect(state.paste_events);
+    try std.testing.expect(state.inband_resize_notifications);
+    try std.testing.expectEqual(@as(u2, 2), state.pointer_mode);
+}
+
 test "xterm pointer mode retains the clamped protocol resource value" {
     var terminal = try Terminal.init(std.testing.allocator, 3, 8);
     defer terminal.deinit();
@@ -6358,6 +6409,37 @@ pub const Terminal = struct {
     pub const DragDropEvent = DragDropEventValue;
     /// Reports bounded OSC 72 event construction failure.
     pub const DragDropEventError = error{ OutOfMemory, ConsequenceLimit, ReplyLimit, InvalidArgument };
+    /// Copies the terminal modes that direct caller-originated interaction.
+    ///
+    /// This is a semantic value, not borrowed mode storage. It contains the
+    /// state consulted by key, mouse, focus, paste, raw-byte signal, pointer,
+    /// and explicit resize interaction so embedders can explain the next
+    /// transition without reconstructing escape-sequence history.
+    pub const InteractionState = struct {
+        keyboard_action_mode: bool,
+        auto_repeat: bool,
+        newline_mode: bool,
+        application_cursor_keys: bool,
+        application_keypad: bool,
+        modify_other_keys: i8,
+        key_format_resource_4: u16,
+        kitty_keyboard_flags: u8,
+        meta_sends_escape: bool,
+        report_key_up: bool,
+        bracketed_paste: bool,
+        focus_reporting: bool,
+        mouse_tracking: input.MouseTrackingMode,
+        mouse_protocol: input.MouseProtocol,
+        termios_signals: bool,
+        alternate_scroll: bool,
+        paste_events: bool,
+        inband_resize_notifications: bool,
+        pointer_mode: u2,
+    };
+    /// Exposes which caller mouse events the terminal currently requests.
+    pub const MouseTrackingMode = input.MouseTrackingMode;
+    /// Exposes the currently negotiated mouse-report byte protocol.
+    pub const MouseProtocol = input.MouseProtocol;
     /// Exposes the typed caller-input vocabulary accepted by encodeInput.
     pub const InputEvent = input.Event;
     /// Exposes named physical keys whose terminal identity is not Unicode text.
@@ -7507,6 +7589,31 @@ pub const Terminal = struct {
             .rows = view.rows,
             .generation = self.graphics.generation(),
             .content_generation = self.graphics.imageGeneration(),
+        };
+    }
+
+    /// Copies the coherent mode-directed caller interaction state.
+    pub fn interactionState(self: *const Terminal) InteractionState {
+        return .{
+            .keyboard_action_mode = self.modes.keyboard_action_mode,
+            .auto_repeat = self.modes.auto_repeat,
+            .newline_mode = self.modes.newline_mode,
+            .application_cursor_keys = self.modes.application_cursor_keys,
+            .application_keypad = self.modes.application_keypad,
+            .modify_other_keys = self.modes.modify_other_keys,
+            .key_format_resource_4 = self.modes.key_format[4],
+            .kitty_keyboard_flags = self.kitty.activeScreenConst(self.screen_state.alt_active).keyboard.flags,
+            .meta_sends_escape = self.modes.meta_sends_escape,
+            .report_key_up = self.modes.report_key_up,
+            .bracketed_paste = self.modes.bracketed_paste,
+            .focus_reporting = self.modes.focus_reporting,
+            .mouse_tracking = self.modes.mouse_tracking,
+            .mouse_protocol = self.modes.mouse_protocol,
+            .termios_signals = self.modes.termios_signals,
+            .alternate_scroll = self.modes.alternate_scroll,
+            .paste_events = self.modes.paste_events,
+            .inband_resize_notifications = self.modes.inband_resize_notifications,
+            .pointer_mode = self.modes.pointer_mode,
         };
     }
 

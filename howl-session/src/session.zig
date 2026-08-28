@@ -52,6 +52,8 @@ pub const maximum_hyperlinks = vt.Terminal.maximum_hyperlinks;
 pub const Signal = pty.Signal;
 /// Exact process-group signal delivery outcome.
 pub const SignalResult = pty.SignalResult;
+/// Coherent terminal modes that direct caller-originated interaction.
+pub const InteractionState = vt.Terminal.InteractionState;
 /// Exact child-process termination observation.
 pub const ChildExit = pty.ChildExit;
 
@@ -204,6 +206,11 @@ pub fn lineGeometry(session: *const Session, history_offset: u32, row: u16) Line
 /// Reports whether one visible row is a soft continuation of its predecessor.
 pub fn rowWrapped(session: *const Session, history_offset: u32, row: u16) bool {
     return stateConst(session).terminal.semanticView(history_offset).rowWrapped(row);
+}
+
+/// Copies the terminal modes that direct the next caller interaction.
+pub fn interactionState(session: *const Session) InteractionState {
+    return stateConst(session).terminal.interactionState();
 }
 
 /// Encodes and admits one input event in canonical session order.
