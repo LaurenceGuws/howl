@@ -220,7 +220,8 @@ fn testHandshakePeer(fd: posix.fd_t) void {
     if (decoded_header.kind != .hello) @panic("wrong hello kind");
     var payload: [protocol.payload_bytes.hello]u8 = undefined;
     readExact(fd, &payload) catch @panic("hello payload");
-    _ = protocol.decodeHello(&payload) catch @panic("invalid hello");
+    const hello = protocol.decodeHello(&payload) catch @panic("invalid hello");
+    if (hello.features & protocol.feature(.text_snapshot) == 0) @panic("rich observation feature missing");
     var welcome: [protocol.payload_bytes.welcome]u8 = undefined;
     protocol.encodeWelcome(&welcome, .{
         .version = protocol.protocol_max_version,

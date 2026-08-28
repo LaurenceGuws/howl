@@ -1,3 +1,5 @@
+howl-transport/src/observe.zig|anytype|fn emitJson(writer: *std.Io.Writer, value: anytype) !void {
+howl-transport/src/stream.zig|anytype|fn emit(writer: *std.Io.Writer, value: anytype) !void {
 howl-vk/src/abi.zig|anyopaque|pub extern fn vkCmdPushConstants(commandBuffer: VkCommandBuffer, layout: VkPipelineLayout, stageFlags: VkShaderStageFlags, offset: u32, size: u32, pValues: ?*const anyopaque) void;
 howl-vk/src/terminal_cells.zig|discard|_ = try glyphAtlasExtent(limits);
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
