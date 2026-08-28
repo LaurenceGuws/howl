@@ -54,6 +54,24 @@ pub const Signal = pty.Signal;
 pub const SignalResult = pty.SignalResult;
 /// Coherent terminal modes that direct caller-originated interaction.
 pub const InteractionState = vt.Terminal.InteractionState;
+/// One ordered host-facing consequence retained by the canonical VT.
+pub const Consequence = vt.Terminal.Consequence;
+/// Reports stale occurrence identity or a consequence requiring a typed reply.
+pub const ConsumeConsequenceError = vt.Terminal.ConsumeConsequenceError;
+/// Reports clipboard reply admission failure without consuming a stale query.
+pub const ClipboardReplyError = vt.Terminal.ClipboardReplyError;
+/// Reports pointer-shape reply admission or identity failure.
+pub const PointerShapeReplyError = vt.Terminal.PointerShapeReplyError;
+/// Terminal-owned light/dark color preference vocabulary.
+pub const ColorSchemePreference = vt.Terminal.ColorSchemePreference;
+/// Reports color-preference reply admission or identity failure.
+pub const ColorPreferenceReplyError = vt.Terminal.ColorPreferenceReplyError;
+/// Typed container/window query reply vocabulary.
+pub const ContainerReply = vt.Terminal.ContainerReply;
+/// Reports container reply admission, identity, or type mismatch.
+pub const ContainerReplyError = vt.Terminal.ContainerReplyError;
+/// Selects whether a service turn applies deterministic headless host policy or retains host consequences.
+pub const ConsequencePolicy = enum { headless, retain };
 /// Exact child-process termination observation.
 pub const ChildExit = pty.ChildExit;
 
@@ -213,6 +231,53 @@ pub fn interactionState(session: *const Session) InteractionState {
     return stateConst(session).terminal.interactionState();
 }
 
+/// Borrows the oldest retained host consequence until canonical terminal mutation.
+pub fn consequenceHead(session: *const Session) ?Consequence {
+    return stateConst(session).terminal.consequenceHead();
+}
+
+/// Returns the bounded count of retained host consequences.
+pub fn consequenceCount(session: *const Session) u16 {
+    return stateConst(session).terminal.consequenceCount();
+}
+
+/// Consumes one non-reply consequence by exact global FIFO identity.
+pub fn consumeConsequence(session: *Session, id: u64) ConsumeConsequenceError!void {
+    return stateMut(session).terminal.consumeConsequence(id);
+}
+
+/// Replies to one exact pending OSC 52 clipboard query.
+pub fn replyClipboard(session: *Session, id: u64, bytes: []const u8) ClipboardReplyError!bool {
+    return stateMut(session).terminal.replyClipboard(id, bytes);
+}
+
+/// Replies to one exact pending OSC 22 pointer-shape query.
+pub fn replyPointerShape(session: *Session, id: u64, payload: []const u8) PointerShapeReplyError!void {
+    return stateMut(session).terminal.replyPointerShape(id, payload);
+}
+
+/// Replies to one exact pending color-preference query.
+pub fn replyColorPreference(
+    session: *Session,
+    id: u64,
+    preference: ColorSchemePreference,
+) ColorPreferenceReplyError!void {
+    return stateMut(session).terminal.replyColorPreference(id, preference);
+}
+
+/// Replies to one exact pending container query.
+pub fn replyContainer(session: *Session, id: u64, reply: ContainerReply) ContainerReplyError!void {
+    return stateMut(session).terminal.replyContainer(id, reply);
+}
+
+/// Declines one exact pending container query without fabricating host state.
+pub fn declineContainerQuery(
+    session: *Session,
+    id: u64,
+) error{ StaleContainerRequest, ContainerReplyMismatch }!void {
+    return stateMut(session).terminal.declineContainerQuery(id);
+}
+
 /// Encodes and admits one input event in canonical session order.
 pub fn input(session: *Session, event: Input) InputError!void {
     return stateMut(session).input(event);
@@ -235,7 +300,23 @@ pub fn service(
     writable: bool,
     timestamp_ns: u64,
 ) ServiceError!Service {
-    return stateMut(session).service(readable, writable, timestamp_ns);
+    return serviceWithConsequencePolicy(session, readable, writable, timestamp_ns, .headless);
+}
+
+/// Services one turn while explicitly selecting host-consequence policy.
+///
+/// `.retain` leaves canonical VT consequences queued for an external authority;
+/// `.headless` applies the existing deterministic fallback policy. Switching a
+/// retained session back to `.headless` drains already-pending consequences on
+/// that same service turn, so authority loss cannot strand a terminal query.
+pub fn serviceWithConsequencePolicy(
+    session: *Session,
+    readable: bool,
+    writable: bool,
+    timestamp_ns: u64,
+    policy: ConsequencePolicy,
+) ServiceError!Service {
+    return stateMut(session).service(readable, writable, timestamp_ns, policy);
 }
 
 const WriteQueue = struct {
@@ -327,13 +408,20 @@ const State = struct {
         prepared.commit();
     }
 
-    fn service(self: *State, readable: bool, writable: bool, timestamp_ns: u64) ServiceError!Service {
+    fn service(
+        self: *State,
+        readable: bool,
+        writable: bool,
+        timestamp_ns: u64,
+        consequence_policy: ConsequencePolicy,
+    ) ServiceError!Service {
         const revision_before = self.terminal.semanticSequence();
+        if (consequence_policy == .headless) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
         collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
             error.WriteQueueFull => return self.serviceResult(revision_before),
         };
-        try self.processBuffered(timestamp_ns);
+        try self.processBuffered(timestamp_ns, consequence_policy);
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
             const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
                 error.Interrupted, error.WouldBlock => 0,
@@ -345,7 +433,7 @@ const State = struct {
             };
             self.read_start = 0;
             self.read_end = count;
-            try self.processBuffered(timestamp_ns);
+            try self.processBuffered(timestamp_ns, consequence_policy);
         }
         switch (try self.transport.observeChild()) {
             .running => {},
@@ -354,7 +442,11 @@ const State = struct {
         return self.serviceResult(revision_before);
     }
 
-    fn processBuffered(self: *State, timestamp_ns: u64) ServiceError!void {
+    fn processBuffered(
+        self: *State,
+        timestamp_ns: u64,
+        consequence_policy: ConsequencePolicy,
+    ) ServiceError!void {
         while (self.read_start < self.read_end) {
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
@@ -363,7 +455,7 @@ const State = struct {
             self.read_start += 1;
             const summary = try self.terminal.feedAt(&.{byte}, timestamp_ns);
             std.debug.assert(!summary.titleChanged() or summary.stateChanged());
-            try self.drainConsequences();
+            if (consequence_policy == .headless) try self.drainConsequences();
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
             };
@@ -535,6 +627,42 @@ test "headless session drains host consequences without an observer" {
     try std.testing.expectEqual(before.columns, after.columns);
     try std.testing.expect(state.terminal.consequenceHead() == null);
     try std.testing.expect(std.mem.indexOf(u8, state.terminal.replyBytes(), "default") != null);
+}
+
+test "retained host query falls back headlessly when external authority disappears" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "stty -echo -icanon min 1 time 0; " ++
+            "printf '\\033]52;c;?\\007'; " ++
+            "bytes=$(dd bs=1 count=9 2>/dev/null | od -An -tx1 -v | tr -d '[:space:]'); " ++
+            "printf 'RESULT:%s\n' \"$bytes\"; cat",
+        .rows = 4,
+        .columns = 40,
+        .history_rows = 16,
+    });
+    defer deinit(session);
+
+    var attempts: u16 = 0;
+    while (consequenceHead(session) == null and attempts < 2000) : (attempts += 1) {
+        const serviced = try serviceWithConsequencePolicy(session, true, true, 0, .retain);
+        try std.testing.expect(!serviced.stream_closed);
+        sleepOneMillisecond();
+    }
+    const pending = consequenceHead(session) orelse return error.Timeout;
+    try std.testing.expectEqual(@as(u16, 1), consequenceCount(session));
+    try std.testing.expect(std.meta.activeTag(pending) == .clipboard);
+    try std.testing.expectEqualStrings("c", pending.clipboard.selection);
+    try std.testing.expect(pending.clipboard.kind == .query);
+
+    var text: [4096]u8 = undefined;
+    try std.testing.expect(std.mem.indexOf(u8, try snapshotAscii(session, &text), "RESULT:") == null);
+
+    // Losing explicit external authority restores today's deterministic
+    // headless reply policy on the next turn, without waiting for new PTY bytes.
+    const fallback = try serviceWithConsequencePolicy(session, false, true, 0, .headless);
+    try std.testing.expect(fallback.write_pending);
+    try std.testing.expect(consequenceHead(session) == null);
+    try serviceUntilContains(session, "RESULT:1b5d35323b633b1b5c");
 }
 
 test "one PTY and VT remain canonical for independent observers" {
