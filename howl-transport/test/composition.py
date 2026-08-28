@@ -96,6 +96,12 @@ def main() -> None:
                     f"unexpected {kind} result",
                 )
 
+            def interaction_state() -> dict:
+                send({"request": "interaction_state"})
+                state = read_record()
+                require(state.get("record") == "interaction_state", state)
+                return state
+
             def snapshot(after_revision: int = 0) -> tuple[dict, str]:
                 send({"request": "observe", "after_revision": after_revision, "history_offset": 0})
                 records = []
@@ -136,28 +142,41 @@ def main() -> None:
                 expect_result("input")
 
             welcome = read_record()
-            require(welcome.get("record") == "welcome" and welcome.get("features") == 31, welcome)
+            require(welcome.get("record") == "welcome" and welcome.get("features") == 63, welcome)
             client_id = welcome["client_id"]
             begin, text = snapshot()
             revision = begin["revision"]
             require("NORMAL" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"], modes)
+            require(not modes["application_cursor_keys"] and not modes["application_keypad"], modes)
+            require(not modes["bracketed_paste"] and not modes["focus_reporting"], modes)
 
             key("named", 5)
             begin, text, revision = observe_until("APP_CURSOR", revision)
             require("normal:1b5b41" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"] and modes["application_cursor_keys"], modes)
 
             key("named", 5)
             begin, text, revision = observe_until("APP_KEYPAD", revision)
             require("app_cursor:1b4f41" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"] and modes["application_keypad"], modes)
 
             key("named", 52)
             begin, text, revision = observe_until("FOCUS", revision)
             require("app_keypad:1b4f6b" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"] and modes["focus_reporting"], modes)
 
             send({"request": "focus", "value": "in"})
             expect_result("input")
             begin, text, revision = observe_until("MOUSE", revision)
             require("focus:1b5b49" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"], modes)
+            require(modes["mouse_tracking"] == "any_event" and modes["mouse_protocol"] == "sgr_pixel", modes)
 
             send(
                 {
@@ -175,11 +194,15 @@ def main() -> None:
             expect_result("input")
             begin, text, revision = observe_until("PASTE", revision)
             require("mouse:1b5b3c31363b3332303b3234304d" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"] and modes["bracketed_paste"], modes)
 
             send({"request": "paste", "bytes_hex": "780079"})
             expect_result("input")
             begin, text, revision = observe_until("KITTY_PRESS", revision)
             require("paste:1b5b3230307e7800791b5b3230317e" in text, text)
+            modes = interaction_state()
+            require(modes["terminal_revision"] >= begin["terminal_revision"] and modes["kitty_keyboard_flags"] == 31, modes)
 
             key("unicode", ord("a"))
             begin, text, revision = observe_until("KITTY_REPEAT", revision)

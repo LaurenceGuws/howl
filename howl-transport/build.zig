@@ -38,5 +38,11 @@ pub fn build(b: *std.Build) void {
     composition.addArtifactArg(executable);
     composition.addArtifactArg(session.artifact("howl-sessiond"));
     test_step.dependOn(&composition.step);
+    const observability = b.addSystemCommand(&.{ "python3", "test/interaction_observability.py" });
+    observability.setName("howl-transport interaction observability");
+    observability.setCwd(b.path("."));
+    observability.addArtifactArg(executable);
+    observability.addArtifactArg(session.artifact("howl-sessiond"));
+    test_step.dependOn(&observability.step);
     b.default_step = check;
 }

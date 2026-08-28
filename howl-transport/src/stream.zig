@@ -26,6 +26,30 @@ const ResultRecord = struct {
     code: []const u8,
 };
 
+const InteractionStateRecord = struct {
+    record: []const u8 = "interaction_state",
+    terminal_revision: u64,
+    keyboard_action_mode: bool,
+    auto_repeat: bool,
+    newline_mode: bool,
+    application_cursor_keys: bool,
+    application_keypad: bool,
+    meta_sends_escape: bool,
+    report_key_up: bool,
+    bracketed_paste: bool,
+    focus_reporting: bool,
+    termios_signals: bool,
+    alternate_scroll: bool,
+    paste_events: bool,
+    inband_resize_notifications: bool,
+    mouse_tracking: []const u8,
+    mouse_protocol: []const u8,
+    modify_other_keys: i8,
+    kitty_keyboard_flags: u8,
+    key_format_resource_4: u16,
+    pointer_mode: u2,
+};
+
 pub fn run(init: std.process.Init, connection: *wire.Connection) !void {
     var stdout_buffer: [16 * 1024]u8 = undefined;
     var stdout = std.Io.File.stdout().writerStreaming(init.io, &stdout_buffer);
@@ -57,6 +81,39 @@ fn dispatch(
     object: std.json.ObjectMap,
 ) !void {
     const request = try requiredString(object, "request");
+    if (std.mem.eql(u8, request, "interaction_state")) {
+        try onlyKeys(object, &.{"request"});
+        if (connection.features & protocol.feature(.interaction_state) == 0)
+            return error.InteractionStateUnsupported;
+        try connection.send(.interaction_state, &.{});
+        var frame = try connection.receive();
+        defer frame.deinit();
+        if (frame.kind != .interaction_state_snapshot) return error.UnexpectedFrame;
+        const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
+        try emit(writer, InteractionStateRecord{
+            .terminal_revision = state.terminal_revision,
+            .keyboard_action_mode = state.keyboard_action_mode,
+            .auto_repeat = state.auto_repeat,
+            .newline_mode = state.newline_mode,
+            .application_cursor_keys = state.application_cursor_keys,
+            .application_keypad = state.application_keypad,
+            .meta_sends_escape = state.meta_sends_escape,
+            .report_key_up = state.report_key_up,
+            .bracketed_paste = state.bracketed_paste,
+            .focus_reporting = state.focus_reporting,
+            .termios_signals = state.termios_signals,
+            .alternate_scroll = state.alternate_scroll,
+            .paste_events = state.paste_events,
+            .inband_resize_notifications = state.inband_resize_notifications,
+            .mouse_tracking = @tagName(state.mouse_tracking),
+            .mouse_protocol = @tagName(state.mouse_protocol),
+            .modify_other_keys = state.modify_other_keys,
+            .kitty_keyboard_flags = state.kitty_keyboard_flags,
+            .key_format_resource_4 = state.key_format_resource_4,
+            .pointer_mode = state.pointer_mode,
+        });
+        return;
+    }
     if (std.mem.eql(u8, request, "observe")) {
         try onlyKeys(object, &.{ "request", "after_revision", "history_offset" });
         const after_revision = try optionalUnsigned(u64, object, "after_revision", 0);
