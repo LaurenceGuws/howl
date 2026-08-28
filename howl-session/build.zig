@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
         .use_lld = false,
     });
     const server_module = b.createModule(.{
-        .root_source_file = b.path("src/server.zig"),
+        .root_source_file = b.path("src/endpoint.zig"),
         .target = target,
         .optimize = optimize,
     });
