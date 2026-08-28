@@ -51,6 +51,13 @@ pub const Kind = enum(u8) {
     result = 11,
     interaction_state = 12,
     interaction_state_snapshot = 13,
+    assign_consequence_leader = 14,
+    consequence_observe = 15,
+    consequence_begin = 16,
+    consequence_data = 17,
+    consequence_end = 18,
+    consequence_consume = 19,
+    consequence_reply = 20,
 };
 
 /// Features are negotiated independently of protocol version.
@@ -61,6 +68,7 @@ pub const Feature = enum(u6) {
     history_window = 3,
     text_snapshot = 4,
     interaction_state = 5,
+    host_consequences = 6,
 };
 
 /// Returns the negotiated bit mask for one feature.
@@ -400,6 +408,137 @@ pub const Result = struct {
     code: ResultCode,
 };
 
+/// Maximum exact raw payload retained by one host consequence snapshot.
+pub const maximum_consequence_payload_bytes: u32 = 1024 * 1024;
+/// Consequence raw data is segmented so one large VT payload never approaches the frame ceiling.
+pub const consequence_data_chunk_bytes: usize = 64 * 1024;
+/// Fixed bytes reserved for consequence-kind metadata in `consequence_begin`.
+pub const consequence_metadata_bytes: usize = 32;
+/// Maximum exact OSC 52 selection bytes copied into consequence metadata.
+pub const consequence_clipboard_selection_bytes: usize = 12;
+/// Maximum payload for notification, pointer, and generic string consequences.
+pub const consequence_small_payload_bytes: u32 = 1024;
+/// Maximum retained Kitty/file-transfer packet payload.
+pub const consequence_packet_payload_bytes: u32 = 8 * 1024;
+/// Maximum retained Kitty drag/drop packet payload.
+pub const consequence_drag_drop_payload_bytes: u32 = 4 * 1024;
+/// Maximum retained delegated DCS payload.
+pub const consequence_dcs_payload_bytes: u32 = 2 * 1024;
+
+/// Stable host-consequence family carried by one consequence snapshot.
+pub const ConsequenceKind = enum(u8) {
+    none = 0,
+    clipboard = 1,
+    notification = 2,
+    pointer_shape = 3,
+    file_transfer = 4,
+    drag_drop = 5,
+    container = 6,
+    color_preference = 7,
+    media_copy = 8,
+    bell = 9,
+    legacy_control = 10,
+    dcs = 11,
+    string_control = 12,
+};
+
+/// Stable clipboard operation class in consequence metadata.
+pub const ConsequenceClipboardKind = enum(u8) { set = 1, query = 2, packet = 3 };
+/// Stable clipboard framing family in consequence metadata.
+pub const ConsequenceClipboardProtocol = enum(u8) { osc52 = 1, kitty_5522 = 2 };
+/// Stable notification operation class in consequence metadata.
+pub const ConsequenceNotificationKind = enum(u8) { message = 1, steal_focus = 2, request_attention = 3 };
+/// Stable file-transfer framing family in consequence metadata.
+pub const ConsequenceFileTransferProtocol = enum(u8) { iterm2_1337 = 1, kitty_5113 = 2 };
+/// Stable incoming Kitty drag/drop command class in consequence metadata.
+pub const ConsequenceDragDropKind = enum(u8) {
+    enable = 1,
+    disable = 2,
+    accept = 3,
+    request = 4,
+    complete = 5,
+    query = 6,
+    continuation = 7,
+    unsupported = 8,
+};
+/// Stable container/window request class in consequence metadata.
+pub const ConsequenceContainerKind = enum(u8) {
+    deiconify = 1,
+    iconify = 2,
+    move = 3,
+    resize_pixels = 4,
+    raise = 5,
+    lower = 6,
+    resize_rows = 7,
+    resize_columns = 8,
+    resize_cells = 9,
+    report_state = 10,
+    report_position = 11,
+    report_screen_cells = 12,
+    report_icon_title = 13,
+};
+/// Stable legacy terminal-control class in consequence metadata.
+pub const ConsequenceLegacyControlKind = enum(u8) {
+    tek_point_plot = 1,
+    tek_graph = 2,
+    tek_incremental_plot = 3,
+    tek_alpha = 4,
+    tek_copy = 5,
+    tek_special_point_plot = 6,
+    tek_write_thru_short_dashed = 7,
+    hp_memory_lock = 8,
+};
+/// Stable caller-directed DCS family in consequence metadata.
+pub const ConsequenceDcsKind = enum(u8) {
+    xtsettcap = 1,
+    decudk = 2,
+    decaupss = 3,
+    iterm_tmux_hook = 4,
+    iterm_ssh_hook = 5,
+    iterm_tmux_wrap = 6,
+    kitty_remote_command = 7,
+    kitty_overlay_ready = 8,
+    kitty_result = 9,
+    kitty_print = 10,
+    kitty_echo = 11,
+    kitty_ssh = 12,
+    kitty_askpass = 13,
+    kitty_clone = 14,
+    kitty_edit = 15,
+};
+/// Stable generic string-control family in consequence metadata.
+pub const ConsequenceStringKind = enum(u8) { apc = 1, pm = 2, sos = 3 };
+
+/// Fixed identity and kind metadata opening one host-consequence snapshot.
+pub const ConsequenceBegin = struct {
+    terminal_revision: u64,
+    authority_client_id: ClientId,
+    generation: u64,
+    payload_len: u32,
+    kind: ConsequenceKind,
+    reply_required: bool,
+    metadata: [consequence_metadata_bytes]u8,
+};
+
+/// Reply operation accepted only from the current consequence authority.
+pub const ConsequenceReplyKind = enum(u8) {
+    clipboard = 1,
+    pointer_shape = 2,
+    color_preference = 3,
+    container_state = 4,
+    container_position = 5,
+    container_screen_cells = 6,
+    container_icon_title = 7,
+    container_decline = 8,
+};
+
+/// Borrowed, validated consequence reply request body.
+pub const ConsequenceReply = struct {
+    generation: u64,
+    kind: ConsequenceReplyKind,
+    body: []const u8,
+};
+
 /// Stable first terminal snapshot representation carried by snapshot_data frames.
 ///
 /// `grid_v1` intentionally freezes only the canonical spatial grid needed by
@@ -578,6 +717,18 @@ pub const payload_bytes = struct {
     pub const interaction_state: usize = 0;
     /// `interaction_state_snapshot` payload bytes.
     pub const interaction_state_snapshot: usize = 20;
+    /// `assign_consequence_leader` payload bytes; identical to resize leadership assignment.
+    pub const assign_consequence_leader: usize = 8;
+    /// `consequence_observe` request payload bytes.
+    pub const consequence_observe: usize = 0;
+    /// Fixed `consequence_begin` payload bytes.
+    pub const consequence_begin: usize = 64;
+    /// `consequence_end` payload bytes.
+    pub const consequence_end: usize = 8;
+    /// `consequence_consume` payload bytes.
+    pub const consequence_consume: usize = 8;
+    /// Fixed header bytes before one typed consequence-reply body.
+    pub const consequence_reply_header: usize = 12;
 };
 
 /// Owns only geometry authority. Client discovery/rosters remain endpoint policy.
@@ -608,6 +759,38 @@ pub const ResizeAuthority = struct {
 
     /// Reports whether one attached client may mutate canonical geometry.
     pub fn mayResize(self: ResizeAuthority, client_id: ClientId) bool {
+        return client_id != no_client and self.leader_client_id == client_id;
+    }
+};
+
+/// Tracks one explicitly assigned host-consequence authority connection.
+pub const ConsequenceAuthority = struct {
+    leader_client_id: ClientId = no_client,
+    revision: u64 = 1,
+
+    /// Returns the current consequence authority, when explicitly assigned.
+    pub fn leader(self: ConsequenceAuthority) ?ClientId {
+        return if (self.leader_client_id == no_client) null else self.leader_client_id;
+    }
+
+    /// Replaces or clears authority and reports whether ownership changed.
+    pub fn assign(self: *ConsequenceAuthority, client_id: ClientId) bool {
+        if (self.leader_client_id == client_id) return false;
+        self.leader_client_id = client_id;
+        advance(&self.revision);
+        return true;
+    }
+
+    /// Clears authority only when the disconnected connection owns it.
+    pub fn disconnected(self: *ConsequenceAuthority, client_id: ClientId) bool {
+        if (client_id == no_client or self.leader_client_id != client_id) return false;
+        self.leader_client_id = no_client;
+        advance(&self.revision);
+        return true;
+    }
+
+    /// Reports whether one connection may consume or reply to host consequences.
+    pub fn mayHandle(self: ConsequenceAuthority, client_id: ClientId) bool {
         return client_id != no_client and self.leader_client_id == client_id;
     }
 };
@@ -969,6 +1152,224 @@ pub fn encodeSignal(output: *[payload_bytes.signal]u8, value: Signal) void {
 pub fn decodeSignal(input: []const u8) PayloadError!Signal {
     if (input.len != payload_bytes.signal) return error.InvalidPayload;
     return enumFromInt(Signal, input[0]) orelse error.InvalidPayload;
+}
+
+/// Encodes one exact host-consequence occurrence identity.
+pub fn encodeConsequenceIdentity(output: *[payload_bytes.consequence_consume]u8, generation: u64) void {
+    writeU64(output, generation);
+}
+
+/// Decodes one exact host-consequence occurrence identity.
+pub fn decodeConsequenceIdentity(input: []const u8) PayloadError!u64 {
+    if (input.len != payload_bytes.consequence_consume) return error.InvalidPayload;
+    return readU64(input);
+}
+
+/// Encodes one fixed host-consequence snapshot begin payload.
+pub fn encodeConsequenceBegin(
+    output: *[payload_bytes.consequence_begin]u8,
+    value: ConsequenceBegin,
+) PayloadError!void {
+    if (value.payload_len > maximum_consequence_payload_bytes) return error.InvalidPayload;
+    try validateConsequenceMetadata(
+        value.kind,
+        value.generation,
+        value.payload_len,
+        value.reply_required,
+        &value.metadata,
+    );
+    output.* = @splat(0);
+    writeU64(output[0..8], value.terminal_revision);
+    writeU64(output[8..16], value.authority_client_id);
+    writeU64(output[16..24], value.generation);
+    writeU32(output[24..28], value.payload_len);
+    output[28] = @backingInt(value.kind);
+    output[29] = @intFromBool(value.reply_required);
+    @memcpy(output[32..64], &value.metadata);
+}
+
+/// Decodes and validates one fixed host-consequence snapshot begin payload.
+pub fn decodeConsequenceBegin(input: []const u8) PayloadError!ConsequenceBegin {
+    if (input.len != payload_bytes.consequence_begin or
+        input[29] > 1 or input[30] != 0 or input[31] != 0)
+        return error.InvalidPayload;
+    const kind = enumFromInt(ConsequenceKind, input[28]) orelse return error.InvalidPayload;
+    const generation = readU64(input[16..24]);
+    const payload_len = readU32(input[24..28]);
+    if (payload_len > maximum_consequence_payload_bytes) return error.InvalidPayload;
+    var metadata: [consequence_metadata_bytes]u8 = undefined;
+    @memcpy(&metadata, input[32..64]);
+    const reply_required = input[29] == 1;
+    try validateConsequenceMetadata(kind, generation, payload_len, reply_required, &metadata);
+    return .{
+        .terminal_revision = readU64(input[0..8]),
+        .authority_client_id = readU64(input[8..16]),
+        .generation = generation,
+        .payload_len = payload_len,
+        .kind = kind,
+        .reply_required = reply_required,
+        .metadata = metadata,
+    };
+}
+
+/// Encodes one host-consequence snapshot end identity.
+pub fn encodeConsequenceEnd(output: *[payload_bytes.consequence_end]u8, generation: u64) void {
+    writeU64(output, generation);
+}
+
+/// Decodes one exact host-consequence snapshot end identity.
+pub fn decodeConsequenceEnd(input: []const u8) PayloadError!u64 {
+    if (input.len != payload_bytes.consequence_end) return error.InvalidPayload;
+    return readU64(input);
+}
+
+/// Encodes one typed consequence reply header and exact caller body.
+pub fn encodeConsequenceReply(
+    output: []u8,
+    generation: u64,
+    kind: ConsequenceReplyKind,
+    body: []const u8,
+) PayloadError![]u8 {
+    const total = std.math.add(usize, payload_bytes.consequence_reply_header, body.len) catch
+        return error.InvalidPayload;
+    if (output.len < total or total > maximum_request_payload_bytes) return error.InvalidPayload;
+    try validateConsequenceReplyBody(kind, body);
+    @memset(output[0..total], 0);
+    writeU64(output[0..8], generation);
+    output[8] = @backingInt(kind);
+    @memcpy(output[payload_bytes.consequence_reply_header..total], body);
+    return output[0..total];
+}
+
+/// Decodes and validates one typed consequence reply without allocating.
+pub fn decodeConsequenceReply(input: []const u8) PayloadError!ConsequenceReply {
+    if (input.len < payload_bytes.consequence_reply_header or
+        input[9] != 0 or input[10] != 0 or input[11] != 0)
+        return error.InvalidPayload;
+    const kind = enumFromInt(ConsequenceReplyKind, input[8]) orelse return error.InvalidPayload;
+    const body = input[payload_bytes.consequence_reply_header..];
+    try validateConsequenceReplyBody(kind, body);
+    return .{ .generation = readU64(input[0..8]), .kind = kind, .body = body };
+}
+
+fn validateConsequenceReplyBody(kind: ConsequenceReplyKind, body: []const u8) PayloadError!void {
+    switch (kind) {
+        .clipboard => {},
+        .pointer_shape, .container_icon_title => if (body.len > consequence_small_payload_bytes)
+            return error.InvalidPayload,
+        .color_preference, .container_state => if (body.len != 1 or body[0] < 1 or body[0] > 2)
+            return error.InvalidPayload,
+        .container_position, .container_screen_cells => if (body.len != 8) return error.InvalidPayload,
+        .container_decline => if (body.len != 0) return error.InvalidPayload,
+    }
+}
+
+fn validateConsequenceMetadata(
+    kind: ConsequenceKind,
+    generation: u64,
+    payload_len: u32,
+    reply_required: bool,
+    metadata: *const [consequence_metadata_bytes]u8,
+) PayloadError!void {
+    switch (kind) {
+        .none => {
+            if (generation != 0 or payload_len != 0 or reply_required or !allZero(metadata))
+                return error.InvalidPayload;
+        },
+        .clipboard => {
+            if (enumFromInt(ConsequenceClipboardProtocol, metadata[0]) == null) return error.InvalidPayload;
+            const operation = enumFromInt(ConsequenceClipboardKind, metadata[1]) orelse
+                return error.InvalidPayload;
+            const selection_len: usize = metadata[2];
+            if (selection_len > consequence_clipboard_selection_bytes or metadata[3] != 0)
+                return error.InvalidPayload;
+            if (!allZero(metadata[4 + selection_len ..])) return error.InvalidPayload;
+            if (reply_required != (operation == .query)) return error.InvalidPayload;
+        },
+        .notification => {
+            if (enumFromInt(ConsequenceNotificationKind, metadata[0]) == null) return error.InvalidPayload;
+            if (payload_len > consequence_small_payload_bytes or metadata[1] != 0 or
+                !allZero(metadata[4..]) or reply_required)
+                return error.InvalidPayload;
+        },
+        .pointer_shape => {
+            if (payload_len > consequence_small_payload_bytes or metadata[8] > 1 or
+                !allZero(metadata[9..]))
+                return error.InvalidPayload;
+        },
+        .file_transfer => {
+            if (enumFromInt(ConsequenceFileTransferProtocol, metadata[0]) == null)
+                return error.InvalidPayload;
+            if (payload_len > consequence_packet_payload_bytes or !allZero(metadata[1..]) or reply_required)
+                return error.InvalidPayload;
+        },
+        .drag_drop => {
+            if (enumFromInt(ConsequenceDragDropKind, metadata[0]) == null) return error.InvalidPayload;
+            if (payload_len > consequence_drag_drop_payload_bytes) return error.InvalidPayload;
+            const flags = metadata[2];
+            if (flags & ~@as(u8, 0x1f) != 0 or metadata[3] != 0 or
+                !allZero(metadata[16..]) or reply_required)
+                return error.InvalidPayload;
+            const client_present = flags & 0x04 != 0;
+            const operation_present = flags & 0x08 != 0;
+            const index_present = flags & 0x10 != 0;
+            if (!client_present and readU32(metadata[4..8]) != 0) return error.InvalidPayload;
+            const operation = readU32(metadata[8..12]);
+            if ((!operation_present and operation != 0) or
+                (operation_present and operation > 3))
+                return error.InvalidPayload;
+            if (!index_present and readU32(metadata[12..16]) != 0) return error.InvalidPayload;
+        },
+        .container => {
+            const request = enumFromInt(ConsequenceContainerKind, metadata[0]) orelse
+                return error.InvalidPayload;
+            if (!allZero(metadata[1..4]) or !allZero(metadata[12..])) return error.InvalidPayload;
+            const first = readU32(metadata[4..8]);
+            const second = readU32(metadata[8..12]);
+            switch (request) {
+                .move, .resize_pixels, .resize_cells => {},
+                .resize_rows => if (first > 255 or second != 0) return error.InvalidPayload,
+                .resize_columns => if ((first != 80 and first != 132) or second != 0)
+                    return error.InvalidPayload,
+                else => if (first != 0 or second != 0) return error.InvalidPayload,
+            }
+            const query = switch (request) {
+                .report_state, .report_position, .report_screen_cells, .report_icon_title => true,
+                else => false,
+            };
+            if (reply_required != query or payload_len != 0) return error.InvalidPayload;
+        },
+        .color_preference => if (!allZero(metadata) or !reply_required or payload_len != 0)
+            return error.InvalidPayload,
+        .media_copy => {
+            if (metadata[0] > 1 or metadata[1] != 0 or !allZero(metadata[4..]) or
+                reply_required or payload_len != 0)
+                return error.InvalidPayload;
+        },
+        .bell => if (!allZero(metadata) or reply_required or payload_len != 0)
+            return error.InvalidPayload,
+        .legacy_control => {
+            if (enumFromInt(ConsequenceLegacyControlKind, metadata[0]) == null)
+                return error.InvalidPayload;
+            if (!allZero(metadata[1..]) or reply_required or payload_len != 0)
+                return error.InvalidPayload;
+        },
+        .dcs => {
+            if (enumFromInt(ConsequenceDcsKind, metadata[0]) == null) return error.InvalidPayload;
+            if (payload_len > consequence_dcs_payload_bytes or !allZero(metadata[1..]) or reply_required)
+                return error.InvalidPayload;
+        },
+        .string_control => {
+            if (enumFromInt(ConsequenceStringKind, metadata[0]) == null) return error.InvalidPayload;
+            if (payload_len > consequence_small_payload_bytes or !allZero(metadata[1..]) or reply_required)
+                return error.InvalidPayload;
+        },
+    }
+}
+
+fn allZero(bytes: []const u8) bool {
+    for (bytes) |byte| if (byte != 0) return false;
+    return true;
 }
 
 /// Encodes one coherent interaction-state snapshot.
@@ -1373,6 +1774,122 @@ test "typed mouse and focus grammars are exact and hostile-safe" {
     try std.testing.expectEqual(InputFocus.in, try decodeFocusInput(&focus));
     focus[0] = 3;
     try std.testing.expectError(error.InvalidPayload, decodeFocusInput(&focus));
+}
+
+test "consequence begin preserves exact clipboard metadata and rejects drift" {
+    var metadata: [consequence_metadata_bytes]u8 = @splat(0);
+    metadata[0] = @backingInt(ConsequenceClipboardProtocol.osc52);
+    metadata[1] = @backingInt(ConsequenceClipboardKind.query);
+    metadata[2] = 1;
+    metadata[4] = 'c';
+    var encoded: [payload_bytes.consequence_begin]u8 = undefined;
+    try encodeConsequenceBegin(&encoded, .{
+        .terminal_revision = 9,
+        .authority_client_id = 7,
+        .generation = 11,
+        .payload_len = 3,
+        .kind = .clipboard,
+        .reply_required = true,
+        .metadata = metadata,
+    });
+    const decoded = try decodeConsequenceBegin(&encoded);
+    try std.testing.expectEqual(@as(u64, 9), decoded.terminal_revision);
+    try std.testing.expectEqual(@as(ClientId, 7), decoded.authority_client_id);
+    try std.testing.expectEqual(@as(u64, 11), decoded.generation);
+    try std.testing.expectEqual(@as(u32, 3), decoded.payload_len);
+    try std.testing.expectEqual(ConsequenceKind.clipboard, decoded.kind);
+    try std.testing.expect(decoded.reply_required);
+    try std.testing.expectEqual(@as(u8, 1), decoded.metadata[2]);
+    try std.testing.expectEqual(@as(u8, 'c'), decoded.metadata[4]);
+
+    var bad = encoded;
+    bad[30] = 1;
+    try std.testing.expectError(error.InvalidPayload, decodeConsequenceBegin(&bad));
+    bad = encoded;
+    bad[29] = 0;
+    try std.testing.expectError(error.InvalidPayload, decodeConsequenceBegin(&bad));
+    bad = encoded;
+    bad[35] = 1;
+    try std.testing.expectError(error.InvalidPayload, decodeConsequenceBegin(&bad));
+}
+
+test "consequence begin enforces family payload ceilings" {
+    var metadata: [consequence_metadata_bytes]u8 = @splat(0);
+    var encoded: [payload_bytes.consequence_begin]u8 = undefined;
+
+    metadata[0] = @backingInt(ConsequenceNotificationKind.message);
+    writeU16(metadata[2..4], 9);
+    try std.testing.expectError(error.InvalidPayload, encodeConsequenceBegin(&encoded, .{
+        .terminal_revision = 1,
+        .authority_client_id = 1,
+        .generation = 1,
+        .payload_len = consequence_small_payload_bytes + 1,
+        .kind = .notification,
+        .reply_required = false,
+        .metadata = metadata,
+    }));
+
+    metadata = @splat(0);
+    metadata[0] = @backingInt(ConsequenceFileTransferProtocol.kitty_5113);
+    try std.testing.expectError(error.InvalidPayload, encodeConsequenceBegin(&encoded, .{
+        .terminal_revision = 1,
+        .authority_client_id = 1,
+        .generation = 2,
+        .payload_len = consequence_packet_payload_bytes + 1,
+        .kind = .file_transfer,
+        .reply_required = false,
+        .metadata = metadata,
+    }));
+
+    metadata = @splat(0);
+    metadata[0] = @backingInt(ConsequenceDcsKind.kitty_remote_command);
+    try std.testing.expectError(error.InvalidPayload, encodeConsequenceBegin(&encoded, .{
+        .terminal_revision = 1,
+        .authority_client_id = 1,
+        .generation = 3,
+        .payload_len = consequence_dcs_payload_bytes + 1,
+        .kind = .dcs,
+        .reply_required = false,
+        .metadata = metadata,
+    }));
+}
+
+test "consequence reply grammar is typed and bounded" {
+    var storage: [2048]u8 = undefined;
+    const clipboard = try encodeConsequenceReply(&storage, 12, .clipboard, "hello");
+    const decoded = try decodeConsequenceReply(clipboard);
+    try std.testing.expectEqual(@as(u64, 12), decoded.generation);
+    try std.testing.expectEqual(ConsequenceReplyKind.clipboard, decoded.kind);
+    try std.testing.expectEqualStrings("hello", decoded.body);
+
+    const color = try encodeConsequenceReply(&storage, 13, .color_preference, &.{1});
+    try std.testing.expectEqual(@as(u8, 1), (try decodeConsequenceReply(color)).body[0]);
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeConsequenceReply(&storage, 13, .color_preference, &.{3}),
+    );
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeConsequenceReply(&storage, 13, .container_position, &.{ 0, 1 }),
+    );
+
+    const decline = try encodeConsequenceReply(&storage, 14, .container_decline, &.{});
+    try std.testing.expectEqual(@as(usize, payload_bytes.consequence_reply_header), decline.len);
+    try std.testing.expectError(
+        error.InvalidPayload,
+        encodeConsequenceReply(&storage, 14, .container_decline, "x"),
+    );
+}
+
+test "consequence authority is explicit and disconnect safe" {
+    var authority: ConsequenceAuthority = .{};
+    try std.testing.expect(authority.leader() == null);
+    try std.testing.expect(authority.assign(41));
+    try std.testing.expect(authority.mayHandle(41));
+    try std.testing.expect(!authority.mayHandle(42));
+    try std.testing.expect(!authority.disconnected(42));
+    try std.testing.expect(authority.disconnected(41));
+    try std.testing.expect(authority.leader() == null);
 }
 
 test "interaction state snapshot is fixed and rejects reserved drift" {
