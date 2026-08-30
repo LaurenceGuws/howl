@@ -165,6 +165,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() => _snapshot = next);
         }
+        // PTY/VT progress is independent of observers. Do not request and decode
+        // terminal revisions faster than Flutter can present them.
+        await WidgetsBinding.instance.endOfFrame;
       }
     } catch (error) {
       _reportFailure(error);
