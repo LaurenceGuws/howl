@@ -7,7 +7,7 @@ void main() {
     final cache = TerminalGlyphCache(maxEntries: 4);
     addTearDown(cache.dispose);
     final first = cache.resolve(
-      scalars: <int>[65],
+      text: 'A',
       foreground: const Color(0xffeeeeee),
       style: 0,
       underlineStyle: 0,
@@ -16,7 +16,7 @@ void main() {
       fontSize: 16,
     );
     final second = cache.resolve(
-      scalars: List<int>.from(<int>[65]),
+      text: 'A',
       foreground: const Color(0xffeeeeee),
       style: 0,
       underlineStyle: 0,
@@ -31,9 +31,9 @@ void main() {
   test('cache remains bounded across distinct glyphs', () {
     final cache = TerminalGlyphCache(maxEntries: 2);
     addTearDown(cache.dispose);
-    for (final scalar in <int>[65, 66, 67]) {
+    for (final text in <String>['A', 'B', 'C']) {
       cache.resolve(
-        scalars: <int>[scalar],
+        text: text,
         foreground: const Color(0xffffffff),
         style: 0,
         underlineStyle: 0,
