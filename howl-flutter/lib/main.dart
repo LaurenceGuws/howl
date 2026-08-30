@@ -11,6 +11,7 @@ import 'launch_config.dart';
 import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
+import 'terminal_glyph_cache.dart';
 import 'touch_surface.dart';
 import 'visible_viewport.dart';
 
@@ -85,6 +86,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
   final TerminalPointerAdapter _pointerInput = TerminalPointerAdapter();
   final HistoryViewport _history = HistoryViewport();
+  final TerminalGlyphCache _glyphCache = TerminalGlyphCache();
   late final TerminalTextInputClient _textInput;
   HowlConnection? _observer;
   HowlConnection? _historyObserver;
@@ -422,6 +424,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _stopping = true;
     _textInput.detach();
     _focusNode.dispose();
+    _glyphCache.dispose();
     _observer?.close();
     _historyObserver?.close();
     _control?.close();
@@ -462,7 +465,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                     snapshot.begin.columns * TerminalPainter.cellWidth,
                     snapshot.begin.rows * TerminalPainter.lineHeight,
                   ),
-                  painter: TerminalPainter(snapshot),
+                  painter: TerminalPainter(snapshot, _glyphCache),
                 ),
               ),
             ),
@@ -503,13 +506,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 }
 
 final class TerminalPainter extends CustomPainter {
-  TerminalPainter(this.snapshot);
+  TerminalPainter(this.snapshot, this.glyphCache);
 
   static const cellWidth = 10.0;
   static const lineHeight = 20.0;
   static const fontSize = 16.0;
 
   final HowlSnapshot snapshot;
+  final TerminalGlyphCache glyphCache;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -560,32 +564,19 @@ final class TerminalPainter extends CustomPainter {
           continue;
         }
 
-        final painter = TextPainter(
-          text: TextSpan(
-            text: String.fromCharCodes(cell.scalars),
-            style: TextStyle(
-              color: foreground,
-              fontFamily: 'monospace',
-              fontSize: fontSize,
-              height: 1,
-              fontWeight: cell.style & 1 != 0
-                  ? FontWeight.bold
-                  : FontWeight.normal,
-              fontStyle: cell.style & (1 << 2) != 0
-                  ? FontStyle.italic
-                  : FontStyle.normal,
-              decoration: textDecoration(cell.style),
-              decorationStyle: underlineDecoration(cell.underlineStyle),
-              decorationColor: semanticColor(
-                cell.underlineColor,
-                presentation,
-                foreground: true,
-              ),
-            ),
+        final painter = glyphCache.resolve(
+          text: String.fromCharCodes(cell.scalars),
+          foreground: foreground,
+          style: cell.style,
+          underlineStyle: cell.underlineStyle,
+          underlineColor: semanticColor(
+            cell.underlineColor,
+            presentation,
+            foreground: true,
           ),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-        )..layout(maxWidth: cellWidth * cell.width);
+          maxWidth: cellWidth * cell.width,
+          fontSize: fontSize,
+        );
         painter.paint(
           canvas,
           Offset(
@@ -634,21 +625,6 @@ final class TerminalPainter extends CustomPainter {
       oldDelegate.snapshot.revision != snapshot.revision ||
       oldDelegate.snapshot.terminalRevision != snapshot.terminalRevision;
 }
-
-TextDecoration textDecoration(int style) {
-  final values = <TextDecoration>[];
-  if (style & (1 << 7) != 0) values.add(TextDecoration.underline);
-  if (style & (1 << 8) != 0) values.add(TextDecoration.lineThrough);
-  return values.isEmpty ? TextDecoration.none : TextDecoration.combine(values);
-}
-
-TextDecorationStyle underlineDecoration(int value) => switch (value) {
-  1 => TextDecorationStyle.double,
-  2 => TextDecorationStyle.wavy,
-  3 => TextDecorationStyle.dotted,
-  4 => TextDecorationStyle.dashed,
-  _ => TextDecorationStyle.solid,
-};
 
 Color semanticColor(
   HowlSemanticColor value,
