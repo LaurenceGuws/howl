@@ -15,7 +15,7 @@ external:
   howl-text: standalone pinned repository owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 experimental:
-  howl-client: reusable native session client mechanics: local endpoint parsing, frozen framing, handshake, bounded frame I/O, and negotiated client identity/features
+  howl-client: reusable UI-agnostic native session client engine: connection/framing, interaction state, canonical non-coordinate actions, compact semantic snapshots, and lossless rich text_v1 decoding
   howl-cli: native human/agent session client under active proof; compact semantic observation plus canonical input/control, not shell execution or remote transport
   howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate
   howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate

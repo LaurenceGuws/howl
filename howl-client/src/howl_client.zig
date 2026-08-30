@@ -10,3 +10,8 @@ const impl = @import("client.zig");
 pub const Error = impl.Error;
 pub const Frame = impl.Frame;
 pub const Connection = impl.Connection;
+
+pub const actions = @import("actions.zig");
+pub const state = @import("state.zig");
+pub const snapshot = @import("snapshot.zig");
+pub const rich = @import("rich.zig");

@@ -1,11 +1,5 @@
 const std = @import("std");
-const protocol = @import("howl_session").protocol;
 const client = @import("howl_client");
-
-pub const Error = client.Error || protocol.PayloadError || std.Io.Writer.Error || error{
-    InteractionStateUnsupported,
-    UnexpectedFrame,
-};
 
 const StateRecord = struct {
     schema: []const u8 = "howl.state/v1",
@@ -31,14 +25,8 @@ const StateRecord = struct {
     pointer_mode: u2,
 };
 
-pub fn emit(connection: *client.Connection, writer: *std.Io.Writer) Error!void {
-    if (connection.features & protocol.feature(.interaction_state) == 0)
-        return error.InteractionStateUnsupported;
-    try connection.send(.interaction_state, &.{});
-    var frame = try connection.receive();
-    defer frame.deinit();
-    if (frame.kind != .interaction_state_snapshot) return error.UnexpectedFrame;
-    const value = try protocol.decodeInteractionStateSnapshot(frame.payload);
+pub fn emit(connection: *client.Connection, writer: *std.Io.Writer) !void {
+    const value = try client.state.get(connection);
     try std.json.Stringify.value(StateRecord{
         .terminal_revision = value.terminal_revision,
         .keyboard_action_mode = value.keyboard_action_mode,

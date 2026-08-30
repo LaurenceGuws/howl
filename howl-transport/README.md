@@ -2,7 +2,7 @@
 
 Experimental AX transport for existing Howl sessions.
 
-This leaf does not define terminal semantics and does not provide a smaller terminal API. It translates the frozen `howl-session` wire into agent-friendly structured records without discarding canonical state.
+This leaf does not define terminal semantics and does not provide a smaller terminal API. It formats `howl-client`'s already-decoded lossless native snapshot/state into agent-friendly structured records without discarding canonical state; it no longer owns a second `text_v1` parser.
 
 The endpoint is explicit. This experiment owns no discovery, session lifecycle, authentication, Fleet routing, renderer policy, terminal encoding, or terminal-state reconstruction.
 
