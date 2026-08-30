@@ -15,6 +15,7 @@ external:
   howl-text: standalone pinned repository owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 experimental:
+  howl-cli: native human/agent session client under active proof; compact semantic observation plus canonical input/control, not shell execution or remote transport
   howl-render: rendering and presentation experiments consuming howl-text; not part of the core gate
   howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate
   howl-flutter: disposable Flutter/Linux visual client pressure-testing the frozen howl-session text/input/geometry contract directly from Dart; not part of the core gate

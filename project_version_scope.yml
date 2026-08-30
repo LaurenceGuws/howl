@@ -20,7 +20,8 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - pressure the text/session boundaries with the first disposable visual client
+  - define and prove the first native Howl CLI as a compact semantic client of the canonical session
+  - pressure the text/session boundaries with the disposable visual client after the CLI contract is healthy
   - preserve SSH as remote transport rather than inventing Howl networking or authentication
 
 deferred:

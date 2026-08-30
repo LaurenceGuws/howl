@@ -15,9 +15,10 @@ core:
     role: standalone native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 planned:
-  clients: Linux and Android first; iOS is SSH-only
+  clients: native Howl CLI first; Linux and Android visual clients next; iOS is SSH-only
 
 experimental:
+  - howl-cli
   - howl-render
   - howl-vk
   - howl-wayland
