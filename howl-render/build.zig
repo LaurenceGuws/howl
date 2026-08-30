@@ -51,9 +51,17 @@ pub fn build(b: *std.Build) void {
     });
     chrome.addImport("canvas", canvas);
 
+    var client: ?*std.Build.Module = null;
     var text: ?*std.Build.Module = null;
     var text_test_fonts: ?*std.Build.Module = null;
     if (native_enabled) {
+        const client_dependency = b.dependency("howl_client", .{
+            .target = target,
+            .optimize = optimize,
+        });
+        client = client_dependency.module("howl_client");
+        module.addImport("howl_client", client.?);
+        test_module.addImport("howl_client", client.?);
         const dependency = b.dependency("howl_text", .{
             .target = target,
             .optimize = optimize,
@@ -73,6 +81,13 @@ pub fn build(b: *std.Build) void {
             text.?,
         );
         module.addImport("chrome", production_chrome);
+        module.addImport("terminal", terminalNativeModule(
+            b,
+            target,
+            optimize,
+            client.?,
+            text.?,
+        ));
         const tested_chrome = chromeNativeModule(
             b,
             target,
@@ -82,6 +97,13 @@ pub fn build(b: *std.Build) void {
             text.?,
         );
         test_module.addImport("chrome", tested_chrome);
+        test_module.addImport("terminal", terminalNativeModule(
+            b,
+            target,
+            optimize,
+            client.?,
+            text.?,
+        ));
     } else {
         module.addImport("chrome", chrome);
         test_module.addImport("chrome", chrome);
@@ -105,6 +127,7 @@ pub fn build(b: *std.Build) void {
     });
     capability_tests.addImport("howl_render", test_module);
     capability_tests.addImport("canvas", canvas);
+    if (client) |value| capability_tests.addImport("howl_client", value);
     capability_tests.addImport("selected_capabilities", selected.createModule());
     if (text_test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
 
@@ -140,4 +163,21 @@ fn chromeNativeModule(
     wrapper.addImport("canvas", canvas);
     wrapper.addImport("howl_text", text);
     return wrapper;
+}
+
+fn terminalNativeModule(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    client: *std.Build.Module,
+    text: *std.Build.Module,
+) *std.Build.Module {
+    const terminal = b.createModule(.{
+        .root_source_file = b.path("src/terminal_native.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    terminal.addImport("howl_client", client);
+    terminal.addImport("howl_text", text);
+    return terminal;
 }

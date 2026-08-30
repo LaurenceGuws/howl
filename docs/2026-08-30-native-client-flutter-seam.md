@@ -92,6 +92,22 @@ The next performance pressure is presentation/text/raster work. If that earns a
 native seam, it should flow through `howl-text` rather than grow another terminal
 transport or Dart parser variant.
 
+That pressure now has a first independent consumer. `howl-render` can project an
+immutable `howl-client.view` through `howl-text` into a bounded caller-owned native
+glyph frame. It preserves source-cluster identity, natural glyph raster metadata,
+terminal style/color facts and copied alpha bytes without Flutter, Dart, Android,
+iOS or a C ABI. Font metrics, shaping, glyph identity and rasterization all remain
+owned by `howl-text`.
+
+A disposable live Brommer probe used the exact IosevkaTerm Nerd Font Regular bytes
+provisioned to the Note10 and one real 36x51 shared session snapshot. The view had
+1,836 cells and 719 Unicode scalars; `howl-text` produced 717 shaped glyphs but only
+68 unique `(face,glyph)` identities, with 45,355 natural alpha bytes across the
+uncached frame. The live snapshot contained the deliberately exercised lambda,
+beta, combining acute, box-drawing and Nerd Font marker scalars. This is strong
+pressure for a bounded glyph cache/atlas experiment, not permission to canonize an
+atlas or renderer ABI yet.
+
 ## Font policy: IosevkaTerm Nerd Font
 
 Home's current terminal presentation family is **IosevkaTerm Nerd Font**. Kitty
