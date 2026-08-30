@@ -17,3 +17,5 @@ this package.
 compact JSON/text formatting. `howl-transport` is retained as an experimental
 NDJSON/black-box pressure tool; it formats the engine's rich model rather than
 parsing the session wire independently.
+
+The measured next Flutter/native experiment is recorded in `../docs/2026-08-30-native-client-flutter-seam.md`; no FFI ABI is accepted yet.

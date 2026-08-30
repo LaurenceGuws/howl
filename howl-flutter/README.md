@@ -2,7 +2,7 @@
 
 Disposable Flutter native pressure client for the frozen `howl-session` v1 wire, currently proven on Linux and Android.
 
-This package is deliberately experimental, not core. It connects directly to an
+This package is deliberately experimental, not core. The measured native-client/text-seam checkpoint is `../docs/2026-08-30-native-client-flutter-seam.md`; no stable FFI or native rendering ABI is implied by the current Dart client. It connects directly to an
 already-running Howl byte-stream endpoint, negotiates `text_snapshot`, strictly
 decodes bounded `text_v1` state in Dart, and paints that semantic state using
 Flutter presentation policy. Native TCP is currently restricted to exact IPv4
