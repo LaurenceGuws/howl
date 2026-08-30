@@ -8,7 +8,7 @@ const posix = std.posix;
 const linux = std.os.linux;
 const protocol = @import("howl_session").protocol;
 
-const tcp_prefix = "tcp://";
+const tcp_prefix = "tcp://127.0.0.1:";
 const unix_prefix = "unix:";
 
 pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.PayloadError || error{
@@ -44,7 +44,7 @@ pub const Connection = struct {
 
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
         const fd = if (std.mem.startsWith(u8, endpoint, tcp_prefix))
-            try connectTcp(try tcpTarget(endpoint))
+            try connectTcp(try tcpPort(endpoint))
         else if (std.mem.startsWith(u8, endpoint, unix_prefix))
             try connectUnix(endpoint[unix_prefix.len..])
         else
@@ -100,31 +100,20 @@ fn initOwnedFd(allocator: std.mem.Allocator, fd: posix.fd_t) Error!Connection {
     return connection;
 }
 
-const TcpTarget = struct {
-    address: [4]u8,
-    port: u16,
-};
-
-fn tcpTarget(endpoint: []const u8) error{InvalidEndpoint}!TcpTarget {
-    if (!std.mem.startsWith(u8, endpoint, tcp_prefix)) return error.InvalidEndpoint;
+fn tcpPort(endpoint: []const u8) error{InvalidEndpoint}!u16 {
     const text = endpoint[tcp_prefix.len..];
-    const separator = std.mem.indexOfScalar(u8, text, ':') orelse return error.InvalidEndpoint;
-    if (separator == 0 or separator + 1 == text.len or
-        std.mem.indexOfScalar(u8, text[separator + 1 ..], ':') != null)
-        return error.InvalidEndpoint;
-    const port = std.fmt.parseInt(u16, text[separator + 1 ..], 10) catch return error.InvalidEndpoint;
+    if (text.len == 0 or std.mem.indexOfScalar(u8, text, '/') != null) return error.InvalidEndpoint;
+    const port = std.fmt.parseInt(u16, text, 10) catch return error.InvalidEndpoint;
     if (port == 0) return error.InvalidEndpoint;
-    const parsed = std.Io.net.Ip4Address.parse(text[0..separator], port) catch return error.InvalidEndpoint;
-    if (std.mem.eql(u8, &parsed.bytes, &.{ 0, 0, 0, 0 })) return error.InvalidEndpoint;
-    return .{ .address = parsed.bytes, .port = port };
+    return port;
 }
 
-fn connectTcp(target: TcpTarget) error{ SocketCreateFailed, SocketConnectFailed, SocketOptionFailed }!posix.fd_t {
+fn connectTcp(port: u16) error{ SocketCreateFailed, SocketConnectFailed, SocketOptionFailed }!posix.fd_t {
     const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
-    var address = ipv4SocketAddress(target.address, target.port);
+    var address = loopbackAddress(port);
     while (true) {
         const result = linux.connect(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in));
         switch (linux.errno(result)) {
@@ -158,7 +147,8 @@ fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed,
     }
 }
 
-fn ipv4SocketAddress(bytes: [4]u8, port: u16) linux.sockaddr.in {
+fn loopbackAddress(port: u16) linux.sockaddr.in {
+    const bytes = [4]u8{ 127, 0, 0, 1 };
     const address: *align(1) const u32 = @ptrCast(&bytes);
     return .{ .port = std.mem.nativeToBig(u16, port), .addr = address.* };
 }
@@ -255,15 +245,8 @@ test "handshake requests the rich frozen wire without transport policy" {
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
 }
 
-test "endpoint parser accepts explicit IPv4 and rejects wildcard or ambiguous TCP" {
-    const loopback = try tcpTarget("tcp://127.0.0.1:43127");
-    try std.testing.expectEqual([4]u8{ 127, 0, 0, 1 }, loopback.address);
-    try std.testing.expectEqual(@as(u16, 43127), loopback.port);
-    const mesh = try tcpTarget("tcp://100.96.0.2:43127");
-    try std.testing.expectEqual([4]u8{ 100, 96, 0, 2 }, mesh.address);
-    try std.testing.expectEqual(@as(u16, 43127), mesh.port);
-    try std.testing.expectError(error.InvalidEndpoint, tcpTarget("tcp://0.0.0.0:43127"));
-    try std.testing.expectError(error.InvalidEndpoint, tcpTarget("tcp://localhost:43127"));
-    try std.testing.expectError(error.InvalidEndpoint, tcpTarget("tcp://127.0.0.1:0"));
-    try std.testing.expectError(error.InvalidEndpoint, tcpTarget("tcp://127.0.0.1:43127/x"));
+test "endpoint parser refuses remote or ambiguous TCP" {
+    try std.testing.expectEqual(@as(u16, 43127), try tcpPort("tcp://127.0.0.1:43127"));
+    try std.testing.expectError(error.InvalidEndpoint, tcpPort("tcp://127.0.0.1:0"));
+    try std.testing.expectError(error.InvalidEndpoint, tcpPort("tcp://127.0.0.1:43127/x"));
 }

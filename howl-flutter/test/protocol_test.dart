@@ -4,18 +4,16 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/protocol.dart';
 
-final Map<String, dynamic> vectors =
-    jsonDecode(
-          File('../howl-session/protocol/v1-vectors.json').readAsStringSync(),
-        )
-        as Map<String, dynamic>;
+final Map<String, dynamic> vectors = jsonDecode(
+  File('../howl-session/protocol/v1-vectors.json').readAsStringSync(),
+) as Map<String, dynamic>;
 
 Map<String, dynamic> vector(String id) => (vectors['cases'] as List<dynamic>)
     .cast<Map<String, dynamic>>()
     .singleWhere((value) => value['id'] == id);
 
 void main() {
-  test('client endpoint keeps Unix oracle and explicit IPv4 TCP', () {
+  test('client endpoint keeps Unix oracle and exact TCP loopback', () {
     final bareUnix = HowlEndpoint.parse('/tmp/howl.sock');
     expect(bareUnix.unixPath, '/tmp/howl.sock');
     expect(bareUnix.tcpPort, isNull);
@@ -26,14 +24,8 @@ void main() {
 
     final tcp = HowlEndpoint.parse('tcp://127.0.0.1:43127');
     expect(tcp.unixPath, isNull);
-    expect(tcp.tcpHost, '127.0.0.1');
     expect(tcp.tcpPort, 43127);
     expect(tcp.toString(), 'tcp://127.0.0.1:43127');
-
-    final mesh = HowlEndpoint.parse('tcp://100.96.0.2:43127');
-    expect(mesh.tcpHost, '100.96.0.2');
-    expect(mesh.tcpPort, 43127);
-    expect(mesh.toString(), 'tcp://100.96.0.2:43127');
 
     for (final value in <String>[
       '',
@@ -156,8 +148,10 @@ void main() {
       ),
     );
 
-    final maximum =
-        List<String>.filled(HowlWire.maximumCommittedTextBytes, 'x').join();
+    final maximum = List<String>.filled(
+      HowlWire.maximumCommittedTextBytes,
+      'x',
+    ).join();
     expect(
       encodeCommittedTextInput(maximum),
       hasLength(HowlWire.maximumRequestPayloadBytes),

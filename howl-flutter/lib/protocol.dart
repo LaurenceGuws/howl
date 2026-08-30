@@ -705,10 +705,9 @@ List<HowlSnapshot> decodeTextSnapshots(Uint8List stream) {
 }
 
 final class HowlEndpoint {
-  const HowlEndpoint._({this.unixPath, this.tcpHost, this.tcpPort});
+  const HowlEndpoint._({this.unixPath, this.tcpPort});
 
   final String? unixPath;
-  final String? tcpHost;
   final int? tcpPort;
 
   static HowlEndpoint parse(String text) {
@@ -717,31 +716,26 @@ final class HowlEndpoint {
       _require(uri != null, 'endpoint_uri');
       _require(uri!.scheme == 'tcp', 'endpoint_scheme');
       _require(uri.userInfo.isEmpty, 'endpoint_userinfo');
-      final address = InternetAddress.tryParse(uri.host);
-      _require(
-        address != null &&
-            address.type == InternetAddressType.IPv4 &&
-            address.address != '0.0.0.0',
-        'endpoint_host',
-      );
+      _require(uri.host == '127.0.0.1', 'endpoint_host');
       _require(
         uri.hasPort && uri.port >= 1 && uri.port <= 65535,
         'endpoint_port',
       );
       _require(uri.path.isEmpty, 'endpoint_path');
       _require(!uri.hasQuery && !uri.hasFragment, 'endpoint_suffix');
-      return HowlEndpoint._(tcpHost: address!.address, tcpPort: uri.port);
+      return HowlEndpoint._(tcpPort: uri.port);
     }
     _require(!text.contains('://'), 'endpoint_scheme');
-    final path =
-        text.startsWith('unix:') ? text.substring('unix:'.length) : text;
+    final path = text.startsWith('unix:')
+        ? text.substring('unix:'.length)
+        : text;
     _require(path.isNotEmpty, 'endpoint_path');
     return HowlEndpoint._(unixPath: path);
   }
 
   Future<Socket> connect() {
     final port = tcpPort;
-    if (port != null) return Socket.connect(tcpHost!, port);
+    if (port != null) return Socket.connect(InternetAddress.loopbackIPv4, port);
     final path = unixPath;
     _require(path != null && path.isNotEmpty, 'endpoint_path');
     return Socket.connect(
@@ -753,7 +747,7 @@ final class HowlEndpoint {
   @override
   String toString() {
     final port = tcpPort;
-    if (port != null) return 'tcp://$tcpHost:$port';
+    if (port != null) return 'tcp://127.0.0.1:$port';
     return 'unix:${unixPath!}';
   }
 }

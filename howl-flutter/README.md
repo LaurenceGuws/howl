@@ -5,10 +5,9 @@ Disposable Flutter native pressure client for the frozen `howl-session` v1 wire,
 This package is deliberately experimental, not core. It connects directly to an
 already-running Howl byte-stream endpoint, negotiates `text_snapshot`, strictly
 decodes bounded `text_v1` state in Dart, and paints that semantic state using
-Flutter presentation policy. Native TCP accepts one explicit numeric IPv4
-endpoint (`tcp://IPV4:PORT`); wildcard and hostname targets are rejected. Fleet
-remote development normally supplies an accepted Mesh address, while a bare path
-or `unix:/path` remains a local Linux oracle. Named physical keys and semantic pointer facts travel through
+Flutter presentation policy. Native TCP is currently restricted to exact IPv4
+loopback (`tcp://127.0.0.1:PORT`); a bare path or `unix:/path` remains a temporary
+Linux parity oracle. Named physical keys and semantic pointer facts travel through
 negotiated `typed_input`; terminal escape encoding remains owned by the canonical
 VT. It owns no PTY, VT, shell, network/auth layer, or session lifetime.
 
@@ -27,7 +26,7 @@ deletion maps to semantic Backspace/Delete, while committed CR/LF maps to semant
 Enter. Stock Android LatinIME has proved Backspace, Enter, and printable text through
 that path; suggestions and autocorrect remain deliberately disabled.
 
-Run a Linux client against an explicit TCP session with:
+Run a Linux client against a loopback TCP session with:
 
 ```sh
 HOWL_ENDPOINT=tcp://127.0.0.1:43127 flutter run -d linux
@@ -44,8 +43,8 @@ and applies the Termux-shaped native sequence to the real `FlutterView`: coalesc
 composition, committed Unicode, and terminal edit semantics remain in Dart.
 
 The Android shell otherwise remains the stock `FlutterActivity` embedding plus the
-normal `INTERNET` permission. The client may reach a `howl-sessiond` on the same
-phone over loopback or a remote Fleet node over its accepted Mesh IPv4 address:
+normal `INTERNET` permission. A Termux-owned `howl-sessiond` on the same phone can
+therefore be reached directly over Android loopback:
 
 ```sh
 flutter build apk --release \

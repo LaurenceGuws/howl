@@ -18,21 +18,15 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
-const TcpSpec = struct {
-    address: [4]u8,
-    port: u16,
-};
-
 const ListenerSpec = union(enum) {
     unix: []const u8,
-    tcp: TcpSpec,
+    tcp_loopback: u16,
 };
 
 const Listener = struct {
     fd: posix.fd_t,
     unix_path: [108]u8 = @splat(0),
     unix_path_len: u8 = 0,
-    tcp_address: ?[4]u8 = null,
     tcp_port: ?u16 = null,
 
     fn init(spec: ListenerSpec) !Listener {
@@ -43,9 +37,9 @@ const Listener = struct {
                 @memcpy(listener.unix_path[0..path.len], path);
                 break :blk listener;
             },
-            .tcp => |tcp_spec| blk: {
-                const bound = try listenTcp(tcp_spec.address, tcp_spec.port);
-                break :blk .{ .fd = bound.fd, .tcp_address = bound.address, .tcp_port = bound.port };
+            .tcp_loopback => |requested_port| blk: {
+                const bound = try listenTcpLoopback(requested_port);
+                break :blk .{ .fd = bound.fd, .tcp_port = bound.port };
             },
         };
     }
@@ -1205,14 +1199,11 @@ fn encodeU64(output: []u8, value: u64) void {
 
 const TcpListener = struct {
     fd: posix.fd_t,
-    address: [4]u8,
     port: u16,
 };
 
-const loopback_ipv4 = [4]u8{ 127, 0, 0, 1 };
-const unspecified_ipv4 = [4]u8{ 0, 0, 0, 0 };
-
-fn ipv4SocketAddress(bytes: [4]u8, port: u16) linux.sockaddr.in {
+fn loopbackAddress(port: u16) linux.sockaddr.in {
+    const bytes = [4]u8{ 127, 0, 0, 1 };
     const address: *align(1) const u32 = @ptrCast(&bytes);
     return .{
         .port = std.mem.nativeToBig(u16, port),
@@ -1220,19 +1211,14 @@ fn ipv4SocketAddress(bytes: [4]u8, port: u16) linux.sockaddr.in {
     };
 }
 
-fn loopbackAddress(port: u16) linux.sockaddr.in {
-    return ipv4SocketAddress(loopback_ipv4, port);
-}
-
-fn listenTcp(bind_address: [4]u8, requested_port: u16) !TcpListener {
-    if (std.mem.eql(u8, &bind_address, &unspecified_ipv4)) return error.InvalidTcpBindAddress;
+fn listenTcpLoopback(requested_port: u16) !TcpListener {
     const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK, 0);
     if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
     try setReuseAddress(fd);
 
-    var address = ipv4SocketAddress(bind_address, requested_port);
+    var address = loopbackAddress(requested_port);
     if (linux.errno(linux.bind(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in))) != .SUCCESS)
         return error.SocketBindFailed;
     if (linux.errno(linux.listen(fd, listen_backlog)) != .SUCCESS) return error.SocketListenFailed;
@@ -1243,11 +1229,11 @@ fn listenTcp(bind_address: [4]u8, requested_port: u16) !TcpListener {
         return error.SocketNameFailed;
     if (bound_len != @sizeOf(linux.sockaddr.in) or bound.family != linux.AF.INET)
         return error.SocketNameFailed;
-    const expected = ipv4SocketAddress(bind_address, 0);
+    const expected = loopbackAddress(0);
     if (bound.addr != expected.addr) return error.SocketNameFailed;
     const port = std.mem.bigToNative(u16, bound.port);
     if (port == 0) return error.SocketNameFailed;
-    return .{ .fd = fd, .address = bind_address, .port = port };
+    return .{ .fd = fd, .port = port };
 }
 
 fn listenUnix(path: []const u8) !posix.fd_t {
@@ -1338,33 +1324,18 @@ fn encodeU32(output: []u8, value: u32) void {
 
 fn parseListenerSpec(text: []const u8) error{InvalidListenerSpec}!ListenerSpec {
     if (std.mem.startsWith(u8, text, "tcp:")) {
-        const body = text["tcp:".len..];
-        if (body.len == 0) return error.InvalidListenerSpec;
-        if (std.mem.indexOfScalar(u8, body, ':')) |separator| {
-            if (separator == 0 or separator + 1 == body.len or
-                std.mem.indexOfScalar(u8, body[separator + 1 ..], ':') != null)
-                return error.InvalidListenerSpec;
-            const port = std.fmt.parseInt(u16, body[separator + 1 ..], 10) catch
-                return error.InvalidListenerSpec;
-            const parsed = std.Io.net.Ip4Address.parse(body[0..separator], port) catch
-                return error.InvalidListenerSpec;
-            if (std.mem.eql(u8, &parsed.bytes, &unspecified_ipv4)) return error.InvalidListenerSpec;
-            return .{ .tcp = .{ .address = parsed.bytes, .port = port } };
-        }
-        const port = std.fmt.parseInt(u16, body, 10) catch return error.InvalidListenerSpec;
-        return .{ .tcp = .{ .address = loopback_ipv4, .port = port } };
+        const port_text = text["tcp:".len..];
+        if (port_text.len == 0) return error.InvalidListenerSpec;
+        const port = std.fmt.parseInt(u16, port_text, 10) catch return error.InvalidListenerSpec;
+        return .{ .tcp_loopback = port };
     }
     if (text.len == 0) return error.InvalidListenerSpec;
     return .{ .unix = text };
 }
 
-fn announceTcpEndpoint(address: [4]u8, port: u16) !void {
-    var buffer: [80]u8 = undefined;
-    const message = std.fmt.bufPrint(
-        &buffer,
-        "HOWL_ENDPOINT=tcp://{d}.{d}.{d}.{d}:{d}\n",
-        .{ address[0], address[1], address[2], address[3], port },
-    ) catch unreachable;
+fn announceTcpEndpoint(port: u16) !void {
+    var buffer: [64]u8 = undefined;
+    const message = std.fmt.bufPrint(&buffer, "HOWL_ENDPOINT=tcp://127.0.0.1:{d}\n", .{port}) catch unreachable;
     var offset: usize = 0;
     while (offset < message.len) {
         const result = linux.write(posix.STDOUT_FILENO, message[offset..].ptr, message.len - offset);
@@ -1380,11 +1351,10 @@ fn announceTcpEndpoint(address: [4]u8, port: u16) !void {
 }
 
 /// Starts one shared session process. Usage:
-/// `howl-sessiond SOCKET_OR_TCP_SPEC SHELL ROWS COLUMNS [COMMAND]`.
+/// `howl-sessiond SOCKET_OR_TCP_PORT SHELL ROWS COLUMNS [COMMAND]`.
 ///
-/// A bare first argument retains the Unix-path transport. `tcp:PORT` keeps the
-/// loopback shorthand; `tcp:IPV4:PORT` binds one exact IPv4 address. Port zero
-/// asks the kernel for a free port and reports the resulting endpoint.
+/// A bare first argument retains the Unix-path transport. `tcp:PORT` binds
+/// IPv4 loopback only; `tcp:0` asks the kernel for a free port and reports it.
 pub fn main(init: std.process.Init) error{
     InvalidArguments,
     InvalidRows,
@@ -1403,8 +1373,7 @@ pub fn main(init: std.process.Init) error{
         .columns = columns,
     }) catch return error.SessionServerFailed;
     defer server.deinit();
-    if (server.listener.tcp_port) |port|
-        announceTcpEndpoint(server.listener.tcp_address.?, port) catch return error.SessionServerFailed;
+    if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
     while (true) server.turn(-1) catch return error.SessionServerFailed;
 }
 
@@ -2029,26 +1998,19 @@ fn readU64(input: []const u8) u64 {
     return value;
 }
 
-test "TCP listener accepts explicit IPv4 and resolves ephemeral port" {
-    const parsed_loopback = try parseListenerSpec("tcp:0");
-    try std.testing.expectEqual(loopback_ipv4, parsed_loopback.tcp.address);
-    try std.testing.expectEqual(@as(u16, 0), parsed_loopback.tcp.port);
-    const parsed_remote = try parseListenerSpec("tcp:100.96.0.2:43127");
-    try std.testing.expectEqual([4]u8{ 100, 96, 0, 2 }, parsed_remote.tcp.address);
-    try std.testing.expectEqual(@as(u16, 43127), parsed_remote.tcp.port);
+test "TCP listener is fixed to IPv4 loopback and resolves ephemeral port" {
+    const parsed_tcp = try parseListenerSpec("tcp:0");
+    try std.testing.expectEqual(@as(u16, 0), parsed_tcp.tcp_loopback);
     const parsed_unix = try parseListenerSpec("/tmp/howl.sock");
     try std.testing.expectEqualStrings("/tmp/howl.sock", parsed_unix.unix);
     try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:"));
     try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:65536"));
-    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:0.0.0.0:1234"));
-    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp:localhost:1234"));
+    try std.testing.expectError(error.InvalidListenerSpec, parseListenerSpec("tcp://0.0.0.0:1234"));
 
-    const explicit_test_address = [4]u8{ 127, 0, 0, 2 };
-    var listener = try Listener.init(.{ .tcp = .{ .address = explicit_test_address, .port = 0 } });
+    var listener = try Listener.init(.{ .tcp_loopback = 0 });
     defer listener.deinit();
     const port = listener.tcp_port orelse return error.MissingTcpPort;
     try std.testing.expect(port != 0);
-    try std.testing.expectEqual(explicit_test_address, listener.tcp_address.?);
 
     var bound: linux.sockaddr.in = .{ .port = 0, .addr = 0 };
     var bound_len: linux.socklen_t = @sizeOf(linux.sockaddr.in);
@@ -2058,11 +2020,11 @@ test "TCP listener accepts explicit IPv4 and resolves ephemeral port" {
     );
     try std.testing.expectEqual(@as(linux.sa_family_t, linux.AF.INET), bound.family);
     try std.testing.expectEqual(port, std.mem.bigToNative(u16, bound.port));
-    try std.testing.expectEqual(ipv4SocketAddress(explicit_test_address, 0).addr, bound.addr);
+    try std.testing.expectEqual(loopbackAddress(0).addr, bound.addr);
 }
 
 test "TCP listener can restart while an old peer still holds the dead connection" {
-    var first = try listenTcp(loopback_ipv4, 0);
+    var first = try listenTcpLoopback(0);
     const port = first.port;
 
     const client_raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
@@ -2094,7 +2056,7 @@ test "TCP listener can restart while an old peer still holds the dead connection
     closeFd(first.fd);
     first.fd = -1;
 
-    const restarted = try listenTcp(loopback_ipv4, port);
+    const restarted = try listenTcpLoopback(port);
     defer closeFd(restarted.fd);
     try std.testing.expectEqual(port, restarted.port);
 }
@@ -2104,7 +2066,7 @@ test "TCP client shares canonical session over the unchanged frame loop" {
         std.testing.allocator,
         std.testing.io,
         std.testing.environ,
-        .{ .tcp = .{ .address = loopback_ipv4, .port = 0 } },
+        .{ .tcp_loopback = 0 },
         .{
             .shell = "/bin/sh",
             .command = "stty -echo -icanon min 1 time 0; printf 'TCP-READY\\n'; cat",
