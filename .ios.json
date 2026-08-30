@@ -1,0 +1,7 @@
+{
+  "workflow": "ios-howl-smoke.yml",
+  "artifact": "howl-ios",
+  "ipa": "howl.ipa",
+  "bundle_id": "uk.laurencegouws.howl",
+  "require_splice_ready": true
+}

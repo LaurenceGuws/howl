@@ -51,6 +51,16 @@ bundled into the APK; private deployment may provision it independently. Missing
 unreadable font material preserves the normal `monospace` fallback and cannot stop
 terminal attachment.
 
+The iOS runner is likewise a stock Flutter shell and currently exists only as a
+platform pressure target. The first iPhone smoke build deliberately compiles the real
+client with `HOWL_ENDPOINT=tcp://127.0.0.1:43127`. With no iPhone-local Howl session,
+connection refusal and the existing attach-failed UI are the expected honest result:
+this proves install/launch/presentation without widening Howl's transport boundary.
+The repository's `.ios.json` delegates macOS/Xcode build, Splice signing/provisioning,
+and device installation to the separate `ios` authority. iOS remains SSH-only for
+actual remote terminal reachability until a later experiment earns a different
+contract.
+
 The Android shell otherwise remains the stock `FlutterActivity` embedding plus the
 normal `INTERNET` permission. A Termux-owned `howl-sessiond` on the same phone can
 therefore be reached directly over Android loopback:

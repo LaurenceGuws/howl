@@ -1,0 +1,61 @@
+name: Howl iOS smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Flutter 3.47.0
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        working-directory: howl-flutter
+        run: flutter pub get
+
+      - name: Build unsigned iOS smoke app
+        working-directory: howl-flutter
+        run: >-
+          flutter build ios --release --no-codesign
+          --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+
+      - name: Package Splice-ready unsigned IPA
+        working-directory: howl-flutter
+        run: |
+          set -euxo pipefail
+          rm -rf dist
+          mkdir -p dist/Payload
+          cp -R build/ios/iphoneos/Runner.app dist/Payload/
+
+          # Splice v1.0.0 must receive embedded frameworks without stale ad-hoc signatures.
+          find dist/Payload/Runner.app -type d -name _CodeSignature -prune -exec rm -rf {} +
+          if find dist/Payload/Runner.app -type d -name _CodeSignature -print -quit | grep -q .; then
+            echo 'stale _CodeSignature directory remains' >&2
+            exit 1
+          fi
+
+          cd dist
+          /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload howl.ipa
+          shasum -a 256 howl.ipa > SHA256SUMS
+          ls -lh howl.ipa SHA256SUMS
+
+      - name: Upload Howl artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: howl-ios
+          path: |
+            howl-flutter/dist/howl.ipa
+            howl-flutter/dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
