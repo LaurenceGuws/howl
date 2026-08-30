@@ -16,7 +16,7 @@ final class TerminalGlyphCache {
   int get length => _painters.length;
 
   TextPainter resolve({
-    required String text,
+    required List<int> scalars,
     required Color foreground,
     required int style,
     required int underlineStyle,
@@ -25,7 +25,7 @@ final class TerminalGlyphCache {
     required double fontSize,
   }) {
     final key = _GlyphKey(
-      text: text,
+      scalars: scalars,
       foreground: foreground.toARGB32(),
       style: style,
       underlineStyle: underlineStyle,
@@ -41,7 +41,7 @@ final class TerminalGlyphCache {
 
     final painter = TextPainter(
       text: TextSpan(
-        text: text,
+        text: String.fromCharCodes(scalars),
         style: TextStyle(
           color: foreground,
           fontFamily: 'monospace',
@@ -78,7 +78,7 @@ final class TerminalGlyphCache {
 
 final class _GlyphKey {
   const _GlyphKey({
-    required this.text,
+    required this.scalars,
     required this.foreground,
     required this.style,
     required this.underlineStyle,
@@ -87,7 +87,7 @@ final class _GlyphKey {
     required this.fontSize,
   });
 
-  final String text;
+  final List<int> scalars;
   final int foreground;
   final int style;
   final int underlineStyle;
@@ -98,7 +98,7 @@ final class _GlyphKey {
   @override
   bool operator ==(Object other) =>
       other is _GlyphKey &&
-      other.text == text &&
+      _sameScalars(other.scalars, scalars) &&
       other.foreground == foreground &&
       other.style == style &&
       other.underlineStyle == underlineStyle &&
@@ -107,15 +107,30 @@ final class _GlyphKey {
       other.fontSize == fontSize;
 
   @override
-  int get hashCode => Object.hash(
-    text,
-    foreground,
-    style,
-    underlineStyle,
-    underlineColor,
-    maxWidth,
-    fontSize,
-  );
+  int get hashCode {
+    var scalarHash = 0;
+    for (final scalar in scalars) {
+      scalarHash = Object.hash(scalarHash, scalar);
+    }
+    return Object.hash(
+      scalarHash,
+      foreground,
+      style,
+      underlineStyle,
+      underlineColor,
+      maxWidth,
+      fontSize,
+    );
+  }
+}
+
+bool _sameScalars(List<int> left, List<int> right) {
+  if (identical(left, right)) return true;
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 TextDecoration _textDecoration(int style) {

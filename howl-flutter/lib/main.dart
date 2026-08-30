@@ -565,7 +565,7 @@ final class TerminalPainter extends CustomPainter {
         }
 
         final painter = glyphCache.resolve(
-          text: String.fromCharCodes(cell.scalars),
+          scalars: cell.scalars,
           foreground: foreground,
           style: cell.style,
           underlineStyle: cell.underlineStyle,
