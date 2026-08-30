@@ -4,7 +4,7 @@ Experimental AX transport for existing Howl sessions.
 
 This leaf does not define terminal semantics and does not provide a smaller terminal API. It translates the frozen `howl-session` wire into agent-friendly structured records without discarding canonical state.
 
-The endpoint is explicit. This experiment owns no discovery, session lifecycle, authentication, Fleet routing, renderer policy, terminal encoding, or terminal-state reconstruction.
+The endpoint is explicit. Unix paths and numeric `tcp://IPV4:PORT` targets are accepted; wildcard and hostname TCP targets are rejected. This experiment owns no discovery, session lifecycle, authentication, Fleet routing, renderer policy, terminal encoding, or terminal-state reconstruction. Fleet callers normally supply an accepted Mesh address.
 
 ## Lossless observation
 

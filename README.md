@@ -19,7 +19,7 @@ The session API is deliberately opaque. Embedders can inspect semantic state and
 
 ## Attachment model
 
-The session/client boundary is the frozen Howl framed byte stream, independent of the kernel PTY underneath it. Unix sockets remain a temporary local oracle, while `howl-sessiond` now also supports IPv4 loopback TCP as the portable native-client transport under active Linux/Android proof. SSH remains an optional secure way to reach a remote byte stream; the existing Unix stdio bridge stays until a TCP remote replacement is independently proven.
+The session/client boundary is the frozen Howl framed byte stream, independent of the kernel PTY underneath it. Unix sockets remain a local oracle, while `howl-sessiond` also supports explicit numeric IPv4 TCP endpoints. The caller owns routing and authentication policy: Fleet development normally binds the exact accepted Mesh address, never a wildcard listener. SSH plus the protocol-blind stdio bridge remains available when an authenticated byte-stream wrapper is preferable.
 
 Attaching is observational. It never silently resizes the PTY. Geometry is explicit canonical session state.
 
