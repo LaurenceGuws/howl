@@ -44,41 +44,53 @@ still transports the complete visible semantic grid for a snapshot.
 This is therefore a better next native target than IME, touch, gestures, app
 lifecycle, or arbitrary Dart line-count reduction.
 
-## Next experiment: coarse native snapshot consumption
+## Coarse native snapshot experiment
 
-Do **not** make Flutter call thousands of FFI getters or move decoding to Zig only
-to recreate the same object-per-cell Dart graph. That would relocate work rather
-than remove it.
+The coarse-view hypothesis survived both native measurement and Android Flutter
+pressure testing. The experiment deliberately began under ignored work space and
+accepted no ABI or memory layout in advance.
 
-A disposable Zig-only packing probe then tested that thesis against the same
-kind of live 36x51 snapshot. The rich native graph contained 1,836 cells and 780
-nonempty scalar cells, implying at least **817 separate heap allocations per
-snapshot** (rows slice + one cell slice per row + one scalar slice per nonempty
-cell, before allocator bookkeeping). A lossless flat native view of the same row,
-cell, scalar and hyperlink data required about **99 KiB in one allocation**. The
-probe code was deleted after measurement so an unaccepted memory layout did not
-become product surface.
+A live linked 36x51 rich snapshot contained 1,836 cells, 780 Unicode scalars and
+one hyperlink. Native `rich.request` used 860 allocator calls and retained about
+121.5 KiB in its object graph after transient frame buffers were released. A
+mechanically equivalent flat projection retained the same row, cell, scalar,
+hyperlink and presentation facts in **78,032 bytes and exactly one allocation**.
+Packing/freeing that view cost about **58.4 microseconds** per revision in the
+100,000-iteration native probe. The projection consumes the already-decoded rich
+model and adds no second `text_v1` parser.
 
-That result materially strengthens the next experiment: `howl-client` should own
-a coarse, immutable native snapshot/presentation view for one canonical revision. The Flutter side should
-receive one explicit-lifetime handle or packed read-only view and consume rows,
-cells, scalar pools and hyperlink/presentation metadata in batches. Exact ABI
-layout is intentionally deferred until a small prototype measures:
+Three temporary Flutter crossings were tested. `TransferableTypedData` was safe
+but copied the whole view each revision. A raw pointer whose backing allocation
+was recycled on the next observation was rejected after a deterministic SIGSEGV:
+Flutter may still compare or paint the previous delegate while installing the next
+one. The safe experiment therefore used an explicit native lease. A published
+view remained immutable until Flutter released it after the following frame.
 
-1. native wire decode time;
-2. Dart allocation/object count avoided;
-3. crossing/copy cost at the FFI boundary;
-4. Flutter paint/frame latency under the same fixed churn workload;
-5. memory retained by one/two snapshot generations.
+Against the same 1,600-line churn shape on the Note10, the explicit-lease native
+path settled about **5.7 MiB lower PSS** than the accepted Dart rich-object path.
+In a normalized 10.208-second run it used **6.038 CPU ticks per terminal paint**
+versus **7.286** for Dart (about 17% less), and average Flutter build+raster time
+fell from **60.617 ms to 53.452 ms** (about 12% less). It produced 106 paints
+versus 70 in the same window. Total process CPU therefore rose because Flutter
+presented substantially more frames, not because the native observation seam cost
+more per presented frame.
 
-The handle/view must remain client state, never terminal truth. The canonical
-revision stays owned by `howl-session`/`howl-vt`; slow or absent Flutter clients
-must still be unable to pace PTY/VT progress. Snapshot lifetime must be explicit,
-and a new observation must not silently mutate memory still owned by a painter.
+The experiment earns one native API: `howl-client.view` projects a lossless rich
+snapshot into an opaque, explicitly owned, immutable one-allocation view with
+batched rows, cells, scalars, hyperlinks, URI bytes and presentation state. The
+source snapshot may be released immediately after projection. The view must be
+explicitly deinitialized only after all borrowers are finished. Public callers
+cannot depend on its backing offsets or struct packing.
 
-Only after this native snapshot seam demonstrates a real win should we decide
-whether Flutter should continue doing text layout or consume a deeper native
-text/render model.
+This remains client state, never terminal truth. `howl-session` and `howl-vt` stay
+canonical and observers cannot pace PTY/VT progress. The temporary C ABI, Android
+wrapper, raw addresses, byte offsets and Dart FFI layout were deleted rather than
+canonized. Any future Flutter bridge must preserve the proven explicit-lifetime
+rule and coarse crossing without treating today's private native layout as ABI.
+
+The next performance pressure is presentation/text/raster work. If that earns a
+native seam, it should flow through `howl-text` rather than grow another terminal
+transport or Dart parser variant.
 
 ## Font policy: IosevkaTerm Nerd Font
 
@@ -112,17 +124,21 @@ Accepted now:
 - one native `howl-client` package owns client connection/framing and semantic
   native observation/control;
 - one rich `text_v1` parser exists, in `howl-client`;
-- compact snapshots project from that rich model rather than parsing twice;
-- CLI and transport remain presentation layers over the native engine;
-- Flutter glyph-layout caching and frame-paced observation are measured wins;
+- compact snapshots and the opaque coarse native view project from that rich model
+  rather than parsing twice;
+- the coarse view owns one immutable allocation with explicit lifetime and exposes
+  semantic slices without accepting a C/FFI byte layout;
+- CLI remains a presentation layer over the native engine;
+- Flutter glyph-layout caching, frame-paced observation, and coarse native snapshot
+  consumption are measured wins;
 - Android may privately provision IosevkaTerm Nerd Font for optional Flutter
   presentation without making the font an app/repository asset.
 
 Still experimental/deferred:
 
 - any stable C/FFI ABI;
-- packed snapshot memory layout;
-- native snapshot ownership/lifetime API for Dart;
+- packed snapshot or stable C/FFI memory layout;
+- a durable Dart/Flutter binding for the native view;
 - moving shaping/rasterization from Flutter into `howl-text`;
 - glyph atlas/image transfer strategy into Flutter;
 - stable cross-platform font provisioning or bundled font asset policy;
