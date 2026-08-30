@@ -1,0 +1,11 @@
+.{
+    .name = .howl_cli,
+    .version = "0.1.6-dev",
+    .fingerprint = 0x75ee688427773164,
+    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .dependencies = .{
+        .howl_session = .{ .path = "../howl-session" },
+        .howl_transport = .{ .path = "../howl-transport" },
+    },
+    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
+}

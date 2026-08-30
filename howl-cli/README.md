@@ -86,6 +86,8 @@ compatibility promise while the client is experimental:
   "lifecycle": {"stream_closed": false, "child_exited": false},
   "resize": {"leader_present": false, "you_are_leader": false},
   "lines": ["$ nvim", "..."],
+  "wrapped_rows": [0],
+  "line_geometry": [],
   "detail": {
     "styled_cells": 42,
     "linked_cells": 0,
@@ -99,6 +101,10 @@ compatibility promise while the client is experimental:
 for that semantic row with ordinary trailing blank cells removed. Empty rows are
 empty strings, preserving row identity without flooding the output with spaces.
 Wide/multicell continuation cells are not duplicated as extra characters.
+`wrapped_rows` preserves soft-wrap identity so a visual row break is never
+silently presented as a child-program newline. `line_geometry` contains only
+non-single-width DEC rows, with row index plus the canonical double-width or
+double-height identity.
 
 The compact projection is intentionally lossy in presentation detail, but never
 silently claims otherwise. `detail` reports when styled, linked or multicell

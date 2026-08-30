@@ -23,6 +23,10 @@ The session/client boundary is the frozen Howl framed byte stream, independent o
 
 Attaching is observational. It never silently resizes the PTY. Geometry is explicit canonical session state.
 
+## Native CLI
+
+`howl-cli/` is the active native human/agent client experiment. It builds the `howl` executable with compact semantic `snapshot`, canonical `state`, committed `type`, semantic `paste`, typed `key`, `focus`, explicit `resize`, and fixed `signal` operations. `snapshot --rich` retains the complete lossless `text_v1` view when compact text is not enough. The CLI owns no shell execution, session discovery, remote transport, renderer, Remoter integration, or Captain Control integration.
+
 ## Experimental packages
 
 `howl-render`, `howl-vk`, `howl-wayland`, `howl-gtk`, and `howl-flutter` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
