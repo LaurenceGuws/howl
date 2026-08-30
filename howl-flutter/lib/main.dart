@@ -13,6 +13,7 @@ import 'protocol.dart';
 import 'text_input.dart';
 import 'terminal_font.dart';
 import 'terminal_glyph_cache.dart';
+import 'terminal_status.dart';
 import 'touch_surface.dart';
 import 'visible_viewport.dart';
 
@@ -447,20 +448,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       content = ColoredBox(
         color: const Color(0xff090b0e),
         child: Center(
-          child: Text(
-            'Howl attach failed\n$failure',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              fontFamily: terminalFontFamily,
-              fontFamilyFallback: terminalFontFamilyFallback,
-            ),
-          ),
+          child: TerminalStatusText('Howl attach failed\n$failure'),
         ),
       );
     } else if (snapshot == null) {
       content = const ColoredBox(
         color: Color(0xff090b0e),
-        child: Center(child: Text('attaching to Howl…')),
+        child: Center(child: TerminalStatusText('attaching to Howl…')),
       );
     } else {
       content = LayoutBuilder(
