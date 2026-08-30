@@ -10,9 +10,9 @@ owns only reusable client-side mechanics and semantic observation/control:
 connection/framing, negotiated client identity/features, coherent interaction
 state, canonical non-coordinate actions, one hostile-safe lossless `text_v1`
 decoder, and a compact projection over that rich native model. `howl-cli` owns
-its command vocabulary and JSON/text formatting. `howl-transport` is an
-experimental NDJSON formatter/black-box pressure tool and no longer parses
-`text_v1` itself.
+its command vocabulary and text/JSON presentation, including explicit rich
+diagnostic output. The earlier generic NDJSON pressure experiment was retired
+after its useful black-box proofs moved onto the CLI/client surfaces.
 
 ## What measurement says
 

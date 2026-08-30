@@ -13,9 +13,9 @@ reachability, authentication, routing, discovery, session lifecycle, PTY/VT
 semantics, stale coordinate policy, UI, and rendering are deliberately outside
 this package.
 
-`howl-cli` consumes the engine and owns its human/agent command vocabulary and
-compact JSON/text formatting. `howl-transport` is retained as an experimental
-NDJSON/black-box pressure tool; it formats the engine's rich model rather than
-parsing the session wire independently.
+`howl-cli` consumes the engine and owns its human/agent command vocabulary plus
+compact text/JSON and explicit rich diagnostic formatting. The earlier generic
+NDJSON transport experiment was retired after its useful black-box proofs moved
+to the CLI/client surfaces.
 
 The measured next Flutter/native experiment is recorded in `../docs/2026-08-30-native-client-flutter-seam.md`; no FFI ABI is accepted yet.
