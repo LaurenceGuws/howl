@@ -1,7 +1,7 @@
 const std = @import("std");
 const protocol = @import("howl_session").protocol;
 const client = @import("howl_client");
-const transport = @import("howl_transport");
+const rich_format = @import("rich_format.zig");
 
 pub const Detail = client.snapshot.Detail;
 pub const LineGeometry = client.snapshot.LineGeometry;
@@ -91,11 +91,7 @@ pub fn requestRich(
     after_revision: u64,
     history_offset: u32,
 ) !void {
-    var payload: [protocol.payload_bytes.observe]u8 = undefined;
-    protocol.encodeObserve(&payload, .{
-        .after_revision = after_revision,
-        .history_offset = history_offset,
-    });
-    try connection.send(.observe, &payload);
-    try transport.observe.receiveAndEmitSnapshot(connection, connection.allocator, writer);
+    var value = try client.rich.request(connection, connection.allocator, after_revision, history_offset);
+    defer value.deinit();
+    try rich_format.emitNative(connection.allocator, writer, &value);
 }

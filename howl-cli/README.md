@@ -125,8 +125,9 @@ resolved hyperlink targets.
 
 The rich form may remain NDJSON because streaming bounded records is useful for
 forensic inspection and tests. It is explicitly *not* the default AX surface.
-The existing `howl-transport observe` decoder is accepted implementation material
-and black-box evidence for this path until the native CLI supersedes it.
+Rich formatting consumes `howl-client.rich` directly: the frozen wire is decoded
+once by the UI-agnostic native engine and the CLI only chooses this diagnostic
+record presentation.
 
 ## Revision semantics
 
