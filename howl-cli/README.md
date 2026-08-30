@@ -34,6 +34,7 @@ use rather than being bundled into the observation client.
 The intended first vocabulary is:
 
 ```text
+howl version
 howl snapshot ENDPOINT [--after REVISION] [--history-offset ROWS] [--text|--rich]
 howl state ENDPOINT
 howl type ENDPOINT TEXT
@@ -218,3 +219,22 @@ that client engine only then. Flutter should remain strong where it is useful:
 application lifecycle, IME, touch/gesture capture, accessibility and final UI
 composition. Canonical terminal state and terminal-specific heavy work stay in
 or move toward Zig without trading away visual quality or input latency.
+
+## User installation
+
+The CLI project owns one regular executable at `~/.local/bin/howl`:
+
+```sh
+./howl-cli/install --check
+./howl-cli/install --promote
+```
+
+Promotion requires clean pushed `main`, builds `ReleaseSmall`, verifies
+`howl.version/v1`, and atomically replaces only a binary proven by the current CLI
+receipt or the exact legacy Howl installer receipt. Symlinks, unrelated commands,
+and locally changed installed binaries are refused. The migration rule exists so
+the retired pre-2026-08-30 `start`/`stop`/`sessions` CLI can be replaced without
+teaching future installers to recognize its command vocabulary.
+
+The CLI installer owns only `howl`. It does not install `howl-sessiond`, the SSH
+bridge, Remoter hooks, Fleet configuration, or graphical clients.

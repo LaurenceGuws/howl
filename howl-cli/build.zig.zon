@@ -7,5 +7,5 @@
         .howl_session = .{ .path = "../howl-session" },
         .howl_transport = .{ .path = "../howl-transport" },
     },
-    .paths = .{ "README.md", "build.zig", "build.zig.zon", "src" },
+    .paths = .{ "README.md", "build.zig", "build.zig.zon", "install", "src", "test" },
 }

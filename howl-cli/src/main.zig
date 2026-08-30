@@ -5,8 +5,13 @@ const protocol = @import("howl_session").protocol;
 
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
-    if (argv.len < 3) return usage();
+    if (argv.len < 2) return usage();
     const operation = std.mem.span(argv[1]);
+    if (std.mem.eql(u8, operation, "version")) {
+        if (argv.len != 2) return usage();
+        return versionCommand(init);
+    }
+    if (argv.len < 3) return usage();
     const endpoint = std.mem.span(argv[2]);
 
     if (std.mem.eql(u8, operation, "snapshot")) return snapshotCommand(init, endpoint, argv[3..]);
@@ -18,6 +23,19 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, operation, "resize")) return resizeCommand(init, endpoint, argv[3..]);
     if (std.mem.eql(u8, operation, "signal")) return signalCommand(init, endpoint, argv[3..]);
     return usage();
+}
+
+fn versionCommand(init: std.process.Init) !void {
+    const Version = struct {
+        schema: []const u8 = cli.version_schema,
+        name: []const u8 = "howl",
+        version: []const u8 = cli.version,
+    };
+    var output_buffer: [256]u8 = undefined;
+    var stdout = stdoutWriter(init, &output_buffer);
+    try std.json.Stringify.value(Version{}, .{}, &stdout.interface);
+    try stdout.interface.writeByte('\n');
+    try stdout.interface.flush();
 }
 
 fn connect(init: std.process.Init, endpoint: []const u8) !transport.wire.Connection {

@@ -26,6 +26,7 @@ Attaching is observational. It never silently resizes the PTY. Geometry is expli
 ## Native CLI
 
 `howl-cli/` is the active native human/agent client experiment. It builds the `howl` executable with compact semantic `snapshot`, canonical `state`, committed `type`, semantic `paste`, typed `key`, `focus`, explicit `resize`, and fixed `signal` operations. `snapshot --rich` retains the complete lossless `text_v1` view when compact text is not enough. The CLI owns no shell execution, session discovery, remote transport, renderer, Remoter integration, or Captain Control integration.
+Install the pushed native CLI as a regular user-owned command with `./howl-cli/install --promote`; the CLI project owns only `~/.local/bin/howl`.
 
 ## Experimental packages
 
