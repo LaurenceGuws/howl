@@ -33,14 +33,23 @@ HOWL_ENDPOINT=tcp://127.0.0.1:43127 flutter run -d linux
 ```
 
 For Android, networking remains `dart:io`; there is no Kotlin networking, protocol,
-or terminal implementation. The one native leaf is IME visibility. Android uses
-Flutter's visible-password/no-suggestions character editor, matching the intent of
-Termux's optional `enforce-char-based-input` mode rather than its default `TYPE_NULL`
-path. That lets Flutter expose document deletion to Dart while keeping suggestions
-out of the terminal editor. `MainActivity` receives one `show` MethodChannel request
-and applies the Termux-shaped native sequence to the real `FlutterView`: coalesced
-300 ms delay, `requestFocus`, `restartInput`, then `showSoftInput(view, 0)`. All
-composition, committed Unicode, and terminal edit semantics remain in Dart.
+or terminal implementation. The native Android shim has two narrow presentation
+leaves: IME visibility and the app-private files path. Android uses Flutter's
+visible-password/no-suggestions character editor, matching the intent of Termux's
+optional `enforce-char-based-input` mode rather than its default `TYPE_NULL` path.
+That lets Flutter expose document deletion to Dart while keeping suggestions out of
+the terminal editor. `MainActivity` receives one `show` MethodChannel request and
+applies the Termux-shaped native sequence to the real `FlutterView`: coalesced 300 ms
+delay, `requestFocus`, `restartInput`, then `showSoftInput(view, 0)`. All composition,
+committed Unicode, and terminal edit semantics remain in Dart.
+
+The Flutter presentation prefers `IosevkaTerm Nerd Font`. On Android it asks the
+native host for `filesDir` before the first frame and, when
+`IosevkaTermNerdFont-Regular.ttf` is present there, registers those bytes under that
+family with Flutter's `FontLoader`. The file is deliberately neither tracked nor
+bundled into the APK; private deployment may provision it independently. Missing or
+unreadable font material preserves the normal `monospace` fallback and cannot stop
+terminal attachment.
 
 The Android shell otherwise remains the stock `FlutterActivity` embedding plus the
 normal `INTERNET` permission. A Termux-owned `howl-sessiond` on the same phone can

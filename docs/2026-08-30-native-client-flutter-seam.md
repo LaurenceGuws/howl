@@ -98,10 +98,12 @@ Flutter. The presentation layer may choose IosevkaTerm (or another configured
 family) and supply the selected font material to `howl-text`; that choice remains
 outside canonical terminal state.
 
-For now, do not make the Android pressure client architecture depend on a
-committed/bundled Iosevka font asset merely to make the demo prettier. The font
-request is useful pressure on the eventual native text seam, not justification
-to couple `howl-client` to font files.
+The Android pressure client now optionally loads an externally provisioned
+`IosevkaTermNerdFont-Regular.ttf` from its app-private files directory before the
+first frame, registering it as `IosevkaTerm Nerd Font` through Flutter's public
+`FontLoader`. The file remains untracked and unbundled; absence falls back to
+`monospace`. This is deliberately presentation/deployment policy and does not add
+font material or font concepts to `howl-client`, `howl-session`, or `howl-vt`.
 
 ## Accepted versus deferred
 
@@ -113,7 +115,8 @@ Accepted now:
 - compact snapshots project from that rich model rather than parsing twice;
 - CLI and transport remain presentation layers over the native engine;
 - Flutter glyph-layout caching and frame-paced observation are measured wins;
-- IosevkaTerm Nerd Font is the desired Home/Howl presentation reference.
+- Android may privately provision IosevkaTerm Nerd Font for optional Flutter
+  presentation without making the font an app/repository asset.
 
 Still experimental/deferred:
 
@@ -122,6 +125,6 @@ Still experimental/deferred:
 - native snapshot ownership/lifetime API for Dart;
 - moving shaping/rasterization from Flutter into `howl-text`;
 - glyph atlas/image transfer strategy into Flutter;
-- Android font provisioning/asset packaging;
+- stable cross-platform font provisioning or bundled font asset policy;
 - mouse/coordinate mutation in the CLI before stale-target identity can be
   enforced by the session boundary.

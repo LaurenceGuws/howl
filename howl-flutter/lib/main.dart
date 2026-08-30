@@ -11,11 +11,12 @@ import 'launch_config.dart';
 import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
+import 'terminal_font.dart';
 import 'terminal_glyph_cache.dart';
 import 'touch_surface.dart';
 import 'visible_viewport.dart';
 
-void main(List<String> args) {
+Future<void> main(List<String> args) async {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
   final endpointText = args.isNotEmpty
       ? args.first
@@ -38,6 +39,9 @@ void main(List<String> args) {
     exitCode = 64;
     return;
   }
+  WidgetsFlutterBinding.ensureInitialized();
+  await loadPrivateTerminalFont();
+
   const compiledGeometryLeader = String.fromEnvironment('HOWL_GEOMETRY_LEADER');
   runApp(
     HowlApp(
@@ -446,7 +450,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           child: Text(
             'Howl attach failed\n$failure',
             textAlign: TextAlign.center,
-            style: const TextStyle(fontFamily: 'monospace'),
+            style: const TextStyle(
+              fontFamily: terminalFontFamily,
+              fontFamilyFallback: terminalFontFamilyFallback,
+            ),
           ),
         ),
       );

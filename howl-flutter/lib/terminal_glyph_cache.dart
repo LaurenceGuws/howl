@@ -2,6 +2,8 @@ import 'dart:collection';
 
 import 'package:flutter/painting.dart';
 
+import 'terminal_font.dart';
+
 /// Bounded cache for immutable, already-laid-out terminal graphemes.
 ///
 /// Canonical terminal semantics stay in Howl. This cache owns only Flutter text
@@ -44,7 +46,8 @@ final class TerminalGlyphCache {
         text: text,
         style: TextStyle(
           color: foreground,
-          fontFamily: 'monospace',
+          fontFamily: terminalFontFamily,
+          fontFamilyFallback: terminalFontFamilyFallback,
           fontSize: fontSize,
           height: 1,
           fontWeight: style & 1 != 0 ? FontWeight.bold : FontWeight.normal,
