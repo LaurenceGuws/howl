@@ -54,6 +54,31 @@ pub fn namedKey(
     try expectOk(connection, .input);
 }
 
+pub fn unicodeKey(
+    connection: *client.Connection,
+    scalar: u32,
+    action: protocol.InputKeyAction,
+    modifiers: u8,
+) Error!void {
+    if (connection.features & protocol.feature(.typed_input) == 0)
+        return error.TypedInputUnsupported;
+    var body_storage: [protocol.typed_input.key_header_bytes]u8 = undefined;
+    const body = protocol.encodeKeyInput(&body_storage, .{
+        .kind = .unicode,
+        .key_value = scalar,
+        .action = action,
+        .modifiers = modifiers,
+    }) catch |failure| switch (failure) {
+        error.OutputTooSmall => unreachable,
+        else => |err| return err,
+    };
+    var payload: [1 + protocol.typed_input.key_header_bytes]u8 = undefined;
+    payload[0] = @backingInt(protocol.InputKind.key);
+    @memcpy(payload[1 .. 1 + body.len], body);
+    try connection.send(.input, payload[0 .. 1 + body.len]);
+    try expectOk(connection, .input);
+}
+
 pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!void {
     if (connection.features & protocol.feature(.typed_input) == 0)
         return error.TypedInputUnsupported;

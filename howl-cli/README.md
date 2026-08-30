@@ -41,7 +41,7 @@ howl type ENDPOINT TEXT
 printf '%s' 'text' | howl type ENDPOINT --stdin
 howl paste ENDPOINT TEXT
 printf '%s' 'text' | howl paste ENDPOINT --stdin
-howl key ENDPOINT KEY [--action press|repeat|release] [--mods MODS]
+howl key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods MODS]
 howl focus ENDPOINT in|out
 howl resize ENDPOINT ROWS COLUMNS
 howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate
@@ -238,3 +238,5 @@ teaching future installers to recognize its command vocabulary.
 
 The CLI installer owns only `howl`. It does not install `howl-sessiond`, the SSH
 bridge, Remoter hooks, Fleet configuration, or graphical clients.
+
+Physical Unicode key identity is explicit: use `U+0061` for the physical Unicode key `a`. Ordinary committed text remains `howl type`; a bare `a` is not accepted as a physical-key spelling.

@@ -141,7 +141,10 @@ fn keyCommand(init: std.process.Init, endpoint: []const u8, args: []const [*:0]c
     }
     var connection = try connect(init, endpoint);
     defer connection.deinit();
-    try cli.actions.namedKey(&connection, key, action, modifiers);
+    switch (key) {
+        .named => |value| try cli.actions.namedKey(&connection, value, action, modifiers),
+        .unicode => |value| try cli.actions.unicodeKey(&connection, value, action, modifiers),
+    }
     try emitActionReceipt(init, "key");
 }
 
@@ -185,7 +188,7 @@ fn usage() error{InvalidArguments} {
         \\  howl state ENDPOINT
         \\  howl type ENDPOINT TEXT|--stdin
         \\  howl paste ENDPOINT TEXT|--stdin
-        \\  howl key ENDPOINT KEY [--action press|repeat|release] [--mods ctrl+shift+...]
+        \\  howl key ENDPOINT KEY|U+XXXX [--action press|repeat|release] [--mods ctrl+shift+...]
         \\  howl focus ENDPOINT in|out
         \\  howl resize ENDPOINT ROWS COLUMNS
         \\  howl signal ENDPOINT hangup|interrupt|resize-notify|kill|terminate

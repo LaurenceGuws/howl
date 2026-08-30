@@ -24,15 +24,28 @@ pub fn emitReceipt(writer: *std.Io.Writer, operation: []const u8) !void {
 pub const committedText = client.actions.committedText;
 pub const paste = client.actions.paste;
 pub const namedKey = client.actions.namedKey;
+pub const unicodeKey = client.actions.unicodeKey;
 pub const focus = client.actions.focus;
 pub const resize = client.actions.resize;
 pub const signal = client.actions.signal;
 
-pub fn parseKey(text: []const u8) Error!protocol.InputKeyName {
+pub const PhysicalKey = union(enum) {
+    named: protocol.InputKeyName,
+    unicode: u32,
+};
+
+pub fn parseKey(text: []const u8) Error!PhysicalKey {
+    if (std.mem.startsWith(u8, text, "U+") or std.mem.startsWith(u8, text, "u+")) {
+        if (text.len <= 2 or text.len > 8) return error.InvalidKey;
+        const scalar = std.fmt.parseInt(u32, text[2..], 16) catch return error.InvalidKey;
+        if (scalar > 0x10ffff or scalar >= 0xd800 and scalar <= 0xdfff) return error.InvalidKey;
+        return .{ .unicode = scalar };
+    }
     if (text.len == 0 or text.len > 31) return error.InvalidKey;
     var normalized: [32]u8 = undefined;
     for (text, 0..) |byte, index| normalized[index] = if (byte == '-') '_' else byte;
-    return std.meta.stringToEnum(protocol.InputKeyName, normalized[0..text.len]) orelse error.InvalidKey;
+    return .{ .named = std.meta.stringToEnum(protocol.InputKeyName, normalized[0..text.len]) orelse
+        return error.InvalidKey };
 }
 
 pub fn parseKeyAction(text: []const u8) Error!protocol.InputKeyAction {
@@ -84,8 +97,10 @@ pub fn parseSignal(text: []const u8) Error!protocol.Signal {
 }
 
 test "CLI key and modifier names map only to frozen protocol vocabulary" {
-    try std.testing.expectEqual(protocol.InputKeyName.page_up, try parseKey("page-up"));
-    try std.testing.expectEqual(protocol.InputKeyName.keypad_enter, try parseKey("keypad_enter"));
+    try std.testing.expectEqual(protocol.InputKeyName.page_up, (try parseKey("page-up")).named);
+    try std.testing.expectEqual(protocol.InputKeyName.keypad_enter, (try parseKey("keypad_enter")).named);
+    try std.testing.expectEqual(@as(u32, 'a'), (try parseKey("U+0061")).unicode);
+    try std.testing.expectError(error.InvalidKey, parseKey("U+D800"));
     try std.testing.expectError(error.InvalidKey, parseKey("c"));
     try std.testing.expectEqual(
         protocol.typed_input.modifiers.control | protocol.typed_input.modifiers.shift,
