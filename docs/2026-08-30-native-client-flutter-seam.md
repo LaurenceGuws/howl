@@ -50,8 +50,17 @@ Do **not** make Flutter call thousands of FFI getters or move decoding to Zig on
 to recreate the same object-per-cell Dart graph. That would relocate work rather
 than remove it.
 
-The next experiment should let `howl-client` own a coarse, immutable native
-snapshot/presentation view for one canonical revision. The Flutter side should
+A disposable Zig-only packing probe then tested that thesis against the same
+kind of live 36x51 snapshot. The rich native graph contained 1,836 cells and 780
+nonempty scalar cells, implying at least **817 separate heap allocations per
+snapshot** (rows slice + one cell slice per row + one scalar slice per nonempty
+cell, before allocator bookkeeping). A lossless flat native view of the same row,
+cell, scalar and hyperlink data required about **99 KiB in one allocation**. The
+probe code was deleted after measurement so an unaccepted memory layout did not
+become product surface.
+
+That result materially strengthens the next experiment: `howl-client` should own
+a coarse, immutable native snapshot/presentation view for one canonical revision. The Flutter side should
 receive one explicit-lifetime handle or packed read-only view and consume rows,
 cells, scalar pools and hyperlink/presentation metadata in batches. Exact ABI
 layout is intentionally deferred until a small prototype measures:
