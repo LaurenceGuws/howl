@@ -1,8 +1,8 @@
 const std = @import("std");
 const protocol = @import("howl_session").protocol;
-const transport = @import("howl_transport");
+const client = @import("howl_client");
 
-pub const Error = transport.wire.Error || protocol.PayloadError || std.Io.Writer.Error || error{
+pub const Error = client.Error || protocol.PayloadError || std.Io.Writer.Error || error{
     InteractionStateUnsupported,
     UnexpectedFrame,
 };
@@ -31,7 +31,7 @@ const StateRecord = struct {
     pointer_mode: u2,
 };
 
-pub fn emit(connection: *transport.wire.Connection, writer: *std.Io.Writer) Error!void {
+pub fn emit(connection: *client.Connection, writer: *std.Io.Writer) Error!void {
     if (connection.features & protocol.feature(.interaction_state) == 0)
         return error.InteractionStateUnsupported;
     try connection.send(.interaction_state, &.{});

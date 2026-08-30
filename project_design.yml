@@ -18,6 +18,7 @@ planned:
   clients: native Howl CLI first; Linux and Android visual clients next; iOS is SSH-only
 
 experimental:
+  - howl-client
   - howl-cli
   - howl-render
   - howl-vk

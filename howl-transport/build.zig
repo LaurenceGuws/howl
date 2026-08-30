@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
 
     const transport = b.addModule("howl_transport", .{
         .root_source_file = b.path("src/transport.zig"),
@@ -11,6 +12,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     transport.addImport("howl_session", session.module("howl_session"));
+    transport.addImport("howl_client", client.module("howl_client"));
 
     const root = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),

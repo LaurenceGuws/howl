@@ -1,6 +1,6 @@
 const std = @import("std");
 const cli = @import("howl_cli");
-const transport = @import("howl_transport");
+const client = @import("howl_client");
 const protocol = @import("howl_session").protocol;
 
 pub fn main(init: std.process.Init) !void {
@@ -38,8 +38,8 @@ fn versionCommand(init: std.process.Init) !void {
     try stdout.interface.flush();
 }
 
-fn connect(init: std.process.Init, endpoint: []const u8) !transport.wire.Connection {
-    return transport.wire.Connection.connect(init.gpa, endpoint);
+fn connect(init: std.process.Init, endpoint: []const u8) !client.Connection {
+    return client.Connection.connect(init.gpa, endpoint);
 }
 
 fn stdoutWriter(init: std.process.Init, buffer: []u8) std.Io.File.Writer {

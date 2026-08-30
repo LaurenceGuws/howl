@@ -1,8 +1,8 @@
 const std = @import("std");
 const protocol = @import("howl_session").protocol;
-const transport = @import("howl_transport");
+const client = @import("howl_client");
 
-pub const Error = transport.wire.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
+pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     InvalidText,
     InvalidKey,
     InvalidKeyAction,
@@ -28,20 +28,20 @@ pub fn emitReceipt(writer: *std.Io.Writer, operation: []const u8) !void {
     try writer.writeByte('\n');
 }
 
-pub fn committedText(connection: *transport.wire.Connection, bytes: []const u8) Error!void {
+pub fn committedText(connection: *client.Connection, bytes: []const u8) Error!void {
     if (bytes.len == 0 or !std.unicode.utf8ValidateSlice(bytes)) return error.InvalidText;
     try sendBytesInput(connection, .bytes, bytes);
     try expectOk(connection, .input);
 }
 
-pub fn paste(connection: *transport.wire.Connection, bytes: []const u8) Error!void {
+pub fn paste(connection: *client.Connection, bytes: []const u8) Error!void {
     if (bytes.len == 0) return error.InvalidText;
     try sendBytesInput(connection, .paste, bytes);
     try expectOk(connection, .input);
 }
 
 pub fn namedKey(
-    connection: *transport.wire.Connection,
+    connection: *client.Connection,
     key: protocol.InputKeyName,
     action: protocol.InputKeyAction,
     modifiers: u8,
@@ -65,7 +65,7 @@ pub fn namedKey(
     try expectOk(connection, .input);
 }
 
-pub fn focus(connection: *transport.wire.Connection, value: protocol.InputFocus) Error!void {
+pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!void {
     if (connection.features & protocol.feature(.typed_input) == 0)
         return error.TypedInputUnsupported;
     var body: [protocol.typed_input.focus_bytes]u8 = undefined;
@@ -77,7 +77,7 @@ pub fn focus(connection: *transport.wire.Connection, value: protocol.InputFocus)
     try expectOk(connection, .input);
 }
 
-pub fn resize(connection: *transport.wire.Connection, rows: u16, columns: u16) Error!void {
+pub fn resize(connection: *client.Connection, rows: u16, columns: u16) Error!void {
     if (rows == 0 or columns == 0) return error.InvalidResize;
     if (connection.features & protocol.feature(.resize_leader) == 0)
         return error.ResizeUnsupported;
@@ -92,7 +92,7 @@ pub fn resize(connection: *transport.wire.Connection, rows: u16, columns: u16) E
     try expectOk(connection, .resize);
 }
 
-pub fn signal(connection: *transport.wire.Connection, value: protocol.Signal) Error!void {
+pub fn signal(connection: *client.Connection, value: protocol.Signal) Error!void {
     var payload: [protocol.payload_bytes.signal]u8 = undefined;
     protocol.encodeSignal(&payload, value);
     try connection.send(.signal, &payload);
@@ -155,7 +155,7 @@ pub fn parseSignal(text: []const u8) Error!protocol.Signal {
 }
 
 fn sendBytesInput(
-    connection: *transport.wire.Connection,
+    connection: *client.Connection,
     kind: protocol.InputKind,
     bytes: []const u8,
 ) Error!void {
@@ -167,7 +167,7 @@ fn sendBytesInput(
     try connection.send(.input, payload);
 }
 
-fn expectOk(connection: *transport.wire.Connection, expected: protocol.Kind) Error!void {
+fn expectOk(connection: *client.Connection, expected: protocol.Kind) Error!void {
     var frame = try connection.receive();
     defer frame.deinit();
     if (frame.kind != .result) return error.UnexpectedFrame;

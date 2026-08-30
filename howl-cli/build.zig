@@ -4,6 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const session = b.dependency("howl_session", .{ .target = target, .optimize = optimize });
+    const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const transport = b.dependency("howl_transport", .{ .target = target, .optimize = optimize });
 
     const module = b.addModule("howl_cli", .{
@@ -12,6 +13,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     module.addImport("howl_session", session.module("howl_session"));
+    module.addImport("howl_client", client.module("howl_client"));
     module.addImport("howl_transport", transport.module("howl_transport"));
 
     const root = b.createModule(.{
@@ -20,6 +22,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     root.addImport("howl_cli", module);
+    root.addImport("howl_client", client.module("howl_client"));
     root.addImport("howl_transport", transport.module("howl_transport"));
     root.addImport("howl_session", session.module("howl_session"));
     const executable = b.addExecutable(.{ .name = "howl", .root_module = root });

@@ -1,8 +1,9 @@
 const std = @import("std");
 const protocol = @import("howl_session").protocol;
+const client = @import("howl_client");
 const transport = @import("howl_transport");
 
-pub const Error = transport.wire.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
+pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadError || error{
     UnexpectedFrame,
     SnapshotTooLarge,
     InvalidSnapshot,
@@ -72,7 +73,7 @@ const Compact = struct {
 };
 
 pub fn request(
-    connection: *transport.wire.Connection,
+    connection: *client.Connection,
     allocator: std.mem.Allocator,
     after_revision: u64,
     history_offset: u32,
@@ -130,7 +131,7 @@ pub fn emitText(writer: *std.Io.Writer, value: *const Snapshot) !void {
 }
 
 pub fn requestRich(
-    connection: *transport.wire.Connection,
+    connection: *client.Connection,
     writer: *std.Io.Writer,
     after_revision: u64,
     history_offset: u32,
@@ -144,7 +145,7 @@ pub fn requestRich(
     try transport.observe.receiveAndEmitSnapshot(connection, connection.allocator, writer);
 }
 
-fn receive(connection: *transport.wire.Connection, allocator: std.mem.Allocator) Error!Snapshot {
+fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
     var total_bytes: usize = 0;
     var begin_frame = try connection.receive();
     defer begin_frame.deinit();
