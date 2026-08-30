@@ -92,21 +92,51 @@ The next performance pressure is presentation/text/raster work. If that earns a
 native seam, it should flow through `howl-text` rather than grow another terminal
 transport or Dart parser variant.
 
-That pressure now has a first independent consumer. `howl-render` can project an
-immutable `howl-client.view` through `howl-text` into a bounded caller-owned native
-glyph frame. It preserves source-cluster identity, natural glyph raster metadata,
-terminal style/color facts and copied alpha bytes without Flutter, Dart, Android,
-iOS or a C ABI. Font metrics, shaping, glyph identity and rasterization all remain
-owned by `howl-text`.
+That pressure now has an independent native consumer and a measured cache decision.
+`howl-render` projects an immutable `howl-client.view` through `howl-text` into
+native glyph placements backed by one caller-bounded alpha atlas generation. Font
+metrics, fallback selection, HarfBuzz shaping/source clusters, glyph identity and
+FreeType rasterization all remain owned by `howl-text`; the renderer owns only
+presentation placement and bounded raster reuse. There is still no Flutter, Dart,
+Android, iOS or C ABI in this path.
 
-A disposable live Brommer probe used the exact IosevkaTerm Nerd Font Regular bytes
-provisioned to the Note10 and one real 36x51 shared session snapshot. The view had
-1,836 cells and 719 Unicode scalars; `howl-text` produced 717 shaped glyphs but only
-68 unique `(face,glyph)` identities, with 45,355 natural alpha bytes across the
-uncached frame. The live snapshot contained the deliberately exercised lambda,
-beta, combining acute, box-drawing and Nerd Font marker scalars. This is strong
-pressure for a bounded glyph cache/atlas experiment, not permission to canonize an
-atlas or renderer ABI yet.
+The first uncached live probe exposed the reuse pressure: a real 36x51 session had
+1,836 cells and 719 Unicode scalars, producing 717 shaped glyphs but only 68 unique
+`(face,glyph)` identities. The subsequent 1,600-line churn measurement used the
+exact Note10-provisioned Iosevka regular face plus an explicit Noto Sans Arabic
+fallback and deliberately exercised indexed/bold style facts, Greek, combining
+acute, box drawing, a Nerd Font marker, a real fallback glyph and a semantic
+width-two lead/continuation. Across 657 coherent observations it saw 588,173 glyph
+instances but only 73 unique glyph identities. A bounded 128-entry experiment hit
+99.988%, with 73 cold misses and no evictions; the actual retained alpha payload
+was 5,900 bytes. A deterministic one-pixel-gap shelf pressure test fit that working
+set in a 128x128 (16 KiB) alpha image, while 80x80 and 96x96 did not. Those dimensions
+are measurement inputs, not product constants.
+
+A frozen settled churn frame separated the native cost directly: HarfBuzz shaping
+cost about **1.192 ms/frame**, rerasterizing every glyph cost about **15.912
+ms/frame**, and the old uncached `howl-render.terminal` projection cost about
+**17.700 ms/frame**. The real bounded atlas implementation then measured **2.146
+ms/frame** warm against **17.853 ms/frame** for that copied-raster path on the same
+36x51 / 911-glyph view, an **8.32x** improvement. The copied-raster API had no
+consumer and was deleted rather than retained as a slower compatibility surface.
+
+The surviving atlas has no implicit eviction or reset. Atlas dimensions and entry
+capacity are supplied by its presentation caller; entries append without moving
+old rasters, and `CacheFull`, `AtlasFull` or `GlyphTooLarge` leave the current
+generation valid. Only explicit `resetAtlas` advances the generation and
+invalidates earlier references. A final live 1,600-line acceptance held one
+caller-selected 128x128/128-entry atlas for 876 observations: it reached 73 entries,
+never reset, and averaged **1.592 ms** native projection time while the style,
+combining, width-two and fallback pressure remained present.
+
+This earns bounded native glyph-raster reuse inside experimental `howl-render`. It
+**does not** yet earn a Flutter glyph-atlas ABI. Flutter atlas upload/composition,
+native-to-Dart crossing volume and platform text integration have not been measured,
+so the accepted Flutter client keeps its current presentation path until a separate
+pressure experiment proves a better bridge. Raw atlas packing, addresses, dimensions
+and glyph structs are therefore native implementation/API facts, not stable FFI
+layout.
 
 ## Font policy: IosevkaTerm Nerd Font
 
@@ -147,6 +177,9 @@ Accepted now:
 - CLI remains a presentation layer over the native engine;
 - Flutter glyph-layout caching, frame-paced observation, and coarse native snapshot
   consumption are measured wins;
+- experimental `howl-render` may derive native terminal glyph placements from
+  `howl-client.view` through `howl-text` using a caller-bounded, append-only atlas
+  generation with explicit reset and no implicit eviction;
 - Android may privately provision IosevkaTerm Nerd Font for optional Flutter
   presentation without making the font an app/repository asset.
 
@@ -155,8 +188,10 @@ Still experimental/deferred:
 - any stable C/FFI ABI;
 - packed snapshot or stable C/FFI memory layout;
 - a durable Dart/Flutter binding for the native view;
-- moving shaping/rasterization from Flutter into `howl-text`;
-- glyph atlas/image transfer strategy into Flutter;
+- replacing Flutter production text layout/rasterization with `howl-text` output;
+- glyph-atlas/image crossing, upload and composition strategy into Flutter/iOS;
+- stable atlas dimensions, packing policy, GPU representation, or FFI memory layout;
+- incremental shaping/run reuse and dirty-region presentation;
 - stable cross-platform font provisioning or bundled font asset policy;
 - mouse/coordinate mutation in the CLI before stale-target identity can be
   enforced by the session boundary.
