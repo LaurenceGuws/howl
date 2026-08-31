@@ -2,9 +2,10 @@
 
 Reusable native Zig client engine for an already-running `howl-session`.
 
-It owns local endpoint parsing, connection/handshake, bounded framed I/O, coherent
-interaction-state retrieval, canonical non-coordinate client operations, and one
-lossless native `text_v1` snapshot model with compact and coarse projections. The
+It owns local endpoint parsing, portable POSIX connection/handshake, bounded framed I/O,
+coherent interaction-state retrieval, canonical semantic client operations including
+mouse facts, and one lossless native `text_v1` snapshot model with compact and coarse
+projections. The
 coarse `view` projection owns one immutable allocation for a revision and exposes
 rows, cells, scalars, hyperlinks, and presentation facts in batches. Its backing
 layout is private: it is not a C/FFI ABI. These models retain typed terminal facts;
@@ -21,7 +22,8 @@ compact text/JSON and explicit rich diagnostic formatting. The earlier generic
 NDJSON transport experiment was retired after its useful black-box proofs moved
 to the CLI/client surfaces.
 
-The measured Flutter/native pressure test is recorded in
-`../docs/2026-08-30-native-client-flutter-seam.md`. It earned the opaque coarse
-native view and explicit snapshot ownership rule, but no FFI ABI or byte layout is
-accepted.
+The measured Flutter/native pressure work is recorded in
+`../docs/2026-08-30-native-client-flutter-seam.md`. It earned the opaque coarse native
+view, explicit snapshot ownership, portable local socket implementation, and complete
+semantic action surface used by the app-private Flutter host. No public FFI ABI or
+native byte layout is accepted.
