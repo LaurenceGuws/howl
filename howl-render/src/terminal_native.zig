@@ -25,6 +25,29 @@ pub const AtlasConfig = struct {
     gap: u16 = 1,
 };
 
+/// Caller-selected retained-shaping bounds for one fixed native font set.
+///
+/// Exact scalar sequences are the cache key. Retained glyph clusters are relative
+/// to that sequence and are rebased to each immutable view during projection.
+pub const ShapeCacheConfig = struct {
+    entry_capacity: usize,
+    scalar_capacity: usize,
+    glyph_capacity: usize,
+    max_sequence_scalars: u32,
+};
+
+/// Opaque explicitly owned shaped-run cache.
+///
+/// No returned frame borrows this storage. `resetShapeCache` may therefore forget
+/// retained runs without invalidating atlas generations or prior frame placements.
+pub const ShapeCache = opaque {};
+
+pub const ShapeCacheUsage = struct {
+    entries: usize,
+    scalars: usize,
+    glyphs: usize,
+};
+
 /// Opaque explicitly owned glyph-atlas cache.
 ///
 /// The cache never evicts or recycles storage implicitly. `resetAtlas` is the
@@ -98,7 +121,19 @@ pub const AtlasError = std.mem.Allocator.Error || text.RasterError || error{
     GenerationOverflow,
 };
 
-pub const Error = AtlasError || text.ShapeError || error{
+pub const ShapeCacheInitError = std.mem.Allocator.Error || text.ShapeBufferInitError || error{
+    InvalidShapeCacheConfig,
+};
+
+pub const ShapeCacheError = text.ShapeError || error{
+    FontSetMismatch,
+    ShapeSequenceLimit,
+    ShapeEntryFull,
+    ShapeScalarFull,
+    ShapeGlyphFull,
+};
+
+pub const Error = AtlasError || ShapeCacheError || error{
     InvalidView,
     ClusterLimit,
     GlyphLimit,
@@ -114,6 +149,28 @@ const AtlasEntry = struct {
     height: u16,
     left: i16,
     top: i16,
+};
+
+const ShapeEntry = struct {
+    hash: u64,
+    scalar_offset: usize,
+    scalar_count: usize,
+    glyph_offset: usize,
+    glyph_count: usize,
+    face_index: u8,
+};
+
+const ShapeCacheImpl = struct {
+    allocator: std.mem.Allocator,
+    fonts: *text.FontSet,
+    shape: *text.ShapeBuffer,
+    entries: []ShapeEntry,
+    scalars: []u32,
+    glyphs: []text.Glyph,
+    max_sequence_scalars: u32,
+    entry_count: usize = 0,
+    scalar_count: usize = 0,
+    glyph_count: usize = 0,
 };
 
 const AtlasImpl = struct {
@@ -145,6 +202,75 @@ const AtlasRaster = struct {
     left: i16,
     top: i16,
 };
+
+/// Allocates one bounded shaped-run owner for one fixed FontSet.
+///
+/// All entry/scalar/glyph storage and the reusable HarfBuzz buffer are allocated
+/// during construction. Cache hits and misses allocate nothing afterward.
+pub fn initShapeCache(
+    allocator: std.mem.Allocator,
+    fonts: *text.FontSet,
+    config: ShapeCacheConfig,
+) ShapeCacheInitError!*ShapeCache {
+    if (config.entry_capacity == 0 or config.scalar_capacity == 0 or
+        config.glyph_capacity == 0 or config.max_sequence_scalars == 0 or
+        config.max_sequence_scalars > text.max_codepoints or
+        @as(usize, config.max_sequence_scalars) > config.scalar_capacity)
+        return error.InvalidShapeCacheConfig;
+
+    const impl = try allocator.create(ShapeCacheImpl);
+    errdefer allocator.destroy(impl);
+    const entries = try allocator.alloc(ShapeEntry, config.entry_capacity);
+    errdefer allocator.free(entries);
+    const scalars = try allocator.alloc(u32, config.scalar_capacity);
+    errdefer allocator.free(scalars);
+    const glyphs = try allocator.alloc(text.Glyph, config.glyph_capacity);
+    errdefer allocator.free(glyphs);
+    const shape = try text.ShapeBuffer.init(allocator, config.max_sequence_scalars);
+    errdefer shape.deinit();
+    impl.* = .{
+        .allocator = allocator,
+        .fonts = fonts,
+        .shape = shape,
+        .entries = entries,
+        .scalars = scalars,
+        .glyphs = glyphs,
+        .max_sequence_scalars = config.max_sequence_scalars,
+    };
+    return @ptrCast(impl);
+}
+
+pub fn deinitShapeCache(cache: *ShapeCache) void {
+    const impl = shapeCacheImpl(cache);
+    const allocator = impl.allocator;
+    const shape = impl.shape;
+    const entries = impl.entries;
+    const scalars = impl.scalars;
+    const glyphs = impl.glyphs;
+    impl.* = undefined;
+    shape.deinit();
+    allocator.free(glyphs);
+    allocator.free(scalars);
+    allocator.free(entries);
+    allocator.destroy(impl);
+}
+
+/// Forgets retained shaped runs without changing the fixed FontSet or atlas.
+pub fn resetShapeCache(cache: *ShapeCache) void {
+    const impl = shapeCacheImpl(cache);
+    impl.entry_count = 0;
+    impl.scalar_count = 0;
+    impl.glyph_count = 0;
+}
+
+pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
+    const impl = constShapeCacheImpl(cache);
+    return .{
+        .entries = impl.entry_count,
+        .scalars = impl.scalar_count,
+        .glyphs = impl.glyph_count,
+    };
+}
 
 /// Allocates one bounded atlas owner. There are no allocations on cache hits or
 /// misses after initialization; misses rasterize through caller scratch.
@@ -216,23 +342,25 @@ pub fn atlasEntryCount(atlas: *const Atlas) usize {
     return constAtlasImpl(atlas).entry_count;
 }
 
-/// Shapes every text-bearing lead cell and reuses persistent natural alpha
-/// rasters from `atlas`.
+/// Reuses bounded exact-sequence shaping and persistent natural alpha rasters
+/// while projecting every text-bearing lead cell.
 ///
 /// Cell occupancy, style, color, revision and canonical state remain owned by
 /// `howl-client.view`; font metrics, shaping, fallback and raster generation stay
-/// owned by `howl-text`. The atlas is append-only during a generation and never
-/// resets or evicts implicitly. `CacheFull`, `AtlasFull`, and `GlyphTooLarge`
-/// leave all existing atlas references valid so the caller decides when old
-/// frames are dead enough to reset and retry.
+/// owned by `howl-text`. The shape cache and atlas allocate nothing during
+/// projection. Neither evicts or resets implicitly; cache-full failures preserve
+/// retained state, and `CacheFull`, `AtlasFull`, and `GlyphTooLarge` leave all
+/// existing atlas references valid so the caller decides when old frames are dead
+/// enough to reset and retry.
 pub fn project(
     snapshot: *const View.Snapshot,
     atlas: *Atlas,
-    shape: *text.ShapeBuffer,
+    shape_cache: *ShapeCache,
     scratch: Scratch,
 ) Error!Frame {
     const impl = atlasImpl(atlas);
     const fonts = impl.fonts;
+    if (shapeCacheImpl(shape_cache).fonts != fonts) return error.FontSetMismatch;
     const begin = View.begin(snapshot);
     const rows = View.rows(snapshot);
     const cells = View.cells(snapshot);
@@ -257,19 +385,12 @@ pub fn project(
                 return error.InvalidView;
             if (scalar_end > scalars.len) return error.InvalidView;
             if (scalar_count > scratch.clusters.len) return error.ClusterLimit;
-            for (scratch.clusters[0..scalar_count], 0..) |*cluster, index| {
-                const source = std.math.add(usize, scalar_first, index) catch
-                    return error.InvalidView;
-                if (source > std.math.maxInt(u32)) return error.InvalidView;
-                cluster.* = @intCast(source);
-            }
+            if (scalar_first > std.math.maxInt(u32)) return error.InvalidView;
 
-            const run = try fonts.shape(
-                shape,
-                .{
-                    .codepoints = scalars[scalar_first..scalar_end],
-                    .clusters = scratch.clusters[0..scalar_count],
-                },
+            const run = try resolveShape(
+                shape_cache,
+                scalars[scalar_first..scalar_end],
+                scratch.clusters,
                 scratch.shaped,
             );
             if (run.glyphs.len > scratch.glyphs.len -| glyph_used)
@@ -311,7 +432,7 @@ pub fn project(
                     .row = @intCast(row_index),
                     .column = @intCast(column),
                     .cell_index = @intCast(cell_index),
-                    .cluster = shaped.cluster,
+                    .cluster = try rebaseCluster(shaped.cluster, scalar_first, scalar_count),
                     .face_index = run.face_index,
                     .glyph_id = shaped.id,
                     .pen_x_26_6 = pen_x_26_6,
@@ -348,6 +469,69 @@ pub fn project(
         .glyphs = scratch.glyphs[0..glyph_used],
         .atlas = atlasView(atlas),
     };
+}
+
+fn resolveShape(
+    cache: *ShapeCache,
+    sequence: []const u32,
+    cluster_scratch: []u32,
+    glyph_scratch: []text.Glyph,
+) ShapeCacheError!text.Run {
+    const impl = shapeCacheImpl(cache);
+    if (sequence.len == 0 or sequence.len > @as(usize, impl.max_sequence_scalars))
+        return error.ShapeSequenceLimit;
+    const hash = std.hash.Wyhash.hash(
+        0x9e3779b97f4a7c15,
+        std.mem.sliceAsBytes(sequence),
+    );
+    for (impl.entries[0..impl.entry_count]) |entry| {
+        if (entry.hash != hash or entry.scalar_count != sequence.len) continue;
+        const retained = impl.scalars[entry.scalar_offset .. entry.scalar_offset + entry.scalar_count];
+        if (!std.mem.eql(u32, retained, sequence)) continue;
+        return .{
+            .face_index = entry.face_index,
+            .glyphs = impl.glyphs[entry.glyph_offset .. entry.glyph_offset + entry.glyph_count],
+        };
+    }
+
+    if (impl.entry_count == impl.entries.len) return error.ShapeEntryFull;
+    if (sequence.len > impl.scalars.len - impl.scalar_count) return error.ShapeScalarFull;
+    if (sequence.len > cluster_scratch.len) return error.ShapeSequenceLimit;
+    for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
+    const shaped = try impl.fonts.shape(
+        impl.shape,
+        .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
+        glyph_scratch,
+    );
+    if (shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
+        return error.ShapeGlyphFull;
+
+    const scalar_offset = impl.scalar_count;
+    const glyph_offset = impl.glyph_count;
+    @memcpy(impl.scalars[scalar_offset .. scalar_offset + sequence.len], sequence);
+    @memcpy(impl.glyphs[glyph_offset .. glyph_offset + shaped.glyphs.len], shaped.glyphs);
+    impl.scalar_count += sequence.len;
+    impl.glyph_count += shaped.glyphs.len;
+    impl.entries[impl.entry_count] = .{
+        .hash = hash,
+        .scalar_offset = scalar_offset,
+        .scalar_count = sequence.len,
+        .glyph_offset = glyph_offset,
+        .glyph_count = shaped.glyphs.len,
+        .face_index = shaped.face_index,
+    };
+    impl.entry_count += 1;
+    return .{
+        .face_index = shaped.face_index,
+        .glyphs = impl.glyphs[glyph_offset .. glyph_offset + shaped.glyphs.len],
+    };
+}
+
+fn rebaseCluster(relative: u32, scalar_first: usize, scalar_count: usize) error{InvalidView}!u32 {
+    if (@as(usize, relative) >= scalar_count) return error.InvalidView;
+    const absolute = std.math.add(usize, scalar_first, @as(usize, relative)) catch return error.InvalidView;
+    if (absolute > std.math.maxInt(u32)) return error.InvalidView;
+    return @intCast(absolute);
 }
 
 fn resolveAtlas(
@@ -468,6 +652,14 @@ fn planAtlas(impl: *const AtlasImpl, width: u16, height: u16) AtlasError!AtlasPa
         .shelf_y = y,
         .shelf_height = @max(shelf_height, row_height),
     };
+}
+
+fn shapeCacheImpl(cache: *ShapeCache) *ShapeCacheImpl {
+    return @ptrCast(@alignCast(cache));
+}
+
+fn constShapeCacheImpl(cache: *const ShapeCache) *const ShapeCacheImpl {
+    return @ptrCast(@alignCast(cache));
 }
 
 fn atlasImpl(atlas: *Atlas) *AtlasImpl {
