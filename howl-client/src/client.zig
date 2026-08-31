@@ -179,8 +179,9 @@ fn writeAll(fd: posix.fd_t, bytes: []const u8) error{ SocketWriteFailed, Connect
         switch (posix.errno(result)) {
             .SUCCESS => {
                 if (result == 0) return error.ConnectionClosed;
-                if (result > bytes.len - offset) return error.SocketWriteFailed;
-                offset += result;
+                const count: usize = @intCast(result);
+                if (count > bytes.len - offset) return error.SocketWriteFailed;
+                offset += count;
             },
             .INTR => continue,
             .PIPE, .CONNRESET, .NOTCONN => return error.ConnectionClosed,
@@ -196,8 +197,9 @@ fn readExact(fd: posix.fd_t, output: []u8) error{ SocketReadFailed, ConnectionCl
         switch (posix.errno(result)) {
             .SUCCESS => {
                 if (result == 0) return error.ConnectionClosed;
-                if (result > output.len - offset) return error.SocketReadFailed;
-                offset += result;
+                const count: usize = @intCast(result);
+                if (count > output.len - offset) return error.SocketReadFailed;
+                offset += count;
             },
             .INTR => continue,
             .CONNRESET, .NOTCONN => return error.ConnectionClosed,
