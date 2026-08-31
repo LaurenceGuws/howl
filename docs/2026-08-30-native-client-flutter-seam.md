@@ -138,6 +138,51 @@ pressure experiment proves a better bridge. Raw atlas packing, addresses, dimens
 and glyph structs are therefore native implementation/API facts, not stable FFI
 layout.
 
+## Flutter atlas pressure result
+
+That separate Android pressure experiment has now been run and deliberately **did
+not** promote its bridge. A disposable arm64 bridge cross-built the accepted
+`howl-client.view -> howl-text -> howl-render.terminal` path with private experimental
+FreeType/HarfBuzz copies, copied one packed placement batch per presented revision,
+and copied the 128x128 atlas image only when native content changed. The accepted
+Dart/TextPainter path remained available for direct A/B throughout. No temporary C
+struct, address, packing offset, Android dependency, or atlas dimension became product
+ABI.
+
+Two profile-mode Note10 runs per path used fresh Brommer-local 36x51 `/bin/sh`
+sessions and the same 1,600-line/5 ms churn. Averaged results were:
+
+- Flutter build+raster fell from **50.098 ms/frame** to **43.989 ms/frame** (about
+  **12.2% faster**);
+- presented paints rose from **86.5** to **115** (about **33% more**);
+- settled PSS stayed effectively flat: **230,212 KiB** Dart versus **229,982 KiB**
+  native;
+- the native crossing averaged about **18.5 KiB** of placement material per
+  observation and exactly two **128 KiB** RGBA atlas uploads per run; the atlas held
+  at most 62 entries, stayed in generation 1, and never reset;
+- but CPU cost per presented paint regressed from **5.781** to **6.031 ticks**
+  (about **4.3% worse**).
+
+The regression is well localized. Native projection still averaged **10.446 ms per
+coherent observation**, while private serialization averaged only **0.271 ms** and
+atlas upload/copy volume stayed bounded. Earlier churn evidence showed only about 26
+of 1,836 visible cells changing per observation on average, so full-grid reshaping and
+placement reconstruction are now the dominant obvious waste.
+
+The bridge was also held to a visual gate before measurement. Its first raw-image
+version rendered almost blank and was rejected. After fixing premultiplied RGBA,
+contiguous private records, natural 16 px Iosevka glyphs on the accepted 10x20 cell
+lattice, and one presentation-only vertical alignment pixel, automated Note10
+screenshot comparison reached about **1.99% differing pixels** with complete
+row-for-row terminal structure. No canonical terminal or `howl-text` behavior was
+changed merely to imitate Flutter.
+
+Therefore the durable conclusion is narrower than “native Flutter renderer wins”:
+the atlas crossing is a real frame-latency/throughput opportunity, but the current
+bridge fails the end-to-end CPU criterion and is deleted. The next native presentation
+pressure should target **incremental shaping/run or cell reuse** before Flutter atlas
+composition is reconsidered.
+
 ## Font policy: IosevkaTerm Nerd Font
 
 Home's current terminal presentation family is **IosevkaTerm Nerd Font**. Kitty
@@ -189,7 +234,8 @@ Still experimental/deferred:
 - packed snapshot or stable C/FFI memory layout;
 - a durable Dart/Flutter binding for the native view;
 - replacing Flutter production text layout/rasterization with `howl-text` output;
-- glyph-atlas/image crossing, upload and composition strategy into Flutter/iOS;
+- a durable glyph-atlas/image crossing into Flutter/iOS; the disposable Android
+  bridge measured a frame-latency win but failed CPU-per-paint and was deleted;
 - stable atlas dimensions, packing policy, GPU representation, or FFI memory layout;
 - incremental shaping/run reuse and dirty-region presentation;
 - stable cross-platform font provisioning or bundled font asset policy;
