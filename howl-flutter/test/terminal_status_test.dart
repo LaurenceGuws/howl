@@ -1,6 +1,5 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:howl_flutter/terminal_font.dart';
 import 'package:howl_flutter/terminal_status.dart';
 
 void main() {
@@ -19,8 +18,7 @@ void main() {
 
     final text = tester.widget<Text>(find.text('Howl status'));
     expect(text.style?.color, const Color(0xffc7ced9));
-    expect(text.style?.fontFamily, terminalFontFamily);
-    expect(text.style?.fontFamilyFallback, terminalFontFamilyFallback);
+    expect(text.style?.fontFamily, 'monospace');
     expect(text.style?.fontSize, 16);
     expect(text.style?.decoration, TextDecoration.none);
     expect(text.textScaler?.scale(16), 24);

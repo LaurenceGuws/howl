@@ -2,7 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/gestures.dart';
 
-import 'protocol.dart';
+import 'howl_input.dart';
 
 final class TerminalPointerLocation {
   const TerminalPointerLocation({
@@ -124,8 +124,8 @@ final class TerminalPointerAdapter {
       if (mapped == null) return const <HowlMouseInput>[];
       return <HowlMouseInput>[
         _input(
-          kind: HowlWire.mouseMove,
-          button: HowlWire.mouseNone,
+          kind: HowlInput.mouseMove,
+          button: HowlInput.mouseNone,
           buttonsDown: current,
           location: location,
           modifiers: modifiers,
@@ -150,7 +150,7 @@ final class TerminalPointerAdapter {
       held |= bit;
       output.add(
         _input(
-          kind: HowlWire.mousePress,
+          kind: HowlInput.mousePress,
           button: _buttonForBit(bit),
           buttonsDown: held,
           location: location,
@@ -176,7 +176,7 @@ final class TerminalPointerAdapter {
       held &= ~bit;
       output.add(
         _input(
-          kind: HowlWire.mouseRelease,
+          kind: HowlInput.mouseRelease,
           button: _buttonForBit(bit),
           buttonsDown: held,
           location: location,
@@ -226,8 +226,8 @@ int _howlButtons(int flutterButtons) {
 }
 
 int _buttonForBit(int bit) => switch (bit) {
-  1 => HowlWire.mouseLeft,
-  2 => HowlWire.mouseMiddle,
-  4 => HowlWire.mouseRight,
-  _ => HowlWire.mouseNone,
+  1 => HowlInput.mouseLeft,
+  2 => HowlInput.mouseMiddle,
+  4 => HowlInput.mouseRight,
+  _ => HowlInput.mouseNone,
 };

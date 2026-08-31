@@ -24,12 +24,21 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
         release {
             // Experimental local client: keep release installs reproducible without a private keystore.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir("../../native/android")
         }
     }
 }
@@ -42,4 +51,22 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+val howlNativeHost = file("../../native/android/arm64-v8a/libhowl_native_host.so")
+
+tasks.register("verifyHowlNativeHost") {
+    doLast {
+        check(howlNativeHost.isFile) {
+            "missing native Howl host; run howl-flutter/native/build-android.sh first"
+        }
+        val targets = providers.gradleProperty("target-platform").orNull
+        check(targets == "android-arm64") {
+            "Howl native host currently supports Android arm64 only; use howl-flutter/build-android.sh or --target-platform android-arm64"
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("verifyHowlNativeHost")
 }

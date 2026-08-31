@@ -1,5 +1,5 @@
 name: howl_flutter
-description: Disposable Flutter pressure client for the Howl shared-session wire.
+description: Flutter platform host for the native Howl client.
 publish_to: none
 version: 0.1.6-dev+1
 
@@ -9,6 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  ffi: ^2.1.4
 
 dev_dependencies:
   flutter_lints: ^6.0.0

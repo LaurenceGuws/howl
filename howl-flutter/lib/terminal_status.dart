@@ -1,7 +1,5 @@
 import 'package:flutter/widgets.dart';
 
-import 'terminal_font.dart';
-
 /// Small non-terminal status surface used before a snapshot can be painted.
 ///
 /// It deliberately does not depend on Material. Howl's terminal surface is a
@@ -21,8 +19,7 @@ final class TerminalStatusText extends StatelessWidget {
       textScaler: MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 1.5),
       style: const TextStyle(
         color: Color(0xffc7ced9),
-        fontFamily: terminalFontFamily,
-        fontFamilyFallback: terminalFontFamilyFallback,
+        fontFamily: 'monospace',
         fontSize: 16,
         fontWeight: FontWeight.normal,
         decoration: TextDecoration.none,

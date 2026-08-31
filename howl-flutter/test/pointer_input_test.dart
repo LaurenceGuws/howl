@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/pointer_input.dart';
-import 'package:howl_flutter/protocol.dart';
+import 'package:howl_flutter/howl_input.dart';
 
 void main() {
   const geometry = TerminalPointerGeometry(
@@ -55,8 +55,8 @@ void main() {
       modifiers: 5,
     );
     expect(press, hasLength(1));
-    expect(press.single.kind, HowlWire.mousePress);
-    expect(press.single.button, HowlWire.mouseRight);
+    expect(press.single.kind, HowlInput.mousePress);
+    expect(press.single.button, HowlInput.mouseRight);
     expect(press.single.buttonsDown, 4);
     expect(press.single.modifiers, 5);
 
@@ -70,8 +70,8 @@ void main() {
       geometry: geometry,
       modifiers: 0,
     );
-    expect(move.single.kind, HowlWire.mouseMove);
-    expect(move.single.button, HowlWire.mouseNone);
+    expect(move.single.kind, HowlInput.mouseMove);
+    expect(move.single.button, HowlInput.mouseNone);
     expect(move.single.buttonsDown, 4);
     expect(move.single.row, 11);
     expect(move.single.column, 41);
@@ -86,8 +86,8 @@ void main() {
       modifiers: 0,
     );
     expect(release, hasLength(1));
-    expect(release.single.kind, HowlWire.mouseRelease);
-    expect(release.single.button, HowlWire.mouseRight);
+    expect(release.single.kind, HowlInput.mouseRelease);
+    expect(release.single.button, HowlInput.mouseRight);
     expect(release.single.buttonsDown, 0);
     expect(release.single.row, 11);
     expect(release.single.column, 41);
@@ -105,8 +105,8 @@ void main() {
       modifiers: 2,
     );
     expect(hover, hasLength(1));
-    expect(hover.single.kind, HowlWire.mouseMove);
-    expect(hover.single.button, HowlWire.mouseNone);
+    expect(hover.single.kind, HowlInput.mouseMove);
+    expect(hover.single.button, HowlInput.mouseNone);
     expect(hover.single.buttonsDown, 0);
     expect(hover.single.modifiers, 2);
     expect(hover.single.row, 10);
@@ -126,8 +126,8 @@ void main() {
       modifiers: 0,
     );
     expect(inputs.map((input) => input.button), <int>[
-      HowlWire.mouseLeft,
-      HowlWire.mouseRight,
+      HowlInput.mouseLeft,
+      HowlInput.mouseRight,
     ]);
     expect(inputs.map((input) => input.buttonsDown), <int>[1, 5]);
   });
@@ -195,8 +195,8 @@ void main() {
       modifiers: 0,
     );
     expect(releases.map((input) => input.button), <int>[
-      HowlWire.mouseLeft,
-      HowlWire.mouseMiddle,
+      HowlInput.mouseLeft,
+      HowlInput.mouseMiddle,
     ]);
     expect(releases.map((input) => input.buttonsDown), <int>[2, 0]);
   });

@@ -1,0 +1,7 @@
+.work/
+.zig-cache/
+zig-out/
+ndk-overlay/
+android/
+libhowl_native_host.so
+.native-host-symbols.txt
