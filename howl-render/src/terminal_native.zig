@@ -1,4 +1,4 @@
-//! Projects immutable terminal client views through howl-text into bounded native glyph frames.
+//! Projects immutable terminal client views through howl-text into bounded Canvas producer updates.
 //!
 //! This layer owns presentation derivation only. It neither parses `text_v1` nor
 //! retains terminal truth. Every font metric, shape, source-cluster mapping,
@@ -7,10 +7,11 @@
 const std = @import("std");
 const client = @import("howl_client");
 const text = @import("howl_text");
+const canvas = @import("canvas");
 
 pub const View = client.view;
-pub const TextColor = View.TextColor;
-pub const Metrics = text.Metrics;
+const TextColor = View.TextColor;
+const Metrics = text.Metrics;
 
 /// Caller-selected memory and packing bounds for one native terminal glyph atlas.
 ///
@@ -40,7 +41,7 @@ pub const ShapeCacheConfig = struct {
 ///
 /// No returned frame borrows this storage. `resetShapeCache` may therefore forget
 /// retained runs without invalidating atlas generations or prior frame placements.
-pub const ShapeCache = opaque {};
+const ShapeCache = opaque {};
 
 pub const ShapeCacheUsage = struct {
     entries: usize,
@@ -52,64 +53,15 @@ pub const ShapeCacheUsage = struct {
 ///
 /// The cache never evicts or recycles storage implicitly. `resetAtlas` is the
 /// only operation that invalidates atlas references returned by prior frames.
-pub const Atlas = opaque {};
+const Atlas = opaque {};
 
 /// Read-only borrowed atlas image for one cache generation.
-pub const AtlasView = struct {
+const AtlasView = struct {
     generation: u64,
     width: u16,
     height: u16,
     /// Complete row-major alpha image. Unused pixels are deterministically zero.
     pixels: []const u8,
-};
-
-/// Describes one shaped terminal glyph backed by an atlas generation.
-pub const Glyph = struct {
-    row: u16,
-    column: u16,
-    cell_index: u32,
-    /// howl-text/HarfBuzz source-cluster identity as the source scalar offset.
-    cluster: u32,
-    face_index: u8,
-    glyph_id: u32,
-    pen_x_26_6: i64,
-    baseline_y_26_6: i64,
-    x_offset_26_6: i32,
-    y_offset_26_6: i32,
-    x_advance_26_6: i32,
-    y_advance_26_6: i32,
-    atlas_x: u16,
-    atlas_y: u16,
-    raster_width: u16,
-    raster_height: u16,
-    raster_left: i16,
-    raster_top: i16,
-    style_bits: u16,
-    foreground: TextColor,
-};
-
-/// Borrows one placement frame and the atlas generation it references.
-///
-/// `glyphs` borrows caller scratch. `atlas` borrows the cache and remains valid
-/// across later cache hits/appends, but becomes invalid immediately after
-/// `resetAtlas` or `deinitAtlas`.
-pub const Frame = struct {
-    revision: u64,
-    terminal_revision: u64,
-    rows: u16,
-    columns: u16,
-    metrics: Metrics,
-    glyphs: []const Glyph,
-    atlas: AtlasView,
-};
-
-/// Bounded caller scratch for one atlas-backed projection.
-pub const Scratch = struct {
-    clusters: []u32,
-    shaped: []text.Glyph,
-    glyphs: []Glyph,
-    /// Temporary storage for one natural howl-text raster on a cache miss.
-    raster: []u8,
 };
 
 pub const AtlasError = std.mem.Allocator.Error || text.RasterError || error{
@@ -133,11 +85,55 @@ pub const ShapeCacheError = text.ShapeError || error{
     ShapeGlyphFull,
 };
 
-pub const Error = AtlasError || ShapeCacheError || error{
+/// Fixes every allocation and terminal presentation lattice used by one
+/// Canvas producer. The font set supplied to `initContent` must outlive the
+/// producer. None of these values are terminal truth or stable ABI.
+pub const ContentConfig = struct {
+    cell_size: canvas.Size,
+    shape_cache: ShapeCacheConfig,
+    atlas: AtlasConfig,
+    shaped_capacity: usize,
+    raster_bytes: usize,
+    command_capacity: usize,
+};
+
+/// Supplies topology identity which terminal state cannot own.
+///
+/// The presentation host issues these values. Terminal presentation combines
+/// them with exact cursor target/revision/color facts from the immutable view.
+pub const CursorContext = struct {
+    pane: u64,
+    source: canvas.SourceId,
+    visible_set_revision: u64,
+    lifecycle_revision: u64,
+};
+
+/// Opaque bounded owner of terminal -> Canvas presentation state.
+///
+/// Returned `canvas.ProducerUpdate` slices borrow this owner and must be applied
+/// or copied synchronously before any later Content operation. Canvas/Composer
+/// retain their own accepted resource and command copies.
+pub const Content = opaque {};
+
+pub const ContentUsage = struct {
+    shape: ShapeCacheUsage,
+    atlas_entries: usize,
+    producer_revision: u64,
+    resource_generation: u64,
+};
+
+pub const ContentInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
+    InvalidContentConfig,
+};
+
+pub const ContentError = AtlasError || ShapeCacheError || error{
     InvalidView,
-    ClusterLimit,
-    GlyphLimit,
-    CoordinateOverflow,
+    InvalidColor,
+    InvalidCursorContext,
+    InvalidPresentationGeometry,
+    CommandLimit,
+    ProducerRevisionOverflow,
+    ResourceGenerationOverflow,
 };
 
 const AtlasEntry = struct {
@@ -186,6 +182,23 @@ const AtlasImpl = struct {
     generation: u64 = 1,
 };
 
+const ContentImpl = struct {
+    allocator: std.mem.Allocator,
+    fonts: *text.FontSet,
+    config: ContentConfig,
+    shape_cache: *ShapeCache,
+    atlas: *Atlas,
+    clusters: []u32,
+    shaped: []text.Glyph,
+    raster: []u8,
+    commands: []canvas.Input,
+    uploads: [1]canvas.ResourceUpload = undefined,
+    producer_revision: u64 = 0,
+    resource_generation: u64 = 0,
+    published_atlas_generation: u64 = 0,
+    published_atlas_entries: usize = 0,
+};
+
 const AtlasPack = struct {
     x: usize,
     y: usize,
@@ -207,7 +220,7 @@ const AtlasRaster = struct {
 ///
 /// All entry/scalar/glyph storage and the reusable HarfBuzz buffer are allocated
 /// during construction. Cache hits and misses allocate nothing afterward.
-pub fn initShapeCache(
+fn initShapeCache(
     allocator: std.mem.Allocator,
     fonts: *text.FontSet,
     config: ShapeCacheConfig,
@@ -240,7 +253,7 @@ pub fn initShapeCache(
     return @ptrCast(impl);
 }
 
-pub fn deinitShapeCache(cache: *ShapeCache) void {
+fn deinitShapeCache(cache: *ShapeCache) void {
     const impl = shapeCacheImpl(cache);
     const allocator = impl.allocator;
     const shape = impl.shape;
@@ -256,14 +269,14 @@ pub fn deinitShapeCache(cache: *ShapeCache) void {
 }
 
 /// Forgets retained shaped runs without changing the fixed FontSet or atlas.
-pub fn resetShapeCache(cache: *ShapeCache) void {
+fn resetShapeCache(cache: *ShapeCache) void {
     const impl = shapeCacheImpl(cache);
     impl.entry_count = 0;
     impl.scalar_count = 0;
     impl.glyph_count = 0;
 }
 
-pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
+fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
     const impl = constShapeCacheImpl(cache);
     return .{
         .entries = impl.entry_count,
@@ -274,7 +287,7 @@ pub fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
 
 /// Allocates one bounded atlas owner. There are no allocations on cache hits or
 /// misses after initialization; misses rasterize through caller scratch.
-pub fn initAtlas(
+fn initAtlas(
     allocator: std.mem.Allocator,
     fonts: *text.FontSet,
     config: AtlasConfig,
@@ -305,7 +318,7 @@ pub fn initAtlas(
 }
 
 /// Releases the atlas. Every prior atlas view and frame becomes invalid.
-pub fn deinitAtlas(atlas: *Atlas) void {
+fn deinitAtlas(atlas: *Atlas) void {
     const impl = atlasImpl(atlas);
     const allocator = impl.allocator;
     const entries = impl.entries;
@@ -317,7 +330,7 @@ pub fn deinitAtlas(atlas: *Atlas) void {
 }
 
 /// Explicitly invalidates every cached glyph and begins a new zeroed generation.
-pub fn resetAtlas(atlas: *Atlas) AtlasError!void {
+fn resetAtlas(atlas: *Atlas) AtlasError!void {
     const impl = atlasImpl(atlas);
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
@@ -328,7 +341,7 @@ pub fn resetAtlas(atlas: *Atlas) AtlasError!void {
     @memset(impl.pixels, 0);
 }
 
-pub fn atlasView(atlas: *const Atlas) AtlasView {
+fn atlasView(atlas: *const Atlas) AtlasView {
     const impl = constAtlasImpl(atlas);
     return .{
         .generation = impl.generation,
@@ -338,137 +351,651 @@ pub fn atlasView(atlas: *const Atlas) AtlasView {
     };
 }
 
-pub fn atlasEntryCount(atlas: *const Atlas) usize {
+fn atlasEntryCount(atlas: *const Atlas) usize {
     return constAtlasImpl(atlas).entry_count;
 }
 
-/// Reuses bounded exact-sequence shaping and persistent natural alpha rasters
-/// while projecting every text-bearing lead cell.
+/// Allocates one bounded terminal Canvas producer.
 ///
-/// Cell occupancy, style, color, revision and canonical state remain owned by
-/// `howl-client.view`; font metrics, shaping, fallback and raster generation stay
-/// owned by `howl-text`. The shape cache and atlas allocate nothing during
-/// projection. Neither evicts or resets implicitly; cache-full failures preserve
-/// retained state, and `CacheFull`, `AtlasFull`, and `GlyphTooLarge` leave all
-/// existing atlas references valid so the caller decides when old frames are dead
-/// enough to reset and retry.
-pub fn project(
+/// The producer owns presentation caches and fixed scratch only. `fonts` remains
+/// caller-owned and must outlive Content. Every later Content operation is
+/// allocation-free.
+pub fn initContent(
+    allocator: std.mem.Allocator,
+    fonts: *text.FontSet,
+    config: ContentConfig,
+) ContentInitError!*Content {
+    if (config.cell_size.width == 0 or config.cell_size.height == 0 or
+        config.shaped_capacity == 0 or config.raster_bytes == 0 or
+        config.command_capacity == 0)
+        return error.InvalidContentConfig;
+
+    const impl = try allocator.create(ContentImpl);
+    errdefer allocator.destroy(impl);
+    const shape_cache = try initShapeCache(allocator, fonts, config.shape_cache);
+    errdefer deinitShapeCache(shape_cache);
+    const atlas = try initAtlas(allocator, fonts, config.atlas);
+    errdefer deinitAtlas(atlas);
+    const clusters = try allocator.alloc(u32, @intCast(config.shape_cache.max_sequence_scalars));
+    errdefer allocator.free(clusters);
+    const shaped = try allocator.alloc(text.Glyph, config.shaped_capacity);
+    errdefer allocator.free(shaped);
+    const raster = try allocator.alloc(u8, config.raster_bytes);
+    errdefer allocator.free(raster);
+    const commands = try allocator.alloc(canvas.Input, config.command_capacity);
+    errdefer allocator.free(commands);
+
+    impl.* = .{
+        .allocator = allocator,
+        .fonts = fonts,
+        .config = config,
+        .shape_cache = shape_cache,
+        .atlas = atlas,
+        .clusters = clusters,
+        .shaped = shaped,
+        .raster = raster,
+        .commands = commands,
+    };
+    return @ptrCast(impl);
+}
+
+/// Releases one terminal Canvas producer and every private presentation cache.
+pub fn deinitContent(content: *Content) void {
+    const impl = contentImpl(content);
+    const allocator = impl.allocator;
+    const shape_cache = impl.shape_cache;
+    const atlas = impl.atlas;
+    const clusters = impl.clusters;
+    const shaped = impl.shaped;
+    const raster = impl.raster;
+    const commands = impl.commands;
+    impl.* = undefined;
+    allocator.free(commands);
+    allocator.free(raster);
+    allocator.free(shaped);
+    allocator.free(clusters);
+    deinitAtlas(atlas);
+    deinitShapeCache(shape_cache);
+    allocator.destroy(impl);
+}
+
+/// Explicitly forgets private shaping and raster caches.
+///
+/// Previously accepted Canvas/Composer state remains independent. The next
+/// successful update which references raster content publishes a newer resource
+/// generation. No cache reset occurs implicitly.
+pub fn resetContentCaches(content: *Content) AtlasError!void {
+    const impl = contentImpl(content);
+    try resetAtlas(impl.atlas);
+    resetShapeCache(impl.shape_cache);
+}
+
+pub fn contentUsage(content: *const Content) ContentUsage {
+    const impl = constContentImpl(content);
+    return .{
+        .shape = shapeCacheUsage(impl.shape_cache),
+        .atlas_entries = atlasEntryCount(impl.atlas),
+        .producer_revision = impl.producer_revision,
+        .resource_generation = impl.resource_generation,
+    };
+}
+
+/// Projects one immutable terminal view into one complete Canvas producer state.
+///
+/// `cursor_context` is optional because terminal state does not own pane,
+/// Composer-source, visible-set, or lifecycle identity. When supplied, those
+/// host facts are combined with exact terminal cursor target/revision/color facts
+/// into one `canvas.CursorBinding`. Returned slices borrow Content until the next
+/// Content operation and must be synchronously copied or applied before then.
+pub fn takeContentUpdate(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+    cursor_context: ?CursorContext,
+) ContentError!canvas.ProducerUpdate {
+    const impl = contentImpl(content);
+    const surface = try contentSurfaceSize(View.begin(snapshot), impl.config.cell_size);
+    const projection = try buildContentCommands(
+        snapshot,
+        impl.atlas,
+        impl.shape_cache,
+        surface,
+        impl.commands,
+        impl.config.cell_size,
+        impl.clusters,
+        impl.shaped,
+        impl.raster,
+    );
+    const atlas = atlasView(impl.atlas);
+    const atlas_entries = atlasEntryCount(impl.atlas);
+    const atlas_changed = atlas.generation != impl.published_atlas_generation or
+        atlas_entries != impl.published_atlas_entries;
+
+    var next_resource_generation = impl.resource_generation;
+    const publish_atlas = projection.has_raster and
+        (next_resource_generation == 0 or atlas_changed);
+    if (publish_atlas) {
+        if (next_resource_generation == std.math.maxInt(u64))
+            return error.ResourceGenerationOverflow;
+        next_resource_generation += 1;
+    }
+    const resource = if (projection.has_raster)
+        contentResource(next_resource_generation)
+    else
+        null;
+    if (resource) |value|
+        bindContentResource(impl.commands[0..projection.command_count], value);
+
+    const cursor_binding = try contentCursorBinding(
+        snapshot,
+        surface,
+        impl.config.cell_size,
+        cursor_context,
+    );
+    if (impl.producer_revision == std.math.maxInt(u64))
+        return error.ProducerRevisionOverflow;
+    const next_producer_revision = impl.producer_revision + 1;
+
+    const uploads: []const canvas.ResourceUpload = if (publish_atlas) blk: {
+        const value = resource orelse return error.InvalidPresentationGeometry;
+        impl.uploads[0] = .{
+            .resource = value,
+            .format = .alpha8,
+            .pixels = .{
+                .bytes = atlas.pixels,
+                .width = atlas.width,
+                .height = atlas.height,
+                .stride = atlas.width,
+            },
+        };
+        break :blk impl.uploads[0..1];
+    } else &.{};
+
+    impl.producer_revision = next_producer_revision;
+    if (publish_atlas) {
+        impl.resource_generation = next_resource_generation;
+        impl.published_atlas_generation = atlas.generation;
+        impl.published_atlas_entries = atlas_entries;
+    }
+    return .{
+        .revision = @fromBackingInt(@intCast(next_producer_revision)),
+        .uploads = uploads,
+        .removals = &.{},
+        .commands = impl.commands[0..projection.command_count],
+        .cursor_binding = cursor_binding,
+    };
+}
+
+const content_style_dim: u16 = 1 << 1;
+const content_style_reverse: u16 = 1 << 5;
+const content_style_invisible: u16 = 1 << 6;
+const content_style_underline: u16 = 1 << 7;
+const content_style_strike: u16 = 1 << 8;
+
+const ContentCellColors = struct {
+    foreground: canvas.Color,
+    background: canvas.Color,
+    underline: canvas.Color,
+};
+
+fn contentSurfaceSize(begin: *const View.Begin, cell_size: canvas.Size) ContentError!canvas.Size {
+    const width = std.math.mul(
+        u32,
+        @as(u32, begin.columns),
+        @as(u32, cell_size.width),
+    ) catch return error.InvalidPresentationGeometry;
+    const height = std.math.mul(
+        u32,
+        @as(u32, begin.rows),
+        @as(u32, cell_size.height),
+    ) catch return error.InvalidPresentationGeometry;
+    if (width == 0 or height == 0 or
+        width > std.math.maxInt(u16) or height > std.math.maxInt(u16))
+        return error.InvalidPresentationGeometry;
+    return .{ .width = @intCast(width), .height = @intCast(height) };
+}
+
+fn contentSurfaceRect(size: canvas.Size) canvas.Rect {
+    return .{ .x = 0, .y = 0, .width = size.width, .height = size.height };
+}
+
+fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) ContentError!canvas.Rect {
+    const x = std.math.mul(usize, column, @as(usize, cell_size.width)) catch
+        return error.InvalidPresentationGeometry;
+    const y = std.math.mul(usize, row, @as(usize, cell_size.height)) catch
+        return error.InvalidPresentationGeometry;
+    return .{
+        .x = std.math.cast(i32, x) orelse return error.InvalidPresentationGeometry,
+        .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
+        .width = cell_size.width,
+        .height = cell_size.height,
+    };
+}
+
+fn contentLeadClip(
+    row: usize,
+    column: usize,
+    width: u8,
+    cell_size: canvas.Size,
+) ContentError!canvas.Rect {
+    var result = try contentCellRect(row, column, cell_size);
+    const extent = std.math.mul(
+        u16,
+        cell_size.width,
+        @as(u16, width),
+    ) catch return error.InvalidPresentationGeometry;
+    if (extent == 0) return error.InvalidPresentationGeometry;
+    result.width = extent;
+    return result;
+}
+
+fn richColor(value: client.rich.Rgba) canvas.Color {
+    return .{ .r = value.r, .g = value.g, .b = value.b, .a = value.a };
+}
+
+fn contentColor(
+    value: TextColor,
+    presentation: *const View.Presentation,
+    foreground: bool,
+) ContentError!canvas.Color {
+    return switch (value.kind) {
+        .default => richColor(if (foreground) presentation.foreground else presentation.background),
+        .indexed => blk: {
+            if (value.value >= presentation.palette.len) return error.InvalidColor;
+            break :blk richColor(presentation.palette[value.value]);
+        },
+        .rgb => .{
+            .r = @intCast((value.value >> 16) & 0xff),
+            .g = @intCast((value.value >> 8) & 0xff),
+            .b = @intCast(value.value & 0xff),
+            .a = 0xff,
+        },
+    };
+}
+
+fn dimContentColor(value: canvas.Color) canvas.Color {
+    var result = value;
+    result.a = @intCast((@as(u16, value.a) * 55 + 50) / 100);
+    return result;
+}
+
+fn contentCellColors(
+    cell: View.Cell,
+    presentation: *const View.Presentation,
+) ContentError!ContentCellColors {
+    var foreground = try contentColor(cell.foreground, presentation, true);
+    var background = try contentColor(cell.background, presentation, false);
+    if (cell.style_bits & content_style_reverse != 0)
+        std.mem.swap(canvas.Color, &foreground, &background);
+    if (presentation.reverse_screen)
+        std.mem.swap(canvas.Color, &foreground, &background);
+    if (cell.style_bits & content_style_dim != 0)
+        foreground = dimContentColor(foreground);
+    return .{
+        .foreground = foreground,
+        .background = background,
+        .underline = try contentColor(cell.underline_color, presentation, true),
+    };
+}
+
+fn appendContentInput(
+    output: []canvas.Input,
+    used: *usize,
+    value: canvas.Input,
+) ContentError!void {
+    if (used.* >= output.len) return error.CommandLimit;
+    output[used.*] = value;
+    used.* += 1;
+}
+
+fn appendContentSolid(
+    output: []canvas.Input,
+    used: *usize,
+    rect: canvas.Rect,
+    clip: canvas.Rect,
+    color: canvas.Color,
+) ContentError!void {
+    try appendContentInput(output, used, .{ .solid = .{
+        .rect = rect,
+        .clip = clip,
+        .color = color,
+    } });
+}
+
+fn appendContentUnderline(
+    output: []canvas.Input,
+    used: *usize,
+    clip: canvas.Rect,
+    y: i32,
+    thickness: u16,
+    style: u8,
+    color: canvas.Color,
+) ContentError!void {
+    const height = @max(@as(u16, 1), thickness);
+    switch (style) {
+        1 => {
+            try appendContentSolid(output, used, .{
+                .x = clip.x,
+                .y = y,
+                .width = clip.width,
+                .height = height,
+            }, clip, color);
+            const second_y = std.math.add(
+                i32,
+                y,
+                @as(i32, height) + 1,
+            ) catch return error.InvalidPresentationGeometry;
+            try appendContentSolid(output, used, .{
+                .x = clip.x,
+                .y = second_y,
+                .width = clip.width,
+                .height = height,
+            }, clip, color);
+        },
+        2 => for (0..clip.width) |offset| {
+            const x = std.math.add(
+                i32,
+                clip.x,
+                @as(i32, @intCast(offset)),
+            ) catch return error.InvalidPresentationGeometry;
+            const wave_y = std.math.add(
+                i32,
+                y,
+                @as(i32, @intCast(offset & 1)),
+            ) catch return error.InvalidPresentationGeometry;
+            try appendContentSolid(output, used, .{
+                .x = x,
+                .y = wave_y,
+                .width = 1,
+                .height = 1,
+            }, clip, color);
+        },
+        3 => {
+            var offset: usize = 0;
+            while (offset < clip.width) : (offset += 2) {
+                const x = std.math.add(
+                    i32,
+                    clip.x,
+                    @as(i32, @intCast(offset)),
+                ) catch return error.InvalidPresentationGeometry;
+                try appendContentSolid(output, used, .{
+                    .x = x,
+                    .y = y,
+                    .width = 1,
+                    .height = height,
+                }, clip, color);
+            }
+        },
+        4 => {
+            var offset: usize = 0;
+            while (offset < clip.width) : (offset += 5) {
+                const x = std.math.add(
+                    i32,
+                    clip.x,
+                    @as(i32, @intCast(offset)),
+                ) catch return error.InvalidPresentationGeometry;
+                const remaining = @as(usize, clip.width) - offset;
+                const width: u16 = @intCast(@min(@as(usize, 3), remaining));
+                try appendContentSolid(output, used, .{
+                    .x = x,
+                    .y = y,
+                    .width = width,
+                    .height = height,
+                }, clip, color);
+            }
+        },
+        else => try appendContentSolid(output, used, .{
+            .x = clip.x,
+            .y = y,
+            .width = clip.width,
+            .height = height,
+        }, clip, color),
+    }
+}
+
+fn fixedContent26_6(value: i64) ContentError!i32 {
+    return std.math.cast(i32, @divFloor(value, 64)) orelse
+        error.InvalidPresentationGeometry;
+}
+
+fn contentLineOffset(metrics: Metrics, cell_size: canvas.Size) i64 {
+    const difference = @as(i64, cell_size.height) - @as(i64, metrics.line_height);
+    return @divFloor(difference, 2);
+}
+
+const ContentProjection = struct {
+    command_count: usize,
+    has_raster: bool,
+};
+
+fn buildContentCommands(
     snapshot: *const View.Snapshot,
     atlas: *Atlas,
     shape_cache: *ShapeCache,
-    scratch: Scratch,
-) Error!Frame {
-    const impl = atlasImpl(atlas);
-    const fonts = impl.fonts;
-    if (shapeCacheImpl(shape_cache).fonts != fonts) return error.FontSetMismatch;
+    surface: canvas.Size,
+    output: []canvas.Input,
+    cell_size: canvas.Size,
+    cluster_scratch: []u32,
+    shaped_scratch: []text.Glyph,
+    raster_scratch: []u8,
+) ContentError!ContentProjection {
+    const atlas_impl = atlasImpl(atlas);
+    if (shapeCacheImpl(shape_cache).fonts != atlas_impl.fonts)
+        return error.FontSetMismatch;
     const begin = View.begin(snapshot);
+    const presentation = View.presentation(snapshot);
     const rows = View.rows(snapshot);
     const cells = View.cells(snapshot);
     const scalars = View.scalars(snapshot);
     if (rows.len != begin.rows) return error.InvalidView;
 
-    const metrics = fonts.metrics();
-    var glyph_used: usize = 0;
+    const metrics = atlas_impl.fonts.metrics();
+    const whole = contentSurfaceRect(surface);
+    const default_background = richColor(presentation.background);
+    const line_offset = contentLineOffset(metrics, cell_size);
+    var used: usize = 0;
+    try appendContentSolid(output, &used, whole, whole, default_background);
+
+    // Preserve terminal paint ordering: all backgrounds and decorations are
+    // established before any glyph mask can overlap a later cell.
     for (rows, 0..) |row, row_index| {
         const first = @as(usize, row.cell_offset);
         const count = @as(usize, row.cell_count);
         const end = std.math.add(usize, first, count) catch return error.InvalidView;
         if (end > cells.len or count != begin.columns) return error.InvalidView;
+        for (cells[first..end], 0..) |cell, column| {
+            const colors = try contentCellColors(cell, presentation);
+            const physical = try contentCellRect(row_index, column, cell_size);
+            if (!std.meta.eql(colors.background, default_background))
+                try appendContentSolid(output, &used, physical, whole, colors.background);
+            if (cell.scalar_count == 0 or cell.x != 0 or cell.y != 0 or
+                cell.style_bits & content_style_invisible != 0)
+                continue;
+            const clip = try contentLeadClip(row_index, column, cell.width, cell_size);
+            if (cell.style_bits & content_style_underline != 0) {
+                const line_y = std.math.add(i64, @as(i64, physical.y), line_offset) catch
+                    return error.InvalidPresentationGeometry;
+                const y = std.math.add(i64, line_y, @as(i64, metrics.underline_y)) catch
+                    return error.InvalidPresentationGeometry;
+                try appendContentUnderline(
+                    output,
+                    &used,
+                    clip,
+                    std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
+                    metrics.underline_height,
+                    cell.underline_style,
+                    colors.underline,
+                );
+            }
+            if (cell.style_bits & content_style_strike != 0) {
+                const line_y = std.math.add(i64, @as(i64, physical.y), line_offset) catch
+                    return error.InvalidPresentationGeometry;
+                const y = std.math.add(i64, line_y, @as(i64, metrics.strike_y)) catch
+                    return error.InvalidPresentationGeometry;
+                try appendContentSolid(output, &used, .{
+                    .x = clip.x,
+                    .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
+                    .width = clip.width,
+                    .height = @max(@as(u16, 1), metrics.strike_height),
+                }, clip, colors.underline);
+            }
+        }
+    }
 
+    const placeholder_resource = contentResource(1);
+    var has_raster = false;
+    for (rows, 0..) |row, row_index| {
+        const first = @as(usize, row.cell_offset);
+        const count = @as(usize, row.cell_count);
+        const end = std.math.add(usize, first, count) catch return error.InvalidView;
+        if (end > cells.len or count != begin.columns) return error.InvalidView;
         for (cells[first..end], 0..) |cell, column| {
             if (cell.scalar_count == 0) continue;
             if (cell.x != 0 or cell.y != 0) return error.InvalidView;
+            if (cell.style_bits & content_style_invisible != 0) continue;
 
             const scalar_first = @as(usize, cell.scalar_offset);
             const scalar_count = @as(usize, cell.scalar_count);
             const scalar_end = std.math.add(usize, scalar_first, scalar_count) catch
                 return error.InvalidView;
             if (scalar_end > scalars.len) return error.InvalidView;
-            if (scalar_count > scratch.clusters.len) return error.ClusterLimit;
-            if (scalar_first > std.math.maxInt(u32)) return error.InvalidView;
-
             const run = try resolveShape(
                 shape_cache,
                 scalars[scalar_first..scalar_end],
-                scratch.clusters,
-                scratch.shaped,
+                cluster_scratch,
+                shaped_scratch,
             );
-            if (run.glyphs.len > scratch.glyphs.len -| glyph_used)
-                return error.GlyphLimit;
+            const colors = try contentCellColors(cell, presentation);
+            const physical = try contentCellRect(row_index, column, cell_size);
+            const clip = try contentLeadClip(row_index, column, cell.width, cell_size);
 
-            const cell_x_px = std.math.mul(
-                i64,
-                @as(i64, @intCast(column)),
-                @as(i64, metrics.advance_width),
-            ) catch return error.CoordinateOverflow;
-            const line_top_px = std.math.mul(
-                i64,
-                @as(i64, @intCast(row_index)),
-                @as(i64, metrics.line_height),
-            ) catch return error.CoordinateOverflow;
+            var pen_x = std.math.mul(i64, @as(i64, physical.x), 64) catch
+                return error.InvalidPresentationGeometry;
             const baseline_px = std.math.add(
                 i64,
-                line_top_px,
+                std.math.add(i64, @as(i64, physical.y), line_offset) catch
+                    return error.InvalidPresentationGeometry,
                 @as(i64, metrics.baseline),
-            ) catch return error.CoordinateOverflow;
-            const cell_x_26_6 = std.math.mul(i64, cell_x_px, 64) catch
-                return error.CoordinateOverflow;
-            const baseline_y_26_6 = std.math.mul(i64, baseline_px, 64) catch
-                return error.CoordinateOverflow;
-            const cell_index = std.math.add(usize, first, column) catch
-                return error.InvalidView;
-            if (cell_index > std.math.maxInt(u32)) return error.InvalidView;
-
-            var pen_x_26_6: i64 = cell_x_26_6;
-            var pen_y_26_6: i64 = 0;
+            ) catch return error.InvalidPresentationGeometry;
+            var pen_y: i64 = 0;
             for (run.glyphs) |shaped| {
                 const raster = try resolveAtlas(
                     atlas,
                     run.face_index,
                     shaped.id,
-                    scratch.raster,
+                    raster_scratch,
                 );
-                scratch.glyphs[glyph_used] = .{
-                    .row = @intCast(row_index),
-                    .column = @intCast(column),
-                    .cell_index = @intCast(cell_index),
-                    .cluster = try rebaseCluster(shaped.cluster, scalar_first, scalar_count),
-                    .face_index = run.face_index,
-                    .glyph_id = shaped.id,
-                    .pen_x_26_6 = pen_x_26_6,
-                    .baseline_y_26_6 = std.math.add(i64, baseline_y_26_6, pen_y_26_6) catch
-                        return error.CoordinateOverflow,
-                    .x_offset_26_6 = shaped.x_offset,
-                    .y_offset_26_6 = shaped.y_offset,
-                    .x_advance_26_6 = shaped.x_advance,
-                    .y_advance_26_6 = shaped.y_advance,
-                    .atlas_x = raster.atlas_x,
-                    .atlas_y = raster.atlas_y,
-                    .raster_width = raster.width,
-                    .raster_height = raster.height,
-                    .raster_left = raster.left,
-                    .raster_top = raster.top,
-                    .style_bits = cell.style_bits,
-                    .foreground = cell.foreground,
-                };
-                glyph_used += 1;
-                pen_x_26_6 = std.math.add(i64, pen_x_26_6, shaped.x_advance) catch
-                    return error.CoordinateOverflow;
-                pen_y_26_6 = std.math.add(i64, pen_y_26_6, shaped.y_advance) catch
-                    return error.CoordinateOverflow;
+                if (raster.width != 0 and raster.height != 0) {
+                    has_raster = true;
+                    var left = std.math.add(i64, pen_x, shaped.x_offset) catch
+                        return error.InvalidPresentationGeometry;
+                    left = std.math.add(i64, left, @as(i64, raster.left) * 64) catch
+                        return error.InvalidPresentationGeometry;
+                    var top = std.math.mul(i64, baseline_px, 64) catch
+                        return error.InvalidPresentationGeometry;
+                    top = std.math.add(i64, top, pen_y) catch
+                        return error.InvalidPresentationGeometry;
+                    top = std.math.sub(i64, top, shaped.y_offset) catch
+                        return error.InvalidPresentationGeometry;
+                    top = std.math.sub(i64, top, @as(i64, raster.top) * 64) catch
+                        return error.InvalidPresentationGeometry;
+                    try appendContentInput(output, &used, .{ .alpha_mask = .{
+                        .destination = .{
+                            .x = try fixedContent26_6(left),
+                            .y = try fixedContent26_6(top),
+                            .width = raster.width,
+                            .height = raster.height,
+                        },
+                        .clip = clip,
+                        .resource = .{
+                            .resource = placeholder_resource,
+                            .format = .alpha8,
+                            .size = .{
+                                .width = atlas_impl.config.width,
+                                .height = atlas_impl.config.height,
+                            },
+                            .source = .{
+                                .x = raster.atlas_x,
+                                .y = raster.atlas_y,
+                                .width = raster.width,
+                                .height = raster.height,
+                            },
+                        },
+                        .color = colors.foreground,
+                        .cursor_component = true,
+                    } });
+                }
+                pen_x = std.math.add(i64, pen_x, shaped.x_advance) catch
+                    return error.InvalidPresentationGeometry;
+                pen_y = std.math.add(i64, pen_y, shaped.y_advance) catch
+                    return error.InvalidPresentationGeometry;
             }
         }
     }
+    return .{ .command_count = used, .has_raster = has_raster };
+}
 
-    return .{
-        .revision = begin.revision,
-        .terminal_revision = begin.terminal_revision,
-        .rows = begin.rows,
-        .columns = begin.columns,
-        .metrics = metrics,
-        .glyphs = scratch.glyphs[0..glyph_used],
-        .atlas = atlasView(atlas),
+fn bindContentResource(commands: []canvas.Input, resource: canvas.ResourceRef) void {
+    for (commands) |*command| switch (command.*) {
+        .alpha_mask => command.alpha_mask.resource.resource = resource,
+        else => {},
     };
+}
+
+fn contentResource(generation: u64) canvas.ResourceRef {
+    std.debug.assert(generation != 0);
+    return .{
+        .resource = canvas.ResourceId.local(1) catch unreachable,
+        .generation = @fromBackingInt(@intCast(generation)),
+    };
+}
+
+fn contentCursorBinding(
+    snapshot: *const View.Snapshot,
+    surface: canvas.Size,
+    cell_size: canvas.Size,
+    context: ?CursorContext,
+) ContentError!?canvas.CursorBinding {
+    const host = context orelse return null;
+    if (host.pane == 0 or @backingInt(host.source) == 0 or
+        host.visible_set_revision == 0 or host.lifecycle_revision == 0)
+        return error.InvalidCursorContext;
+    const begin = View.begin(snapshot);
+    if (!begin.cursor_visible or begin.cursor_shape == 3) return null;
+    if (begin.cursor_row >= begin.rows or begin.cursor_column >= begin.columns)
+        return null;
+    if (begin.revision == 0 or begin.terminal_revision == 0)
+        return error.InvalidCursorContext;
+    const presentation = View.presentation(snapshot);
+    const rect = try contentCellRect(begin.cursor_row, begin.cursor_column, cell_size);
+    return .{
+        .pane = host.pane,
+        .source = host.source,
+        .terminal_sequence = begin.terminal_revision,
+        .cursor_revision = begin.revision,
+        .visible_set_revision = host.visible_set_revision,
+        .lifecycle_revision = host.lifecycle_revision,
+        .rect = rect,
+        .cell_origin = .{ .x = 0, .y = 0 },
+        .cell_size = cell_size,
+        .clip = contentSurfaceRect(surface),
+        .shape = switch (begin.cursor_shape) {
+            1 => .underline,
+            2 => .bar,
+            3 => .none,
+            else => .block,
+        },
+        .color = richColor(presentation.cursor orelse presentation.foreground),
+        .text_color = richColor(presentation.cursor_text orelse presentation.background),
+        .visible = true,
+    };
+}
+
+fn contentImpl(content: *Content) *ContentImpl {
+    return @ptrCast(@alignCast(content));
+}
+
+fn constContentImpl(content: *const Content) *const ContentImpl {
+    return @ptrCast(@alignCast(content));
 }
 
 fn resolveShape(
@@ -525,13 +1052,6 @@ fn resolveShape(
         .face_index = shaped.face_index,
         .glyphs = impl.glyphs[glyph_offset .. glyph_offset + shaped.glyphs.len],
     };
-}
-
-fn rebaseCluster(relative: u32, scalar_first: usize, scalar_count: usize) error{InvalidView}!u32 {
-    if (@as(usize, relative) >= scalar_count) return error.InvalidView;
-    const absolute = std.math.add(usize, scalar_first, @as(usize, relative)) catch return error.InvalidView;
-    if (absolute > std.math.maxInt(u32)) return error.InvalidView;
-    return @intCast(absolute);
 }
 
 fn resolveAtlas(

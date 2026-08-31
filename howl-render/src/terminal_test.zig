@@ -1,4 +1,4 @@
-//! Proves atlas-backed native terminal text projection without terminal truth duplication.
+//! Proves bounded terminal Canvas presentation without terminal truth duplication.
 
 const std = @import("std");
 const render = @import("howl_render");
@@ -74,318 +74,43 @@ fn sourceSnapshot(rows: []client.rich.Row, columns: u16) client.rich.Snapshot {
     };
 }
 
-fn singleCellSource(
-    scalar: u32,
-    rows: *[1]client.rich.Row,
-    cells: *[1]client.rich.Cell,
-    storage: *[1]u32,
-) client.rich.Snapshot {
-    storage[0] = scalar;
-    cells[0] = cell(storage, 1, 0);
-    rows[0] = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
-    return sourceSnapshot(rows, 1);
-}
-
-fn defaultShapeCacheConfig() render.terminal.ShapeCacheConfig {
+fn contentConfig(command_capacity: usize) render.terminal.ContentConfig {
     return .{
-        .entry_capacity = 16,
-        .scalar_capacity = 64,
-        .glyph_capacity = 64,
-        .max_sequence_scalars = 16,
+        .cell_size = .{ .width = 10, .height = 20 },
+        .shape_cache = .{
+            .entry_capacity = 16,
+            .scalar_capacity = 32,
+            .glyph_capacity = 32,
+            .max_sequence_scalars = 8,
+        },
+        .atlas = .{ .width = 64, .height = 64, .entry_capacity = 16 },
+        .shaped_capacity = 16,
+        .raster_bytes = 4096,
+        .command_capacity = command_capacity,
     };
 }
 
-const TestContext = struct {
-    view: *client.view.Snapshot,
-    font: *render.text.FontSet,
-    shape_cache: *render.terminal.ShapeCache,
-    atlas: *render.terminal.Atlas,
-    clusters: [16]u32 = undefined,
-    shaped: [32]render.text.Glyph = undefined,
-    glyphs: [32]render.terminal.Glyph = undefined,
-    raster: [4096]u8 = undefined,
-
-    fn init(
-        source: *const client.rich.Snapshot,
-        config: render.terminal.AtlasConfig,
-    ) !TestContext {
-        return initWith(
-            source,
-            config,
-            defaultShapeCacheConfig(),
-            .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
-        );
-    }
-
-    fn initWith(
-        source: *const client.rich.Snapshot,
-        atlas_config: render.terminal.AtlasConfig,
-        shape_config: render.terminal.ShapeCacheConfig,
-        font_config: render.text.Config,
-    ) !TestContext {
-        const view = try client.view.project(std.testing.allocator, source);
-        errdefer client.view.deinit(view);
-        const font = try render.text.FontSet.init(std.testing.allocator, font_config);
-        errdefer font.deinit();
-        const shape_cache = try render.terminal.initShapeCache(
-            std.testing.allocator,
-            font,
-            shape_config,
-        );
-        errdefer render.terminal.deinitShapeCache(shape_cache);
-        const atlas = try render.terminal.initAtlas(std.testing.allocator, font, atlas_config);
-        errdefer render.terminal.deinitAtlas(atlas);
-        return .{
-            .view = view,
-            .font = font,
-            .shape_cache = shape_cache,
-            .atlas = atlas,
-        };
-    }
-
-    fn deinit(self: *TestContext) void {
-        render.terminal.deinitAtlas(self.atlas);
-        render.terminal.deinitShapeCache(self.shape_cache);
-        self.font.deinit();
-        client.view.deinit(self.view);
-        self.* = undefined;
-    }
-
-    fn project(self: *TestContext, glyph_capacity: usize) !render.terminal.Frame {
-        return render.terminal.project(self.view, self.atlas, self.shape_cache, .{
-            .clusters = &self.clusters,
-            .shaped = &self.shaped,
-            .glyphs = self.glyphs[0..glyph_capacity],
-            .raster = &self.raster,
-        });
-    }
-};
-
-test "terminal atlas preserves source clusters style and natural rasters" {
-    var first_scalars = [_]u32{ 'e', 0x0301 };
-    var second_scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{
-        cell(&first_scalars, 1, 0),
-        cell(&second_scalars, 1, 0),
-    };
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 2);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-    const frame = try context.project(32);
-
-    try std.testing.expectEqual(@as(u64, 17), frame.revision);
-    try std.testing.expectEqual(@as(u64, 11), frame.terminal_revision);
-    try std.testing.expectEqual(@as(u16, 1), frame.rows);
-    try std.testing.expectEqual(@as(u16, 2), frame.columns);
-    try std.testing.expect(frame.metrics.advance_width > 0);
-    try std.testing.expect(frame.glyphs.len >= 2);
-    try std.testing.expectEqual(@as(u32, 0), frame.glyphs[0].cluster);
-    try std.testing.expect(frame.glyphs[frame.glyphs.len - 1].cluster >= 2);
-    try std.testing.expectEqual(@as(u16, 1), frame.glyphs[frame.glyphs.len - 1].column);
-    try std.testing.expectEqual(@as(u16, 1), frame.glyphs[0].style_bits);
-    try std.testing.expectEqual(@as(u32, 0xabcdef), frame.glyphs[0].foreground.value);
-    try std.testing.expect(render.terminal.atlasEntryCount(context.atlas) != 0);
-    try std.testing.expect(std.hash.Wyhash.hash(0, frame.atlas.pixels) != 0);
-}
-
-test "terminal atlas ignores empty continuation cells" {
-    var wide = [_]u32{'W'};
-    var cells = [_]client.rich.Cell{
-        cell(&wide, 2, 0),
-        cell(&.{}, 2, 1),
-    };
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 2);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-    const frame = try context.project(32);
-    try std.testing.expect(frame.glyphs.len != 0);
-    for (frame.glyphs) |glyph| {
-        try std.testing.expectEqual(@as(u16, 0), glyph.column);
-        try std.testing.expectEqual(@as(u32, 0), glyph.cell_index);
-    }
-}
-
-test "terminal atlas rejects insufficient placement output without touching terminal truth" {
-    var text_scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{cell(&text_scalars, 1, 0)};
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 1);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-    try std.testing.expectError(error.GlyphLimit, context.project(0));
-    try std.testing.expectEqual(@as(u64, 17), source.begin.revision);
-    try std.testing.expectEqual(@as(u32, 'A'), text_scalars[0]);
-}
-
-test "terminal atlas reuses stable storage until explicit reset" {
-    var scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{ cell(&scalars, 1, 0), cell(&scalars, 1, 0) };
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 2);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-
-    const first = try context.project(32);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.atlasEntryCount(context.atlas));
-    const first_x = first.glyphs[0].atlas_x;
-    const first_y = first.glyphs[0].atlas_y;
-    const generation = first.atlas.generation;
-    const hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-
-    const second = try context.project(32);
-    try std.testing.expectEqual(generation, second.atlas.generation);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(hash, std.hash.Wyhash.hash(0, second.atlas.pixels));
-    try std.testing.expectEqual(first_x, second.glyphs[0].atlas_x);
-    try std.testing.expectEqual(first_y, second.glyphs[0].atlas_y);
-
-    try render.terminal.resetAtlas(context.atlas);
-    const reset = render.terminal.atlasView(context.atlas);
-    try std.testing.expectEqual(generation + 1, reset.generation);
-    try std.testing.expectEqual(@as(usize, 0), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expect(std.mem.allEqual(u8, reset.pixels, 0));
-    const third = try context.project(32);
-    try std.testing.expectEqual(reset.generation, third.atlas.generation);
-}
-
-test "terminal atlas cache full never evicts a live generation" {
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    var context = try TestContext.init(&source_a, .{ .width = 64, .height = 64, .entry_capacity = 1 });
-    defer context.deinit();
-    const first = try context.project(32);
-    const generation = first.atlas.generation;
-    const hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-
-    var rows_b: [1]client.rich.Row = undefined;
-    var cells_b: [1]client.rich.Cell = undefined;
-    var scalar_b: [1]u32 = undefined;
-    const source_b = singleCellSource('B', &rows_b, &cells_b, &scalar_b);
-    const view_b = try client.view.project(std.testing.allocator, &source_b);
-    defer client.view.deinit(view_b);
-    try std.testing.expectError(
-        error.CacheFull,
-        render.terminal.project(view_b, context.atlas, context.shape_cache, .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        }),
-    );
-    try std.testing.expectEqual(generation, render.terminal.atlasView(context.atlas).generation);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
-
-    try render.terminal.resetAtlas(context.atlas);
-    const after_reset = try render.terminal.project(view_b, context.atlas, context.shape_cache, .{
-        .clusters = &context.clusters,
-        .shaped = &context.shaped,
-        .glyphs = &context.glyphs,
-        .raster = &context.raster,
-    });
-    try std.testing.expectEqual(generation + 1, after_reset.atlas.generation);
-}
-
-test "terminal atlas reports too-small geometry without hidden reset" {
-    var rows: [1]client.rich.Row = undefined;
-    var cells: [1]client.rich.Cell = undefined;
-    var scalar: [1]u32 = undefined;
-    const source = singleCellSource('A', &rows, &cells, &scalar);
-    var context = try TestContext.init(&source, .{ .width = 1, .height = 1, .entry_capacity = 4 });
-    defer context.deinit();
-    const generation = render.terminal.atlasView(context.atlas).generation;
-    try std.testing.expectError(error.GlyphTooLarge, context.project(32));
-    try std.testing.expectEqual(generation, render.terminal.atlasView(context.atlas).generation);
-    try std.testing.expectEqual(@as(usize, 0), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expect(std.mem.allEqual(u8, render.terminal.atlasView(context.atlas).pixels, 0));
-}
-
-test "terminal atlas full preserves the already packed generation" {
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
+fn contentFont() !*render.text.FontSet {
+    return render.text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
         .size = .{ .pixels = 16 },
     });
-    defer font.deinit();
-    const shape = try render.text.ShapeBuffer.init(std.testing.allocator, 8);
-    defer shape.deinit();
-    var clusters = [_]u32{0};
-    var shaped: [8]render.text.Glyph = undefined;
-    var raster_scratch: [4096]u8 = undefined;
-
-    var a_cp = [_]u32{'A'};
-    const a_run = try font.shape(shape, .{ .codepoints = &a_cp, .clusters = &clusters }, &shaped);
-    var a_allocator = std.heap.FixedBufferAllocator.init(&raster_scratch);
-    var a_raster = try font.rasterize(a_allocator.allocator(), a_run.face_index, a_run.glyphs[0].id);
-    defer a_raster.deinit();
-    const a_width = a_raster.width;
-    const a_height = a_raster.height;
-
-    var b_cp = [_]u32{'B'};
-    const b_run = try font.shape(shape, .{ .codepoints = &b_cp, .clusters = &clusters }, &shaped);
-    var b_allocator = std.heap.FixedBufferAllocator.init(&raster_scratch);
-    var b_raster = try font.rasterize(b_allocator.allocator(), b_run.face_index, b_run.glyphs[0].id);
-    defer b_raster.deinit();
-    try std.testing.expect(a_width != 0 and a_height != 0 and b_raster.width != 0 and b_raster.height != 0);
-
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    var context = try TestContext.init(&source_a, .{
-        .width = @max(a_width, b_raster.width),
-        .height = @max(a_height, b_raster.height),
-        .entry_capacity = 2,
-    });
-    defer context.deinit();
-    const first = try context.project(32);
-    const generation = first.atlas.generation;
-    const hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-
-    var rows_b: [1]client.rich.Row = undefined;
-    var cells_b: [1]client.rich.Cell = undefined;
-    var scalar_b: [1]u32 = undefined;
-    const source_b = singleCellSource('B', &rows_b, &cells_b, &scalar_b);
-    const view_b = try client.view.project(std.testing.allocator, &source_b);
-    defer client.view.deinit(view_b);
-    try std.testing.expectError(
-        error.AtlasFull,
-        render.terminal.project(view_b, context.atlas, context.shape_cache, .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        }),
-    );
-    try std.testing.expectEqual(generation, render.terminal.atlasView(context.atlas).generation);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
 }
 
-test "terminal atlas init cleans every failed allocation stage" {
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.primary_font,
-        .size = .{ .pixels = 16 },
-    });
-    defer font.deinit();
-    for (0..3) |fail_index| {
-        var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = fail_index });
-        try std.testing.expectError(
-            error.OutOfMemory,
-            render.terminal.initAtlas(failing.allocator(), font, .{
-                .width = 64,
-                .height = 64,
-                .entry_capacity = 8,
-            }),
-        );
-        try std.testing.expectEqual(failing.allocated_bytes, failing.freed_bytes);
-    }
+fn firstAlphaResource(commands: []const render.canvas.Input) ?render.canvas.ResourceRef {
+    for (commands) |command| switch (command) {
+        .alpha_mask => |value| return value.resource.resource,
+        else => {},
+    };
+    return null;
 }
 
-test "terminal shape cache reuses one combining run and rebases clusters per cell" {
+fn constructTerminalContent(allocator: std.mem.Allocator, font: *render.text.FontSet) !void {
+    const content = try render.terminal.initContent(allocator, font, contentConfig(64));
+    render.terminal.deinitContent(content);
+}
+
+test "terminal Canvas content reuses exact combining runs" {
     var first = [_]u32{ 'e', 0x0301 };
     var second = [_]u32{ 'e', 0x0301 };
     var cells = [_]client.rich.Cell{
@@ -394,359 +119,457 @@ test "terminal shape cache reuses one combining run and rebases clusters per cel
     };
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     const source = sourceSnapshot(&rows, 2);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
 
-    const frame = try context.project(32);
-    const usage = render.terminal.shapeCacheUsage(context.shape_cache);
-    try std.testing.expectEqual(@as(usize, 1), usage.entries);
-    try std.testing.expectEqual(@as(usize, 2), usage.scalars);
-    try std.testing.expect(usage.glyphs != 0);
+    const first_update = try render.terminal.takeContentUpdate(content, view, null);
+    try std.testing.expect(firstAlphaResource(first_update.commands) != null);
+    const usage = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(usize, 1), usage.shape.entries);
+    try std.testing.expectEqual(@as(usize, 2), usage.shape.scalars);
+    try std.testing.expect(usage.shape.glyphs != 0);
 
-    var first_glyphs: [8]render.terminal.Glyph = undefined;
-    var second_glyphs: [8]render.terminal.Glyph = undefined;
-    var first_count: usize = 0;
-    var second_count: usize = 0;
-    for (frame.glyphs) |glyph| switch (glyph.column) {
-        0 => {
-            first_glyphs[first_count] = glyph;
-            first_count += 1;
-            try std.testing.expect(glyph.cluster < 2);
-        },
-        1 => {
-            second_glyphs[second_count] = glyph;
-            second_count += 1;
-            try std.testing.expect(glyph.cluster >= 2 and glyph.cluster < 4);
-        },
-        else => return error.UnexpectedColumn,
-    };
-    try std.testing.expectEqual(first_count, second_count);
-    try std.testing.expect(first_count != 0);
-    for (first_glyphs[0..first_count], second_glyphs[0..second_count]) |left, right| {
-        try std.testing.expectEqual(left.glyph_id, right.glyph_id);
-        try std.testing.expectEqual(left.face_index, right.face_index);
-        try std.testing.expectEqual(left.cluster + 2, right.cluster);
-        try std.testing.expectEqual(left.x_offset_26_6, right.x_offset_26_6);
-        try std.testing.expectEqual(left.y_offset_26_6, right.y_offset_26_6);
-        try std.testing.expectEqual(left.x_advance_26_6, right.x_advance_26_6);
-        try std.testing.expectEqual(left.y_advance_26_6, right.y_advance_26_6);
-    }
+    const second_update = try render.terminal.takeContentUpdate(content, view, null);
+    try std.testing.expectEqual(@as(usize, 0), second_update.uploads.len);
+    try std.testing.expectEqualDeep(usage.shape, render.terminal.contentUsage(content).shape);
 }
 
-test "terminal shape cache retains fallback face identity" {
-    var first = [_]u32{0xe0b0};
-    var second = [_]u32{0xe0b0};
-    var cells = [_]client.rich.Cell{
-        cell(&first, 1, 0),
-        cell(&second, 1, 0),
-    };
+test "terminal Canvas content retains howl-text fallback presentation" {
+    var symbol = [_]u32{0xe0b0};
+    var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 2);
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
     const fallbacks = [_][]const u8{fonts.symbol_font};
-    var context = try TestContext.initWith(
-        &source,
-        .{ .width = 64, .height = 64, .entry_capacity = 8 },
-        defaultShapeCacheConfig(),
-        .{
-            .primary = fonts.primary_font,
-            .fallbacks = &fallbacks,
-            .size = .{ .pixels = 16 },
-        },
-    );
-    defer context.deinit();
-
-    const frame = try context.project(32);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.shapeCacheUsage(context.shape_cache).entries);
-    try std.testing.expect(frame.glyphs.len != 0);
-    for (frame.glyphs) |glyph| try std.testing.expectEqual(@as(u8, 1), glyph.face_index);
-}
-
-test "terminal shape cache reset is independent from atlas generation" {
-    var scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 1);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-
-    const first = try context.project(32);
-    const generation = first.atlas.generation;
-    const atlas_entries = render.terminal.atlasEntryCount(context.atlas);
-    const atlas_hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.shapeCacheUsage(context.shape_cache).entries);
-
-    render.terminal.resetShapeCache(context.shape_cache);
-    try std.testing.expectEqualDeep(
-        render.terminal.ShapeCacheUsage{ .entries = 0, .scalars = 0, .glyphs = 0 },
-        render.terminal.shapeCacheUsage(context.shape_cache),
-    );
-    try std.testing.expectEqual(generation, render.terminal.atlasView(context.atlas).generation);
-    try std.testing.expectEqual(atlas_entries, render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(atlas_hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
-
-    const second = try context.project(32);
-    try std.testing.expectEqual(generation, second.atlas.generation);
-    try std.testing.expectEqual(atlas_entries, render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.shapeCacheUsage(context.shape_cache).entries);
-}
-
-test "terminal shape entry exhaustion preserves both caches" {
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    var context = try TestContext.initWith(
-        &source_a,
-        .{ .width = 64, .height = 64, .entry_capacity = 8 },
-        .{
-            .entry_capacity = 1,
-            .scalar_capacity = 4,
-            .glyph_capacity = 4,
-            .max_sequence_scalars = 2,
-        },
-        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
-    );
-    defer context.deinit();
-    const first = try context.project(32);
-    const atlas_hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-    const atlas_entries = render.terminal.atlasEntryCount(context.atlas);
-    const usage = render.terminal.shapeCacheUsage(context.shape_cache);
-
-    var rows_b: [1]client.rich.Row = undefined;
-    var cells_b: [1]client.rich.Cell = undefined;
-    var scalar_b: [1]u32 = undefined;
-    const source_b = singleCellSource('B', &rows_b, &cells_b, &scalar_b);
-    const view_b = try client.view.project(std.testing.allocator, &source_b);
-    defer client.view.deinit(view_b);
-    try std.testing.expectError(error.ShapeEntryFull, render.terminal.project(
-        view_b,
-        context.atlas,
-        context.shape_cache,
-        .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        },
-    ));
-    try std.testing.expectEqualDeep(usage, render.terminal.shapeCacheUsage(context.shape_cache));
-    try std.testing.expectEqual(atlas_entries, render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expectEqual(atlas_hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
-
-    render.terminal.resetShapeCache(context.shape_cache);
-    const after_reset = try render.terminal.project(view_b, context.atlas, context.shape_cache, .{
-        .clusters = &context.clusters,
-        .shaped = &context.shaped,
-        .glyphs = &context.glyphs,
-        .raster = &context.raster,
-    });
-    try std.testing.expect(after_reset.glyphs.len != 0);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.shapeCacheUsage(context.shape_cache).entries);
-}
-
-test "terminal shape scalar exhaustion is transactional" {
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    var context = try TestContext.initWith(
-        &source_a,
-        .{ .width = 64, .height = 64, .entry_capacity = 8 },
-        .{
-            .entry_capacity = 4,
-            .scalar_capacity = 2,
-            .glyph_capacity = 8,
-            .max_sequence_scalars = 2,
-        },
-        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
-    );
-    defer context.deinit();
-    const first = try context.project(32);
-    const atlas_hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-    const usage = render.terminal.shapeCacheUsage(context.shape_cache);
-
-    var combined = [_]u32{ 'e', 0x0301 };
-    var cells_b = [_]client.rich.Cell{cell(&combined, 1, 0)};
-    var rows_b = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells_b }};
-    const source_b = sourceSnapshot(&rows_b, 1);
-    const view_b = try client.view.project(std.testing.allocator, &source_b);
-    defer client.view.deinit(view_b);
-    try std.testing.expectError(error.ShapeScalarFull, render.terminal.project(
-        view_b,
-        context.atlas,
-        context.shape_cache,
-        .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        },
-    ));
-    try std.testing.expectEqualDeep(usage, render.terminal.shapeCacheUsage(context.shape_cache));
-    try std.testing.expectEqual(atlas_hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
-}
-
-test "terminal shape glyph exhaustion is transactional" {
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    var context = try TestContext.initWith(
-        &source_a,
-        .{ .width = 64, .height = 64, .entry_capacity = 8 },
-        .{
-            .entry_capacity = 4,
-            .scalar_capacity = 4,
-            .glyph_capacity = 1,
-            .max_sequence_scalars = 2,
-        },
-        .{ .primary = fonts.primary_font, .size = .{ .pixels = 16 } },
-    );
-    defer context.deinit();
-    const first = try context.project(32);
-    const atlas_hash = std.hash.Wyhash.hash(0, first.atlas.pixels);
-    const usage = render.terminal.shapeCacheUsage(context.shape_cache);
-
-    var rows_b: [1]client.rich.Row = undefined;
-    var cells_b: [1]client.rich.Cell = undefined;
-    var scalar_b: [1]u32 = undefined;
-    const source_b = singleCellSource('B', &rows_b, &cells_b, &scalar_b);
-    const view_b = try client.view.project(std.testing.allocator, &source_b);
-    defer client.view.deinit(view_b);
-    try std.testing.expectError(error.ShapeGlyphFull, render.terminal.project(
-        view_b,
-        context.atlas,
-        context.shape_cache,
-        .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        },
-    ));
-    try std.testing.expectEqualDeep(usage, render.terminal.shapeCacheUsage(context.shape_cache));
-    try std.testing.expectEqual(atlas_hash, std.hash.Wyhash.hash(0, render.terminal.atlasView(context.atlas).pixels));
-}
-
-test "terminal projection rejects a shape cache from another FontSet" {
-    var scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 1);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-
-    const other_font = try render.text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.primary_font,
-        .size = .{ .pixels = 16 },
-    });
-    defer other_font.deinit();
-    const other_cache = try render.terminal.initShapeCache(
-        std.testing.allocator,
-        other_font,
-        defaultShapeCacheConfig(),
-    );
-    defer render.terminal.deinitShapeCache(other_cache);
-    const before = render.terminal.shapeCacheUsage(other_cache);
-    try std.testing.expectError(error.FontSetMismatch, render.terminal.project(
-        context.view,
-        context.atlas,
-        other_cache,
-        .{
-            .clusters = &context.clusters,
-            .shaped = &context.shaped,
-            .glyphs = &context.glyphs,
-            .raster = &context.raster,
-        },
-    ));
-    try std.testing.expectEqualDeep(before, render.terminal.shapeCacheUsage(other_cache));
-}
-
-fn constructShapeCache(allocator: std.mem.Allocator, font: *render.text.FontSet) !void {
-    const cache = try render.terminal.initShapeCache(allocator, font, defaultShapeCacheConfig());
-    render.terminal.deinitShapeCache(cache);
-}
-
-test "terminal shape cache construction cleans every allocation failure" {
     const font = try render.text.FontSet.init(std.testing.allocator, .{
         .primary = fonts.primary_font,
+        .fallbacks = &fallbacks,
         .size = .{ .pixels = 16 },
     });
     defer font.deinit();
-    try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
-        constructShapeCache,
-        .{font},
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    try std.testing.expect(firstAlphaResource(update.commands) != null);
+    try std.testing.expectEqual(@as(usize, 1), render.terminal.contentUsage(content).shape.entries);
+}
+
+test "terminal Canvas shape entry exhaustion preserves published state" {
+    var a = [_]u32{'A'};
+    var a_cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var a_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &a_cells }};
+    const a_source = sourceSnapshot(&a_rows, 1);
+    const a_view = try client.view.project(std.testing.allocator, &a_source);
+    defer client.view.deinit(a_view);
+
+    var b = [_]u32{'B'};
+    var b_cells = [_]client.rich.Cell{cell(&b, 1, 0)};
+    var b_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &b_cells }};
+    const b_source = sourceSnapshot(&b_rows, 1);
+    const b_view = try client.view.project(std.testing.allocator, &b_source);
+    defer client.view.deinit(b_view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    var config = contentConfig(64);
+    config.shape_cache.entry_capacity = 1;
+    const content = try render.terminal.initContent(std.testing.allocator, font, config);
+    defer render.terminal.deinitContent(content);
+
+    const accepted_update = try render.terminal.takeContentUpdate(content, a_view, null);
+    try std.testing.expect(accepted_update.commands.len != 0);
+    const accepted = render.terminal.contentUsage(content);
+    try std.testing.expectError(
+        error.ShapeEntryFull,
+        render.terminal.takeContentUpdate(content, b_view, null),
     );
+    try std.testing.expectEqualDeep(accepted, render.terminal.contentUsage(content));
+
+    try render.terminal.resetContentCaches(content);
+    const recovered = try render.terminal.takeContentUpdate(content, b_view, null);
+    try std.testing.expect(firstAlphaResource(recovered.commands) != null);
 }
 
-test "terminal shape cache hit needs no cold-shape glyph scratch" {
-    var scalars = [_]u32{'A'};
-    var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
-    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
-    const source = sourceSnapshot(&rows, 1);
-    var context = try TestContext.init(&source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-    const populated = try context.project(32);
-    try std.testing.expect(populated.glyphs.len != 0);
-
-    const usage = render.terminal.shapeCacheUsage(context.shape_cache);
-    const frame = try render.terminal.project(context.view, context.atlas, context.shape_cache, .{
-        .clusters = &context.clusters,
-        .shaped = context.shaped[0..0],
-        .glyphs = &context.glyphs,
-        .raster = &context.raster,
-    });
-    try std.testing.expect(frame.glyphs.len != 0);
-    try std.testing.expectEqualDeep(usage, render.terminal.shapeCacheUsage(context.shape_cache));
-}
-
-test "terminal shape failure leaves caches pristine and reusable" {
+test "terminal Canvas missing glyph leaves unpublished state reusable" {
     var missing = [_]u32{0x10ffff};
     var missing_cells = [_]client.rich.Cell{cell(&missing, 1, 0)};
     var missing_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &missing_cells }};
     const missing_source = sourceSnapshot(&missing_rows, 1);
-    var context = try TestContext.init(&missing_source, .{ .width = 64, .height = 64, .entry_capacity = 8 });
-    defer context.deinit();
-    try std.testing.expectError(error.MissingGlyph, context.project(32));
-    try std.testing.expectEqualDeep(
-        render.terminal.ShapeCacheUsage{ .entries = 0, .scalars = 0, .glyphs = 0 },
-        render.terminal.shapeCacheUsage(context.shape_cache),
-    );
-    try std.testing.expectEqual(@as(usize, 0), render.terminal.atlasEntryCount(context.atlas));
-    try std.testing.expect(std.mem.allEqual(u8, render.terminal.atlasView(context.atlas).pixels, 0));
+    const missing_view = try client.view.project(std.testing.allocator, &missing_source);
+    defer client.view.deinit(missing_view);
 
-    var rows_a: [1]client.rich.Row = undefined;
-    var cells_a: [1]client.rich.Cell = undefined;
-    var scalar_a: [1]u32 = undefined;
-    const source_a = singleCellSource('A', &rows_a, &cells_a, &scalar_a);
-    const view_a = try client.view.project(std.testing.allocator, &source_a);
-    defer client.view.deinit(view_a);
-    const frame = try render.terminal.project(view_a, context.atlas, context.shape_cache, .{
-        .clusters = &context.clusters,
-        .shaped = &context.shaped,
-        .glyphs = &context.glyphs,
-        .raster = &context.raster,
-    });
-    try std.testing.expect(frame.glyphs.len != 0);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.shapeCacheUsage(context.shape_cache).entries);
-    try std.testing.expectEqual(@as(usize, 1), render.terminal.atlasEntryCount(context.atlas));
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
+    try std.testing.expectError(
+        error.MissingGlyph,
+        render.terminal.takeContentUpdate(content, missing_view, null),
+    );
+    try std.testing.expectEqualDeep(
+        render.terminal.ContentUsage{
+            .shape = .{ .entries = 0, .scalars = 0, .glyphs = 0 },
+            .atlas_entries = 0,
+            .producer_revision = 0,
+            .resource_generation = 0,
+        },
+        render.terminal.contentUsage(content),
+    );
+
+    var a = [_]u32{'A'};
+    var a_cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var a_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &a_cells }};
+    const a_source = sourceSnapshot(&a_rows, 1);
+    const a_view = try client.view.project(std.testing.allocator, &a_source);
+    defer client.view.deinit(a_view);
+    const update = try render.terminal.takeContentUpdate(content, a_view, null);
+    try std.testing.expect(firstAlphaResource(update.commands) != null);
 }
 
-test "terminal shape cache validates construction bounds before allocation" {
-    const font = try render.text.FontSet.init(std.testing.allocator, .{
-        .primary = fonts.primary_font,
-        .size = .{ .pixels = 16 },
-    });
+test "terminal Canvas atlas geometry failure never publishes" {
+    var a = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
     defer font.deinit();
-    try std.testing.expectError(error.InvalidShapeCacheConfig, render.terminal.initShapeCache(
-        std.testing.failing_allocator,
-        font,
-        .{ .entry_capacity = 0, .scalar_capacity = 1, .glyph_capacity = 1, .max_sequence_scalars = 1 },
-    ));
-    try std.testing.expectError(error.InvalidShapeCacheConfig, render.terminal.initShapeCache(
-        std.testing.failing_allocator,
-        font,
-        .{ .entry_capacity = 1, .scalar_capacity = 1, .glyph_capacity = 1, .max_sequence_scalars = 2 },
-    ));
+    var config = contentConfig(64);
+    config.atlas.width = 1;
+    config.atlas.height = 1;
+    const content = try render.terminal.initContent(std.testing.allocator, font, config);
+    defer render.terminal.deinitContent(content);
+
+    try std.testing.expectError(
+        error.GlyphTooLarge,
+        render.terminal.takeContentUpdate(content, view, null),
+    );
+    const usage = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(u64, 0), usage.producer_revision);
+    try std.testing.expectEqual(@as(u64, 0), usage.resource_generation);
+    try std.testing.expectEqual(@as(usize, 0), usage.atlas_entries);
+}
+
+test "terminal Canvas content emits sparse atlas generations and Composer state" {
+    var scalars = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var source = sourceSnapshot(&rows, 1);
+    source.begin.cursor_visible = true;
+    source.begin.cursor_row = 0;
+    source.begin.cursor_column = 0;
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
+
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 64,
+        .retained_pixel_bytes = 4096,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 64,
+        .candidate_pixel_bytes = 4096,
+    });
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const cursor = render.terminal.CursorContext{
+        .pane = 9,
+        .source = producer,
+        .visible_set_revision = 13,
+        .lifecycle_revision = 15,
+    };
+
+    const first = try render.terminal.takeContentUpdate(content, view, cursor);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(first.revision));
+    try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
+    try std.testing.expect(first.commands.len >= 2);
+    const first_resource = firstAlphaResource(first.commands) orelse
+        return error.MissingCanvasAlphaResource;
+    try std.testing.expectEqual(first.uploads[0].resource, first_resource);
+    try std.testing.expectEqual(@as(u64, 9), first.cursor_binding.?.pane);
+    try std.testing.expectEqual(producer, first.cursor_binding.?.source);
+    try std.testing.expectEqual(@as(u64, 11), first.cursor_binding.?.terminal_sequence);
+    try std.testing.expectEqual(@as(u64, 17), first.cursor_binding.?.cursor_revision);
+    try std.testing.expectEqual(render.canvas.Size{ .width = 10, .height = 20 }, first.cursor_binding.?.cell_size);
+    const first_generation = @backingInt(first_resource.generation);
+
+    try composer.apply(producer, first);
+    const placement = render.canvas.Composer.Placement{
+        .source = producer,
+        .origin = .{ .x = 0, .y = 0 },
+        .clip = .{ .x = 0, .y = 0, .width = 10, .height = 20 },
+    };
+    try composer.setComposition(.{
+        .surface = .{ .width = 10, .height = 20 },
+        .sources = &.{placement},
+        .focused_source = producer,
+    });
+    var frame_uploads: [4]render.canvas.FrameResourceUpload = undefined;
+    var frame_removals: [4]render.canvas.FrameResourceRef = undefined;
+    var frame_commands: [64]render.canvas.Command = undefined;
+    var frame_pixels: [4096]u8 = undefined;
+    const composed = try composer.frame(&.{}, .{
+        .uploads = &frame_uploads,
+        .removals = &frame_removals,
+        .commands = &frame_commands,
+        .pixels = &frame_pixels,
+    });
+    try std.testing.expectEqual(@as(usize, 1), composed.uploads.len);
+    try std.testing.expect(composed.commands.len >= first.commands.len);
+
+    const second = try render.terminal.takeContentUpdate(content, view, cursor);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(second.revision));
+    try std.testing.expectEqual(@as(usize, 0), second.uploads.len);
+    const second_resource = firstAlphaResource(second.commands) orelse
+        return error.MissingCanvasAlphaResource;
+    try std.testing.expectEqual(first_generation, @backingInt(second_resource.generation));
+    try composer.apply(producer, second);
+
+    try render.terminal.resetContentCaches(content);
+    const third = try render.terminal.takeContentUpdate(content, view, cursor);
+    try std.testing.expectEqual(@as(usize, 1), third.uploads.len);
+    const third_resource = firstAlphaResource(third.commands) orelse
+        return error.MissingCanvasAlphaResource;
+    try std.testing.expectEqual(first_generation + 1, @backingInt(third_resource.generation));
+    try std.testing.expectEqualDeep(
+        render.terminal.ContentUsage{
+            .shape = .{ .entries = 1, .scalars = 1, .glyphs = 1 },
+            .atlas_entries = 1,
+            .producer_revision = 3,
+            .resource_generation = first_generation + 1,
+        },
+        render.terminal.contentUsage(content),
+    );
+}
+
+test "terminal Canvas content resolves style color decoration and invisibility once" {
+    var a = [_]u32{'A'};
+    var b = [_]u32{'B'};
+    var c = [_]u32{'C'};
+    var cells = [_]client.rich.Cell{
+        cell(&a, 1, 0),
+        cell(&b, 1, 0),
+        cell(&c, 1, 0),
+    };
+    cells[0].foreground = .{ .kind = .indexed, .value = 1 };
+    cells[0].background = .{ .kind = .rgb, .value = 0x040506 };
+    cells[0].style_bits = 1 << 1;
+    cells[1].style_bits = (1 << 5) | (1 << 7) | (1 << 8);
+    cells[1].underline_style = 3;
+    cells[1].underline_color = .{ .kind = .rgb, .value = 0x445566 };
+    cells[2].style_bits = 1 << 6;
+    cells[2].background = .{ .kind = .indexed, .value = 4 };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var source = sourceSnapshot(&rows, 3);
+    source.presentation.palette[1] = .{ .r = 205, .g = 49, .b = 49, .a = 255 };
+    source.presentation.palette[4] = .{ .r = 36, .g = 114, .b = 200, .a = 255 };
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+
+    var alpha_count: usize = 0;
+    var saw_dim_red = false;
+    var saw_reverse_foreground = false;
+    var saw_a_background = false;
+    var saw_b_background = false;
+    var saw_invisible_background = false;
+    var decoration_count: usize = 0;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            alpha_count += 1;
+            if (value.destination.x < 10) {
+                saw_dim_red = std.meta.eql(value.color, render.canvas.Color{
+                    .r = 205,
+                    .g = 49,
+                    .b = 49,
+                    .a = 140,
+                });
+            } else if (value.destination.x < 20) {
+                saw_reverse_foreground = std.meta.eql(value.color, render.canvas.Color{
+                    .r = 1,
+                    .g = 2,
+                    .b = 3,
+                    .a = 255,
+                });
+            }
+        },
+        .solid => |value| {
+            if (value.rect.x == 0 and value.rect.width == 10 and
+                std.meta.eql(value.color, render.canvas.Color{ .r = 4, .g = 5, .b = 6, .a = 255 }))
+                saw_a_background = true;
+            if (value.rect.x == 10 and value.rect.width == 10 and
+                std.meta.eql(value.color, render.canvas.Color{ .r = 0xab, .g = 0xcd, .b = 0xef, .a = 255 }))
+                saw_b_background = true;
+            if (value.rect.x == 20 and value.rect.width == 10 and
+                std.meta.eql(value.color, render.canvas.Color{ .r = 36, .g = 114, .b = 200, .a = 255 }))
+                saw_invisible_background = true;
+            if (std.meta.eql(value.color, render.canvas.Color{ .r = 0x44, .g = 0x55, .b = 0x66, .a = 255 }))
+                decoration_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 2), alpha_count);
+    try std.testing.expect(saw_dim_red);
+    try std.testing.expect(saw_reverse_foreground);
+    try std.testing.expect(saw_a_background);
+    try std.testing.expect(saw_b_background);
+    try std.testing.expect(saw_invisible_background);
+    try std.testing.expect(decoration_count >= 6);
+}
+
+test "terminal Canvas content failure preserves published revision and recovers" {
+    var empty_cells = [_]client.rich.Cell{cell(&.{}, 1, 0)};
+    var empty_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &empty_cells }};
+    const empty_source = sourceSnapshot(&empty_rows, 1);
+    const empty_view = try client.view.project(std.testing.allocator, &empty_source);
+    defer client.view.deinit(empty_view);
+
+    var a = [_]u32{'A'};
+    var a_cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var a_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &a_cells }};
+    const a_source = sourceSnapshot(&a_rows, 1);
+    const a_view = try client.view.project(std.testing.allocator, &a_source);
+    defer client.view.deinit(a_view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(1));
+    defer render.terminal.deinitContent(content);
+    const first = try render.terminal.takeContentUpdate(content, empty_view, null);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(first.revision));
+    try std.testing.expectError(
+        error.CommandLimit,
+        render.terminal.takeContentUpdate(content, a_view, null),
+    );
+    const after_failure = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(u64, 1), after_failure.producer_revision);
+    try std.testing.expectEqual(@as(u64, 0), after_failure.resource_generation);
+    try std.testing.expect(after_failure.atlas_entries != 0);
+    const recovered = try render.terminal.takeContentUpdate(content, empty_view, null);
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(recovered.revision));
+    try std.testing.expectEqual(@as(usize, 0), recovered.uploads.len);
+}
+
+test "terminal Canvas cursor context is host-owned and transactional" {
+    var scalars = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var source = sourceSnapshot(&rows, 1);
+    source.begin.cursor_visible = true;
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(32));
+    defer render.terminal.deinitContent(content);
+
+    try std.testing.expectError(
+        error.InvalidCursorContext,
+        render.terminal.takeContentUpdate(content, view, .{
+            .pane = 0,
+            .source = @fromBackingInt(@intCast(1)),
+            .visible_set_revision = 3,
+            .lifecycle_revision = 5,
+        }),
+    );
+    const failed = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(u64, 0), failed.producer_revision);
+    try std.testing.expectEqual(@as(u64, 0), failed.resource_generation);
+
+    const update = try render.terminal.takeContentUpdate(content, view, .{
+        .pane = 7,
+        .source = @fromBackingInt(@intCast(11)),
+        .visible_set_revision = 13,
+        .lifecycle_revision = 17,
+    });
+    try std.testing.expectEqual(@as(u64, 7), update.cursor_binding.?.pane);
+    try std.testing.expectEqual(@as(u64, 11), @backingInt(update.cursor_binding.?.source));
+    try std.testing.expectEqual(@as(u64, 13), update.cursor_binding.?.visible_set_revision);
+    try std.testing.expectEqual(@as(u64, 17), update.cursor_binding.?.lifecycle_revision);
+    try std.testing.expectEqual(@as(u64, 1), render.terminal.contentUsage(content).producer_revision);
+    try std.testing.expectEqual(@as(u64, 1), render.terminal.contentUsage(content).resource_generation);
+}
+
+test "terminal Canvas content construction releases every staged allocation" {
+    const font = try contentFont();
+    defer font.deinit();
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        constructTerminalContent,
+        .{font},
+    );
+}
+
+test "terminal Canvas content validates fixed presentation bounds before allocation" {
+    const font = try contentFont();
+    defer font.deinit();
+    var invalid = contentConfig(64);
+    invalid.cell_size.width = 0;
+    try std.testing.expectError(
+        error.InvalidContentConfig,
+        render.terminal.initContent(std.testing.failing_allocator, font, invalid),
+    );
+    invalid = contentConfig(0);
+    try std.testing.expectError(
+        error.InvalidContentConfig,
+        render.terminal.initContent(std.testing.failing_allocator, font, invalid),
+    );
+}
+
+test "terminal Canvas failed richer frame publishes warmed atlas only on recovery" {
+    var a = [_]u32{'A'};
+    var a_cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var a_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &a_cells }};
+    const a_source = sourceSnapshot(&a_rows, 1);
+    const a_view = try client.view.project(std.testing.allocator, &a_source);
+    defer client.view.deinit(a_view);
+
+    var b = [_]u32{'B'};
+    var b_cells = [_]client.rich.Cell{cell(&b, 1, 0)};
+    b_cells[0].background = .{ .kind = .rgb, .value = 0x040506 };
+    var b_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &b_cells }};
+    const b_source = sourceSnapshot(&b_rows, 1);
+    const b_view = try client.view.project(std.testing.allocator, &b_source);
+    defer client.view.deinit(b_view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(2));
+    defer render.terminal.deinitContent(content);
+
+    const first = try render.terminal.takeContentUpdate(content, a_view, null);
+    try std.testing.expectEqual(@as(usize, 1), first.uploads.len);
+    const first_generation = render.terminal.contentUsage(content).resource_generation;
+    try std.testing.expectEqual(@as(u64, 1), first_generation);
+
+    try std.testing.expectError(
+        error.CommandLimit,
+        render.terminal.takeContentUpdate(content, b_view, null),
+    );
+    const failed = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(u64, 1), failed.producer_revision);
+    try std.testing.expectEqual(first_generation, failed.resource_generation);
+    try std.testing.expectEqual(@as(usize, 2), failed.atlas_entries);
+
+    const recovered = try render.terminal.takeContentUpdate(content, a_view, null);
+    try std.testing.expectEqual(@as(usize, 1), recovered.uploads.len);
+    try std.testing.expectEqual(first_generation + 1, render.terminal.contentUsage(content).resource_generation);
+    try std.testing.expectEqual(@as(u64, 2), render.terminal.contentUsage(content).producer_revision);
 }

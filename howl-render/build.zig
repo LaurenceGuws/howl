@@ -87,6 +87,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
+            canvas,
         ));
         const tested_chrome = chromeNativeModule(
             b,
@@ -103,6 +104,7 @@ pub fn build(b: *std.Build) void {
             optimize,
             client.?,
             text.?,
+            canvas,
         ));
     } else {
         module.addImport("chrome", chrome);
@@ -171,6 +173,7 @@ fn terminalNativeModule(
     optimize: std.builtin.OptimizeMode,
     client: *std.Build.Module,
     text: *std.Build.Module,
+    canvas: *std.Build.Module,
 ) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal_native.zig"),
@@ -179,5 +182,6 @@ fn terminalNativeModule(
     });
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
+    terminal.addImport("canvas", canvas);
     return terminal;
 }
