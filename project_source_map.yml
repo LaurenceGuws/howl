@@ -15,10 +15,10 @@ external:
   howl-text: standalone pinned repository owning native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 experimental:
-  howl-client: reusable UI-agnostic native session client engine: connection/framing, interaction state, canonical non-coordinate actions, one lossless rich text_v1 decoder, compact semantic snapshots, and an explicit-lifetime one-allocation coarse semantic view
+  howl-client: reusable UI-agnostic native session client engine: portable local connection/framing, interaction state, canonical semantic actions including mouse, one lossless rich text_v1 decoder, compact semantic snapshots, and an explicit-lifetime one-allocation coarse semantic view
   howl-cli: native human/agent session client under active proof; compact semantic observation plus canonical input/control, not shell execution or remote transport
   howl-render: backend-neutral rendering experiments consuming howl-text and howl-client.view; terminal Content emits complete Canvas ProducerUpdate state through private caller-bounded shape/atlas caches, and Composer-derived Canvas frames are the Android/iOS-pressure-proven semantic presentation seam; no stable mobile ABI is accepted
   howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate
-  howl-flutter: disposable Flutter/Linux visual client pressure-testing the frozen howl-session text/input/geometry contract directly from Dart; not part of the core gate
+  howl-flutter: Flutter platform host for the native Howl client: platform input/viewport/history UX plus an app-private version-locked native observer/control binding and batched final-Canvas backend; Android live path accepted, Linux bundled host proven, iOS native-host semantics pressure-proven while remote reachability remains SSH-only; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate

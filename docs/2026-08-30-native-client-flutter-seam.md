@@ -8,7 +8,7 @@ experiment, but **no Flutter FFI ABI is accepted yet**.
 `howl-session` + `howl-vt` remain canonical terminal truth. `howl-client` now
 owns only reusable client-side mechanics and semantic observation/control:
 connection/framing, negotiated client identity/features, coherent interaction
-state, canonical non-coordinate actions, one hostile-safe lossless `text_v1`
+state, canonical semantic actions including mouse, one hostile-safe lossless `text_v1`
 decoder, and a compact projection over that rich native model. `howl-cli` owns
 its command vocabulary and text/JSON presentation, including explicit rich
 diagnostic output. The earlier generic NDJSON pressure experiment was retired
@@ -384,6 +384,91 @@ The experiment packet, native addresses/offsets, Android dependency packaging an
 representation were deleted; a future binding should adapt the already-proven Canvas
 ownership/lifetime model instead of freezing renderer-private memory layout.
 
+## Flutter native-host promotion
+
+The final pressure step moved from presentation-only experiments to client ownership. A
+version-locked app-private host now owns Flutter's live Howl observation and control
+connections. Live observation executes
+`howl-client.rich -> howl-client.view -> terminal.Content -> canvas.Composer.Frame`
+in native code and copies one complete final-Canvas frame into caller-owned memory.
+Flutter retains only copied resource descriptors/pixels and `ui.Image` leases; the next
+observation reports precisely those qualified resources which still have a live image.
+No mutable native presentation pointer survives into a retained Flutter painter.
+
+Control uses a separate native connection/worker. Flutter continues to own platform IME,
+keyboard, touch, stylus and pointer capture, but forwards only semantic committed text,
+paste, named/Unicode physical keys, focus, resize, signals and mouse facts through
+`howl-client.actions`. `howl-client.actions.mouse` was the only missing native operation
+and was added without creating a host escape encoder. With canonical mouse tracking off,
+a native semantic move produces no child bytes. With a child enabling normal SGR mouse
+tracking, the same semantic native press/release was encoded by `howl-vt` as
+`^[[<0;4;3M^[[<3;4;3m`. Terminal byte encoding therefore remains canonical VT authority.
+
+A checked-in Android canary replaces vendor `adb input text` behavior as the native-control
+oracle. It drives the app-private control library under the real app UID and asserts
+committed UTF-8 (including lambda), Enter, Backspace, Delete, Unicode physical key,
+paste, focus, tracking-off mouse policy and a 41x53 resize against canonical shell and
+geometry results. Real Android LatinIME separately proved the accepted guard-editor
+Backspace + Enter path. Samsung's shell injector inability to synthesize non-ASCII text
+is not treated as a Howl contract.
+
+Three fresh 36x51 Note10 sessions then compared the complete old Dart/TextPainter client
+to the full native host under the same marker-delimited 1,600-line / 5 ms workload.
+Geometry leadership was disabled only for this benchmark so vendor IME inset timing could
+not change the fixture. Means across three runs were:
+
+| metric | Dart wire + TextPainter | full native host | delta |
+| --- | ---: | ---: | ---: |
+| CPU ticks / presented paint | **7.486** | **2.995** | **-60.0%** |
+| Flutter build / frame | 23.610 ms | 2.098 ms | -91.1% |
+| Flutter raster / frame | 37.554 ms | 5.524 ms | -85.3% |
+| build+raster / frame | **61.164 ms** | **7.622 ms** | **-87.5%** |
+| paints in workload | 67.0 | 89.0 | **+32.8%** |
+| settled PSS | 231,852 KiB | 221,116 KiB | **-10,736 KiB** |
+
+The native observer copied about 47.5 KiB per presented observation in that workload.
+Its worker-call wall time averaged about 76 ms because that timing includes the blocking
+long-poll wait and therefore is not a native CPU-cost metric. Flutter-side resource/image
+preparation averaged about 7.5 ms/observation.
+
+The performance result earned a strict deletion trial. Flutter's 1,030-line wire/
+`text_v1` decoder, snapshot object graph, TextPainter terminal renderer and 137-line glyph
+cache were deleted rather than retained as a permanent fallback. The native-only client
+passed the surviving behavioral suite, root gate and physical Note10 quality/history/
+control dogfood. Flutter kept only launch endpoint grammar and language-neutral semantic
+input identities as platform configuration facts. After replacing the old generic
+multi-frame replay parser with a one-frame final-Canvas parser and deleting benchmark
+telemetry, Flutter's Dart source is about 2,994 lines: only about 352 lines above the old
+Dart-terminal client despite removing 1,167 lines of duplicate terminal authority and
+adding native observer/control/history/resource-lifetime support.
+
+The native binding is intentionally colocated under `howl-flutter/native/`. It is an
+application implementation detail, version-locked to the same Howl/Flutter build, not a
+new reusable package or public ABI. Its C-facing handles are typed opaque Zig handles,
+so the product source adds no new `anyopaque` audit allowlist entries. The packet format,
+FFI symbol set and layout may change with the app.
+
+`howl-client.Connection` was also moved from raw `std.os.linux` socket syscalls to Zig's
+POSIX/system layer. Linux tests and the root gate remained green; the same native host and
+control object then compiled for `aarch64-ios`. Darwin's signed `ssize_t` return from
+`read`/`write` exposed one portable accounting bug, fixed by converting successful
+nonnegative byte counts to `usize` before accumulation.
+
+On iPhone the same host/control object was linked beside a no-network native canary, so
+no remote-session transport claim was needed. Physical frame 1 visibly rendered the
+corrected `dstIn` color path and published one 16 KiB alpha resource; frame 2 retained the
+identical terminal picture with **uploads 0 / 0 B**. This proves the Apple compile/link,
+caller-owned-copy and resource-lifetime model. iOS live remote reachability remains
+SSH-only and is intentionally outside this promotion.
+
+Android packaging is explicitly arm64-only while this native host has only an arm64
+furnace. The checked-in Android build wrapper builds the native host, performs a clean
+Flutter build with `--target-platform android-arm64`, verifies the APK ABI set and native
+host entry, and Gradle independently rejects any Flutter `target-platform` other than
+`android-arm64`. The clean profile APK is about 24.4 MiB. Linux builds the same host as a
+shared library against system FreeType/HarfBuzz and installs it in the existing
+`$ORIGIN/lib` Flutter bundle lane.
+
 ## Font policy: IosevkaTerm Nerd Font
 
 Home's current terminal presentation family is **IosevkaTerm Nerd Font**. Kitty
@@ -402,12 +487,15 @@ Flutter. The presentation layer may choose IosevkaTerm (or another configured
 family) and supply the selected font material to `howl-text`; that choice remains
 outside canonical terminal state.
 
-The Android pressure client now optionally loads an externally provisioned
-`IosevkaTermNerdFont-Regular.ttf` from its app-private files directory before the
-first frame, registering it as `IosevkaTerm Nerd Font` through Flutter's public
-`FontLoader`. The file remains untracked and unbundled; absence falls back to
-`monospace`. This is deliberately presentation/deployment policy and does not add
-font material or font concepts to `howl-client`, `howl-session`, or `howl-vt`.
+The accepted Android native host consumes an externally provisioned
+`IosevkaTermNerdFont-Regular.ttf` from the app-private files directory and uses the
+explicit Android `NotoNaskhArabic-Regular.ttf` fallback. The Iosevka file remains
+untracked and unbundled. Because Flutter no longer shapes terminal text, the previous
+Flutter `FontLoader` lane was deleted. Linux accepts explicit `HOWL_FONT` /
+`HOWL_FALLBACK_FONT` file paths or requires fontconfig to resolve the requested family
+exactly; silent font-family substitution is rejected. Font material and family choice
+remain presentation/deployment policy outside `howl-client`, `howl-session`, and
+`howl-vt`.
 
 ## Accepted versus deferred
 
@@ -421,8 +509,8 @@ Accepted now:
 - the coarse view owns one immutable allocation with explicit lifetime and exposes
   semantic slices without accepting a C/FFI byte layout;
 - CLI remains a presentation layer over the native engine;
-- Flutter glyph-layout caching, frame-paced observation, and coarse native snapshot
-  consumption are measured wins;
+- Flutter's live Android terminal now uses the app-private native observer/control host;
+  the duplicate Dart wire/text_v1/TextPainter/glyph-cache authority is deleted;
 - experimental `howl-render.terminal.Content` consumes `howl-client.view` through
   `howl-text` and emits complete backend-neutral `canvas.ProducerUpdate` state; its
   bounded exact-sequence shaping and append-only alpha atlas are private caches with
@@ -435,21 +523,20 @@ Accepted now:
 - cross-platform bindings must preserve explicit immutable frame ownership, qualified
   resource generations, sparse mutations, command order/clipping and backend-owned
   batching; those semantics are accepted independently of any C/FFI memory layout;
-- Android may privately provision IosevkaTerm Nerd Font for optional Flutter
-  presentation without making the font an app/repository asset.
+- Android privately provisions IosevkaTerm Nerd Font for native `howl-text`
+  presentation without making the font an app/repository asset; Linux uses explicit
+  files or exact fontconfig family resolution.
 
 Still experimental/deferred:
 
 - any stable C/FFI ABI;
 - packed snapshot or stable C/FFI memory layout;
-- a durable Dart/Flutter binding for the native view;
-- replacing Flutter production text layout/rasterization with `howl-text` output;
 - a stable C/FFI adapter for the accepted Canvas semantic boundary; disposable Android
   and iOS packets/exports proved caller-owned copied crossings but were deleted rather
   than promoted as ABI;
-- a production Flutter/iOS Canvas binding and each platform's concrete resource/
-  batching implementation; semantic requirements are accepted, implementation policy
-  is still platform-owned and experimental;
+- live iOS remote-session attachment through the native host; the same host compiles
+  and its copied-frame lifetime is physical-device proven, but remote reachability
+  remains SSH-only until separately designed;
 - stable atlas dimensions, GPU representation, native packet layout, or FFI memory
   layout;
 - dirty-region or retained-command reuse beyond the accepted exact-sequence shaping
