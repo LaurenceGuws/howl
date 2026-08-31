@@ -78,6 +78,7 @@ pub const Connection = struct {
 
 fn initOwnedFd(allocator: std.mem.Allocator, fd: posix.fd_t) Error!Connection {
     errdefer closeFd(fd);
+    try setCloseOnExec(fd);
     var connection = Connection{
         .allocator = allocator,
         .fd = fd,
@@ -158,6 +159,11 @@ fn loopbackAddress(port: u16) posix.sockaddr.in {
     result.addr = address.*;
     if (@hasField(posix.sockaddr.in, "zero")) result.zero = @splat(0);
     return result;
+}
+
+fn setCloseOnExec(fd: posix.fd_t) error{SocketOptionFailed}!void {
+    const result = system.fcntl(fd, posix.F.SETFD, @as(usize, posix.FD_CLOEXEC));
+    if (posix.errno(result) != .SUCCESS) return error.SocketOptionFailed;
 }
 
 fn setTcpNoDelay(fd: posix.fd_t) error{SocketOptionFailed}!void {
@@ -249,6 +255,9 @@ test "handshake requests the rich frozen wire without transport policy" {
     var connection = try initOwnedFd(std.testing.allocator, pair[0]);
     defer connection.deinit();
     thread.join();
+    const fd_flags = system.fcntl(connection.fd, posix.F.GETFD, @as(usize, 0));
+    try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(fd_flags));
+    try std.testing.expect(fd_flags & posix.FD_CLOEXEC != 0);
     try std.testing.expectEqual(protocol.protocol_max_version, connection.version);
     try std.testing.expect(connection.features & protocol.feature(.text_snapshot) != 0);
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
