@@ -17,7 +17,7 @@ external:
 experimental:
   howl-client: reusable UI-agnostic native session client engine: connection/framing, interaction state, canonical non-coordinate actions, one lossless rich text_v1 decoder, compact semantic snapshots, and an explicit-lifetime one-allocation coarse semantic view
   howl-cli: native human/agent session client under active proof; compact semantic observation plus canonical input/control, not shell execution or remote transport
-  howl-render: rendering and presentation experiments consuming howl-text and howl-client.view; native terminal text uses caller-bounded explicit-reset alpha-atlas generations and is not part of the core gate
+  howl-render: rendering and presentation experiments consuming howl-text and howl-client.view; native terminal text uses caller-bounded exact-sequence shaped-run reuse plus explicit-reset alpha-atlas generations and is not part of the core gate
   howl-gtk: disposable GTK4/Cairo visual client pressure-testing howl-session and howl-text; not part of the core gate
   howl-flutter: disposable Flutter/Linux visual client pressure-testing the frozen howl-session text/input/geometry contract directly from Dart; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate

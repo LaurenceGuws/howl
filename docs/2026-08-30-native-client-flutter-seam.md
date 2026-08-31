@@ -177,11 +177,66 @@ screenshot comparison reached about **1.99% differing pixels** with complete
 row-for-row terminal structure. No canonical terminal or `howl-text` behavior was
 changed merely to imitate Flutter.
 
-Therefore the durable conclusion is narrower than “native Flutter renderer wins”:
-the atlas crossing is a real frame-latency/throughput opportunity, but the current
-bridge fails the end-to-end CPU criterion and is deleted. The next native presentation
-pressure should target **incremental shaping/run or cell reuse** before Flutter atlas
-composition is reconsidered.
+Therefore the durable conclusion from that first crossing was narrower than “native
+Flutter renderer wins”: the atlas crossing was a real frame-latency/throughput
+opportunity, but full-grid shaping left it failing the end-to-end CPU criterion. The
+bridge was deleted and shaped-run reuse was measured before Flutter was reconsidered.
+
+## Bounded shaping reuse and second Flutter pressure result
+
+The follow-up measurement found a much stronger reusable identity than spatial dirty
+cells. Across a fresh 36x51 / 1,600-line churn, terminal projection asked for
+**1,440,941** cell-local shapes but saw only **73 exact scalar sequences**. A
+disposable exact-sequence cache produced a **99.9949%** hit rate after 73 cold misses.
+All 1.44 million direct-versus-cached glyph comparisons matched after rebasing cached
+relative source clusters into the current immutable view, including combining,
+width-two, Nerd-font and real fallback sequences. The measured retained scalar, glyph
+and metadata material was only **5,552 bytes**.
+
+That result earns a presentation-owned `ShapeCache` in `howl-render.terminal`. Its
+entry, scalar, glyph and maximum-sequence capacities are all supplied by the caller.
+It owns one preallocated `howl-text.ShapeBuffer`, stores exact scalar sequences and
+relative shaped runs for one fixed `FontSet`, allocates nothing after initialization,
+does not evict implicitly, and may be reset independently from the glyph atlas because
+no returned frame borrows shape-cache storage. Cache hits rebase clusters while
+copying final placements; `howl-text` remains the sole owner of face selection and
+HarfBuzz semantics.
+
+On the Note10, the exact pre-cache renderer from pushed commit `9a17398` averaged
+**1.928 ms/frame** warm on the same settled 36x51 / 911-glyph view. The bounded
+shape-cache candidate averaged **0.178 ms/frame**, a **10.85x** reduction (about
+**90.8% less terminal projection time**). The candidate first compared every
+placement field against fresh direct `howl-text` output before timing.
+
+That native win was large enough to justify recreating the deleted Flutter atlas
+pressure path once more. Three fresh profile-mode Note10 sessions per mode used
+explicit begin/end terminal markers around the same 1,600-line/5 ms workload.
+Averaged results were:
+
+- CPU cost per presented paint: **6.114 Dart -> 4.703 native**, about **23.1% lower**;
+- Flutter build+raster: **50.666 ms -> 38.521 ms/frame**, about **24.0% lower**;
+- presented paints: **72.3 -> 104.3**, about **44.2% more**;
+- settled PSS: **230,534 KiB -> 228,611 KiB**, about **1.9 MiB lower**.
+
+Inside the measured native window, coarse view creation averaged **0.300 ms**,
+cache-backed terminal projection **0.734 ms**, and private presentation serialization
+**0.375 ms** per observation. Packed presentation material averaged about **20.35
+KiB/observation**. Shape and glyph caches both topped out at 71 entries, atlas
+generation remained 1, and no reset occurred. The atlas had already stabilized before
+the begin marker, so no atlas image upload was needed during the timed window.
+
+The recreated quality fixture retained indexed/bold style, Greek, combining text, box
+drawing, Nerd-font content, a semantic width-two lead/continuation, and a real Arabic
+fallback. Native and Dart screenshots retained the same complete terminal structure
+and nearly identical content luminance distributions.
+
+This second A/B therefore overturns the first experiment's CPU verdict: bounded native
+presentation is now an end-to-end physical-device win for this workload. It still does
+**not** canonize the disposable bridge. Its C ABI, Dart offsets, Android packaging,
+private FreeType/HarfBuzz copies, 128x128 RGBA representation and FFI ownership glue
+were deleted again. The next design question is the smallest durable ownership-oriented
+native presentation seam that can preserve the measured win without exposing
+`howl-render`'s private packing as ABI.
 
 ## Font policy: IosevkaTerm Nerd Font
 
@@ -223,8 +278,9 @@ Accepted now:
 - Flutter glyph-layout caching, frame-paced observation, and coarse native snapshot
   consumption are measured wins;
 - experimental `howl-render` may derive native terminal glyph placements from
-  `howl-client.view` through `howl-text` using a caller-bounded, append-only atlas
-  generation with explicit reset and no implicit eviction;
+  `howl-client.view` through `howl-text` using caller-bounded shaped-run reuse plus
+  an append-only glyph atlas; both have explicit independent reset and no implicit
+  eviction, while source clusters are rebased into each immutable view;
 - Android may privately provision IosevkaTerm Nerd Font for optional Flutter
   presentation without making the font an app/repository asset.
 
@@ -234,10 +290,11 @@ Still experimental/deferred:
 - packed snapshot or stable C/FFI memory layout;
 - a durable Dart/Flutter binding for the native view;
 - replacing Flutter production text layout/rasterization with `howl-text` output;
-- a durable glyph-atlas/image crossing into Flutter/iOS; the disposable Android
-  bridge measured a frame-latency win but failed CPU-per-paint and was deleted;
+- a durable native presentation crossing into Flutter/iOS; a second disposable
+  Android bridge with bounded shape reuse won CPU/frame/memory on Note10, but its
+  private ABI and packaging were deleted rather than promoted directly;
 - stable atlas dimensions, packing policy, GPU representation, or FFI memory layout;
-- incremental shaping/run reuse and dirty-region presentation;
+- dirty-region/placement reuse beyond the accepted exact-sequence shape cache;
 - stable cross-platform font provisioning or bundled font asset policy;
 - mouse/coordinate mutation in the CLI before stale-target identity can be
   enforced by the session boundary.
