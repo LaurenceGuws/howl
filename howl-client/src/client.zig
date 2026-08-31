@@ -130,11 +130,11 @@ fn connectTcp(port: u16) error{ SocketCreateFailed, SocketConnectFailed, SocketO
 fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed, SocketPathTooLong }!posix.fd_t {
     var address: posix.sockaddr.un = undefined;
     if (path.len == 0 or path.len >= address.path.len) return error.SocketPathTooLong;
-    if (@hasField(posix.sockaddr.un, "len")) address.len = @sizeOf(posix.sockaddr.un);
+    const length: posix.socklen_t = @intCast(@offsetOf(posix.sockaddr.un, "path") + path.len + 1);
+    if (@hasField(posix.sockaddr.un, "len")) address.len = @intCast(length);
     address.family = posix.AF.UNIX;
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
-    const length: posix.socklen_t = @intCast(@sizeOf(posix.sockaddr.un));
     const raw = system.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0);
     if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
