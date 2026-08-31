@@ -5,7 +5,7 @@
 
 const std = @import("std");
 const posix = std.posix;
-const linux = std.os.linux;
+const system = posix.system;
 const protocol = @import("howl_session").protocol;
 
 const tcp_prefix = "tcp://127.0.0.1:";
@@ -109,14 +109,14 @@ fn tcpPort(endpoint: []const u8) error{InvalidEndpoint}!u16 {
 }
 
 fn connectTcp(port: u16) error{ SocketCreateFailed, SocketConnectFailed, SocketOptionFailed }!posix.fd_t {
-    const raw = linux.socket(linux.AF.INET, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+    const raw = system.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+    if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
     var address = loopbackAddress(port);
     while (true) {
-        const result = linux.connect(fd, @ptrCast(&address), @sizeOf(linux.sockaddr.in));
-        switch (linux.errno(result)) {
+        const result = system.connect(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in));
+        switch (posix.errno(result)) {
             .SUCCESS => break,
             .INTR => continue,
             else => return error.SocketConnectFailed,
@@ -127,19 +127,20 @@ fn connectTcp(port: u16) error{ SocketCreateFailed, SocketConnectFailed, SocketO
 }
 
 fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed, SocketPathTooLong }!posix.fd_t {
-    var address: linux.sockaddr.un = undefined;
+    var address: posix.sockaddr.un = undefined;
     if (path.len == 0 or path.len >= address.path.len) return error.SocketPathTooLong;
-    address.family = linux.AF.UNIX;
+    if (@hasField(posix.sockaddr.un, "len")) address.len = @sizeOf(posix.sockaddr.un);
+    address.family = posix.AF.UNIX;
     @memset(&address.path, 0);
     @memcpy(address.path[0..path.len], path);
-    const length: linux.socklen_t = @intCast(@offsetOf(linux.sockaddr.un, "path") + path.len + 1);
-    const raw = linux.socket(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0);
-    if (linux.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
+    const length: posix.socklen_t = @intCast(@sizeOf(posix.sockaddr.un));
+    const raw = system.socket(posix.AF.UNIX, posix.SOCK.STREAM, 0);
+    if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
     while (true) {
-        const result = linux.connect(fd, @ptrCast(&address), length);
-        switch (linux.errno(result)) {
+        const result = system.connect(fd, @ptrCast(&address), length);
+        switch (posix.errno(result)) {
             .SUCCESS => return fd,
             .INTR => continue,
             else => return error.SocketConnectFailed,
@@ -147,29 +148,35 @@ fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed,
     }
 }
 
-fn loopbackAddress(port: u16) linux.sockaddr.in {
+fn loopbackAddress(port: u16) posix.sockaddr.in {
     const bytes = [4]u8{ 127, 0, 0, 1 };
     const address: *align(1) const u32 = @ptrCast(&bytes);
-    return .{ .port = std.mem.nativeToBig(u16, port), .addr = address.* };
+    var result: posix.sockaddr.in = undefined;
+    if (@hasField(posix.sockaddr.in, "len")) result.len = @sizeOf(posix.sockaddr.in);
+    result.family = posix.AF.INET;
+    result.port = std.mem.nativeToBig(u16, port);
+    result.addr = address.*;
+    if (@hasField(posix.sockaddr.in, "zero")) result.zero = @splat(0);
+    return result;
 }
 
 fn setTcpNoDelay(fd: posix.fd_t) error{SocketOptionFailed}!void {
     const enabled: c_int = 1;
-    const result = linux.setsockopt(
+    const result = system.setsockopt(
         fd,
-        linux.IPPROTO.TCP,
-        linux.TCP.NODELAY,
+        posix.IPPROTO.TCP,
+        posix.TCP.NODELAY,
         std.mem.asBytes(&enabled).ptr,
         @sizeOf(c_int),
     );
-    if (linux.errno(result) != .SUCCESS) return error.SocketOptionFailed;
+    if (posix.errno(result) != .SUCCESS) return error.SocketOptionFailed;
 }
 
 fn writeAll(fd: posix.fd_t, bytes: []const u8) error{ SocketWriteFailed, ConnectionClosed }!void {
     var offset: usize = 0;
     while (offset < bytes.len) {
-        const result = linux.write(fd, bytes[offset..].ptr, bytes.len - offset);
-        switch (linux.errno(result)) {
+        const result = system.write(fd, bytes[offset..].ptr, bytes.len - offset);
+        switch (posix.errno(result)) {
             .SUCCESS => {
                 if (result == 0) return error.ConnectionClosed;
                 if (result > bytes.len - offset) return error.SocketWriteFailed;
@@ -185,8 +192,8 @@ fn writeAll(fd: posix.fd_t, bytes: []const u8) error{ SocketWriteFailed, Connect
 fn readExact(fd: posix.fd_t, output: []u8) error{ SocketReadFailed, ConnectionClosed }!void {
     var offset: usize = 0;
     while (offset < output.len) {
-        const result = linux.read(fd, output[offset..].ptr, output.len - offset);
-        switch (linux.errno(result)) {
+        const result = system.read(fd, output[offset..].ptr, output.len - offset);
+        switch (posix.errno(result)) {
             .SUCCESS => {
                 if (result == 0) return error.ConnectionClosed;
                 if (result > output.len - offset) return error.SocketReadFailed;
@@ -200,15 +207,15 @@ fn readExact(fd: posix.fd_t, output: []u8) error{ SocketReadFailed, ConnectionCl
 }
 
 fn closeFd(fd: posix.fd_t) void {
-    const result = linux.close(fd);
-    const errno = linux.errno(result);
+    const result = system.close(fd);
+    const errno = posix.errno(result);
     std.debug.assert(errno == .SUCCESS or errno == .INTR);
 }
 
 fn testSocketPair() [2]posix.fd_t {
     var pair: [2]posix.fd_t = undefined;
-    const result = linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM | linux.SOCK.CLOEXEC, 0, &pair);
-    if (linux.errno(result) != .SUCCESS) @panic("test socketpair failed");
+    const result = system.socketpair(posix.AF.UNIX, posix.SOCK.STREAM, 0, &pair);
+    if (posix.errno(result) != .SUCCESS) @panic("test socketpair failed");
     return pair;
 }
 

@@ -7,7 +7,11 @@ import 'package:flutter/services.dart';
 
 import 'platform_input.dart';
 import 'history_viewport.dart';
+import 'ios_native_host_pressure.dart';
 import 'launch_config.dart';
+import 'native_canvas_surface.dart';
+import 'native_host.dart';
+import 'native_host_measurement.dart';
 import 'pointer_input.dart';
 import 'protocol.dart';
 import 'text_input.dart';
@@ -17,7 +21,13 @@ import 'terminal_status.dart';
 import 'touch_surface.dart';
 import 'visible_viewport.dart';
 
+const bool _nativeHostEnabled = bool.fromEnvironment('HOWL_NATIVE_HOST');
+
 Future<void> main(List<String> args) async {
+  if (Platform.isIOS) {
+    await runIosNativeHostPressure();
+    return;
+  }
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
   final endpointText = args.isNotEmpty
       ? args.first
@@ -93,11 +103,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   final HistoryViewport _history = HistoryViewport();
   final TerminalGlyphCache _glyphCache = TerminalGlyphCache();
   late final TerminalTextInputClient _textInput;
+  late final TerminalMeasurement _measurement;
   HowlConnection? _observer;
   HowlConnection? _historyObserver;
   HowlConnection? _control;
   HowlSnapshot? _liveSnapshot;
   HowlSnapshot? _snapshot;
+  NativeHostObserver? _nativeObserver;
+  NativeHostObserver? _nativeHistoryObserver;
+  NativeHostControl? _nativeControl;
+  NativeHostMetadata? _nativeLiveMetadata;
+  NativeHostMetadata? _nativeHistoryMetadata;
+  CanvasReplayFrameLease? _nativeLiveLease;
+  CanvasReplayFrameLease? _nativeHistoryLease;
   Object? _failure;
   bool _stopping = false;
   bool _historyRequestRunning = false;
@@ -111,11 +129,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void initState() {
     super.initState();
+    _measurement = TerminalMeasurement(
+      mode: _nativeHostEnabled ? 'native' : 'dart',
+    );
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       onCommit: (text) {
         _returnToLiveForInput();
-        _queueControl((control) => control.sendCommittedText(text));
+        _sendCommittedText(text);
       },
       onEditKey: (key) {
         _returnToLiveForInput();
@@ -124,16 +145,88 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           TerminalEditKey.backspace => HowlWire.namedBackspace,
           TerminalEditKey.delete => HowlWire.namedDelete,
         };
-        _queueControl(
-          (control) =>
-              control.sendNamedKey(keyName: keyName, action: HowlWire.keyPress),
-        );
+        _sendNamedKey(keyName: keyName, action: HowlWire.keyPress);
       },
     );
     unawaited(_observe());
   }
 
-  Future<void> _observe() async {
+  Future<void> _observe() =>
+      _nativeHostEnabled ? _observeNative() : _observeDart();
+
+  Future<void> _observeNative() async {
+    try {
+      final observer = await NativeHostObserver.createAndroid(
+        endpoint: widget.endpoint.toString(),
+      );
+      final control = await NativeHostControl.create(
+        endpoint: widget.endpoint.toString(),
+      );
+      if (!mounted || _stopping) {
+        unawaited(observer.close());
+        unawaited(control.close());
+        return;
+      }
+      _nativeObserver = observer;
+      _nativeControl = control;
+      if (_focusNode.hasFocus) {
+        _textInput.attach(viewId: View.of(context).viewId);
+        _scheduleTextInputShow();
+        _sendFocus(true);
+      }
+      var revision = 0;
+      while (!_stopping) {
+        final observation = await observer.observe(
+          afterRevision: revision,
+          historyOffset: 0,
+          residency: encodeNativeHostResidency(_nativeLiveLease),
+        );
+        final packet = parseNativeHostPacket(observation.bytes);
+        revision = packet.metadata.revision;
+        if (!mounted || _stopping) break;
+        final prepared = await prepareCanvasReplayFrame(
+          _nativeLiveLease,
+          packet.canvas,
+        );
+        if (!mounted || _stopping) {
+          disposeCanvasReplayLease(prepared.lease);
+          break;
+        }
+        _measurement.observeNative(
+          metadata: packet.metadata,
+          observation: observation,
+          prepareMicroseconds: prepared.prepareMicroseconds,
+        );
+        _nativeLiveMetadata = packet.metadata;
+        _nativeLiveLease = prepared.lease;
+        if (_history.active) {
+          _history.followLive(
+            historyCount: packet.metadata.historyCount,
+            historyRowBase: packet.metadata.historyRowBase,
+            alternateScreen: packet.metadata.alternateScreen,
+          );
+          _historyGeneration += 1;
+          if (_history.active) {
+            _scheduleHistorySnapshot();
+            setState(() {});
+          } else {
+            _leaveHistory();
+          }
+        } else {
+          setState(() {});
+        }
+        await WidgetsBinding.instance.endOfFrame;
+        await _measurement.afterPresentedFrame();
+        for (final image in prepared.retired) {
+          image.dispose();
+        }
+      }
+    } catch (error) {
+      _reportFailure(error);
+    }
+  }
+
+  Future<void> _observeDart() async {
     try {
       final observer = await HowlConnection.connect(widget.endpoint);
       final control = await HowlConnection.connect(widget.endpoint);
@@ -147,13 +240,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (_focusNode.hasFocus) {
         _textInput.attach(viewId: View.of(context).viewId);
         _scheduleTextInputShow();
-        _queueControl((control) => control.sendFocus(true));
+        _sendFocus(true);
       }
       var revision = 0;
       while (!_stopping) {
         final next = await observer.observeText(revision);
         revision = next.revision;
         if (!mounted || _stopping) break;
+        _measurement.observeDart(next);
         _liveSnapshot = next;
         if (_history.active) {
           _history.followLive(
@@ -173,6 +267,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         // PTY/VT progress is independent of observers. Do not request and decode
         // terminal revisions faster than Flutter can present them.
         await WidgetsBinding.instance.endOfFrame;
+        await _measurement.afterPresentedFrame();
       }
     } catch (error) {
       _reportFailure(error);
@@ -184,13 +279,90 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     setState(() => _failure = error);
   }
 
-  void _queueControl(Future<void> Function(HowlConnection) action) {
-    final control = _control;
-    if (control == null || _stopping) return;
-    _controlTail = _controlTail.then((_) => action(control));
+  bool get _hasControl =>
+      _nativeHostEnabled ? _nativeControl != null : _control != null;
+
+  void _queueControl({
+    Future<void> Function(HowlConnection)? dart,
+    Future<void> Function(NativeHostControl)? native,
+  }) {
+    if (_stopping) return;
+    Future<void> Function()? action;
+    if (_nativeHostEnabled) {
+      final control = _nativeControl;
+      if (control == null || native == null) return;
+      action = () => native(control);
+    } else {
+      final control = _control;
+      if (control == null || dart == null) return;
+      action = () => dart(control);
+    }
+    _controlTail = _controlTail.then((_) => action!());
     _controlTail = _controlTail.catchError((Object error) {
       _reportFailure(error);
     });
+  }
+
+  void _sendCommittedText(String text) {
+    _queueControl(
+      dart: (control) => control.sendCommittedText(text),
+      native: (control) => control.committedText(text),
+    );
+  }
+
+  void _sendNamedKey({
+    required int keyName,
+    required int action,
+    int modifiers = 0,
+  }) {
+    _queueControl(
+      dart: (control) => control.sendNamedKey(
+        keyName: keyName,
+        action: action,
+        modifiers: modifiers,
+      ),
+      native: (control) => control.namedKey(
+        keyName: keyName,
+        action: action,
+        modifiers: modifiers,
+      ),
+    );
+  }
+
+  void _sendFocus(bool focused) {
+    _queueControl(
+      dart: (control) => control.sendFocus(focused),
+      native: (control) => control.focus(focused),
+    );
+  }
+
+  void _sendMouse(HowlMouseInput input) {
+    _queueControl(
+      dart: (control) => control.sendMouse(input),
+      native: (control) => control.mouse(
+        kind: input.kind,
+        button: input.button,
+        modifiers: input.modifiers,
+        buttonsDown: input.buttonsDown,
+        row: input.row,
+        column: input.column,
+        pixelX: input.pixelX,
+        pixelY: input.pixelY,
+      ),
+    );
+  }
+
+  void _sendResize(int rows, int columns) {
+    _queueControl(
+      dart: (control) async {
+        if (!_leaderAssigned) {
+          await control.assignLeader(control.welcome.clientId);
+          _leaderAssigned = true;
+        }
+        await control.resize(rows, columns);
+      },
+      native: (control) => control.resize(rows, columns),
+    );
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
@@ -204,19 +376,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _ => HowlWire.keyPress,
     };
     final modifiers = howlModifierBits();
-    _queueControl(
-      (control) => control.sendNamedKey(
-        keyName: keyName,
-        action: action,
-        modifiers: modifiers,
-      ),
-    );
+    _sendNamedKey(keyName: keyName, action: action, modifiers: modifiers);
     return KeyEventResult.handled;
   }
 
   void _scheduleTextInputShow() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _stopping || !_focusNode.hasFocus || _control == null) {
+      if (!mounted || _stopping || !_focusNode.hasFocus || !_hasControl) {
         return;
       }
       unawaited(_showTextInput());
@@ -233,7 +399,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _activateTextInput() {
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
-    if (_control == null) return;
+    if (!_hasControl) return;
     _textInput.attach(viewId: View.of(context).viewId);
     _scheduleTextInputShow();
   }
@@ -264,13 +430,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _sendPointer(PointerEvent event, Size viewport) {
     final snapshot = _liveSnapshot;
-    if (snapshot == null) return;
+    final metadata = _nativeLiveMetadata;
+    final rows = _nativeHostEnabled ? metadata?.rows : snapshot?.begin.rows;
+    final columns = _nativeHostEnabled
+        ? metadata?.columns
+        : snapshot?.begin.columns;
+    if (rows == null || columns == null) return;
     final events = _pointerInput.translate(
       event,
       geometry: TerminalPointerGeometry(
         viewport: viewport,
-        rows: snapshot.begin.rows,
-        columns: snapshot.begin.columns,
+        rows: rows,
+        columns: columns,
         cellWidth: TerminalPainter.cellWidth,
         rowHeight: TerminalPainter.lineHeight,
       ),
@@ -279,7 +450,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (events.isEmpty) return;
     _returnToLiveForInput();
     for (final input in events) {
-      _queueControl((control) => control.sendMouse(input));
+      _sendMouse(input);
     }
   }
 
@@ -289,14 +460,29 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _updateHistoryDrag(DragUpdateDetails details) {
     final live = _liveSnapshot;
+    final metadata = _nativeLiveMetadata;
     final deltaY = details.primaryDelta;
-    if (live == null || deltaY == null) return;
+    final historyCount = _nativeHostEnabled
+        ? metadata?.historyCount
+        : live?.begin.historyCount;
+    final historyRowBase = _nativeHostEnabled
+        ? metadata?.historyRowBase
+        : live?.begin.historyRowBase;
+    final alternateScreen = _nativeHostEnabled
+        ? metadata?.alternateScreen
+        : live?.begin.alternateScreen;
+    if (deltaY == null ||
+        historyCount == null ||
+        historyRowBase == null ||
+        alternateScreen == null) {
+      return;
+    }
     final changed = _history.drag(
       deltaY: deltaY,
       rowHeight: TerminalPainter.lineHeight,
-      historyCount: live.begin.historyCount,
-      historyRowBase: live.begin.historyRowBase,
-      alternateScreen: live.begin.alternateScreen,
+      historyCount: historyCount,
+      historyRowBase: historyRowBase,
+      alternateScreen: alternateScreen,
     );
     if (!changed) return;
     _historyGeneration += 1;
@@ -321,6 +507,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   Future<void> _drainHistorySnapshots() async {
+    if (_nativeHostEnabled) return _drainNativeHistorySnapshots();
     if (_historyRequestRunning || _stopping || !_history.active) return;
     _historyRequestRunning = true;
     try {
@@ -372,6 +559,76 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     }
   }
 
+  Future<void> _drainNativeHistorySnapshots() async {
+    if (_historyRequestRunning || _stopping || !_history.active) return;
+    _historyRequestRunning = true;
+    try {
+      while (!_stopping && _history.active) {
+        _historyRequestPending = false;
+        final generation = _historyGeneration;
+        var observer = _nativeHistoryObserver;
+        if (observer == null) {
+          observer = await NativeHostObserver.createAndroid(
+            endpoint: widget.endpoint.toString(),
+          );
+          if (!mounted || _stopping || !_history.active) {
+            unawaited(observer.close());
+            return;
+          }
+          _nativeHistoryObserver = observer;
+        }
+        final observation = await observer.observe(
+          afterRevision: 0,
+          historyOffset: _history.targetOffset,
+          residency: encodeNativeHostResidency(_nativeHistoryLease),
+        );
+        final packet = parseNativeHostPacket(observation.bytes);
+        if (!mounted || _stopping || !_history.active) return;
+        if (generation != _historyGeneration) continue;
+        _history.acceptSnapshot(
+          historyOffset: packet.metadata.historyOffset,
+          historyCount: packet.metadata.historyCount,
+          historyRowBase: packet.metadata.historyRowBase,
+          alternateScreen: packet.metadata.alternateScreen,
+        );
+        if (!_history.active) {
+          _leaveHistory();
+          return;
+        }
+        final prepared = await prepareCanvasReplayFrame(
+          _nativeHistoryLease,
+          packet.canvas,
+        );
+        if (!mounted || _stopping || !_history.active) return;
+        if (generation != _historyGeneration) {
+          for (final image in prepared.retired) {
+            image.dispose();
+          }
+          continue;
+        }
+        _nativeHistoryMetadata = packet.metadata;
+        _nativeHistoryLease = prepared.lease;
+        setState(() {});
+        await WidgetsBinding.instance.endOfFrame;
+        for (final image in prepared.retired) {
+          image.dispose();
+        }
+        if (generation == _historyGeneration) return;
+      }
+    } catch (error) {
+      if (!_stopping && _history.active) {
+        _leaveHistory();
+        _reportFailure(error);
+      }
+    } finally {
+      _historyRequestRunning = false;
+      if (_historyRequestPending && !_stopping && _history.active) {
+        _historyRequestPending = false;
+        _scheduleHistorySnapshot();
+      }
+    }
+  }
+
   void _returnToLiveForInput() {
     if (_history.active) _leaveHistory();
   }
@@ -383,20 +640,42 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final historyObserver = _historyObserver;
     _historyObserver = null;
     historyObserver?.close();
+    final nativeHistoryObserver = _nativeHistoryObserver;
+    _nativeHistoryObserver = null;
+    if (nativeHistoryObserver != null) {
+      unawaited(nativeHistoryObserver.close());
+    }
+    final oldNativeHistory = _nativeHistoryLease;
+    _nativeHistoryLease = null;
+    _nativeHistoryMetadata = null;
+    if (_nativeHostEnabled) {
+      if (mounted && !_stopping && _nativeLiveLease != null) {
+        setState(() {});
+        if (oldNativeHistory != null) {
+          unawaited(_disposeLeaseAfterFrame(oldNativeHistory));
+        }
+      }
+      return;
+    }
     final live = _liveSnapshot;
     if (mounted && !_stopping && live != null) {
       setState(() => _snapshot = live);
     }
   }
 
+  Future<void> _disposeLeaseAfterFrame(CanvasReplayFrameLease lease) async {
+    await WidgetsBinding.instance.endOfFrame;
+    disposeCanvasReplayLease(lease);
+  }
+
   void _onFocusChange(bool focused) {
-    if (focused && _control != null) {
+    if (focused && _hasControl) {
       _textInput.attach(viewId: View.of(context).viewId);
       _scheduleTextInputShow();
     } else {
       _textInput.detach();
     }
-    _queueControl((control) => control.sendFocus(focused));
+    _sendFocus(focused);
   }
 
   void _proposeGeometry(Size size) {
@@ -417,13 +696,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _proposedRows = rows;
     _proposedColumns = columns;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _queueControl((control) async {
-        if (!_leaderAssigned) {
-          await control.assignLeader(control.welcome.clientId);
-          _leaderAssigned = true;
-        }
-        await control.resize(rows, columns);
-      });
+      _sendResize(rows, columns);
     });
   }
 
@@ -433,9 +706,20 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _textInput.detach();
     _focusNode.dispose();
     _glyphCache.dispose();
+    _measurement.dispose();
     _observer?.close();
     _historyObserver?.close();
     _control?.close();
+    final nativeObserver = _nativeObserver;
+    final nativeHistoryObserver = _nativeHistoryObserver;
+    final nativeControl = _nativeControl;
+    if (nativeObserver != null) unawaited(nativeObserver.close());
+    if (nativeHistoryObserver != null) {
+      unawaited(nativeHistoryObserver.close());
+    }
+    if (nativeControl != null) unawaited(nativeControl.close());
+    disposeCanvasReplayLease(_nativeLiveLease);
+    disposeCanvasReplayLease(_nativeHistoryLease);
     super.dispose();
   }
 
@@ -444,6 +728,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     Widget content;
     final failure = _failure;
     final snapshot = _snapshot;
+    final nativeMetadata = _history.active
+        ? _nativeHistoryMetadata
+        : _nativeLiveMetadata;
+    final nativeLease = _history.active
+        ? _nativeHistoryLease
+        : _nativeLiveLease;
     if (failure != null) {
       content = ColoredBox(
         color: const Color(0xff090b0e),
@@ -451,6 +741,40 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           child: TerminalStatusText('Howl attach failed\n$failure'),
         ),
       );
+    } else if (_nativeHostEnabled) {
+      if (nativeMetadata == null || nativeLease == null) {
+        content = const ColoredBox(
+          color: Color(0xff090b0e),
+          child: Center(child: TerminalStatusText('attaching to native Howl…')),
+        );
+      } else {
+        content = LayoutBuilder(
+          builder: (context, constraints) {
+            _proposeGeometry(constraints.biggest);
+            return ColoredBox(
+              color: const Color(0xff090b0e),
+              child: Center(
+                child: RepaintBoundary(
+                  child: CustomPaint(
+                    size: Size(
+                      nativeMetadata.columns * TerminalPainter.cellWidth,
+                      nativeMetadata.rows * TerminalPainter.lineHeight,
+                    ),
+                    painter: CanvasReplayPainter(
+                      lease: nativeLease,
+                      logicalWidth:
+                          nativeMetadata.columns * TerminalPainter.cellWidth,
+                      logicalHeight:
+                          nativeMetadata.rows * TerminalPainter.lineHeight,
+                      onPaint: _measurement.onPaint,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      }
     } else if (snapshot == null) {
       content = const ColoredBox(
         color: Color(0xff090b0e),
@@ -469,7 +793,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                     snapshot.begin.columns * TerminalPainter.cellWidth,
                     snapshot.begin.rows * TerminalPainter.lineHeight,
                   ),
-                  painter: TerminalPainter(snapshot, _glyphCache),
+                  painter: TerminalPainter(
+                    snapshot,
+                    _glyphCache,
+                    _measurement.onPaint,
+                  ),
                 ),
               ),
             ),
@@ -510,7 +838,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 }
 
 final class TerminalPainter extends CustomPainter {
-  TerminalPainter(this.snapshot, this.glyphCache);
+  TerminalPainter(this.snapshot, this.glyphCache, this.onPaint);
 
   static const cellWidth = 10.0;
   static const lineHeight = 20.0;
@@ -518,9 +846,11 @@ final class TerminalPainter extends CustomPainter {
 
   final HowlSnapshot snapshot;
   final TerminalGlyphCache glyphCache;
+  final VoidCallback onPaint;
 
   @override
   void paint(Canvas canvas, Size size) {
+    onPaint();
     final presentation = snapshot.presentation;
     final defaultBackground = rgbaColor(presentation.background);
     canvas.drawRect(Offset.zero & size, Paint()..color = defaultBackground);

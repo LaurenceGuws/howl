@@ -13,6 +13,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install tracked Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.17.0-dev.1454+5faa79730
+
+      - name: Verify native pressure inputs
+        run: |
+          set -euxo pipefail
+          test "$(zig version)" = "$(cat .zigversion)"
+          actual="$(zig fetch pressure/native-ios/howl-text)"
+          expected='howl_text-0.1.6-dev-fp7jPoZZ2QBExKz8gj5T7MtGp3vVEUU_bDtdh_FhaHaW'
+          test "$actual" = "$expected"
+
+      - name: Install native pressure build tools
+        run: brew install meson ninja pkg-config
+
+      - name: Build private iPhoneOS text dependencies
+        run: pressure/native-ios/build-deps.sh
+
+      - name: Build same native host for iPhoneOS
+        run: pressure/native-ios/build-zig-ios.sh
+
+      - name: Stage native host library
+        run: pressure/native-ios/stage-flutter.sh
+
       - name: Install Flutter 3.47.0
         uses: subosito/flutter-action@v2
         with:
@@ -24,11 +49,31 @@ jobs:
         working-directory: howl-flutter
         run: flutter pub get
 
-      - name: Build unsigned iOS smoke app
+      - name: Analyze pressure client
         working-directory: howl-flutter
-        run: >-
-          flutter build ios --release --no-codesign
-          --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+        run: flutter analyze
+
+      - name: Build unsigned iOS native-host pressure app
+        working-directory: howl-flutter
+        run: flutter build ios --release --no-codesign
+
+      - name: Verify final Runner native-host exports
+        run: |
+          set -euxo pipefail
+          runner=howl-flutter/build/ios/iphoneos/Runner.app/Runner
+          file "$runner"
+          nm -gU "$runner" > "$RUNNER_TEMP/runner-symbols.txt"
+          for symbol in \
+            howl_native_host_version \
+            howl_native_host_create \
+            howl_native_host_observe \
+            howl_native_control_create \
+            howl_native_control_mouse \
+            howl_ios_native_canary_version \
+            howl_ios_native_render_hcr1
+          do
+            grep -q " _$symbol$" "$RUNNER_TEMP/runner-symbols.txt"
+          done
 
       - name: Package Splice-ready unsigned IPA
         working-directory: howl-flutter
@@ -37,14 +82,11 @@ jobs:
           rm -rf dist
           mkdir -p dist/Payload
           cp -R build/ios/iphoneos/Runner.app dist/Payload/
-
-          # Splice v1.0.0 must receive embedded frameworks without stale ad-hoc signatures.
           find dist/Payload/Runner.app -type d -name _CodeSignature -prune -exec rm -rf {} +
           if find dist/Payload/Runner.app -type d -name _CodeSignature -print -quit | grep -q .; then
             echo 'stale _CodeSignature directory remains' >&2
             exit 1
           fi
-
           cd dist
           /usr/bin/ditto -c -k --sequesterRsrc --keepParent Payload howl.ipa
           shasum -a 256 howl.ipa > SHA256SUMS

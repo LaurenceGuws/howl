@@ -1,0 +1,8 @@
+.{
+    .name = .howl_native_host_pressure,
+    .version = "0.1.6-dev",
+    .fingerprint = 0x6fdede885abef85,
+    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .dependencies = .{},
+    .paths = .{ "build.zig", "build.zig.zon", "bridge.zig", "native.h", "howl-text" },
+}

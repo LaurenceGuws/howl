@@ -79,6 +79,18 @@ pub fn unicodeKey(
     try expectOk(connection, .input);
 }
 
+pub fn mouse(connection: *client.Connection, value: protocol.MouseInput) Error!void {
+    if (connection.features & protocol.feature(.typed_input) == 0)
+        return error.TypedInputUnsupported;
+    var body: [protocol.typed_input.mouse_bytes]u8 = undefined;
+    try protocol.encodeMouseInput(&body, value);
+    var payload: [1 + protocol.typed_input.mouse_bytes]u8 = undefined;
+    payload[0] = @backingInt(protocol.InputKind.mouse);
+    @memcpy(payload[1..], &body);
+    try connection.send(.input, &payload);
+    try expectOk(connection, .input);
+}
+
 pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!void {
     if (connection.features & protocol.feature(.typed_input) == 0)
         return error.TypedInputUnsupported;

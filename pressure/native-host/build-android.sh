@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root=$(cd "$(dirname "$0")" && pwd)
+repo=$(cd "$root/../.." && pwd)
+ndk=${ANDROID_NDK_ROOT:-${1:-}}
+if [[ -z "$ndk" || ! -d "$ndk/toolchains/llvm/prebuilt/linux-x86_64" ]]; then
+  echo 'ANDROID_NDK_ROOT or first argument must name Android NDK' >&2
+  exit 2
+fi
+expected=$(cat "$repo/.zigversion")
+test "$(zig version)" = "$expected"
+
+export ANDROID_NDK_ROOT="$ndk"
+"$root/build-deps-android.sh" "$ndk"
+work=${HOWL_ANDROID_NATIVE_WORK:-$root/.work}
+prefix="$work/prefix"
+toolchain="$ndk/toolchains/llvm/prebuilt/linux-x86_64"
+
+# Zig 0.17 currently rejects Android's nullability qualifier inside C array
+# declarators such as `unsigned short x[_Nonnull 3]`. Overlay only stdlib.h and
+# remove qualifiers from those brackets; every other NDK header remains exact.
+overlay="$root/ndk-overlay"
+mkdir -p "$overlay"
+python3 - "$toolchain/sysroot/usr/include/stdlib.h" "$overlay/stdlib.h" <<'PY'
+import pathlib,re,sys
+src=pathlib.Path(sys.argv[1]).read_text()
+src=re.sub(r'\[_(?:Nonnull|Nullable)(?:\s+([0-9]+))?\]', lambda m: '['+(m.group(1) or '')+']', src)
+pathlib.Path(sys.argv[2]).write_text(src)
+PY
+
+rm -rf "$root/.zig-cache" "$root/zig-out"
+zig build \
+  -Dtarget=aarch64-linux-android \
+  -Doptimize=ReleaseFast \
+  -Dndk="$ndk" \
+  -Ddeps="$prefix"
+
+obj="$root/zig-out/howl_flutter_native_host.o"
+out="$root/libhowl_native_host.so"
+cxx="$toolchain/bin/aarch64-linux-android24-clang++"
+"$cxx" -shared -fPIC \
+  -Wl,-soname,libhowl_native_host.so \
+  -Wl,--no-undefined \
+  "$obj" \
+  "$prefix/lib/libharfbuzz.a" \
+  "$prefix/lib/libfreetype.a" \
+  -static-libstdc++ -lm -ldl \
+  -o "$out"
+
+file "$out"
+"$toolchain/bin/llvm-readelf" -d "$out" >"$work/native-host-dynamic.txt"
+cat "$work/native-host-dynamic.txt"
+if grep -Eq 'NEEDED.*(harfbuzz|freetype)' "$work/native-host-dynamic.txt"; then
+  echo 'private text dependency leaked as dynamic Android ABI' >&2
+  exit 1
+fi
+"$toolchain/bin/llvm-nm" -D --defined-only "$out" >"$work/native-host-symbols.txt"
+for symbol in howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe; do
+  grep -q " $symbol$" "$work/native-host-symbols.txt"
+done
+sha256sum "$out"
+echo "HOWL_ANDROID_NATIVE_HOST_OK output=$out"
