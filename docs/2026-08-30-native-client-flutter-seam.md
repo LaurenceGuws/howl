@@ -238,6 +238,112 @@ were deleted again. The next design question is the smallest durable ownership-o
 native presentation seam that can preserve the measured win without exposing
 `howl-render`'s private packing as ABI.
 
+## Terminal Canvas producer and native presentation seam
+
+The next pressure moved the decision one level higher than the specialized glyph
+atlas bridge. `howl-render.canvas` already owns backend-neutral solids, alpha masks,
+RGBA resources, resource identity/generation, clipping, composition and cursor
+overlays. A disposable terminal mapper proved that the existing Canvas vocabulary
+can express the tested terminal presentation without adding a terminal-specific draw
+primitive: default/indexed/RGB colors, dim, cell and screen reverse, invisible text,
+underline/strike and underline styles, combining text, semantic width-two cells,
+Nerd-font and fallback glyphs, and cursor presentation all fit the existing contract.
+
+The one ownership gap was topology, not drawing power. Terminal state can provide the
+cursor target, semantic revision, shape and colors, but it cannot truthfully mint a
+pane identity, Canvas source identity, visible-set revision or lifecycle revision.
+The surviving API therefore requires an optional caller-supplied `CursorContext` for
+those host-owned identities. `terminal.Content` combines that context with immutable
+terminal facts and emits one complete `canvas.ProducerUpdate`; it never invents Host
+or Composer topology.
+
+`terminal.Content` is now the bounded native presentation owner. Its caller selects
+the cell lattice, exact-sequence shaping bounds, atlas dimensions/capacity, cold-shape
+scratch, raster scratch and Canvas command capacity. Construction performs all
+allocation. Steady-state updates allocate nothing. Exact-sequence ShapeCache and the
+append-only alpha atlas remain private implementation owners: neither evicts or resets
+implicitly, and an explicit content-cache reset is the only presentation operation
+which forgets them. Canvas resource generation advances only after a successful update
+needs changed raster content; failures may warm private caches but cannot advance the
+published producer revision or resource generation.
+
+A live Brommer Composer/software-backend proof then retained terminal updates through
+`canvas.Composer`, maintained backend residency and derived final Canvas frames. On a
+500-observation ReleaseFast churn the pre-fusion candidate measured about **1.193 ms**
+for terminal Content, **0.525 ms** for `Composer.apply`, and **0.790 ms** for
+`Composer.frame`, or **2.507 ms/frame** for the complete native Canvas boundary. Only
+two 16 KiB resource replacements occurred. A backend-loss recovery frame reproduced
+the complete latest resource deterministically. The software backend rendered the
+same quality fixture as the tracked Flutter client; raw-RGB comparison retained the
+known native-vs-TextPainter line-box personality, with best alignment dx=0/dy=1 and
+about **2.89%** fixture-channel MAE on that host/device comparison.
+
+That Composer proof strictly subsumed the earlier terminal-specific `Glyph` / `Frame`
+/ `Scratch` / `project()` surface. No accepted consumer existed outside its tests, and
+keeping it forced `Content` to reserve a second 72-byte-per-glyph placement array only
+to translate it immediately into 72-byte Canvas inputs. The placement API was deleted
+and Content now projects directly into Canvas commands in two ordered passes: all
+backgrounds/decorations first, then glyph masks. This preserves wide-glyph paint order
+while deleting the duplicate placement buffer and source-cluster rebasing that no
+backend-neutral Canvas consumer needs. Shape/atlas cache handles and lifecycle
+functions became private again; callers see only Content bounds, usage, errors and the
+Canvas update contract.
+
+### Physical-device Canvas crossing
+
+A second disposable Android pressure client crossed the **derived final Canvas frame**,
+not terminal cells, shaped glyph structs or atlas internals. Its private packet carried
+only surface/frame revision, qualified Canvas resource generations, sparse resource
+mutations, final solid/alpha/RGBA commands and pixel bytes. Cursor presentation had
+already been resolved by Composer. Android C/FFI offsets, the packet format, NDK
+header overlay, private FreeType/HarfBuzz packaging and Dart worker protocol all
+remained ignored experiment material.
+
+The first generic Flutter backend was deliberately kept in the evidence because it
+lost badly: parsing every final Canvas command into Dart objects and issuing one image
+draw per alpha mask cost about **48.4% more CPU per paint**, **21.1% more build+raster**
+and roughly **14 MiB more PSS** than TextPainter. Native Content+Composer was not the
+large cost; the Dart object/per-command backend was.
+
+The same final Canvas semantics were then consumed by a terminal-agnostic batched
+backend. It retained only resource descriptors plus a few paint segments, clipped
+sprites mathematically and used Flutter `drawRawAtlas` to submit long same-resource
+alpha runs as one draw. No terminal row/cell/style/font/cursor policy entered Dart.
+Three fresh 36x51 Note10 sessions per mode, using the same marker-delimited 1,600-line
+/ 5 ms workload, measured:
+
+| metric | Dart/TextPainter | Batched final Canvas | delta |
+| --- | ---: | ---: | ---: |
+| CPU ticks / paint | **6.236** | **4.287** | **-31.25%** |
+| build / frame | 22.112 ms | 4.865 ms | -78.0% |
+| raster / frame | 29.959 ms | 1.649 ms | -94.5% |
+| build+raster / frame | **52.071 ms** | **6.515 ms** | **-87.49%** |
+| paints | 72.33 | 82.33 | **+13.82%** |
+| settled PSS | 230,107 KiB | 224,848 KiB | **-5,259 KiB** |
+
+The full device quality fixture preserved indexed/RGB backgrounds, dim/reverse,
+underline/strike styles, combining text, width-two occupancy, Nerd glyphs, Arabic
+fallback and Composer cursor output. Fixture-only raw RGB comparison to TextPainter
+measured **2.516% MAE** with the same best dx=0/dy=1 backend alignment. The default
+block cursor is filled by Composer while the old simplified Flutter painter outlines
+that case; the difference is recorded rather than teaching native presentation to
+imitate a weaker client convention.
+
+After deleting the redundant terminal placement frame, the Android bridge was rebuilt
+against the **exact fused source** and run once more on Note10 before checkpoint. That
+canary measured **3.90 CPU ticks/paint**, **7.44 ms build+raster**, **100 paints** and
+**226,120 KiB PSS**, with 71-entry shape/atlas working sets and no timed-window resource
+upload. The fusion therefore preserved the winning physical-device regime rather than
+only passing host tests.
+
+The durable conclusion is now precise: **`canvas.ProducerUpdate` and the
+Composer-derived Canvas frame are the native semantic presentation boundary.** A good
+platform backend should batch compatible final Canvas commands, but batching policy
+belongs to that backend and is not terminal semantics. No stable C ABI is accepted yet.
+The experiment packet, native addresses/offsets, Android dependency packaging and Dart
+representation were deleted; a future binding should adapt the already-proven Canvas
+ownership/lifetime model instead of freezing renderer-private memory layout.
+
 ## Font policy: IosevkaTerm Nerd Font
 
 Home's current terminal presentation family is **IosevkaTerm Nerd Font**. Kitty
@@ -277,10 +383,13 @@ Accepted now:
 - CLI remains a presentation layer over the native engine;
 - Flutter glyph-layout caching, frame-paced observation, and coarse native snapshot
   consumption are measured wins;
-- experimental `howl-render` may derive native terminal glyph placements from
-  `howl-client.view` through `howl-text` using caller-bounded shaped-run reuse plus
-  an append-only glyph atlas; both have explicit independent reset and no implicit
-  eviction, while source clusters are rebased into each immutable view;
+- experimental `howl-render.terminal.Content` consumes `howl-client.view` through
+  `howl-text` and emits complete backend-neutral `canvas.ProducerUpdate` state; its
+  bounded exact-sequence shaping and append-only alpha atlas are private caches with
+  explicit reset and no implicit eviction;
+- `canvas.ProducerUpdate` plus the Composer-derived Canvas frame are the measured
+  semantic native presentation boundary; a batched terminal-agnostic Note10 backend
+  beats the tracked TextPainter path without carrying terminal semantics into Dart;
 - Android may privately provision IosevkaTerm Nerd Font for optional Flutter
   presentation without making the font an app/repository asset.
 
@@ -290,11 +399,14 @@ Still experimental/deferred:
 - packed snapshot or stable C/FFI memory layout;
 - a durable Dart/Flutter binding for the native view;
 - replacing Flutter production text layout/rasterization with `howl-text` output;
-- a durable native presentation crossing into Flutter/iOS; a second disposable
-  Android bridge with bounded shape reuse won CPU/frame/memory on Note10, but its
-  private ABI and packaging were deleted rather than promoted directly;
-- stable atlas dimensions, packing policy, GPU representation, or FFI memory layout;
-- dirty-region/placement reuse beyond the accepted exact-sequence shape cache;
+- a stable C/FFI adapter for the accepted Canvas semantic boundary; the disposable
+  Android final-Canvas packet and Dart worker won only after backend batching and were
+  deleted rather than promoted as ABI;
+- a production Flutter/iOS Canvas binding and its platform resource/batching policy;
+- stable atlas dimensions, GPU representation, native packet layout, or FFI memory
+  layout;
+- dirty-region or retained-command reuse beyond the accepted exact-sequence shaping
+  and Canvas resource-generation model;
 - stable cross-platform font provisioning or bundled font asset policy;
 - mouse/coordinate mutation in the CLI before stale-target identity can be
   enforced by the session boundary.
