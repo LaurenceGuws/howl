@@ -1,7 +1,7 @@
 .{
     .name = .howl_ios_host_pressure,
     .version = "0.0.0",
-    .fingerprint = 0xb965639d85c7c1de,
+    .fingerprint = 0x7961d220c8b7879d,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
     .dependencies = .{},
     .paths = .{ "build.zig", "build.zig.zon", "canary.zig", "native.h", "generated", "howl-text" },
