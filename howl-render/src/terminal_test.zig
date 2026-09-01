@@ -196,7 +196,7 @@ test "terminal Canvas shape entry exhaustion preserves published state" {
     try std.testing.expect(firstAlphaResource(recovered.commands) != null);
 }
 
-test "terminal Canvas missing glyph leaves unpublished state reusable" {
+test "terminal Canvas missing glyph degrades to replacement and remains reusable" {
     var missing = [_]u32{0x10ffff};
     var missing_cells = [_]client.rich.Cell{cell(&missing, 1, 0)};
     var missing_rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &missing_cells }};
@@ -208,19 +208,14 @@ test "terminal Canvas missing glyph leaves unpublished state reusable" {
     defer font.deinit();
     const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
     defer render.terminal.deinitContent(content);
-    try std.testing.expectError(
-        error.MissingGlyph,
-        render.terminal.takeContentUpdate(content, missing_view, null),
-    );
-    try std.testing.expectEqualDeep(
-        render.terminal.ContentUsage{
-            .shape = .{ .entries = 0, .scalars = 0, .glyphs = 0 },
-            .atlas_entries = 0,
-            .producer_revision = 0,
-            .resource_generation = 0,
-        },
-        render.terminal.contentUsage(content),
-    );
+    const missing_update = try render.terminal.takeContentUpdate(content, missing_view, null);
+    try std.testing.expect(firstAlphaResource(missing_update.commands) != null);
+    const missing_usage = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(usize, 1), missing_usage.shape.entries);
+    try std.testing.expectEqual(@as(usize, 1), missing_usage.shape.scalars);
+    try std.testing.expect(missing_usage.shape.glyphs != 0);
+    try std.testing.expect(missing_usage.atlas_entries != 0);
+    try std.testing.expect(missing_usage.producer_revision != 0);
 
     var a = [_]u32{'A'};
     var a_cells = [_]client.rich.Cell{cell(&a, 1, 0)};

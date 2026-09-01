@@ -1025,11 +1025,22 @@ fn resolveShape(
     if (sequence.len > impl.scalars.len - impl.scalar_count) return error.ShapeScalarFull;
     if (sequence.len > cluster_scratch.len) return error.ShapeSequenceLimit;
     for (cluster_scratch[0..sequence.len], 0..) |*cluster, index| cluster.* = @intCast(index);
-    const shaped = try impl.fonts.shape(
+    const shaped = impl.fonts.shape(
         impl.shape,
         .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
         glyph_scratch,
-    );
+    ) catch |failure| switch (failure) {
+        error.MissingGlyph => replacement: {
+            const replacement_codepoints = [_]u32{0xfffd};
+            cluster_scratch[0] = 0;
+            break :replacement try impl.fonts.shape(
+                impl.shape,
+                .{ .codepoints = &replacement_codepoints, .clusters = cluster_scratch[0..1] },
+                glyph_scratch,
+            );
+        },
+        else => return failure,
+    };
     if (shaped.glyphs.len > impl.glyphs.len - impl.glyph_count)
         return error.ShapeGlyphFull;
 
