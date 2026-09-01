@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
     const deps = b.option([]const u8, "deps", "private FreeType/HarfBuzz prefix");
     const freetype_include = b.option([]const u8, "freetype-include", "FreeType include directory");
     const harfbuzz_include = b.option([]const u8, "harfbuzz-include", "HarfBuzz include root");
+    const apple_sdk = b.option([]const u8, "apple-sdk", "Apple SDK root for Darwin translate-c");
 
     const translate = b.addTranslateC(.{
         .root_source_file = b.path("native.h"),
@@ -26,6 +27,9 @@ pub fn build(b: *std.Build) void {
     } else {
         if (freetype_include) |path| translate.addIncludePath(.{ .cwd_relative = path });
         if (harfbuzz_include) |path| translate.addIncludePath(.{ .cwd_relative = path });
+        if (apple_sdk) |sdk| {
+            translate.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
+        }
     }
     const native_c = translate.createModule();
 

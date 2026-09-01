@@ -292,6 +292,21 @@ Future<_NativeHostFonts> _resolveNativeHostFonts() async {
     }
     return _NativeHostFonts(primary, fallback, secondaryFallback);
   }
+  if (Platform.isIOS) {
+    const channel = MethodChannel('howl.flutter/ios_host');
+    final paths = await channel.invokeMapMethod<String, String>('fontPaths');
+    final primary = paths?['primary'];
+    final fallback = paths?['fallback'];
+    if (primary == null || primary.isEmpty || !await File(primary).exists()) {
+      throw const NativeHostException('ios_primary_font_missing');
+    }
+    if (fallback == null ||
+        fallback.isEmpty ||
+        !await File(fallback).exists()) {
+      throw const NativeHostException('ios_fallback_font_missing');
+    }
+    return _NativeHostFonts(primary, fallback, '');
+  }
   if (Platform.isLinux) {
     final primary = await _configuredFont('HOWL_FONT', 'IosevkaTerm Nerd Font');
     final fallback = await _configuredFont(
@@ -378,6 +393,10 @@ typedef _ObserveDart = int Function(
   ffi.Pointer<ffi.Size>,
 );
 
+ffi.DynamicLibrary _nativeHostLibrary() => Platform.isIOS
+    ? ffi.DynamicLibrary.process()
+    : ffi.DynamicLibrary.open('libhowl_native_host.so');
+
 Future<void> _nativeHostWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
   final responses = init[1]! as SendPort;
@@ -387,7 +406,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final secondaryFallback = init[5]! as String;
   final commands = ReceivePort();
 
-  final dylib = ffi.DynamicLibrary.open('libhowl_native_host.so');
+  final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_CreateNative, _CreateDart>(
     'howl_native_host_create',
   );
@@ -710,7 +729,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final responses = init[1]! as SendPort;
   final endpoint = init[2]! as String;
   final commands = ReceivePort();
-  final dylib = ffi.DynamicLibrary.open('libhowl_native_host.so');
+  final dylib = _nativeHostLibrary();
   final create = dylib.lookupFunction<_ControlCreateNative, _ControlCreateDart>(
     'howl_native_control_create',
   );

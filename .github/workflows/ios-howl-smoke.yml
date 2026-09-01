@@ -2,6 +2,12 @@ name: Howl iOS smoke
 
 on:
   workflow_dispatch:
+    inputs:
+      endpoint:
+        description: Explicit numeric IPv4 Howl peer for the built client
+        required: true
+        default: tcp://127.0.0.1:43127
+        type: string
 
 permissions:
   contents: read
@@ -13,10 +19,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Flutter 3.47.0
+      - name: Install tracked Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.17.0-dev.1454+5faa79730
+
+      - name: Install native iPhoneOS build tools
+        run: brew install meson ninja pkg-config
+
+      - name: Build app-private native Howl host for iPhoneOS
+        run: howl-flutter/native/build-ios.sh
+
+      - name: Install Flutter 3.47.2
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.0'
+          flutter-version: '3.47.2'
           channel: stable
           cache: true
 
@@ -24,11 +41,33 @@ jobs:
         working-directory: howl-flutter
         run: flutter pub get
 
+      - name: Analyze iOS client
+        working-directory: howl-flutter
+        run: flutter analyze
+
       - name: Build unsigned iOS smoke app
         working-directory: howl-flutter
         run: >-
           flutter build ios --release --no-codesign
-          --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127
+          --dart-define=HOWL_ENDPOINT=${{ inputs.endpoint }}
+          --dart-define=HOWL_GEOMETRY_LEADER=1
+
+      - name: Verify final Runner native-host exports
+        run: |
+          set -euxo pipefail
+          runner=howl-flutter/build/ios/iphoneos/Runner.app/Runner
+          file "$runner"
+          nm -gU "$runner" > "$RUNNER_TEMP/runner-symbols.txt"
+          for symbol in \
+            howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe \
+            howl_native_control_create howl_native_control_destroy howl_native_control_committed_text \
+            howl_native_control_paste howl_native_control_named_key howl_native_control_unicode_key \
+            howl_native_control_focus howl_native_control_resize howl_native_control_signal howl_native_control_mouse
+          do
+            grep -q " _$symbol$" "$RUNNER_TEMP/runner-symbols.txt"
+          done
+          test -f howl-flutter/build/ios/iphoneos/Runner.app/IosevkaTermNerdFont-Regular.ttf
+          test -f howl-flutter/build/ios/iphoneos/Runner.app/NotoSans-Regular.ttf
 
       - name: Package Splice-ready unsigned IPA
         working-directory: howl-flutter

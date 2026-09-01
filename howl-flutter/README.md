@@ -68,13 +68,13 @@ The Linux bundle installs `libhowl_native_host.so` into its existing `$ORIGIN/li
 
 Font discovery is exact rather than permissive. `HOWL_FONT` and `HOWL_FALLBACK_FONT` may name explicit files. Otherwise fontconfig must actually resolve `IosevkaTerm Nerd Font` and `Noto Sans Arabic`; a silent family substitution is rejected.
 
-A bare path or `unix:/path` remains a local Linux endpoint option. TCP remains restricted to exact IPv4 loopback.
+A bare path or `unix:/path` remains a local Linux endpoint option. TCP accepts an explicit numeric IPv4 peer selected by platform/deployment policy; Howl performs no DNS, discovery, authentication, or route selection.
 
 ## iOS
 
 The iOS runner remains an honest platform-pressure target. The same native observer/control host object has compiled and linked for arm64 iPhoneOS, and physical iPhone pressure proved final-Canvas resource lifetime with a first 16 KiB atlas publication followed by an identical sparse frame with zero re-upload.
 
-That does **not** change iOS remote-session reachability. Actual iOS remote terminal policy remains SSH-only until a separate transport experiment earns another contract. The accepted Flutter client therefore does not invent a direct remote Canvas or Howl TCP path on iOS.
+iOS remains a client only: it does not own a PTY, shell, or Unix userland. The native Howl client may connect to an explicitly configured numeric IPv4 TCP peer; deployment/Fleet policy owns how that private route is made reachable. No DNS, discovery, listener, or authentication policy is added to Howl itself.
 
 ## Ownership notes
 
