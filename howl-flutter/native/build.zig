@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
     const freetype_include = b.option([]const u8, "freetype-include", "FreeType include directory");
     const harfbuzz_include = b.option([]const u8, "harfbuzz-include", "HarfBuzz include root");
     const apple_sdk = b.option([]const u8, "apple-sdk", "Apple SDK root for Darwin translate-c");
+    const howl_text_root = b.option([]const u8, "howl-text-root", "Exact local howl-text package root");
 
     const translate = b.addTranslateC(.{
         .root_source_file = b.path("native.h"),
@@ -42,13 +43,22 @@ pub fn build(b: *std.Build) void {
     const client = localModule(b, target, optimize, repo, "howl-client/src/howl_client.zig");
     client.addImport("howl_session", session);
 
-    const text_package = b.dependency("howl_text", .{});
-    const text = b.createModule(.{
-        .root_source_file = text_package.path("src/text.zig"),
-        .target = target,
-        .optimize = optimize,
-        .link_libc = true,
-    });
+    const text = if (howl_text_root) |root_path|
+        b.createModule(.{
+            .root_source_file = .{ .cwd_relative = b.pathJoin(&.{ root_path, "src/text.zig" }) },
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        })
+    else blk: {
+        const text_package = b.dependency("howl_text", .{});
+        break :blk b.createModule(.{
+            .root_source_file = text_package.path("src/text.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+    };
     text.addImport("native_c", native_c);
 
     const validation = localModule(b, target, optimize, repo, "howl-render/src/canvas_validation.zig");
