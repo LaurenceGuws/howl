@@ -109,6 +109,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int _historyGeneration = 0;
   int _proposedRows = 0;
   int _proposedColumns = 0;
+  int? _pendingResizeRows;
+  int? _pendingResizeColumns;
+  bool _resizeDrainRunning = false;
   Future<void> _controlTail = Future<void>.value();
 
   @override
@@ -208,14 +211,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   bool get _hasControl => _nativeControl != null;
 
-  void _queueControl(Future<void> Function(NativeHostControl) action) {
-    if (_stopping) return;
+  Future<void> _queueControl(Future<void> Function(NativeHostControl) action) {
+    if (_stopping) return Future<void>.value();
     final control = _nativeControl;
-    if (control == null) return;
+    if (control == null) return Future<void>.value();
     _controlTail = _controlTail.then((_) => action(control));
     _controlTail = _controlTail.catchError((Object error) {
       _reportFailure(error);
     });
+    return _controlTail;
   }
 
   void _sendCommittedText(String text) {
@@ -256,7 +260,25 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _sendResize(int rows, int columns) {
-    _queueControl((control) => control.resize(rows, columns));
+    _pendingResizeRows = rows;
+    _pendingResizeColumns = columns;
+    if (_resizeDrainRunning || !_hasControl || _stopping) return;
+    _resizeDrainRunning = true;
+    unawaited(_drainResize());
+  }
+
+  Future<void> _drainResize() async {
+    try {
+      while (!_stopping && _pendingResizeRows != null) {
+        final rows = _pendingResizeRows!;
+        final columns = _pendingResizeColumns!;
+        _pendingResizeRows = null;
+        _pendingResizeColumns = null;
+        await _queueControl((control) => control.resize(rows, columns));
+      }
+    } finally {
+      _resizeDrainRunning = false;
+    }
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
@@ -501,6 +523,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _proposeGeometry(Size size) {
     if (!widget.geometryLeader ||
+        !_hasControl ||
         !size.width.isFinite ||
         !size.height.isFinite) {
       return;
