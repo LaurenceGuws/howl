@@ -554,3 +554,49 @@ test "terminal save reset and alternate lifecycle stays coherent across resize a
     try std.testing.expect(restored.attrs.bold);
     try std.testing.expect(restored.attrs.italic);
 }
+
+test "service-bounded feed stops exactly at child replies and host consequences" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 16);
+    defer terminal.deinit();
+
+    const reply_input = "ABC\x1b[5nDEF";
+    const reply = try terminal.feedAtServiceBoundary(reply_input, 11);
+    try std.testing.expectEqual(@as(usize, 7), reply.consumed);
+    try std.testing.expect(reply.summary.stateChanged());
+    try std.testing.expect(terminal.replyBytes().len != 0);
+    try std.testing.expectEqual(@as(u21, 'A'), terminal.semanticView(0).cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'C'), terminal.semanticView(0).cellAt(0, 2));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 3));
+
+    try terminal.consumeReplyBytes(terminal.replyBytes().len);
+    const reply_tail = try terminal.feedAtServiceBoundary(reply_input[reply.consumed..], 12);
+    try std.testing.expectEqual(@as(usize, 3), reply_tail.consumed);
+    try std.testing.expectEqual(@as(u21, 'F'), terminal.semanticView(0).cellAt(0, 5));
+
+    const consequence_input = "GHI\x07JKL";
+    const consequence = try terminal.feedAtServiceBoundary(consequence_input, 13);
+    try std.testing.expectEqual(@as(usize, 4), consequence.consumed);
+    try std.testing.expectEqual(@as(u16, 1), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(u21, 'I'), terminal.semanticView(0).cellAt(0, 8));
+    try std.testing.expectEqual(@as(u21, 0), terminal.semanticView(0).cellAt(0, 9));
+
+    const pending = terminal.consequenceHead() orelse return error.TestUnexpectedResult;
+    try terminal.consumeConsequence(pending.id());
+    const consequence_tail = try terminal.feedAtServiceBoundary(
+        consequence_input[consequence.consumed..],
+        14,
+    );
+    try std.testing.expectEqual(@as(usize, 3), consequence_tail.consumed);
+    try std.testing.expectEqual(@as(u21, 'L'), terminal.semanticView(0).cellAt(0, 11));
+}
+
+test "service-bounded feed consumes ordinary slices as one transaction" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 16);
+    defer terminal.deinit();
+
+    const progress = try terminal.feedAtServiceBoundary("ordinary-output", 17);
+    try std.testing.expectEqual(@as(usize, 15), progress.consumed);
+    try std.testing.expect(progress.summary.stateChanged());
+    try std.testing.expectEqual(@as(u16, 0), terminal.consequenceCount());
+    try std.testing.expectEqual(@as(usize, 0), terminal.replyBytes().len);
+}

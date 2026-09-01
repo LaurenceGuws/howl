@@ -451,10 +451,14 @@ const State = struct {
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
             };
-            const byte = self.reads[self.read_start];
-            self.read_start += 1;
-            const summary = try self.terminal.feedAt(&.{byte}, timestamp_ns);
-            std.debug.assert(!summary.titleChanged() or summary.stateChanged());
+            const progress = try self.terminal.feedAtServiceBoundary(
+                self.reads[self.read_start..self.read_end],
+                timestamp_ns,
+            );
+            std.debug.assert(progress.consumed > 0);
+            std.debug.assert(progress.consumed <= self.read_end - self.read_start);
+            self.read_start += progress.consumed;
+            std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
             if (consequence_policy == .headless) try self.drainConsequences();
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
                 error.WriteQueueFull => return,
@@ -686,4 +690,18 @@ test "one PTY and VT remain canonical for independent observers" {
     const first_view = try snapshotAscii(session, &first);
     const second_view = try snapshotAscii(session, &second);
     try std.testing.expectEqualSlices(u8, first_view, second_view);
+}
+
+test "headless service drains consequence bursts at VT service boundaries" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "i=0; while [ $i -lt 64 ]; do printf '\\007'; i=$((i+1)); done; printf 'BOUNDARY-DONE\\n'; cat",
+        .rows = 4,
+        .columns = 32,
+        .history_rows = 16,
+    });
+    defer deinit(session);
+
+    try serviceUntilContains(session, "BOUNDARY-DONE");
+    try std.testing.expectEqual(@as(u16, 0), consequenceCount(session));
 }

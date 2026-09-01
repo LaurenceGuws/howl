@@ -5344,6 +5344,12 @@ pub const TerminalFeedSummary = struct {
     }
 };
 
+/// Reports one bounded feed prefix ending at caller-service work.
+pub const TerminalFeedProgress = struct {
+    summary: TerminalFeedSummary,
+    consumed: usize,
+};
+
 // Fragmented parser-stream ownership.
 
 const DcsCapture = struct {
@@ -5568,6 +5574,34 @@ const TerminalStream = struct {
         self.terminal.completeStreamMutation(summary.stateChanged());
         completed = true;
         return summary;
+    }
+
+    fn nextServiceBoundarySummary(
+        self: *TerminalStream,
+        bytes: []const u8,
+        replies_before: u32,
+        consequences_before: u16,
+    ) TerminalFeedError!TerminalFeedProgress {
+        var summary: TerminalFeedSummary = .{ .mutations = .{} };
+        var consumed: usize = 0;
+        var completed = false;
+        const before = MutationObservation.capture(self.terminal);
+        defer if (!completed) self.terminal.completeStreamMutation(summary.stateChanged());
+        const history_loss_before = self.terminal.screen_state.primary.history_loss_generation;
+        for (bytes) |byte| {
+            const byte_summary = try self.nextSummary(byte);
+            summary.mutations.merge(byte_summary.mutations);
+            consumed += 1;
+            if (self.terminal.reply_buffer.len() != replies_before or
+                self.terminal.consequences.count() != consequences_before)
+                break;
+        }
+        before.mergeInto(MutationObservation.capture(self.terminal), &summary.mutations);
+        if (self.terminal.screen_state.primary.history_loss_generation != history_loss_before)
+            summary.mutations.history_loss = true;
+        self.terminal.completeStreamMutation(summary.stateChanged());
+        completed = true;
+        return .{ .summary = summary, .consumed = consumed };
     }
 
     fn applyAction(self: *TerminalStream, action: parser_mod.Action) TerminalFeedError!EventEffect {
@@ -6304,6 +6338,8 @@ pub const Terminal = struct {
     pub const FeedError = TerminalFeedError;
     /// Summarizes observable terminal changes from one feed operation.
     pub const FeedSummary = TerminalFeedSummary;
+    /// Reports the consumed prefix and merged mutations from a service-bounded feed.
+    pub const FeedProgress = TerminalFeedProgress;
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
@@ -6802,6 +6838,34 @@ pub const Terminal = struct {
             summary.mutations.images = true;
         }
         return summary;
+    }
+
+    /// Applies a nonempty borrowed prefix until new reply bytes or a host consequence appear.
+    ///
+    /// Ordinary bytes may consume the complete slice. A caller that owns child replies or
+    /// host consequences can service the newly pending work, then continue at `consumed`.
+    /// This keeps those bounded queues observable between protocol-producing events without
+    /// forcing caller-side byte-at-a-time terminal feeds.
+    pub fn feedAtServiceBoundary(
+        self: *Terminal,
+        bytes: []const u8,
+        timestamp_ns: u64,
+    ) FeedError!FeedProgress {
+        self.requireNoPreparedResize();
+        self.screen_state.setCursorMovementTimestamp(timestamp_ns);
+        const graphics_before = self.graphics.generation();
+        const replies_before = self.reply_buffer.len();
+        const consequences_before = self.consequences.count();
+        var stream = TerminalStream.init(self);
+        var progress = try stream.nextServiceBoundarySummary(
+            bytes,
+            replies_before,
+            consequences_before,
+        );
+        if (self.graphics.generation() != graphics_before) {
+            progress.summary.mutations.images = true;
+        }
+        return progress;
     }
 
     fn completeStreamMutation(
