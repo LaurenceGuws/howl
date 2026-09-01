@@ -79,34 +79,6 @@ final class _RgbaSegment extends _PaintSegment {
   }
 }
 
-final class _AtlasBuilder {
-  _AtlasBuilder(this.resource);
-  final NativeCanvasResourceKey resource;
-  final List<double> transforms = <double>[];
-  final List<double> rects = <double>[];
-  final List<int> colors = <int>[];
-
-  bool get isEmpty => colors.isEmpty;
-
-  void add(ui.Rect destination, ui.Rect source, ui.Color color) {
-    transforms.addAll(<double>[1, 0, destination.left, destination.top]);
-    rects.addAll(<double>[
-      source.left,
-      source.top,
-      source.right,
-      source.bottom,
-    ]);
-    colors.add(color.toARGB32().toSigned(32));
-  }
-
-  _AtlasSegment finish() => _AtlasSegment(
-    resource: resource,
-    transforms: Float32List.fromList(transforms),
-    rects: Float32List.fromList(rects),
-    colors: Int32List.fromList(colors),
-  );
-}
-
 final class NativeCanvasPlan {
   NativeCanvasPlan._(this._segments);
   final List<_PaintSegment> _segments;
@@ -127,24 +99,18 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
     growable: false,
   );
   final segments = <_PaintSegment>[];
-  _AtlasBuilder? atlas;
 
-  void flushAtlas() {
-    final current = atlas;
-    if (current != null && !current.isEmpty) segments.add(current.finish());
-    atlas = null;
-  }
-
-  for (var index = 0; index < frame.commandCount; index++) {
+  var index = 0;
+  while (index < frame.commandCount) {
     final tag = frame.commandTag(index);
     if (tag == 0) {
-      flushAtlas();
       segments.add(
         _SolidSegment(
           _destination(frame, index),
           _rgbaBitsToColor(frame.commandColorRgba(index)),
         ),
       );
+      index += 1;
       continue;
     }
 
@@ -153,43 +119,93 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
       throw const NativeCanvasException('paint_resource');
     }
     final resource = resources[resourceIndex];
-    final destination = _destination(frame, index);
-    final clip = _clip(frame, index);
-    final source = _source(frame, index);
 
     if (tag == 1) {
-      final clipped = clipNativeCanvasSprite(destination, clip, source);
-      if (clipped == null) continue;
-      if (atlas == null || atlas!.resource != resource.key) {
-        flushAtlas();
-        atlas = _AtlasBuilder(resource.key);
+      var end = index + 1;
+      while (end < frame.commandCount &&
+          frame.commandTag(end) == 1 &&
+          frame.commandResourceIndex(end) == resourceIndex) {
+        end += 1;
       }
-      atlas!.add(
-        clipped.destination,
-        clipped.source,
-        _rgbaBitsToColor(frame.commandColorRgba(index)),
-      );
+      final segment = _buildAtlasSegment(frame, resource.key, index, end);
+      if (segment != null) segments.add(segment);
+      index = end;
       continue;
     }
 
-    flushAtlas();
     if (tag == 2) {
+      final destination = _destination(frame, index);
+      final clip = _clip(frame, index);
       if (!destination.intersect(clip).isEmpty) {
         segments.add(
           _RgbaSegment(
             resource: resource.key,
-            source: source,
+            source: _source(frame, index),
             destination: destination,
             clip: clip,
           ),
         );
       }
+      index += 1;
       continue;
     }
     throw const NativeCanvasException('paint_tag');
   }
-  flushAtlas();
   return NativeCanvasPlan._(List.unmodifiable(segments));
+}
+
+_AtlasSegment? _buildAtlasSegment(
+  NativeCanvasFrame frame,
+  NativeCanvasResourceKey resource,
+  int start,
+  int end,
+) {
+  final capacity = end - start;
+  final transforms = Float32List(capacity * 4);
+  final rects = Float32List(capacity * 4);
+  final colors = Int32List(capacity);
+  var count = 0;
+
+  for (var index = start; index < end; index++) {
+    final clipped = clipNativeCanvasSprite(
+      _destination(frame, index),
+      _clip(frame, index),
+      _source(frame, index),
+    );
+    if (clipped == null) continue;
+    final offset = count * 4;
+    transforms[offset] = 1;
+    transforms[offset + 1] = 0;
+    transforms[offset + 2] = clipped.destination.left;
+    transforms[offset + 3] = clipped.destination.top;
+    rects[offset] = clipped.source.left;
+    rects[offset + 1] = clipped.source.top;
+    rects[offset + 2] = clipped.source.right;
+    rects[offset + 3] = clipped.source.bottom;
+    colors[count] = _rgbaBitsToColor(frame.commandColorRgba(index))
+        .toARGB32()
+        .toSigned(32);
+    count += 1;
+  }
+  if (count == 0) return null;
+  if (count == capacity) {
+    return _AtlasSegment(
+      resource: resource,
+      transforms: transforms,
+      rects: rects,
+      colors: colors,
+    );
+  }
+  return _AtlasSegment(
+    resource: resource,
+    transforms: Float32List.view(
+      transforms.buffer,
+      transforms.offsetInBytes,
+      count * 4,
+    ),
+    rects: Float32List.view(rects.buffer, rects.offsetInBytes, count * 4),
+    colors: Int32List.view(colors.buffer, colors.offsetInBytes, count),
+  );
 }
 
 final class NativeCanvasClip {

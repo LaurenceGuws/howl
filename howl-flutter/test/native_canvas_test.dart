@@ -82,6 +82,36 @@ Uint8List _oneFrameCanvas() {
   return bytes;
 }
 
+Uint8List _batchedAlphaCanvas() {
+  final bytes = _oneFrameCanvas();
+  final data = ByteData.sublistView(bytes);
+  var at =
+      NativeCanvasFrame.globalHeaderBytes +
+      NativeCanvasFrame.frameHeaderBytes +
+      NativeCanvasFrame.resourceRecordBytes;
+
+  void rect(int offset, int x, int y, int width, int height) {
+    data.setInt32(offset, x, Endian.little);
+    data.setInt32(offset + 4, y, Endian.little);
+    data.setUint16(offset + 8, width, Endian.little);
+    data.setUint16(offset + 10, height, Endian.little);
+  }
+
+  for (var index = 0; index < 3; index++) {
+    data.setUint8(at, 1);
+    data.setUint8(at + 1, 0);
+    data.setUint32(at + 4, 0xffffffff, Endian.little);
+    rect(at + 8, index, 0, 1, 1);
+    rect(at + 20, 0, 0, 10, 20);
+    data.setUint16(at + 32, 0, Endian.little);
+    data.setUint16(at + 34, 0, Endian.little);
+    data.setUint16(at + 36, 1, Endian.little);
+    data.setUint16(at + 38, 1, Endian.little);
+    at += NativeCanvasFrame.commandRecordBytes;
+  }
+  return bytes;
+}
+
 Uint8List _hostPacket() {
   final canvas = _oneFrameCanvas();
   final bytes = Uint8List(64 + canvas.length);
@@ -115,6 +145,12 @@ void main() {
     expect(frame.resource(0).uploadLength, 1);
     final plan = buildNativeCanvasPlan(frame);
     expect(plan.segmentCountForTesting, 3);
+  });
+
+  test('consecutive alpha commands become one typed atlas batch', () {
+    final frame = NativeCanvasFrame.parse(_batchedAlphaCanvas());
+    final plan = buildNativeCanvasPlan(frame);
+    expect(plan.segmentCountForTesting, 1);
   });
 
   test('native host metadata wraps exactly one final Canvas frame', () {
