@@ -22,12 +22,13 @@ invariants:
 active:
   - define and prove the first native Howl CLI as a compact semantic client of the canonical session
   - pressure the text/session boundaries with the disposable visual client after the CLI contract is healthy
-  - preserve SSH as remote transport rather than inventing Howl networking or authentication
+  - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
+  - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
 
 deferred:
   - durable graphical Linux client
   - durable Android visual client and app lifecycle integration
-  - iOS SSH client
+  - authenticated/public remote Howl transport policy
   - renderer backend selection and presentation polish
 
 gates:
