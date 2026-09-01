@@ -4308,33 +4308,55 @@ pub const Screen = struct {
         const cells = self.cells orelse return false;
         const dst_start = self.rowStart(dst_row);
         const src_start = self.rowStart(src_row);
-        var changed = false;
-        var col = @as(u32, start_col);
+        const start = @as(u32, start_col);
         const end = @as(u32, end_col_exclusive);
-        while (col < end) : (col += 1) {
-            const dst_index = dst_start + col;
-            const src_index = src_start + col;
-            const source = cells[@intCast(src_index)];
-            const destination = cells[@intCast(dst_index)];
-            if (!std.meta.eql(destination, source)) changed = true;
-
-            if (self.scalars) |*storage| {
-                const source_tail = storage.tail(src_index, source.combining_len) catch
-                    @panic("accepted source scalar mismatch");
-                const destination_tail = storage.tail(dst_index, destination.combining_len) catch
-                    @panic("accepted destination scalar mismatch");
-                if (!std.mem.eql(u32, source_tail, destination_tail)) changed = true;
-                storage.move(
-                    src_index,
-                    source.combining_len,
-                    dst_index,
-                    destination.combining_len,
-                ) catch @panic("accepted scalar move mismatch");
-                if (source.combining_len >= scalar_storage.inline_scalars) {
-                    cells[@intCast(src_index)].combining_len = scalar_storage.inline_scalars - 1;
+        const dst = cells[@intCast(dst_start + start)..@intCast(dst_start + end)];
+        const src = cells[@intCast(src_start + start)..@intCast(src_start + end)];
+        var changed = false;
+        var inline_only = true;
+        for (dst, src) |destination, source| {
+            if (destination.combining_len >= scalar_storage.inline_scalars or
+                source.combining_len >= scalar_storage.inline_scalars)
+            {
+                inline_only = false;
+                break;
+            }
+        }
+        if (inline_only) {
+            for (dst, src) |destination, source| {
+                if (!std.meta.eql(destination, source)) {
+                    changed = true;
+                    break;
                 }
             }
-            cells[@intCast(dst_index)] = source;
+            std.mem.copyForwards(Cell, dst, src);
+        } else {
+            var col = start;
+            while (col < end) : (col += 1) {
+                const dst_index = dst_start + col;
+                const src_index = src_start + col;
+                const source = cells[@intCast(src_index)];
+                const destination = cells[@intCast(dst_index)];
+                if (!std.meta.eql(destination, source)) changed = true;
+
+                if (self.scalars) |*storage| {
+                    const source_tail = storage.tail(src_index, source.combining_len) catch
+                        @panic("accepted source scalar mismatch");
+                    const destination_tail = storage.tail(dst_index, destination.combining_len) catch
+                        @panic("accepted destination scalar mismatch");
+                    if (!std.mem.eql(u32, source_tail, destination_tail)) changed = true;
+                    storage.move(
+                        src_index,
+                        source.combining_len,
+                        dst_index,
+                        destination.combining_len,
+                    ) catch @panic("accepted scalar move mismatch");
+                    if (source.combining_len >= scalar_storage.inline_scalars) {
+                        cells[@intCast(src_index)].combining_len = scalar_storage.inline_scalars - 1;
+                    }
+                }
+                cells[@intCast(dst_index)] = source;
+            }
         }
         if (start_col == 0 and end_col_exclusive == self.cols) {
             changed = self.rowFlagsValue(dst_row) != self.rowFlagsValue(src_row) or changed;
@@ -6977,6 +6999,22 @@ test "scroll rows preserve scalar tails while transferring cell metadata" {
         &tail,
         try screen.scalars.?.tail(top, source.combining_len),
     );
+}
+
+test "partial row scroll preserves inline grapheme cells without scalar tails" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 4, 3);
+    defer screen.deinit(std.testing.allocator);
+
+    var source = blank_cell;
+    source.codepoint = 'a';
+    source.combining_len = 2;
+    source.combining[0] = 0x0300;
+    source.combining[1] = 0x0301;
+    screen.cells.?[@intCast(screen.rowStart(1))] = source;
+
+    try std.testing.expect(screen.scrollDownRegion(1, 3, 1));
+    try std.testing.expectEqual(source, screen.cells.?[@intCast(screen.rowStart(2))]);
+    try std.testing.expectEqual(scalar_storage.Range.none, screen.scalars.?.ranges[@intCast(screen.rowStart(2))]);
 }
 
 test "vertical absolute cursor movement clamps to the retained grid" {
