@@ -75,18 +75,25 @@ pub export fn howl_native_host_create(
     primary_len: usize,
     fallback_ptr: [*]const u8,
     fallback_len: usize,
+    secondary_fallback_ptr: ?[*]const u8,
+    secondary_fallback_len: usize,
 ) ?*HostHandle {
     if (endpoint_len == 0 or primary_len == 0) return null;
     const allocator = std.heap.c_allocator;
     var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch return null;
     errdefer connection.deinit();
-    var fallback_storage: [1][]const u8 = undefined;
-    const fallbacks: []const []const u8 = if (fallback_len == 0)
-        &.{}
-    else blk: {
-        fallback_storage[0] = fallback_ptr[0..fallback_len];
-        break :blk fallback_storage[0..1];
-    };
+    var fallback_storage: [2][]const u8 = undefined;
+    var fallback_count: usize = 0;
+    if (fallback_len != 0) {
+        fallback_storage[fallback_count] = fallback_ptr[0..fallback_len];
+        fallback_count += 1;
+    }
+    if (secondary_fallback_len != 0) {
+        const pointer = secondary_fallback_ptr orelse return null;
+        fallback_storage[fallback_count] = pointer[0..secondary_fallback_len];
+        fallback_count += 1;
+    }
+    const fallbacks = fallback_storage[0..fallback_count];
     // `FontSet.init` copies every path during this call.
     const fonts = text.FontSet.init(allocator, .{
         .primary = primary_ptr[0..primary_len],

@@ -165,6 +165,7 @@ final class NativeHostObserver {
       endpoint: endpoint,
       primaryFontPath: fonts.primary,
       fallbackFontPath: fonts.fallback,
+      secondaryFallbackFontPath: fonts.secondaryFallback,
     );
   }
 
@@ -172,6 +173,7 @@ final class NativeHostObserver {
     required String endpoint,
     required String primaryFontPath,
     required String fallbackFontPath,
+    required String secondaryFallbackFontPath,
   }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
@@ -183,6 +185,7 @@ final class NativeHostObserver {
         endpoint,
         primaryFontPath,
         fallbackFontPath,
+        secondaryFallbackFontPath,
       ],
       debugName: 'Howl native observer',
     );
@@ -257,9 +260,10 @@ final class NativeHostObserver {
 }
 
 final class _NativeHostFonts {
-  const _NativeHostFonts(this.primary, this.fallback);
+  const _NativeHostFonts(this.primary, this.fallback, this.secondaryFallback);
   final String primary;
   final String fallback;
+  final String secondaryFallback;
 }
 
 Future<_NativeHostFonts>? _fontPaths;
@@ -276,13 +280,17 @@ Future<_NativeHostFonts> _resolveNativeHostFonts() async {
     }
     final primary = '$filesPath/IosevkaTermNerdFont-Regular.ttf';
     const fallback = '/system/fonts/NotoNaskhArabic-Regular.ttf';
+    const secondaryFallback = '/system/fonts/NotoSansCJK-Regular.ttc';
     if (!await File(primary).exists()) {
       throw const NativeHostException('primary_font_missing');
     }
     if (!await File(fallback).exists()) {
       throw const NativeHostException('fallback_font_missing');
     }
-    return _NativeHostFonts(primary, fallback);
+    if (!await File(secondaryFallback).exists()) {
+      throw const NativeHostException('secondary_fallback_font_missing');
+    }
+    return _NativeHostFonts(primary, fallback, secondaryFallback);
   }
   if (Platform.isLinux) {
     final primary = await _configuredFont('HOWL_FONT', 'IosevkaTerm Nerd Font');
@@ -290,7 +298,7 @@ Future<_NativeHostFonts> _resolveNativeHostFonts() async {
       'HOWL_FALLBACK_FONT',
       'Noto Sans Arabic',
     );
-    return _NativeHostFonts(primary, fallback);
+    return _NativeHostFonts(primary, fallback, '');
   }
   throw const NativeHostException('platform_transport_unavailable');
 }
@@ -334,8 +342,12 @@ typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
   ffi.Size,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
 );
 typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
+  ffi.Pointer<ffi.Uint8>,
+  int,
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Uint8>,
@@ -372,6 +384,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final endpoint = init[2]! as String;
   final primary = init[3]! as String;
   final fallback = init[4]! as String;
+  final secondaryFallback = init[5]! as String;
   final commands = ReceivePort();
 
   final dylib = ffi.DynamicLibrary.open('libhowl_native_host.so');
@@ -395,9 +408,13 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final endpointBytes = utf8.encode(endpoint);
   final primaryBytes = utf8.encode(primary);
   final fallbackBytes = utf8.encode(fallback);
+  final secondaryFallbackBytes = utf8.encode(secondaryFallback);
   final endpointPointer = copyString(endpoint);
   final primaryPointer = copyString(primary);
   final fallbackPointer = copyString(fallback);
+  final secondaryFallbackPointer = secondaryFallbackBytes.isEmpty
+      ? ffi.nullptr
+      : copyString(secondaryFallback);
   final host = create(
     endpointPointer,
     endpointBytes.length,
@@ -405,10 +422,15 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     primaryBytes.length,
     fallbackPointer,
     fallbackBytes.length,
+    secondaryFallbackPointer,
+    secondaryFallbackBytes.length,
   );
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);
   calloc.free(fallbackPointer);
+  if (secondaryFallbackPointer != ffi.nullptr) {
+    calloc.free(secondaryFallbackPointer);
+  }
   if (host == ffi.nullptr) {
     ready.send('worker_host_create');
     commands.close();

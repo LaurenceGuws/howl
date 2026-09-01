@@ -44,7 +44,7 @@ The terminal font is presentation/deployment policy. The Android native host req
 files/IosevkaTermNerdFont-Regular.ttf
 ```
 
-and currently uses Android's `NotoNaskhArabic-Regular.ttf` as the explicit fallback. The font is neither tracked nor bundled in this repository.
+and uses Android's `NotoNaskhArabic-Regular.ttf` plus `NotoSansCJK-Regular.ttc` as explicit system fallbacks. Missing sequences outside the configured faces degrade to a replacement glyph rather than failing the terminal frame. These system fonts are neither tracked nor bundled in this repository.
 
 The native control canary is deterministic and does not rely on Android's vendor-specific shell text injector:
 
