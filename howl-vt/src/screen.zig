@@ -1988,7 +1988,11 @@ pub const Screen = struct {
     }
 
     fn setCursorRowClamped(self: *Screen, row: u16) void {
-        self.cursor.setPositionByClient(row, @min(self.cursor.col, self.lineRightBoundary(row)));
+        const bounded_row = @min(row, self.rows -| 1);
+        self.cursor.setPositionByClient(
+            bounded_row,
+            @min(self.cursor.col, self.lineRightBoundary(bounded_row)),
+        );
     }
 
     /// Clears retained scrollback while preserving the visible grid.
@@ -3667,7 +3671,7 @@ pub const Screen = struct {
 
         var dst = top;
         while (dst + amount <= bounded_bottom) : (dst += 1) {
-            changed = self.copyRowRange(dst, dst + amount, left, right + 1) or changed;
+            changed = self.moveRowRange(dst, dst + amount, left, right + 1) or changed;
         }
 
         var clear_row = bounded_bottom - (amount - 1);
@@ -3703,7 +3707,7 @@ pub const Screen = struct {
 
         var dst = bounded_bottom;
         while (dst >= top + amount) {
-            changed = self.copyRowRange(dst, dst - amount, left, right + 1) or changed;
+            changed = self.moveRowRange(dst, dst - amount, left, right + 1) or changed;
             if (dst == top + amount) break;
             dst -= 1;
         }
@@ -4291,29 +4295,38 @@ pub const Screen = struct {
         return changed;
     }
 
-    fn copyRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) bool {
-        const c = self.cells orelse return false;
+    fn moveRowRange(self: *Screen, dst_row: u16, src_row: u16, start_col: u16, end_col_exclusive: u16) bool {
+        const cells = self.cells orelse return false;
         const dst_start = self.rowStart(dst_row);
         const src_start = self.rowStart(src_row);
-        const start_col32 = @as(u32, start_col);
-        const end_col32 = @as(u32, end_col_exclusive);
-        const dst = c[@intCast(dst_start + start_col32)..@intCast(dst_start + end_col32)];
-        const src = c[@intCast(src_start + start_col32)..@intCast(src_start + end_col32)];
         var changed = false;
-        for (dst, src) |dst_cell, src_cell| {
-            if (!std.meta.eql(dst_cell, src_cell)) changed = true;
+        var col = @as(u32, start_col);
+        const end = @as(u32, end_col_exclusive);
+        while (col < end) : (col += 1) {
+            const dst_index = dst_start + col;
+            const src_index = src_start + col;
+            const source = cells[@intCast(src_index)];
+            const destination = cells[@intCast(dst_index)];
+            if (!std.meta.eql(destination, source)) changed = true;
+
+            if (self.scalars) |*storage| {
+                const source_tail = storage.tail(src_index, source.combining_len) catch
+                    @panic("accepted source scalar mismatch");
+                const destination_tail = storage.tail(dst_index, destination.combining_len) catch
+                    @panic("accepted destination scalar mismatch");
+                if (!std.mem.eql(u32, source_tail, destination_tail)) changed = true;
+                storage.move(
+                    src_index,
+                    source.combining_len,
+                    dst_index,
+                    destination.combining_len,
+                ) catch @panic("accepted scalar move mismatch");
+                if (source.combining_len >= scalar_storage.inline_scalars) {
+                    cells[@intCast(src_index)].combining_len = scalar_storage.inline_scalars - 1;
+                }
+            }
+            cells[@intCast(dst_index)] = source;
         }
-        std.mem.copyForwards(
-            Cell,
-            dst,
-            src,
-        );
-        self.moveScalarCells(
-            dst_start + start_col32,
-            src_start + start_col32,
-            end_col32 - start_col32,
-            false,
-        );
         if (start_col == 0 and end_col_exclusive == self.cols) {
             changed = self.rowFlagsValue(dst_row) != self.rowFlagsValue(src_row) or changed;
             self.copyRowFlags(dst_row, src_row);
@@ -6920,4 +6933,46 @@ fn copyTabStops(dst: ?[]bool, src: ?[]const bool) void {
     const d = dst orelse return;
     const s = src orelse return;
     @memcpy(d[0..@min(d.len, s.len)], s[0..@min(d.len, s.len)]);
+}
+
+test "scroll rows preserve scalar tails while transferring cell metadata" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 3, 2);
+    defer screen.deinit(std.testing.allocator);
+
+    var source = blank_cell;
+    source.codepoint = 'a';
+    source.combining_len = scalar_storage.maximum_scalars - 1;
+    source.combining = .{ 0x0300, 0x0301, 0x0302 };
+    var tail: [scalar_storage.maximum_tail_scalars]u32 = undefined;
+    for (&tail, 0..) |*scalar, index|
+        scalar.* = 0x0400 + @as(u32, @intCast(index));
+    try screen.scalars.?.set(0, 0, &tail);
+    screen.cells.?[0] = source;
+
+    try std.testing.expect(screen.scrollDownRegion(0, 2, 1));
+    const middle = screen.rowStart(1);
+    try std.testing.expectEqual(source, screen.cells.?[@intCast(middle)]);
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try screen.scalars.?.tail(middle, source.combining_len),
+    );
+
+    try std.testing.expect(screen.scrollUpRegion(0, 2, 1));
+    const top = screen.rowStart(0);
+    try std.testing.expectEqual(source, screen.cells.?[@intCast(top)]);
+    try std.testing.expectEqualSlices(
+        u32,
+        &tail,
+        try screen.scalars.?.tail(top, source.combining_len),
+    );
+}
+
+test "vertical absolute cursor movement clamps to the retained grid" {
+    var screen = try Screen.initWithCells(std.testing.allocator, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+
+    try std.testing.expect(screen.moveCursor(.{ .cursor_vertical_absolute = 21 }));
+    try std.testing.expectEqual(@as(u16, 1), screen.cursor.row);
+    try std.testing.expectEqual(@as(u16, 0), screen.cursor.col);
 }
