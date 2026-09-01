@@ -463,11 +463,12 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
         responses.send(<Object?>[id, code == 0 ? 5 : code, null]);
         continue;
       }
-      final bytes = Uint8List.fromList(output.asTypedList(outputLength.value));
       responses.send(<Object?>[
         id,
         0,
-        TransferableTypedData.fromList(<Uint8List>[bytes]),
+        TransferableTypedData.fromList(<Uint8List>[
+          output.asTypedList(outputLength.value),
+        ]),
       ]);
     }
   } finally {
