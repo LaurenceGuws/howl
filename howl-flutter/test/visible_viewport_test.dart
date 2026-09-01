@@ -35,6 +35,39 @@ void main() {
     expect(visible, const Size(460, 260));
   });
 
+  testWidgets('terminal viewport also excludes persistent safe-area padding', (
+    tester,
+  ) async {
+    Size? visible;
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Center(
+          child: SizedBox(
+            width: 500,
+            height: 400,
+            child: MediaQuery(
+              data: const MediaQueryData(
+                viewPadding: EdgeInsets.fromLTRB(12, 48, 16, 24),
+                viewInsets: EdgeInsets.only(bottom: 120),
+              ),
+              child: TerminalVisibleViewport(
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    visible = constraints.biggest;
+                    return const SizedBox.expand();
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(visible, const Size(472, 232));
+  });
+
   testWidgets('terminal viewport is unchanged when nothing obscures it', (
     tester,
   ) async {
