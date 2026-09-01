@@ -3699,6 +3699,15 @@ pub const Screen = struct {
         ) or changed;
         changed = self.clearClustersIntersecting(top, top + 1, 0, self.cols) or changed;
 
+        if (top == 0 and bounded_bottom == self.rows - 1 and !self.left_right_margin_mode) {
+            self.row_origin = @intCast((@as(u32, self.row_origin) + @as(u32, self.rows) - @as(u32, amount)) % @as(u32, self.rows));
+            var clear_row: u16 = 0;
+            while (clear_row < amount) : (clear_row += 1) {
+                changed = self.clearStructuralRowRange(clear_row, 0, self.cols) or changed;
+            }
+            return true;
+        }
+
         const left = if (self.left_right_margin_mode) self.left_margin else 0;
         const right = if (self.left_right_margin_mode) self.right_margin else self.cols -| 1;
         if (left != 0 or right + 1 != self.cols) {
@@ -5495,10 +5504,11 @@ test "twenty four scalars cross projected history and reflow page boundaries" {
 
     screen.clearRowRange(0, 0, old_cols);
     try std.testing.expect(screen.scrollDownFromHistory(1));
+    const restored_lead = screen.rowStart(0) + @as(u32, @intCast(lead));
     try std.testing.expectEqualSlices(
         u32,
         &tail,
-        try screen.scalars.?.tail(lead, cell_value.combining_len),
+        try screen.scalars.?.tail(restored_lead, cell_value.combining_len),
     );
     try std.testing.expectEqual(@as(u32, 0), screen.history_count);
 
@@ -6950,6 +6960,7 @@ test "scroll rows preserve scalar tails while transferring cell metadata" {
     screen.cells.?[0] = source;
 
     try std.testing.expect(screen.scrollDownRegion(0, 2, 1));
+    try std.testing.expectEqual(blank_cell, screen.cells.?[@intCast(screen.rowStart(0))]);
     const middle = screen.rowStart(1);
     try std.testing.expectEqual(source, screen.cells.?[@intCast(middle)]);
     try std.testing.expectEqualSlices(
