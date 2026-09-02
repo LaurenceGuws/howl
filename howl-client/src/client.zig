@@ -15,6 +15,7 @@ pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.Pa
     InvalidEndpoint,
     SocketCreateFailed,
     SocketConnectFailed,
+    SocketConnectTimedOut,
     SocketOptionFailed,
     SocketReadFailed,
     SocketWriteFailed,
@@ -120,22 +121,90 @@ fn tcpEndpoint(endpoint: []const u8) error{InvalidEndpoint}!TcpEndpoint {
     return .{ .address = address, .port = port };
 }
 
-fn connectTcp(endpoint: TcpEndpoint) error{ SocketCreateFailed, SocketConnectFailed, SocketOptionFailed }!posix.fd_t {
+const tcp_connect_timeout_ms = 15_000;
+
+fn connectTcp(endpoint: TcpEndpoint) error{ SocketCreateFailed, SocketConnectFailed, SocketConnectTimedOut, SocketOptionFailed }!posix.fd_t {
     const raw = system.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
     if (posix.errno(raw) != .SUCCESS) return error.SocketCreateFailed;
     const fd: posix.fd_t = @intCast(raw);
     errdefer closeFd(fd);
+
+    const original_flags = try fileStatusFlags(fd);
+    try setFileStatusFlags(fd, original_flags | nonblockingFlag());
+
     var address = ipv4Address(endpoint.address, endpoint.port);
+    var connected = false;
     while (true) {
         const result = system.connect(fd, @ptrCast(&address), @sizeOf(posix.sockaddr.in));
         switch (posix.errno(result)) {
-            .SUCCESS => break,
+            .SUCCESS, .ISCONN => {
+                connected = true;
+                break;
+            },
             .INTR => continue,
+            .INPROGRESS, .ALREADY, .AGAIN => break,
             else => return error.SocketConnectFailed,
         }
     }
+
+    if (!connected) {
+        var fds = [_]posix.pollfd{.{
+            .fd = fd,
+            .events = posix.POLL.OUT,
+            .revents = 0,
+        }};
+        const ready = posix.poll(&fds, tcp_connect_timeout_ms) catch
+            return error.SocketConnectFailed;
+        if (ready == 0) return error.SocketConnectTimedOut;
+        if (fds[0].revents & (posix.POLL.ERR | posix.POLL.HUP | posix.POLL.NVAL | posix.POLL.OUT) == 0)
+            return error.SocketConnectFailed;
+        try verifySocketConnected(fd);
+    }
+
+    try setFileStatusFlags(fd, original_flags);
     try setTcpNoDelay(fd);
     return fd;
+}
+
+fn nonblockingFlag() usize {
+    return @as(usize, 1) << @bitOffsetOf(posix.O, "NONBLOCK");
+}
+
+fn fileStatusFlags(fd: posix.fd_t) error{SocketOptionFailed}!usize {
+    while (true) {
+        const result = system.fcntl(fd, posix.F.GETFL, @as(usize, 0));
+        switch (posix.errno(result)) {
+            .SUCCESS => return @intCast(result),
+            .INTR => continue,
+            else => return error.SocketOptionFailed,
+        }
+    }
+}
+
+fn setFileStatusFlags(fd: posix.fd_t, flags: usize) error{SocketOptionFailed}!void {
+    while (true) {
+        const result = system.fcntl(fd, posix.F.SETFL, flags);
+        switch (posix.errno(result)) {
+            .SUCCESS => return,
+            .INTR => continue,
+            else => return error.SocketOptionFailed,
+        }
+    }
+}
+
+fn verifySocketConnected(fd: posix.fd_t) error{ SocketConnectFailed, SocketOptionFailed }!void {
+    var socket_error: c_int = 0;
+    var length: posix.socklen_t = @sizeOf(c_int);
+    const result = system.getsockopt(
+        fd,
+        posix.SOL.SOCKET,
+        posix.SO.ERROR,
+        @ptrCast(&socket_error),
+        &length,
+    );
+    if (posix.errno(result) != .SUCCESS or length != @sizeOf(c_int))
+        return error.SocketOptionFailed;
+    if (socket_error != 0) return error.SocketConnectFailed;
 }
 
 fn connectUnix(path: []const u8) error{ SocketCreateFailed, SocketConnectFailed, SocketPathTooLong }!posix.fd_t {
