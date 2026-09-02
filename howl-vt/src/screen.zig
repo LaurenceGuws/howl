@@ -851,7 +851,11 @@ pub const Screen = struct {
             return;
         };
         const prefix_len = next_line.cells.items.len;
-        var next_scalars: ?scalar_storage.Storage = if (prefix_len + len > 0)
+        const row_start = self.rowStart(row);
+        const incoming_cells = self.cells.?[row_start..][0..len];
+        const incoming_has_external_scalars = cellsHaveExternalScalars(incoming_cells);
+        const needs_scalar_storage = next_line.scalars != null or incoming_has_external_scalars;
+        var next_scalars: ?scalar_storage.Storage = if (needs_scalar_storage)
             scalar_storage.Storage.init(
                 allocator,
                 prefix_len + len,
@@ -875,11 +879,11 @@ pub const Screen = struct {
                 return;
             };
         }
-        if (len > 0) {
+        if (incoming_has_external_scalars) {
             copyScalarCells(
                 &self.scalars.?,
-                self.cells.?[self.rowStart(row)..][0..self.cols],
-                self.rowStart(row),
+                self.cells.?[row_start..][0..self.cols],
+                row_start,
                 &next_scalars.?,
                 prefix_len,
                 len,
@@ -921,7 +925,7 @@ pub const Screen = struct {
         const incoming_start = if (next_line.scalars != null)
             next_line.cells.items.len - len
         else
-            0;
+            row_start;
         const projected_slot = self.preflightProjectedRow(
             next_line.cells.items[next_line.cells.items.len - len ..],
             incoming_storage,
@@ -3746,17 +3750,7 @@ pub const Screen = struct {
             const remove = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
             std.debug.assert(remove > 0);
             const first = line.cells.items.len - remove;
-            const storage = if (line.scalars) |*value|
-                value
-            else
-                @panic("accepted history scalar owner missing");
-            var index = first;
-            while (index < line.cells.items.len) : (index += 1)
-                clearAcceptedTail(
-                    storage,
-                    index,
-                    line.cells.items[index].combining_len,
-                );
+            clearHistoryLineExternalScalars(line, first);
             line.cells.shrinkRetainingCapacity(line.cells.items.len - remove);
             if (line.cells.items.len == 0) {
                 line.deinit(allocator);
@@ -3782,17 +3776,7 @@ pub const Screen = struct {
             const tail = line.cells.items.len - @as(usize, row_count - 1) * self.cols;
             std.debug.assert(tail > 0 and tail <= self.cols);
             const first = line.cells.items.len - tail;
-            const storage = if (line.scalars) |*value|
-                value
-            else
-                @panic("accepted history scalar owner missing");
-            var index = first;
-            while (index < line.cells.items.len) : (index += 1)
-                clearAcceptedTail(
-                    storage,
-                    index,
-                    line.cells.items[index].combining_len,
-                );
+            clearHistoryLineExternalScalars(&line, first);
             line.cells.shrinkRetainingCapacity(line.cells.items.len - tail);
             self.open_history_line = line;
         } else {
@@ -4423,13 +4407,36 @@ fn cloneAuthorityLine(
     return line;
 }
 
+fn cellsHaveExternalScalars(cells: []const ScreenCell) bool {
+    for (cells) |cell| {
+        if (sidecarCount(cell) != 0) return true;
+    }
+    return false;
+}
+
+fn clearHistoryLineExternalScalars(line: *HistoryLine, first: usize) void {
+    std.debug.assert(first <= line.cells.items.len);
+    if (line.scalars) |*storage| {
+        var index = first;
+        while (index < line.cells.items.len) : (index += 1) {
+            clearAcceptedTail(
+                storage,
+                index,
+                line.cells.items[index].combining_len,
+            );
+        }
+        return;
+    }
+    std.debug.assert(!cellsHaveExternalScalars(line.cells.items[first..]));
+}
+
 fn cloneLineScalars(
     allocator: std.mem.Allocator,
     cells: []const ScreenCell,
     source: ?*const scalar_storage.Storage,
     source_start: usize,
 ) std.mem.Allocator.Error!?scalar_storage.Storage {
-    if (cells.len == 0) return null;
+    if (!cellsHaveExternalScalars(cells)) return null;
     var result = scalar_storage.Storage.init(
         allocator,
         cells.len,
@@ -5485,6 +5492,32 @@ test "REP reports no preceding graphic separately from scalar pressure" {
     try std.testing.expectEqualDeep(graphic_before, pressured.last_graphic);
 }
 
+test "inline combining history needs no external scalar owner" {
+    var screen = try Screen.initWithCellsAndHistory(
+        std.testing.allocator,
+        2,
+        4,
+        4,
+    );
+    defer screen.deinit(std.testing.allocator);
+
+    var inline_cell = blank_cell;
+    inline_cell.codepoint = 'a';
+    inline_cell.combining_len = scalar_storage.inline_scalars - 1;
+    inline_cell.combining = .{ 0x0300, 0x0301, 0x0302 };
+    screen.cells.?[@intCast(screen.rowStart(0))] = inline_cell;
+
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expect(screen.historyLineAt(0).scalars == null);
+    try std.testing.expectEqualDeep(inline_cell, screen.historyLineAt(0).cells.items[0]);
+
+    screen.clearRowRange(0, 0, screen.cols);
+    try std.testing.expect(screen.scrollDownFromHistory(1));
+    try std.testing.expectEqual(@as(u32, 0), screen.history_count);
+    try std.testing.expectEqualDeep(inline_cell, screen.cellInfoAt(0, 0));
+}
+
 test "twenty four scalars cross projected history and reflow page boundaries" {
     const old_cols: u16 = scalar_storage.page_cells + 1;
     var screen = try Screen.initWithCellsAndHistory(
@@ -6315,20 +6348,22 @@ fn appendRewrappedRows(
             );
             result.flat_rows.items[destination + 1] = continuation;
         }
-        copyScalarCells(
-            if (line.scalars) |*storage|
-                storage
-            else
-                @panic("accepted logical scalar owner missing"),
-            line.cells.items[source_index..][0..1],
-            @intCast(source_index),
-            &result.scalars.?,
-            destination,
-            1,
-        ) catch |err| switch (err) {
-            error.ScalarCapacity => return error.ScalarCapacity,
-            error.InvalidRange => @panic("accepted logical scalar mismatch"),
-        };
+        if (sidecarCount(cell) != 0) {
+            copyScalarCells(
+                if (line.scalars) |*storage|
+                    storage
+                else
+                    @panic("accepted logical scalar owner missing"),
+                line.cells.items[source_index..][0..1],
+                @intCast(source_index),
+                &result.scalars.?,
+                destination,
+                1,
+            ) catch |err| switch (err) {
+                error.ScalarCapacity => return error.ScalarCapacity,
+                error.InvalidRange => @panic("accepted logical scalar mismatch"),
+            };
+        }
         destination_col += span;
         result.rewrapped.items[rewrapped_before + destination_row].len =
             destination_col;
