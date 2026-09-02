@@ -159,12 +159,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _sendFocus(true);
       }
       var revision = 0;
+      var pendingObservation = observer.observe(
+        afterRevision: revision,
+        historyOffset: 0,
+        residency: encodeNativeHostResidency(_nativeLiveLease),
+      );
       while (!_stopping) {
-        final bytes = await observer.observe(
-          afterRevision: revision,
-          historyOffset: 0,
-          residency: encodeNativeHostResidency(_nativeLiveLease),
-        );
+        final bytes = await pendingObservation;
         final packet = parseNativeHostPacket(bytes);
         revision = packet.metadata.revision;
         if (!mounted || _stopping) break;
@@ -194,6 +195,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() {});
         }
+        pendingObservation = observer.observe(
+          afterRevision: revision,
+          historyOffset: 0,
+          residency: encodeNativeHostResidency(_nativeLiveLease),
+        );
         await WidgetsBinding.instance.endOfFrame;
         for (final image in prepared.retired) {
           image.dispose();
