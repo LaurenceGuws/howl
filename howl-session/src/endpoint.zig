@@ -68,7 +68,6 @@ const Client = struct {
     fd: posix.fd_t,
     id: protocol.ClientId,
     phase: enum { hello, ready } = .hello,
-    features: u64 = 0,
     input: [input_buffer_bytes]u8 = undefined,
     input_len: usize = 0,
     output: std.ArrayList(u8) = .empty,
@@ -316,23 +315,13 @@ const Server = struct {
                 self.closeClient(index);
                 return;
             }
-            const hello = protocol.decodeHello(payload) catch {
-                self.closeClient(index);
-                return;
-            };
-            const version = protocol.negotiateVersion(hello) orelse {
-                self.closeClient(index);
-                return;
-            };
-            const features = protocol.negotiateFeatures(hello);
-            if (features & protocol.feature(.grid_snapshot) == 0) {
+            if (payload.len != protocol.payload_bytes.hello) {
                 self.closeClient(index);
                 return;
             }
             client.phase = .ready;
-            client.features = features;
             var encoded: [protocol.payload_bytes.welcome]u8 = undefined;
-            protocol.encodeWelcome(&encoded, .{ .version = version, .features = features, .client_id = client.id });
+            protocol.encodeWelcome(&encoded, .{ .client_id = client.id });
             try self.queueFrame(client, .welcome, &encoded);
             return;
         }
@@ -343,12 +332,6 @@ const Server = struct {
                     try self.queueResult(client, .observe, .malformed);
                     return;
                 };
-                if (request.history_offset != 0 and
-                    client.features & protocol.feature(.history_window) == 0)
-                {
-                    try self.queueResult(client, .observe, .unsupported);
-                    return;
-                }
                 if (request.after_revision > self.observation_revision) {
                     try self.queueResult(client, .observe, .malformed);
                     return;
@@ -378,8 +361,6 @@ const Server = struct {
             .bytes => .{ .bytes = payload[1..] },
             .paste => .{ .paste = payload[1..] },
             .key => blk: {
-                if (client.features & protocol.feature(.typed_input) == 0)
-                    return self.queueResult(client, .input, .unsupported);
                 const value = protocol.decodeKeyInput(payload[1..]) catch
                     return self.queueResult(client, .input, .malformed);
                 const key: howl.Key = switch (value.kind) {
@@ -399,8 +380,6 @@ const Server = struct {
                 } };
             },
             .mouse => blk: {
-                if (client.features & protocol.feature(.typed_input) == 0)
-                    return self.queueResult(client, .input, .unsupported);
                 const value = protocol.decodeMouseInput(payload[1..]) catch
                     return self.queueResult(client, .input, .malformed);
                 break :blk .{ .mouse = .{
@@ -415,8 +394,6 @@ const Server = struct {
                 } };
             },
             .focus => blk: {
-                if (client.features & protocol.feature(.typed_input) == 0)
-                    return self.queueResult(client, .input, .unsupported);
                 const value = protocol.decodeFocusInput(payload[1..]) catch
                     return self.queueResult(client, .input, .malformed);
                 break :blk .{ .focus = switch (value) {
@@ -432,8 +409,6 @@ const Server = struct {
     }
 
     fn handleInteractionState(self: *Server, client: *Client, payload: []const u8) !void {
-        if (client.features & protocol.feature(.interaction_state) == 0)
-            return self.queueResult(client, .interaction_state, .unsupported);
         if (payload.len != protocol.payload_bytes.interaction_state)
             return self.queueResult(client, .interaction_state, .malformed);
         const state = howl.interactionState(self.session);
@@ -476,8 +451,6 @@ const Server = struct {
     }
 
     fn handleAssignLeader(self: *Server, client: *Client, payload: []const u8) !void {
-        if (client.features & protocol.feature(.resize_leader) == 0)
-            return self.queueResult(client, .assign_leader, .unsupported);
         const request = protocol.decodeAssignLeader(payload) catch
             return self.queueResult(client, .assign_leader, .malformed);
         if (request.client_id != protocol.no_client and !self.hasClient(request.client_id))
@@ -487,8 +460,6 @@ const Server = struct {
     }
 
     fn handleResize(self: *Server, client: *Client, payload: []const u8) !void {
-        if (client.features & protocol.feature(.resize_leader) == 0)
-            return self.queueResult(client, .resize, .unsupported);
         if (!self.authority.mayResize(client.id)) return self.queueResult(client, .resize, .not_leader);
         const request = protocol.decodeResize(payload) catch return self.queueResult(client, .resize, .malformed);
         howl.resize(self.session, request.rows, request.columns) catch
@@ -568,99 +539,7 @@ const Server = struct {
     }
 
     fn queueSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
-        if (client.features & protocol.feature(.text_snapshot) != 0)
-            return self.queueTextSnapshot(client, history_offset);
-        return self.queueGridSnapshot(client, history_offset);
-    }
-
-    fn queueGridSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
-        const status = howl.status(self.session, history_offset);
-        const row_bytes = std.math.add(usize, 4, std.math.mul(usize, status.columns, 8) catch
-            return error.SnapshotTooLarge) catch return error.SnapshotTooLarge;
-        const body_bytes = std.math.mul(usize, status.rows, row_bytes) catch return error.SnapshotTooLarge;
-        const maximum_payload: usize = protocol.maximum_payload_bytes;
-        if (row_bytes > maximum_payload) return error.SnapshotTooLarge;
-        const rows_per_frame = @max(@as(usize, 1), maximum_payload / row_bytes);
-        const row_count: usize = status.rows;
-        const data_frames = if (row_count == 0) 0 else (row_count + rows_per_frame - 1) / rows_per_frame;
-        const frame_count = std.math.add(usize, data_frames, 2) catch return error.SnapshotTooLarge;
-        const frame_headers = std.math.mul(usize, frame_count, protocol.header_bytes) catch
-            return error.SnapshotTooLarge;
-        const fixed_payloads = std.math.add(
-            usize,
-            protocol.payload_bytes.snapshot_begin,
-            protocol.payload_bytes.snapshot_end,
-        ) catch return error.SnapshotTooLarge;
-        const framed_body = std.math.add(usize, body_bytes, frame_headers) catch return error.SnapshotTooLarge;
-        const total_bound = std.math.add(usize, framed_body, fixed_payloads) catch return error.SnapshotTooLarge;
-        if (total_bound > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
-
-        client.resetOutput(self.allocator);
-        errdefer client.resetOutput(self.allocator);
-        try client.output.ensureTotalCapacity(self.allocator, total_bound);
-
-        var begin_payload: [protocol.payload_bytes.snapshot_begin]u8 = undefined;
-        protocol.encodeSnapshotBegin(&begin_payload, .{
-            .revision = self.observation_revision,
-            .terminal_revision = status.revision,
-            .history_offset = status.history_offset,
-            .history_count = status.history_count,
-            .history_row_base = status.history_row_base,
-            .rows = status.rows,
-            .columns = status.columns,
-            .cursor_row = status.cursor_row,
-            .cursor_column = status.cursor_column,
-            .cursor_shape = @intCast(@backingInt(status.cursor_shape)),
-            .cursor_visible = status.cursor_visible,
-            .cursor_blink = status.cursor_blink,
-            .alternate_screen = status.alternate_screen,
-            .stream_closed = self.stream_closed,
-            .child_exited = self.child_exited,
-            .leader_present = self.authority.leader() != null,
-            .you_are_leader = self.authority.mayResize(client.id),
-        });
-        try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
-
-        if (status.rows != 0) {
-            const cells = try self.allocator.alloc(howl.Cell, status.columns);
-            defer self.allocator.free(cells);
-            var frame_header_offset: ?usize = null;
-            var frame_payload_start: usize = 0;
-            var row: u16 = 0;
-            while (row < status.rows) : (row += 1) {
-                if (frame_header_offset == null or
-                    client.output.items.len - frame_payload_start + row_bytes > protocol.maximum_payload_bytes)
-                {
-                    if (frame_header_offset) |offset| try finishDataFrame(&client.output, offset, frame_payload_start);
-                    frame_header_offset = client.output.items.len;
-                    try client.output.appendNTimes(self.allocator, 0, protocol.header_bytes);
-                    frame_payload_start = client.output.items.len;
-                }
-                var row_header: [4]u8 = .{
-                    @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
-                    @intCast(@backingInt(howl.lineGeometry(self.session, status.history_offset, row))),
-                    @truncate(status.columns >> 8),
-                    @truncate(status.columns),
-                };
-                try client.output.appendSlice(self.allocator, &row_header);
-                const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-                for (copied) |cell| {
-                    var encoded: [8]u8 = undefined;
-                    encodeU32(encoded[0..4], cell.codepoint);
-                    encoded[4] = cell.width;
-                    encoded[5] = cell.height;
-                    encoded[6] = cell.x;
-                    encoded[7] = cell.y;
-                    try client.output.appendSlice(self.allocator, &encoded);
-                }
-            }
-            if (frame_header_offset) |offset| try finishDataFrame(&client.output, offset, frame_payload_start);
-        }
-
-        var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
-        protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
-        try self.appendFrame(&client.output, .snapshot_end, &end_payload);
-        client.output_offset = 0;
+        return self.queueTextSnapshot(client, history_offset);
     }
 
     fn queueTextSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
@@ -671,7 +550,6 @@ const Server = struct {
         else
             observed_ns -| status.cursor_movement_timestamp_ns;
         var referenced_links: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-        var referenced_link_count: usize = 0;
         const cells = try self.allocator.alloc(howl.Cell, status.columns);
         defer self.allocator.free(cells);
 
@@ -718,7 +596,6 @@ const Server = struct {
                         if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
                             return error.InvalidSnapshot;
                         referenced_links[link_index] = true;
-                        referenced_link_count += 1;
                     }
                 }
             }
@@ -727,7 +604,6 @@ const Server = struct {
                 protocol.text_v1.record_header_bytes,
                 row_payload_bytes,
             ) catch return error.SnapshotTooLarge;
-            if (record_bytes > protocol.maximum_payload_bytes) return error.SnapshotTooLarge;
             body_bytes = std.math.add(usize, body_bytes, record_bytes) catch
                 return error.SnapshotTooLarge;
         }
@@ -749,22 +625,95 @@ const Server = struct {
             ) catch return error.SnapshotTooLarge;
         }
 
-        const data_frame_count = std.math.add(
-            usize,
-            @as(usize, status.rows) + 1,
-            referenced_link_count,
-        ) catch return error.SnapshotTooLarge;
-        const frame_count = std.math.add(usize, data_frame_count, 2) catch
+        if (body_bytes == 0 or body_bytes > protocol.maximum_snapshot_bytes or
+            body_bytes > std.math.maxInt(u32))
             return error.SnapshotTooLarge;
-        const frame_headers = std.math.mul(usize, frame_count, protocol.header_bytes) catch
-            return error.SnapshotTooLarge;
-        const fixed_payloads = protocol.payload_bytes.snapshot_begin +
-            protocol.payload_bytes.snapshot_end;
-        const total_bound = std.math.add(
+
+        // `text_v1` has one semantic body. Build it once, then compress that
+        // exact body. Do not materialize a second uncompressed frame protocol: it
+        // creates compatibility branches and makes the server parse its own wire.
+        var body: std.ArrayList(u8) = .empty;
+        defer body.deinit(self.allocator);
+        try body.ensureTotalCapacity(self.allocator, body_bytes);
+
+        try self.appendPresentationRecord(&body, cursor_age_ns);
+
+        row = 0;
+        while (row < status.rows) : (row += 1) {
+            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
+            const record = try self.beginTextRecord(&body, .row);
+            var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
+                @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
+                richLineGeometry(howl.lineGeometry(self.session, status.history_offset, row)),
+                @truncate(status.columns >> 8),
+                @truncate(status.columns),
+            };
+            try body.appendSlice(self.allocator, &row_header);
+            for (copied, 0..) |cell, column| {
+                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
+                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
+                    howl.copyCellScalars(
+                        self.session,
+                        status.history_offset,
+                        row,
+                        @intCast(column),
+                        &scalar_storage,
+                    )
+                else
+                    &.{};
+                try self.appendTextCell(&body, cell, scalars);
+            }
+            try finishTextRecord(&body, record);
+        }
+
+        link_id = 1;
+        while (link_id < referenced_links.len) : (link_id += 1) {
+            if (!referenced_links[link_id]) continue;
+            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
+                return error.InvalidSnapshot;
+            const record = try self.beginTextRecord(&body, .hyperlink);
+            var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
+            encodeU32(link_header[0..4], @intCast(link_id));
+            link_header[4] = @truncate(uri.len >> 8);
+            link_header[5] = @truncate(uri.len);
+            try body.appendSlice(self.allocator, &link_header);
+            try body.appendSlice(self.allocator, uri);
+            try finishTextRecord(&body, record);
+        }
+        std.debug.assert(body.items.len == body_bytes);
+
+        var compressed: std.Io.Writer.Allocating = .init(self.allocator);
+        defer compressed.deinit();
+        // Flate requires backing capacity before init; keep this explicit so a
+        // future allocator cleanup cannot reintroduce the debug-only assertion
+        // failure found during the compression experiment.
+        try compressed.ensureTotalCapacity(64);
+        const work = try self.allocator.alloc(u8, std.compress.flate.max_window_len);
+        defer self.allocator.free(work);
+        const compressor = try self.allocator.create(std.compress.flate.Compress);
+        defer self.allocator.destroy(compressor);
+        compressor.* = try std.compress.flate.Compress.init(
+            &compressed.writer,
+            work,
+            .zlib,
+            .fastest,
+        );
+        try compressor.writer.writeAll(body.items);
+        try compressor.finish();
+
+        const encoded_bytes = std.math.add(
             usize,
-            std.math.add(usize, body_bytes, frame_headers) catch return error.SnapshotTooLarge,
-            fixed_payloads,
+            protocol.text_v1.compressed_header_bytes,
+            compressed.written().len,
         ) catch return error.SnapshotTooLarge;
+        const data_frames = std.math.divCeil(
+            usize,
+            encoded_bytes,
+            protocol.maximum_payload_bytes,
+        ) catch return error.SnapshotTooLarge;
+        const total_bound = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
+            data_frames * protocol.header_bytes + encoded_bytes +
+            protocol.header_bytes + protocol.payload_bytes.snapshot_end;
         if (total_bound > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
 
         client.resetOutput(self.allocator);
@@ -775,7 +724,6 @@ const Server = struct {
         protocol.encodeSnapshotBegin(&begin_payload, .{
             .revision = self.observation_revision,
             .terminal_revision = status.revision,
-            .format = .text_v1,
             .history_offset = status.history_offset,
             .history_count = status.history_count,
             .history_row_base = status.history_row_base,
@@ -794,56 +742,52 @@ const Server = struct {
         });
         try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
 
-        try self.appendPresentationRecord(&client.output, cursor_age_ns);
-
-        row = 0;
-        while (row < status.rows) : (row += 1) {
-            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-            const record = try self.beginTextRecord(&client.output, .row);
-            var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
-                @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
-                richLineGeometry(howl.lineGeometry(self.session, status.history_offset, row)),
-                @truncate(status.columns >> 8),
-                @truncate(status.columns),
-            };
-            try client.output.appendSlice(self.allocator, &row_header);
-            for (copied, 0..) |cell, column| {
-                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
-                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
-                    howl.copyCellScalars(
-                        self.session,
-                        status.history_offset,
-                        row,
-                        @intCast(column),
-                        &scalar_storage,
-                    )
-                else
-                    &.{};
-                try self.appendTextCell(&client.output, cell, scalars);
-            }
-            try finishTextRecord(&client.output, record);
-        }
-
-        link_id = 1;
-        while (link_id < referenced_links.len) : (link_id += 1) {
-            if (!referenced_links[link_id]) continue;
-            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
-                return error.InvalidSnapshot;
-            const record = try self.beginTextRecord(&client.output, .hyperlink);
-            var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
-            encodeU32(link_header[0..4], @intCast(link_id));
-            link_header[4] = @truncate(uri.len >> 8);
-            link_header[5] = @truncate(uri.len);
-            try client.output.appendSlice(self.allocator, &link_header);
-            try client.output.appendSlice(self.allocator, uri);
-            try finishTextRecord(&client.output, record);
-        }
+        var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
+        encodeU32(&raw_len, @intCast(body_bytes));
+        try self.appendSnapshotData(&client.output, &raw_len, compressed.written());
 
         var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
         protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
         try self.appendFrame(&client.output, .snapshot_end, &end_payload);
         std.debug.assert(client.output.items.len == total_bound);
         client.output_offset = 0;
+    }
+
+    fn appendSnapshotData(
+        self: *Server,
+        output: *std.ArrayList(u8),
+        prefix: []const u8,
+        compressed: []const u8,
+    ) !void {
+        std.debug.assert(prefix.len == protocol.text_v1.compressed_header_bytes);
+        var prefix_offset: usize = 0;
+        var compressed_offset: usize = 0;
+        while (prefix_offset < prefix.len or compressed_offset < compressed.len) {
+            const prefix_left = prefix.len - prefix_offset;
+            const payload_capacity: usize = protocol.maximum_payload_bytes;
+            const prefix_count = @min(prefix_left, payload_capacity);
+            const compressed_count = @min(
+                compressed.len - compressed_offset,
+                payload_capacity - prefix_count,
+            );
+            const payload_len = prefix_count + compressed_count;
+            var header: [protocol.header_bytes]u8 = undefined;
+            try protocol.encodeHeader(&header, .{
+                .kind = .snapshot_data,
+                .payload_len = @intCast(payload_len),
+            });
+            try output.appendSlice(self.allocator, &header);
+            try output.appendSlice(
+                self.allocator,
+                prefix[prefix_offset .. prefix_offset + prefix_count],
+            );
+            try output.appendSlice(
+                self.allocator,
+                compressed[compressed_offset .. compressed_offset + compressed_count],
+            );
+            prefix_offset += prefix_count;
+            compressed_offset += compressed_count;
+        }
     }
 
     fn appendPresentationRecord(
@@ -916,7 +860,6 @@ const Server = struct {
     }
 
     const TextRecordOffsets = struct {
-        frame_header: usize,
         record_header: usize,
         payload_start: usize,
         kind: protocol.TextRecordKind,
@@ -927,12 +870,9 @@ const Server = struct {
         output: *std.ArrayList(u8),
         kind: protocol.TextRecordKind,
     ) !TextRecordOffsets {
-        const frame_header = output.items.len;
-        try output.appendNTimes(self.allocator, 0, protocol.header_bytes);
         const record_header = output.items.len;
         try output.appendNTimes(self.allocator, 0, protocol.text_v1.record_header_bytes);
         return .{
-            .frame_header = frame_header,
             .record_header = record_header,
             .payload_start = output.items.len,
             .kind = kind,
@@ -961,13 +901,6 @@ const Server = struct {
         try output.appendSlice(self.allocator, payload);
     }
 };
-
-fn finishDataFrame(output: *std.ArrayList(u8), header_offset: usize, payload_start: usize) !void {
-    const payload_len = output.items.len - payload_start;
-    var header: [protocol.header_bytes]u8 = undefined;
-    try protocol.encodeHeader(&header, .{ .kind = .snapshot_data, .payload_len = @intCast(payload_len) });
-    @memcpy(output.items[header_offset..payload_start], &header);
-}
 
 fn typedKeyName(value: u32) ?howl.KeyName {
     return switch (value) {
@@ -1076,13 +1009,7 @@ fn typedMouseButton(value: protocol.InputMouseButton) howl.MouseButton {
 
 fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffsets) !void {
     const payload_len = output.items.len - offsets.payload_start;
-    const frame_payload_len = std.math.add(
-        usize,
-        protocol.text_v1.record_header_bytes,
-        payload_len,
-    ) catch return error.PayloadTooLarge;
-    if (frame_payload_len > protocol.maximum_payload_bytes) return error.PayloadTooLarge;
-
+    if (payload_len > std.math.maxInt(u32)) return error.SnapshotTooLarge;
     var record_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
     protocol.encodeTextRecordHeader(&record_header, .{
         .kind = offsets.kind,
@@ -1091,16 +1018,6 @@ fn finishTextRecord(output: *std.ArrayList(u8), offsets: Server.TextRecordOffset
     @memcpy(
         output.items[offsets.record_header..offsets.payload_start],
         &record_header,
-    );
-
-    var frame_header: [protocol.header_bytes]u8 = undefined;
-    try protocol.encodeHeader(&frame_header, .{
-        .kind = .snapshot_data,
-        .payload_len = @intCast(frame_payload_len),
-    });
-    @memcpy(
-        output.items[offsets.frame_header..offsets.record_header],
-        &frame_header,
     );
 }
 
@@ -1501,6 +1418,17 @@ const TestPeer = struct {
     }
 };
 
+const TestWireSnapshot = struct {
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    body: []u8,
+
+    fn deinit(self: *TestWireSnapshot) void {
+        self.allocator.free(self.body);
+        self.* = undefined;
+    }
+};
+
 const TestSnapshot = struct {
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
@@ -1556,35 +1484,22 @@ fn awaitFrame(peer: *TestPeer, server: *Server) !TestFrame {
     return error.TestTimeout;
 }
 
-const legacy_test_features = protocol.feature(.grid_snapshot) |
-    protocol.feature(.resize_leader) |
-    protocol.feature(.history_window);
-
-fn handshakeWithFeatures(
-    peer: *TestPeer,
-    server: *Server,
-    features: u64,
-) !protocol.Welcome {
-    var payload: [protocol.payload_bytes.hello]u8 = undefined;
-    protocol.encodeHello(&payload, .{ .features = features });
-    try peer.sendFrame(server, .hello, &payload);
+fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
+    try peer.sendFrame(server, .hello, &.{});
     var frame = try awaitFrame(peer, server);
     defer frame.deinit();
     try std.testing.expectEqual(protocol.Kind.welcome, frame.kind);
     const welcome = try protocol.decodeWelcome(frame.payload);
-    try std.testing.expectEqual(protocol.protocol_max_version, welcome.version);
-    try std.testing.expect(welcome.features & protocol.feature(.grid_snapshot) != 0);
+    try std.testing.expect(welcome.client_id != protocol.no_client);
     return welcome;
 }
 
-fn handshake(peer: *TestPeer, server: *Server) !protocol.Welcome {
-    const welcome = try handshakeWithFeatures(peer, server, legacy_test_features);
-    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) == 0);
-    try std.testing.expect(welcome.features & protocol.feature(.typed_input) == 0);
-    return welcome;
+fn attach(peer: *TestPeer, server: *Server) !void {
+    const welcome = try handshake(peer, server);
+    try std.testing.expect(welcome.client_id != protocol.no_client);
 }
 
-test "interaction state is negotiated and exposes invisible input modes" {
+test "interaction state exposes invisible input modes" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
         &path_buffer,
@@ -1608,9 +1523,7 @@ test "interaction state is negotiated and exposes invisible input modes" {
     defer server.deinit();
     var peer = try TestPeer.connect(std.testing.allocator, path);
     defer peer.deinit();
-    const features = protocol.feature(.grid_snapshot) | protocol.feature(.interaction_state);
-    const welcome = try handshakeWithFeatures(&peer, &server, features);
-    try std.testing.expect(welcome.features & protocol.feature(.interaction_state) != 0);
+    try attach(&peer, &server);
 
     var turns: usize = 0;
     while (!howl.interactionState(server.session).bracketed_paste and turns < 1000) : (turns += 1)
@@ -1624,18 +1537,6 @@ test "interaction state is negotiated and exposes invisible input modes" {
     const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
     try std.testing.expect(state.bracketed_paste);
     try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
-
-    var legacy = try TestPeer.connect(std.testing.allocator, path);
-    defer legacy.deinit();
-    const legacy_welcome = try handshakeWithFeatures(&legacy, &server, protocol.feature(.grid_snapshot));
-    try std.testing.expectEqual(protocol.feature(.grid_snapshot), legacy_welcome.features);
-    try legacy.sendFrame(&server, .interaction_state, &.{});
-    var rejected = try awaitFrame(&legacy, &server);
-    defer rejected.deinit();
-    try std.testing.expectEqual(protocol.Kind.result, rejected.kind);
-    const result = try protocol.decodeResult(rejected.payload);
-    try std.testing.expectEqual(protocol.Kind.interaction_state, result.request_kind);
-    try std.testing.expectEqual(protocol.ResultCode.unsupported, result.code);
 }
 
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
@@ -1644,141 +1545,200 @@ fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
     try peer.sendFrame(server, .observe, &payload);
 }
 
-fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
+/// Receives and inflates the one current snapshot wire.
+///
+/// Keep transport validation here so every semantic endpoint test consumes the
+/// same decompressed `text_v1` record body. Adding a second test decoder would
+/// make it too easy for compatibility behavior to survive after production has
+/// one wire.
+fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     var begin_frame = try awaitFrame(peer, server);
     defer begin_frame.deinit();
-    try std.testing.expectEqual(protocol.Kind.snapshot_begin, begin_frame.kind);
+    if (begin_frame.kind != .snapshot_begin) return error.UnexpectedTestFrame;
     const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
-    if (begin.format != .grid_v1) return error.MalformedTestSnapshot;
 
-    var body: std.ArrayList(u8) = .empty;
-    defer body.deinit(peer.allocator);
+    var encoded: std.ArrayList(u8) = .empty;
+    defer encoded.deinit(peer.allocator);
     while (true) {
         var frame = try awaitFrame(peer, server);
         defer frame.deinit();
         switch (frame.kind) {
-            .snapshot_data => try body.appendSlice(peer.allocator, frame.payload),
+            .snapshot_data => {
+                if (encoded.items.len + frame.payload.len > protocol.maximum_snapshot_bytes)
+                    return error.MalformedTestSnapshot;
+                try encoded.appendSlice(peer.allocator, frame.payload);
+            },
             .snapshot_end => {
-                const end = try protocol.decodeSnapshotEnd(frame.payload);
-                try std.testing.expectEqual(begin.revision, end.revision);
+                const snapshot_end = protocol.decodeSnapshotEnd(frame.payload) catch
+                    return error.MalformedTestSnapshot;
+                if (snapshot_end.revision != begin.revision) return error.MalformedTestSnapshot;
                 break;
             },
             else => return error.UnexpectedTestFrame,
         }
     }
 
-    const row_bytes = 4 + @as(usize, begin.columns) * 8;
-    const expected_body = @as(usize, begin.rows) * row_bytes;
-    if (body.items.len != expected_body) return error.MalformedTestSnapshot;
+    if (encoded.items.len <= protocol.text_v1.compressed_header_bytes)
+        return error.MalformedTestSnapshot;
+    const raw_len = readU32(encoded.items[0..protocol.text_v1.compressed_header_bytes]);
+    if (raw_len == 0 or raw_len > protocol.maximum_snapshot_bytes)
+        return error.MalformedTestSnapshot;
+    const body = try peer.allocator.alloc(u8, raw_len);
+    errdefer peer.allocator.free(body);
+    var output: std.Io.Writer = .fixed(body);
+    var input: std.Io.Reader = .fixed(encoded.items[protocol.text_v1.compressed_header_bytes..]);
+    const work = try peer.allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer peer.allocator.free(work);
+    var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
+    const decoded_count = decompressor.reader.streamRemaining(&output) catch
+        return error.MalformedTestSnapshot;
+    if (decoded_count != raw_len or output.buffered().len != raw_len or input.seek != input.end)
+        return error.MalformedTestSnapshot;
+    return .{ .allocator = peer.allocator, .begin = begin, .body = body };
+}
+
+fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
+    var wire = try receiveWireSnapshot(peer, server);
+    defer wire.deinit();
+
     var text: std.ArrayList(u8) = .empty;
     errdefer text.deinit(peer.allocator);
-    try text.ensureTotalCapacity(peer.allocator, @as(usize, begin.rows) * (@as(usize, begin.columns) + 1));
+    try text.ensureTotalCapacity(
+        peer.allocator,
+        @as(usize, wire.begin.rows) * (@as(usize, wire.begin.columns) + 1),
+    );
+    var row_count: u16 = 0;
     var offset: usize = 0;
-    var row: u16 = 0;
-    while (row < begin.rows) : (row += 1) {
-        if (body.items[offset] > 1) return error.MalformedTestSnapshot;
-        if (readU16(body.items[offset + 2 .. offset + 4]) != begin.columns) return error.MalformedTestSnapshot;
-        offset += 4;
-        var column: u16 = 0;
-        while (column < begin.columns) : (column += 1) {
-            const cell = body.items[offset .. offset + 8];
-            const codepoint = readU32(cell[0..4]);
-            const byte: u8 = if (cell[6] != 0 or cell[7] != 0 or codepoint == 0)
-                ' '
-            else if (codepoint <= 0x7f)
-                @intCast(codepoint)
-            else
-                '?';
-            try text.append(peer.allocator, byte);
-            offset += 8;
+    while (offset < wire.body.len) {
+        const record = try testTextRecord(wire.body, offset);
+        const payload = wire.body[record.payload_start..record.end];
+        switch (record.header.kind) {
+            .presentation, .hyperlink => {},
+            .row => {
+                if (row_count >= wire.begin.rows) return error.MalformedTestSnapshot;
+                try appendTestTextRow(peer.allocator, wire.begin, payload, &text);
+                row_count += 1;
+            },
         }
-        try text.append(peer.allocator, '\n');
+        offset = record.end;
     }
-    return .{ .allocator = peer.allocator, .begin = begin, .text = try text.toOwnedSlice(peer.allocator) };
+    if (row_count != wire.begin.rows) return error.MalformedTestSnapshot;
+    return .{
+        .allocator = peer.allocator,
+        .begin = wire.begin,
+        .text = try text.toOwnedSlice(peer.allocator),
+    };
+}
+
+const TestTextRecord = struct {
+    header: protocol.TextRecordHeader,
+    payload_start: usize,
+    end: usize,
+};
+
+fn testTextRecord(body: []const u8, offset: usize) !TestTextRecord {
+    if (body.len - offset < protocol.text_v1.record_header_bytes)
+        return error.MalformedTestSnapshot;
+    var header_bytes: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    @memcpy(&header_bytes, body[offset..][0..protocol.text_v1.record_header_bytes]);
+    const header = protocol.decodeTextRecordHeader(&header_bytes) catch
+        return error.MalformedTestSnapshot;
+    const payload_start = offset + protocol.text_v1.record_header_bytes;
+    const end = std.math.add(usize, payload_start, header.payload_len) catch
+        return error.MalformedTestSnapshot;
+    if (end > body.len) return error.MalformedTestSnapshot;
+    return .{ .header = header, .payload_start = payload_start, .end = end };
+}
+
+fn appendTestTextRow(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    payload: []const u8,
+    text: *std.ArrayList(u8),
+) !void {
+    if (payload.len < protocol.text_v1.row_header_bytes or payload[0] > 1 or
+        payload[1] > 3 or readU16(payload[2..4]) != begin.columns)
+        return error.MalformedTestSnapshot;
+    var offset: usize = protocol.text_v1.row_header_bytes;
+    var column: u16 = 0;
+    while (column < begin.columns) : (column += 1) {
+        if (payload.len - offset < protocol.text_v1.cell_header_bytes)
+            return error.MalformedTestSnapshot;
+        const cell = payload[offset..][0..protocol.text_v1.cell_header_bytes];
+        const scalar_count = cell[0];
+        if (scalar_count > protocol.text_v1.maximum_cell_scalars)
+            return error.MalformedTestSnapshot;
+        offset += protocol.text_v1.cell_header_bytes;
+        const scalar_bytes = @as(usize, scalar_count) * 4;
+        if (payload.len - offset < scalar_bytes) return error.MalformedTestSnapshot;
+        const byte: u8 = if (cell[3] != 0 or cell[4] != 0 or scalar_count == 0)
+            ' '
+        else blk: {
+            const scalar = readU32(payload[offset..][0..4]);
+            break :blk if (scalar <= 0x7f) @intCast(scalar) else '?';
+        };
+        try text.append(allocator, byte);
+        offset += scalar_bytes;
+    }
+    if (offset != payload.len) return error.MalformedTestSnapshot;
+    try text.append(allocator, '\n');
 }
 
 fn receiveTextSnapshot(peer: *TestPeer, server: *Server) !TestTextSnapshot {
-    var begin_frame = try awaitFrame(peer, server);
-    defer begin_frame.deinit();
-    if (begin_frame.kind != .snapshot_begin) return error.UnexpectedTestFrame;
-    const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
-    if (begin.format != .text_v1) return error.MalformedTestSnapshot;
-
+    var wire = try receiveWireSnapshot(peer, server);
+    defer wire.deinit();
+    const begin = wire.begin;
     var result = TestTextSnapshot{ .begin = begin };
     var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
     var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
     var phase: enum { presentation, rows, hyperlinks } = .presentation;
 
-    while (true) {
-        var frame = try awaitFrame(peer, server);
-        defer frame.deinit();
-        switch (frame.kind) {
-            .snapshot_data => {
-                if (frame.payload.len < protocol.text_v1.record_header_bytes)
+    var offset: usize = 0;
+    while (offset < wire.body.len) {
+        const record = try testTextRecord(wire.body, offset);
+        const payload = wire.body[record.payload_start..record.end];
+        switch (record.header.kind) {
+            .presentation => {
+                if (phase != .presentation or result.presentation_seen or
+                    payload.len != protocol.text_v1.presentation_bytes)
                     return error.MalformedTestSnapshot;
-                var header_bytes: [protocol.text_v1.record_header_bytes]u8 = undefined;
-                @memcpy(&header_bytes, frame.payload[0..protocol.text_v1.record_header_bytes]);
-                const record = protocol.decodeTextRecordHeader(&header_bytes) catch
+                if (payload[8] & ~protocol.text_v1.presentation_presence.known != 0 or
+                    payload[9] & ~protocol.text_v1.presentation_flags.known != 0 or
+                    payload[10] != 0 or payload[11] != 0)
                     return error.MalformedTestSnapshot;
-                if (record.payload_len != frame.payload.len - protocol.text_v1.record_header_bytes)
-                    return error.MalformedTestSnapshot;
-                const payload = frame.payload[protocol.text_v1.record_header_bytes..];
-                switch (record.kind) {
-                    .presentation => {
-                        if (phase != .presentation or result.presentation_seen or
-                            payload.len != protocol.text_v1.presentation_bytes)
-                            return error.MalformedTestSnapshot;
-                        if (payload[8] & ~protocol.text_v1.presentation_presence.known != 0 or
-                            payload[9] & ~protocol.text_v1.presentation_flags.known != 0 or
-                            payload[10] != 0 or payload[11] != 0)
-                            return error.MalformedTestSnapshot;
-                        result.cursor_age_ns = readU64(payload[0..8]);
-                        result.presentation_seen = true;
-                        phase = .rows;
-                    },
-                    .row => {
-                        if (phase != .rows or !result.presentation_seen or
-                            result.row_count >= begin.rows)
-                            return error.MalformedTestSnapshot;
-                        try inspectTextRow(
-                            begin,
-                            payload,
-                            &result,
-                            &referenced,
-                        );
-                        result.row_count += 1;
-                        if (result.row_count == begin.rows) phase = .hyperlinks;
-                    },
-                    .hyperlink => {
-                        if (phase != .hyperlinks or payload.len < protocol.text_v1.hyperlink_header_bytes)
-                            return error.MalformedTestSnapshot;
-                        const id = readU32(payload[0..4]);
-                        const uri_len = readU16(payload[4..6]);
-                        if (id == 0 or id > protocol.text_v1.maximum_hyperlinks or
-                            uri_len == 0 or uri_len > protocol.text_v1.maximum_hyperlink_uri_bytes or
-                            payload.len != protocol.text_v1.hyperlink_header_bytes + uri_len or
-                            resolved[id])
-                            return error.MalformedTestSnapshot;
-                        resolved[id] = true;
-                        if (id == result.styled_link_id and
-                            std.mem.eql(u8, payload[6..], "https://howl.example"))
-                            result.saw_hyperlink = true;
-                    },
-                }
+                result.cursor_age_ns = readU64(payload[0..8]);
+                result.presentation_seen = true;
+                phase = .rows;
             },
-            .snapshot_end => {
-                const end = protocol.decodeSnapshotEnd(frame.payload) catch
+            .row => {
+                if (phase != .rows or !result.presentation_seen or result.row_count >= begin.rows)
                     return error.MalformedTestSnapshot;
-                if (end.revision != begin.revision or !result.presentation_seen or
-                    result.row_count != begin.rows)
-                    return error.MalformedTestSnapshot;
-                for (referenced, resolved) |needed, present| if (needed != present)
-                    return error.MalformedTestSnapshot;
-                return result;
+                try inspectTextRow(begin, payload, &result, &referenced);
+                result.row_count += 1;
+                if (result.row_count == begin.rows) phase = .hyperlinks;
             },
-            else => return error.UnexpectedTestFrame,
+            .hyperlink => {
+                if (phase != .hyperlinks or payload.len < protocol.text_v1.hyperlink_header_bytes)
+                    return error.MalformedTestSnapshot;
+                const id = readU32(payload[0..4]);
+                const uri_len = readU16(payload[4..6]);
+                if (id == 0 or id > protocol.text_v1.maximum_hyperlinks or
+                    uri_len == 0 or uri_len > protocol.text_v1.maximum_hyperlink_uri_bytes or
+                    payload.len != protocol.text_v1.hyperlink_header_bytes + uri_len or resolved[id])
+                    return error.MalformedTestSnapshot;
+                resolved[id] = true;
+                if (id == result.styled_link_id and
+                    std.mem.eql(u8, payload[6..], "https://howl.example"))
+                    result.saw_hyperlink = true;
+            },
         }
+        offset = record.end;
     }
+    if (!result.presentation_seen or result.row_count != begin.rows)
+        return error.MalformedTestSnapshot;
+    for (referenced, resolved) |needed, present| if (needed != present)
+        return error.MalformedTestSnapshot;
+    return result;
 }
 
 fn inspectTextRow(
@@ -2078,11 +2038,9 @@ test "TCP client shares canonical session over the unchanged frame loop" {
     defer server.deinit();
     const port = server.listener.tcp_port orelse return error.MissingTcpPort;
 
-    const features = legacy_test_features | protocol.feature(.typed_input);
     var peer = try TestPeer.connectTcp(std.testing.allocator, port);
     defer peer.deinit();
-    const welcome = try handshakeWithFeatures(&peer, &server, features);
-    try std.testing.expectEqual(features, welcome.features);
+    const welcome = try handshake(&peer, &server);
 
     var ready = try observeUntilContains(&peer, &server, 0, "TCP-READY");
     const revision = ready.begin.revision;
@@ -2101,14 +2059,14 @@ test "TCP client shares canonical session over the unchanged frame loop" {
 
     var fresh = try TestPeer.connectTcp(std.testing.allocator, port);
     defer fresh.deinit();
-    const fresh_welcome = try handshakeWithFeatures(&fresh, &server, features);
+    const fresh_welcome = try handshake(&fresh, &server);
     try std.testing.expect(fresh_welcome.client_id != welcome.client_id);
     var recovered = try observeUntilContains(&fresh, &server, 0, "tcp-input");
     defer recovered.deinit();
     try std.testing.expectEqual(terminal_revision, recovered.begin.terminal_revision);
 }
 
-test "typed input is negotiated and encoded by live terminal modes" {
+test "typed input is encoded by live terminal modes" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
         &path_buffer,
@@ -2144,26 +2102,9 @@ test "typed input is negotiated and encoded by live terminal modes" {
     );
     defer server.deinit();
 
-    var legacy = try TestPeer.connect(std.testing.allocator, path);
-    defer legacy.deinit();
-    const legacy_welcome = try handshake(&legacy, &server);
-    try std.testing.expect(legacy_welcome.client_id != protocol.no_client);
-    try std.testing.expect(legacy_welcome.features & protocol.feature(.typed_input) == 0);
-    try sendTypedKey(&legacy, &server, .{
-        .kind = .named,
-        .key_value = @backingInt(protocol.InputKeyName.up),
-        .action = .press,
-    });
-    try expectResult(&legacy, &server, .input, .unsupported);
-
     var peer = try TestPeer.connect(std.testing.allocator, path);
     defer peer.deinit();
-    const welcome = try handshakeWithFeatures(
-        &peer,
-        &server,
-        legacy_test_features | protocol.feature(.typed_input),
-    );
-    try std.testing.expect(welcome.features & protocol.feature(.typed_input) != 0);
+    try attach(&peer, &server);
 
     try peer.sendFrame(&server, .input, &.{ @backingInt(protocol.InputKind.key), 0xff });
     try expectResult(&peer, &server, .input, .malformed);
@@ -2284,7 +2225,7 @@ test "typed input is negotiated and encoded by live terminal modes" {
     try std.testing.expect(std.mem.indexOf(u8, done.text, "kitty_release:1b5b39373b313a3375") != null);
 }
 
-test "history windows require their negotiated feature" {
+test "history windows use explicit requested offsets" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
         &path_buffer,
@@ -2299,7 +2240,7 @@ test "history windows require their negotiated feature" {
         .{ .unix = path },
         .{
             .shell = "/bin/sh",
-            .command = "stty -echo -icanon min 1 time 0; printf 'READY\\n'; cat",
+            .command = "stty -echo -icanon min 1 time 0; printf '1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\nREADY\\n'; cat",
             .rows = 4,
             .columns = 16,
             .history_rows = 16,
@@ -2309,23 +2250,18 @@ test "history windows require their negotiated feature" {
 
     var peer = try TestPeer.connect(std.testing.allocator, path);
     defer peer.deinit();
-    const welcome = try handshakeWithFeatures(
-        &peer,
-        &server,
-        protocol.feature(.grid_snapshot),
-    );
-    try std.testing.expect(welcome.features & protocol.feature(.history_window) == 0);
+    try attach(&peer, &server);
+
+    var live = try observeUntilContains(&peer, &server, 0, "READY");
+    defer live.deinit();
+    try std.testing.expect(live.begin.history_count > 0);
 
     var observe: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&observe, .{ .history_offset = 1 });
     try peer.sendFrame(&server, .observe, &observe);
-    try expectResult(&peer, &server, .observe, .unsupported);
-
-    protocol.encodeObserve(&observe, .{});
-    try peer.sendFrame(&server, .observe, &observe);
-    var snapshot = try receiveSnapshot(&peer, &server);
-    defer snapshot.deinit();
-    try std.testing.expectEqual(@as(u32, 0), snapshot.begin.history_offset);
+    var history = try receiveSnapshot(&peer, &server);
+    defer history.deinit();
+    try std.testing.expectEqual(@as(u32, 1), history.begin.history_offset);
 }
 
 test "request payload above endpoint limit closes before body read" {
@@ -2404,12 +2340,7 @@ test "text_v1 preserves renderer-complete terminal text semantics" {
 
     var peer = try TestPeer.connect(std.testing.allocator, path);
     defer peer.deinit();
-    const welcome = try handshakeWithFeatures(
-        &peer,
-        &server,
-        legacy_test_features | protocol.feature(.text_snapshot),
-    );
-    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) != 0);
+    try attach(&peer, &server);
 
     var attempts: usize = 0;
     var revision: u64 = 0;
@@ -2539,8 +2470,8 @@ test "slow Unix observer cannot pace PTY or healthy client" {
     var server = try Server.init(std.testing.allocator, std.testing.io, std.testing.environ, .{ .unix = path }, .{
         .shell = "/bin/sh",
         .command = "stty -echo -icanon min 1 time 0; cat",
-        .rows = 512,
-        .columns = 512,
+        .rows = 128,
+        .columns = 256,
         .history_rows = 16,
     });
     defer server.deinit();
@@ -2553,21 +2484,41 @@ test "slow Unix observer cannot pace PTY or healthy client" {
     const healthy_welcome = try handshake(&healthy, &server);
     try std.testing.expect(healthy_welcome.client_id != protocol.no_client);
     try setReceiveBuffer(slow.fd, 4096);
+    const slow_server = serverClient(&server, slow_welcome.client_id) orelse
+        return error.SlowClientMissing;
+    try setSendBuffer(slow_server.fd, 4096);
+
+    // Fill the visible terminal through the real PTY with deterministic data
+    // that is deliberately hard to compress. Backpressure must be a socket
+    // property, not an accidental consequence of today's snapshot encoding.
+    var noise: [32 * 1024]u8 = undefined;
+    var state: u32 = 0x6d2b_79f5;
+    for (&noise) |*byte| {
+        state = state *% 1_664_525 +% 1_013_904_223;
+        byte.* = @intCast(33 + (state >> 16) % 94);
+    }
+    const marker = "NOISE-DONE";
+    @memcpy(noise[noise.len - marker.len ..], marker);
+    try sendInput(&healthy, &server, &noise);
+    try expectResult(&healthy, &server, .input, .ok);
+    var primed = try observeUntilContains(&healthy, &server, 0, marker);
+    const primed_revision = primed.begin.revision;
+    primed.deinit();
 
     try sendObserve(&slow, &server, 0);
     var turn: usize = 0;
     while (turn < 64) : (turn += 1) try server.turn(0);
     const blocked = serverClient(&server, slow_welcome.client_id) orelse return error.SlowClientMissing;
-    try std.testing.expect(blocked.output.items.len > 1024 * 1024);
+    try std.testing.expect(blocked.output.items.len > protocol.header_bytes);
     try std.testing.expect(blocked.outputPending());
     try std.testing.expect(blocked.output_offset < blocked.output.items.len);
 
     try sendInput(&healthy, &server, "FLOW-CONTINUES\n");
     try expectResult(&healthy, &server, .input, .ok);
-    var progressed = try observeUntilContains(&healthy, &server, 0, "FLOW-CONTINUES");
+    var progressed = try observeUntilContains(&healthy, &server, primed_revision, "FLOW-CONTINUES");
     defer progressed.deinit();
-    try std.testing.expectEqual(@as(u16, 512), progressed.begin.rows);
-    try std.testing.expectEqual(@as(u16, 512), progressed.begin.columns);
+    try std.testing.expectEqual(@as(u16, 128), progressed.begin.rows);
+    try std.testing.expectEqual(@as(u16, 256), progressed.begin.columns);
 
     const still_blocked = serverClient(&server, slow_welcome.client_id) orelse return error.SlowClientMissing;
     try std.testing.expect(still_blocked.outputPending());
@@ -2631,12 +2582,7 @@ test "oversized text_v1 observation is local rejection and recovers" {
 
     var peer = try TestPeer.connect(std.testing.allocator, path);
     defer peer.deinit();
-    const welcome = try handshakeWithFeatures(
-        &peer,
-        &server,
-        legacy_test_features | protocol.feature(.text_snapshot),
-    );
-    try std.testing.expect(welcome.features & protocol.feature(.text_snapshot) != 0);
+    const welcome = try handshake(&peer, &server);
 
     try sendObserve(&peer, &server, 0);
     try expectResult(&peer, &server, .observe, .rejected);

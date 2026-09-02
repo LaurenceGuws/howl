@@ -11,8 +11,6 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     InvalidText,
     InvalidResize,
     RequestTooLarge,
-    TypedInputUnsupported,
-    ResizeUnsupported,
     UnexpectedFrame,
     ServerRejected,
 };
@@ -35,8 +33,6 @@ pub fn namedKey(
     action: protocol.InputKeyAction,
     modifiers: u8,
 ) Error!void {
-    if (connection.features & protocol.feature(.typed_input) == 0)
-        return error.TypedInputUnsupported;
     var body_storage: [protocol.typed_input.key_header_bytes]u8 = undefined;
     const body = protocol.encodeKeyInput(&body_storage, .{
         .kind = .named,
@@ -60,8 +56,6 @@ pub fn unicodeKey(
     action: protocol.InputKeyAction,
     modifiers: u8,
 ) Error!void {
-    if (connection.features & protocol.feature(.typed_input) == 0)
-        return error.TypedInputUnsupported;
     var body_storage: [protocol.typed_input.key_header_bytes]u8 = undefined;
     const body = protocol.encodeKeyInput(&body_storage, .{
         .kind = .unicode,
@@ -80,8 +74,6 @@ pub fn unicodeKey(
 }
 
 pub fn mouse(connection: *client.Connection, value: protocol.MouseInput) Error!void {
-    if (connection.features & protocol.feature(.typed_input) == 0)
-        return error.TypedInputUnsupported;
     var body: [protocol.typed_input.mouse_bytes]u8 = undefined;
     try protocol.encodeMouseInput(&body, value);
     var payload: [1 + protocol.typed_input.mouse_bytes]u8 = undefined;
@@ -92,8 +84,6 @@ pub fn mouse(connection: *client.Connection, value: protocol.MouseInput) Error!v
 }
 
 pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!void {
-    if (connection.features & protocol.feature(.typed_input) == 0)
-        return error.TypedInputUnsupported;
     var body: [protocol.typed_input.focus_bytes]u8 = undefined;
     protocol.encodeFocusInput(&body, value);
     var payload: [1 + protocol.typed_input.focus_bytes]u8 = undefined;
@@ -105,8 +95,6 @@ pub fn focus(connection: *client.Connection, value: protocol.InputFocus) Error!v
 
 pub fn resize(connection: *client.Connection, rows: u16, columns: u16) Error!void {
     if (rows == 0 or columns == 0) return error.InvalidResize;
-    if (connection.features & protocol.feature(.resize_leader) == 0)
-        return error.ResizeUnsupported;
     var leader_payload: [protocol.payload_bytes.assign_leader]u8 = undefined;
     protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.client_id });
     try connection.send(.assign_leader, &leader_payload);

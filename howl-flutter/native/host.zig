@@ -46,6 +46,8 @@ const Host = struct {
     frame_commands: [command_capacity]canvas.Command = undefined,
     frame_pixels: [pixel_capacity]u8 = undefined,
     residencies: [maximum_frame_resources]canvas.Residency = undefined,
+    live_observe_pipeline: bool = false,
+    armed_live_after_revision: ?u64 = null,
 };
 
 fn contentConfig() terminal.ContentConfig {
@@ -285,6 +287,18 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
 /// `output` is caller-owned. No pointer into native presentation memory survives
 /// this call. `residency` is a packed list of exact resources which the Flutter
 /// backend successfully retained from the previous presented frame.
+pub export fn howl_native_host_set_live_observe_pipeline(
+    raw: ?*HostHandle,
+    enabled: u8,
+) i32 {
+    if (enabled > 1) return 3;
+    const raw_host = raw orelse return 2;
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    if (host.armed_live_after_revision != null) return 4;
+    host.live_observe_pipeline = enabled == 1;
+    return 0;
+}
+
 pub export fn howl_native_host_observe(
     raw: ?*HostHandle,
     after_revision: u64,
@@ -318,6 +332,26 @@ pub export fn howl_native_host_observe(
     return 0;
 }
 
+fn receiveRich(
+    host: *Host,
+    after_revision: u64,
+    history_offset: u32,
+) !client.rich.Snapshot {
+    if (host.armed_live_after_revision) |armed_after| {
+        if (!host.live_observe_pipeline or history_offset != 0 or after_revision != armed_after)
+            return error.InvalidHost;
+        const snapshot = try client.rich.receive(&host.connection, host.allocator);
+        host.armed_live_after_revision = null;
+        return snapshot;
+    }
+    return client.rich.request(
+        &host.connection,
+        host.allocator,
+        after_revision,
+        history_offset,
+    );
+}
+
 fn observe(
     host: *Host,
     after_revision: u64,
@@ -328,14 +362,13 @@ fn observe(
     if (output.len < output_minimum_bytes) return error.BufferTooSmall;
     const residency = try decodeResidencies(host, residency_bytes);
 
-    var rich = try client.rich.request(
-        &host.connection,
-        host.allocator,
-        after_revision,
-        history_offset,
-    );
+    var rich = try receiveRich(host, after_revision, history_offset);
     defer rich.deinit();
     const begin = rich.begin;
+    if (host.live_observe_pipeline and history_offset == 0) {
+        try client.rich.sendRequest(&host.connection, begin.revision, 0);
+        host.armed_live_after_revision = begin.revision;
+    }
     const view = try client.view.project(host.allocator, &rich);
     defer client.view.deinit(view);
 

@@ -11,7 +11,6 @@ pub const Error = client.Error || std.mem.Allocator.Error || protocol.PayloadErr
     UnexpectedFrame,
     SnapshotTooLarge,
     InvalidSnapshot,
-    UnsupportedSnapshotFormat,
 };
 
 pub const Rgba = struct { r: u8, g: u8, b: u8, a: u8 };
@@ -82,18 +81,30 @@ pub const Snapshot = struct {
     }
 };
 
-pub fn request(
+/// Sends one ordinary request-driven rich observation without receiving it yet.
+///
+/// The caller must pair every successful call with exactly one `receive` on the
+/// same connection before sending another request.
+pub fn sendRequest(
     connection: *client.Connection,
-    allocator: std.mem.Allocator,
     after_revision: u64,
     history_offset: u32,
-) Error!Snapshot {
+) client.Error!void {
     var payload: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&payload, .{
         .after_revision = after_revision,
         .history_offset = history_offset,
     });
     try connection.send(.observe, &payload);
+}
+
+pub fn request(
+    connection: *client.Connection,
+    allocator: std.mem.Allocator,
+    after_revision: u64,
+    history_offset: u32,
+) Error!Snapshot {
+    try sendRequest(connection, after_revision, history_offset);
     return receive(connection, allocator);
 }
 
@@ -105,7 +116,6 @@ pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Err
     try accountFrame(&total_bytes, begin_frame.payload.len);
     if (begin_frame.kind != .snapshot_begin) return error.UnexpectedFrame;
     const begin = try protocol.decodeSnapshotBegin(begin_frame.payload);
-    if (begin.format != .text_v1) return error.UnsupportedSnapshotFormat;
 
     const rows = try allocator.alloc(Row, begin.rows);
     errdefer allocator.free(rows);
@@ -123,7 +133,9 @@ pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Err
     var presentation: Presentation = undefined;
     var presentation_seen = false;
     var row_count: u16 = 0;
-    var phase: enum { presentation, rows, hyperlinks } = .presentation;
+    var phase: DecodePhase = .presentation;
+    var compressed_body: std.ArrayList(u8) = .empty;
+    defer compressed_body.deinit(allocator);
 
     while (true) {
         var frame = try connection.receive();
@@ -131,38 +143,28 @@ pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Err
         try accountFrame(&total_bytes, frame.payload.len);
         switch (frame.kind) {
             .snapshot_data => {
-                if (frame.payload.len < protocol.text_v1.record_header_bytes) return error.InvalidSnapshot;
-                var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
-                @memcpy(&encoded_header, frame.payload[0..protocol.text_v1.record_header_bytes]);
-                const header = try protocol.decodeTextRecordHeader(&encoded_header);
-                if (header.payload_len != frame.payload.len - protocol.text_v1.record_header_bytes)
-                    return error.InvalidSnapshot;
-                const payload = frame.payload[protocol.text_v1.record_header_bytes..];
-                switch (header.kind) {
-                    .presentation => {
-                        if (phase != .presentation or presentation_seen) return error.InvalidSnapshot;
-                        presentation = try decodePresentation(payload);
-                        presentation_seen = true;
-                        phase = .rows;
-                    },
-                    .row => {
-                        if (phase != .rows or !presentation_seen or row_count >= begin.rows)
-                            return error.InvalidSnapshot;
-                        rows[row_count] = try decodeRow(allocator, begin, payload, &referenced);
-                        initialized_rows += 1;
-                        row_count += 1;
-                        if (row_count == begin.rows) phase = .hyperlinks;
-                    },
-                    .hyperlink => {
-                        if (phase != .hyperlinks) return error.InvalidSnapshot;
-                        try hyperlinks.append(allocator, try decodeHyperlink(allocator, payload, &referenced, &resolved));
-                    },
-                }
+                if (compressed_body.items.len + frame.payload.len > protocol.maximum_snapshot_bytes)
+                    return error.SnapshotTooLarge;
+                try compressed_body.appendSlice(allocator, frame.payload);
             },
             .snapshot_end => {
                 const end = try protocol.decodeSnapshotEnd(frame.payload);
-                if (end.revision != begin.revision or !presentation_seen or row_count != begin.rows)
-                    return error.InvalidSnapshot;
+                if (end.revision != begin.revision) return error.InvalidSnapshot;
+                try decodeTextBody(
+                    allocator,
+                    begin,
+                    compressed_body.items,
+                    rows,
+                    &initialized_rows,
+                    &hyperlinks,
+                    &referenced,
+                    &resolved,
+                    &presentation,
+                    &presentation_seen,
+                    &row_count,
+                    &phase,
+                );
+                if (!presentation_seen or row_count != begin.rows) return error.InvalidSnapshot;
                 for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
                     return error.InvalidSnapshot;
                 return .{
@@ -175,6 +177,110 @@ pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Err
             },
             else => return error.UnexpectedFrame,
         }
+    }
+}
+
+const DecodePhase = enum { presentation, rows, hyperlinks };
+
+fn decodeTextRecord(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    encoded_record: []const u8,
+    rows: []Row,
+    initialized_rows: *usize,
+    hyperlinks: *std.ArrayList(Hyperlink),
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    presentation: *Presentation,
+    presentation_seen: *bool,
+    row_count: *u16,
+    phase: *DecodePhase,
+) Error!void {
+    if (encoded_record.len < protocol.text_v1.record_header_bytes) return error.InvalidSnapshot;
+    var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    @memcpy(&encoded_header, encoded_record[0..protocol.text_v1.record_header_bytes]);
+    const header = try protocol.decodeTextRecordHeader(&encoded_header);
+    if (header.payload_len != encoded_record.len - protocol.text_v1.record_header_bytes)
+        return error.InvalidSnapshot;
+    const payload = encoded_record[protocol.text_v1.record_header_bytes..];
+    switch (header.kind) {
+        .presentation => {
+            if (phase.* != .presentation or presentation_seen.*) return error.InvalidSnapshot;
+            presentation.* = try decodePresentation(payload);
+            presentation_seen.* = true;
+            phase.* = .rows;
+        },
+        .row => {
+            if (phase.* != .rows or !presentation_seen.* or row_count.* >= begin.rows)
+                return error.InvalidSnapshot;
+            rows[row_count.*] = try decodeRow(allocator, begin, payload, referenced);
+            initialized_rows.* += 1;
+            row_count.* += 1;
+            if (row_count.* == begin.rows) phase.* = .hyperlinks;
+        },
+        .hyperlink => {
+            if (phase.* != .hyperlinks) return error.InvalidSnapshot;
+            try hyperlinks.append(allocator, try decodeHyperlink(allocator, payload, referenced, resolved));
+        },
+    }
+}
+
+fn decodeTextBody(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    encoded: []const u8,
+    rows: []Row,
+    initialized_rows: *usize,
+    hyperlinks: *std.ArrayList(Hyperlink),
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    presentation: *Presentation,
+    presentation_seen: *bool,
+    row_count: *u16,
+    phase: *DecodePhase,
+) Error!void {
+    if (encoded.len <= protocol.text_v1.compressed_header_bytes) return error.InvalidSnapshot;
+    const uncompressed_len = readU32(encoded[0..protocol.text_v1.compressed_header_bytes]);
+    if (uncompressed_len == 0 or uncompressed_len > protocol.maximum_snapshot_bytes)
+        return error.SnapshotTooLarge;
+    const decoded = try allocator.alloc(u8, uncompressed_len);
+    defer allocator.free(decoded);
+    var output: std.Io.Writer = .fixed(decoded);
+    var input: std.Io.Reader = .fixed(encoded[protocol.text_v1.compressed_header_bytes..]);
+    const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(work);
+    var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
+    const decoded_count = decompressor.reader.streamRemaining(&output) catch return error.InvalidSnapshot;
+    if (decoded_count != uncompressed_len or output.buffered().len != uncompressed_len or input.seek != input.end)
+        return error.InvalidSnapshot;
+
+    var offset: usize = 0;
+    while (offset < decoded.len) {
+        if (decoded.len - offset < protocol.text_v1.record_header_bytes) return error.InvalidSnapshot;
+        var encoded_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+        @memcpy(&encoded_header, decoded[offset..][0..protocol.text_v1.record_header_bytes]);
+        const header = try protocol.decodeTextRecordHeader(&encoded_header);
+        const record_len = std.math.add(
+            usize,
+            protocol.text_v1.record_header_bytes,
+            header.payload_len,
+        ) catch return error.InvalidSnapshot;
+        if (record_len > decoded.len - offset) return error.InvalidSnapshot;
+        try decodeTextRecord(
+            allocator,
+            begin,
+            decoded[offset..][0..record_len],
+            rows,
+            initialized_rows,
+            hyperlinks,
+            referenced,
+            resolved,
+            presentation,
+            presentation_seen,
+            row_count,
+            phase,
+        );
+        offset += record_len;
     }
 }
 
@@ -387,7 +493,6 @@ test "rich row preserves typed style color and grapheme state" {
     const begin = protocol.SnapshotBegin{
         .revision = 3,
         .terminal_revision = 9,
-        .format = .text_v1,
         .history_offset = 0,
         .history_count = 0,
         .history_row_base = 0,
@@ -467,4 +572,167 @@ test "rich hyperlink preserves arbitrary URI bytes exactly" {
     defer std.testing.allocator.free(link.uri_bytes);
     try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, link.uri_bytes);
     try std.testing.expect(resolved[2]);
+}
+
+fn testDeflateBody(allocator: std.mem.Allocator, body: []const u8) ![]u8 {
+    var compressed: std.Io.Writer.Allocating = .init(allocator);
+    defer compressed.deinit();
+    const work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer allocator.free(work);
+    const compressor = try allocator.create(std.compress.flate.Compress);
+    defer allocator.destroy(compressor);
+    compressor.* = try std.compress.flate.Compress.init(
+        &compressed.writer,
+        work,
+        .zlib,
+        .fastest,
+    );
+    try compressor.writer.writeAll(body);
+    try compressor.finish();
+    const result = try allocator.alloc(
+        u8,
+        protocol.text_v1.compressed_header_bytes + compressed.written().len,
+    );
+    encodeU32(result[0..protocol.text_v1.compressed_header_bytes], @intCast(body.len));
+    @memcpy(result[protocol.text_v1.compressed_header_bytes..], compressed.written());
+    return result;
+}
+
+test "deflated rich body reuses the text record decoder" {
+    const begin = protocol.SnapshotBegin{
+        .revision = 3,
+        .terminal_revision = 9,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 0,
+        .columns = 0,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = true,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    var body: [protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes]u8 = @splat(0);
+    var record_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    protocol.encodeTextRecordHeader(&record_header, .{
+        .kind = .presentation,
+        .payload_len = protocol.text_v1.presentation_bytes,
+    });
+    @memcpy(body[0..protocol.text_v1.record_header_bytes], &record_header);
+    const encoded = try testDeflateBody(std.testing.allocator, &body);
+    defer std.testing.allocator.free(encoded);
+
+    const rows = try std.testing.allocator.alloc(Row, 0);
+    defer std.testing.allocator.free(rows);
+    var initialized_rows: usize = 0;
+    var hyperlinks: std.ArrayList(Hyperlink) = .empty;
+    defer hyperlinks.deinit(std.testing.allocator);
+    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var presentation: Presentation = undefined;
+    var presentation_seen = false;
+    var row_count: u16 = 0;
+    var phase: DecodePhase = .presentation;
+    try decodeTextBody(
+        std.testing.allocator,
+        begin,
+        encoded,
+        rows,
+        &initialized_rows,
+        &hyperlinks,
+        &referenced,
+        &resolved,
+        &presentation,
+        &presentation_seen,
+        &row_count,
+        &phase,
+    );
+    try std.testing.expect(presentation_seen);
+    try std.testing.expectEqual(@as(u16, 0), row_count);
+    try std.testing.expectEqual(DecodePhase.rows, phase);
+}
+
+test "deflated rich body rejects corrupt and oversized streams" {
+    const begin = protocol.SnapshotBegin{
+        .revision = 3,
+        .terminal_revision = 9,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 0,
+        .columns = 0,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = true,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    var body: [protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes]u8 = @splat(0);
+    var record_header: [protocol.text_v1.record_header_bytes]u8 = undefined;
+    protocol.encodeTextRecordHeader(&record_header, .{
+        .kind = .presentation,
+        .payload_len = protocol.text_v1.presentation_bytes,
+    });
+    @memcpy(body[0..protocol.text_v1.record_header_bytes], &record_header);
+    const encoded = try testDeflateBody(std.testing.allocator, &body);
+    defer std.testing.allocator.free(encoded);
+    encoded[encoded.len - 1] ^= 0xff;
+
+    const rows = try std.testing.allocator.alloc(Row, 0);
+    defer std.testing.allocator.free(rows);
+    var initialized_rows: usize = 0;
+    var hyperlinks: std.ArrayList(Hyperlink) = .empty;
+    defer hyperlinks.deinit(std.testing.allocator);
+    var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
+    var presentation: Presentation = undefined;
+    var presentation_seen = false;
+    var row_count: u16 = 0;
+    var phase: DecodePhase = .presentation;
+    try std.testing.expectError(error.InvalidSnapshot, decodeTextBody(
+        std.testing.allocator,
+        begin,
+        encoded,
+        rows,
+        &initialized_rows,
+        &hyperlinks,
+        &referenced,
+        &resolved,
+        &presentation,
+        &presentation_seen,
+        &row_count,
+        &phase,
+    ));
+
+    var oversized: [protocol.text_v1.compressed_header_bytes + 1]u8 = @splat(0);
+    encodeU32(oversized[0..protocol.text_v1.compressed_header_bytes], protocol.maximum_snapshot_bytes + 1);
+    initialized_rows = 0;
+    presentation_seen = false;
+    row_count = 0;
+    phase = .presentation;
+    try std.testing.expectError(error.SnapshotTooLarge, decodeTextBody(
+        std.testing.allocator,
+        begin,
+        &oversized,
+        rows,
+        &initialized_rows,
+        &hyperlinks,
+        &referenced,
+        &resolved,
+        &presentation,
+        &presentation_seen,
+        &row_count,
+        &phase,
+    ));
 }

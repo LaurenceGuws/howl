@@ -14,12 +14,12 @@
 
 const std = @import("std");
 
-/// Version of the fixed frame header, independent of session protocol versions.
+/// Exact version of the complete Howl session wire carried in every frame header.
+///
+/// Howl currently has one protocol, not a compatibility matrix. Change this
+/// value when the wire contract changes instead of accumulating negotiation
+/// branches for clients we do not maintain.
 pub const framing_version: u8 = 1;
-/// Oldest session protocol this implementation can negotiate.
-pub const protocol_min_version: u16 = 1;
-/// Newest session protocol this implementation can negotiate.
-pub const protocol_max_version: u16 = 1;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -60,30 +60,6 @@ pub const Kind = enum(u8) {
     consequence_reply = 20,
 };
 
-/// Features are negotiated independently of protocol version.
-pub const Feature = enum(u6) {
-    grid_snapshot = 0,
-    typed_input = 1,
-    resize_leader = 2,
-    history_window = 3,
-    text_snapshot = 4,
-    interaction_state = 5,
-    host_consequences = 6,
-};
-
-/// Returns the negotiated bit mask for one feature.
-pub fn feature(feature_value: Feature) u64 {
-    return @as(u64, 1) << @backingInt(feature_value);
-}
-
-/// Features implemented by the current endpoint contract.
-pub const supported_features = feature(.grid_snapshot) |
-    feature(.typed_input) |
-    feature(.resize_leader) |
-    feature(.history_window) |
-    feature(.text_snapshot) |
-    feature(.interaction_state);
-
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
 pub const Header = struct {
     kind: Kind,
@@ -102,17 +78,9 @@ pub const HeaderError = error{
 /// Rejects a fixed message payload whose size or enum values are invalid.
 pub const PayloadError = error{InvalidPayload};
 
-/// Handshake sent before any session request.
-pub const Hello = struct {
-    min_version: u16 = protocol_min_version,
-    max_version: u16 = protocol_max_version,
-    features: u64 = supported_features,
-};
-
-/// Handshake response. Clients only learn their own identity by default.
+/// Handshake response. The empty `hello` frame exists only to establish an
+/// explicit attach boundary; the endpoint returns this connection-local id.
 pub const Welcome = struct {
-    version: u16,
-    features: u64,
     client_id: ClientId,
 };
 
@@ -122,7 +90,7 @@ pub const Observe = struct {
     history_offset: u32 = 0,
 };
 
-/// Input payload family. Structured key/mouse input is capability-gated.
+/// Input payload family for committed bytes and semantic physical input.
 pub const InputKind = enum(u8) {
     bytes = 1,
     paste = 2,
@@ -254,7 +222,7 @@ pub const MouseInput = struct {
     pixel_y: ?u32 = null,
 };
 
-/// Frozen byte grammar and bounds for capability-gated typed input.
+/// Frozen byte grammar and bounds for typed physical input.
 pub const typed_input = struct {
     /// Fixed physical-key header before bounded legacy and committed-text bytes.
     pub const key_header_bytes: usize = 20;
@@ -539,22 +507,13 @@ pub const ConsequenceReply = struct {
     body: []const u8,
 };
 
-/// Stable first terminal snapshot representation carried by snapshot_data frames.
+/// Record classes carried inside the compressed renderer-complete snapshot body.
 ///
-/// `grid_v1` intentionally freezes only the canonical spatial grid needed by
-/// the first shared-session client: row wrap/DEC geometry and each cell's
-/// codepoint plus multicell occupancy. `text_v1` adds complete renderer-neutral
-/// text semantics; terminal images remain a separate future capability.
-pub const SnapshotFormat = enum(u16) {
-    grid_v1 = 1,
-    text_v1 = 2,
-};
-
-/// Record classes carried inside `snapshot_data` for `SnapshotFormat.text_v1`.
-///
-/// Each `snapshot_data` frame carries exactly one record. Every record starts
-/// with one fixed eight-byte header so clients can validate it without
-/// depending on Zig struct layout.
+/// There is deliberately one current snapshot representation. The body is a
+/// bounded zlib/DEFLATE stream over concatenated self-delimiting `text_v1`
+/// records. Compression is part of `text_v1`, not a negotiated alternative.
+/// Every decompressed record starts with one fixed eight-byte header so clients
+/// can validate the body without depending on Zig struct layout.
 pub const TextRecordKind = enum(u8) {
     presentation = 1,
     row = 2,
@@ -582,6 +541,8 @@ pub const TextColor = struct {
 
 /// Frozen byte grammar and bounds for the renderer-neutral rich text snapshot.
 pub const text_v1 = struct {
+    /// Uncompressed body length prefix before the zlib stream, big-endian u32.
+    pub const compressed_header_bytes: usize = 4;
     /// Fixed record header: kind:u8, reserved:u24=0, payload_len:u32 big-endian.
     pub const record_header_bytes: usize = 8;
     /// Semantic color: kind:u8 followed by value:u32 big-endian.
@@ -659,7 +620,6 @@ pub const SnapshotBegin = struct {
     revision: u64,
     /// Canonical VT semantic revision captured inside this observation.
     terminal_revision: u64,
-    format: SnapshotFormat = .grid_v1,
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -695,14 +655,14 @@ pub const AssignLeader = struct {
 
 /// Exact fixed payload widths for v1 messages.
 pub const payload_bytes = struct {
-    /// `Hello` payload bytes.
-    pub const hello: usize = 12;
-    /// `Welcome` payload bytes.
-    pub const welcome: usize = 18;
+    /// `hello` is an empty attach token.
+    pub const hello: usize = 0;
+    /// `Welcome` carries only the connection-local client id.
+    pub const welcome: usize = 8;
     /// `Observe` payload bytes.
     pub const observe: usize = 12;
     /// `SnapshotBegin` payload bytes.
-    pub const snapshot_begin: usize = 40;
+    pub const snapshot_begin: usize = 38;
     /// `SnapshotEnd` payload bytes.
     pub const snapshot_end: usize = 8;
     /// `AssignLeader` payload bytes.
@@ -795,51 +755,16 @@ pub const ConsequenceAuthority = struct {
     }
 };
 
-/// Selects the highest mutually supported protocol version.
-pub fn negotiateVersion(hello: Hello) ?u16 {
-    if (hello.min_version > hello.max_version) return null;
-    const lower = @max(hello.min_version, protocol_min_version);
-    const upper = @min(hello.max_version, protocol_max_version);
-    return if (lower <= upper) upper else null;
-}
-
-/// Returns the features both peers can use for the negotiated connection.
-pub fn negotiateFeatures(hello: Hello) u64 {
-    return hello.features & supported_features;
-}
-
-/// Encodes one hello payload with explicit endian order.
-pub fn encodeHello(output: *[payload_bytes.hello]u8, value: Hello) void {
-    writeU16(output[0..2], value.min_version);
-    writeU16(output[2..4], value.max_version);
-    writeU64(output[4..12], value.features);
-}
-
-/// Decodes one exact hello payload.
-pub fn decodeHello(input: []const u8) PayloadError!Hello {
-    if (input.len != payload_bytes.hello) return error.InvalidPayload;
-    return .{
-        .min_version = readU16(input[0..2]),
-        .max_version = readU16(input[2..4]),
-        .features = readU64(input[4..12]),
-    };
-}
-
-/// Encodes one welcome payload with explicit endian order.
+/// Encodes the attach response. The framing version already identifies the
+/// complete wire contract, so no second version/features negotiation lives here.
 pub fn encodeWelcome(output: *[payload_bytes.welcome]u8, value: Welcome) void {
-    writeU16(output[0..2], value.version);
-    writeU64(output[2..10], value.features);
-    writeU64(output[10..18], value.client_id);
+    writeU64(output[0..8], value.client_id);
 }
 
-/// Decodes one exact welcome payload.
+/// Decodes one exact attach response.
 pub fn decodeWelcome(input: []const u8) PayloadError!Welcome {
     if (input.len != payload_bytes.welcome) return error.InvalidPayload;
-    return .{
-        .version = readU16(input[0..2]),
-        .features = readU64(input[2..10]),
-        .client_id = readU64(input[10..18]),
-    };
+    return .{ .client_id = readU64(input[0..8]) };
 }
 
 /// Encodes one observation request.
@@ -862,16 +787,15 @@ pub fn encodeSnapshotBegin(output: *[payload_bytes.snapshot_begin]u8, value: Sna
     output.* = @splat(0);
     writeU64(output[0..8], value.revision);
     writeU64(output[8..16], value.terminal_revision);
-    writeU16(output[16..18], @backingInt(value.format));
-    writeU32(output[18..22], value.history_offset);
-    writeU32(output[22..26], value.history_count);
-    writeU32(output[26..30], value.history_row_base);
-    writeU16(output[30..32], value.rows);
-    writeU16(output[32..34], value.columns);
-    writeU16(output[34..36], value.cursor_row);
-    writeU16(output[36..38], value.cursor_column);
-    output[38] = value.cursor_shape;
-    output[39] = (@as(u8, @intFromBool(value.cursor_visible)) << 0) |
+    writeU32(output[16..20], value.history_offset);
+    writeU32(output[20..24], value.history_count);
+    writeU32(output[24..28], value.history_row_base);
+    writeU16(output[28..30], value.rows);
+    writeU16(output[30..32], value.columns);
+    writeU16(output[32..34], value.cursor_row);
+    writeU16(output[34..36], value.cursor_column);
+    output[36] = value.cursor_shape;
+    output[37] = (@as(u8, @intFromBool(value.cursor_visible)) << 0) |
         (@as(u8, @intFromBool(value.cursor_blink)) << 1) |
         (@as(u8, @intFromBool(value.alternate_screen)) << 2) |
         (@as(u8, @intFromBool(value.stream_closed)) << 3) |
@@ -883,28 +807,25 @@ pub fn encodeSnapshotBegin(output: *[payload_bytes.snapshot_begin]u8, value: Sna
 /// Decodes one exact snapshot metadata boundary.
 pub fn decodeSnapshotBegin(input: []const u8) PayloadError!SnapshotBegin {
     if (input.len != payload_bytes.snapshot_begin) return error.InvalidPayload;
-    const format = enumFromInt(SnapshotFormat, readU16(input[16..18])) orelse
-        return error.InvalidPayload;
-    if (input[39] & 0x80 != 0) return error.InvalidPayload;
+    if (input[37] & 0x80 != 0) return error.InvalidPayload;
     return .{
         .revision = readU64(input[0..8]),
         .terminal_revision = readU64(input[8..16]),
-        .format = format,
-        .history_offset = readU32(input[18..22]),
-        .history_count = readU32(input[22..26]),
-        .history_row_base = readU32(input[26..30]),
-        .rows = readU16(input[30..32]),
-        .columns = readU16(input[32..34]),
-        .cursor_row = readU16(input[34..36]),
-        .cursor_column = readU16(input[36..38]),
-        .cursor_shape = input[38],
-        .cursor_visible = input[39] & (1 << 0) != 0,
-        .cursor_blink = input[39] & (1 << 1) != 0,
-        .alternate_screen = input[39] & (1 << 2) != 0,
-        .stream_closed = input[39] & (1 << 3) != 0,
-        .child_exited = input[39] & (1 << 4) != 0,
-        .leader_present = input[39] & (1 << 5) != 0,
-        .you_are_leader = input[39] & (1 << 6) != 0,
+        .history_offset = readU32(input[16..20]),
+        .history_count = readU32(input[20..24]),
+        .history_row_base = readU32(input[24..28]),
+        .rows = readU16(input[28..30]),
+        .columns = readU16(input[30..32]),
+        .cursor_row = readU16(input[32..34]),
+        .cursor_column = readU16(input[34..36]),
+        .cursor_shape = input[36],
+        .cursor_visible = input[37] & (1 << 0) != 0,
+        .cursor_blink = input[37] & (1 << 1) != 0,
+        .alternate_screen = input[37] & (1 << 2) != 0,
+        .stream_closed = input[37] & (1 << 3) != 0,
+        .child_exited = input[37] & (1 << 4) != 0,
+        .leader_present = input[37] & (1 << 5) != 0,
+        .you_are_leader = input[37] & (1 << 6) != 0,
     };
 }
 
@@ -1553,17 +1474,10 @@ test "wire integers round trip beyond one byte" {
     const header = try decodeHeader(&header_bytes_out);
     try std.testing.expectEqual(@as(u32, 0x00f1_a2b3), header.payload_len);
 
-    var hello_bytes: [payload_bytes.hello]u8 = undefined;
-    const hello = Hello{
-        .min_version = 0x0123,
-        .max_version = 0x4567,
-        .features = 0xf123_4567_89ab_cdef,
-    };
-    encodeHello(&hello_bytes, hello);
-    const decoded_hello = try decodeHello(&hello_bytes);
-    try std.testing.expectEqual(hello.min_version, decoded_hello.min_version);
-    try std.testing.expectEqual(hello.max_version, decoded_hello.max_version);
-    try std.testing.expectEqual(hello.features, decoded_hello.features);
+    var welcome_bytes: [payload_bytes.welcome]u8 = undefined;
+    encodeWelcome(&welcome_bytes, .{ .client_id = 0xf123_4567_89ab_cdef });
+    const welcome = try decodeWelcome(&welcome_bytes);
+    try std.testing.expectEqual(@as(ClientId, 0xf123_4567_89ab_cdef), welcome.client_id);
 
     var resize_bytes: [payload_bytes.resize]u8 = undefined;
     encodeResize(&resize_bytes, .{ .rows = 512, .columns = 1025 });
@@ -1572,7 +1486,7 @@ test "wire integers round trip beyond one byte" {
     try std.testing.expectEqual(@as(u16, 1025), resize.columns);
 }
 
-test "grid_v1 snapshot begin bytes stay frozen" {
+test "snapshot begin bytes stay frozen" {
     var encoded: [payload_bytes.snapshot_begin]u8 = undefined;
     encodeSnapshotBegin(&encoded, .{
         .revision = 0x0102_0304_0506_0708,
@@ -1596,9 +1510,9 @@ test "grid_v1 snapshot begin bytes stay frozen" {
     try std.testing.expectEqualSlices(u8, &.{
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
         0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-        0x00, 0x01, 0x21, 0x22, 0x23, 0x24, 0x31, 0x32,
-        0x33, 0x34, 0x41, 0x42, 0x43, 0x44, 0x51, 0x52,
-        0x61, 0x62, 0x71, 0x72, 0x81, 0x82, 0x91, 0x7f,
+        0x21, 0x22, 0x23, 0x24, 0x31, 0x32, 0x33, 0x34,
+        0x41, 0x42, 0x43, 0x44, 0x51, 0x52, 0x61, 0x62,
+        0x71, 0x72, 0x81, 0x82, 0x91, 0x7f,
     }, &encoded);
 }
 
@@ -1933,20 +1847,6 @@ test "interaction state snapshot is fixed and rejects reserved drift" {
     bad = encoded;
     bad[15] = 0x80;
     try std.testing.expectError(error.InvalidPayload, decodeInteractionStateSnapshot(&bad));
-}
-
-test "version negotiation is explicit before protocol v1" {
-    try std.testing.expectEqual(@as(?u16, 1), negotiateVersion(.{}));
-    try std.testing.expectEqual(@as(?u16, 1), negotiateVersion(.{ .min_version = 0, .max_version = 2 }));
-    try std.testing.expectEqual(@as(?u16, null), negotiateVersion(.{ .min_version = 2, .max_version = 3 }));
-    try std.testing.expectEqual(@as(?u16, null), negotiateVersion(.{ .min_version = 2, .max_version = 1 }));
-    try std.testing.expectEqual(supported_features, negotiateFeatures(.{}));
-    try std.testing.expectEqual(
-        feature(.resize_leader) | feature(.typed_input),
-        negotiateFeatures(.{
-            .features = feature(.resize_leader) | feature(.typed_input),
-        }),
-    );
 }
 
 test "resize leadership is explicit and disappears with its client" {

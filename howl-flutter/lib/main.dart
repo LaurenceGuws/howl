@@ -142,6 +142,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     try {
       final observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
+        armNextLiveObservation: true,
       );
       final control = await NativeHostControl.create(
         endpoint: widget.endpoint.toString(),

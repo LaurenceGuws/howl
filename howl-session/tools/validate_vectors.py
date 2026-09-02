@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import struct
 import sys
+import zlib
 from pathlib import Path
 
 
@@ -19,6 +20,7 @@ MAGIC = b"HWLS"
 FRAMING_VERSION = 1
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
+MAXIMUM_SNAPSHOT_BYTES = 4 * 1024 * 1024
 
 KINDS = {
     1: "hello",
@@ -59,7 +61,6 @@ RESULT_CODES = {
     5: "rejected",
 }
 
-SNAPSHOT_FORMATS = {1: "grid_v1", 2: "text_v1"}
 TEXT_RECORD_KINDS = {1: "presentation", 2: "row", 3: "hyperlink"}
 TEXT_COLOR_KINDS = {0: "default", 1: "indexed", 2: "rgb"}
 
@@ -143,21 +144,13 @@ def valid_scalar(value: int) -> bool:
 
 
 def decode_hello(payload: bytes) -> dict:
-    require(len(payload) == 12, "hello_size")
-    return {
-        "min_version": u16(payload[0:2]),
-        "max_version": u16(payload[2:4]),
-        "features": u64(payload[4:12]),
-    }
+    require(len(payload) == 0, "hello_size")
+    return {}
 
 
 def decode_welcome(payload: bytes) -> dict:
-    require(len(payload) == 18, "welcome_size")
-    return {
-        "version": u16(payload[0:2]),
-        "features": u64(payload[2:10]),
-        "client_id": u64(payload[10:18]),
-    }
+    require(len(payload) == 8, "welcome_size")
+    return {"client_id": u64(payload)}
 
 
 def decode_observe(payload: bytes) -> dict:
@@ -169,23 +162,20 @@ def decode_observe(payload: bytes) -> dict:
 
 
 def decode_snapshot_begin(payload: bytes) -> dict:
-    require(len(payload) == 40, "snapshot_begin_size")
-    format_value = u16(payload[16:18])
-    require(format_value in SNAPSHOT_FORMATS, "snapshot_format")
-    flags = payload[39]
+    require(len(payload) == 38, "snapshot_begin_size")
+    flags = payload[37]
     require(flags & 0x80 == 0, "snapshot_flags")
     return {
         "revision": u64(payload[0:8]),
         "terminal_revision": u64(payload[8:16]),
-        "format": SNAPSHOT_FORMATS[format_value],
-        "history_offset": u32(payload[18:22]),
-        "history_count": u32(payload[22:26]),
-        "history_row_base": u32(payload[26:30]),
-        "rows": u16(payload[30:32]),
-        "columns": u16(payload[32:34]),
-        "cursor_row": u16(payload[34:36]),
-        "cursor_column": u16(payload[36:38]),
-        "cursor_shape": payload[38],
+        "history_offset": u32(payload[16:20]),
+        "history_count": u32(payload[20:24]),
+        "history_row_base": u32(payload[24:28]),
+        "rows": u16(payload[28:30]),
+        "columns": u16(payload[30:32]),
+        "cursor_row": u16(payload[32:34]),
+        "cursor_column": u16(payload[34:36]),
+        "cursor_shape": payload[36],
         "cursor_visible": bool(flags & (1 << 0)),
         "cursor_blink": bool(flags & (1 << 1)),
         "alternate_screen": bool(flags & (1 << 2)),
@@ -504,50 +494,10 @@ def decode_hyperlink(payload: bytes, resolved_links: dict[int, str]) -> dict:
     return {"link_id": link_id, "uri_hex": uri_hex}
 
 
-def decode_grid_rows(payload: bytes, begin: dict) -> list[dict]:
-    columns = begin["columns"]
-    row_bytes = 4 + columns * 8
-    require(row_bytes > 0 and len(payload) % row_bytes == 0, "grid_data_size")
-    rows = []
-    offset = 0
-    while offset < len(payload):
-        header = payload[offset : offset + 4]
-        require(header[0] <= 1, "grid_row_wrapped")
-        require(header[1] <= 3, "grid_row_geometry")
-        require(u16(header[2:4]) == columns, "grid_row_columns")
-        offset += 4
-        cells = []
-        for _ in range(columns):
-            cell = payload[offset : offset + 8]
-            codepoint = u32(cell[0:4])
-            width, height, x, y = cell[4], cell[5], cell[6], cell[7]
-            require(width > 0 and height > 0 and x < width and y < height, "grid_cell_geometry")
-            require(codepoint == 0 or valid_scalar(codepoint), "grid_codepoint")
-            cells.append(
-                {
-                    "codepoint": codepoint,
-                    "width": width,
-                    "height": height,
-                    "x": x,
-                    "y": y,
-                }
-            )
-            offset += 8
-        rows.append(
-            {
-                "wrapped": bool(header[0]),
-                "line_geometry": header[1],
-                "columns": columns,
-                "cells": cells,
-            }
-        )
-    return rows
-
-
 def new_snapshot(begin: dict) -> dict:
     return {
         "begin": begin,
-        "grid_rows": [],
+        "encoded_body": bytearray(),
         "presentation": None,
         "text_rows": [],
         "hyperlinks": [],
@@ -594,17 +544,25 @@ def decode_text_records(payload: bytes, snapshot: dict) -> list[dict]:
             decoded = decode_hyperlink(record_payload, snapshot["resolved_links"])
             snapshot["hyperlinks"].append(decoded)
         records.append({"kind": name, "payload": decoded})
-    require(len(records) == 1, "text_record_count")
     return records
 
 
 def finish_snapshot(snapshot: dict, end: dict) -> dict:
     begin = snapshot["begin"]
     require(end["revision"] == begin["revision"], "snapshot_revision")
-    if begin["format"] == "grid_v1":
-        require(len(snapshot["grid_rows"]) == begin["rows"], "grid_row_count")
-        return {"begin": begin, "rows": snapshot["grid_rows"], "end": end}
-
+    encoded = bytes(snapshot["encoded_body"])
+    require(len(encoded) > 4, "snapshot_compressed_size")
+    raw_len = u32(encoded[0:4])
+    require(0 < raw_len <= MAXIMUM_SNAPSHOT_BYTES, "snapshot_raw_limit")
+    inflater = zlib.decompressobj()
+    try:
+        body = inflater.decompress(encoded[4:], raw_len + 1)
+        body += inflater.flush()
+    except zlib.error:
+        reject("snapshot_compression")
+    require(inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail, "snapshot_compression")
+    require(len(body) == raw_len, "snapshot_raw_size")
+    decode_text_records(body, snapshot)
     require(snapshot["presentation"] is not None, "text_presentation_missing")
     require(len(snapshot["text_rows"]) == begin["rows"], "text_row_count")
     require(snapshot["referenced_links"] == set(snapshot["resolved_links"]), "text_unresolved_hyperlink")
@@ -615,7 +573,6 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
         "hyperlinks": snapshot["hyperlinks"],
         "end": end,
     }
-
 
 def decode_fixed_payload(kind: int, payload: bytes) -> dict:
     if kind == 1:
@@ -672,14 +629,9 @@ def decode_stream(data: bytes) -> dict:
             snapshot = new_snapshot(decoded)
         elif kind == 5:
             require(snapshot is not None, "snapshot_data_without_begin")
-            if snapshot["begin"]["format"] == "grid_v1":
-                decoded_rows = decode_grid_rows(payload, snapshot["begin"])
-                snapshot["grid_rows"].extend(decoded_rows)
-                require(len(snapshot["grid_rows"]) <= snapshot["begin"]["rows"], "grid_row_count")
-                decoded = {"format": "grid_v1", "rows": decoded_rows}
-            else:
-                decoded_records = decode_text_records(payload, snapshot)
-                decoded = {"format": "text_v1", "records": decoded_records}
+            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_SNAPSHOT_BYTES, "snapshot_compressed_limit")
+            snapshot["encoded_body"].extend(payload)
+            decoded = {"bytes": len(payload)}
         elif kind == 6:
             require(snapshot is not None, "snapshot_end_without_begin")
             decoded = decode_snapshot_end(payload)

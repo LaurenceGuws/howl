@@ -189,7 +189,7 @@ keyboard shortcut as a substitute for a requested signal.
 ## Resize authority
 
 Resize remains explicit canonical session state. A one-shot CLI `resize` client
-must negotiate the `resize_leader` feature, assign its own real connection-local
+must assign its own real connection-local
 client id as leader, request the new rows/columns, verify the result, then close.
 A mere observation never assigns leadership or changes geometry.
 
@@ -203,7 +203,7 @@ closed errors. Actions return a small receipt naming the requested operation and
 the session result code. Human `--text` output is the only intentionally
 unstructured path in the first cut.
 
-Malformed endpoints, unsupported negotiated features, invalid UTF-8/scalars,
+Malformed endpoints, unsupported request families, invalid UTF-8/scalars,
 oversized requests/snapshots, protocol disagreement, stale future pointer
 contracts and server result failures all fail closed. A successful socket write
 is never treated as proof that the terminal operation succeeded.

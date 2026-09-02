@@ -51,7 +51,6 @@ fn sourceSnapshot(rows: []client.rich.Row, columns: u16) client.rich.Snapshot {
         .begin = .{
             .revision = 17,
             .terminal_revision = 11,
-            .format = .text_v1,
             .history_offset = 0,
             .history_count = 0,
             .history_row_base = 0,

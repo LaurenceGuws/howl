@@ -20,7 +20,6 @@ pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.Pa
     SocketWriteFailed,
     ConnectionClosed,
     UnexpectedHandshakeFrame,
-    RequiredFeatureMissing,
     SocketPathTooLong,
 };
 
@@ -38,8 +37,6 @@ pub const Frame = struct {
 pub const Connection = struct {
     allocator: std.mem.Allocator,
     fd: posix.fd_t,
-    version: u16,
-    features: u64,
     client_id: protocol.ClientId,
 
     pub fn connect(allocator: std.mem.Allocator, endpoint: []const u8) Error!Connection {
@@ -82,21 +79,13 @@ fn initOwnedFd(allocator: std.mem.Allocator, fd: posix.fd_t) Error!Connection {
     var connection = Connection{
         .allocator = allocator,
         .fd = fd,
-        .version = 0,
-        .features = 0,
         .client_id = protocol.no_client,
     };
-    var hello: [protocol.payload_bytes.hello]u8 = undefined;
-    protocol.encodeHello(&hello, .{});
-    try connection.send(.hello, &hello);
+    try connection.send(.hello, &.{});
     var frame = try connection.receive();
     defer frame.deinit();
     if (frame.kind != .welcome) return error.UnexpectedHandshakeFrame;
     const welcome = try protocol.decodeWelcome(frame.payload);
-    if (welcome.features & protocol.feature(.text_snapshot) == 0)
-        return error.RequiredFeatureMissing;
-    connection.version = welcome.version;
-    connection.features = welcome.features;
     connection.client_id = welcome.client_id;
     return connection;
 }
@@ -254,23 +243,16 @@ fn testHandshakePeer(fd: posix.fd_t) void {
     readExact(fd, &header) catch @panic("hello header");
     const decoded_header = protocol.decodeHeader(&header) catch @panic("hello frame");
     if (decoded_header.kind != .hello) @panic("wrong hello kind");
-    var payload: [protocol.payload_bytes.hello]u8 = undefined;
-    readExact(fd, &payload) catch @panic("hello payload");
-    const hello = protocol.decodeHello(&payload) catch @panic("invalid hello");
-    if (hello.features & protocol.feature(.text_snapshot) == 0) @panic("rich observation feature missing");
+    if (decoded_header.payload_len != protocol.payload_bytes.hello) @panic("hello payload");
     var welcome: [protocol.payload_bytes.welcome]u8 = undefined;
-    protocol.encodeWelcome(&welcome, .{
-        .version = protocol.protocol_max_version,
-        .features = protocol.supported_features,
-        .client_id = 71,
-    });
+    protocol.encodeWelcome(&welcome, .{ .client_id = 71 });
     var response: [protocol.header_bytes]u8 = undefined;
     protocol.encodeHeader(&response, .{ .kind = .welcome, .payload_len = welcome.len }) catch @panic("welcome header");
     writeAll(fd, &response) catch @panic("welcome header write");
     writeAll(fd, &welcome) catch @panic("welcome write");
 }
 
-test "handshake requests the rich frozen wire without transport policy" {
+test "handshake establishes client identity without transport policy" {
     const pair = testSocketPair();
     const thread = try std.Thread.spawn(.{}, testHandshakePeer, .{pair[1]});
     var connection = try initOwnedFd(std.testing.allocator, pair[0]);
@@ -279,8 +261,6 @@ test "handshake requests the rich frozen wire without transport policy" {
     const fd_flags = system.fcntl(connection.fd, posix.F.GETFD, @as(usize, 0));
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(fd_flags));
     try std.testing.expect(fd_flags & posix.FD_CLOEXEC != 0);
-    try std.testing.expectEqual(protocol.protocol_max_version, connection.version);
-    try std.testing.expect(connection.features & protocol.feature(.text_snapshot) != 0);
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
 }
 

@@ -30,7 +30,7 @@ Install the pushed native CLI as a regular user-owned command with `./howl-cli/i
 
 ## Experimental packages
 
-`howl-render`, `howl-vk`, `howl-wayland`, `howl-gtk`, and `howl-flutter` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
+`howl-render`, `howl-vk`, `howl-wayland`, and `howl-flutter` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
 
 ## Build
 
@@ -45,7 +45,7 @@ zig build test
 Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed compiler; the repository owns only the version pin.
 
 Each local child package owns its own `build.zig` and proofs. `howl-text` lives
-in its own repository; the root, renderer, and GTK pressure client consume the
+in its own repository; the root and renderer consume the
 exact published commit pinned in their package metadata.
 
 Core `check`/`test` gates also use Python 3's standard library to validate the

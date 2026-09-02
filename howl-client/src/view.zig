@@ -258,7 +258,7 @@ const Counts = struct {
 };
 
 fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
-    if (source.begin.format != .text_v1 or source.rows.len != source.begin.rows) {
+    if (source.rows.len != source.begin.rows) {
         return error.InvalidRichSnapshot;
     }
     if (!validPresentation(source.presentation) or
@@ -391,7 +391,6 @@ fn testBegin(rows_count: u16, columns_count: u16) Begin {
     return .{
         .revision = 1,
         .terminal_revision = 1,
-        .format = .text_v1,
         .history_offset = 0,
         .history_count = 0,
         .history_row_base = 0,
@@ -486,7 +485,6 @@ test "coarse view preserves rich semantics in one allocation" {
         .begin = .{
             .revision = 11,
             .terminal_revision = 9,
-            .format = .text_v1,
             .history_offset = 3,
             .history_count = 8,
             .history_row_base = 2,

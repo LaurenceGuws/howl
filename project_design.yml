@@ -23,7 +23,6 @@ experimental:
   - howl-render
   - howl-vk
   - howl-wayland
-  - howl-gtk
   - howl-flutter
 
 ownership:

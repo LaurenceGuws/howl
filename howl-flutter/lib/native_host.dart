@@ -159,6 +159,7 @@ final class NativeHostObserver {
 
   static Future<NativeHostObserver> createPlatform({
     required String endpoint,
+    bool armNextLiveObservation = false,
   }) async {
     final fonts = await _nativeHostFonts();
     return create(
@@ -166,6 +167,7 @@ final class NativeHostObserver {
       primaryFontPath: fonts.primary,
       fallbackFontPath: fonts.fallback,
       secondaryFallbackFontPath: fonts.secondaryFallback,
+      armNextLiveObservation: armNextLiveObservation,
     );
   }
 
@@ -174,6 +176,7 @@ final class NativeHostObserver {
     required String primaryFontPath,
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
+    bool armNextLiveObservation = false,
   }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
@@ -186,6 +189,7 @@ final class NativeHostObserver {
         primaryFontPath,
         fallbackFontPath,
         secondaryFallbackFontPath,
+        armNextLiveObservation,
       ],
       debugName: 'Howl native observer',
     );
@@ -392,6 +396,11 @@ typedef _ObserveDart = int Function(
   int,
   ffi.Pointer<ffi.Size>,
 );
+typedef _SetLiveObservePipelineNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Uint8,
+);
+typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
 
 ffi.DynamicLibrary _nativeHostLibrary() => Platform.isIOS
     ? ffi.DynamicLibrary.process()
@@ -404,6 +413,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final primary = init[3]! as String;
   final fallback = init[4]! as String;
   final secondaryFallback = init[5]! as String;
+  final armNextLiveObservation = init[6]! as bool;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
@@ -416,6 +426,11 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final observe = dylib.lookupFunction<_ObserveNative, _ObserveDart>(
     'howl_native_host_observe',
   );
+  final setLiveObservePipeline = dylib
+      .lookupFunction<
+        _SetLiveObservePipelineNative,
+        _SetLiveObservePipelineDart
+      >('howl_native_host_set_live_observe_pipeline');
 
   ffi.Pointer<ffi.Uint8> copyString(String value) {
     final encoded = utf8.encode(value);
@@ -452,6 +467,13 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   }
   if (host == ffi.nullptr) {
     ready.send('worker_host_create');
+    commands.close();
+    return;
+  }
+
+  if (armNextLiveObservation && setLiveObservePipeline(host, 1) != 0) {
+    destroy(host);
+    ready.send('worker_live_observe_pipeline');
     commands.close();
     return;
   }

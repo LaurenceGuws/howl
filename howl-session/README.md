@@ -57,53 +57,25 @@ Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
 framing failure or an inbound request payload above 64 KiB.
 
-## Handshake and features
+## Attach handshake
 
-The first client frame must be `hello`. Its 12-byte payload is:
+The first client frame is an empty `hello`. The frame header version is the
+complete Howl wire compatibility boundary; there is no second protocol-version
+or feature-negotiation matrix. When the wire changes, change the frame version
+instead of accumulating compatibility branches for clients Howl does not
+maintain.
 
-| Offset | Bytes | Meaning |
-| --- | ---: | --- |
-| 0 | 2 | minimum session protocol version |
-| 2 | 2 | maximum session protocol version |
-| 4 | 8 | requested feature bit mask |
-
-The only session protocol version currently implemented is `1`. The endpoint
-selects the highest mutually supported version. If there is no common version,
-the connection closes.
-
-Feature bits are independent of protocol version:
-
-| Bit | Mask | Feature | Meaning |
-| ---: | ---: | --- | --- |
-| 0 | `0x01` | `grid_snapshot` | understands `grid_v1`; required to attach |
-| 1 | `0x02` | `typed_input` | key, mouse, and focus input bodies below |
-| 2 | `0x04` | `resize_leader` | leader assignment and canonical resize |
-| 3 | `0x08` | `history_window` | nonzero observation history offsets |
-| 4 | `0x10` | `text_snapshot` | selects renderer-complete `text_v1` snapshots |
-| 5 | `0x20` | `interaction_state` | observes mode state that directs caller input/resize interaction |
-
-The endpoint currently supports mask `0x3f`. It replies with the intersection
-of requested and supported bits. `grid_snapshot` must be present in that
-intersection or the endpoint closes the connection.
-
-`welcome` has an 18-byte payload:
-
-| Offset | Bytes | Meaning |
-| --- | ---: | --- |
-| 0 | 2 | selected session protocol version |
-| 2 | 8 | negotiated feature mask |
-| 10 | 8 | nonzero connection-local client id |
-
-The client id is not a durable node identity. It exists only for this endpoint
-connection lifetime and for geometry leadership.
+The endpoint replies with `welcome`, exactly eight bytes containing one nonzero
+connection-local client id. That id is not a durable node identity. It exists
+only for this endpoint connection lifetime and for explicit authority such as
+geometry leadership.
 
 ## Interaction state
 
-`text_v1` remains the renderer-complete terminal snapshot format and is unchanged by
-this feature. Some terminal modes do not alter visible cells but do alter how the
-same next semantic input is encoded. A client that negotiated `interaction_state`
-may therefore send an empty `interaction_state` frame to observe that coherent
-mode-directed state without perturbing the terminal.
+Some terminal modes do not alter visible cells but do alter how the same next
+semantic input is encoded. A client may therefore send an empty
+`interaction_state` frame to observe that coherent mode-directed state without
+perturbing the terminal. This is semantic state, not a second snapshot format.
 
 The endpoint replies with one `interaction_state_snapshot` payload of exactly 20
 bytes:
@@ -138,11 +110,7 @@ The flags word uses these bits:
 | 11 | paste events |
 | 12 | in-band resize notifications |
 
-Bits 13..31 are reserved and must be zero. This is a separately negotiated
-observation surface, not an extension of `text_v1`: clients that do not request
-feature bit `0x20` retain their existing protocol-v1 behavior and receive
-`result(request_kind=interaction_state, code=unsupported)` if they send the new
-request anyway.
+Bits 13..31 are reserved and must be zero.
 
 ## Observation model
 
@@ -162,14 +130,13 @@ endpoint waits while the current observation revision is less than or equal to
 `after_revision`, and responds when a newer revision exists. Asking for a
 revision newer than the endpoint currently owns is malformed.
 
-A nonzero `history_offset` requires negotiated `history_window`; otherwise the
-endpoint returns `result(request_kind=observe, code=unsupported)`. The snapshot
-reports the effective history offset actually used.
+The requested history offset is clamped to canonical retained history. The
+snapshot reports the effective history offset actually used.
 
 Each observation is:
 
 1. one `snapshot_begin`;
-2. zero or more `snapshot_data` frames;
+2. one or more `snapshot_data` transport chunks;
 3. one `snapshot_end` with the same observation revision.
 
 The endpoint materializes the coherent snapshot before emitting
@@ -178,22 +145,21 @@ drain to the observer.
 
 ### `snapshot_begin`
 
-The payload is exactly 40 bytes:
+The payload is exactly 38 bytes:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 8 | observation `revision` |
 | 8 | 8 | canonical terminal semantic `terminal_revision` |
-| 16 | 2 | snapshot format: `1=grid_v1`, `2=text_v1` |
-| 18 | 4 | effective history offset |
-| 22 | 4 | total retained history row count |
-| 26 | 4 | history row base |
-| 30 | 2 | rows in this snapshot |
-| 32 | 2 | canonical columns |
-| 34 | 2 | cursor row |
-| 36 | 2 | cursor column |
-| 38 | 1 | cursor shape |
-| 39 | 1 | flags |
+| 16 | 4 | effective history offset |
+| 20 | 4 | total retained history row count |
+| 24 | 4 | history row base |
+| 28 | 2 | rows in this snapshot |
+| 30 | 2 | canonical columns |
+| 32 | 2 | cursor row |
+| 34 | 2 | cursor column |
+| 36 | 1 | cursor shape |
+| 37 | 1 | flags |
 
 Cursor shapes emitted today are `0=block`, `1=underline`, `2=bar`, `3=none`.
 Clients should render an unknown future shape with a safe fallback rather than
@@ -215,45 +181,28 @@ Flag byte bits are:
 `snapshot_end` is exactly eight bytes containing the observation revision from
 `snapshot_begin`.
 
-## `grid_v1`
-
-`grid_v1` is the frozen compatibility snapshot. It transports canonical spatial
-text only: row wrap/DEC geometry plus one codepoint and multicell occupancy per
-column. Existing clients can keep negotiating only this format.
-
-Each complete row is:
-
-| Offset | Bytes | Meaning |
-| --- | ---: | --- |
-| 0 | 1 | wrapped, `0` or `1` |
-| 1 | 1 | DEC line geometry |
-| 2 | 2 | column count, exactly `snapshot_begin.columns` |
-| 4 | `columns × 8` | cells |
-
-DEC line geometry values are `0=single_width`, `1=double_width`,
-`2=double_height_top`, `3=double_height_bottom`.
-
-Each eight-byte cell is:
-
-| Offset | Bytes | Meaning |
-| --- | ---: | --- |
-| 0 | 4 | Unicode scalar, or zero for a blank/continuation |
-| 4 | 1 | multicell width |
-| 5 | 1 | multicell height |
-| 6 | 1 | x within the multicell rectangle |
-| 7 | 1 | y within the multicell rectangle |
-
-Width and height are nonzero; `x < width` and `y < height`. `snapshot_data`
-payloads contain complete rows and do not split a row across frames.
-
 ## `text_v1`
 
-Negotiating `text_snapshot` selects `text_v1`. It remains renderer-neutral:
-there are no font file names, glyph ids, GPU objects, Flutter types, or window
-system concepts on this wire.
+`text_v1` is the one renderer-complete snapshot representation. It remains
+renderer-neutral: there are no font file names, glyph ids, GPU objects, Flutter
+types, or window-system concepts on this wire.
 
-Every `snapshot_data` payload contains exactly one complete record. A record
-does not cross a frame boundary. The eight-byte record header is:
+The `snapshot_data` payloads are transport chunks only. Concatenate them in
+order. The resulting bytes are:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 4 | exact uncompressed body byte count, big-endian `u32` |
+| 4 | variable | one zlib/DEFLATE stream containing the complete semantic body |
+
+The declared uncompressed body is bounded to 4 MiB before allocation. The zlib
+stream must finish exactly, with no trailing or unconsumed bytes, and inflate to
+exactly the declared length. Every snapshot is independently decompressible; no
+previous client revision is needed to recover or validate it. Compression is
+part of `text_v1`, not an optional or negotiated alternative.
+
+After inflation, the body is a concatenation of self-delimiting records. The
+eight-byte record header is:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -261,10 +210,11 @@ does not cross a frame boundary. The eight-byte record header is:
 | 1 | 3 | reserved, zero |
 | 4 | 4 | record payload length |
 
-Record order is strict: exactly one presentation record, exactly
-`snapshot_begin.rows` row records, then zero or more hyperlink resolver records.
-Every nonzero hyperlink id referenced by a row must be resolved exactly once
-before `snapshot_end`.
+Records may cross `snapshot_data` transport-chunk boundaries because those
+boundaries have no semantic meaning. Record order is strict: exactly one
+presentation record, exactly `snapshot_begin.rows` row records, then zero or
+more hyperlink resolver records. Every nonzero hyperlink id referenced by a row
+must resolve exactly once before `snapshot_end`.
 
 ### Presentation record
 
@@ -295,9 +245,9 @@ mode; all other presentation flag bits are reserved.
 
 ### Row and cell records
 
-A row starts with the same four-byte row prefix as `grid_v1`: wrapped, DEC line
-geometry, and exact canonical column count. It is followed by exactly one cell
-entry for each canonical column.
+A row starts with a four-byte prefix: wrapped, DEC line geometry, and exact
+canonical column count. It is followed by exactly one cell entry for each
+canonical column.
 
 Each cell has a fixed 35-byte prefix followed by `scalar_count` four-byte Unicode
 scalars:
@@ -367,16 +317,16 @@ build the resolver table per snapshot rather than assuming a node-global table.
 
 Every `input` frame begins with a one-byte input kind:
 
-| Value | Kind | Feature requirement |
-| ---: | --- | --- |
-| 1 | raw bytes | none beyond successful handshake |
-| 2 | paste | none beyond successful handshake |
-| 3 | physical key | negotiated `typed_input` |
-| 4 | mouse | negotiated `typed_input` |
-| 5 | focus | negotiated `typed_input` |
+| Value | Kind |
+| ---: | --- |
+| 1 | raw bytes |
+| 2 | paste |
+| 3 | physical key |
+| 4 | mouse |
+| 5 | focus |
 
-Raw bytes are an explicit compatibility escape hatch and are passed as exact
-PTY input bytes. Paste is semantic input: the remaining payload is exact paste
+Raw bytes are the explicit exact-byte input lane and are passed unchanged to
+the canonical input owner. Paste is semantic input: the remaining payload is exact paste
 content, and the canonical VT decides whether bracketed-paste framing applies.
 
 For key, mouse, and focus events, **the client sends physical meaning, not
@@ -487,10 +437,10 @@ elect a leader. There is no fallback election and no largest-viewport rule.
 
 `assign_leader` is exactly eight bytes containing a client id. Client id zero
 clears leadership. A nonzero id must name an attached client or the endpoint
-returns `no_such_client`. `assign_leader` requires negotiated `resize_leader`.
+returns `no_such_client`.
 
-`resize` is exactly four bytes: rows `u16`, then columns `u16`. It also requires
-`resize_leader`, and only the current leader may change canonical PTY geometry.
+`resize` is exactly four bytes: rows `u16`, then columns `u16`. Only the current
+leader may change canonical PTY geometry.
 A nonleader receives `not_leader`. If the leader disconnects, leadership becomes
 empty and the last canonical geometry remains unchanged.
 
@@ -521,13 +471,13 @@ host-specific errno values never cross the wire.
 | 5 | rejected |
 
 Malformed post-handshake commands are reported as bounded semantic results where
-the endpoint can safely retain the connection. Unsupported negotiated features
-likewise return `unsupported`. Framing/handshake failures are connection-level
-failures instead.
+the endpoint can safely retain the connection. Recognized request families that
+the endpoint does not implement return `unsupported`. Framing/attach failures
+are connection-level failures instead.
 
 ## Ownership rules for a client implementation
 
-A client owns framing, negotiation, UI-local state, and physical input capture.
+A client owns framing, connection-local state, UI-local state, and physical input capture.
 The session node owns the PTY, canonical VT, terminal protocol modes, process
 lifecycle, canonical geometry, and deterministic host consequences. Presentation
 code may shape and draw `text_v1`, but must not reinterpret terminal modes or
@@ -535,12 +485,11 @@ write PTY escape bytes for typed input.
 
 The minimal client implementation order is:
 
-1. stream-safe 12-byte frame reader/writer;
-2. `hello`/`welcome` with at least `grid_snapshot`;
-3. request-driven `observe` and `grid_v1` decoding;
-4. `text_snapshot` and `text_v1` records for a real renderer;
-5. `typed_input` key/mouse/focus plus semantic paste;
-6. optional `resize_leader` and `history_window` controls.
+1. stream-safe 12-byte frame reader/writer and frame-version validation;
+2. empty `hello`, `welcome`, and connection-local client identity;
+3. request-driven `observe`, bounded zlib inflate, and `text_v1` record decoding;
+4. semantic key/mouse/focus plus paste/raw-byte input;
+5. explicit resize leadership, history offsets, and interaction-state queries as needed.
 
 Before connecting a new language implementation, run the independent corpus:
 
