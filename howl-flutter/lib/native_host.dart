@@ -297,16 +297,13 @@ Future<_NativeHostFonts> _resolveNativeHostFonts() async {
     return _NativeHostFonts(primary, fallback, secondaryFallback);
   }
   if (Platform.isIOS) {
-    const channel = MethodChannel('howl.flutter/ios_host');
-    final paths = await channel.invokeMapMethod<String, String>('fontPaths');
-    final primary = paths?['primary'];
-    final fallback = paths?['fallback'];
-    if (primary == null || primary.isEmpty || !await File(primary).exists()) {
+    final bundlePath = File(Platform.resolvedExecutable).parent.path;
+    final primary = '$bundlePath/IosevkaTermNerdFont-Regular.ttf';
+    final fallback = '$bundlePath/NotoSans-Regular.ttf';
+    if (!await File(primary).exists()) {
       throw const NativeHostException('ios_primary_font_missing');
     }
-    if (fallback == null ||
-        fallback.isEmpty ||
-        !await File(fallback).exists()) {
+    if (!await File(fallback).exists()) {
       throw const NativeHostException('ios_fallback_font_missing');
     }
     return _NativeHostFonts(primary, fallback, '');
