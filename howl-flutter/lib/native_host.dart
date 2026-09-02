@@ -145,6 +145,33 @@ Uint8List encodeNativeHostResidency(NativeCanvasLease? lease) {
   return bytes;
 }
 
+Future<Object?> _awaitWorkerStartup({
+  required ReceivePort ready,
+  required ReceivePort errors,
+  required ReceivePort exits,
+  required String errorCode,
+  required String exitCode,
+}) async {
+  final result = Completer<Object?>();
+  void complete(Object? value) {
+    if (!result.isCompleted) result.complete(value);
+  }
+
+  final readySubscription = ready.listen(complete);
+  final errorSubscription = errors.listen((_) => complete(errorCode));
+  final exitSubscription = exits.listen((_) => complete(exitCode));
+  try {
+    return await result.future;
+  } finally {
+    await readySubscription.cancel();
+    await errorSubscription.cancel();
+    await exitSubscription.cancel();
+    ready.close();
+    errors.close();
+    exits.close();
+  }
+}
+
 final class NativeHostObserver {
   NativeHostObserver._(this._commands, this._responses, this._isolate) {
     _responses.listen(_onResponse);
@@ -180,6 +207,8 @@ final class NativeHostObserver {
   }) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
+    final errors = ReceivePort();
+    final exits = ReceivePort();
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeHostWorker,
       <Object?>[
@@ -192,14 +221,21 @@ final class NativeHostObserver {
         armNextLiveObservation,
       ],
       debugName: 'Howl native observer',
+      onError: errors.sendPort,
+      onExit: exits.sendPort,
     );
-    final first = await ready.first;
+    final first = await _awaitWorkerStartup(
+      ready: ready,
+      errors: errors,
+      exits: exits,
+      errorCode: 'worker_isolate_error',
+      exitCode: 'worker_isolate_exit',
+    );
     if (first is! SendPort) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
       throw NativeHostException(first is String ? first : 'worker_start');
     }
-    ready.close();
     return NativeHostObserver._(first, responses, isolate);
   }
 
@@ -555,12 +591,22 @@ final class NativeHostControl {
   static Future<NativeHostControl> create({required String endpoint}) async {
     final ready = ReceivePort();
     final responses = ReceivePort();
+    final errors = ReceivePort();
+    final exits = ReceivePort();
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeControlWorker,
       <Object?>[ready.sendPort, responses.sendPort, endpoint],
       debugName: 'Howl native control',
+      onError: errors.sendPort,
+      onExit: exits.sendPort,
     );
-    final first = await ready.first;
+    final first = await _awaitWorkerStartup(
+      ready: ready,
+      errors: errors,
+      exits: exits,
+      errorCode: 'control_worker_isolate_error',
+      exitCode: 'control_worker_isolate_exit',
+    );
     if (first is! SendPort) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
@@ -568,7 +614,6 @@ final class NativeHostControl {
         first is String ? first : 'control_worker_start',
       );
     }
-    ready.close();
     return NativeHostControl._(first, responses, isolate);
   }
 

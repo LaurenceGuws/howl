@@ -54,12 +54,7 @@ xcrun libtool -static -o "$dest/libhowl_ios_native.a" \
 file "$dest/libhowl_ios_native.a"
 xcrun lipo -info "$dest/libhowl_ios_native.a"
 nm -gU "$dest/libhowl_ios_native.a" >"$dest/symbols.txt"
-for symbol in \
-  howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe \
-  howl_native_control_create howl_native_control_destroy howl_native_control_committed_text \
-  howl_native_control_paste howl_native_control_named_key howl_native_control_unicode_key \
-  howl_native_control_focus howl_native_control_resize howl_native_control_signal howl_native_control_mouse
-do
+while IFS= read -r symbol; do
   grep -q " _$symbol$" "$dest/symbols.txt"
-done
+done <"$root/ffi-symbols.txt"
 echo "HOWL_IOS_NATIVE_HOST_OK library=$dest/libhowl_ios_native.a"

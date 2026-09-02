@@ -58,14 +58,9 @@ jobs:
           runner=howl-flutter/build/ios/iphoneos/Runner.app/Runner
           file "$runner"
           nm -gU "$runner" > "$RUNNER_TEMP/runner-symbols.txt"
-          for symbol in \
-            howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe \
-            howl_native_control_create howl_native_control_destroy howl_native_control_committed_text \
-            howl_native_control_paste howl_native_control_named_key howl_native_control_unicode_key \
-            howl_native_control_focus howl_native_control_resize howl_native_control_signal howl_native_control_mouse
-          do
+          while IFS= read -r symbol; do
             grep -q " _$symbol$" "$RUNNER_TEMP/runner-symbols.txt"
-          done
+          done < howl-flutter/native/ffi-symbols.txt
           test -f howl-flutter/build/ios/iphoneos/Runner.app/IosevkaTermNerdFont-Regular.ttf
           test -f howl-flutter/build/ios/iphoneos/Runner.app/NotoSans-Regular.ttf
 

@@ -108,4 +108,38 @@ diff -u tools/source_audit.allow <(
         sort
 ) || { printf 'Howl sensitive source sites changed; review the exact allowlist.\n' >&2; status=1; }
 
+# The Dart/native FFI surface is one explicit contract. Every runtime lookup must
+# be declared, every declaration must exist as a Zig export, and iOS must retain
+# every declared symbol through final Runner linking.
+ffi_contract=howl-flutter/native/ffi-symbols.txt
+if grep -Evq '^[a-z][a-z0-9_]*$' "$ffi_contract"; then
+    printf '%s: invalid FFI symbol name\n' "$ffi_contract"
+    status=1
+fi
+if [[ -n "$(sort "$ffi_contract" | uniq -d)" ]]; then
+    printf '%s: duplicate FFI symbol\n' "$ffi_contract"
+    status=1
+fi
+while IFS= read -r symbol; do
+    [[ -n "$symbol" ]] || continue
+    if ! grep -Fq "pub export fn $symbol(" howl-flutter/native/host.zig; then
+        printf '%s: declared FFI symbol has no Zig export: %s\n' "$ffi_contract" "$symbol"
+        status=1
+    fi
+    for config in howl-flutter/ios/Flutter/Debug.xcconfig howl-flutter/ios/Flutter/Release.xcconfig; do
+        if ! grep -Fq "_$symbol" "$config"; then
+            printf '%s: iOS linker does not retain FFI symbol %s\n' "$config" "$symbol"
+            status=1
+        fi
+    done
+done < "$ffi_contract"
+
+while IFS= read -r literal; do
+    symbol=${literal:1:${#literal}-2}
+    if ! grep -Fxq "$symbol" "$ffi_contract"; then
+        printf 'howl-flutter/lib: Dart FFI lookup is outside contract: %s\n' "$symbol"
+        status=1
+    fi
+done < <(grep -RhoE "['\"]howl_native_[a-z0-9_]+['\"]" howl-flutter/lib --include='*.dart' | sort -u)
+
 exit "$status"

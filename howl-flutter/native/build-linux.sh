@@ -35,9 +35,9 @@ out="$root/libhowl_native_host.so"
 ${CXX:-c++} -shared -fPIC "$obj" $(pkg-config --libs freetype2 harfbuzz) -lm -ldl -o "$out"
 
 nm -D --defined-only "$out" >"$root/.native-host-symbols.txt"
-for symbol in howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe; do
+while IFS= read -r symbol; do
   grep -q " $symbol$" "$root/.native-host-symbols.txt"
-done
+done <"$root/ffi-symbols.txt"
 file "$out"
 sha256sum "$out"
 echo "HOWL_LINUX_NATIVE_HOST_OK output=$out"

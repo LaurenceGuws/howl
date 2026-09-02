@@ -59,14 +59,9 @@ if grep -Eq 'NEEDED.*(harfbuzz|freetype)' "$work/native-host-dynamic.txt"; then
   exit 1
 fi
 "$toolchain/bin/llvm-nm" -D --defined-only "$out" >"$work/native-host-symbols.txt"
-for symbol in \
-  howl_native_host_version howl_native_host_create howl_native_host_destroy howl_native_host_observe \
-  howl_native_control_create howl_native_control_destroy howl_native_control_committed_text \
-  howl_native_control_paste howl_native_control_named_key howl_native_control_unicode_key \
-  howl_native_control_focus howl_native_control_resize howl_native_control_signal howl_native_control_mouse
-do
+while IFS= read -r symbol; do
   grep -q " $symbol$" "$work/native-host-symbols.txt"
-done
+done <"$root/ffi-symbols.txt"
 file "$out"
 sha256sum "$out"
 echo "HOWL_ANDROID_NATIVE_HOST_OK output=$out"
