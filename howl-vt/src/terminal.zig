@@ -8,6 +8,7 @@ const replies = @import("replies.zig");
 const properties = @import("properties.zig");
 const consequences = @import("consequences.zig");
 const input = @import("input.zig");
+const mode_report_mod = @import("mode_report.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
 const clipboard_mod = @import("clipboard.zig");
@@ -207,102 +208,6 @@ const SavedAllModes = struct {
     mouse_protocol: input.MouseProtocol = .none,
     reverse_screen_mode: bool = false,
 };
-
-// Borrows the DEC mode state required to answer one mode query.
-const DecView = struct {
-    application_cursor_keys: bool,
-    application_keypad: bool,
-    column_mode_132: bool,
-    allow_column_mode: bool,
-    preserve_screen_on_column_mode: bool,
-    more_fix: bool,
-    auto_repeat: bool,
-    reverse_screen_mode: bool,
-    origin_mode: bool,
-    auto_wrap: bool,
-    left_right_margin_mode: bool,
-    cursor_blink: bool,
-    cursor_visible: bool,
-    alt_active: bool,
-    mouse_tracking: input.MouseTrackingMode,
-    mouse_protocol: input.MouseProtocol,
-    focus_reporting: bool,
-    alternate_scroll: bool,
-    meta_sends_escape: bool,
-    report_key_up: bool,
-    bracketed_paste: bool,
-    synchronized_output: bool,
-    inband_resize_notifications: bool,
-    color_preference_notifications: bool,
-    paste_events: bool,
-    reverse_wraparound: bool,
-    extended_reverse_wraparound: bool,
-    sixel_display_mode: bool,
-};
-
-// Borrows the ANSI mode state required to answer one mode query.
-const AnsiView = struct {
-    keyboard_action_mode: bool,
-    insert_mode: bool,
-    send_receive_mode: bool,
-    newline_mode: bool,
-};
-
-// Returns the DEC mode report state for a supported numeric mode.
-fn decModeStateForView(view: DecView, mode: u16) u8 {
-    return switch (mode) {
-        1 => boolToDecModeState(view.application_cursor_keys),
-        3 => boolToDecModeState(view.allow_column_mode and view.column_mode_132),
-        40 => boolToDecModeState(view.allow_column_mode),
-        41 => boolToDecModeState(view.more_fix),
-        95 => boolToDecModeState(view.preserve_screen_on_column_mode),
-        5 => boolToDecModeState(view.reverse_screen_mode),
-        6 => boolToDecModeState(view.origin_mode),
-        7 => boolToDecModeState(view.auto_wrap),
-        8 => boolToDecModeState(view.auto_repeat),
-        12 => boolToDecModeState(view.cursor_blink),
-        45 => boolToDecModeState(view.reverse_wraparound),
-        69 => boolToDecModeState(view.left_right_margin_mode),
-        80 => boolToDecModeState(view.sixel_display_mode),
-        66 => boolToDecModeState(view.application_keypad),
-        25 => boolToDecModeState(view.cursor_visible),
-        47, 1047, 1049 => boolToDecModeState(view.alt_active),
-        9 => if (view.mouse_tracking == .x10) 1 else 2,
-        1000 => if (view.mouse_tracking == .normal) 1 else 2,
-        1002 => if (view.mouse_tracking == .button_event) 1 else 2,
-        1003 => if (view.mouse_tracking == .any_event) 1 else 2,
-        1004 => boolToDecModeState(view.focus_reporting),
-        1005 => boolToDecModeState(view.mouse_protocol == .utf8),
-        1006 => boolToDecModeState(view.mouse_protocol == .sgr),
-        1007 => boolToDecModeState(view.alternate_scroll),
-        1016 => boolToDecModeState(view.mouse_protocol == .sgr_pixel),
-        1015 => boolToDecModeState(view.mouse_protocol == .urxvt),
-        1036 => boolToDecModeState(view.meta_sends_escape),
-        1337 => boolToDecModeState(view.report_key_up),
-        2004 => boolToDecModeState(view.bracketed_paste),
-        2026 => boolToDecModeState(view.synchronized_output),
-        2048 => boolToDecModeState(view.inband_resize_notifications),
-        2031 => boolToDecModeState(view.color_preference_notifications),
-        5522 => boolToDecModeState(view.paste_events),
-        1045 => boolToDecModeState(view.extended_reverse_wraparound),
-        else => 0,
-    };
-}
-
-// Returns the ANSI mode report state for a supported numeric mode.
-fn ansiModeStateForView(view: AnsiView, mode: u16) u8 {
-    return switch (mode) {
-        2 => boolToDecModeState(view.keyboard_action_mode),
-        4 => boolToDecModeState(view.insert_mode),
-        12 => boolToDecModeState(view.send_receive_mode),
-        20 => boolToDecModeState(view.newline_mode),
-        else => 0,
-    };
-}
-
-fn boolToDecModeState(enabled: bool) u8 {
-    return if (enabled) 1 else 2;
-}
 
 fn replaceBool(target: *bool, value: bool) bool {
     if (target.* == value) return false;
@@ -2582,29 +2487,10 @@ const RectChecksumRequest = struct {
     request_id: u16,
 };
 
-// Apply one report-directed semantic event to bounded caller output.
-fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!void {
-    var scratch: input.Scratch = .{};
-    const allocator = vt.allocator;
-    const reply_buffer = &vt.reply_buffer;
-    const encode_buf = scratch.buf[0..];
+// Projects live terminal owners into the complete DEC query view.
+fn decModeReportView(vt: *const Terminal) mode_report_mod.DecView {
     const active = vt.screen_state.activeConst();
-    const report_view = CursorReportView{
-        .rows = active.rows,
-        .cols = active.cols,
-        .cursor_row = active.cursor.row,
-        .cursor_col = active.cursor.col,
-        .origin_mode = active.origin_mode,
-        .origin_top = active.scroll_top,
-        .origin_left = if (active.left_right_margin_mode) active.left_margin else 0,
-    };
-    const ansi_modes = AnsiView{
-        .keyboard_action_mode = vt.modes.keyboard_action_mode,
-        .insert_mode = active.insert_mode,
-        .send_receive_mode = vt.modes.send_receive_mode,
-        .newline_mode = vt.modes.newline_mode,
-    };
-    const dec_modes = DecView{
+    return .{
         .application_cursor_keys = vt.modes.application_cursor_keys,
         .application_keypad = vt.modes.application_keypad,
         .column_mode_132 = vt.modes.column_mode_132,
@@ -2634,13 +2520,37 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .extended_reverse_wraparound = vt.modes.extended_reverse_wraparound_mode,
         .sixel_display_mode = vt.modes.sixel_display_mode,
     };
+}
+
+// Apply one report-directed semantic event to bounded caller output.
+fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!void {
+    var scratch: input.Scratch = .{};
+    const allocator = vt.allocator;
+    const reply_buffer = &vt.reply_buffer;
+    const encode_buf = scratch.buf[0..];
+    const active = vt.screen_state.activeConst();
+    const report_view = CursorReportView{
+        .rows = active.rows,
+        .cols = active.cols,
+        .cursor_row = active.cursor.row,
+        .cursor_col = active.cursor.col,
+        .origin_mode = active.origin_mode,
+        .origin_top = active.scroll_top,
+        .origin_left = if (active.left_right_margin_mode) active.left_margin else 0,
+    };
+    const ansi_modes = mode_report_mod.AnsiView{
+        .keyboard_action_mode = vt.modes.keyboard_action_mode,
+        .insert_mode = active.insert_mode,
+        .send_receive_mode = vt.modes.send_receive_mode,
+        .newline_mode = vt.modes.newline_mode,
+    };
+    const dec_modes = decModeReportView(vt);
     switch (event) {
-        .ansi_mode_query => |mode| try appendAnsiModeReport(
-            allocator,
+        .ansi_mode_query => |mode| try mode_report_mod.appendAnsi(
             reply_buffer,
             encode_buf,
             mode,
-            ansiModeStateForView(ansi_modes, mode),
+            mode_report_mod.ansiState(ansi_modes, mode),
         ),
         .modify_other_keys_query => try appendModifyOtherKeysReport(
             allocator,
@@ -2656,12 +2566,11 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
                 resource,
                 vt.modes.key_format[resource],
             ),
-        .dec_mode_query => |mode| try appendDecModeReport(
-            allocator,
+        .dec_mode_query => |mode| try mode_report_mod.appendDec(
             reply_buffer,
             encode_buf,
             mode,
-            decModeStateForView(dec_modes, mode),
+            mode_report_mod.decState(dec_modes, mode),
         ),
         .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
         .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
@@ -2987,28 +2896,6 @@ fn reportCursorCoordinate(position: u16, origin: u16, relative: bool) u32 {
 test "cursor report coordinate saturates origin and preserves one-based u16 extent" {
     try std.testing.expectEqual(@as(u32, 1), reportCursorCoordinate(2, 6, true));
     try std.testing.expectEqual(@as(u32, 65_536), reportCursorCoordinate(std.math.maxInt(u16), 0, false));
-}
-
-fn appendDecModeReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    mode: u16,
-    state: u8,
-) replies.AppendError!void {
-    const payload = std.fmt.bufPrint(encode_buf, "?{d};{d}$y", .{ mode, state }) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-fn appendAnsiModeReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    mode: u16,
-    state: u8,
-) replies.AppendError!void {
-    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}$y", .{ mode, state }) catch unreachable;
-    try output.appendCsi(.terminal, payload);
 }
 
 fn appendColorStackReport(
@@ -6774,37 +6661,7 @@ pub const Terminal = struct {
     }
 
     fn decModeState(self: *const Terminal, mode_number: u16) u8 {
-        const active = self.screen_state.activeConst();
-        return decModeStateForView(.{
-            .application_cursor_keys = self.modes.application_cursor_keys,
-            .application_keypad = self.modes.application_keypad,
-            .column_mode_132 = self.modes.column_mode_132,
-            .allow_column_mode = self.modes.allow_column_mode,
-            .preserve_screen_on_column_mode = self.modes.preserve_screen_on_column_mode,
-            .more_fix = self.modes.more_fix,
-            .auto_repeat = self.modes.auto_repeat,
-            .reverse_screen_mode = self.modes.reverse_screen_mode,
-            .origin_mode = active.origin_mode,
-            .auto_wrap = active.auto_wrap,
-            .left_right_margin_mode = active.left_right_margin_mode,
-            .cursor_blink = active.cursor.blink_intent,
-            .cursor_visible = active.cursor.visible,
-            .alt_active = self.screen_state.alt_active,
-            .mouse_tracking = self.modes.mouse_tracking,
-            .mouse_protocol = self.modes.mouse_protocol,
-            .focus_reporting = self.modes.focus_reporting,
-            .alternate_scroll = self.modes.alternate_scroll,
-            .meta_sends_escape = self.modes.meta_sends_escape,
-            .report_key_up = self.modes.report_key_up,
-            .bracketed_paste = self.modes.bracketed_paste,
-            .synchronized_output = self.modes.synchronized_output,
-            .inband_resize_notifications = self.modes.inband_resize_notifications,
-            .color_preference_notifications = self.modes.color_preference_notifications,
-            .paste_events = self.modes.paste_events,
-            .reverse_wraparound = self.modes.reverse_wraparound_mode,
-            .extended_reverse_wraparound = self.modes.extended_reverse_wraparound_mode,
-            .sixel_display_mode = self.modes.sixel_display_mode,
-        }, mode_number);
+        return mode_report_mod.decState(decModeReportView(self), mode_number);
     }
 
     fn setDecModes(self: *Terminal, mode_numbers: []const u16, enabled: bool) bool {
