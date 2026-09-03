@@ -10,6 +10,7 @@ const consequences = @import("consequences.zig");
 const input = @import("input.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
+const clipboard_mod = @import("clipboard.zig");
 const locator_mod = @import("locator.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
@@ -312,22 +313,10 @@ const ClipboardRequestKind = consequences.ClipboardRequestKind;
 const ClipboardProtocol = consequences.ClipboardProtocol;
 const ClipboardRequestView = consequences.ClipboardRequestView;
 
-const ParsedClipboardRequest = struct {
-    selection: []const u8,
-    data: []const u8,
-    kind: ClipboardRequestKind,
-};
-
 const SemanticEventError = consequences.Error || properties.PropertyError || replies.AppendError;
-const ClipboardQueryError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
 const ContainerSerializationError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
 const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
 
-/// OSC 52 names four standard selections and eight numbered cut buffers.
-const clipboard_selection_bytes_max: u8 = 12;
-/// One query reply fits regardless of selection length and 7-bit framing.
-const clipboard_reply_bytes_max: u32 =
-    ((replies.max_bytes - clipboard_selection_bytes_max - 8) / 4) * 3;
 /// Bounds aggregate bytes retained across configuration, delegated protocol, and caller-directed DCS consequences.
 const dcs_payload_max_bytes: u32 = 2 * 1024;
 /// Bounds one retained consequence payload owned by this composition state.
@@ -406,7 +395,6 @@ const TitleStackEffect = properties.TitleStackEffect;
 
 comptime {
     std.debug.assert(dcs_payload_max_bytes <= replies.max_bytes);
-    std.debug.assert(clipboard_reply_bytes_max < replies.max_bytes);
 }
 
 // Converts a slice length after asserting it fits the protocol-owned u32 domain.
@@ -418,29 +406,6 @@ fn byteCount(bytes: []const u8) u32 {
 // Borrows one parsed OSC 8 hyperlink until the parser dispatch returns.
 const HyperlinkSpec = properties.HyperlinkSpec;
 const HyperlinkTarget = properties.HyperlinkTarget;
-
-fn appendClipboardQueryReply(
-    output: *replies.Buffer,
-    allocator: std.mem.Allocator,
-    selection: []const u8,
-    bytes: []const u8,
-) ClipboardQueryError!void {
-    if (bytes.len > clipboard_reply_bytes_max) return error.ConsequenceLimit;
-    const encoded_len = std.base64.standard.Encoder.calcSize(bytes.len);
-    const prefix_len = std.math.add(usize, 4, selection.len) catch
-        return error.ConsequenceLimit;
-    const payload_len = std.math.add(usize, prefix_len, encoded_len) catch
-        return error.ConsequenceLimit;
-    if (payload_len > replies.max_bytes) return error.ReplyLimit;
-    const payload = try allocator.alloc(u8, payload_len);
-    defer allocator.free(payload);
-    @memcpy(payload[0..3], "52;");
-    @memcpy(payload[3 .. 3 + selection.len], selection);
-    payload[prefix_len - 1] = ';';
-    const encoded = std.base64.standard.Encoder.encode(payload[prefix_len..], bytes);
-    std.debug.assert(encoded.len == encoded_len);
-    try output.appendString(.terminal, .osc, payload);
-}
 
 fn ensureRetainedBound(len: u32, max_len: u32) error{ConsequenceLimit}!void {
     if (len > max_len) return error.ConsequenceLimit;
@@ -1981,29 +1946,6 @@ test "esc maps low legacy controls and ignores unsupported finals" {
     try std.testing.expectEqual(@as(?SemanticEvent, null), escProcess('z'));
 }
 
-// Reports malformed OSC 52 syntax, unsupported query input, invalid base64, or allocation failure.
-const ClipboardSetError = error{
-    InvalidCharacter,
-    InvalidOsc52Payload,
-    InvalidPadding,
-    OutOfMemory,
-    UnsupportedOsc52Query,
-};
-
-const ClipboardSizeError = error{
-    InvalidOsc52Payload,
-    InvalidPadding,
-    UnsupportedOsc52Query,
-};
-
-const ClipboardIntoError = error{
-    InvalidCharacter,
-    InvalidOsc52Payload,
-    InvalidPadding,
-    ShortBuffer,
-    UnsupportedOsc52Query,
-};
-
 // Decodes one complete borrowed OSC action into a canonical semantic event.
 fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
     return switch (osc) {
@@ -2205,112 +2147,6 @@ fn parseHyperlink(payload: []const u8) ?SemanticEvent {
         }
     }
     return SemanticEvent{ .hyperlink_set = .{ .uri = uri, .id = id } };
-}
-
-// Allocates and decodes one base64 OSC 52 payload into caller-owned memory.
-fn decodeClipboardSet(allocator: std.mem.Allocator, raw: []const u8) ClipboardSetError![]u8 {
-    const decoded_len = try decodedClipboardSetSize(raw);
-    const out = try allocator.alloc(u8, @intCast(decoded_len));
-    errdefer allocator.free(out);
-    std.debug.assert(out.len == decoded_len);
-    const written = decodeClipboardSetInto(raw, out) catch |err| switch (err) {
-        error.ShortBuffer => unreachable,
-        error.InvalidCharacter => return error.InvalidCharacter,
-        error.InvalidOsc52Payload => return error.InvalidOsc52Payload,
-        error.InvalidPadding => return error.InvalidPadding,
-        error.UnsupportedOsc52Query => return error.UnsupportedOsc52Query,
-    };
-    std.debug.assert(written == decoded_len);
-    return out;
-}
-
-fn decodedClipboardSetSize(raw: []const u8) ClipboardSizeError!u64 {
-    const request = parseClipboardEnvelope(raw) orelse return error.InvalidOsc52Payload;
-    if (request.kind == .query) return error.UnsupportedOsc52Query;
-    return @intCast(try decodedBase64Size(request.data));
-}
-
-fn decodeClipboardSetInto(raw: []const u8, out: []u8) ClipboardIntoError!u64 {
-    const request = parseClipboardEnvelope(raw) orelse return error.InvalidOsc52Payload;
-    if (request.kind == .query) return error.UnsupportedOsc52Query;
-    const decoded_len = try decodedBase64Size(request.data);
-    if (out.len < decoded_len) return error.ShortBuffer;
-    std.debug.assert(out.len >= decoded_len);
-    std.base64.standard.Decoder.decode(out[0..decoded_len], request.data) catch |err| switch (err) {
-        error.InvalidCharacter => return error.InvalidCharacter,
-        error.InvalidPadding => return error.InvalidPadding,
-        error.NoSpaceLeft => unreachable,
-    };
-    return @intCast(decoded_len);
-}
-
-fn decodedBase64Size(data: []const u8) error{InvalidPadding}!usize {
-    // Size calculation cannot inspect alphabet bytes or consume destination space.
-    return std.base64.standard.Decoder.calcSizeForSlice(data) catch |err| switch (err) {
-        error.InvalidPadding => return error.InvalidPadding,
-        error.InvalidCharacter, error.NoSpaceLeft => unreachable,
-    };
-}
-
-// Classifies one complete OSC 52 payload while retaining selection bytes for embedder policy.
-fn parseClipboardRequest(raw: []const u8) ?ParsedClipboardRequest {
-    const request = parseClipboardEnvelope(raw) orelse return null;
-    if (request.kind == .set and !validClipboardBase64(request.data)) return null;
-    return request;
-}
-
-fn parseClipboardEnvelope(raw: []const u8) ?ParsedClipboardRequest {
-    const separator = std.mem.indexOfScalar(u8, raw, ';') orelse return null;
-    const selection = raw[0..separator];
-    if (selection.len > clipboard_selection_bytes_max) return null;
-    for (selection) |byte| switch (byte) {
-        'c', 'p', 'q', 's', '0'...'7' => {},
-        else => return null,
-    };
-    const data = raw[separator + 1 ..];
-    return .{
-        .selection = selection,
-        .data = data,
-        .kind = if (std.mem.eql(u8, data, "?")) .query else .set,
-    };
-}
-
-fn validClipboardBase64(data: []const u8) bool {
-    if (data.len % 4 != 0) return false;
-    var padding: u2 = 0;
-    for (data, 0..) |byte, index| switch (byte) {
-        'A'...'Z', 'a'...'z', '0'...'9', '+', '/' => if (padding != 0) return false,
-        '=' => {
-            if (index < data.len -| 2 or padding == 2) return false;
-            padding += 1;
-        },
-        else => return false,
-    };
-    return true;
-}
-
-test "OSC 52 clipboard set payload decodes" {
-    const decoded = try decodeClipboardSet(std.testing.allocator, "c;SG93bA==");
-    defer std.testing.allocator.free(decoded);
-    try std.testing.expectEqualStrings("Howl", decoded);
-}
-
-test "OSC 52 clipboard query is unsupported for set drain" {
-    try std.testing.expectError(error.UnsupportedOsc52Query, decodeClipboardSet(std.testing.allocator, "c;?"));
-}
-
-test "OSC 52 clipboard decode reports exact syntax base64 and allocation failures" {
-    const decode: *const fn (std.mem.Allocator, []const u8) ClipboardSetError![]u8 = decodeClipboardSet;
-    try std.testing.expectError(error.InvalidOsc52Payload, decode(std.testing.allocator, "SG93bA=="));
-    try std.testing.expectError(error.InvalidPadding, decode(std.testing.allocator, "c;A"));
-    try std.testing.expectError(error.InvalidCharacter, decode(std.testing.allocator, "c;!!!!"));
-
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, decode(failing.allocator(), "c;SG93bA=="));
-    try std.testing.expect(failing.has_induced_failure);
-
-    var short: [3]u8 = undefined;
-    try std.testing.expectError(error.ShortBuffer, decodeClipboardSetInto("c;SG93bA==", &short));
 }
 
 test "OSC title commands retain exact title and icon semantics" {
@@ -2699,7 +2535,7 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
         .hyperlink_set => |spec| return vt.screen_state.active().setCurrentLinkId(try vt.properties.internHyperlink(spec)),
         .hyperlink_clear => return vt.screen_state.active().setCurrentLinkId(0),
         .clipboard_set => |payload| {
-            const parsed = parseClipboardRequest(payload) orelse return false;
+            const parsed = clipboard_mod.parse(payload) orelse return false;
             try vt.consequences.admitClipboard(payload, @intCast(parsed.selection.len), parsed.kind, .osc52);
             return true;
         },
@@ -7842,7 +7678,7 @@ pub const Terminal = struct {
             return error.StaleClipboardRequest;
         const request = consequence.clipboard;
         if (request.protocol != .osc52 or request.kind != .set) return null;
-        const decoded = decodeClipboardSet(allocator, request.payload) catch |failure| switch (failure) {
+        const decoded = clipboard_mod.decodeSet(allocator, request.payload) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             else => @panic("retained OSC 52 set failed prior grammar validation"),
         };
@@ -7867,11 +7703,11 @@ pub const Terminal = struct {
         const request = consequence.clipboard;
         if (request.protocol != .osc52 or request.kind != .set) return null;
         const decoded_len: usize = @intCast(
-            decodedClipboardSetSize(request.payload) catch
+            clipboard_mod.decodedSetSize(request.payload) catch
                 @panic("retained OSC 52 set failed prior grammar validation"),
         );
         if (decoded_len > max_bytes) return error.ClipboardLimit;
-        return decodeClipboardSet(allocator, request.payload) catch |failure| switch (failure) {
+        return clipboard_mod.decodeSet(allocator, request.payload) catch |failure| switch (failure) {
             error.OutOfMemory => return error.OutOfMemory,
             else => @panic("retained OSC 52 set failed prior grammar validation"),
         };
@@ -7885,7 +7721,7 @@ pub const Terminal = struct {
             return error.StaleClipboardRequest;
         const request = consequence.clipboard;
         if (request.protocol != .osc52 or request.kind != .query) return false;
-        try appendClipboardQueryReply(&self.reply_buffer, self.allocator, request.selection, bytes);
+        try clipboard_mod.appendQueryReply(&self.reply_buffer, self.allocator, request.selection, bytes);
         self.consequences.consumeHead(generation) catch return error.StaleClipboardRequest;
         advanceIdentity(&self.semantic_sequence);
         return true;
