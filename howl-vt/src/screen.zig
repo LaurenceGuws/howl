@@ -92,7 +92,11 @@ fn validateSizedText(parsed: ParsedTextSize) bool {
 /// Terminal screen state for cursor, cells, margins, and history.
 pub const Screen = struct {
     /// Maximum aggregate bytes retained across finalized logical-output lines.
-    pub const retained_output_bytes_max: usize = 1024 * 1024;
+    pub const retained_output_bytes_max: usize = logical_output_line_bytes_max;
+
+    comptime {
+        std.debug.assert(retained_output_bytes_max <= std.math.maxInt(u32));
+    }
 
     /// Failure while validating dimensions or allocating owned Screen storage.
     const InitError = error{ InvalidDimensions, OutOfMemory };
@@ -224,9 +228,11 @@ pub const Screen = struct {
     history_lines: std.ArrayListUnmanaged(HistoryLine),
     history_lines_start: u32,
     open_history_line: ?HistoryLine,
-    output_lines: std.ArrayListUnmanaged(?OutputLine),
+    output_lines: ?[]OutputLine,
     output_lines_start: u32,
     output_lines_count: u16,
+    output_text: ?[]u8,
+    output_text_start: u32,
     output_bytes: usize,
     next_output_id: u64,
     history_loss_generation: u64,
@@ -284,9 +290,11 @@ pub const Screen = struct {
             .history_lines = .empty,
             .history_lines_start = 0,
             .open_history_line = null,
-            .output_lines = .empty,
+            .output_lines = null,
             .output_lines_start = 0,
             .output_lines_count = 0,
+            .output_text = null,
+            .output_text_start = 0,
             .output_bytes = 0,
             .next_output_id = 1,
             .history_loss_generation = 0,
@@ -412,6 +420,7 @@ pub const Screen = struct {
             @memset(screen.history_plan_incoming.?, 0);
         }
         screen.history_capacity = if (screen.cells != null) history_capacity else 0;
+        try screen.allocateOutputAuthority(allocator);
         return screen;
     }
 
@@ -437,12 +446,14 @@ pub const Screen = struct {
         self.history_plan_incoming = null;
         if (self.history_flags) |buf| allocator.free(buf);
         self.history_flags = null;
+        if (self.output_text) |text| allocator.free(text);
+        self.output_text = null;
+        if (self.output_lines) |lines| allocator.free(lines);
+        self.output_lines = null;
         for (self.history_lines.items) |*line| line.deinit(allocator);
         self.history_lines.deinit(allocator);
         if (self.open_history_line) |*line| line.deinit(allocator);
         self.open_history_line = null;
-        for (self.output_lines.items) |*slot| if (slot.*) |*line| line.deinit(allocator);
-        self.output_lines.deinit(allocator);
     }
 
     /// Replace this screen with a reflowed grid of the requested dimensions.
@@ -492,7 +503,8 @@ pub const Screen = struct {
         replacement.installResizeState(rows, cols, buffers.take());
         errdefer replacement.deinit(allocator);
         try replacement.allocateHistoryPlan(allocator);
-        try replacement.cloneOutputAuthority(allocator, self);
+        try replacement.allocateOutputAuthority(allocator);
+        replacement.cloneOutputAuthority(self);
         try replacement.rebuildResizeAuthority(allocator, lines, reflow, projection, cols);
         replacement.restoreResizeCursor(rows, cols, reflow, projection);
         return replacement;
@@ -540,6 +552,27 @@ pub const Screen = struct {
         @memset(self.history_plan_incoming.?, 0);
     }
 
+    fn allocateOutputAuthority(
+        self: *Screen,
+        allocator: std.mem.Allocator,
+    ) std.mem.Allocator.Error!void {
+        if (self.history_capacity == 0) return;
+        std.debug.assert(self.output_lines == null);
+        std.debug.assert(self.output_text == null);
+        std.debug.assert(self.output_lines_count == 0);
+        std.debug.assert(self.output_bytes == 0);
+
+        const lines = try allocator.alloc(OutputLine, self.history_capacity);
+        errdefer allocator.free(lines);
+        for (lines) |*line| line.* = OutputLine.empty;
+        const text = try allocator.alloc(u8, retained_output_bytes_max);
+
+        self.output_lines = lines;
+        self.output_text = text;
+        self.output_lines_start = 0;
+        self.output_text_start = 0;
+    }
+
     fn replacementBase(self: *const Screen, allocator: std.mem.Allocator) Screen {
         var replacement = self.*;
         replacement.allocator = allocator;
@@ -558,9 +591,11 @@ pub const Screen = struct {
         replacement.history_lines = .empty;
         replacement.history_lines_start = 0;
         replacement.open_history_line = null;
-        replacement.output_lines = .empty;
+        replacement.output_lines = null;
         replacement.output_lines_start = 0;
         replacement.output_lines_count = 0;
+        replacement.output_text = null;
+        replacement.output_text_start = 0;
         replacement.output_bytes = 0;
         return replacement;
     }
@@ -611,28 +646,33 @@ pub const Screen = struct {
         std.debug.assert(self.right_margin == cols -| 1);
     }
 
-    fn cloneOutputAuthority(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-        source: *const Screen,
-    ) ReflowError!void {
-        try self.output_lines.ensureTotalCapacity(allocator, source.output_lines.items.len);
-        while (self.output_lines.items.len < source.output_lines.items.len) {
-            self.output_lines.appendAssumeCapacity(null);
+    fn cloneOutputAuthority(self: *Screen, source: *const Screen) void {
+        if (self.history_capacity == 0) {
+            std.debug.assert(self.output_lines == null);
+            std.debug.assert(self.output_text == null);
+            std.debug.assert(source.output_lines == null);
+            std.debug.assert(source.output_text == null);
+            return;
         }
-        for (source.output_lines.items, 0..) |slot, index| {
-            const line = slot orelse continue;
-            const value: OutputLine.Value = switch (line.value) {
-                .text => |text| .{ .text = try allocator.dupe(u8, text) },
-                .loss => |loss| .{ .loss = loss },
-            };
-            self.output_lines.items[index] = .{
-                .id = line.id,
-                .value = value,
-            };
+        const lines = self.output_lines orelse unreachable;
+        const source_lines = source.output_lines orelse unreachable;
+        const text = self.output_text orelse unreachable;
+        const source_text = source.output_text orelse unreachable;
+        std.debug.assert(lines.len == source_lines.len);
+        std.debug.assert(text.len == source_text.len);
+        for (lines, source_lines) |*destination, value| destination.* = value;
+        if (source.output_bytes != 0) {
+            const start: usize = source.output_text_start;
+            const first_len = @min(source.output_bytes, source_text.len - start);
+            @memcpy(text[start..][0..first_len], source_text[start..][0..first_len]);
+            const second_len = source.output_bytes - first_len;
+            if (second_len != 0) {
+                @memcpy(text[0..second_len], source_text[0..second_len]);
+            }
         }
         self.output_lines_start = source.output_lines_start;
         self.output_lines_count = source.output_lines_count;
+        self.output_text_start = source.output_text_start;
         self.output_bytes = source.output_bytes;
     }
 
@@ -978,90 +1018,111 @@ pub const Screen = struct {
     }
 
     /// Finalizes the primary screen's current logical output line.
-    pub fn finalizeOutputLine(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-    ) std.mem.Allocator.Error!void {
+    pub fn finalizeOutputLine(self: *Screen) void {
         if (self.history_capacity == 0) return;
         const byte_count = openOutputLineByteCount(self);
         if (byte_count > logical_output_line_bytes_max) {
-            try self.retainOutputLoss(allocator, byte_count);
+            self.retainOutputLoss(byte_count);
             return;
         }
-        const text = copyOpenOutputLine(
-            allocator,
-            self,
-            byte_count,
-        ) catch |failure| switch (failure) {
-            error.OutOfMemory => return error.OutOfMemory,
-            error.LineTooLong => unreachable,
-        };
-        errdefer allocator.free(text);
-        try self.retainOutputText(allocator, text);
+        self.retainOpenOutputText(byte_count);
     }
 
     // Finalized output is copied separately because logical-history rows are
     // retained only after leaving the projection, while output identity belongs
     // to the earlier line-finalization boundary and must survive later reflow.
-    fn retainOutputText(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-        text: []u8,
-    ) std.mem.Allocator.Error!void {
-        std.debug.assert(text.len <= logical_output_line_bytes_max);
-        try self.retainOutputLine(allocator, .{ .text = text });
+    fn retainOpenOutputText(self: *Screen, byte_count: usize) void {
+        std.debug.assert(byte_count <= logical_output_line_bytes_max);
+        self.prepareOutputLine(byte_count);
+        const start = self.outputTextTail();
+        var writer = OutputTextWriter.init(self.output_text.?, start);
+        writeOpenOutputLine(self, &writer);
+        std.debug.assert(writer.count == byte_count);
+        self.commitOutputLine(.{ .text = .{
+            .start = start,
+            .len = @intCast(byte_count),
+        } });
     }
 
-    fn retainOutputLoss(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-        byte_count: usize,
-    ) std.mem.Allocator.Error!void {
+    fn retainOutputText(self: *Screen, text: []const u8) void {
+        std.debug.assert(text.len <= logical_output_line_bytes_max);
+        self.prepareOutputLine(text.len);
+        const start = self.outputTextTail();
+        var writer = OutputTextWriter.init(self.output_text.?, start);
+        writer.write(text);
+        self.commitOutputLine(.{ .text = .{
+            .start = start,
+            .len = @intCast(text.len),
+        } });
+    }
+
+    fn retainOutputLoss(self: *Screen, byte_count: usize) void {
         std.debug.assert(byte_count > logical_output_line_bytes_max);
-        try self.retainOutputLine(allocator, .{ .loss = .{
+        self.prepareOutputLine(0);
+        self.commitOutputLine(.{ .loss = .{
             .byte_count = byte_count,
             .reason = .line_too_long,
         } });
     }
 
-    fn retainOutputLine(
-        self: *Screen,
-        allocator: std.mem.Allocator,
-        value: OutputLine.Value,
-    ) std.mem.Allocator.Error!void {
-        if (self.output_lines.items.len == 0) {
-            try self.output_lines.ensureTotalCapacity(allocator, self.history_capacity);
-            while (self.output_lines.items.len < self.history_capacity) {
-                self.output_lines.appendAssumeCapacity(null);
-            }
-        }
+    fn prepareOutputLine(self: *Screen, byte_count: usize) void {
+        std.debug.assert(self.history_capacity > 0);
+        std.debug.assert(byte_count <= retained_output_bytes_max);
         while (self.output_lines_count == self.history_capacity or
-            value.retainedBytes() > Screen.retained_output_bytes_max - self.output_bytes)
+            byte_count > retained_output_bytes_max - self.output_bytes)
         {
-            self.evictOldestOutputLine(allocator);
+            self.evictOldestOutputLine();
         }
-        const slot = (self.output_lines_start + self.output_lines_count) %
-            @as(u32, @intCast(self.output_lines.items.len));
-        std.debug.assert(self.output_lines.items[@intCast(slot)] == null);
-        self.output_lines.items[@intCast(slot)] = .{
+    }
+
+    fn commitOutputLine(self: *Screen, value: OutputLine.Value) void {
+        const lines = self.output_lines orelse unreachable;
+        std.debug.assert(self.output_lines_count < self.history_capacity);
+        const slot_index = (self.output_lines_start + self.output_lines_count) %
+            @as(u32, @intCast(lines.len));
+        const slot = &lines[@intCast(slot_index)];
+        std.debug.assert(slot.id == 0);
+        slot.* = .{
             .id = self.takeOutputId(),
             .value = value,
         };
         self.output_lines_count += 1;
         self.output_bytes += value.retainedBytes();
-        std.debug.assert(self.output_bytes <= Screen.retained_output_bytes_max);
+        std.debug.assert(self.output_bytes <= retained_output_bytes_max);
     }
 
-    fn evictOldestOutputLine(self: *Screen, allocator: std.mem.Allocator) void {
+    fn evictOldestOutputLine(self: *Screen) void {
+        const lines = self.output_lines orelse unreachable;
         std.debug.assert(self.output_lines_count > 0);
-        const slot = &self.output_lines.items[@intCast(self.output_lines_start)];
-        var line = slot.* orelse unreachable;
-        self.output_bytes -= line.value.retainedBytes();
-        line.deinit(allocator);
-        slot.* = null;
+        const slot = &lines[@intCast(self.output_lines_start)];
+        std.debug.assert(slot.id != 0);
+        switch (slot.value) {
+            .text => |text| {
+                std.debug.assert(text.start == self.output_text_start);
+                self.output_bytes -= text.len;
+                self.output_text_start = @intCast(
+                    (@as(usize, text.start) + text.len) % retained_output_bytes_max,
+                );
+            },
+            .loss => {},
+        }
+        slot.* = OutputLine.empty;
         self.output_lines_count -= 1;
         self.output_lines_start = (self.output_lines_start + 1) %
-            @as(u32, @intCast(self.output_lines.items.len));
+            @as(u32, @intCast(lines.len));
+        if (self.output_lines_count == 0) {
+            std.debug.assert(self.output_bytes == 0);
+            self.output_lines_start = 0;
+            self.output_text_start = 0;
+        }
+    }
+
+    fn outputTextTail(self: *const Screen) u32 {
+        std.debug.assert(self.output_text != null);
+        return @intCast(
+            (@as(usize, self.output_text_start) + self.output_bytes) %
+                retained_output_bytes_max,
+        );
     }
 
     fn takeOutputId(self: *Screen) u64 {
@@ -4544,17 +4605,104 @@ fn copyScalarCells(
     }
 }
 
+const OutputTextWriter = struct {
+    storage: []u8,
+    start: u32,
+    count: usize = 0,
+
+    fn init(storage: []u8, start: u32) OutputTextWriter {
+        std.debug.assert(storage.len == Screen.retained_output_bytes_max);
+        std.debug.assert(start < storage.len);
+        return .{ .storage = storage, .start = start };
+    }
+
+    fn write(self: *OutputTextWriter, bytes: []const u8) void {
+        std.debug.assert(bytes.len <= self.storage.len - self.count);
+        if (bytes.len == 0) return;
+        const offset = (@as(usize, self.start) + self.count) % self.storage.len;
+        const first_len = @min(bytes.len, self.storage.len - offset);
+        @memcpy(self.storage[offset..][0..first_len], bytes[0..first_len]);
+        const second_len = bytes.len - first_len;
+        if (second_len != 0) {
+            @memcpy(self.storage[0..second_len], bytes[first_len..]);
+        }
+        self.count += bytes.len;
+    }
+};
+
 fn externalCellScalars(
     storage: ?*const scalar_storage.Storage,
     cell_index: usize,
     cell: ScreenCell,
 ) []const u32 {
-    const count = sidecarCount(cell);
-    if (count == 0) return &.{};
-    const owner = storage orelse @panic("accepted scalar owner missing");
-    const scalars = acceptedTail(owner, cell_index, cell.combining_len);
-    std.debug.assert(scalars.len == count);
-    return scalars;
+    const expected = sidecarCount(cell);
+    if (expected == 0) {
+        if (storage) |owner| {
+            if (!owner.validRange(cell_index, cell.combining_len))
+                @panic("accepted output scalar range/count mismatch");
+        }
+        return &.{};
+    }
+    const owner = storage orelse
+        @panic("accepted output scalar owner missing");
+    const tail = acceptedTail(owner, cell_index, cell.combining_len);
+    std.debug.assert(tail.len == expected);
+    return tail;
+}
+
+fn writeScalarText(writer: *OutputTextWriter, scalar: u32) void {
+    var encoded: [4]u8 = undefined;
+    const codepoint = std.math.cast(u21, scalar) orelse unreachable;
+    const length = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
+    writer.write(encoded[0..length]);
+}
+
+fn writeCellText(
+    writer: *OutputTextWriter,
+    cell: ScreenCell,
+    external: []const u32,
+) void {
+    if (isCellContinuation(cell)) return;
+    const direct = @min(@as(usize, cell.combining_len), cell.combining.len);
+    std.debug.assert(direct + external.len == cell.combining_len);
+    writeScalarText(writer, if (cell.codepoint == 0) ' ' else cell.codepoint);
+    for (cell.combining[0..direct]) |combining| writeScalarText(writer, combining);
+    for (external) |combining| writeScalarText(writer, combining);
+}
+
+fn writeOpenOutputLine(screen: *const Screen, writer: *OutputTextWriter) void {
+    var start_row = screen.cursor.row;
+    while (start_row > 0 and screen.rowWrapped(start_row - 1)) start_row -= 1;
+    if (start_row == 0) {
+        if (screen.open_history_line) |*line| {
+            const storage: ?*const scalar_storage.Storage = if (line.scalars) |*owner|
+                owner
+            else
+                null;
+            for (line.cells.items, 0..) |cell, index| {
+                writeCellText(
+                    writer,
+                    cell,
+                    externalCellScalars(storage, index, cell),
+                );
+            }
+        }
+    }
+    var row = start_row;
+    while (row < screen.rows) : (row += 1) {
+        const content_len = screen.sourceRowContentLen(row);
+        var col: u16 = 0;
+        while (col < content_len) : (col += 1) {
+            const cell = screen.cellInfoAt(row, col);
+            const index = screen.rowStart(row) + col;
+            writeCellText(
+                writer,
+                cell,
+                externalCellScalars(&screen.scalars.?, index, cell),
+            );
+        }
+        if (!screen.rowWrapped(row)) break;
+    }
 }
 
 fn appendScalarTextBounded(
@@ -6142,10 +6290,29 @@ const OutputLoss = struct {
     reason: OutputLossReason,
 };
 
+const OutputText = struct {
+    start: u32,
+    len: u32,
+
+    /// Borrows the ordered physical slices backing one circular text range.
+    pub fn slices(self: OutputText, storage: []const u8) [2][]const u8 {
+        std.debug.assert(storage.len == Screen.retained_output_bytes_max);
+        std.debug.assert(self.start < storage.len);
+        std.debug.assert(self.len <= storage.len);
+        const start: usize = self.start;
+        const len: usize = self.len;
+        const first_len = @min(len, storage.len - start);
+        return .{
+            storage[start..][0..first_len],
+            storage[0 .. len - first_len],
+        };
+    }
+};
+
 // Owns one bounded finalized primary-screen result and its stable identity.
 const OutputLine = struct {
     const Value = union(enum) {
-        text: []u8,
+        text: OutputText,
         loss: OutputLoss,
 
         fn retainedBytes(self: Value) usize {
@@ -6156,16 +6323,16 @@ const OutputLine = struct {
         }
     };
 
+    const empty: OutputLine = .{
+        .id = 0,
+        .value = .{ .loss = .{
+            .byte_count = 0,
+            .reason = .line_too_long,
+        } },
+    };
+
     id: u64,
     value: Value,
-
-    fn deinit(self: *OutputLine, allocator: std.mem.Allocator) void {
-        switch (self.value) {
-            .text => |text| allocator.free(text),
-            .loss => {},
-        }
-        self.* = undefined;
-    }
 };
 
 // Borrows one row range from a reflowed logical line.
@@ -7001,23 +7168,116 @@ test "logical output byte bound evicts complete oldest lines" {
     defer screen.deinit(std.testing.allocator);
     const line_bytes = Screen.retained_output_bytes_max / 2 + 1;
     const first = try std.testing.allocator.alloc(u8, line_bytes);
+    defer std.testing.allocator.free(first);
     @memset(first, 'a');
-    try screen.retainOutputText(std.testing.allocator, first);
+    screen.retainOutputText(first);
     const second = try std.testing.allocator.alloc(u8, line_bytes);
+    defer std.testing.allocator.free(second);
     @memset(second, 'b');
-    try screen.retainOutputText(std.testing.allocator, second);
+    screen.retainOutputText(second);
 
     try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
-    try std.testing.expectEqual(@as(u64, 2), screen.output_lines.items[@intCast(screen.output_lines_start)].?.id);
+    try std.testing.expectEqual(@as(u64, 2), screen.output_lines.?[@intCast(screen.output_lines_start)].id);
     try std.testing.expectEqual(line_bytes, screen.output_bytes);
+}
+
+test "logical output byte ring preserves payload across physical wrap" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+    const first_len = 600 * 1024;
+    const later_len = 300 * 1024;
+    const first = try std.testing.allocator.alloc(u8, first_len);
+    defer std.testing.allocator.free(first);
+    @memset(first, 'a');
+    const second = try std.testing.allocator.alloc(u8, later_len);
+    defer std.testing.allocator.free(second);
+    @memset(second, 'b');
+    const third = try std.testing.allocator.alloc(u8, later_len);
+    defer std.testing.allocator.free(third);
+    @memset(third, 'c');
+
+    screen.retainOutputText(first);
+    screen.retainOutputText(second);
+    screen.retainOutputText(third);
+
+    try std.testing.expectEqual(@as(u16, 2), screen.output_lines_count);
+    try std.testing.expectEqual(@as(usize, later_len * 2), screen.output_bytes);
+    const lines = screen.output_lines.?;
+    const second_line = lines[@intCast(screen.output_lines_start)];
+    const third_slot = (screen.output_lines_start + 1) % @as(u32, @intCast(lines.len));
+    const third_line = lines[@intCast(third_slot)];
+    try std.testing.expectEqual(@as(u64, 2), second_line.id);
+    try std.testing.expectEqual(@as(u64, 3), third_line.id);
+    const storage = screen.output_text.?;
+    const second_text = switch (second_line.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const third_text = switch (third_line.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const second_slices = second_text.slices(storage);
+    try std.testing.expectEqual(@as(usize, later_len), second_slices[0].len);
+    try std.testing.expectEqual(@as(usize, 0), second_slices[1].len);
+    try std.testing.expectEqualSlices(u8, second, second_slices[0]);
+    const third_slices = third_text.slices(storage);
+    try std.testing.expect(third_slices[0].len > 0);
+    try std.testing.expect(third_slices[1].len > 0);
+    try std.testing.expectEqual(later_len, third_slices[0].len + third_slices[1].len);
+    try std.testing.expectEqualSlices(u8, third[0..third_slices[0].len], third_slices[0]);
+    try std.testing.expectEqualSlices(u8, third[third_slices[0].len..], third_slices[1]);
+}
+
+test "resize preserves a physically wrapped logical output ring" {
+    var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 2, 4);
+    defer screen.deinit(std.testing.allocator);
+    const first_len = 600 * 1024;
+    const later_len = 300 * 1024;
+    const first = try std.testing.allocator.alloc(u8, first_len);
+    defer std.testing.allocator.free(first);
+    @memset(first, 'a');
+    const second = try std.testing.allocator.alloc(u8, later_len);
+    defer std.testing.allocator.free(second);
+    @memset(second, 'b');
+    const third = try std.testing.allocator.alloc(u8, later_len);
+    defer std.testing.allocator.free(third);
+    @memset(third, 'c');
+
+    screen.retainOutputText(first);
+    screen.retainOutputText(second);
+    screen.retainOutputText(third);
+    try screen.resize(std.testing.allocator, 3, 3);
+
+    try std.testing.expectEqual(@as(u16, 2), screen.output_lines_count);
+    const lines = screen.output_lines.?;
+    const second_line = lines[@intCast(screen.output_lines_start)];
+    const third_slot = (screen.output_lines_start + 1) % @as(u32, @intCast(lines.len));
+    const third_line = lines[@intCast(third_slot)];
+    const storage = screen.output_text.?;
+    const second_text = switch (second_line.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const third_text = switch (third_line.value) {
+        .text => |text| text,
+        .loss => return error.UnexpectedOutputLoss,
+    };
+    const second_slices = second_text.slices(storage);
+    try std.testing.expectEqualSlices(u8, second, second_slices[0]);
+    try std.testing.expectEqual(@as(usize, 0), second_slices[1].len);
+    const third_slices = third_text.slices(storage);
+    try std.testing.expectEqualSlices(u8, third[0..third_slices[0].len], third_slices[0]);
+    try std.testing.expectEqualSlices(u8, third[third_slices[0].len..], third_slices[1]);
 }
 
 test "logical output accepts its exact per-line byte bound" {
     var screen = try Screen.initWithCellsAndHistory(std.testing.allocator, 2, 2, 2);
     defer screen.deinit(std.testing.allocator);
     const maximum = try std.testing.allocator.alloc(u8, logical_output_line_bytes_max);
+    defer std.testing.allocator.free(maximum);
     @memset(maximum, 'x');
-    try screen.retainOutputText(std.testing.allocator, maximum);
+    screen.retainOutputText(maximum);
 
     try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
     try std.testing.expectEqual(logical_output_line_bytes_max, screen.output_bytes);

@@ -4989,7 +4989,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const history_scroll = !vt.screen_state.alt_active and active.scroll_top == 0 and
                 active.scrollBottom() == active.rows - 1;
             if (!vt.screen_state.alt_active) {
-                try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
+                vt.screen_state.primary.finalizeOutputLine();
             }
             active.applyScreen(
                 if (event == .next_line or vt.modes.newline_mode) .next_line else .line_feed,
@@ -5011,7 +5011,7 @@ fn applySemantic(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
             const active = vt.screen_state.active();
             if (vt.modes.more_fix and active.wrap_pending) {
                 if (!vt.screen_state.alt_active) {
-                    try vt.screen_state.primary.finalizeOutputLine(vt.allocator);
+                    vt.screen_state.primary.finalizeOutputLine();
                 }
                 active.applyScreen(.next_line);
                 active.applyScreen(.horizontal_tab);
@@ -7794,12 +7794,13 @@ pub const Terminal = struct {
             return error.InvalidLimit;
         }
         const primary = &self.screen_state.primary;
+        const lines = primary.output_lines orelse &.{};
         const count = primary.output_lines_count;
         const newest = primary.next_output_id - 1;
         const oldest = if (count == 0)
             primary.next_output_id
         else
-            primary.output_lines.items[@intCast(primary.output_lines_start)].?.id;
+            lines[@intCast(primary.output_lines_start)].id;
         if (cursor > newest) return .{ .cursor_ahead = newest };
         if (oldest > 1 and cursor < oldest - 1) return .{ .cursor_stale = oldest };
 
@@ -7814,8 +7815,9 @@ pub const Terminal = struct {
         var logical_index: u16 = 0;
         while (logical_index < count) : (logical_index += 1) {
             const slot = (primary.output_lines_start + @as(u32, @intCast(logical_index))) %
-                @as(u32, @intCast(primary.output_lines.items.len));
-            const line = primary.output_lines.items[@intCast(slot)].?;
+                @as(u32, @intCast(lines.len));
+            const line = lines[@intCast(slot)];
+            std.debug.assert(line.id != 0);
             if (line.id <= cursor) continue;
             if (entry_count == max_lines) {
                 more = true;
@@ -7830,15 +7832,19 @@ pub const Terminal = struct {
                     });
                 },
                 .text => |line_text| {
+                    const line_len: usize = line_text.len;
                     const separator: usize = if (line_count == 0) 0 else 1;
                     const remaining = max_bytes - text.items.len;
-                    if (separator > remaining or line_text.len > remaining - separator) {
+                    if (separator > remaining or line_len > remaining - separator) {
                         if (entry_count == 0) return .{ .line_too_long = line.id };
                         more = true;
                         break;
                     }
                     if (separator != 0) try text.append(allocator, '\n');
-                    try text.appendSlice(allocator, line_text);
+                    const storage = primary.output_text orelse unreachable;
+                    for (line_text.slices(storage)) |slice| {
+                        try text.appendSlice(allocator, slice);
+                    }
                     line_count += 1;
                 },
             }
@@ -7884,12 +7890,13 @@ pub const Terminal = struct {
     /// Returns the current finalized primary-output retention bounds.
     pub fn logicalOutputRange(self: *const Terminal) LogicalOutputRange {
         const primary = &self.screen_state.primary;
+        const lines = primary.output_lines orelse &.{};
         const count = primary.output_lines_count;
         return .{
             .oldest = if (count == 0)
                 primary.next_output_id
             else
-                primary.output_lines.items[@intCast(primary.output_lines_start)].?.id,
+                lines[@intCast(primary.output_lines_start)].id,
             .newest = primary.next_output_id - 1,
         };
     }

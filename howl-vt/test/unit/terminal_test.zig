@@ -129,19 +129,17 @@ test "logical output preserves external combining scalars" {
     try std.testing.expectEqualStrings("next", finalized.open_line);
 }
 
-test "logical output identity advances only after retained text allocation succeeds" {
+test "logical output finalization is allocation-free after initialization" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 8, 4);
     defer terminal.deinit();
     try feedChanged(&terminal, "line");
-    failing.fail_index = failing.alloc_index;
-    try std.testing.expectError(error.OutOfMemory, terminal.feed("\r\n"));
-    try std.testing.expect(failing.has_induced_failure);
-    try std.testing.expectEqual(@as(u64, 0), terminal.logicalOutputRange().newest);
 
-    failing.fail_index = std.math.maxInt(usize);
-    try feedChanged(&terminal, "\n");
+    failing.fail_index = failing.alloc_index;
+    try feedChanged(&terminal, "\r\n");
+    try std.testing.expect(!failing.has_induced_failure);
     try std.testing.expectEqual(@as(u64, 1), terminal.logicalOutputRange().newest);
+    failing.fail_index = std.math.maxInt(usize);
 }
 
 test "oversized finalized line records loss and terminal continues mutating" {
