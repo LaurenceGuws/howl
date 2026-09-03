@@ -4544,43 +4544,73 @@ fn copyScalarCells(
     }
 }
 
+fn externalCellScalars(
+    storage: ?*const scalar_storage.Storage,
+    cell_index: usize,
+    cell: ScreenCell,
+) []const u32 {
+    const count = sidecarCount(cell);
+    if (count == 0) return &.{};
+    const owner = storage orelse @panic("accepted scalar owner missing");
+    const scalars = acceptedTail(owner, cell_index, cell.combining_len);
+    std.debug.assert(scalars.len == count);
+    return scalars;
+}
+
+fn appendScalarTextBounded(
+    allocator: std.mem.Allocator,
+    bytes: *std.ArrayList(u8),
+    scalar: u32,
+    limit: usize,
+) (std.mem.Allocator.Error || error{LineTooLong})!void {
+    var encoded: [4]u8 = undefined;
+    const value = std.math.cast(u21, scalar) orelse unreachable;
+    const length = std.unicode.utf8Encode(value, &encoded) catch unreachable;
+    if (length > limit -| bytes.items.len) return error.LineTooLong;
+    try bytes.appendSlice(allocator, encoded[0..length]);
+}
+
 fn appendCellTextBounded(
     allocator: std.mem.Allocator,
     bytes: *std.ArrayList(u8),
     cell: ScreenCell,
+    external: []const u32,
     limit: usize,
 ) (std.mem.Allocator.Error || error{LineTooLong})!void {
     if (isCellContinuation(cell)) return;
-    var encoded: [4]u8 = undefined;
-    const codepoint: u21 = if (cell.codepoint == 0)
-        ' '
-    else
-        std.math.cast(u21, cell.codepoint) orelse unreachable;
-    const length = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
-    if (length > limit -| bytes.items.len) return error.LineTooLong;
-    try bytes.appendSlice(allocator, encoded[0..length]);
-    for (cell.combining[0..cell.combining_len]) |combining| {
-        const scalar = std.math.cast(u21, combining) orelse unreachable;
-        const combining_length = std.unicode.utf8Encode(scalar, &encoded) catch unreachable;
-        if (combining_length > limit -| bytes.items.len) return error.LineTooLong;
-        try bytes.appendSlice(allocator, encoded[0..combining_length]);
-    }
+    try appendScalarTextBounded(
+        allocator,
+        bytes,
+        if (cell.codepoint == 0) ' ' else cell.codepoint,
+        limit,
+    );
+    const direct_count = @min(@as(usize, cell.combining_len), cell.combining.len);
+    for (cell.combining[0..direct_count]) |scalar|
+        try appendScalarTextBounded(allocator, bytes, scalar, limit);
+    for (external) |scalar|
+        try appendScalarTextBounded(allocator, bytes, scalar, limit);
+    std.debug.assert(direct_count + external.len == cell.combining_len);
 }
 
-fn cellTextByteCount(cell: ScreenCell) usize {
-    if (isCellContinuation(cell)) return 0;
+fn scalarTextByteCount(scalar: u32) usize {
     var encoded: [4]u8 = undefined;
-    const codepoint: u21 = if (cell.codepoint == 0)
-        ' '
-    else
-        std.math.cast(u21, cell.codepoint) orelse unreachable;
-    var count: usize = std.unicode.utf8Encode(codepoint, &encoded) catch unreachable;
-    for (cell.combining[0..cell.combining_len]) |combining| {
-        const scalar = std.math.cast(u21, combining) orelse unreachable;
-        const length = std.unicode.utf8Encode(scalar, &encoded) catch unreachable;
-        count = std.math.add(usize, count, length) catch
+    const value = std.math.cast(u21, scalar) orelse unreachable;
+    return std.unicode.utf8Encode(value, &encoded) catch unreachable;
+}
+
+fn cellTextByteCount(cell: ScreenCell, external: []const u32) usize {
+    if (isCellContinuation(cell)) return 0;
+    var count = scalarTextByteCount(if (cell.codepoint == 0) ' ' else cell.codepoint);
+    const direct_count = @min(@as(usize, cell.combining_len), cell.combining.len);
+    for (cell.combining[0..direct_count]) |scalar| {
+        count = std.math.add(usize, count, scalarTextByteCount(scalar)) catch
             @panic("resident logical output byte count overflow");
     }
+    for (external) |scalar| {
+        count = std.math.add(usize, count, scalarTextByteCount(scalar)) catch
+            @panic("resident logical output byte count overflow");
+    }
+    std.debug.assert(direct_count + external.len == cell.combining_len);
     return count;
 }
 
@@ -4589,19 +4619,25 @@ fn openOutputLineByteCount(screen: *const Screen) usize {
     var start_row = screen.cursor.row;
     while (start_row > 0 and screen.rowWrapped(start_row - 1)) start_row -= 1;
     if (start_row == 0) {
-        if (screen.open_history_line) |line| {
-            for (line.cells.items) |cell| {
-                count = std.math.add(usize, count, cellTextByteCount(cell)) catch
+        if (screen.open_history_line) |*line| {
+            const storage: ?*const scalar_storage.Storage = if (line.scalars) |*value| value else null;
+            for (line.cells.items, 0..) |cell, index| {
+                const external = externalCellScalars(storage, index, cell);
+                count = std.math.add(usize, count, cellTextByteCount(cell, external)) catch
                     @panic("resident logical output byte count overflow");
             }
         }
     }
+    const visible_scalars: ?*const scalar_storage.Storage = if (screen.scalars) |*value| value else null;
     var row = start_row;
     while (row < screen.rows) : (row += 1) {
         const content_len = screen.sourceRowContentLen(row);
+        const row_start = screen.rowStart(row);
         var col: u16 = 0;
         while (col < content_len) : (col += 1) {
-            count = std.math.add(usize, count, cellTextByteCount(screen.cellInfoAt(row, col))) catch
+            const cell = screen.cellInfoAt(row, col);
+            const external = externalCellScalars(visible_scalars, row_start + col, cell);
+            count = std.math.add(usize, count, cellTextByteCount(cell, external)) catch
                 @panic("resident logical output byte count overflow");
         }
         if (!screen.rowWrapped(row)) break;
@@ -4623,16 +4659,24 @@ pub fn copyOpenOutputLine(
     var start_row = screen.cursor.row;
     while (start_row > 0 and screen.rowWrapped(start_row - 1)) start_row -= 1;
     if (start_row == 0) {
-        if (screen.open_history_line) |line|
-            for (line.cells.items) |cell|
-                try appendCellTextBounded(allocator, &bytes, cell, limit);
+        if (screen.open_history_line) |*line| {
+            const storage: ?*const scalar_storage.Storage = if (line.scalars) |*value| value else null;
+            for (line.cells.items, 0..) |cell, index| {
+                const external = externalCellScalars(storage, index, cell);
+                try appendCellTextBounded(allocator, &bytes, cell, external, limit);
+            }
+        }
     }
+    const visible_scalars: ?*const scalar_storage.Storage = if (screen.scalars) |*value| value else null;
     var row = start_row;
     while (row < screen.rows) : (row += 1) {
         const content_len = screen.sourceRowContentLen(row);
+        const row_start = screen.rowStart(row);
         var col: u16 = 0;
         while (col < content_len) : (col += 1) {
-            try appendCellTextBounded(allocator, &bytes, screen.cellInfoAt(row, col), limit);
+            const cell = screen.cellInfoAt(row, col);
+            const external = externalCellScalars(visible_scalars, row_start + col, cell);
+            try appendCellTextBounded(allocator, &bytes, cell, external, limit);
         }
         if (!screen.rowWrapped(row)) break;
     }

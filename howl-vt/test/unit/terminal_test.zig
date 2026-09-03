@@ -105,6 +105,30 @@ test "open logical output is semantic-observation scoped and does not advance it
     try std.testing.expect(second.semantic_sequence > first.semantic_sequence);
 }
 
+test "logical output preserves external combining scalars" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 3, 8, 4);
+    defer terminal.deinit();
+    const grapheme = "e\u{0301}\u{0302}\u{0303}\u{0304}";
+
+    try feedChanged(&terminal, grapheme);
+    var open = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer open.deinit();
+    try std.testing.expectEqualStrings(grapheme, open.open_line);
+
+    try feedChanged(&terminal, "\r\nnext");
+    var finalized = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |output| output,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer finalized.deinit();
+    try std.testing.expectEqualStrings(grapheme, finalized.text);
+    try std.testing.expectEqualStrings("next", finalized.open_line);
+}
+
 test "logical output identity advances only after retained text allocation succeeds" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 8, 4);
