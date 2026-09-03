@@ -8527,27 +8527,21 @@ test "feed mutation set derives printing, tabs, regions, scrolling, images, and 
     try std.testing.expect(!image.mutations.text);
 }
 
-test "feed summary and semantic state report dropped history" {
+test "configured history eviction is mutation rather than exceptional loss" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 1, 2, 4);
     defer terminal.deinit();
     failing.fail_index = failing.alloc_index;
 
-    const dropped = try terminal.feed("\x1b[S");
-    try std.testing.expect(dropped.stateChanged());
-    try std.testing.expect(dropped.historyLost());
-    try std.testing.expectEqual(
-        @as(u64, 1),
-        terminal.historyLossCount(),
-    );
-
-    failing.fail_index = std.math.maxInt(usize);
-    const retained = try terminal.feed("\x1b[S");
-    try std.testing.expect(!retained.historyLost());
-    try std.testing.expectEqual(
-        @as(u64, 1),
-        terminal.historyLossCount(),
-    );
+    var index: u8 = 0;
+    while (index < 8) : (index += 1) {
+        const scrolled = try terminal.feed("\x1b[S");
+        try std.testing.expect(scrolled.stateChanged());
+        try std.testing.expect(!scrolled.historyLost());
+    }
+    try std.testing.expect(!failing.has_induced_failure);
+    try std.testing.expectEqual(@as(u64, 0), terminal.historyLossCount());
+    try std.testing.expectEqual(@as(u32, 4), terminal.semanticView(0).history_count);
 }
 
 test "terminal retains every bounded bell and remains reusable" {
