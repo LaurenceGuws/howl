@@ -134,6 +134,8 @@ protocol; it is not an embedder failure.
 - `src/mode_report.zig` owns pure ANSI/DEC mode-state classification and
   bounded DECRPM serialization. Terminal projects live mode and screen facts
   into one complete borrowed view.
+- `src/fixed_report.zig` owns stateless terminal identity, status, geometry,
+  title-stack, parameter, and checksum reply encoding from small value views.
 - `src/stream_state.zig` owns parser allocation and bounded fragmented DCS,
   APC, PM, and SOS capture. Terminal retains semantic application, sixel
   placement, and Kitty graphics consequences after a capture completes.

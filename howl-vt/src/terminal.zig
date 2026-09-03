@@ -12,6 +12,7 @@ const mode_report_mod = @import("mode_report.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
 const clipboard_mod = @import("clipboard.zig");
+const fixed_report_mod = @import("fixed_report.zig");
 const locator_mod = @import("locator.zig");
 const stream_state_mod = @import("stream_state.zig");
 const screen_mod = @import("screen.zig");
@@ -2473,20 +2474,6 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
 const xtversion_text = "howl-vt dev";
 const terminal_report_max_bytes = 64;
 
-const CursorReportView = struct {
-    rows: u16,
-    cols: u16,
-    cursor_row: u16,
-    cursor_col: u16,
-    origin_mode: bool = false,
-    origin_top: u16 = 0,
-    origin_left: u16 = 0,
-};
-
-const RectChecksumRequest = struct {
-    request_id: u16,
-};
-
 // Projects live terminal owners into the complete DEC query view.
 fn decModeReportView(vt: *const Terminal) mode_report_mod.DecView {
     const active = vt.screen_state.activeConst();
@@ -2529,7 +2516,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
     const reply_buffer = &vt.reply_buffer;
     const encode_buf = scratch.buf[0..];
     const active = vt.screen_state.activeConst();
-    const report_view = CursorReportView{
+    const report_view = fixed_report_mod.CursorView{
         .rows = active.rows,
         .cols = active.cols,
         .cursor_row = active.cursor.row,
@@ -2575,33 +2562,31 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .dcs_request_status => |request| try appendDecrqssReply(allocator, reply_buffer, encode_buf, active, request),
         .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
         .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, reply_buffer, request),
-        .device_status_report => try reply_buffer.appendCsi(.terminal, "0n"),
+        .device_status_report => try fixed_report_mod.appendDeviceStatus(reply_buffer),
         .dec_device_status_report => |param| try locator_mod.appendDeviceStatusReport(reply_buffer, encode_buf, param),
-        .cursor_position_report => try appendCursorPositionReport(allocator, reply_buffer, encode_buf, report_view),
-        .dec_cursor_position_report => try appendDecCursorPositionReport(
-            allocator,
+        .cursor_position_report => try fixed_report_mod.appendCursorPosition(
             reply_buffer,
             encode_buf,
             report_view,
         ),
-        .primary_device_attributes => {
-            const payload = std.fmt.bufPrint(encode_buf, "?{d};22c", .{dec_conformance_level}) catch unreachable;
-            try reply_buffer.appendCsi(.terminal, payload);
-        },
-        .secondary_device_attributes => try reply_buffer.appendCsi(.terminal, ">1;10;0c"),
-        .tertiary_device_attributes => try reply_buffer.appendString(
-            .terminal,
-            .dcs,
-            "!|00000000",
-        ),
-        .xtversion => try appendXtVersionReport(allocator, reply_buffer),
-        .xttitlepos => try appendTitleStackPositionReport(allocator, reply_buffer, encode_buf, 0, 0),
-        .xtchecksum => |flags| vt.xtchecksum_flags = flags,
-        .rect_checksum_request => |req| try appendRectChecksumReport(
-            allocator,
+        .dec_cursor_position_report => try fixed_report_mod.appendDecCursorPosition(
             reply_buffer,
             encode_buf,
-            .{ .request_id = req.request_id },
+            report_view,
+        ),
+        .primary_device_attributes => try fixed_report_mod.appendPrimaryDeviceAttributes(
+            reply_buffer,
+            encode_buf,
+        ),
+        .secondary_device_attributes => try fixed_report_mod.appendSecondaryDeviceAttributes(reply_buffer),
+        .tertiary_device_attributes => try fixed_report_mod.appendTertiaryDeviceAttributes(reply_buffer),
+        .xtversion => try appendXtVersionReport(allocator, reply_buffer),
+        .xttitlepos => try fixed_report_mod.appendTitleStackPosition(reply_buffer, encode_buf, 0, 0),
+        .xtchecksum => |flags| vt.xtchecksum_flags = flags,
+        .rect_checksum_request => |req| try fixed_report_mod.appendRectChecksum(
+            reply_buffer,
+            encode_buf,
+            req.request_id,
             computeRectChecksum(active, vt.xtchecksum_flags, req.page, req.area),
         ),
         .selected_graphic_rendition_report => |area| try appendSelectedGraphicRenditionReport(
@@ -2611,8 +2596,8 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
             active,
             area,
         ),
-        .screen_extent_report => try appendScreenExtentReport(allocator, reply_buffer, encode_buf, report_view),
-        .parameters_report => |kind| try appendTerminalParametersReport(allocator, reply_buffer, encode_buf, kind),
+        .screen_extent_report => try fixed_report_mod.appendScreenExtent(reply_buffer, encode_buf, report_view),
+        .parameters_report => |kind| try fixed_report_mod.appendTerminalParameters(reply_buffer, encode_buf, kind),
         .title_report => try appendTitleReport(vt),
         .xtreportcolors => try appendColorStackReport(allocator, reply_buffer, encode_buf, &vt.properties.color_stack),
         .iterm_report_cell_size => try appendItermCellSizeReport(vt, encode_buf),
@@ -2696,12 +2681,9 @@ fn appendDecrqssReply(
     try output.appendControl(.terminal, .st);
 }
 
-// Howl identifies as a VT220-class terminal in DA1 and DECRQSS DECSCL.
-const dec_conformance_level: u8 = 62;
-
 fn decrqssPayload(encode_buf: []u8, screen: *const Screen, request: []const u8) ?[]const u8 {
     if (std.mem.eql(u8, request, "\"p")) {
-        return std.fmt.bufPrint(encode_buf, "{d}\"p", .{dec_conformance_level}) catch null;
+        return std.fmt.bufPrint(encode_buf, "{d}\"p", .{fixed_report_mod.dec_conformance_level}) catch null;
     }
     if (std.mem.eql(u8, request, "r")) {
         const bottom = if (screen.rows == 0) @as(u16, 0) else @min(screen.scroll_bottom, screen.rows - 1);
@@ -2843,61 +2825,6 @@ fn appendResourceInvalidReport(
     try output.appendControl(.terminal, .st);
 }
 
-fn appendTitleStackPositionReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    current: u16,
-    max: u16,
-) replies.AppendError!void {
-    const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#S", .{ current, max }) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-fn appendCursorPositionReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    report_view: CursorReportView,
-) replies.AppendError!void {
-    const row = reportCursorCoordinate(report_view.cursor_row, report_view.origin_top, report_view.origin_mode);
-    const col = reportCursorCoordinate(report_view.cursor_col, report_view.origin_left, report_view.origin_mode);
-    const payload = std.fmt.bufPrint(
-        encode_buf,
-        "{d};{d}R",
-        .{ row, col },
-    ) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-fn appendDecCursorPositionReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    report_view: CursorReportView,
-) replies.AppendError!void {
-    const row = reportCursorCoordinate(report_view.cursor_row, report_view.origin_top, report_view.origin_mode);
-    const col = reportCursorCoordinate(report_view.cursor_col, report_view.origin_left, report_view.origin_mode);
-    const payload = std.fmt.bufPrint(
-        encode_buf,
-        "?{d};{d}R",
-        .{ row, col },
-    ) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-// A restored cursor may precede current margins; relative reports clamp that
-// valid cross-savepoint state to the first addressable origin coordinate.
-fn reportCursorCoordinate(position: u16, origin: u16, relative: bool) u32 {
-    const zero_based: u32 = if (relative) position -| origin else position;
-    return zero_based + 1;
-}
-
-test "cursor report coordinate saturates origin and preserves one-based u16 extent" {
-    try std.testing.expectEqual(@as(u32, 1), reportCursorCoordinate(2, 6, true));
-    try std.testing.expectEqual(@as(u32, 65_536), reportCursorCoordinate(std.math.maxInt(u16), 0, false));
-}
-
 fn appendColorStackReport(
     _: std.mem.Allocator,
     output: *replies.Buffer,
@@ -2907,38 +2834,6 @@ fn appendColorStackReport(
     const index = if (stack.len == 0) 0 else stack.len - 1;
     const payload = std.fmt.bufPrint(encode_buf, "{d};{d}#Q", .{ index, stack.len }) catch unreachable;
     try output.appendCsi(.kitty, payload);
-}
-
-fn appendScreenExtentReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    report_view: CursorReportView,
-) replies.AppendError!void {
-    const payload = std.fmt.bufPrint(encode_buf, "{d};{d};1;1;1\"w", .{ report_view.rows, report_view.cols }) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-fn appendTerminalParametersReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    kind: u16,
-) replies.AppendError!void {
-    if (kind > 1) return;
-    const payload = std.fmt.bufPrint(encode_buf, "{d};1;1;128;128;1;0x", .{kind + 2}) catch unreachable;
-    try output.appendCsi(.terminal, payload);
-}
-
-fn appendRectChecksumReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    req: RectChecksumRequest,
-    checksum: u16,
-) replies.AppendError!void {
-    const payload = std.fmt.bufPrint(encode_buf, "{d}!~{X:0>4}", .{ req.request_id, checksum }) catch unreachable;
-    try output.appendString(.terminal, .dcs, payload);
 }
 
 fn appendSelectedGraphicRenditionReport(
@@ -3243,20 +3138,6 @@ test "DECRQSS reply capacity failure preserves the complete prior output" {
         appendDecrqssReply(allocator, &output, encode_buf[0..], &screen, "t"),
     );
     try std.testing.expectEqualSlices(u8, retained, output.bytes());
-}
-
-test "cursor position report payload names semantic cursor position" {
-    var output = replies.Buffer.init(std.testing.allocator);
-    defer output.deinit();
-    var encode_buf: [64]u8 = undefined;
-
-    try appendCursorPositionReport(std.testing.allocator, &output, encode_buf[0..], .{
-        .rows = 24,
-        .cols = 80,
-        .cursor_row = 2,
-        .cursor_col = 4,
-    });
-    try std.testing.expectEqualStrings("\x1b[3;5R", output.bytes());
 }
 
 const Rgb = properties.Rgb;
