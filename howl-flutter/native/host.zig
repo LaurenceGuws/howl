@@ -13,8 +13,30 @@ const removal_record_bytes: usize = 24;
 const command_record_bytes: usize = 40;
 const maximum_frame_resources: usize = 8;
 const output_minimum_bytes: usize = 256 * 1024;
-const command_capacity: usize = 4096;
-const pixel_capacity: usize = 64 * 1024;
+const atlas_width: u16 = 128;
+const atlas_height: u16 = 128;
+const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height);
+// One call copies a complete frame into Flutter's fixed output packet. Reserve
+// every other bounded section first, then spend the exact remainder on whole
+// command records so an admitted frame is always serializable by construction.
+const maximum_non_command_packet_bytes: usize = host_header_bytes + global_header_bytes +
+    frame_header_bytes + maximum_frame_resources * resource_record_bytes +
+    maximum_frame_resources * removal_record_bytes + pixel_capacity;
+const command_capacity: usize = (output_minimum_bytes - maximum_non_command_packet_bytes) /
+    command_record_bytes;
+const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity *
+    command_record_bytes;
+
+comptime {
+    if (maximum_non_command_packet_bytes > output_minimum_bytes)
+        @compileError("native host fixed frame state exceeds its minimum output packet");
+    if (command_capacity == 0)
+        @compileError("native host output packet leaves no room for Canvas commands");
+    if (maximum_packet_bytes > output_minimum_bytes)
+        @compileError("native host frame bounds exceed its minimum output packet");
+    if (output_minimum_bytes - maximum_packet_bytes >= command_record_bytes)
+        @compileError("native host command capacity does not consume the available packet budget");
+}
 
 const HostPacketError = error{
     BufferTooSmall,
@@ -59,9 +81,9 @@ fn contentConfig() terminal.ContentConfig {
             .glyph_capacity = 512,
             .max_sequence_scalars = 16,
         },
-        .atlas = .{ .width = 128, .height = 128, .entry_capacity = 256 },
+        .atlas = .{ .width = atlas_width, .height = atlas_height, .entry_capacity = 256 },
         .shaped_capacity = 32,
-        .raster_bytes = 16 * 1024,
+        .raster_bytes = pixel_capacity,
         .command_capacity = command_capacity,
     };
 }

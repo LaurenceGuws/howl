@@ -461,6 +461,59 @@ test "terminal Canvas content failure preserves published revision and recovers"
     try std.testing.expectEqual(@as(usize, 0), recovered.uploads.len);
 }
 
+test "dense 40x120 terminal Canvas presentation is bounded and transactional" {
+    const row_count: usize = 40;
+    const column_count: usize = 120;
+    const cell_count = row_count * column_count;
+    const command_count = cell_count + 1;
+
+    var scalar = [_]u32{'A'};
+    const cells = try std.testing.allocator.alloc(client.rich.Cell, cell_count);
+    defer std.testing.allocator.free(cells);
+    for (cells) |*value| value.* = cell(&scalar, 1, 0);
+
+    const rows = try std.testing.allocator.alloc(client.rich.Row, row_count);
+    defer std.testing.allocator.free(rows);
+    for (rows, 0..) |*row, index| {
+        const first = index * column_count;
+        row.* = .{
+            .wrapped = false,
+            .line_geometry = 0,
+            .cells = cells[first .. first + column_count],
+        };
+    }
+
+    const source = sourceSnapshot(rows, column_count);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+
+    const limited = try render.terminal.initContent(
+        std.testing.allocator,
+        font,
+        contentConfig(command_count - 1),
+    );
+    defer render.terminal.deinitContent(limited);
+    try std.testing.expectError(
+        error.CommandLimit,
+        render.terminal.takeContentUpdate(limited, view, null),
+    );
+    const failed = render.terminal.contentUsage(limited);
+    try std.testing.expectEqual(@as(u64, 0), failed.producer_revision);
+    try std.testing.expectEqual(@as(u64, 0), failed.resource_generation);
+
+    const exact = try render.terminal.initContent(
+        std.testing.allocator,
+        font,
+        contentConfig(command_count),
+    );
+    defer render.terminal.deinitContent(exact);
+    const update = try render.terminal.takeContentUpdate(exact, view, null);
+    try std.testing.expectEqual(command_count, update.commands.len);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(update.revision));
+}
+
 test "terminal Canvas cursor context is host-owned and transactional" {
     var scalars = [_]u32{'A'};
     var cells = [_]client.rich.Cell{cell(&scalars, 1, 0)};
