@@ -17,6 +17,7 @@ invariants:
   - attaching an observer never changes canonical geometry
   - text shaping and rasterization expose no renderer, window, session, or client authority
   - renderer and platform code are not core dependencies
+  - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:

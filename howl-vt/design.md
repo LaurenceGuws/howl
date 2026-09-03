@@ -46,18 +46,27 @@ selection policy terminal state.
 7. Resize or reset the emulator when required.
 8. Call `deinit` exactly once.
 
-`Terminal.initWithHistory` selects a fixed retained-history capacity. A
-successful terminal owns every allocation made through its initialization
-allocator until `deinit`.
+`Terminal.initWithHistory` selects a fixed projected scrollback-row capacity.
+Projected history plus the visible primary screen are the complete cell and
+future-reflow authority: once a row is older than `history_row_base`, widening
+cannot make its cells return. Finalized output and the bounded semantic line at
+the cursor are retained independently as byte evidence. A successful terminal
+owns every allocation made through its initialization allocator until `deinit`.
 
 ## Borrows and allocations
 
 Borrowed cells, history, metadata, graphics, reply bytes, and consequence
 payloads remain valid only until the next terminal mutation.
 
-Observation does not allocate. `replyBytes`, `semanticView`,
-`consequenceHead`, and the direct metadata observers return borrowed or copied
-state.
+Observation does not allocate unless the API explicitly returns a
+caller-owned copy. `replyBytes`, `semanticView`, `consequenceHead`, and the
+direct metadata observers borrow or copy bounded state; `copyLogicalOutput` and
+text extraction allocate only through the allocator supplied by the caller.
+
+At fixed geometry, ordinary text feed, scrolling, projected-history eviction,
+logical-output finalization, and borrowed observation perform no terminal-owned
+allocation after successful initialization. Resize and reflow remain an explicit
+transactional reconfiguration boundary.
 
 Allocating operations state their ownership in their Zig contracts:
 
@@ -106,8 +115,9 @@ protocol; it is not an embedder failure.
 - `src/parser.zig` recognizes bounded terminal syntax and materializes typed
   parser actions.
 - `src/screen.zig` owns screen-bank cells, cursor state, margins, tab stops,
-  retained history, logical-line retention, SGR application, and transactional
-  reflow. Its owner proofs live in `src/screen/`.
+  fixed projected history, bounded logical-output evidence, SGR application,
+  and transactional reflow of retained rows. Its owner proofs live in
+  `src/screen/`.
 - `src/modes.zig` owns ANSI/DEC mode state, saved DEC slots, and per-screen
   Kitty keyboard stacks. Kitty report serialization and all protocol routing
   remain in `src/terminal.zig`.

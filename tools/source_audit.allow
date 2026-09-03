@@ -5,6 +5,10 @@ howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn alloc(ctx: *anyopaque, len
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn free(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn remap(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
 howl-vt/benchmark/terminal_benchmark.zig|anyopaque|fn resize(ctx: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+howl-vt/test/unit/terminal_test.zig|anyopaque|context: *anyopaque,
+howl-vt/test/unit/terminal_test.zig|anyopaque|context: *anyopaque,
+howl-vt/test/unit/terminal_test.zig|anyopaque|context: *anyopaque,
+howl-vt/test/unit/terminal_test.zig|anyopaque|context: *anyopaque,
 howl-vt/test_unit.zig|discard|_ = @import("src/howl_vt.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/cursor_test.zig");
 howl-vt/test_unit.zig|discard|_ = @import("src/screen/history_test.zig");

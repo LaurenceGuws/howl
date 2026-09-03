@@ -6,6 +6,7 @@ rules:
   - Construction failure and deinitialization release completed resources in reverse ownership order.
   - usize is for indexes, lengths, capacities, byte counts, and standard-library boundaries; domain quantities use sized types.
   - VT owns terminal semantics, history, images, input encoding, replies, and protocol consequences; it owns no observer or renderer publication queue.
+  - VT projected history and the visible screen are the sole cell authority for future reflow; rows older than history_row_base never return, while bounded logical-output evidence remains independent.
   - Session owns one canonical PTY and VT, ordered process I/O, explicit geometry, signals, child lifetime, and deterministic headless consequence policy.
   - Session exposes no mutable PTY or VT escape hatch; its public handle is opaque.
   - An observer may disconnect, stall, or disappear without blocking canonical session progress.

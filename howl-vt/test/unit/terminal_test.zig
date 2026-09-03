@@ -10,6 +10,77 @@ fn feed(terminal: *Terminal, bytes: []const u8) Terminal.FeedError!void {
 
 const expected_logical_output_bytes: usize = 1024 * 1024;
 
+const RuntimeAllocatorBoundary = struct {
+    parent: std.mem.Allocator,
+    forbidden: bool = false,
+
+    const vtable: std.mem.Allocator.VTable = .{
+        .alloc = alloc,
+        .resize = resize,
+        .remap = remap,
+        .free = free,
+    };
+
+    fn allocator(self: *RuntimeAllocatorBoundary) std.mem.Allocator {
+        return .{ .ptr = self, .vtable = &vtable };
+    }
+
+    fn reject(self: *const RuntimeAllocatorBoundary, operation: []const u8) void {
+        if (self.forbidden) {
+            std.debug.panic(
+                "terminal allocator used after initialization: {s}",
+                .{operation},
+            );
+        }
+    }
+
+    fn alloc(
+        context: *anyopaque,
+        len: usize,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
+        self.reject("alloc");
+        return self.parent.rawAlloc(len, alignment, return_address);
+    }
+
+    fn resize(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) bool {
+        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
+        self.reject("resize");
+        return self.parent.rawResize(memory, alignment, new_len, return_address);
+    }
+
+    fn remap(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        new_len: usize,
+        return_address: usize,
+    ) ?[*]u8 {
+        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
+        self.reject("remap");
+        return self.parent.rawRemap(memory, alignment, new_len, return_address);
+    }
+
+    fn free(
+        context: *anyopaque,
+        memory: []u8,
+        alignment: std.mem.Alignment,
+        return_address: usize,
+    ) void {
+        const self: *RuntimeAllocatorBoundary = @ptrCast(@alignCast(context));
+        self.reject("free");
+        self.parent.rawFree(memory, alignment, return_address);
+    }
+};
+
 test "terminal rejects zero dimensions exactly" {
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 0, 1));
     try std.testing.expectError(error.InvalidDimensions, Terminal.init(std.testing.allocator, 1, 0));
@@ -160,6 +231,75 @@ test "logical output finalization is allocation-free after initialization" {
     try std.testing.expect(!failing.has_induced_failure);
     try std.testing.expectEqual(@as(u64, 1), terminal.logicalOutputRange().newest);
     failing.fail_index = std.math.maxInt(usize);
+}
+
+test "ordinary fixed-geometry history never crosses the terminal allocator boundary" {
+    var boundary = RuntimeAllocatorBoundary{ .parent = std.testing.allocator };
+    var terminal = try Terminal.initWithHistory(boundary.allocator(), 4, 8, 16);
+    defer {
+        boundary.forbidden = false;
+        terminal.deinit();
+    }
+    boundary.forbidden = true;
+
+    const scalar_line = "e\u{0301}\u{0302}\u{0303}\u{0304}\r\n";
+    for (0..64) |_| {
+        const summary = try terminal.feed(scalar_line);
+        try std.testing.expect(summary.stateChanged());
+        try std.testing.expect(!summary.historyLost());
+    }
+
+    var wrapped: [256]u8 = @splat('W');
+    const wrapped_summary = try terminal.feed(&wrapped);
+    try std.testing.expect(wrapped_summary.stateChanged());
+    try std.testing.expect(!wrapped_summary.historyLost());
+
+    const live = terminal.semanticView(0);
+    const oldest = terminal.semanticView(std.math.maxInt(u32));
+    var checksum: u64 = live.history_row_base +% live.history_count +% oldest.history_offset;
+    var row: u16 = 0;
+    while (row < oldest.rows) : (row += 1) {
+        var col: u16 = 0;
+        while (col < oldest.cols) : (col += 1) {
+            checksum +%= oldest.cellAt(row, col);
+            var scalars: [24]u21 = undefined;
+            for (oldest.cellScalarsAt(row, col, &scalars)) |scalar| checksum +%= scalar;
+        }
+    }
+    std.mem.doNotOptimizeAway(checksum);
+
+    const range = terminal.logicalOutputRange();
+    var output = switch (try terminal.copyLogicalOutput(
+        std.testing.allocator,
+        range.oldest -| 1,
+        16,
+        expected_logical_output_bytes,
+    )) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    try std.testing.expectEqual(@as(usize, wrapped.len), output.open_line.len);
+    output.deinit();
+
+    const restored = try terminal.feed("\x1b[3+T");
+    try std.testing.expect(restored.stateChanged());
+    try std.testing.expect(!restored.historyLost());
+
+    const resumed = try terminal.feed("tail\r\nopen");
+    try std.testing.expect(resumed.stateChanged());
+    try std.testing.expect(!resumed.historyLost());
+
+    var resumed_output = switch (try terminal.copyLogicalOutput(
+        std.testing.allocator,
+        terminal.logicalOutputRange().oldest -| 1,
+        16,
+        expected_logical_output_bytes,
+    )) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer resumed_output.deinit();
+    try std.testing.expectEqualStrings("open", resumed_output.open_line);
 }
 
 test "oversized finalized line records loss and terminal continues mutating" {
