@@ -302,6 +302,148 @@ test "ordinary fixed-geometry history never crosses the terminal allocator bound
     try std.testing.expectEqualStrings("open", resumed_output.open_line);
 }
 
+test "evicted projected cells never return while current output remains exact" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 2, 4);
+    defer terminal.deinit();
+    const payload = "abcdefghijklmnopqrst";
+
+    try feedChanged(&terminal, payload);
+    var narrow_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer narrow_output.deinit();
+    try std.testing.expectEqualStrings(payload, narrow_output.open_line);
+    try std.testing.expectEqual(@as(u32, 4), terminal.semanticView(0).history_count);
+
+    try terminal.resize(2, 20);
+    const widened = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), widened.history_count);
+    try std.testing.expectEqual(@as(u21, 'i'), widened.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 't'), widened.cellAt(0, 11));
+    try std.testing.expectEqual(@as(u21, 0), widened.cellAt(0, 12));
+
+    var wide_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer wide_output.deinit();
+    try std.testing.expectEqualStrings(payload, wide_output.open_line);
+}
+
+test "reverse history selects the exact bounded current semantic line" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 2, 2);
+    defer terminal.deinit();
+
+    try feedChanged(&terminal, "abcdefghijkl");
+    var initial = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer initial.deinit();
+    try std.testing.expectEqualStrings("abcdefghijkl", initial.open_line);
+
+    try feedChanged(&terminal, "\x1b[+T");
+    var once = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer once.deinit();
+    try std.testing.expectEqualStrings("abcdefghij", once.open_line);
+
+    try feedChanged(&terminal, "\x1b[+T");
+    var twice = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer twice.deinit();
+    try std.testing.expectEqualStrings("abcdefgh", twice.open_line);
+
+    try terminal.resize(2, 8);
+    const widened = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'e'), widened.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'h'), widened.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0), widened.cellAt(0, 4));
+    var wide_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer wide_output.deinit();
+    try std.testing.expectEqualStrings("abcdefgh", wide_output.open_line);
+}
+
+test "clear scrollback drops cells but preserves bounded current output evidence" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 2, 2);
+    defer terminal.deinit();
+
+    try feedChanged(&terminal, "abcdefghijkl");
+    try feedChanged(&terminal, "\x1b[3J");
+    const cleared = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u32, 0), cleared.history_count);
+    try std.testing.expectEqual(@as(u21, 'i'), cleared.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'l'), cleared.cellAt(1, 1));
+
+    var output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer output.deinit();
+    try std.testing.expectEqualStrings("abcdefghijkl", output.open_line);
+
+    try terminal.resize(2, 8);
+    const widened = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'i'), widened.cellAt(0, 0));
+    try std.testing.expectEqual(@as(u21, 'l'), widened.cellAt(0, 3));
+    try std.testing.expectEqual(@as(u21, 0), widened.cellAt(0, 4));
+    var wide_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 64)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer wide_output.deinit();
+    try std.testing.expectEqualStrings("abcdefghijkl", wide_output.open_line);
+}
+
+test "evicted external scalar cells remain output evidence but never reflow" {
+    const allocator = std.testing.allocator;
+    var terminal = try Terminal.initWithHistory(allocator, 2, 2, 2);
+    defer terminal.deinit();
+    const early = "a\u{0301}\u{0302}\u{0303}\u{0304}";
+    const late = "b\u{0311}\u{0312}\u{0313}\u{0314}";
+    const payload = early ++ early ++ late ++ late ++ late ++ late ++ late ++ late ++ late ++ late;
+
+    try feedChanged(&terminal, payload);
+    var narrow_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 256)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer narrow_output.deinit();
+    try std.testing.expectEqualStrings(payload, narrow_output.open_line);
+
+    try terminal.resize(2, 8);
+    const widened = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u21, 'b'), widened.cellAt(0, 0));
+    var scalars: [24]u21 = undefined;
+    try std.testing.expectEqualSlices(
+        u21,
+        &.{ 'b', 0x0311, 0x0312, 0x0313, 0x0314 },
+        widened.cellScalarsAt(0, 0, &scalars),
+    );
+    var col: u16 = 0;
+    while (col < widened.cols) : (col += 1) {
+        try std.testing.expect(widened.cellAt(0, col) != 'a');
+    }
+
+    var wide_output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 256)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    defer wide_output.deinit();
+    try std.testing.expectEqualStrings(payload, wide_output.open_line);
+}
+
 test "oversized finalized line records loss and terminal continues mutating" {
     var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, std.math.maxInt(u16), 32);
     defer terminal.deinit();
