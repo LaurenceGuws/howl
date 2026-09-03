@@ -513,7 +513,10 @@ pub const Screen = struct {
         ) catch return error.OutOfMemory;
         const history = try allocator.alloc(Cell, history_cells);
         errdefer allocator.free(history);
-        @memset(history, blank_cell);
+        // Unoccupied projected rows are unreachable through history_count and
+        // remain untouched until their first complete-row commit. Reserving the
+        // fixed owner at initialization must not fault every future row into
+        // resident memory while the terminal is idle.
         const flags = try allocator.alloc(u8, self.history_capacity);
         errdefer allocator.free(flags);
         @memset(flags, 0);
@@ -1019,13 +1022,19 @@ pub const Screen = struct {
             outgoing_counts.len != self.cols or
             incoming_counts.len != self.cols)
             return null;
+        const capacity = self.projectedCapacity();
+        std.debug.assert(self.history_count <= capacity);
+        const replacing_occupied = self.history_count == capacity;
         const slot = self.projectedAppendSlot();
         const base = slot * @as(u32, self.cols);
         if (base + self.cols > history.len or slot >= flags.len) return null;
         @memset(plans, .none);
         var col: usize = 0;
         while (col < self.cols) : (col += 1) {
-            outgoing_counts[col] = history[base + col].combining_len;
+            outgoing_counts[col] = if (replacing_occupied)
+                history[base + col].combining_len
+            else
+                0;
             incoming_counts[col] = if (col < incoming.len)
                 incoming[col].combining_len
             else
@@ -5177,7 +5186,7 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
         std.mem.sliceAsBytes(screen.scalars.?.pages),
     );
     defer std.testing.allocator.free(pages_before);
-    const history_before = try std.testing.allocator.dupe(ScreenCell, screen.history.?);
+    const history_before = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(history_before);
     const cursor_before = screen.cursor;
     const history_count_before = screen.history_count;
@@ -5194,7 +5203,9 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
         pages_before,
         std.mem.sliceAsBytes(screen.scalars.?.pages),
     );
-    try std.testing.expectEqualSlices(ScreenCell, history_before, screen.history.?);
+    const history_after_discard = try copyProjectedHistory(std.testing.allocator, &screen);
+    defer std.testing.allocator.free(history_after_discard);
+    try std.testing.expectEqualSlices(ScreenCell, history_before, history_after_discard);
     try std.testing.expectEqualDeep(cursor_before, screen.cursor);
     try std.testing.expectEqual(history_count_before, screen.history_count);
     discarded.deinit(std.testing.allocator);
@@ -5213,9 +5224,15 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
         try std.testing.expectEqual(sidecarCount(cell), retained);
     }
     if (screen.history_scalars) |*storage| {
-        for (screen.history orelse &.{}, 0..) |cell, index| {
-            const retained = try storage.validate(index, cell.combining_len);
-            try std.testing.expectEqual(sidecarCount(cell), retained);
+        var logical_row: u32 = 0;
+        while (logical_row < screen.history_count) : (logical_row += 1) {
+            const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
+            const base = slot * @as(u32, screen.cols);
+            const row = screen.history.?[@intCast(base)..@intCast(base + screen.cols)];
+            for (row, 0..) |cell, col| {
+                const retained = try storage.validate(base + col, cell.combining_len);
+                try std.testing.expectEqual(sidecarCount(cell), retained);
+            }
         }
     }
 
@@ -5291,11 +5308,33 @@ fn oneColumnOmissionFixture() !Screen {
     return screen;
 }
 
+fn copyProjectedHistory(
+    allocator: std.mem.Allocator,
+    screen: *const Screen,
+) std.mem.Allocator.Error![]ScreenCell {
+    const cell_count = @as(usize, screen.history_count) * screen.cols;
+    const result = try allocator.alloc(ScreenCell, cell_count);
+    var logical_row: u32 = 0;
+    while (logical_row < screen.history_count) : (logical_row += 1) {
+        const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
+        const source = slot * @as(u32, screen.cols);
+        const destination = @as(usize, logical_row) * screen.cols;
+        @memcpy(
+            result[destination..][0..screen.cols],
+            screen.history.?[@intCast(source)..@intCast(source + screen.cols)],
+        );
+    }
+    return result;
+}
+
 fn containsCodepoint(screen: *const Screen, codepoint: u32) bool {
     for (screen.cells orelse &.{}) |cell|
         if (cell.codepoint == codepoint) return true;
-    if (screen.history) |history| {
-        for (history) |cell|
+    var logical_row: u32 = 0;
+    while (logical_row < screen.history_count) : (logical_row += 1) {
+        const slot = screen.historySlotForLogicalRow(logical_row) orelse unreachable;
+        const base = slot * @as(u32, screen.cols);
+        for (screen.history.?[@intCast(base)..@intCast(base + screen.cols)]) |cell|
             if (cell.codepoint == codepoint) return true;
     }
     return false;
@@ -5411,6 +5450,25 @@ test "REP reports no preceding graphic separately from scalar pressure" {
     try std.testing.expectEqualDeep(cursor_before, pressured.cursor);
     try std.testing.expectEqual(wrap_before, pressured.wrap_pending);
     try std.testing.expectEqualDeep(graphic_before, pressured.last_graphic);
+}
+
+test "first projected admission ignores untouched future slots" {
+    const backing = try std.heap.page_allocator.alloc(u8, 3 * 1024 * 1024);
+    defer std.heap.page_allocator.free(backing);
+    @memset(backing, 0xa5);
+    var fixed = std.heap.FixedBufferAllocator.init(backing);
+    const allocator = fixed.allocator();
+
+    var screen = try Screen.initWithCellsAndHistory(allocator, 2, 2, 4);
+    defer screen.deinit(allocator);
+    var cell = blank_cell;
+    cell.codepoint = 'P';
+    screen.cells.?[@intCast(screen.rowStart(0))] = cell;
+
+    screen.storeHistoryRow(0);
+    try std.testing.expectEqual(@as(u64, 0), screen.history_loss_generation);
+    try std.testing.expectEqual(@as(u32, 1), screen.history_count);
+    try std.testing.expectEqual(@as(u21, 'P'), screen.historyRowAt(0, 0));
 }
 
 test "inline combining history remains entirely in fixed projected storage" {
@@ -5566,7 +5624,7 @@ test "projected history scalar pressure preserves accepted ownership and later r
         std.mem.sliceAsBytes(screen.history_scalars.?.pages),
     );
     defer std.testing.allocator.free(before_pages);
-    const before_cells = try std.testing.allocator.dupe(ScreenCell, screen.history.?);
+    const before_cells = try copyProjectedHistory(std.testing.allocator, &screen);
     defer std.testing.allocator.free(before_cells);
     const before_flags = try std.testing.allocator.dupe(u8, screen.history_flags.?);
     defer std.testing.allocator.free(before_flags);
@@ -5589,7 +5647,9 @@ test "projected history scalar pressure preserves accepted ownership and later r
         before_pages,
         std.mem.sliceAsBytes(screen.history_scalars.?.pages),
     );
-    try std.testing.expectEqualSlices(ScreenCell, before_cells, screen.history.?);
+    const after_cells = try copyProjectedHistory(std.testing.allocator, &screen);
+    defer std.testing.allocator.free(after_cells);
+    try std.testing.expectEqualSlices(ScreenCell, before_cells, after_cells);
     try std.testing.expectEqualSlices(u8, before_flags, screen.history_flags.?);
     try std.testing.expectEqual(before_history_count, screen.history_count);
     try std.testing.expectEqual(before_history_write_idx, screen.history_write_idx);
