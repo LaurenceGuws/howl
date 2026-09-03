@@ -129,6 +129,26 @@ test "logical output preserves external combining scalars" {
     try std.testing.expectEqualStrings("next", finalized.open_line);
 }
 
+test "logical output copy releases every caller allocation failure" {
+    try std.testing.checkAllAllocationFailures(
+        std.testing.allocator,
+        copyLogicalOutputAllocation,
+        .{},
+    );
+}
+
+fn copyLogicalOutputAllocation(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 8, 4);
+    defer terminal.deinit();
+    try feedChanged(&terminal, "one\r\ntwo\r\nopen");
+
+    var output = switch (try terminal.copyLogicalOutput(allocator, 0, 4, 128)) {
+        .output => |value| value,
+        else => return error.UnexpectedOutputResult,
+    };
+    output.deinit();
+}
+
 test "logical output finalization is allocation-free after initialization" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
     var terminal = try Terminal.initWithHistory(failing.allocator(), 2, 8, 4);
