@@ -10,11 +10,11 @@ const consequences = @import("consequences.zig");
 const input = @import("input.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
+const locator_mod = @import("locator.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
 const CursorStyleCommand = screen_mod.CursorStyleCommand;
-const OptionalRectArea = screen_mod.OptionalRectArea;
 const OutputLossReason = screen_mod.OutputLossReason;
 const RectArea = screen_mod.RectArea;
 const RectCopy = screen_mod.RectCopy;
@@ -306,202 +306,6 @@ fn replaceBool(target: *bool, value: bool) bool {
     if (target.* == value) return false;
     target.* = value;
     return true;
-}
-
-const locator_report_max_bytes = 40;
-
-const ReportingMode = enum(u2) {
-    disabled,
-    continuous,
-    one_shot,
-};
-
-const FilterRect = struct {
-    top: u16,
-    left: u16,
-    bottom: u16,
-    right: u16,
-};
-
-// Stores DEC locator reporting mode, filter rectangle, and one-shot event flags.
-const Locator = struct {
-    mode: ReportingMode = .disabled,
-    coordinate_unit: u16 = 0,
-    report_button_down: bool = false,
-    report_button_up: bool = false,
-    filter_rect: ?FilterRect = null,
-    last_row: ?u16 = null,
-    last_col: ?u16 = null,
-    last_pixel_x: ?u32 = null,
-    last_pixel_y: ?u32 = null,
-    last_buttons_down: u8 = 0,
-};
-
-// Sets locator reporting and coordinate units, disabling unsupported values.
-fn setReporting(state: *Locator, mode: u16, unit: u16) void {
-    state.mode = switch (mode) {
-        1 => .continuous,
-        2 => .one_shot,
-        else => .disabled,
-    };
-    state.coordinate_unit = unit;
-}
-
-// Installs an optional locator filter rectangle and clears its outside latch.
-fn setFilter(state: *Locator, area: OptionalRectArea) void {
-    const row = state.last_row orelse 0;
-    const col = state.last_col orelse 0;
-    const top = area.top orelse row;
-    const left = area.left orelse col;
-    const bottom = area.bottom orelse row;
-    const right = area.right orelse col;
-    if (area.top == null and area.left == null and area.bottom == null and area.right == null) {
-        state.filter_rect = null;
-        return;
-    }
-    if (top > bottom or left > right) return;
-    state.filter_rect = .{ .top = top, .left = left, .bottom = bottom, .right = right };
-}
-
-// Replaces one-shot locator event flags from borrowed numeric modes.
-fn setEvents(state: *Locator, modes: []const u16) void {
-    for (modes) |mode| switch (mode) {
-        0 => {
-            state.report_button_down = false;
-            state.report_button_up = false;
-            state.filter_rect = null;
-        },
-        1 => state.report_button_down = true,
-        2 => state.report_button_down = false,
-        3 => state.report_button_up = true,
-        4 => state.report_button_up = false,
-        else => {},
-    };
-}
-
-// Appends a bounded locator status or position reply for one request parameter.
-fn appendReportForRequest(
-    state: *Locator,
-    allocator: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    param: u16,
-) replies.AppendError!void {
-    if (param > 1) return;
-    if (state.mode == .disabled or state.last_row == null or state.last_col == null) {
-        try output.appendCsi(.terminal, "0&w");
-        return;
-    }
-    try appendReport(
-        state,
-        allocator,
-        output,
-        encode_buf,
-        1,
-        state.last_buttons_down,
-        state.last_row.?,
-        state.last_col.?,
-    );
-}
-
-// Appends the supported locator device-status reply for parameter 53.
-fn appendDeviceStatusReport(
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    param: u16,
-) replies.AppendError!void {
-    const text = switch (param) {
-        55 => std.fmt.bufPrint(encode_buf, "?50n", .{}) catch unreachable,
-        56 => std.fmt.bufPrint(encode_buf, "?57;1n", .{}) catch unreachable,
-        else => return,
-    };
-    try output.appendCsi(.terminal, text);
-}
-
-// Updates representable locator coordinates and appends enabled reports.
-//
-// Rows outside the retained `u16` coordinate domain are ignored. Report
-// allocation or capacity failure preserves one-shot and filter latches.
-fn handleMouseEvent(
-    state: *Locator,
-    allocator: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    event: input.MouseEvent,
-) replies.AppendError!void {
-    if (event.row < 0 or event.row > std.math.maxInt(u16)) return;
-    const row: u16 = @intCast(event.row);
-    const col = event.col;
-    state.last_row = row;
-    state.last_col = col;
-    state.last_pixel_x = event.pixel_x;
-    state.last_pixel_y = event.pixel_y;
-    state.last_buttons_down = event.buttons_down;
-
-    if (state.mode == .disabled) return;
-
-    if (state.filter_rect) |filter| {
-        if (row < filter.top or row > filter.bottom or col < filter.left or col > filter.right) {
-            try appendReport(state, allocator, output, encode_buf, 10, event.buttons_down, row, col);
-            state.filter_rect = null;
-            return;
-        }
-    }
-
-    const event_code: ?u16 = switch (event.kind) {
-        .press => if (state.report_button_down) switch (event.button) {
-            .left => 2,
-            .middle => 4,
-            .right => 6,
-            else => null,
-        } else null,
-        .release => if (state.report_button_up) switch (event.button) {
-            .left => 3,
-            .middle => 5,
-            .right => 7,
-            else => null,
-        } else null,
-        else => null,
-    };
-    if (event_code) |code| try appendReport(state, allocator, output, encode_buf, code, event.buttons_down, row, col);
-}
-
-fn appendReport(
-    state: *Locator,
-    _: std.mem.Allocator,
-    output: *replies.Buffer,
-    encode_buf: []u8,
-    event_code: u16,
-    buttons_down: u8,
-    row: u16,
-    col: u16,
-) replies.AppendError!void {
-    const button_mask = buttonsMask(buttons_down);
-    const coords = coordinates(state, row, col);
-    std.debug.assert(encode_buf.len >= locator_report_max_bytes);
-    const text = std.fmt.bufPrint(
-        encode_buf,
-        "{d};{d};{d};{d};0&w",
-        .{ event_code, button_mask, coords.row + 1, coords.col + 1 },
-    ) catch unreachable;
-    try output.appendCsi(.terminal, text);
-    if (state.mode == .one_shot) state.mode = .disabled;
-}
-
-fn coordinates(state: *const Locator, row: u16, col: u16) struct { row: u32, col: u32 } {
-    if (state.coordinate_unit == 1) {
-        return .{ .row = state.last_pixel_y orelse row, .col = state.last_pixel_x orelse col };
-    }
-    return .{ .row = row, .col = col };
-}
-
-fn buttonsMask(buttons_down: u8) u16 {
-    var mask: u16 = 0;
-    if ((buttons_down & 0b001) != 0) mask |= 4;
-    if ((buttons_down & 0b010) != 0) mask |= 2;
-    if ((buttons_down & 0b100) != 0) mask |= 1;
-    return mask;
 }
 
 const ClipboardRequestKind = consequences.ClipboardRequestKind;
@@ -1033,7 +837,7 @@ const SemanticEvent = union(enum) {
     title_stack: struct { command: TitleStackCommand, option: u16 },
     xtreportcolors,
     locator_reporting: struct { mode: u16, unit: u16 },
-    locator_filter: OptionalRectArea,
+    locator_filter: locator_mod.FilterArea,
     locator_events: ModeParams,
     locator_request: u16,
     media_copy_request: MediaCopyRequest,
@@ -1362,7 +1166,7 @@ fn processHash(final: u8, params: []const i32) ?SemanticEvent {
 
 fn processTick(final: u8, params: []const i32) ?SemanticEvent {
     return switch (final) {
-        'w' => SemanticEvent{ .locator_filter = optionalRectArea(params) },
+        'w' => SemanticEvent{ .locator_filter = locatorFilterArea(params) },
         '}' => SemanticEvent{ .insert_columns = paramAtOrDefault1(params, 0) },
         'z' => SemanticEvent{ .locator_reporting = .{
             .mode = paramAtOrDefault0(params, 0),
@@ -1556,7 +1360,7 @@ fn paramCount32(items: []const i32) u32 {
 }
 
 // Projects positive one-based parameters into optional zero-based rectangle edges.
-fn optionalRectArea(params: []const i32) OptionalRectArea {
+fn locatorFilterArea(params: []const i32) locator_mod.FilterArea {
     return .{
         .top = if (params.len >= 1 and params[0] > 0) paramOrDefault1(params[0]) - 1 else null,
         .left = if (params.len >= 2 and params[1] > 0) paramOrDefault1(params[1]) - 1 else null,
@@ -2911,12 +2715,10 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
             .remote = command.remote,
             .payload = command.payload,
         }),
-        .locator_reporting => |cfg| setReporting(&vt.locator, cfg.mode, cfg.unit),
-        .locator_filter => |area| setFilter(&vt.locator, area),
-        .locator_events => |modes| setEvents(&vt.locator, modes.params[0..modes.param_count]),
-        .locator_request => |param| try appendReportForRequest(
-            &vt.locator,
-            allocator,
+        .locator_reporting => |cfg| vt.locator.setReporting(cfg.mode, cfg.unit),
+        .locator_filter => |area| vt.locator.setFilter(area),
+        .locator_events => |modes| vt.locator.setEvents(modes.params[0..modes.param_count]),
+        .locator_request => |param| try vt.locator.appendReportForRequest(
             &vt.reply_buffer,
             scratch.buf[0..],
             param,
@@ -3032,7 +2834,7 @@ fn applyReportEvent(vt: *Terminal, event: SemanticEvent) replies.AppendError!voi
         .dcs_request_termcap => |request| try appendTermcapReports(allocator, reply_buffer, request),
         .dcs_request_resource => |request| try appendResourceInvalidReport(allocator, reply_buffer, request),
         .device_status_report => try reply_buffer.appendCsi(.terminal, "0n"),
-        .dec_device_status_report => |param| try appendDeviceStatusReport(allocator, reply_buffer, encode_buf, param),
+        .dec_device_status_report => |param| try locator_mod.appendDeviceStatusReport(reply_buffer, encode_buf, param),
         .cursor_position_report => try appendCursorPositionReport(allocator, reply_buffer, encode_buf, report_view),
         .dec_cursor_position_report => try appendDecCursorPositionReport(
             allocator,
@@ -6743,7 +6545,7 @@ pub const Terminal = struct {
     properties: properties.State,
     reply_buffer: replies.Buffer,
     consequences: consequences.State,
-    locator: Locator = .{},
+    locator: locator_mod.State = .{},
     charset: charset_mod.State = .{},
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
@@ -7024,7 +6826,7 @@ pub const Terminal = struct {
         self.stream_state.parser.resetTextEncoding();
         self.reply_buffer.resetFraming();
         self.kitty.resetTerminalState();
-        self.locator = .{};
+        self.locator.reset();
         self.consequences.resetTerminal();
         self.properties.resetTerminal();
         const graphics_changed = self.graphics.reset();
@@ -7997,7 +7799,7 @@ pub const Terminal = struct {
     }
 
     fn encodeMouseInput(self: *Terminal, scratch: *InputScratch, event: input.MouseEvent) replies.AppendError![]const u8 {
-        try handleMouseEvent(&self.locator, self.allocator, &self.reply_buffer, scratch.buf[0..], event);
+        try self.locator.handleMouseEvent(&self.reply_buffer, scratch.buf[0..], event);
         const encoded = input.encodeMouse(scratch.buf[0..], event, self.modes.mouse_tracking, self.modes.mouse_protocol);
         std.debug.assert(encoded.len <= scratch.buf.len);
         return encoded;

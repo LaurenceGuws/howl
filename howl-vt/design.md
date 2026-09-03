@@ -125,6 +125,9 @@ protocol; it is not an embedder failure.
   and the implemented character-set mappings. Parser dispatch and savepoint
   composition remain in `src/terminal.zig`.
 - `src/input.zig` owns mode-directed key, mouse, focus, and paste encoding.
+- `src/locator.zig` owns DEC locator reporting mode, filter and pointer state,
+  and bounded locator reply serialization. Terminal routing supplies decoded
+  controls and semantic mouse events without retaining a parallel copy.
 - `src/replies.zig` owns bounded retained reply bytes and framing.
 - `src/properties.zig` owns retained terminal metadata and presentation
   properties.

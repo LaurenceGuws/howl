@@ -6034,14 +6034,6 @@ pub const RectArea = struct {
     right: ?u16,
 };
 
-/// Optional rectangular locator filter coordinates.
-pub const OptionalRectArea = struct {
-    top: ?u16,
-    left: ?u16,
-    bottom: ?u16,
-    right: ?u16,
-};
-
 /// Page-qualified rectangular copy request.
 pub const RectCopy = struct {
     area: RectArea,
