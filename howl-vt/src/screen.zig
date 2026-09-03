@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const scalar_storage = @import("scalar_storage.zig");
+const sized_text = @import("sized_text.zig");
 const unicode = @import("unicode_17.zig");
 
 fn acceptedTail(
@@ -23,71 +24,6 @@ fn clearAcceptedTail(
 }
 
 const logical_output_line_bytes_max: usize = 1024 * 1024;
-
-const ParsedTextSize = struct {
-    text: []const u8,
-    scale: u8 = 1,
-    width: u8 = 0,
-    subscale_n: u4 = 0,
-    subscale_d: u4 = 0,
-    vertical_align: u2 = 0,
-    horizontal_align: u2 = 0,
-};
-
-fn parseTextSize(payload: []const u8) ?ParsedTextSize {
-    const separator = std.mem.indexOfScalar(u8, payload, ';') orelse return null;
-    var result = ParsedTextSize{ .text = payload[separator + 1 ..] };
-    var fields = std.mem.splitScalar(u8, payload[0..separator], ':');
-    while (fields.next()) |field| {
-        if (field.len == 0) continue;
-        if (field.len < 3 or field[1] != '=') return null;
-        const value = parseTextSizeNumber(field[2..]) orelse return null;
-        switch (field[0]) {
-            's' => result.scale = @intCast(@max(1, @min(value, 7))),
-            'w' => result.width = @intCast(@min(value, 7)),
-            'n' => result.subscale_n = @intCast(@min(value, 15)),
-            'd' => result.subscale_d = @intCast(@min(value, 15)),
-            'v' => result.vertical_align = @intCast(@min(value, 3)),
-            'h' => result.horizontal_align = @intCast(@min(value, 3)),
-            else => return null,
-        }
-    }
-    if (!std.unicode.utf8ValidateSlice(result.text)) return null;
-    return result;
-}
-
-fn parseTextSizeNumber(bytes: []const u8) ?u32 {
-    if (bytes.len == 0 or bytes.len > 10) return null;
-    var value: u64 = 0;
-    for (bytes) |byte| {
-        if (byte < '0' or byte > '9') return null;
-        value = value * 10 + byte - '0';
-        if (value > std.math.maxInt(u32)) return null;
-    }
-    return @intCast(value);
-}
-
-fn isIgnoredSizedTextCodepoint(cp: u21) bool {
-    return cp < 0x20 or (cp >= 0x7f and cp <= 0x9f);
-}
-
-// Validates the bounded current cell payload before any terminal mutation.
-fn validateSizedText(parsed: ParsedTextSize) bool {
-    var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
-    var cluster_len: u8 = 0;
-    var cluster_count: usize = 0;
-    while (iterator.nextCodepoint()) |cp| {
-        if (isIgnoredSizedTextCodepoint(cp)) continue;
-        if (parsed.width == 0 and cluster_len != 0 and !isTrailingCombiningCodepoint(cp)) {
-            cluster_count += 1;
-            cluster_len = 0;
-        }
-        if (cluster_len == scalar_storage.maximum_scalars) return false;
-        cluster_len += 1;
-    }
-    if (cluster_len != 0) cluster_count += 1;
-    return cluster_count != 0 and (parsed.width == 0 or cluster_count == 1);
-}
 
 /// Terminal screen state for cursor, cells, margins, and history.
 pub const Screen = struct {
@@ -2519,18 +2455,16 @@ pub const Screen = struct {
         return true;
     }
 
-    // Applies one validated OSC 66 payload as fixed bounded cell clusters.
     /// Applies one validated OSC 66 sized-text payload.
     pub fn writeSizedText(self: *Screen, payload: []const u8) bool {
-        const parsed = parseTextSize(payload) orelse return false;
-        if (!validateSizedText(parsed)) return false;
+        const parsed = sized_text.parse(payload) orelse return false;
         var changed = false;
         var iterator = std.unicode.Utf8View.initUnchecked(parsed.text).iterator();
         if (parsed.width != 0) {
             var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
             var count: u8 = 0;
             while (iterator.nextCodepoint()) |cp| {
-                if (isIgnoredSizedTextCodepoint(cp)) continue;
+                if (sized_text.isIgnoredCodepoint(cp)) continue;
                 scalars[count] = @intCast(cp);
                 count += 1;
             }
@@ -2541,8 +2475,8 @@ pub const Screen = struct {
         var scalars: [scalar_storage.maximum_scalars]u21 = undefined;
         var count: u8 = 0;
         while (iterator.nextCodepoint()) |cp| {
-            if (isIgnoredSizedTextCodepoint(cp)) continue;
-            if (count != 0 and !isTrailingCombiningCodepoint(cp)) {
+            if (sized_text.isIgnoredCodepoint(cp)) continue;
+            if (count != 0 and !sized_text.isTrailingCombiningCodepoint(cp)) {
                 changed = self.writeSizedCluster(parsed, scalars[0..count], 1) or changed;
                 count = 0;
             }
@@ -2555,7 +2489,7 @@ pub const Screen = struct {
 
     fn writeSizedCluster(
         self: *Screen,
-        parsed: ParsedTextSize,
+        parsed: sized_text.Value,
         scalars: []const u21,
         width_cells: u8,
     ) bool {
@@ -4647,67 +4581,6 @@ fn screenAnsi16Color(idx: u8) ScreenColor {
     return switch (idx) {
         0...15 => .indexed(idx),
         else => initial_cell_attrs.fg,
-    };
-}
-
-fn isTrailingCombiningCodepoint(cp: u21) bool {
-    return switch (cp) {
-        0x0300...0x036F,
-        0x0483...0x0489,
-        0x0591...0x05BD,
-        0x05BF,
-        0x05C1...0x05C2,
-        0x05C4...0x05C5,
-        0x0610...0x061A,
-        0x064B...0x065F,
-        0x0670,
-        0x06D6...0x06DC,
-        0x06DF...0x06E4,
-        0x06E7...0x06E8,
-        0x06EB...0x06EC,
-        0x0730...0x074A,
-        0x07EB...0x07F3,
-        0x0816...0x0819,
-        0x081B...0x0823,
-        0x0825...0x0827,
-        0x0829...0x082D,
-        0x0951...0x0954,
-        0x0F82...0x0F83,
-        0x0F86...0x0F87,
-        0x135D...0x135F,
-        0x17DD,
-        0x193A,
-        0x1A17,
-        0x1A75...0x1A7C,
-        0x1B6B...0x1B73,
-        0x1CD0...0x1CD2,
-        0x1CDA...0x1CDB,
-        0x1CE0,
-        0x1AB0...0x1AFF,
-        0x1DC0...0x1DFF,
-        0x20D0...0x20FF,
-        0x2CEF...0x2CF1,
-        0x2DE0...0x2DFF,
-        0xA66F,
-        0xA67C...0xA67D,
-        0xA6F0...0xA6F1,
-        0xA8E0...0xA8F1,
-        0xAAB0,
-        0xAAB2...0xAAB3,
-        0xAAB7...0xAAB8,
-        0xAABE...0xAABF,
-        0xAAC1,
-        0x200C...0x200D,
-        0xFE00...0xFE0F,
-        0xFE20...0xFE2F,
-        0x10A0F,
-        0x10A38,
-        0x1D185...0x1D189,
-        0x1D1AA...0x1D1AD,
-        0x1D242...0x1D244,
-        0xE0100...0xE01EF,
-        => true,
-        else => false,
     };
 }
 

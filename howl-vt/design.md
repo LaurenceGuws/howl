@@ -118,6 +118,9 @@ protocol; it is not an embedder failure.
   fixed projected history, bounded logical-output evidence, SGR application,
   and transactional reflow of retained rows. Its owner proofs live in
   `src/screen/`.
+- `src/sized_text.zig` owns OSC 66 field grammar, UTF-8 validation, clamped
+  presentation values, and bounded cluster admission. Screen retains cell,
+  scalar, cursor, wrapping, and scrolling mutation.
 - `src/modes.zig` owns ANSI/DEC mode state, saved DEC slots, and per-screen
   Kitty keyboard stacks. Kitty report serialization and all protocol routing
   remain in `src/terminal.zig`.
