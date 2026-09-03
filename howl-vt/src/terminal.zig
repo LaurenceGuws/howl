@@ -8,6 +8,7 @@ const replies = @import("replies.zig");
 const properties = @import("properties.zig");
 const consequences = @import("consequences.zig");
 const input = @import("input.zig");
+const iterm_control = @import("iterm_control.zig");
 const mode_report_mod = @import("mode_report.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
@@ -318,169 +319,9 @@ fn optionalBytesEqual(current: ?[]const u8, replacement: []const u8) bool {
     return if (current) |bytes| std.mem.eql(u8, bytes, replacement) else false;
 }
 
-// Borrows one parsed OSC 133 shell mark until parser mutation.
-const ItermShellMark = struct {
-    kind: u8,
-    status: ?i32,
-    metadata: []const u8,
-};
-
-// Borrows a decimal version and optional bounded `shell` identity.
-// Duplicate, malformed, or unknown suffix keys reject the complete update.
-const ItermShellIntegration = struct {
-    version: u32,
-    shell: ?[]const u8,
-};
-
-// Bounds one shell name without creating a generic metadata namespace.
-const max_shell_name_bytes: u8 = 32;
-
-// Names iTerm controls whose effects are safe inside the native terminal contract.
-const ItermCommand = union(enum) {
-    cursor_shape: ScreenCursorShape,
-    report_cell_size,
-    set_colors: []const u8,
-    shell_integration: ItermShellIntegration,
-    current_directory: []const u8,
-    remote_host: []const u8,
-    clear_scrollback,
-    notification: []const u8,
-    steal_focus,
-    request_attention: []const u8,
-    file_transfer: []const u8,
-};
-
-// Decodes one borrowed OSC 50 or 1337 payload under its exact command family.
-fn parse(osc_command: u16, payload: []const u8) ?ItermCommand {
-    return switch (osc_command) {
-        50 => parseCursorShape(payload),
-        1337 => parse1337(payload),
-        else => null,
-    };
-}
-
-fn parse1337(payload: []const u8) ?ItermCommand {
-    const separator = std.mem.indexOfScalar(u8, payload, '=') orelse {
-        return if (std.mem.eql(u8, payload, "ReportCellSize"))
-            .report_cell_size
-        else if (std.mem.eql(u8, payload, "StealFocus"))
-            .steal_focus
-        else if (std.mem.eql(u8, payload, "ClearScrollback"))
-            .clear_scrollback
-        else if (std.mem.eql(u8, payload, "RequestAttention"))
-            .{ .request_attention = "" }
-        else
-            null;
-    };
-    const key = payload[0..separator];
-    const value = payload[separator + 1 ..];
-    // iTerm ignores the value of this request key.
-    if (std.mem.eql(u8, key, "ReportCellSize")) return .report_cell_size;
-    if (std.mem.eql(u8, key, "CursorShape")) return parseCursorShape(payload);
-    if (std.mem.eql(u8, key, "SetColors")) return .{ .set_colors = value };
-    if (std.mem.eql(u8, key, "CurrentDir")) return .{ .current_directory = value };
-    if (std.mem.eql(u8, key, "RemoteHost")) return .{ .remote_host = value };
-    if (std.mem.eql(u8, key, "ClearScrollback")) return .clear_scrollback;
-    if (std.mem.eql(u8, key, "Notification")) return .{ .notification = value };
-    // iTerm ignores an optional StealFocus value after recognizing the key.
-    if (std.mem.eql(u8, key, "StealFocus")) return .steal_focus;
-    if (std.mem.eql(u8, key, "RequestAttention")) return .{ .request_attention = value };
-    if (std.mem.eql(u8, key, "File") or
-        std.mem.eql(u8, key, "MultipartFile") or
-        std.mem.eql(u8, key, "FilePart") or
-        std.mem.eql(u8, key, "FileEnd")) return .{ .file_transfer = payload };
-    if (std.mem.eql(u8, key, "ShellIntegrationVersion"))
-        return .{ .shell_integration = parseShellIntegration(value) orelse return null };
-    return null;
-}
-
-fn parseCursorShape(payload: []const u8) ?ItermCommand {
-    const prefix = "CursorShape=";
-    if (!std.mem.startsWith(u8, payload, prefix)) return null;
-    const value = payload[prefix.len..];
-    if (value.len != 1) return null;
-    return .{ .cursor_shape = switch (value[0]) {
-        '0' => .block,
-        '1' => .bar,
-        '2' => .underline,
-        else => return null,
-    } };
-}
-
-fn parseShellIntegration(payload: []const u8) ?ItermShellIntegration {
-    var parts = std.mem.splitScalar(u8, payload, ';');
-    const version_text = parts.next() orelse return null;
-    if (version_text.len == 0) return null;
-    const version = std.fmt.parseUnsigned(u32, version_text, 10) catch return null;
-    var shell: ?[]const u8 = null;
-    while (parts.next()) |part| {
-        const separator = std.mem.indexOfScalar(u8, part, '=') orelse return null;
-        const key = part[0..separator];
-        const value = part[separator + 1 ..];
-        if (!std.mem.eql(u8, key, "shell") or shell != null or
-            value.len == 0 or value.len > max_shell_name_bytes)
-            return null;
-        for (value) |byte| if (!isShellNameByte(byte)) return null;
-        shell = value;
-    }
-    return .{ .version = version, .shell = shell };
-}
-
-fn isShellNameByte(byte: u8) bool {
-    return std.ascii.isAlphanumeric(byte) or
-        byte == '.' or byte == '_' or byte == '+' or byte == '-';
-}
-
-// Parses one OSC 133 mark and the first positional command-exit status.
-fn parseShellMark(payload: []const u8) ?ItermShellMark {
-    if (payload.len == 0) return null;
-    const separator = std.mem.indexOfScalar(u8, payload, ';') orelse payload.len;
-    if (separator != 1) return null;
-    const kind = payload[0];
-    switch (kind) {
-        'A', 'B', 'C', 'D' => {},
-        else => return null,
-    }
-    const metadata = if (separator < payload.len) payload[separator + 1 ..] else "";
-    const status = if (kind == 'D') parseShellExitStatus(metadata) else null;
-    return .{ .kind = kind, .status = status, .metadata = metadata };
-}
-
-// Ignores key-value attributes and returns the first complete signed decimal field.
-fn parseShellExitStatus(metadata: []const u8) ?i32 {
-    var fields = std.mem.splitScalar(u8, metadata, ';');
-    while (fields.next()) |field| {
-        if (field.len == 0 or std.mem.indexOfScalar(u8, field, '=') != null) continue;
-        if (std.fmt.parseInt(i32, field, 10)) |status| return status else |_| {}
-    }
-    return null;
-}
-
-test "iTerm safe controls decode without accepting policy commands" {
-    try std.testing.expect(parse(1337, "ReportCellSize").? == .report_cell_size);
-    try std.testing.expect(parse(1337, "ReportCellSize=ignored").? == .report_cell_size);
-    try std.testing.expectEqual(ScreenCursorShape.bar, parse(50, "CursorShape=1").?.cursor_shape);
-    try std.testing.expectEqual(ScreenCursorShape.bar, parse(1337, "CursorShape=1").?.cursor_shape);
-    try std.testing.expectEqualStrings("fg=fff", parse(1337, "SetColors=fg=fff").?.set_colors);
-    try std.testing.expectEqualStrings("/work/tree", parse(1337, "CurrentDir=/work/tree").?.current_directory);
-    try std.testing.expectEqualStrings("hello", parse(1337, "Notification=hello").?.notification);
-    try std.testing.expect(parse(1337, "StealFocus").? == .steal_focus);
-    try std.testing.expect(parse(1337, "StealFocus=ignored").? == .steal_focus);
-    try std.testing.expectEqualStrings("", parse(1337, "RequestAttention").?.request_attention);
-    try std.testing.expectEqualStrings("fireworks", parse(1337, "RequestAttention=fireworks").?.request_attention);
-    try std.testing.expectEqualStrings("FilePart=QQ==", parse(1337, "FilePart=QQ==").?.file_transfer);
-    const integration = parse(1337, "ShellIntegrationVersion=20;shell=bash").?.shell_integration;
-    try std.testing.expectEqual(@as(u32, 20), integration.version);
-    try std.testing.expectEqualStrings("bash", integration.shell.?);
-    try std.testing.expect(parse(1337, "ShellIntegrationVersion=20;shell=bash;shell=zsh") == null);
-    try std.testing.expect(parse(1337, "ShellIntegrationVersion=20;unknown=value") == null);
-    try std.testing.expect(parse(1337, "ShellIntegrationVersion=broken;shell=bash") == null);
-    try std.testing.expect(parse(50, "CursorShape=9") == null);
-    try std.testing.expect(parse(50, "SetColors=fg=fff") == null);
-    try std.testing.expect(parse(50, "ShellIntegrationVersion=20;shell=bash") == null);
-    try std.testing.expect(parse(50, "ReportCellSize") == null);
-    try std.testing.expect(parse(49, "CursorShape=1") == null);
-}
+// Internal composition aliases for borrowed iTerm protocol values.
+const ItermShellMark = iterm_control.ShellMark;
+const ItermShellIntegration = iterm_control.ShellIntegration;
 
 const KittyColorState = properties.ColorState;
 
@@ -1866,7 +1707,7 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
         .dynamic_reset => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .kitty_color => |v| SemanticEvent{ .color_control = .{ .command = v.command, .payload = v.payload } },
         .report_pwd => |v| SemanticEvent{ .working_directory_report = .{ .kind = .uri, .value = v.payload } },
-        .shell_mark => |v| if (parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
+        .shell_mark => |v| if (iterm_control.parseShellMark(v.payload)) |mark| SemanticEvent{ .shell_mark = mark } else null,
         .notification => |v| SemanticEvent{ .notification = .{
             .kind = .message,
             .command = v.command,
@@ -1878,8 +1719,12 @@ fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
             .command = 777,
             .payload = v.payload,
         } },
-        .iterm2 => |v| if (parse(v.command, v.payload)) |command| switch (command) {
-            .cursor_shape => |shape| SemanticEvent{ .cursor_shape = shape },
+        .iterm2 => |v| if (iterm_control.parse(v.command, v.payload)) |command| switch (command) {
+            .cursor_shape => |shape| SemanticEvent{ .cursor_shape = switch (shape) {
+                .block => .block,
+                .bar => .bar,
+                .underline => .underline,
+            } },
             .report_cell_size => SemanticEvent.iterm_report_cell_size,
             .set_colors => |payload| SemanticEvent{ .iterm_set_colors = payload },
             .current_directory => |value| SemanticEvent{
@@ -2118,10 +1963,6 @@ test "OSC shell mark maps to neutral semantic metadata" {
     const shell_mark = oscProcess(.{ .shell_mark = .{ .payload = "D;7", .term = .bel } }).?;
     try std.testing.expectEqual(@as(u8, 'D'), shell_mark.shell_mark.kind);
     try std.testing.expectEqual(@as(?i32, 7), shell_mark.shell_mark.status);
-    try std.testing.expectEqual(@as(?i32, 9), parseShellMark("D;aid=nested;9;cl=x").?.status);
-    try std.testing.expectEqual(@as(?i32, -3), parseShellMark("D;;-3;aid=x").?.status);
-    try std.testing.expectEqual(@as(?i32, null), parseShellMark("D;aid=x;broken").?.status);
-    try std.testing.expectEqual(@as(?i32, null), parseShellMark("C;7").?.status);
 }
 
 test "OSC Kitty caller-policy payloads expose only retained terminal state" {

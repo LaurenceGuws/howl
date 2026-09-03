@@ -142,6 +142,9 @@ protocol; it is not an embedder failure.
   into one complete borrowed view.
 - `src/fixed_report.zig` owns stateless terminal identity, status, geometry,
   title-stack, parameter, and checksum reply encoding from small value views.
+- `src/iterm_control.zig` owns borrowed OSC 50, 133, and 1337 grammar for
+  Howl's accepted iTerm subset. Terminal and Properties retain every resulting
+  mutation, consequence, and owned byte lifetime.
 - `src/stream_state.zig` owns parser allocation and bounded fragmented DCS,
   APC, PM, and SOS capture. Terminal retains semantic application, sixel
   placement, and Kitty graphics consequences after a capture completes.
