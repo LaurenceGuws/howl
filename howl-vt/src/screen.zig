@@ -3,6 +3,7 @@
 const std = @import("std");
 const scalar_storage = @import("scalar_storage.zig");
 const sized_text = @import("sized_text.zig");
+const tab_stops_mod = @import("tab_stops.zig");
 const unicode = @import("unicode_17.zig");
 
 fn acceptedTail(
@@ -186,7 +187,7 @@ pub const Screen = struct {
     history_loss_generation: u64,
     last_graphic: ?LastGraphic,
     current_attrs: CellAttrs,
-    tab_stops: ?[]bool,
+    tab_stops: tab_stops_mod.State,
     cell_pixel_size: ?CellPixelSize,
 
     fn cellCount(rows: u16, cols: u16) u32 {
@@ -203,7 +204,7 @@ pub const Screen = struct {
         history: ?[]Cell,
         history_flags: ?[]u8,
         history_capacity: u16,
-        tab_stops: ?[]bool,
+        tab_stops: tab_stops_mod.State,
     ) Screen {
         return .{
             .allocator = allocator,
@@ -260,7 +261,7 @@ pub const Screen = struct {
     }
 
     fn initWithDefaultCursorStyle(rows: u16, cols: u16, cursor_style_default: CursorStyle) Screen {
-        return initBase(null, rows, cols, cursor_style_default, null, null, null, null, 0, null);
+        return initBase(null, rows, cols, cursor_style_default, null, null, null, null, 0, .empty);
     }
 
     /// Initialize screen with owned cell storage.
@@ -288,8 +289,8 @@ pub const Screen = struct {
             break :blk buf;
         } else null;
         errdefer if (row_flags) |buf| allocator.free(buf);
-        const tab_stops = try allocTabStops(allocator, cols);
-        errdefer if (tab_stops) |buf| allocator.free(buf);
+        var tab_stops = try tab_stops_mod.State.init(allocator, cols);
+        errdefer tab_stops.deinit(allocator);
         var result = initBase(
             allocator,
             rows,
@@ -353,8 +354,7 @@ pub const Screen = struct {
         self.scalars = null;
         if (self.row_flags) |buf| allocator.free(buf);
         self.row_flags = null;
-        if (self.tab_stops) |buf| allocator.free(buf);
-        self.tab_stops = null;
+        self.tab_stops.deinit(allocator);
         if (self.history) |h| allocator.free(h);
         self.history = null;
         if (self.history_scalars) |*storage| storage.deinit();
@@ -513,7 +513,7 @@ pub const Screen = struct {
         replacement.cells = null;
         replacement.scalars = null;
         replacement.row_flags = null;
-        replacement.tab_stops = null;
+        replacement.tab_stops = .empty;
         replacement.history = null;
         replacement.history_scalars = null;
         replacement.history_plan = null;
@@ -564,10 +564,9 @@ pub const Screen = struct {
         std.debug.assert((self.cells != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.scalars != null) == (rows > 0 and cols > 0));
         std.debug.assert((self.row_flags != null) == (rows > 0));
-        std.debug.assert((self.tab_stops != null) == (cols > 0));
+        std.debug.assert(self.tab_stops.ownsColumns(cols));
         if (self.cells) |buf| std.debug.assert(buf.len == cellCount(rows, cols));
         if (self.row_flags) |buf| std.debug.assert(buf.len == rows);
-        if (self.tab_stops) |buf| std.debug.assert(buf.len == cols);
         std.debug.assert(self.history == null);
         std.debug.assert(self.history_flags == null);
         std.debug.assert(self.history_count == 0);
@@ -1133,7 +1132,7 @@ pub const Screen = struct {
         if (self.cells) |c| @memset(c, blank_cell);
         if (self.scalars) |*storage| storage.clearAll();
         if (self.row_flags) |buf| @memset(buf, 0);
-        if (self.tab_stops) |stops| setDefaultTabStops(stops);
+        self.tab_stops.reset();
     }
 
     // Applies DECSTR's bank-local defaults without erasing cells or moving the cursor.
@@ -1154,12 +1153,7 @@ pub const Screen = struct {
         self.cursor.restoreDefaultStyle();
         changed = !std.meta.eql(cursor_before, self.cursor) or changed;
 
-        if (self.tab_stops) |stops| {
-            for (stops, 0..) |stop, col| {
-                if (stop != (col != 0 and col % 8 == 0)) changed = true;
-            }
-            setDefaultTabStops(stops);
-        }
+        changed = self.tab_stops.resetChanged() or changed;
         var row: u16 = 0;
         while (row < self.rows) : (row += 1) {
             if (self.lineGeometry(row) != .single_width) changed = true;
@@ -1217,10 +1211,7 @@ pub const Screen = struct {
 
     /// Return whether `col` is a configured stop, using default eight-column stops without storage.
     pub fn tabStopAt(self: *const Screen, col: u16) bool {
-        if (self.tab_stops) |stops| {
-            if (col < stops.len) return stops[col];
-        }
-        return col != 0 and col % 8 == 0;
+        return self.tab_stops.at(col);
     }
 
     /// Read history cell by recency index and column.
@@ -1409,10 +1400,10 @@ pub const Screen = struct {
 
     fn applyTabState(self: *Screen, event: Screen.Action) void {
         switch (event) {
-            .horizontal_tab_set => self.setTabStop(),
-            .tab_clear_current => self.clearCurrentTabStop(),
-            .tab_clear_all => self.clearAllTabStops(),
-            .reset_default_tab_stops => self.resetDefaultTabStops(),
+            .horizontal_tab_set => self.tab_stops.set(self.cursor.col),
+            .tab_clear_current => self.tab_stops.clear(self.cursor.col),
+            .tab_clear_all => self.tab_stops.clearAll(),
+            .reset_default_tab_stops => self.tab_stops.reset(),
             else => unreachable,
         }
     }
@@ -3098,30 +3089,6 @@ pub const Screen = struct {
             while (col > 0 and !self.tabStopAt(col)) : (col -= 1) {}
             self.cursor.setColByClient(if (self.tabStopAt(col)) col else 0);
         }
-    }
-
-    /// Set a stored tab stop at the current in-bounds cursor column.
-    fn setTabStop(self: *Screen) void {
-        if (self.tab_stops) |stops| {
-            if (self.cursor.col < stops.len) stops[self.cursor.col] = true;
-        }
-    }
-
-    /// Clear a stored tab stop at the current in-bounds cursor column.
-    fn clearCurrentTabStop(self: *Screen) void {
-        if (self.tab_stops) |stops| {
-            if (self.cursor.col < stops.len) stops[self.cursor.col] = false;
-        }
-    }
-
-    /// Clear every stored tab stop.
-    fn clearAllTabStops(self: *Screen) void {
-        if (self.tab_stops) |stops| @memset(stops, false);
-    }
-
-    /// Restore default eight-column stops in the stored tab-stop buffer.
-    fn resetDefaultTabStops(self: *Screen) void {
-        if (self.tab_stops) |stops| setDefaultTabStops(stops);
     }
 
     /// Advance within the scroll region, scrolling it upward at its bottom edge.
@@ -5954,13 +5921,13 @@ const ResizeBuffers = struct {
     cells: ?[]ScreenCell,
     scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
-    tab_stops: ?[]bool,
+    tab_stops: tab_stops_mod.State,
 
     const empty: ResizeBuffers = .{
         .cells = null,
         .scalars = null,
         .row_flags = null,
-        .tab_stops = null,
+        .tab_stops = .empty,
     };
 
     /// Release every owned buffer and reset the value.
@@ -5968,7 +5935,7 @@ const ResizeBuffers = struct {
         if (self.cells) |buf| allocator.free(buf);
         if (self.scalars) |*storage| storage.deinit();
         if (self.row_flags) |buf| allocator.free(buf);
-        if (self.tab_stops) |buf| allocator.free(buf);
+        self.tab_stops.deinit(allocator);
         self.* = empty;
     }
 
@@ -6358,7 +6325,7 @@ fn allocResizeBuffers(
     allocator: std.mem.Allocator,
     rows: u16,
     cols: u16,
-    old_tab_stops: ?[]bool,
+    old_tab_stops: tab_stops_mod.State,
 ) std.mem.Allocator.Error!ResizeBuffers {
     const cell_count = resizeCellCount(rows, cols);
     var cells: ?[]ScreenCell = null;
@@ -6385,16 +6352,14 @@ fn allocResizeBuffers(
     }
     errdefer if (row_flags) |buf| allocator.free(buf);
 
-    const tab_stops = try allocTabStops(allocator, cols);
-    errdefer if (tab_stops) |buf| allocator.free(buf);
-    copyTabStops(tab_stops, old_tab_stops);
+    var tab_stops = try tab_stops_mod.State.initCopied(allocator, cols, old_tab_stops);
+    errdefer tab_stops.deinit(allocator);
 
     std.debug.assert((cells != null) == (cell_count > 0));
     std.debug.assert((row_flags != null) == (rows > 0));
-    std.debug.assert((tab_stops != null) == (cols > 0));
+    std.debug.assert(tab_stops.ownsColumns(cols));
     if (cells) |buf| std.debug.assert(buf.len == cell_count);
     if (row_flags) |buf| std.debug.assert(buf.len == rows);
-    if (tab_stops) |buf| std.debug.assert(buf.len == cols);
 
     return .{
         .cells = cells,
@@ -6486,8 +6451,8 @@ fn reflowAllocation(allocator: std.mem.Allocator) !void {
 }
 
 fn resizeBuffersAllocation(allocator: std.mem.Allocator) !void {
-    var buffers = allocResizeBuffers(allocator, 3, 5, null) catch |err| {
-        var retry = try allocResizeBuffers(std.testing.allocator, 3, 5, null);
+    var buffers = allocResizeBuffers(allocator, 3, 5, .empty) catch |err| {
+        var retry = try allocResizeBuffers(std.testing.allocator, 3, 5, .empty);
         retry.deinit(std.testing.allocator);
         return err;
     };
@@ -6850,29 +6815,6 @@ test "logical output accepts its exact per-line byte bound" {
 
     try std.testing.expectEqual(@as(u16, 1), screen.output_lines_count);
     try std.testing.expectEqual(logical_output_line_bytes_max, screen.output_bytes);
-}
-
-// Allocates one tab-stop flag per column and installs default stops.
-fn allocTabStops(allocator: std.mem.Allocator, cols: u16) std.mem.Allocator.Error!?[]bool {
-    if (cols == 0) return null;
-    const buf = try allocator.alloc(bool, cols);
-    setDefaultTabStops(buf);
-    return buf;
-}
-
-// Replaces all stops with the terminal default every eight columns.
-fn setDefaultTabStops(stops: []bool) void {
-    @memset(stops, false);
-    for (stops, 0..) |*stop, idx| {
-        if (idx != 0 and idx % 8 == 0) stop.* = true;
-    }
-}
-
-// Copies the overlapping prefix of optional old and replacement tab stops.
-fn copyTabStops(dst: ?[]bool, src: ?[]const bool) void {
-    const d = dst orelse return;
-    const s = src orelse return;
-    @memcpy(d[0..@min(d.len, s.len)], s[0..@min(d.len, s.len)]);
 }
 
 test "scroll rows preserve scalar tails while transferring cell metadata" {

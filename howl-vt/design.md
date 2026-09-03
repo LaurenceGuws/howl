@@ -121,6 +121,9 @@ protocol; it is not an embedder failure.
 - `src/sized_text.zig` owns OSC 66 field grammar, UTF-8 validation, clamped
   presentation values, and bounded cluster admission. Screen retains cell,
   scalar, cursor, wrapping, and scrolling mutation.
+- `src/tab_stops.zig` owns explicit per-column tab-stop storage, default
+  fallback semantics, resets, resize-prefix copying, and allocation lifetime.
+  Screen retains cursor movement and routes tab-control actions.
 - `src/modes.zig` owns ANSI/DEC mode state, saved DEC slots, and per-screen
   Kitty keyboard stacks. Kitty report serialization and all protocol routing
   remain in `src/terminal.zig`.

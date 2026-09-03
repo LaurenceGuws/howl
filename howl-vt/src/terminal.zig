@@ -6324,31 +6324,7 @@ pub const Terminal = struct {
 
     // Replaces the active screen's bounded tab-stop set from one-based DECTABSR values.
     fn restoreTabStops(self: *Terminal, payload: []const u8) bool {
-        const stops = self.screen_state.active().tab_stops orelse return false;
-        var restored: [parser_mod.max_metadata_control_bytes / 2 + 1]u16 = undefined;
-        var restored_count: usize = 0;
-        var values = std.mem.splitScalar(u8, payload, '/');
-        while (values.next()) |field| {
-            // iTerm2 filters invalid members independently instead of rejecting the complete stop set.
-            const one_based = std.fmt.parseInt(u32, field, 10) catch continue;
-            if (one_based == 0 or one_based > stops.len) continue;
-            std.debug.assert(restored_count < restored.len);
-            restored[restored_count] = @intCast(one_based - 1);
-            restored_count += 1;
-        }
-        std.sort.block(u16, restored[0..restored_count], {}, std.sort.asc(u16));
-
-        var changed = false;
-        var restored_index: usize = 0;
-        for (stops, 0..) |*stop, col| {
-            const column: u16 = @intCast(col);
-            while (restored_index < restored_count and restored[restored_index] < column)
-                restored_index += 1;
-            const next = restored_index < restored_count and restored[restored_index] == column;
-            changed = stop.* != next or changed;
-            stop.* = next;
-        }
-        return changed;
+        return self.screen_state.active().tab_stops.replaceOneBased(payload);
     }
 
     /// Saves cursor presentation, rendition, charset, origin, and wrap state into the active screen slot.
