@@ -131,6 +131,9 @@ protocol; it is not an embedder failure.
 - `src/locator.zig` owns DEC locator reporting mode, filter and pointer state,
   and bounded locator reply serialization. Terminal routing supplies decoded
   controls and semantic mouse events without retaining a parallel copy.
+- `src/stream_state.zig` owns parser allocation and bounded fragmented DCS,
+  APC, PM, and SOS capture. Terminal retains semantic application, sixel
+  placement, and Kitty graphics consequences after a capture completes.
 - `src/replies.zig` owns bounded retained reply bytes and framing.
 - `src/properties.zig` owns retained terminal metadata and presentation
   properties.

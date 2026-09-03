@@ -12,6 +12,7 @@ const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
 const clipboard_mod = @import("clipboard.zig");
 const locator_mod = @import("locator.zig");
+const stream_state_mod = @import("stream_state.zig");
 const screen_mod = @import("screen.zig");
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
@@ -317,8 +318,6 @@ const SemanticEventError = consequences.Error || properties.PropertyError || rep
 const ContainerSerializationError = error{ OutOfMemory, ReplyLimit, ConsequenceLimit };
 const GraphicsEventError = error{ OutOfMemory, ReplyLimit };
 
-/// Bounds aggregate bytes retained across configuration, delegated protocol, and caller-directed DCS consequences.
-const dcs_payload_max_bytes: u32 = 2 * 1024;
 /// Bounds one retained consequence payload owned by this composition state.
 const consequence_payload_max_bytes: u32 = 1024;
 const pointer_shape_reply_max_bytes: u32 = (consequence_payload_max_bytes / 12) * 14 - 1;
@@ -393,9 +392,7 @@ const WorkingDirectoryReport = properties.WorkingDirectory;
 
 const TitleStackEffect = properties.TitleStackEffect;
 
-comptime {
-    std.debug.assert(dcs_payload_max_bytes <= replies.max_bytes);
-}
+comptime {}
 
 // Converts a slice length after asserting it fits the protocol-owned u32 domain.
 fn byteCount(bytes: []const u8) u32 {
@@ -4988,156 +4985,8 @@ pub const TerminalFeedProgress = struct {
     consumed: usize,
 };
 
-// Fragmented parser-stream ownership.
-
-const DcsCapture = struct {
-    const StartError = error{OutOfMemory};
-    const PutError = error{ OutOfMemory, StringControlLimit };
-
-    allocator: std.mem.Allocator,
-    bytes: std.ArrayList(u8),
-    params: [parser_mod.max_params]i32 = @as([parser_mod.max_params]i32, @splat(0)),
-    intermediates: [parser_mod.max_intermediates]u8 = @as([parser_mod.max_intermediates]u8, @splat(0)),
-    payload_start: usize = 0,
-    final: u8 = 0,
-    param_count: u8 = 0,
-    intermediates_len: u8 = 0,
-    active: bool = false,
-
-    fn init(allocator: std.mem.Allocator) DcsCapture {
-        return .{ .allocator = allocator, .bytes = .empty };
-    }
-
-    fn deinit(self: *DcsCapture) void {
-        self.bytes.deinit(self.allocator);
-    }
-
-    fn reset(self: *DcsCapture) void {
-        self.active = false;
-        self.payload_start = 0;
-        self.final = 0;
-        self.param_count = 0;
-        self.intermediates_len = 0;
-        self.bytes.clearRetainingCapacity();
-    }
-
-    fn start(self: *DcsCapture, hook: parser_mod.DcsHook) StartError!void {
-        std.debug.assert(hook.count <= parser_mod.max_params);
-        std.debug.assert(hook.intermediates_len <= parser_mod.max_intermediates);
-        self.reset();
-        self.active = true;
-        self.final = hook.final;
-        self.param_count = hook.count;
-        self.intermediates_len = hook.intermediates_len;
-        std.mem.copyForwards(i32, self.params[0..hook.count], hook.params[0..hook.count]);
-        std.mem.copyForwards(
-            u8,
-            self.intermediates[0..hook.intermediates_len],
-            hook.intermediates[0..hook.intermediates_len],
-        );
-
-        errdefer self.reset();
-        var idx: u8 = 0;
-        while (idx < hook.count) : (idx += 1) {
-            if (idx > 0) try self.bytes.append(self.allocator, ';');
-            var text_buf: [32]u8 = undefined;
-            const text = std.fmt.bufPrint(&text_buf, "{d}", .{hook.params[idx]}) catch unreachable;
-            try self.bytes.appendSlice(self.allocator, text);
-        }
-        try self.bytes.appendSlice(self.allocator, self.intermediates[0..hook.intermediates_len]);
-        try self.bytes.append(self.allocator, hook.final);
-        self.payload_start = self.bytes.items.len;
-    }
-
-    fn put(self: *DcsCapture, byte: u8) PutError!void {
-        std.debug.assert(self.active);
-        const limit: usize = if (self.final == 'q' and self.intermediates_len == 0)
-            sixel.max_encoded_bytes
-        else
-            parser_mod.max_metadata_control_bytes;
-        if (self.bytes.items.len - self.payload_start >= limit) {
-            return error.StringControlLimit;
-        }
-        try self.bytes.append(self.allocator, byte);
-    }
-
-    fn event(self: *const DcsCapture) parser_mod.Event {
-        std.debug.assert(self.active);
-        return .{ .dcs = .{
-            .body = self.bytes.items,
-            .payload = self.bytes.items[self.payload_start..],
-            .final = self.final,
-            .params = self.params[0..self.param_count],
-            .param_count = self.param_count,
-            .intermediates = self.intermediates[0..self.intermediates_len],
-            .intermediates_len = self.intermediates_len,
-        } };
-    }
-};
-
-const StringCapture = struct {
-    allocator: std.mem.Allocator,
-    bytes: std.ArrayList(u8) = .empty,
-    kind: ?StringPayloadKind = null,
-    overflowed: bool = false,
-
-    fn deinit(self: *StringCapture) void {
-        self.bytes.deinit(self.allocator);
-    }
-
-    fn start(self: *StringCapture, kind: StringPayloadKind) void {
-        self.bytes.clearRetainingCapacity();
-        self.kind = kind;
-        self.overflowed = false;
-    }
-
-    fn put(self: *StringCapture, byte: u8) error{OutOfMemory}!void {
-        std.debug.assert(self.kind != null);
-        if (self.overflowed) return;
-        const limit: usize = if (self.kind == .apc and self.bytes.items.len != 0 and self.bytes.items[0] == 'G')
-            graphics_mod.max_command_bytes + 1
-        else
-            dcs_payload_max_bytes;
-        if (self.bytes.items.len >= limit) {
-            self.overflowed = true;
-            self.bytes.clearRetainingCapacity();
-            return;
-        }
-        try self.bytes.append(self.allocator, byte);
-    }
-
-    fn reset(self: *StringCapture) void {
-        self.bytes.clearRetainingCapacity();
-        self.kind = null;
-        self.overflowed = false;
-    }
-};
-
-// Owns parser allocation and bounded DCS and generic string capture for one terminal lifetime.
-const TerminalStreamState = struct {
-    /// TerminalStream-state initialization can fail only while allocating parser storage.
-    const InitError = error{OutOfMemory};
-
-    parser: parser_mod.Parser,
-    dcs: DcsCapture,
-    string: StringCapture,
-
-    /// Initializes parser storage and empty string captures with one borrowed allocator.
-    fn initAlloc(allocator: std.mem.Allocator) InitError!TerminalStreamState {
-        return .{
-            .parser = try parser_mod.Parser.init(allocator),
-            .dcs = DcsCapture.init(allocator),
-            .string = .{ .allocator = allocator },
-        };
-    }
-
-    /// Releases parser and string-capture allocations.
-    fn deinit(self: *TerminalStreamState) void {
-        self.dcs.deinit();
-        self.string.deinit();
-        self.parser.deinit();
-    }
-};
+// Owns parser allocation and bounded fragmented-control capture for one terminal lifetime.
+const TerminalStreamState = stream_state_mod.State;
 
 // Borrows one terminal while translating input bytes into terminal mutation.
 const TerminalStream = struct {
@@ -5387,12 +5236,9 @@ const TerminalStream = struct {
 
     fn endDcs(self: *TerminalStream) TerminalFeedError!EventEffect {
         const state = &self.terminal.stream_state;
-        if (state.dcs.final == 'q' and state.dcs.intermediates_len == 0) {
+        if (state.dcs.isSixel()) {
             defer state.dcs.reset();
-            return self.applySixel(
-                state.dcs.bytes.items[state.dcs.payload_start..],
-                state.dcs.params[0..state.dcs.param_count],
-            );
+            return self.applySixel(state.dcs.payload(), state.dcs.parameters());
         }
         const event = state.dcs.event();
         defer state.dcs.reset();
@@ -5481,18 +5327,21 @@ const TerminalStream = struct {
 
     fn endString(self: *TerminalStream) TerminalFeedError!EventEffect {
         const capture = &self.terminal.stream_state.string;
-        if (capture.overflowed) {
-            if (capturedKittyGraphics(capture)) self.terminal.graphics.cancel();
+        if (capture.didOverflow()) {
+            if (capture.isKittyGraphics()) self.terminal.graphics.cancel();
             capture.reset();
             return discardedStringControl();
         }
-        if (capture.kind == .apc and capture.bytes.items.len != 0 and capture.bytes.items[0] == 'G') {
+        if (capture.isKittyGraphics()) {
             defer capture.reset();
             return .{
-                .changed = try applyKittyGraphicsPacket(self.terminal, capture.bytes.items[1..]),
+                .changed = try applyKittyGraphicsPacket(self.terminal, capture.payload()[1..]),
             };
         }
-        const payload: consequences.StringInput = .{ .kind = capture.kind.?, .payload = capture.bytes.items };
+        const payload: consequences.StringInput = .{
+            .kind = capture.payloadKind(),
+            .payload = capture.payload(),
+        };
         defer capture.reset();
         return .{
             .changed = try applySemantic(self.terminal, .{ .string_payload = payload }),
@@ -5501,7 +5350,7 @@ const TerminalStream = struct {
 
     fn cancelString(self: *TerminalStream) EventEffect {
         const capture = &self.terminal.stream_state.string;
-        if (capturedKittyGraphics(capture)) self.terminal.graphics.cancel();
+        if (capture.isKittyGraphics()) self.terminal.graphics.cancel();
         capture.reset();
         return discardedStringControl();
     }
@@ -5510,10 +5359,6 @@ const TerminalStream = struct {
         return self.terminal.charset.mapCodepoint(cp);
     }
 };
-
-fn capturedKittyGraphics(capture: *const StringCapture) bool {
-    return capture.kind == .apc and capture.bytes.items.len != 0 and capture.bytes.items[0] == 'G';
-}
 
 fn discardedStringControl() EventEffect {
     return .{
@@ -5577,62 +5422,6 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
     }
 
     return result.changed or (respond and !suppressed);
-}
-
-test "stream state initialization reports parser allocation failure" {
-    const init: *const fn (
-        std.mem.Allocator,
-    ) TerminalStreamState.InitError!TerminalStreamState = TerminalStreamState.initAlloc;
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    try std.testing.expectError(error.OutOfMemory, init(failing.allocator()));
-    try std.testing.expect(failing.has_induced_failure);
-}
-
-test "DCS capture start and put report exact failures and remain reusable" {
-    const start: *const fn (*DcsCapture, parser_mod.DcsHook) DcsCapture.StartError!void = DcsCapture.start;
-    const put: *const fn (*DcsCapture, u8) DcsCapture.PutError!void = DcsCapture.put;
-    const hook: parser_mod.DcsHook = .{
-        .final = 'q',
-        .params = &.{1},
-        .count = 1,
-        .intermediates = "$",
-        .intermediates_len = 1,
-    };
-
-    var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 0 });
-    var capture = DcsCapture.init(failing.allocator());
-    defer capture.deinit();
-
-    try std.testing.expectError(error.OutOfMemory, start(&capture, hook));
-    try std.testing.expect(!capture.active);
-    try std.testing.expectEqual(@as(usize, 0), capture.bytes.items.len);
-
-    failing.fail_index = std.math.maxInt(usize);
-    try start(&capture, hook);
-    const payload_start = capture.payload_start;
-    failing.fail_index = failing.alloc_index;
-
-    var put_count: u32 = 0;
-    while (!failing.has_induced_failure) : (put_count += 1) {
-        try std.testing.expect(put_count < parser_mod.max_metadata_control_bytes);
-        put(&capture, 'x') catch |err| {
-            try std.testing.expectEqual(error.OutOfMemory, err);
-            break;
-        };
-    }
-    try std.testing.expect(failing.has_induced_failure);
-    try std.testing.expect(capture.active);
-    try std.testing.expectEqual(payload_start + put_count, capture.bytes.items.len);
-
-    failing.fail_index = std.math.maxInt(usize);
-    try put(&capture, 'y');
-    while (capture.bytes.items.len - capture.payload_start < parser_mod.max_metadata_control_bytes) {
-        try put(&capture, 'z');
-    }
-    try std.testing.expectError(error.StringControlLimit, put(&capture, 'z'));
-    capture.reset();
-    try std.testing.expect(!capture.active);
-    try start(&capture, hook);
 }
 
 test "discarded string controls stream without retaining payload bytes" {
@@ -6415,7 +6204,7 @@ pub const Terminal = struct {
     /// and must call `deinit`.
     pub fn init(allocator: std.mem.Allocator, rows: u16, cols: u16) InitError!Terminal {
         try validateDimensions(rows, cols);
-        var stream_state = try TerminalStreamState.initAlloc(allocator);
+        var stream_state = try TerminalStreamState.init(allocator);
         errdefer stream_state.deinit();
         var state = try Screen.initWithCells(allocator, rows, cols);
         errdefer state.deinit(allocator);
@@ -6436,7 +6225,7 @@ pub const Terminal = struct {
         history_capacity: u16,
     ) InitError!Terminal {
         try validateDimensions(rows, cols);
-        var stream_state = try TerminalStreamState.initAlloc(allocator);
+        var stream_state = try TerminalStreamState.init(allocator);
         errdefer stream_state.deinit();
         var state = try Screen.initWithCellsAndHistory(allocator, rows, cols, history_capacity);
         errdefer state.deinit(allocator);
