@@ -2,6 +2,18 @@
 
 const std = @import("std");
 
+// File map:
+//   - parser bounds and borrowed phase-action vocabulary
+//   - runtime byte parser, active controls, and CSI/DCS accumulation
+//   - parser-spine proofs and projected terminal-event vocabulary
+//   - generated ECMA-48 transition table
+//   - bounded OSC and allocation-free delimited-control owners
+//   - incremental UTF-8 decoding and transactional owned copies
+
+// =============================================================================
+// Parser bounds and borrowed action vocabulary
+// =============================================================================
+
 const ParamKind = enum {
     csi,
     dcs,
@@ -222,13 +234,23 @@ pub const Action = union(enum) {
 /// Preserves exit, transition, and entry action order for one input byte.
 pub const PhaseActions = [3]?Action;
 
+// =============================================================================
+// Runtime terminal parser
+// =============================================================================
+
 /// Stateful parser for terminal input streams.
 pub const Parser = struct {
     /// Parser initialization can fail only while allocating its reusable string-control buffer.
     pub const InitError = error{OutOfMemory};
 
+    // -------------------------------------------------------------------------
+    // Retained decoder, transition, and delimited-control state
+    // -------------------------------------------------------------------------
+
+    // Text decoder and selected graphic encoding.
     utf8: Utf8Decoder,
     latin1: bool,
+    // ECMA-48 state plus borrowed CSI/DCS parameter scratch.
     state: ParseState,
     csi_params: [csi_max_params]i32,
     csi_separators: CsiSeparatorList,
@@ -236,11 +258,16 @@ pub const Parser = struct {
     intermediates: [csi_max_intermediates]u8,
     intermediates_len: u8,
     csi_in_param: bool,
+    // Mutually exclusive OSC, APC, DCS, PM, and SOS control owners.
     osc: OscControl,
     apc: PassthroughControl,
     dcs: PassthroughControl,
     pm: PassthroughControl,
     sos: PassthroughControl,
+
+    // -------------------------------------------------------------------------
+    // Lifetime, reset, and text encoding
+    // -------------------------------------------------------------------------
 
     /// Initialize parser state and its allocator-owned reusable string-control buffer.
     pub fn init(allocator: std.mem.Allocator) InitError!Parser {
@@ -309,6 +336,10 @@ pub const Parser = struct {
         if (self.osc.takeFailure()) |failure| return failure;
         return null;
     }
+
+    // -------------------------------------------------------------------------
+    // Byte advancement and ordered phase execution
+    // -------------------------------------------------------------------------
 
     /// Advance the parser by one byte and return ordered phase actions.
     pub fn next(self: *Parser, byte: u8) PhaseActions {
@@ -425,6 +456,10 @@ pub const Parser = struct {
             else => unreachable,
         };
     }
+
+    // -------------------------------------------------------------------------
+    // CSI/DCS accumulation and action assembly
+    // -------------------------------------------------------------------------
 
     fn collect(self: *Parser, byte: u8) void {
         if (self.intermediates_len >= self.intermediates.len) return;
@@ -641,6 +676,10 @@ pub const Parser = struct {
         };
     }
 
+    // -------------------------------------------------------------------------
+    // Active-control arbitration and scalar decoding
+    // -------------------------------------------------------------------------
+
     fn isActiveState(self: *const Parser) bool {
         return switch (self.state) {
             .osc_string, .screen_title_string, .dcs_passthrough, .sos_pm_apc_string => true,
@@ -758,6 +797,10 @@ pub const Parser = struct {
 fn stringControlCompleted(byte: u8) bool {
     return byte == '\\' or byte == 0x9C;
 }
+
+// =============================================================================
+// Runtime parser proofs
+// =============================================================================
 
 fn expectPhaseTags(
     phases: PhaseActions,
@@ -892,6 +935,10 @@ test "parser DCS hook stays on the hook boundary" {
     try expectPhaseTags(unhook, .dcs_unhook, null, null);
 }
 
+// =============================================================================
+// Projected terminal-event vocabulary
+// =============================================================================
+
 // Borrows one completed CSI rendition action.
 const StyleChange = struct {
     final: u8,
@@ -931,7 +978,9 @@ pub const Event = union(enum) {
     invalid_sequence,
 };
 
-// Generated ECMA-48 byte-state transition table.
+// =============================================================================
+// Generated ECMA-48 transition table
+// =============================================================================
 
 // Names every state in the generated VT parser automaton.
 const ParseState = enum {
@@ -1245,7 +1294,9 @@ fn parseTransition(state: ParseState, action: TransitionAction) Transition {
     return .{ .state = state, .action = action };
 }
 
-// Bounded OSC and generic string-control owners.
+// =============================================================================
+// Bounded OSC control owner
+// =============================================================================
 
 const ByteLimit = u32;
 
@@ -1305,6 +1356,10 @@ pub const OscControl = struct {
         kitty_file_transfer,
         kitty_clipboard,
     };
+
+    // -------------------------------------------------------------------------
+    // Retained payload, command policy, and failure state
+    // -------------------------------------------------------------------------
 
     allocator: std.mem.Allocator,
     state: OscState = .idle,
@@ -1393,6 +1448,10 @@ pub const OscControl = struct {
         c5113,
         c5522,
     };
+
+    // -------------------------------------------------------------------------
+    // Lifetime, snapshots, and failure reporting
+    // -------------------------------------------------------------------------
 
     /// Allocates the initial OSC buffer and records metadata, clipboard, and chunk bounds.
     pub fn init(
@@ -1531,6 +1590,10 @@ pub const OscControl = struct {
         self.overflowed = false;
         return failure;
     }
+
+    // -------------------------------------------------------------------------
+    // Byte admission and body completion
+    // -------------------------------------------------------------------------
 
     /// Consumes one OSC byte and returns its payload or terminator effect.
     pub fn feed(self: *OscControl, byte: u8) ?FeedResult {
@@ -1718,6 +1781,10 @@ pub const OscControl = struct {
             self.alloc_failed = true;
         };
     }
+
+    // -------------------------------------------------------------------------
+    // Numeric command-prefix recognition
+    // -------------------------------------------------------------------------
 
     fn advancePrefix(self: *const OscControl, byte: u8) ?PrefixState {
         return switch (self.prefix) {
@@ -2022,6 +2089,10 @@ fn bodyEscState(comptime kind: OscControl.BodyKind) OscControl.OscState {
     };
 }
 
+// =============================================================================
+// Allocation-free delimited controls
+// =============================================================================
+
 // Incremental string-control parser state without payload ownership.
 const PassthroughControl = struct {
     state: DelimitedState = .idle,
@@ -2101,7 +2172,9 @@ fn feedEscState(state: *DelimitedState, byte: u8) ?FeedResult {
     return .{ .put = byte };
 }
 
-// Incremental text decoding.
+// =============================================================================
+// Incremental UTF-8 decoding and proofs
+// =============================================================================
 
 /// UTF-8 decode result union.
 const Utf8Result = union(enum) {
@@ -2189,7 +2262,9 @@ test "UTF8 decoder: invalid continuation resets partial sequence" {
     try std.testing.expectEqual(@as(u21, 'B'), result.codepoint);
 }
 
-// Transactional event copying for simulation and fuzz ownership.
+// =============================================================================
+// Transactional owned event copies
+// =============================================================================
 
 /// Copies borrowed parser phase actions into arena-backed storage transactionally.
 pub fn appendOwnedPhases(
