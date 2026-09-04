@@ -1,6 +1,8 @@
 //! Owns terminal semantic state, byte application, replies, and ordered consequences.
 
 const std = @import("std");
+
+// Core parser, state, and protocol owners.
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
 const sixel = @import("sixel.zig");
@@ -8,15 +10,19 @@ const replies = @import("replies.zig");
 const properties = @import("properties.zig");
 const consequences = @import("consequences.zig");
 const input = @import("input.zig");
-const iterm_control = @import("iterm_control.zig");
-const mode_report_mod = @import("mode_report.zig");
 const modes_mod = @import("modes.zig");
 const charset_mod = @import("charset.zig");
+const screen_mod = @import("screen.zig");
+
+// Focused owners composed by Terminal.
 const clipboard_mod = @import("clipboard.zig");
 const fixed_report_mod = @import("fixed_report.zig");
+const iterm_control = @import("iterm_control.zig");
 const locator_mod = @import("locator.zig");
+const mode_report_mod = @import("mode_report.zig");
 const stream_state_mod = @import("stream_state.zig");
-const screen_mod = @import("screen.zig");
+
+// Screen-owned vocabulary used by terminal composition.
 const Screen = screen_mod.Screen;
 const copyOpenOutputLine = screen_mod.copyOpenOutputLine;
 const CursorStyleCommand = screen_mod.CursorStyleCommand;
@@ -28,6 +34,15 @@ const ScreenCursorShape = screen_mod.ScreenCursorShape;
 const ScreenEraseMode = screen_mod.ScreenEraseMode;
 const ScreenProtection = screen_mod.ScreenProtection;
 
+// File map:
+//   - shared composition and semantic-event vocabulary
+//   - C0/CSI/DCS/ESC/OSC parser narrowing
+//   - screen-bank projection and text selection
+//   - semantic application, reports, and terminal colors
+//   - mutation routing and fragmented stream ingestion
+//   - public Terminal lifecycle, observation, input, and replies
+//   - public-path characterization and parser ownership proofs
+
 comptime {
     if (parser_mod.max_params > Screen.SgrOperands.capacity) {
         @compileError("parser SGR parameter bound exceeds Screen.SgrOperands capacity");
@@ -36,6 +51,10 @@ comptime {
         @compileError("retained packet bound must match parser chunk-control bound");
     }
 }
+
+// =============================================================================
+// Shared terminal composition vocabulary
+// =============================================================================
 
 const sgr_stack_capacity = 10;
 const sgr_stack_default_selection: u16 = 0b111_1111_1111;
@@ -49,142 +68,7 @@ const SgrStackEntry = struct {
 fn advanceIdentity(value: *u64) void {
     value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
 }
-test "terminal resize allocation failures preserve primary state" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
-}
 
-test "terminal resize allocation failures preserve alternate state" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
-}
-
-test "terminal resize report allocation failures preserve state" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
-}
-
-test "prepared resize allocation failures and discard preserve state" {
-    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareResizeDiscardTransaction, .{});
-}
-
-fn prepareResizeDiscardTransaction(allocator: std.mem.Allocator) !void {
-    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
-    defer terminal.deinit();
-    const fed = try terminal.feed("AB\r\nCD");
-    try std.testing.expect(fed.stateChanged());
-    const semantic_sequence = terminal.semanticSequence();
-    const view_before = terminal.semanticView(0);
-    const cursor_row = view_before.cursor_row;
-    const cursor_col = view_before.cursor_col;
-    const history_rows = view_before.history_count;
-
-    var prepared = terminal.prepareResize(3, 5) catch |failure| {
-        try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
-        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cols);
-        return failure;
-    };
-    prepared.deinit();
-
-    const discarded = terminal.semanticView(0);
-    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
-    try std.testing.expectEqual(@as(u16, 2), discarded.rows);
-    try std.testing.expectEqual(@as(u16, 4), discarded.cols);
-    try std.testing.expectEqual(cursor_row, discarded.cursor_row);
-    try std.testing.expectEqual(cursor_col, discarded.cursor_col);
-    try std.testing.expectEqual(history_rows, discarded.history_count);
-
-    var reused = try terminal.prepareResize(3, 5);
-    defer reused.deinit();
-    reused.commit();
-    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
-    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).rows);
-    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cols);
-}
-
-fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
-    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
-    defer terminal.deinit();
-    try terminal.setCellPixelSize(9, 17);
-    const enabled = try terminal.feed("\x1b[?2048h");
-    try std.testing.expect(enabled.stateChanged());
-
-    terminal.resize(3, 5) catch |failure| {
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
-        try std.testing.expectEqualStrings("", terminal.replyBytes());
-        return failure;
-    };
-    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
-}
-
-test "prepared resize commits exact eight-bit report once" {
-    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
-    defer terminal.deinit();
-    try terminal.setCellPixelSize(9, 17);
-    const configured = try terminal.feed("\x1b[?2048h\x1b G");
-    try std.testing.expect(configured.stateChanged());
-    const semantic_sequence = terminal.semanticSequence();
-
-    var prepared = try terminal.prepareResize(3, 5);
-    defer prepared.deinit();
-    try std.testing.expectEqualStrings("", terminal.replyBytes());
-    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
-    prepared.commit();
-
-    try std.testing.expectEqualStrings("\x9b48;3;5;51;45t", terminal.replyBytes());
-    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
-}
-
-fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
-    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
-    defer terminal.deinit();
-
-    terminal.screen_state.primary.cells.?[0].codepoint = 'P';
-    terminal.screen_state.primary.cells.?[1].codepoint = 'R';
-    terminal.screen_state.alternate.cells.?[0].codepoint = 'A';
-    terminal.screen_state.alternate.cells.?[1].codepoint = 'L';
-    terminal.screen_state.alt_active = alternate_active;
-    terminal.screen_state.primary.cursor.setDefaultStyle(.{ .shape = .bar, .blink = false });
-    terminal.screen_state.alternate.cursor.setDefaultStyle(.{ .shape = .underline, .blink = true });
-    terminal.screen_state.primary.left_right_margin_mode = true;
-    terminal.screen_state.primary.left_margin = 1;
-    terminal.screen_state.primary.right_margin = 2;
-    const primary_history_count = terminal.screen_state.primary.historyCount();
-    const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
-    const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
-    const semantic_sequence_before = terminal.semanticSequence();
-
-    terminal.resize(3, 3) catch |err| {
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
-        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
-        try std.testing.expectEqual(primary_history_count, terminal.screen_state.primary.historyCount());
-        try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
-        try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
-        try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-        try std.testing.expectEqual(semantic_sequence_before, terminal.semanticSequence());
-        try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
-        try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
-        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
-        try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
-        try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-        return err;
-    };
-
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.rows);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.cols);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.rows);
-    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.cols);
-    try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
-    try std.testing.expect(!terminal.screen_state.primary.left_right_margin_mode);
-    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.left_margin);
-    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
-    try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
-    try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
-    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
-}
 // Terminal modes, replies, and bounded caller-neutral consequences.
 
 // Carries Kitty keyboard flags and the set, add, or remove operation mode.
@@ -406,6 +290,10 @@ const TerminalColorControlCommand = struct {
 const TextSizeCommand = struct {
     payload: []const u8,
 };
+
+// =============================================================================
+// Semantic event vocabulary
+// =============================================================================
 
 // Parser events to canonical terminal semantics.
 
@@ -659,6 +547,10 @@ const TitleStackCommand = enum {
     pop,
 };
 
+// =============================================================================
+// C0 and single-byte control decoding
+// =============================================================================
+
 const C0Action = enum {
     bell,
     line_feed,
@@ -760,6 +652,10 @@ test "c0 legacy controls map caller-neutral state" {
 test "c0 ignores unsupported controls" {
     try std.testing.expectEqual(@as(?SemanticEvent, null), c0Process(fromByte(0x00)));
 }
+
+// =============================================================================
+// CSI decoding
+// =============================================================================
 
 // Routes one completed borrowed CSI sequence; unsupported combinations return null.
 fn csiProcess(
@@ -1429,6 +1325,10 @@ fn zeroQuery(params: []const i32) bool {
     return (queryParam(params) orelse return false) == 0;
 }
 
+// =============================================================================
+// DCS and escape decoding
+// =============================================================================
+
 const DcsEvent = @FieldType(parser_mod.Event, "dcs");
 
 // Decodes one completed borrowed DCS payload; unsupported commands return null.
@@ -1689,6 +1589,10 @@ test "esc maps low legacy controls and ignores unsupported finals" {
     try std.testing.expect(escProcess('s').?.legacy_control == .tek_write_thru_short_dashed);
     try std.testing.expectEqual(@as(?SemanticEvent, null), escProcess('z'));
 }
+
+// =============================================================================
+// OSC decoding and borrowed protocol payloads
+// =============================================================================
 
 // Decodes one complete borrowed OSC action into a canonical semantic event.
 fn oscProcess(osc: parser_mod.OscAction) ?SemanticEvent {
@@ -1999,6 +1903,10 @@ test "OSC Kitty caller-policy payloads expose only retained terminal state" {
     } }).?.text_size.payload);
 }
 
+// =============================================================================
+// Screen-bank projection and text selection
+// =============================================================================
+
 // Screen banks and borrowed semantic projection.
 
 // Identifies whether a visible row comes from history or the active screen.
@@ -2206,6 +2114,10 @@ fn copyTextRange(
     }
     return out.toOwnedSlice(allocator);
 }
+
+// =============================================================================
+// Semantic application and child-directed reports
+// =============================================================================
 
 // Semantic application and terminal reply generation.
 
@@ -2981,6 +2893,10 @@ test "DECRQSS reply capacity failure preserves the complete prior output" {
     try std.testing.expectEqualSlices(u8, retained, output.bytes());
 }
 
+// =============================================================================
+// Terminal color protocol state
+// =============================================================================
+
 const Rgb = properties.Rgb;
 const color_osc_max_bytes = 18;
 
@@ -3651,6 +3567,10 @@ fn applyKittyColorStack(vt: *Terminal, command: KittyColorCommand) bool {
         .pop => |index| vt.properties.popColor(index),
     };
 }
+
+// =============================================================================
+// Mutation routing and parser application
+// =============================================================================
 
 /// Packs the semantic owners affected by one accepted feed.
 ///
@@ -4553,6 +4473,10 @@ fn eraseGraphicsRect(vt: *Terminal, screen: *const Screen, area: RectArea) bool 
     );
 }
 
+// =============================================================================
+// Fragmented stream ingestion
+// =============================================================================
+
 // Reports parser allocation, parser bound, captured DCS bound, or retained-consequence failure.
 const TerminalFeedError = error{
     ConsequenceLimit,
@@ -5138,6 +5062,10 @@ test "text extraction reports impossible retained codepoints exactly" {
     );
 }
 
+// =============================================================================
+// Cursor restoration and public lifecycle
+// =============================================================================
+
 const RestoredCursorInformation = struct {
     row: u16,
     col: u16,
@@ -5213,6 +5141,32 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
 
 // Public terminal composition and lifecycle.
 
+const CursorSavepoint = struct {
+    row: u16 = 0,
+    col: u16 = 0,
+    style: Screen.CursorStyle = Screen.default_cursor_style,
+    visible: bool = true,
+};
+
+// Stores cursor presentation, rendition, charset, origin, and wrap state for one screen-bank save slot.
+const Savepoint = struct {
+    valid: bool = false,
+    cursor: CursorSavepoint = .{},
+    current_attrs: Screen.CellAttrs = Screen.default_cell_attrs,
+    reverse_screen_mode: bool = false,
+    origin_mode: bool = false,
+    auto_wrap: bool = true,
+    wrap_pending: bool = false,
+    gl_index: u8 = 0,
+    gr_index: u8 = 1,
+    designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
+
+    /// Returns the savepoint to default cursor and charset state.
+    fn clear(self: *Savepoint) void {
+        self.* = .{};
+    }
+};
+
 // Owns resize implementation state without widening Terminal's public surface
 // to Screen or reflow storage.
 const PreparedResizeState = struct {
@@ -5223,8 +5177,14 @@ const PreparedResizeState = struct {
     reply_len: u32,
 };
 
-/// caller-neutral terminal state and protocol engine.
+// =============================================================================
+// Public Terminal owner
+// =============================================================================
+
+/// Caller-neutral terminal state and protocol engine.
 pub const Terminal = struct {
+    // -- Public observation and value vocabulary -----------------------------
+
     /// Borrows a unified history-and-screen view until terminal mutation.
     pub const SemanticView = struct {
         rows: u16,
@@ -5340,6 +5300,9 @@ pub const Terminal = struct {
     };
     /// Reports exact terminal-text extraction failures.
     pub const TextError = CopyError;
+
+    // Caller-neutral consequence vocabulary.
+
     /// Classifies one retained notification consequence.
     pub const NotificationKind = consequences.NotificationKind;
     /// Borrows one retained notification consequence.
@@ -5370,6 +5333,9 @@ pub const Terminal = struct {
     pub const ContainerOccurrence = consequences.ContainerOccurrence;
     /// Supplies one caller-owned value for a retained container query.
     pub const ContainerReply = ContainerReplyValue;
+
+    // Construction, feed, and geometry results.
+
     /// Reports parser, retained-state, and reply failures while feeding PTY bytes.
     pub const FeedError = TerminalFeedError;
     /// Summarizes observable terminal changes from one feed operation.
@@ -5439,6 +5405,9 @@ pub const Terminal = struct {
             self.committed = true;
         }
     };
+
+    // Caller interaction and protocol reply vocabulary.
+
     /// Reports a zero cell-pixel dimension before any screen mutation.
     pub const CellPixelSizeError = error{InvalidDimensions};
     /// Copies one nonzero caller-provided terminal cell size in logical pixels.
@@ -5590,6 +5559,9 @@ pub const Terminal = struct {
     };
     /// Reports stale occurrence identity or a consequence requiring a reply.
     pub const ConsumeConsequenceError = error{ StaleConsequence, ReplyRequired };
+
+    // Presentation and image vocabulary.
+
     /// Uses the canonical copied terminal RGB value.
     pub const Rgb = Screen.Rgb;
     /// Uses the canonical default, indexed, or RGB cell color.
@@ -5608,6 +5580,33 @@ pub const Terminal = struct {
     pub const CursorShape = Screen.CursorShape;
     /// Uses one row's DEC presentation geometry.
     pub const LineGeometry = Screen.LineGeometry;
+    /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
+    /// reverse state used to resolve terminal visual values.
+    pub const Presentation = struct {
+        palette: [256]Terminal.Rgb,
+        foreground: Terminal.Rgb,
+        background: Terminal.Rgb,
+        cursor: ?Terminal.Rgb,
+        cursor_text: ?Terminal.Rgb,
+        selection_background: ?Terminal.Rgb,
+        selection_foreground: ?Terminal.Rgb,
+        reverse_screen: bool,
+    };
+
+    fn defaultPresentation() Presentation {
+        const colors = TerminalColorState{};
+        return .{
+            .palette = colors.palette,
+            .foreground = colors.foreground,
+            .background = colors.background,
+            .cursor = null,
+            .cursor_text = null,
+            .selection_background = null,
+            .selection_foreground = null,
+            .reverse_screen = false,
+        };
+    }
+
     /// Provides the canonical default terminal cell attributes.
     pub const default_cell_attrs = Screen.default_cell_attrs;
     /// Provides the immutable terminal palette and dynamic-color defaults.
@@ -5694,6 +5693,9 @@ pub const Terminal = struct {
             };
         }
     };
+
+    // Logical-output vocabulary.
+
     /// Names why one finalized logical line has no retained text.
     pub const LogicalOutputLossReason = OutputLossReason;
 
@@ -5766,6 +5768,9 @@ pub const Terminal = struct {
         newest: u64,
     };
 
+    // -- Retained canonical owners -------------------------------------------
+
+    // Canonical data planes and mode state.
     allocator: std.mem.Allocator,
     stream_state: TerminalStreamState,
     screen_state: ScreenSet,
@@ -5776,15 +5781,21 @@ pub const Terminal = struct {
     sgr_stack: [sgr_stack_capacity]SgrStackEntry = @splat(.{}),
     sgr_stack_len: u8 = 0,
     xtchecksum_flags: u16 = 0,
+
+    // Child-facing metadata, replies, consequences, and protocol adjuncts.
     properties: properties.State,
     reply_buffer: replies.Buffer,
     consequences: consequences.State,
     locator: locator_mod.State = .{},
     charset: charset_mod.State = .{},
+
+    // Cursor savepoints and lifecycle identity.
     primary_savepoint: Savepoint = .{},
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
     resize_prepared: bool = false,
+    // -- Construction and feed ------------------------------------------------
+
     fn requireNoPreparedResize(self: *const Terminal) void {
         if (self.resize_prepared)
             @panic("terminal mutation during prepared resize");
@@ -5919,6 +5930,8 @@ pub const Terminal = struct {
         if (state_changed) advanceIdentity(&self.semantic_sequence);
     }
 
+    // -- Geometry and reconfiguration ----------------------------------------
+
     /// Resize both terminal screens.
     ///
     /// Both dimensions must be nonzero. Invalid dimensions or allocation
@@ -6045,6 +6058,8 @@ pub const Terminal = struct {
         self.consequences.consumeHead(generation) catch return error.StaleColorPreferenceQuery;
         advanceIdentity(&self.semantic_sequence);
     }
+
+    // -- Reset, savepoints, and terminal modes --------------------------------
 
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
@@ -6564,6 +6579,8 @@ pub const Terminal = struct {
         return changed;
     }
 
+    // -- Borrowed observation -------------------------------------------------
+
     /// Reports whether mode 19997 requests foreground termios handling for typed one-byte keys.
     pub fn termiosSignals(self: *const Terminal) bool {
         return self.modes.termios_signals;
@@ -6662,6 +6679,8 @@ pub const Terminal = struct {
             .pointer_mode = self.modes.pointer_mode,
         };
     }
+
+    // -- Properties and caller-neutral consequences --------------------------
 
     /// Reports whether synchronized-output mode is enabled.
     pub fn synchronizedOutput(self: *const Terminal) bool {
@@ -6763,6 +6782,8 @@ pub const Terminal = struct {
     pub fn colorPreferenceNotifications(self: *const Terminal) bool {
         return self.modes.color_preference_notifications;
     }
+
+    // -- Logical output and text extraction ----------------------------------
 
     /// Copies finalized primary logical lines after `cursor` and one observation-scoped open line.
     pub fn copyLogicalOutput(
@@ -6900,6 +6921,8 @@ pub const Terminal = struct {
     ) TextError![]const u8 {
         return copyTextRange(allocator, &self.screen_state, range, max_bytes);
     }
+
+    // -- Caller input and child replies --------------------------------------
 
     /// Encode one caller input event according to current terminal modes.
     ///
@@ -7231,6 +7254,8 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
+    // -- Private cursor helpers -----------------------------------------------
+
     fn activeSavepoint(self: *Terminal) *Savepoint {
         return if (self.screen_state.alt_active) &self.alternate_savepoint else &self.primary_savepoint;
     }
@@ -7251,34 +7276,11 @@ pub const Terminal = struct {
         const bounded_col = @min(col, active.cols - 1);
         active.cursor.setPositionStructural(bounded_row, bounded_col);
     }
-
-    /// Copies the palette, dynamic defaults, cursor colors, and screen-wide
-    /// reverse state used to resolve terminal visual values.
-    pub const Presentation = struct {
-        palette: [256]Terminal.Rgb,
-        foreground: Terminal.Rgb,
-        background: Terminal.Rgb,
-        cursor: ?Terminal.Rgb,
-        cursor_text: ?Terminal.Rgb,
-        selection_background: ?Terminal.Rgb,
-        selection_foreground: ?Terminal.Rgb,
-        reverse_screen: bool,
-    };
-
-    fn defaultPresentation() Presentation {
-        const colors = TerminalColorState{};
-        return .{
-            .palette = colors.palette,
-            .foreground = colors.foreground,
-            .background = colors.background,
-            .cursor = null,
-            .cursor_text = null,
-            .selection_background = null,
-            .selection_foreground = null,
-            .reverse_screen = false,
-        };
-    }
 };
+
+// =============================================================================
+// Caller reply helpers and structural bounds
+// =============================================================================
 
 fn containerReplyMatches(request: ContainerRequestValue, reply: ContainerReplyValue) bool {
     return switch (request) {
@@ -7341,6 +7343,147 @@ comptime {
         @as(u64, std.math.maxInt(u16)) * @as(u64, std.math.maxInt(u16));
     std.debug.assert(maximum_cell_count <= std.math.maxInt(u32));
     std.debug.assert(maximum_cell_count <= std.math.maxInt(usize));
+}
+
+// =============================================================================
+// Public-path characterization tests
+// =============================================================================
+
+test "terminal resize allocation failures preserve primary state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
+}
+
+test "terminal resize allocation failures preserve alternate state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{true});
+}
+
+test "terminal resize report allocation failures preserve state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeWithNotificationTransaction, .{});
+}
+
+test "prepared resize allocation failures and discard preserve state" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, prepareResizeDiscardTransaction, .{});
+}
+
+fn prepareResizeDiscardTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    const fed = try terminal.feed("AB\r\nCD");
+    try std.testing.expect(fed.stateChanged());
+    const semantic_sequence = terminal.semanticSequence();
+    const view_before = terminal.semanticView(0);
+    const cursor_row = view_before.cursor_row;
+    const cursor_col = view_before.cursor_col;
+    const history_rows = view_before.history_count;
+
+    var prepared = terminal.prepareResize(3, 5) catch |failure| {
+        try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+        try std.testing.expectEqual(@as(u16, 2), terminal.semanticView(0).rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.semanticView(0).cols);
+        return failure;
+    };
+    prepared.deinit();
+
+    const discarded = terminal.semanticView(0);
+    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 2), discarded.rows);
+    try std.testing.expectEqual(@as(u16, 4), discarded.cols);
+    try std.testing.expectEqual(cursor_row, discarded.cursor_row);
+    try std.testing.expectEqual(cursor_col, discarded.cursor_col);
+    try std.testing.expectEqual(history_rows, discarded.history_count);
+
+    var reused = try terminal.prepareResize(3, 5);
+    defer reused.deinit();
+    reused.commit();
+    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
+    try std.testing.expectEqual(@as(u16, 3), terminal.semanticView(0).rows);
+    try std.testing.expectEqual(@as(u16, 5), terminal.semanticView(0).cols);
+}
+
+fn resizeWithNotificationTransaction(allocator: std.mem.Allocator) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 17);
+    const enabled = try terminal.feed("\x1b[?2048h");
+    try std.testing.expect(enabled.stateChanged());
+
+    terminal.resize(3, 5) catch |failure| {
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
+        try std.testing.expectEqualStrings("", terminal.replyBytes());
+        return failure;
+    };
+    try std.testing.expectEqualStrings("\x1b[48;3;5;51;45t", terminal.replyBytes());
+}
+
+test "prepared resize commits exact eight-bit report once" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 4);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(9, 17);
+    const configured = try terminal.feed("\x1b[?2048h\x1b G");
+    try std.testing.expect(configured.stateChanged());
+    const semantic_sequence = terminal.semanticSequence();
+
+    var prepared = try terminal.prepareResize(3, 5);
+    defer prepared.deinit();
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+    try std.testing.expectEqual(semantic_sequence, terminal.semanticSequence());
+    prepared.commit();
+
+    try std.testing.expectEqualStrings("\x9b48;3;5;51;45t", terminal.replyBytes());
+    try std.testing.expectEqual(semantic_sequence + 1, terminal.semanticSequence());
+}
+
+fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: bool) !void {
+    var terminal = try Terminal.initWithHistory(allocator, 2, 4, 8);
+    defer terminal.deinit();
+
+    terminal.screen_state.primary.cells.?[0].codepoint = 'P';
+    terminal.screen_state.primary.cells.?[1].codepoint = 'R';
+    terminal.screen_state.alternate.cells.?[0].codepoint = 'A';
+    terminal.screen_state.alternate.cells.?[1].codepoint = 'L';
+    terminal.screen_state.alt_active = alternate_active;
+    terminal.screen_state.primary.cursor.setDefaultStyle(.{ .shape = .bar, .blink = false });
+    terminal.screen_state.alternate.cursor.setDefaultStyle(.{ .shape = .underline, .blink = true });
+    terminal.screen_state.primary.left_right_margin_mode = true;
+    terminal.screen_state.primary.left_margin = 1;
+    terminal.screen_state.primary.right_margin = 2;
+    const primary_history_count = terminal.screen_state.primary.historyCount();
+    const primary_history_cell = terminal.screen_state.primary.historyRowAt(0, 0);
+    const alternate_cell = terminal.screen_state.alternate.cellAt(0, 0);
+    const semantic_sequence_before = terminal.semanticSequence();
+
+    terminal.resize(3, 3) catch |err| {
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.primary.cols);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.alternate.rows);
+        try std.testing.expectEqual(@as(u16, 4), terminal.screen_state.alternate.cols);
+        try std.testing.expectEqual(primary_history_count, terminal.screen_state.primary.historyCount());
+        try std.testing.expectEqual(primary_history_cell, terminal.screen_state.primary.historyRowAt(0, 0));
+        try std.testing.expectEqual(alternate_cell, terminal.screen_state.alternate.cellAt(0, 0));
+        try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
+        try std.testing.expectEqual(semantic_sequence_before, terminal.semanticSequence());
+        try std.testing.expect(terminal.screen_state.primary.left_right_margin_mode);
+        try std.testing.expectEqual(@as(u16, 1), terminal.screen_state.primary.left_margin);
+        try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
+        try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
+        try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
+        return err;
+    };
+
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.rows);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.primary.cols);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.rows);
+    try std.testing.expectEqual(@as(u16, 3), terminal.screen_state.alternate.cols);
+    try std.testing.expectEqual(alternate_active, terminal.screen_state.alt_active);
+    try std.testing.expect(!terminal.screen_state.primary.left_right_margin_mode);
+    try std.testing.expectEqual(@as(u16, 0), terminal.screen_state.primary.left_margin);
+    try std.testing.expectEqual(@as(u16, 2), terminal.screen_state.primary.right_margin);
+    try std.testing.expectEqual(.bar, terminal.screen_state.primary.cursor.default_style.shape);
+    try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
+    try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
 }
 
 test "terminal borrows bounded caller-selected history projections" {
@@ -7728,31 +7871,9 @@ test "OSC 66 character insertion removes the whole intersecting cluster" {
     }
 }
 
-const CursorSavepoint = struct {
-    row: u16 = 0,
-    col: u16 = 0,
-    style: Screen.CursorStyle = Screen.default_cursor_style,
-    visible: bool = true,
-};
-
-// Stores cursor presentation, rendition, charset, origin, and wrap state for one screen-bank save slot.
-const Savepoint = struct {
-    valid: bool = false,
-    cursor: CursorSavepoint = .{},
-    current_attrs: Screen.CellAttrs = Screen.default_cell_attrs,
-    reverse_screen_mode: bool = false,
-    origin_mode: bool = false,
-    auto_wrap: bool = true,
-    wrap_pending: bool = false,
-    gl_index: u8 = 0,
-    gr_index: u8 = 1,
-    designations: [4]u8 = .{ 'B', 'B', 'B', 'B' },
-
-    /// Returns the savepoint to default cursor and charset state.
-    fn clear(self: *Savepoint) void {
-        self.* = .{};
-    }
-};
+// =============================================================================
+// Test-only parser ownership maps
+// =============================================================================
 
 const RouteOwnerTests = struct {
     const ParserEvent = parser_mod.Event;
