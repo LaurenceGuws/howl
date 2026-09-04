@@ -6,6 +6,17 @@ const sized_text = @import("sized_text.zig");
 const tab_stops_mod = @import("tab_stops.zig");
 const unicode = @import("unicode_17.zig");
 
+// File map:
+//   - scalar sidecar helpers and shared bounds
+//   - the public Screen owner, storage, lifecycle, and mutation districts
+//   - logical text projection and the cell-value model
+//   - Unicode ownership proofs
+//   - resize/reflow machinery and history/output integration proofs
+
+// =============================================================================
+// Scalar sidecar helpers and shared bounds
+// =============================================================================
+
 fn acceptedTail(
     storage: *const scalar_storage.Storage,
     cell: usize,
@@ -26,8 +37,16 @@ fn clearAcceptedTail(
 
 const logical_output_line_bytes_max: usize = 1024 * 1024;
 
+// =============================================================================
+// Public Screen owner
+// =============================================================================
+
 /// Terminal screen state for cursor, cells, margins, and history.
 pub const Screen = struct {
+    // -------------------------------------------------------------------------
+    // Public vocabulary and retained layout
+    // -------------------------------------------------------------------------
+
     /// Maximum aggregate bytes retained across finalized logical-output lines.
     pub const retained_output_bytes_max: usize = logical_output_line_bytes_max;
 
@@ -189,6 +208,10 @@ pub const Screen = struct {
     current_attrs: CellAttrs,
     tab_stops: tab_stops_mod.State,
     cell_pixel_size: ?CellPixelSize,
+
+    // -------------------------------------------------------------------------
+    // Construction and owned storage
+    // -------------------------------------------------------------------------
 
     fn cellCount(rows: u16, cols: u16) u32 {
         return @as(u32, rows) * @as(u32, cols);
@@ -374,6 +397,10 @@ pub const Screen = struct {
         if (self.output_lines) |lines| allocator.free(lines);
         self.output_lines = null;
     }
+
+    // -------------------------------------------------------------------------
+    // Resize authority and replacement installation
+    // -------------------------------------------------------------------------
 
     /// Replace this screen with a reflowed grid of the requested dimensions.
     ///
@@ -693,6 +720,10 @@ pub const Screen = struct {
         std.debug.assert(self.cursor.col < cols);
         if (self.wrap_pending) std.debug.assert(self.cursor.col == self.lineRightBoundary(self.cursor.row));
     }
+
+    // -------------------------------------------------------------------------
+    // Projected history and logical-output retention
+    // -------------------------------------------------------------------------
 
     /// Retain one visible row only after all authority and projection allocations succeed.
     ///
@@ -1112,6 +1143,10 @@ pub const Screen = struct {
         if (self.history_flags) |flags| flags[slot] = 0;
     }
 
+    // -------------------------------------------------------------------------
+    // Reset and borrowed observation
+    // -------------------------------------------------------------------------
+
     /// Reset visible grid state to defaults.
     pub fn reset(self: *Screen) void {
         self.cursor.reset();
@@ -1284,6 +1319,10 @@ pub const Screen = struct {
     pub fn historyCapacity(self: *const Screen) u16 {
         return self.history_capacity;
     }
+
+    // -------------------------------------------------------------------------
+    // Action routing and cursor movement
+    // -------------------------------------------------------------------------
 
     /// Apply one routed screen mutation request to this Screen.
     pub fn applyScreen(self: *Screen, event: Screen.Action) void {
@@ -1480,6 +1519,10 @@ pub const Screen = struct {
             else => unreachable,
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Erase, rectangular, line, and column editing
+    // -------------------------------------------------------------------------
 
     /// Resolved inclusive physical bounds for one rectangular operation.
     pub const RectBounds = struct {
@@ -2240,6 +2283,10 @@ pub const Screen = struct {
         return changed;
     }
 
+    // -------------------------------------------------------------------------
+    // Cell and scalar mutation support
+    // -------------------------------------------------------------------------
+
     fn rowCells(self: *Screen, row: u16) ?[]Cell {
         const cells = self.cells orelse return null;
         const start = self.rowStart(row);
@@ -2301,6 +2348,10 @@ pub const Screen = struct {
                 ) catch unreachable;
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Text and grapheme admission
+    // -------------------------------------------------------------------------
 
     /// Write one byte per cell through the terminal's graphic write path.
     pub fn writeText(self: *Screen, text: []const u8) void {
@@ -2941,6 +2992,10 @@ pub const Screen = struct {
         return .{ .row = self.cursor.row, .col = self.cursor.col - 1 };
     }
 
+    // -------------------------------------------------------------------------
+    // Rendition
+    // -------------------------------------------------------------------------
+
     /// Apply SGR parameters to the retained attributes used by subsequent writes.
     pub fn applySgr(self: *Screen, operands: SgrOperands) bool {
         const params = operands.values;
@@ -3066,6 +3121,10 @@ pub const Screen = struct {
         const sgr_color = decodeExtendedColor(operands, idx) orelse return;
         self.current_attrs.underline_color = sgr_color;
     }
+
+    // -------------------------------------------------------------------------
+    // Tabs, scrolling, margins, and history restoration
+    // -------------------------------------------------------------------------
 
     /// Move forward through at most `count` tab stops, clamping at the last column.
     fn horizontalTabForward(self: *Screen, count: u16) void {
@@ -3485,6 +3544,10 @@ pub const Screen = struct {
             ) catch @panic("history restore first-fit plan diverged");
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Row geometry and structural ownership
+    // -------------------------------------------------------------------------
 
     fn rowStart(self: *const Screen, logical_row: u16) u32 {
         if (self.rows == 0) return 0;
@@ -4062,7 +4125,9 @@ pub const Screen = struct {
     }
 };
 
-// Screen storage, reflow, and cell-value support.
+// =============================================================================
+// Logical text projection helpers
+// =============================================================================
 
 fn screenColCount(value: u16) u32 {
     return value;
@@ -4474,6 +4539,10 @@ pub fn copyOpenOutputLine(
     return bytes.toOwnedSlice(allocator);
 }
 
+// =============================================================================
+// Cell rendition and semantic value model
+// =============================================================================
+
 fn decodeExtendedColor(
     operands: Screen.SgrOperands,
     idx: *u8,
@@ -4665,6 +4734,10 @@ const blank_cell = ScreenCell{
     .codepoint = 0,
     .attrs = initial_cell_attrs,
 };
+
+// =============================================================================
+// Unicode cell and projected-history proofs
+// =============================================================================
 
 test "screen retains twenty four scalars and REP owns an independent copy" {
     var screen = try Screen.initWithCells(std.testing.allocator, 1, 4);
@@ -5504,6 +5577,10 @@ test "projected history scalar pressure preserves accepted ownership and later r
     try std.testing.expectEqual(@as(u64, 1), screen.history_loss_generation);
 }
 
+// =============================================================================
+// Color and cursor value types
+// =============================================================================
+
 // Stores one exact 24-bit terminal color.
 const ScreenRgb = struct {
     r: u8,
@@ -5753,6 +5830,10 @@ pub const ScreenEraseMode = enum(u2) {
     all = 2,
     scrollback = 3,
 };
+
+// =============================================================================
+// Resize and reflow engine
+// =============================================================================
 
 // Convert a checked standard-library length to the history/reflow domain.
 fn screenCount32(len: usize) u32 {
@@ -6416,6 +6497,10 @@ fn copyVisibleRows(
     std.debug.assert(src_row == projection.visible_start + projection.visible_rows_kept);
 }
 
+// =============================================================================
+// Resize and reflow proofs
+// =============================================================================
+
 test "resize allocation owners release partial state and remain reusable" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, collectSnapshotAllocation, .{});
     try std.testing.checkAllAllocationFailures(std.testing.allocator, reflowAllocation, .{});
@@ -6523,7 +6608,7 @@ fn screenResizeColCount(cols: u16) u32 {
     return cols;
 }
 
-// Applies bounded rectangular attribute operations to one cell in protocol order.
+// Rectangular rendition helper shared by Screen editing paths.
 fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool) bool {
     const before = target.*;
     for (attrs) |attr| {
@@ -6605,6 +6690,10 @@ fn applyRectAttrOps(target: *ScreenCellAttrs, attrs: []const u16, reverse: bool)
     }
     return !std.meta.eql(before, target.*);
 }
+
+// =============================================================================
+// Projected history and logical-output proofs
+// =============================================================================
 
 test "projected history admission and eviction allocate nothing after initialization" {
     var failing = std.testing.FailingAllocator.init(std.testing.allocator, .{});
