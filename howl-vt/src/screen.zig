@@ -44,7 +44,7 @@ const logical_output_line_bytes_max: usize = 1024 * 1024;
 /// Terminal screen state for cursor, cells, margins, and history.
 pub const Screen = struct {
     // -------------------------------------------------------------------------
-    // Public vocabulary and retained layout
+    // Public vocabulary
     // -------------------------------------------------------------------------
 
     /// Maximum aggregate bytes retained across finalized logical-output lines.
@@ -56,6 +56,8 @@ pub const Screen = struct {
 
     /// Failure while validating dimensions or allocating owned Screen storage.
     const InitError = error{ InvalidDimensions, OutOfMemory };
+
+    // Canonical cell, color, and cursor values.
 
     /// Uses the canonical terminal RGB value for screen state.
     pub const Rgb = ScreenRgb;
@@ -94,6 +96,16 @@ pub const Screen = struct {
         double_height_top,
         double_height_bottom,
     };
+    /// Resolved inclusive physical bounds for one rectangular operation.
+    pub const RectBounds = struct {
+        top: u16,
+        left: u16,
+        bottom: u16,
+        right: u16,
+    };
+
+    // Screen-local row projection and routed mutation values.
+
     const RetainedRow = struct {
         cells: []const Cell,
         scalars: *const scalar_storage.Storage,
@@ -163,6 +175,11 @@ pub const Screen = struct {
     const row_geometry_shift: u3 = 1;
     const row_geometry_mask: u8 = 0b110;
 
+    // -------------------------------------------------------------------------
+    // Retained screen-bank owners
+    // -------------------------------------------------------------------------
+
+    // Geometry, cursor, modes, margins, and row orientation.
     allocator: ?std.mem.Allocator,
     rows: u16,
     cols: u16,
@@ -179,9 +196,13 @@ pub const Screen = struct {
     row_origin: u16,
     scroll_top: u16,
     scroll_bottom: u16,
+
+    // Visible cell plane and scalar sidecar.
     cells: ?[]Cell,
     scalars: ?scalar_storage.Storage,
     row_flags: ?[]u8,
+
+    // Projected scrollback ring and its transactional scalar plans.
     history: ?[]Cell,
     history_scalars: ?scalar_storage.Storage,
     history_plan: ?[]scalar_storage.Range,
@@ -192,10 +213,14 @@ pub const Screen = struct {
     history_count: u32,
     history_write_idx: u32,
     history_row_base: u32,
+
+    // Bounded prefix of the one logical line cut by the oldest retained row.
     history_boundary_text: ?[]u8,
     history_boundary_stored: usize,
     history_boundary_total: usize,
     history_boundary_active: bool,
+
+    // Finalized logical-output descriptors and circular text storage.
     output_lines: ?[]OutputLine,
     output_lines_start: u32,
     output_lines_count: u16,
@@ -203,6 +228,8 @@ pub const Screen = struct {
     output_text_start: u32,
     output_bytes: usize,
     next_output_id: u64,
+
+    // Loss identity, repeat source, rendition, tab, and pixel-size state.
     history_loss_generation: u64,
     last_graphic: ?LastGraphic,
     current_attrs: CellAttrs,
@@ -1523,14 +1550,6 @@ pub const Screen = struct {
     // -------------------------------------------------------------------------
     // Erase, rectangular, line, and column editing
     // -------------------------------------------------------------------------
-
-    /// Resolved inclusive physical bounds for one rectangular operation.
-    pub const RectBounds = struct {
-        top: u16,
-        left: u16,
-        bottom: u16,
-        right: u16,
-    };
 
     /// Erases one display mode, preserving protected cells when requested.
     /// Returns whether cells, row state, history, or pending wrap changed; it cannot fail.
