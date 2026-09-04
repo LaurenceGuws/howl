@@ -1,0 +1,50 @@
+//! Maintained WebAssembly canary; never part of the native core dependency graph.
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.resolveTargetQuery(.{ .cpu_arch = .wasm32, .os_tag = .freestanding });
+    const client = b.dependency("howl_client", .{ .target = target, .optimize = .ReleaseSafe });
+    const client_module = client.module("howl_client");
+    const session_module = client_module.import_table.get("howl_session") orelse
+        @panic("howl-client lost its owned session protocol dependency");
+    const render = b.dependency("howl_render", .{
+        .target = target,
+        .optimize = .ReleaseSafe,
+        .native_text = false,
+        .generated_glyphs = false,
+    });
+    const root = b.createModule(.{
+        .root_source_file = b.path("src/wasm.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    root.addImport("howl_client", client_module);
+    root.addImport("howl_session", session_module);
+    root.addImport("howl_render", render.module("howl_render"));
+    const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
+    wasm.entry = .disabled;
+    root.export_symbol_names = &.{
+        "hw_input_ptr", "hw_input_capacity", "hw_output_ptr",   "hw_output_len",
+        "hw_text_ptr",  "hw_text_len",       "hw_error_ptr",    "hw_error_len",
+        "hw_phase",     "hw_identity",       "hw_revision",     "hw_rows",
+        "hw_columns",   "hw_reset",          "hw_observe",      "hw_send_text",
+        "hw_feed",      "hw_finish",         "hw_canvas_check",
+    };
+    wasm.export_memory = true;
+    wasm.initial_memory = 32 * 1024 * 1024;
+    wasm.max_memory = 32 * 1024 * 1024;
+    b.installArtifact(wasm);
+
+    const check = b.step("check", "Run the zero-import Wasm wire and Canvas contract");
+    const test_command = b.addSystemCommand(&.{ "node", "tests/check.mjs" });
+    test_command.setCwd(b.path("."));
+    test_command.addFileArg(wasm.getEmittedBin());
+    check.dependOn(&test_command.step);
+    const live = b.step("live", "Test this Wasm client against a caller-supplied disposable Howl endpoint");
+    const live_command = b.addSystemCommand(&.{ "node", "tests/live.mjs" });
+    live_command.setCwd(b.path("."));
+    live_command.addFileArg(wasm.getEmittedBin());
+    live_command.addPassthruArgs();
+    live.dependOn(&live_command.step);
+    b.default_step = check;
+}

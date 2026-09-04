@@ -1,3 +1,4 @@
+howl-client/src/rich.zig|anytype|fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
 howl-cli/src/rich_format.zig|anytype|fn emitJson(writer: *std.Io.Writer, value: anytype) !void {
 howl-vk/src/abi.zig|anyopaque|pub extern fn vkCmdPushConstants(commandBuffer: VkCommandBuffer, layout: VkPipelineLayout, stageFlags: VkShaderStageFlags, offset: u32, size: u32, pValues: ?*const anyopaque) void;
 howl-vk/src/terminal_cells.zig|discard|_ = try glyphAtlasExtent(limits);

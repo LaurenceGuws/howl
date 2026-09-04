@@ -27,3 +27,9 @@ The measured Flutter/native pressure work is recorded in
 view, explicit snapshot ownership, portable local socket implementation, and complete
 semantic action surface used by the app-private Flutter host. No public FFI ABI or
 native byte layout is accepted.
+
+`rich.decodeFrames(allocator, bytes)` decodes exactly one complete bounded framed
+snapshot without opening a socket. Native `rich.receive` and this byte-entry API
+share one decoder body. The returned rich snapshot owns its memory; the encoded
+input is borrowed only for the call. The Web canary uses this seam after bounded
+asynchronous assembly, not a second VT or a copied `text_v1` implementation.

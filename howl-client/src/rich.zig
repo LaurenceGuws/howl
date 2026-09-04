@@ -110,6 +110,52 @@ pub fn request(
 
 /// Receives one rich snapshot after the caller has already sent `observe`.
 pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
+    return receiveFrom(connection, allocator);
+}
+
+/// Decodes exactly one complete framed snapshot without a socket or platform I/O.
+/// The caller retains `bytes` for this call only; the returned snapshot owns its
+/// allocations. Truncation and trailing frames are errors, not partial success.
+/// Asynchronous hosts must bound and assemble a complete response before calling.
+pub fn decodeFrames(allocator: std.mem.Allocator, bytes: []const u8) Error!Snapshot {
+    if (bytes.len > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+    var reader = BufferedFrames{ .bytes = bytes };
+    var snapshot = try receiveFrom(&reader, allocator);
+    errdefer snapshot.deinit();
+    if (reader.offset != bytes.len) return error.InvalidSnapshot;
+    return snapshot;
+}
+
+const BufferedFrames = struct {
+    bytes: []const u8,
+    offset: usize = 0,
+
+    const Frame = struct {
+        kind: protocol.Kind,
+        payload: []const u8,
+
+        fn deinit(self: *Frame) void {
+            // A borrowed view, not an allocation; invalidate only this handle.
+            self.* = undefined;
+        }
+    };
+
+    fn receive(self: *BufferedFrames) Error!Frame {
+        const remaining = self.bytes[self.offset..];
+        if (remaining.len < protocol.header_bytes) return error.InvalidSnapshot;
+        const header = try protocol.decodeHeader(remaining[0..protocol.header_bytes]);
+        if (header.payload_len > remaining.len - protocol.header_bytes)
+            return error.InvalidSnapshot;
+        self.offset += protocol.header_bytes + header.payload_len;
+        return .{
+            .kind = header.kind,
+            .payload = remaining[protocol.header_bytes..][0..header.payload_len],
+        };
+    }
+};
+
+// One decoder body, specialized only for owned socket frames or borrowed bytes.
+fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot {
     var total_bytes: usize = 0;
     var begin_frame = try connection.receive();
     defer begin_frame.deinit();
@@ -735,4 +781,92 @@ test "deflated rich body rejects corrupt and oversized streams" {
         &row_count,
         &phase,
     ));
+}
+
+fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
+    const begin: protocol.SnapshotBegin = .{
+        .revision = 3,
+        .terminal_revision = 9,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 0,
+        .columns = 0,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    var body: [protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes]u8 = @splat(0);
+    protocol.encodeTextRecordHeader(body[0..protocol.text_v1.record_header_bytes], .{
+        .kind = .presentation,
+        .payload_len = protocol.text_v1.presentation_bytes,
+    });
+    const compressed = try testDeflateBody(allocator, &body);
+    defer allocator.free(compressed);
+    const length = 3 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
+        compressed.len + protocol.payload_bytes.snapshot_end;
+    const frames = try allocator.alloc(u8, length);
+    errdefer allocator.free(frames);
+    var at: usize = 0;
+    try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
+        .kind = .snapshot_begin,
+        .payload_len = protocol.payload_bytes.snapshot_begin,
+    });
+    at += protocol.header_bytes;
+    protocol.encodeSnapshotBegin(frames[at..][0..protocol.payload_bytes.snapshot_begin], begin);
+    at += protocol.payload_bytes.snapshot_begin;
+    try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
+        .kind = .snapshot_data,
+        .payload_len = @intCast(compressed.len),
+    });
+    at += protocol.header_bytes;
+    @memcpy(frames[at..][0..compressed.len], compressed);
+    at += compressed.len;
+    try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
+        .kind = .snapshot_end,
+        .payload_len = protocol.payload_bytes.snapshot_end,
+    });
+    at += protocol.header_bytes;
+    protocol.encodeSnapshotEnd(frames[at..][0..protocol.payload_bytes.snapshot_end], .{ .revision = begin.revision });
+    return frames;
+}
+
+fn testDecodeOwned(allocator: std.mem.Allocator, bytes: []const u8) !void {
+    var snapshot = try decodeFrames(allocator, bytes);
+    defer snapshot.deinit();
+    try std.testing.expectEqual(@as(u64, 3), snapshot.begin.revision);
+    try std.testing.expectEqual(@as(u64, 9), snapshot.begin.terminal_revision);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.rows.len);
+}
+
+test "buffered frames share decoder and clean up at every allocation failure" {
+    const frames = try testFramedSnapshot(std.testing.allocator);
+    defer std.testing.allocator.free(frames);
+    try testDecodeOwned(std.testing.allocator, frames);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testDecodeOwned, .{frames});
+}
+
+test "buffered frames reject truncation trailing data and mismatched revision" {
+    const frames = try testFramedSnapshot(std.testing.allocator);
+    defer std.testing.allocator.free(frames);
+    for (0..frames.len) |length| {
+        try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, frames[0..length]));
+    }
+    const trailing = try std.testing.allocator.alloc(u8, frames.len + 1);
+    defer std.testing.allocator.free(trailing);
+    @memcpy(trailing[0..frames.len], frames);
+    trailing[frames.len] = 0;
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, trailing));
+    frames[frames.len - 1] ^= 1;
+    try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, frames));
+    frames[frames.len - 1] ^= 1;
+    frames[0] = 0;
+    try std.testing.expectError(error.InvalidMagic, decodeFrames(std.testing.allocator, frames));
 }
