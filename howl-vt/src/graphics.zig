@@ -2,6 +2,16 @@
 
 const std = @import("std");
 
+// File map:
+//   - fixed bounds and graphics command vocabulary
+//   - retained Plane lifecycle, admission, placement, and animation
+//   - Kitty command parsing, geometry, and RGBA composition
+//   - transactional placement, frame, animation, and failure proofs
+
+// =============================================================================
+// Graphics vocabulary and fixed bounds
+// =============================================================================
+
 /// Bounds decoded image bytes retained by one terminal.
 const max_storage_bytes: usize = 64 * 1024 * 1024;
 /// Bounds one decoded RGBA image.
@@ -197,20 +207,37 @@ pub fn mayRespond(bytes: []const u8) bool {
     return command_value.action != 'd';
 }
 
+// =============================================================================
+// Retained graphics plane
+// =============================================================================
+
 /// Owns decoded image/frame bytes, placements, animation state, and one transfer.
 pub const Plane = struct {
+    // -------------------------------------------------------------------------
+    // Retained graphics ownership
+    // -------------------------------------------------------------------------
+
+    // Decoded image storage and internal/application identities.
     allocator: std.mem.Allocator,
     images: [max_images]Image = undefined,
     image_count: u16 = 0,
+    // Cell-relative placements across the primary and alternate banks.
     placements: [max_placements]Placement = undefined,
     placement_count: u16 = 0,
+    // Animation-frame storage shared by retained images.
     frames: [max_frames]Frame = undefined,
     frame_count: u16 = 0,
+    // Global storage accounting and monotonic mutation identities.
     storage_bytes: usize = 0,
     next_generation: u64 = 0,
     next_image_id: u32 = 0,
     content_generation: u64 = 0,
+    // One optional chunked transfer under construction.
     loading: ?Loading = null,
+
+    // -------------------------------------------------------------------------
+    // Construction, teardown, and command dispatch
+    // -------------------------------------------------------------------------
 
     /// Initializes an empty plane borrowing `allocator` through `deinit`.
     pub fn init(allocator: std.mem.Allocator) Plane {
@@ -273,6 +300,10 @@ pub const Plane = struct {
             },
         };
     }
+
+    // -------------------------------------------------------------------------
+    // Chunked image transmission
+    // -------------------------------------------------------------------------
 
     fn transmit(
         self: *Plane,
@@ -394,6 +425,10 @@ pub const Plane = struct {
         }
         return try self.finish(bank, row, col, cell_width, cell_height);
     }
+
+    // -------------------------------------------------------------------------
+    // Animation frame admission and composition
+    // -------------------------------------------------------------------------
 
     fn frame(self: *Plane, command_value: Command) std.mem.Allocator.Error!Result {
         if (self.loading != null) {
@@ -618,6 +653,10 @@ pub const Plane = struct {
             .quiet = command_value.quiet,
         };
     }
+
+    // -------------------------------------------------------------------------
+    // Image finalization, placement, and deletion
+    // -------------------------------------------------------------------------
 
     fn finish(
         self: *Plane,
@@ -944,6 +983,10 @@ pub const Plane = struct {
         return .{ .changed = true, .visual_changed = visible_changed, .quiet = 2 };
     }
 
+    // -------------------------------------------------------------------------
+    // Decoded image and screen integration
+    // -------------------------------------------------------------------------
+
     /// Removes every image and placement, preserving no protocol transfer.
     pub fn reset(self: *Plane) bool {
         self.cancel();
@@ -1167,6 +1210,10 @@ pub const Plane = struct {
         return changed;
     }
 
+    // -------------------------------------------------------------------------
+    // Borrowed observation and animation
+    // -------------------------------------------------------------------------
+
     /// Borrows one retained image by dense index.
     pub fn image(self: *const Plane, index: usize) ?ImageView {
         if (index >= self.image_count) return null;
@@ -1369,6 +1416,10 @@ pub const Plane = struct {
         };
     }
 
+    // -------------------------------------------------------------------------
+    // Placement planning
+    // -------------------------------------------------------------------------
+
     fn addPlacement(
         self: *Plane,
         image_id: u32,
@@ -1496,6 +1547,10 @@ pub const Plane = struct {
             .cols = @intCast(@min(occupied_cols, std.math.maxInt(u16))),
         };
     }
+
+    // -------------------------------------------------------------------------
+    // Retained storage, indexes, and identities
+    // -------------------------------------------------------------------------
 
     fn removePlacements(self: *Plane, image_id: u32) void {
         var index: usize = 0;
@@ -1665,6 +1720,10 @@ pub const Plane = struct {
         self.next_generation += 1;
     }
 };
+
+// =============================================================================
+// Kitty command grammar and pixel composition
+// =============================================================================
 
 fn parseCommand(bytes: []const u8) ?Command {
     const separator = std.mem.indexOfScalar(u8, bytes, ';');
@@ -1850,6 +1909,10 @@ fn deleteMatches(
 fn nonzero(value: u32) ?u32 {
     return if (value == 0) null else value;
 }
+
+// =============================================================================
+// Image admission, placement, and deletion proofs
+// =============================================================================
 
 test "static plane admission is transactional across chunks replacement put and delete" {
     var plane = Plane.init(std.testing.allocator);
@@ -2146,6 +2209,10 @@ test "Kitty z and point3d deletion preserve unmatched layers and image data" {
     try std.testing.expectEqual(@as(usize, 0), plane.image_count);
 }
 
+// =============================================================================
+// Animation frame and composition proofs
+// =============================================================================
+
 test "Kitty frames compose transactionally and advance on monotonic gaps" {
     var plane = Plane.init(std.testing.allocator);
     defer plane.deinit();
@@ -2415,6 +2482,10 @@ test "Kitty animation requires a placement and nonzero total duration" {
     )).changed);
     try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200).next_ms);
 }
+
+// =============================================================================
+// Allocation and capacity proofs
+// =============================================================================
 
 test "static image allocation failure leaves the plane reusable" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationFailure, .{});
