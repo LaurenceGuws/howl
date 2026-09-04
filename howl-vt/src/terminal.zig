@@ -41,7 +41,7 @@ const ScreenProtection = screen_mod.ScreenProtection;
 //   - semantic application, reports, and terminal colors
 //   - mutation routing and fragmented stream ingestion
 //   - public Terminal lifecycle, observation, input, and replies
-//   - public-path characterization and parser ownership proofs
+//   - Terminal-owner, routing, and integration proofs
 
 comptime {
     if (parser_mod.max_params > Screen.SgrOperands.capacity) {
@@ -68,8 +68,6 @@ const SgrStackEntry = struct {
 fn advanceIdentity(value: *u64) void {
     value.* = std.math.add(u64, value.*, 1) catch @panic("monotonic identity exhausted");
 }
-
-// Terminal modes, replies, and bounded caller-neutral consequences.
 
 // Carries Kitty keyboard flags and the set, add, or remove operation mode.
 const KeyFormatChange = struct {
@@ -159,8 +157,6 @@ const DragDropEventValue = union(enum) {
 // Internal composition alias for the consequence-owned container-request vocabulary.
 const ContainerRequestValue = consequences.ContainerRequest;
 
-// Internal composition alias for the consequence-owned container request.
-
 // Internal composition alias for the consequence-owned media-copy request.
 const MediaCopyRequest = consequences.MediaCopyRequest;
 
@@ -182,8 +178,6 @@ const ShellIntegration = properties.ShellIntegration;
 const WorkingDirectoryReport = properties.WorkingDirectory;
 
 const TitleStackEffect = properties.TitleStackEffect;
-
-comptime {}
 
 // Converts a slice length after asserting it fits the protocol-owned u32 domain.
 fn byteCount(bytes: []const u8) u32 {
@@ -294,8 +288,6 @@ const TextSizeCommand = struct {
 // =============================================================================
 // Semantic event vocabulary
 // =============================================================================
-
-// Parser events to canonical terminal semantics.
 
 /// Canonical parser-to-domain event consumed synchronously by terminal state owners.
 const SemanticEvent = union(enum) {
@@ -1326,7 +1318,7 @@ fn zeroQuery(params: []const i32) bool {
 }
 
 // =============================================================================
-// DCS and escape decoding
+// DCS and ESC decoding
 // =============================================================================
 
 const DcsEvent = @FieldType(parser_mod.Event, "dcs");
@@ -1907,8 +1899,6 @@ test "OSC Kitty caller-policy payloads expose only retained terminal state" {
 // Screen-bank projection and text selection
 // =============================================================================
 
-// Screen banks and borrowed semantic projection.
-
 // Identifies whether a visible row comes from history or the active screen.
 const RowSource = union(enum) {
     history: u32,
@@ -2119,7 +2109,7 @@ fn copyTextRange(
 // Semantic application and child-directed reports
 // =============================================================================
 
-// Semantic application and terminal reply generation.
+// -- Caller-directed semantic application ------------------------------------
 
 // Apply one caller-directed semantic event and retain its bounded consequence.
 fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bool {
@@ -2223,6 +2213,8 @@ fn applySemanticEvent(vt: *Terminal, event: SemanticEvent) SemanticEventError!bo
     }
     return true;
 }
+
+// -- Child-directed report projection ----------------------------------------
 
 const xtversion_text = "howl-vt dev";
 const terminal_report_max_bytes = 64;
@@ -5063,7 +5055,7 @@ test "text extraction reports impossible retained codepoints exactly" {
 }
 
 // =============================================================================
-// Cursor restoration and public lifecycle
+// Restoration payloads, savepoints, and resize state
 // =============================================================================
 
 const RestoredCursorInformation = struct {
@@ -5139,8 +5131,6 @@ fn consumePresentationDesignation(payload: []const u8, offset: *usize) ?u8 {
     return byte;
 }
 
-// Public terminal composition and lifecycle.
-
 const CursorSavepoint = struct {
     row: u16 = 0,
     col: u16 = 0,
@@ -5181,9 +5171,11 @@ const PreparedResizeState = struct {
 // Public Terminal owner
 // =============================================================================
 
-/// Caller-neutral terminal state and protocol engine.
+/// Owns caller-neutral terminal state and protocol execution.
 pub const Terminal = struct {
-    // -- Public observation and value vocabulary -----------------------------
+    // -------------------------------------------------------------------------
+    // Public observation and value vocabulary
+    // -------------------------------------------------------------------------
 
     /// Borrows a unified history-and-screen view until terminal mutation.
     pub const SemanticView = struct {
@@ -5768,7 +5760,9 @@ pub const Terminal = struct {
         newest: u64,
     };
 
-    // -- Retained canonical owners -------------------------------------------
+    // -------------------------------------------------------------------------
+    // Retained canonical owners
+    // -------------------------------------------------------------------------
 
     // Canonical data planes and mode state.
     allocator: std.mem.Allocator,
@@ -5794,7 +5788,9 @@ pub const Terminal = struct {
     alternate_savepoint: Savepoint = .{},
     semantic_sequence: u64 = 1,
     resize_prepared: bool = false,
-    // -- Construction and feed ------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Construction and feed
+    // -------------------------------------------------------------------------
 
     fn requireNoPreparedResize(self: *const Terminal) void {
         if (self.resize_prepared)
@@ -5930,7 +5926,9 @@ pub const Terminal = struct {
         if (state_changed) advanceIdentity(&self.semantic_sequence);
     }
 
-    // -- Geometry and reconfiguration ----------------------------------------
+    // -------------------------------------------------------------------------
+    // Geometry and reconfiguration
+    // -------------------------------------------------------------------------
 
     /// Resize both terminal screens.
     ///
@@ -6059,7 +6057,9 @@ pub const Terminal = struct {
         advanceIdentity(&self.semantic_sequence);
     }
 
-    // -- Reset, savepoints, and terminal modes --------------------------------
+    // -------------------------------------------------------------------------
+    // Reset, savepoints, and terminal modes
+    // -------------------------------------------------------------------------
 
     /// Applies RIS while preserving dimensions and owned allocations.
     pub fn hardReset(self: *Terminal) void {
@@ -6181,6 +6181,27 @@ pub const Terminal = struct {
     // Replaces the active screen's bounded tab-stop set from one-based DECTABSR values.
     fn restoreTabStops(self: *Terminal, payload: []const u8) bool {
         return self.screen_state.active().tab_stops.replaceOneBased(payload);
+    }
+
+    fn activeSavepoint(self: *Terminal) *Savepoint {
+        return if (self.screen_state.alt_active) &self.alternate_savepoint else &self.primary_savepoint;
+    }
+
+    fn activeSavepointConst(self: *const Terminal) *const Savepoint {
+        return if (self.screen_state.alt_active) &self.alternate_savepoint else &self.primary_savepoint;
+    }
+
+    fn restoreCursorPosition(active: *Screen, row: u16, col: u16) void {
+        if (active.rows == 0 or active.cols == 0) {
+            active.cursor.setPositionStructural(0, 0);
+            return;
+        }
+
+        const top = if (active.origin_mode) active.scroll_top else 0;
+        const bottom = if (active.origin_mode) @min(active.scroll_bottom, active.rows - 1) else active.rows - 1;
+        const bounded_row = @max(top, @min(row, bottom));
+        const bounded_col = @min(col, active.cols - 1);
+        active.cursor.setPositionStructural(bounded_row, bounded_col);
     }
 
     /// Saves cursor presentation, rendition, charset, origin, and wrap state into the active screen slot.
@@ -6579,7 +6600,9 @@ pub const Terminal = struct {
         return changed;
     }
 
-    // -- Borrowed observation -------------------------------------------------
+    // -------------------------------------------------------------------------
+    // Borrowed observation
+    // -------------------------------------------------------------------------
 
     /// Reports whether mode 19997 requests foreground termios handling for typed one-byte keys.
     pub fn termiosSignals(self: *const Terminal) bool {
@@ -6680,7 +6703,9 @@ pub const Terminal = struct {
         };
     }
 
-    // -- Properties and caller-neutral consequences --------------------------
+    // -------------------------------------------------------------------------
+    // Properties and caller-neutral consequences
+    // -------------------------------------------------------------------------
 
     /// Reports whether synchronized-output mode is enabled.
     pub fn synchronizedOutput(self: *const Terminal) bool {
@@ -6783,7 +6808,9 @@ pub const Terminal = struct {
         return self.modes.color_preference_notifications;
     }
 
-    // -- Logical output and text extraction ----------------------------------
+    // -------------------------------------------------------------------------
+    // Logical output and text extraction
+    // -------------------------------------------------------------------------
 
     /// Copies finalized primary logical lines after `cursor` and one observation-scoped open line.
     pub fn copyLogicalOutput(
@@ -6922,7 +6949,9 @@ pub const Terminal = struct {
         return copyTextRange(allocator, &self.screen_state, range, max_bytes);
     }
 
-    // -- Caller input and child replies --------------------------------------
+    // -------------------------------------------------------------------------
+    // Caller input and child replies
+    // -------------------------------------------------------------------------
 
     /// Encode one caller input event according to current terminal modes.
     ///
@@ -7253,29 +7282,6 @@ pub const Terminal = struct {
             return error.StaleContainerRequest;
         advanceIdentity(&self.semantic_sequence);
     }
-
-    // -- Private cursor helpers -----------------------------------------------
-
-    fn activeSavepoint(self: *Terminal) *Savepoint {
-        return if (self.screen_state.alt_active) &self.alternate_savepoint else &self.primary_savepoint;
-    }
-
-    fn activeSavepointConst(self: *const Terminal) *const Savepoint {
-        return if (self.screen_state.alt_active) &self.alternate_savepoint else &self.primary_savepoint;
-    }
-
-    fn restoreCursorPosition(active: *Screen, row: u16, col: u16) void {
-        if (active.rows == 0 or active.cols == 0) {
-            active.cursor.setPositionStructural(0, 0);
-            return;
-        }
-
-        const top = if (active.origin_mode) active.scroll_top else 0;
-        const bottom = if (active.origin_mode) @min(active.scroll_bottom, active.rows - 1) else active.rows - 1;
-        const bounded_row = @max(top, @min(row, bottom));
-        const bounded_col = @min(col, active.cols - 1);
-        active.cursor.setPositionStructural(bounded_row, bounded_col);
-    }
 };
 
 // =============================================================================
@@ -7346,8 +7352,10 @@ comptime {
 }
 
 // =============================================================================
-// Public-path characterization tests
+// Terminal owner proofs
 // =============================================================================
+
+// Resize transaction proofs.
 
 test "terminal resize allocation failures preserve primary state" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, resizeTerminalTransaction, .{false});
@@ -7485,6 +7493,8 @@ fn resizeTerminalTransaction(allocator: std.mem.Allocator, alternate_active: boo
     try std.testing.expectEqual(.underline, terminal.screen_state.alternate.cursor.default_style.shape);
     try std.testing.expectEqual(semantic_sequence_before + 1, terminal.semanticSequence());
 }
+
+// Observation, mutation, and consequence proofs.
 
 test "terminal borrows bounded caller-selected history projections" {
     var vt = try Terminal.initWithHistory(std.testing.allocator, 3, 5, 8);
@@ -7705,6 +7715,8 @@ test "container query may be declined by exact identity without fabricated reply
     );
 }
 
+// Sized-text integration proofs.
+
 test "OSC 66 fixed cluster is fragmented, bounded, and overwritten atomically" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
@@ -7872,7 +7884,7 @@ test "OSC 66 character insertion removes the whole intersecting cluster" {
 }
 
 // =============================================================================
-// Test-only parser ownership maps
+// Parser and semantic ownership proofs
 // =============================================================================
 
 const RouteOwnerTests = struct {
@@ -8794,6 +8806,10 @@ const ReportRoutingOwnerTests = struct {
 comptime {
     std.debug.assert(@sizeOf(ReportRoutingOwnerTests) == 0);
 }
+
+// =============================================================================
+// Public boundary and Unicode integration proofs
+// =============================================================================
 
 test "input error set excludes unrelated terminal owner limits" {
     const error_names = @typeInfo(Terminal.InputError).error_set.error_names orelse &.{};
