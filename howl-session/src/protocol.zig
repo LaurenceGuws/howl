@@ -14,6 +14,19 @@
 
 const std = @import("std");
 
+// File map:
+//   - wire framing, attach, observation, and request identities
+//   - typed input, signals, and coherent interaction state
+//   - command results and host-consequence grammar
+//   - renderer-complete text snapshots and fixed payload sizes
+//   - geometry and consequence authority
+//   - typed payload codecs and framing primitives
+//   - frozen byte-grammar and ownership proofs
+
+// =============================================================================
+// Wire framing, attach, and observation vocabulary
+// =============================================================================
+
 /// Exact version of the complete Howl session wire carried in every frame header.
 ///
 /// Howl currently has one protocol, not a compatibility matrix. Change this
@@ -89,6 +102,10 @@ pub const Observe = struct {
     after_revision: u64 = 0,
     history_offset: u32 = 0,
 };
+
+// =============================================================================
+// Typed input, signals, and interaction state
+// =============================================================================
 
 /// Input payload family for committed bytes and semantic physical input.
 pub const InputKind = enum(u8) {
@@ -360,6 +377,10 @@ pub const interaction_state_flags = struct {
     pub const known: u32 = (1 << 13) - 1;
 };
 
+// =============================================================================
+// Command results and host-consequence grammar
+// =============================================================================
+
 /// Bounded request outcome without transporting host-specific errno values.
 pub const ResultCode = enum(u8) {
     ok = 0,
@@ -507,6 +528,10 @@ pub const ConsequenceReply = struct {
     body: []const u8,
 };
 
+// =============================================================================
+// Renderer-complete text snapshot grammar
+// =============================================================================
+
 /// Record classes carried inside the compressed renderer-complete snapshot body.
 ///
 /// There is deliberately one current snapshot representation. The body is a
@@ -614,6 +639,10 @@ pub const text_v1 = struct {
     };
 };
 
+// =============================================================================
+// Snapshot lifecycle and fixed payload sizes
+// =============================================================================
+
 /// Starts one coherent snapshot. All following data/end frames share revision.
 pub const SnapshotBegin = struct {
     /// Endpoint observation revision covering VT, lifecycle, and authority state.
@@ -691,6 +720,10 @@ pub const payload_bytes = struct {
     pub const consequence_reply_header: usize = 12;
 };
 
+// =============================================================================
+// Geometry and host-consequence authority
+// =============================================================================
+
 /// Owns only geometry authority. Client discovery/rosters remain endpoint policy.
 pub const ResizeAuthority = struct {
     leader_client_id: ClientId = no_client,
@@ -754,6 +787,12 @@ pub const ConsequenceAuthority = struct {
         return client_id != no_client and self.leader_client_id == client_id;
     }
 };
+
+// =============================================================================
+// Typed payload codecs
+// =============================================================================
+
+// -- Attach, observation, and rich snapshot codecs ---------------------------
 
 /// Encodes the attach response. The framing version already identifies the
 /// complete wire contract, so no second version/features negotiation lives here.
@@ -877,6 +916,8 @@ pub fn decodeTextColor(input: *const [text_v1.color_bytes]u8) PayloadError!TextC
     try encodeTextColor(&canonical, value);
     return value;
 }
+
+// -- Typed input codecs -------------------------------------------------------
 
 /// Reports malformed typed input or insufficient caller-provided encode storage.
 pub const InputEncodeError = PayloadError || error{OutputTooSmall};
@@ -1030,6 +1071,8 @@ fn validateScalar(value: u32) PayloadError!void {
         return error.InvalidPayload;
 }
 
+// -- Session control codecs ---------------------------------------------------
+
 /// Encodes one completed snapshot revision.
 pub fn encodeSnapshotEnd(output: *[payload_bytes.snapshot_end]u8, value: SnapshotEnd) void {
     writeU64(output, value.revision);
@@ -1074,6 +1117,8 @@ pub fn decodeSignal(input: []const u8) PayloadError!Signal {
     if (input.len != payload_bytes.signal) return error.InvalidPayload;
     return enumFromInt(Signal, input[0]) orelse error.InvalidPayload;
 }
+
+// -- Host-consequence codecs -------------------------------------------------
 
 /// Encodes one exact host-consequence occurrence identity.
 pub fn encodeConsequenceIdentity(output: *[payload_bytes.consequence_consume]u8, generation: u64) void {
@@ -1293,6 +1338,8 @@ fn allZero(bytes: []const u8) bool {
     return true;
 }
 
+// -- Interaction-state and result codecs -------------------------------------
+
 /// Encodes one coherent interaction-state snapshot.
 pub fn encodeInteractionStateSnapshot(
     output: *[payload_bytes.interaction_state_snapshot]u8,
@@ -1368,6 +1415,10 @@ pub fn decodeResult(input: []const u8) PayloadError!Result {
         .code = enumFromInt(ResultCode, input[1]) orelse return error.InvalidPayload,
     };
 }
+
+// =============================================================================
+// Frame header and integer primitives
+// =============================================================================
 
 /// Encodes one fixed header without allocation.
 pub fn encodeHeader(output: *[header_bytes]u8, header: Header) error{PayloadTooLarge}!void {
@@ -1452,6 +1503,12 @@ fn enumFromInt(comptime Enum: type, value: @typeInfo(Enum).@"enum".tag_type) ?En
 fn advance(value: *u64) void {
     value.* = std.math.add(u64, value.*, 1) catch @panic("protocol revision exhausted");
 }
+
+// =============================================================================
+// Frozen wire and authority proofs
+// =============================================================================
+
+// -- Framing and rich snapshot grammar ---------------------------------------
 
 test "header round trips and rejects framing ambiguity" {
     var bytes: [header_bytes]u8 = undefined;
@@ -1550,6 +1607,8 @@ test "text_v1 record and color grammar is exact and hostile-safe" {
     color = .{ 2, 1, 0, 0, 0 };
     try std.testing.expectError(error.InvalidPayload, decodeTextColor(&color));
 }
+
+// -- Typed input grammar ------------------------------------------------------
 
 test "typed key grammar is exact and rejects noncanonical payloads" {
     const value = KeyInput{
@@ -1690,6 +1749,8 @@ test "typed mouse and focus grammars are exact and hostile-safe" {
     try std.testing.expectError(error.InvalidPayload, decodeFocusInput(&focus));
 }
 
+// -- Host-consequence grammar ------------------------------------------------
+
 test "consequence begin preserves exact clipboard metadata and rejects drift" {
     var metadata: [consequence_metadata_bytes]u8 = @splat(0);
     metadata[0] = @backingInt(ConsequenceClipboardProtocol.osc52);
@@ -1805,6 +1866,8 @@ test "consequence authority is explicit and disconnect safe" {
     try std.testing.expect(authority.disconnected(41));
     try std.testing.expect(authority.leader() == null);
 }
+
+// -- Interaction state and authority -----------------------------------------
 
 test "interaction state snapshot is fixed and rejects reserved drift" {
     var encoded: [payload_bytes.interaction_state_snapshot]u8 = undefined;

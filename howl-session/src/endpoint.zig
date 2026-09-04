@@ -18,6 +18,17 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
+// File map:
+//   - listener and bounded client storage
+//   - one canonical Session endpoint and nonblocking service loop
+//   - typed input adapters and renderer-complete snapshot publication
+//   - Unix/TCP listener mechanics and executable composition
+//   - one in-process byte-stream harness and endpoint behavior proofs
+
+// =============================================================================
+// Listener and client storage
+// =============================================================================
+
 const ListenerSpec = union(enum) {
     unix: []const u8,
     tcp_loopback: u16,
@@ -91,19 +102,34 @@ const Client = struct {
     }
 };
 
+// =============================================================================
+// Canonical Session endpoint
+// =============================================================================
+
 const Server = struct {
+    // -------------------------------------------------------------------------
+    // Retained endpoint owners
+    // -------------------------------------------------------------------------
+
+    // Canonical Session and listener lifecycle.
     allocator: std.mem.Allocator,
     io: std.Io,
     session: *howl.Session,
     listener: Listener,
+    // Bounded client table, identity issuance, and geometry authority.
     clients: [maximum_clients]?Client = @splat(null),
     next_client_id: protocol.ClientId = 1,
     authority: protocol.ResizeAuthority = .{},
+    // Endpoint observation, child lifecycle, and pending PTY output.
     observation_revision: u64 = 1,
     terminal_revision: u64,
     stream_closed: bool = false,
     child_exited: bool = false,
     pty_write_pending: bool = false,
+
+    // -------------------------------------------------------------------------
+    // Construction and lifecycle loop
+    // -------------------------------------------------------------------------
 
     fn init(
         allocator: std.mem.Allocator,
@@ -197,6 +223,10 @@ const Server = struct {
         try self.materializeObservers();
     }
 
+    // -------------------------------------------------------------------------
+    // Client acceptance and byte-stream I/O
+    // -------------------------------------------------------------------------
+
     fn acceptClients(self: *Server) !void {
         while (true) {
             const accepted = linux.accept4(
@@ -280,6 +310,10 @@ const Server = struct {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Request framing and dispatch
+    // -------------------------------------------------------------------------
+
     fn processBufferedRequests(self: *Server) !void {
         var index: usize = 0;
         while (index < self.clients.len) : (index += 1) {
@@ -346,6 +380,10 @@ const Server = struct {
             else => try self.queueResult(client, kind, .unsupported),
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Semantic input and interaction state
+    // -------------------------------------------------------------------------
 
     fn handleInput(self: *Server, client: *Client, payload: []const u8) !void {
         if (payload.len == 0) return self.queueResult(client, .input, .malformed);
@@ -450,6 +488,10 @@ const Server = struct {
         try self.queueFrame(client, .interaction_state_snapshot, &encoded);
     }
 
+    // -------------------------------------------------------------------------
+    // Leadership, resize, and signals
+    // -------------------------------------------------------------------------
+
     fn handleAssignLeader(self: *Server, client: *Client, payload: []const u8) !void {
         const request = protocol.decodeAssignLeader(payload) catch
             return self.queueResult(client, .assign_leader, .malformed);
@@ -480,6 +522,10 @@ const Server = struct {
         const result = howl.signal(self.session, native);
         try self.queueResult(client, .signal, if (result == .delivered) .ok else .rejected);
     }
+
+    // -------------------------------------------------------------------------
+    // Client teardown and observation lifecycle
+    // -------------------------------------------------------------------------
 
     fn hasClient(self: *Server, id: protocol.ClientId) bool {
         for (self.clients) |client| if (client) |active| if (active.id == id) return true;
@@ -521,6 +567,10 @@ const Server = struct {
             @panic("session observation revision exhausted");
     }
 
+    // -------------------------------------------------------------------------
+    // Observation and snapshot materialization
+    // -------------------------------------------------------------------------
+
     fn materializeObservers(self: *Server) !void {
         var index: usize = 0;
         while (index < self.clients.len) : (index += 1) {
@@ -537,6 +587,10 @@ const Server = struct {
             client.observe = null;
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Rich text snapshot construction
+    // -------------------------------------------------------------------------
 
     fn queueSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
         return self.queueTextSnapshot(client, history_offset);
@@ -879,6 +933,10 @@ const Server = struct {
         };
     }
 
+    // -------------------------------------------------------------------------
+    // Response framing
+    // -------------------------------------------------------------------------
+
     fn queueResult(self: *Server, client: *Client, request_kind: protocol.Kind, code: protocol.ResultCode) !void {
         var payload: [protocol.payload_bytes.result]u8 = undefined;
         protocol.encodeResult(&payload, .{ .request_kind = request_kind, .code = code });
@@ -901,6 +959,10 @@ const Server = struct {
         try output.appendSlice(self.allocator, payload);
     }
 };
+
+// =============================================================================
+// Terminal input and rich snapshot adapters
+// =============================================================================
 
 fn typedKeyName(value: u32) ?howl.KeyName {
     return switch (value) {
@@ -1114,6 +1176,10 @@ fn encodeU64(output: []u8, value: u64) void {
     output[7] = @truncate(value);
 }
 
+// =============================================================================
+// Listener mechanics and executable entrypoint
+// =============================================================================
+
 const TcpListener = struct {
     fd: posix.fd_t,
     port: u16,
@@ -1293,6 +1359,10 @@ pub fn main(init: std.process.Init) error{
     if (server.listener.tcp_port) |port| announceTcpEndpoint(port) catch return error.SessionServerFailed;
     while (true) server.turn(-1) catch return error.SessionServerFailed;
 }
+
+// =============================================================================
+// In-process endpoint harness
+// =============================================================================
 
 const TestFrame = struct {
     allocator: std.mem.Allocator,
@@ -1498,6 +1568,10 @@ fn attach(peer: *TestPeer, server: *Server) !void {
     const welcome = try handshake(peer, server);
     try std.testing.expect(welcome.client_id != protocol.no_client);
 }
+
+// =============================================================================
+// Harness behavior and snapshot decoding
+// =============================================================================
 
 test "interaction state exposes invisible input modes" {
     var path_buffer: [108]u8 = undefined;
@@ -1842,6 +1916,10 @@ fn validateTextColorBytes(bytes: []const u8) !void {
     }
 }
 
+// =============================================================================
+// Endpoint test actions and result helpers
+// =============================================================================
+
 fn observeUntilContains(
     peer: *TestPeer,
     server: *Server,
@@ -1957,6 +2035,10 @@ fn readU64(input: []const u8) u64 {
     for (input) |byte| value = (value << 8) | byte;
     return value;
 }
+
+// =============================================================================
+// Endpoint behavior proofs
+// =============================================================================
 
 test "TCP listener is fixed to IPv4 loopback and resolves ephemeral port" {
     const parsed_tcp = try parseListenerSpec("tcp:0");
