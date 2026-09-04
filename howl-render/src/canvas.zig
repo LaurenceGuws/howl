@@ -3,6 +3,17 @@
 const std = @import("std");
 const validation = @import("canvas_validation");
 
+// File map:
+//   - backend-neutral geometry, resources, producer input, and cursor vocabulary
+//   - the bounded Composer transaction owner
+//   - candidate planning and projection helpers
+//   - frame command validation and clipping
+//   - stateless Canvas and transactional Composer proofs
+
+// =============================================================================
+// Canvas vocabulary and validation errors
+// =============================================================================
+
 /// Reports invalid identities, resource views, geometry, aliases, arithmetic,
 /// or capacity before any caller output byte changes.
 pub const Error = error{
@@ -400,12 +411,20 @@ pub const CursorBinding = struct {
     frame_revision: u64 = 0,
 };
 
+// =============================================================================
+// Bounded Composer owner
+// =============================================================================
+
 /// Retains bounded producer state and derives complete backend-neutral frames.
 ///
 /// The initializer allocator owns every retained allocation through `deinit`.
 /// Successful initialization performs all allocation; every later operation is
 /// allocation-free and transactional.
 pub const Composer = struct {
+    // -------------------------------------------------------------------------
+    // Public transaction vocabulary and fixed limits
+    // -------------------------------------------------------------------------
+
     const candidate_source_limit: usize = 17;
     const hidden_source_clear_limit: usize = 16;
     const candidate_plan_limit: usize =
@@ -610,6 +629,11 @@ pub const Composer = struct {
         local_high_water: u64,
     };
 
+    // -------------------------------------------------------------------------
+    // Retained and candidate ownership banks
+    // -------------------------------------------------------------------------
+
+    // Retained source-local state.
     allocator: std.mem.Allocator,
     limits: Limits,
     sources: []Source,
@@ -620,10 +644,12 @@ pub const Composer = struct {
     command_count: usize = 0,
     pixels: []u8,
     pixel_count: usize = 0,
+    // Visible composition and focus state.
     composition: []Placement,
     composition_count: usize = 0,
     focused_source: ?SourceId = null,
     surface: Size = .{ .width = 1, .height = 1 },
+    // Source-local candidate scratch and aggregate plans.
     candidate_resources: []Resource,
     candidate_resource_count: usize = 0,
     candidate_commands: []Input,
@@ -635,6 +661,7 @@ pub const Composer = struct {
     source_plan_count: usize = 0,
     resource_plan: []u64,
     resource_plan_count: usize = 0,
+    // Shared-resource recovery bank and prospective free-space plan.
     shared_resources: []SharedResource,
     shared_resource_count: usize = 0,
     candidate_shared_resources: []SharedResource,
@@ -648,10 +675,15 @@ pub const Composer = struct {
     candidate_shared_reference_sources: []u128,
     candidate_shared_high_water: u64 = 0,
     shared_high_water: u64 = 0,
+    // Prospective composition and monotonic identity/revision state.
     candidate_composition: [candidate_placement_limit]Placement = undefined,
     candidate_composition_count: usize = 0,
     next_source_id: u64 = 1,
     frame_revision: u64 = 1,
+
+    // -------------------------------------------------------------------------
+    // Construction and source lifecycle
+    // -------------------------------------------------------------------------
 
     /// Allocates every retained and candidate bank transactionally.
     pub fn init(allocator: std.mem.Allocator, limits: Limits) Composer.Error!Composer {
@@ -824,6 +856,10 @@ pub const Composer = struct {
         }
         if (self.focused_source == source) self.focused_source = null;
     }
+
+    // -------------------------------------------------------------------------
+    // Single-source and aggregate update transactions
+    // -------------------------------------------------------------------------
 
     /// Copies one strictly newer complete local-only producer state
     /// transactionally.
@@ -1092,6 +1128,10 @@ pub const Composer = struct {
         } else self.refreshVisibleCursorBindings();
     }
 
+    // -------------------------------------------------------------------------
+    // Composition and frame derivation
+    // -------------------------------------------------------------------------
+
     /// Replaces the complete ordered visible composition transactionally.
     pub fn setComposition(
         self: *Composer,
@@ -1237,6 +1277,10 @@ pub const Composer = struct {
         };
     }
 
+    // -------------------------------------------------------------------------
+    // Source lookup and candidate range planning
+    // -------------------------------------------------------------------------
+
     fn sourceIndex(self: *const Composer, source: SourceId) Composer.Error!usize {
         const value = @backingInt(source);
         if (value == 0 or value >= self.next_source_id) return error.InvalidSource;
@@ -1366,6 +1410,10 @@ pub const Composer = struct {
             if (plan.source_index == source_index) return index;
         return null;
     }
+
+    // -------------------------------------------------------------------------
+    // Shared resource planning
+    // -------------------------------------------------------------------------
 
     fn planSharedCandidate(
         self: *Composer,
@@ -1648,6 +1696,10 @@ pub const Composer = struct {
         self.candidate_shared_free_region_count += 1;
     }
 
+    // -------------------------------------------------------------------------
+    // Shared and aggregate commit
+    // -------------------------------------------------------------------------
+
     fn commitSharedCandidate(
         self: *Composer,
         candidate: Candidate,
@@ -1832,6 +1884,10 @@ pub const Composer = struct {
         self.command_count = final_command_count;
         self.pixel_count = final_pixel_count;
     }
+
+    // -------------------------------------------------------------------------
+    // Candidate staging and validation
+    // -------------------------------------------------------------------------
 
     fn buildCandidate(
         self: *Composer,
@@ -2151,6 +2207,10 @@ pub const Composer = struct {
         self.sources[index].pixel_count = self.candidate_pixel_count;
     }
 
+    // -------------------------------------------------------------------------
+    // Retained cleanup and alias validation
+    // -------------------------------------------------------------------------
+
     fn removeRetainedRanges(
         self: *Composer,
         index: usize,
@@ -2256,6 +2316,10 @@ pub const Composer = struct {
             }
         }
     }
+
+    // -------------------------------------------------------------------------
+    // Frame measurement, cursor overlay, and visibility
+    // -------------------------------------------------------------------------
 
     fn measureFrame(
         self: *const Composer,
@@ -2604,6 +2668,10 @@ pub const Composer = struct {
         return false;
     }
 };
+
+// =============================================================================
+// Composer support and candidate planning
+// =============================================================================
 
 const ByteRange = struct {
     start: usize,
@@ -3179,6 +3247,10 @@ fn sharedResidencyMatches(
     return false;
 }
 
+// =============================================================================
+// Frame command vocabulary and projection
+// =============================================================================
+
 /// Copies one accepted draw with an exact surface-local scissor rectangle.
 pub const Command = union(enum) {
     /// Fills the clipped rectangle.
@@ -3281,6 +3353,10 @@ fn qualify(source: SourceId, resource: ResourceView) FrameResourceView {
         .source = resource.source,
     };
 }
+
+// =============================================================================
+// Projection validation and clipping
+// =============================================================================
 
 fn validate(input: Input, surface: Size) Error!?Rect {
     return switch (input) {
@@ -3514,6 +3590,10 @@ fn overlaps(a: usize, a_len: usize, b: usize, b_len: usize) bool {
     return a < b + b_len and b < a + a_len;
 }
 
+// =============================================================================
+// Canvas contract proofs
+// =============================================================================
+
 test "resource update syntax is exact and stateless" {
     const local = ResourceRef{
         .resource = try ResourceId.local(7),
@@ -3708,6 +3788,10 @@ test "producer update syntax is canonical and complete" {
     );
 }
 
+// =============================================================================
+// Composer retained-state proof support
+// =============================================================================
+
 const ComposerRetainedSnapshot = struct {
     source: Composer.Source,
     resource: Composer.Resource,
@@ -3742,6 +3826,10 @@ fn expectComposerRetained(
 ) !void {
     try std.testing.expectEqualDeep(expected, composerRetainedSnapshot(composer));
 }
+
+// =============================================================================
+// Composer transaction proofs
+// =============================================================================
 
 test "visible cursor binding identity failure is observable and transactional" {
     var composer = try Composer.init(std.testing.allocator, .{
