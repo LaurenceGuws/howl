@@ -5,6 +5,19 @@ const std = @import("std");
 const posix = std.posix;
 const linux = std.os.linux;
 
+// File map:
+//   - raw Linux syscall outcomes and checked conversions
+//   - public lifecycle, observation, and signal contract
+//   - immutable launch environment and bounded cleanup timing
+//   - PTY transport construction and the Owned lifecycle
+//   - child-side descriptor/session setup and exec
+//   - bounded child/process-group teardown and signal mechanics
+//   - lifecycle, syscall, multiplexing, and drain proofs
+
+// =============================================================================
+// Raw Linux syscall outcomes and checked conversions
+// =============================================================================
+
 const linux_nonblock_flag: c_int = @intCast(@as(u32, @bitCast(linux.O{ .NONBLOCK = true })));
 const control_character_disabled: posix.cc_t = 0;
 
@@ -81,7 +94,9 @@ fn checkedLinuxSignal(value: c_int) ?linux.SIG {
     return @fromBackingInt(@intCast(@as(u32, @intCast(value))));
 }
 
-// Public lifecycle failures, signals, and nonblocking write outcomes.
+// =============================================================================
+// Public lifecycle, observation, and signal contract
+// =============================================================================
 
 /// Reports copied launch allocation, invalid environment, or a non-Linux build.
 pub const InitError = std.mem.Allocator.Error || error{
@@ -217,6 +232,10 @@ pub const SignalResult = enum {
     /// Native signal delivery failed for another reason.
     native_signal_failed,
 };
+
+// =============================================================================
+// Immutable launch environment and bounded cleanup timing
+// =============================================================================
 
 const stop_hangup_grace_ns = 50 * std.time.ns_per_ms;
 const stop_terminate_grace_ns = 50 * std.time.ns_per_ms;
@@ -361,7 +380,9 @@ fn copyEnvironmentOverride(
     index.* += 1;
 }
 
-// Construction primitives used by the PTY owner.
+// =============================================================================
+// PTY transport construction
+// =============================================================================
 
 fn childLaunchError(value: u8) StartError {
     return switch (value) {
@@ -412,11 +433,16 @@ fn openTransport(cols: u16, rows: u16) StartError!Open {
     return .{ .master_fd = master_fd, .slave_fd = slave_fd };
 }
 
+// =============================================================================
+// Owned PTY lifecycle
+// =============================================================================
+
 /// Owns copied launch values, one Linux PTY, and its child process group.
 /// `start`, `read`, `write`, `observeChild`, `resize`, `signal`, and `stop`
 /// are externally serialized. `stop` and `deinit` require every caller to
 /// have returned.
 pub const Owned = struct {
+    // Copied launch configuration survives every start/stop cycle.
     allocator: std.mem.Allocator,
     shell_path: [:0]u8,
     command: ?[:0]u8,
@@ -424,6 +450,8 @@ pub const Owned = struct {
     start_path: ?[:0]u8,
     start_path_ptr: ?[*:0]u8,
     environment: LaunchEnvironment,
+
+    // Live transport/process state belongs to one externally serialized owner.
     started: bool,
     master_fd: ?posix.fd_t,
     child: Child,
@@ -441,6 +469,10 @@ pub const Owned = struct {
     const StartPipes = struct {
         launch_status: LaunchStatus,
     };
+
+    // -------------------------------------------------------------------------
+    // Copied launch configuration and idle lifetime
+    // -------------------------------------------------------------------------
 
     /// Copies launch strings and initializes an idle PTY owner.
     pub fn init(
@@ -515,6 +547,10 @@ pub const Owned = struct {
         self.environment.deinit();
         self.* = undefined;
     }
+
+    // -------------------------------------------------------------------------
+    // Child launch and parent adoption
+    // -------------------------------------------------------------------------
 
     /// Starts one child at the supplied nonzero terminal dimensions.
     pub fn start(self: *Self, cols: u16, rows: u16) StartError!void {
@@ -599,6 +635,10 @@ pub const Owned = struct {
         std.debug.assert(self.master_fd != null);
         std.debug.assert(self.childPid() != null);
     }
+
+    // -------------------------------------------------------------------------
+    // Child lifetime and observation
+    // -------------------------------------------------------------------------
 
     /// Stops and reaps the child process group and closes every descriptor.
     pub fn stop(self: *Self) void {
@@ -711,6 +751,10 @@ pub const Owned = struct {
         self.child = .none;
     }
 
+    // -------------------------------------------------------------------------
+    // Nonblocking transport and terminal control
+    // -------------------------------------------------------------------------
+
     /// Attempts one nonblocking write. The caller owns polling, retries,
     /// deadlines, and the unaccepted suffix.
     pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
@@ -793,7 +837,11 @@ pub const Owned = struct {
     }
 };
 
-// Linux descriptor, child-launch, and process-group mechanics.
+// =============================================================================
+// Linux descriptor, child-launch, and process-group mechanics
+// =============================================================================
+
+// -- Exit decoding and descriptor ownership ----------------------------------
 
 fn childObservation(status: c_int) ChildObservation {
     const value: u32 = @intCast(status);
@@ -874,6 +922,8 @@ fn requireExecutable(path: [:0]const u8) StartError!void {
 fn cArg(path: [*:0]const u8) [*c]u8 {
     return @ptrFromInt(@intFromPtr(path));
 }
+
+// -- Child session, stdio, and exec ------------------------------------------
 
 const ChildProcessFds = struct {
     master_fd: posix.fd_t,
@@ -958,6 +1008,8 @@ fn childProcess(
     if (linux.errno(linux.execve(shell_path.ptr, @ptrCast(argv[0..].ptr), @ptrCast(envp))) != .SUCCESS) childLaunchExit(status_fd, .exec);
     childLaunchExit(status_fd, .exec);
 }
+
+// -- Bounded reap and process-group teardown --------------------------------
 
 fn waitChildNoHang(pid: posix.pid_t) enum { alive, reaped, failed } {
     std.debug.assert(pid > 0);
@@ -1065,6 +1117,10 @@ fn sleepStopSlice() void {
     consumeSleepResult(linux.nanosleep(&request, null));
 }
 
+// =============================================================================
+// PTY owner proofs
+// =============================================================================
+
 const test_cols: u16 = 80;
 const test_rows: u16 = 24;
 const test_wait_ms: i32 = 100;
@@ -1117,6 +1173,8 @@ fn environmentAllocation(allocator: std.mem.Allocator) !void {
 fn expectEnvironmentEntry(environment: *const LaunchEnvironment, index: usize, expected: []const u8) !void {
     try std.testing.expectEqualStrings(expected, std.mem.span(environment.entries[index].?));
 }
+
+// -- Allocation and launch-environment ownership -----------------------------
 
 test "initialization releases every partial allocation" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
@@ -1220,6 +1278,8 @@ test "launch environment rejects malformed and bounded input transactionally" {
 test "launch environment releases both allocations under every failure" {
     try std.testing.checkAllAllocationFailures(std.testing.allocator, environmentAllocation, .{});
 }
+
+// -- Lifecycle, I/O, resize, and signal semantics -----------------------------
 
 test "child receives selected identities and retained environment across restart" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
@@ -1377,6 +1437,8 @@ test "failed termios query preserves owner state and delivers no signal" {
     }
 }
 
+// -- Raw syscall and cleanup boundaries --------------------------------------
+
 test "PTY owner has no libc or C shim dependency" {
     const source = @embedFile("howl_pty.zig");
     inline for (.{
@@ -1473,6 +1535,8 @@ test "failed ioctl preserves accepted dimensions" {
     try std.testing.expectEqual(@as(u16, 0), owned.last_cols);
     try std.testing.expectEqual(@as(u16, 0), owned.last_rows);
 }
+
+// -- Multiplexing, backpressure, and drain behavior ---------------------------
 
 test "multiple owners interleave output through one caller poll set" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
