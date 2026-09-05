@@ -28,18 +28,22 @@ resource residency follows the already-proven Flutter lease rule: each completed
 frame names the exact resource generations still live, so superseded atlas
 generations do not accumulate.
 
-This remains a local canary. Its WebSocket bridge is disposable, loopback-only,
-origin-checked and bounded; it is not product source and is not an authentication
-or public-delivery design. Safari/PWA acceptance is not claimed.
+The browser byte bridge is now maintained in `gateway/`. It binds loopback only,
+serves a closed static route table and copies admitted binary WebSocket messages
+to one explicit loopback Howl session without parsing the Howl protocol. Host,
+Origin, WebSocket structure and connection/byte budgets fail closed before the
+upstream socket opens. Public authentication still belongs to Cloudflare Access;
+the optional Access-assertion check is an origin misrouting guard, not a second
+identity system. Safari acceptance is not yet claimed.
 
 ## Build and check
 
-Use the workspace `.zigversion` compiler and Node.js:
+Use the workspace `.zigversion` compiler, Node.js and Python 3 standard library:
 
 ```sh
 cd howl-web
-zig build check
-zig build install
+zig build check render-check gateway-check
+zig build install render-web gateway-install
 ```
 
 The artifact is `zig-out/bin/howl-web.wasm`. `check` instantiates the actual
@@ -92,15 +96,29 @@ frame. It acknowledges residency only after successfully drawing that frame; a
 failed draw therefore cannot cause the renderer to assume an upload exists. This
 matches the native Flutter resource-lifetime contract.
 
+## Maintained gateway and PWA shell
+
+`gateway/` owns the loopback HTTP/WebSocket origin. Its black-box test proves that
+rejected Host, Origin, Access and WebSocket requests cause zero upstream terminal
+connections; only admitted binary WebSockets cross the byte-pump boundary. The
+full contract and standalone commands live in `gateway/README.md`.
+
+`render-web` now includes a manifest, the existing Howl iOS icon and a small service
+worker. The service worker is network-first while online and caches only successful,
+non-redirected same-origin app responses. An Access login/redirect is therefore
+never stored as application content. With the origin stopped, the cached shell
+relaunches into an explicit `DISCONNECTED` state with no terminal frame; after the
+gateway returns, the page-level Reconnect control can restore observer/control
+connections without reloading.
+
 ## Next boundaries
 
-1. Replace the disposable loopback byte bridge with a maintained browser transport
-   owner while preserving the protocol-blind byte-pump boundary and strict bounds.
+1. Put the maintained loopback gateway behind a whole-host Cloudflare Access app
+   and the existing Home tunnel, with the Access policy created before the tunnel
+   ingress is made reachable.
 2. Broaden browser control from committed lines to the existing semantic key,
    paste, focus, resize and pointer actions without duplicating terminal encoding.
-3. Design and prove private authenticated HTTPS/WSS delivery before any non-loopback
-   terminal exposure.
-4. Obtain real Safari/Home-Screen input, lifecycle, rotation and reconnect evidence
+3. Obtain real Safari/Home-Screen input, lifecycle, rotation and reconnect evidence
    on the iPhone.
 
 Flutter remains the native regression client. Web is the preferred fast canary,
@@ -135,6 +153,6 @@ exactly four admitted host functions and bounded memory growth (64 MiB initial,
 96 MiB maximum). `text/web/runtime.mjs` is the restricted text host reused by Node and browser canaries; it grants no filesystem or socket access. These are honest current
 canary limits, not a finished renderer memory budget.
 
-The shared renderer and loopback browser observation/control path are now proven.
-The remaining product work is maintained transport and full semantic browser input,
-then authenticated HTTPS/WSS and actual Safari/iPhone acceptance.
+The shared renderer, maintained loopback transport and offline-capable PWA shell
+are now proven. The remaining product work is Cloudflare Access delivery and full
+semantic browser input, followed by actual Safari/iPhone acceptance.

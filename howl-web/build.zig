@@ -63,5 +63,13 @@ pub fn build(b: *std.Build) void {
     const render_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
     render_site.setCwd(b.path("render"));
     render_web.dependOn(&render_site.step);
+    const gateway_check = b.step("gateway-check", "Run the maintained loopback WebSocket gateway proofs");
+    const gateway_tests = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "test" });
+    gateway_tests.setCwd(b.path("gateway"));
+    gateway_check.dependOn(&gateway_tests.step);
+    const gateway_install = b.step("gateway-install", "Build the maintained loopback WebSocket gateway");
+    const gateway_build = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "install", "-Doptimize=ReleaseSafe" });
+    gateway_build.setCwd(b.path("gateway"));
+    gateway_install.dependOn(&gateway_build.step);
     b.default_step = check;
 }

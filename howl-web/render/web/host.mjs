@@ -266,6 +266,7 @@ reconnect.addEventListener('click', async () => {
       previousObserverId = observer.clientId ? String(observer.clientId) : null;
       await observer.closeAndWait();
     }
+    if (!control || control.closed) control = await WireConnection.connect('control');
     observer = await WireConnection.connect('observer');
     if (previousObserverId && String(observer.clientId) === previousObserverId) throw new Error('observer reconnect reused client identity');
     status.textContent = 'Observer reconnected; waiting for canonical snapshot…';
@@ -275,8 +276,12 @@ reconnect.addEventListener('click', async () => {
 
 function fail(error) {
   console.error(error);
-  status.textContent = `FAIL: ${error.message}`;
+  const networkFailure = /websocket|open timeout|open error/i.test(error.message);
+  status.textContent = `${networkFailure ? 'DISCONNECTED' : 'FAIL'}: ${error.message}`;
   factsNode.textContent = error.stack ?? String(error);
 }
 
 load().catch(fail);
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(error => console.warn('service worker registration failed', error));
+}

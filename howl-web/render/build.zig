@@ -86,7 +86,7 @@ pub fn build(b: *std.Build) void {
     const web = b.step("web", "Build the local-only live terminal renderer site");
     web.dependOn(&b.addInstallFile(live.getEmittedBin(), "live-web/render.wasm").step);
     web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/font.bin").step);
-    inline for (.{ "index.html", "host.mjs", "style.css" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep
