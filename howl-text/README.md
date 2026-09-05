@@ -74,7 +74,7 @@ injected by those tests.
 ## Target-built dependencies
 
 The ordinary module build still uses system FreeType/HarfBuzz and libc. It does
-not download the optional dependency archives. A consuming build can request
+not download the optional upstream dependencies. A consuming build can request
 `bundled = true` to build the exact content-pinned upstream sources recorded in
 `build.zig.zon`. `bundled.zig` owns their configuration and linkage. No caller
 passes machine-local source mirrors or modifies a dependency cache.

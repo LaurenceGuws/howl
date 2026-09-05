@@ -2,7 +2,7 @@ Bundled Howl text dependency notices
 ====================================
 
 The memory-only build uses these upstream sources without changing their
-shaping or rasterization implementations. Source archive hashes are recorded
+shaping or rasterization implementations. Source package hashes are recorded
 in howl-text/build.zig.zon. Preserve these notices with distributed artifacts.
 The ordinary native build continues to use the platform's system libraries.
 

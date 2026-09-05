@@ -12,9 +12,8 @@ pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.
     // consumer asks for this module, not return a half-configured dependency.
     const ft = b.dependency("freetype", .{});
     const hb = b.dependency("harfbuzz", .{});
-    // GitHub's content-pinned archives retain their commit-named top directory.
-    const ft_root = ft.path("freetype-25a08f24cfc0da879d1938352d026532f280b77e");
-    const hb_root = hb.path("harfbuzz-a95d2a18ab0084b3fed5e5c6737f60d2c985bbeb");
+    const ft_root = ft.path("");
+    const hb_root = hb.path("");
     const ft_include = ft_root.path(b, "include");
     const hb_include = hb_root.path(b, "src");
     const ftmod = b.createModule(.{ .target = target, .optimize = optimize, .link_libc = true });
