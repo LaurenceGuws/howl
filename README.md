@@ -11,7 +11,7 @@ The core idea is simple: **the session lives on the node, not in the client.** O
 | `howl-vt` | Terminal parsing, semantic state, history, images, input encoding, replies, and protocol consequences |
 | `howl-session` | One canonical PTY/VT lifetime, ordered I/O, explicit geometry, signals, child state, and headless policy |
 | `howl-pty` | Linux-kernel PTY transport and child-process lifecycle, used directly on Linux and Android |
-| `howl-text` | Standalone pinned package for native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization |
+| `howl-text` | Tracked module for native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization |
 
 The portable session v1 client contract and language-neutral golden vectors live in `howl-session/README.md`.
 
@@ -30,7 +30,7 @@ Install the pushed native CLI as a regular user-owned command with `./howl-cli/i
 
 ## Experimental packages
 
-`howl-render`, `howl-vk`, `howl-wayland`, and `howl-flutter` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
+`howl-render`, `howl-vk`, `howl-wayland`, `howl-flutter`, and `howl-web` are experiments, not compatibility surfaces and not part of the root core gate. They may be replaced or deleted when better client architecture demands it.
 
 ## Build
 
@@ -44,9 +44,10 @@ zig build test
 
 Do not create a project-local Zig symlink or toolchain alias. Fleet owns the installed compiler; the repository owns only the version pin.
 
-Each local child package owns its own `build.zig` and proofs. `howl-text` lives
-in its own repository; the root and renderer consume the
-exact published commit pinned in their package metadata.
+Each tracked core module owns its own `build.zig` and proofs. `howl-text/`
+lives in this repository alongside VT, Session, and PTY. Root checks and tests
+include it directly; renderer and native hosts consume the same local source.
+There is no separate text-repository fetch or historical-source fallback.
 
 Core `check`/`test` gates also use Python 3's standard library to validate the
 language-neutral session wire corpus. Python is build-time evidence only and is

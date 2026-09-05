@@ -3,12 +3,7 @@
     .version = "0.1.6-dev",
     .fingerprint = 0xf06e5c954256b3dd,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
-    .dependencies = .{
-        .howl_text = .{
-            .url = "git+https://github.com/LaurenceGuws/howl-text.git#8ffaea781e2677ebe8e1cfc2b7b3d5015ad53b90",
-            .hash = "howl_text-0.1.6-dev-fp7jPoZZ2QBExKz8gj5T7MtGp3vVEUU_bDtdh_FhaHaW",
-        },
-    },
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",

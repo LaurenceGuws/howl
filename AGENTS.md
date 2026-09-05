@@ -26,7 +26,7 @@ Use Fleet's installed `zig` from `PATH` and require `zig version` to match the t
 3. VT owns terminal semantics only. It must never wait for or publish to a renderer or observer.
 4. Session owns one canonical PTY and VT lifetime. Observers may disappear or stall without affecting canonical progress.
 5. PTY owns Linux process and descriptor mechanics. Platform policy never leaks downward.
-6. The standalone `howl-text` repository owns native font metrics, shaping, source clusters, glyph lookup, and bounded natural rasterization. Renderer, window, terminal-cell, session, and client policy never leaks downward.
+6. The tracked `howl-text` module owns native font metrics, shaping, source clusters, glyph lookup, and bounded natural rasterization. Renderer, window, terminal-cell, session, and client policy never leaks downward.
 7. Public authority boundaries must be mechanically enforceable, not comments pretending fields are private.
 8. Tests prove positive and negative space, failure cleanup, bounds, and ownership.
 
@@ -46,6 +46,6 @@ Before a checkpoint: run the affected package proofs, root core gate, protocol v
 
 ## Workspace
 
-This repository is the session/VT/PTY workspace, not an authority boundary for every Howl-named package. Cairn carries substantial cross-repository context; repository adjacency is only development convenience.
+This repository tracks the core and experimental client modules together. Module boundaries define semantic ownership; they do not require separate repositories. `howl-text/` is ordinary tracked source here, not a Git submodule, remote package pin, or dependency-cache editing surface. Cairn carries substantial work context.
 
-The root gate owns local `howl-vt`, `howl-session`, and `howl-pty`, and delegates the exact pinned standalone `howl-text` package's own checks and tests. Other local packages are experiments until explicitly promoted. QAgent and other embedders may pressure the core but never own its policy.
+The root gate runs the owner-local checks and tests for `howl-vt`, `howl-session`, `howl-pty`, and `howl-text`. Other local packages are experiments until explicitly promoted. QAgent and other embedders may pressure the core but never own its policy.

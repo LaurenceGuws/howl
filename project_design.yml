@@ -1,7 +1,7 @@
 project:
   name: howl
   mission: small, correct native terminal sessions shared by humans and agents
-  shape: small independent Zig package repositories with explicit pinned dependencies
+  shape: one repository of small Zig modules with explicit local dependencies and semantic ownership
 
 core:
   howl-vt:
@@ -12,7 +12,7 @@ core:
   howl-pty:
     role: Linux PTY, child process group, descriptors, resize, signals, and cleanup
   howl-text:
-    role: standalone native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
+    role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 planned:
   clients: native Howl CLI plus Linux/Android/iOS visual clients and a WebAssembly browser canary; iOS and web remain client-only with no PTY/userland ownership
@@ -35,7 +35,6 @@ ownership:
   - renderer and platform policy stay outside VT and session
 
 workspace:
-  local_root_gate: [howl-vt, howl-session, howl-pty]
-  delegated_gate: exact pinned howl-text package check and test
+  local_root_gate: [howl-vt, howl-session, howl-pty, howl-text]
   toolchain: exact tracked Zig pin with self-hosted code generation and linking
   root: development curator only; exports no product module
