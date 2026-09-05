@@ -11,6 +11,7 @@ const terminal = document.querySelector('#terminal');
 const toolbar = document.querySelector('#toolbar');
 const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
+const pasteButton = document.querySelector('#paste-button');
 const reconnect = document.querySelector('#reconnect');
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -412,6 +413,22 @@ keyboard.addEventListener('keyup', event => {
 
 terminal.addEventListener('pointerdown', focusKeyboard);
 keyboardButton.addEventListener('click', focusKeyboard);
+pasteButton.addEventListener('click', async () => {
+  try {
+    if (!navigator.clipboard?.readText) throw new Error('browser clipboard read is unavailable');
+    const value = await navigator.clipboard.readText();
+    if (!value) {
+      status.textContent = 'Clipboard is empty';
+      return;
+    }
+    queuePaste(value);
+    status.textContent = `Clipboard paste queued (${encoder.encode(value).length} bytes)`;
+    focusKeyboard();
+  } catch (error) {
+    status.textContent = `PASTE UNAVAILABLE: ${error.message}`;
+    focusKeyboard();
+  }
+});
 
 function setModifierLatch(value) {
   modifierLatch = value;
