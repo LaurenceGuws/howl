@@ -1,14 +1,23 @@
 :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #0c1218; color: #d8e2ea; }
 * { box-sizing: border-box; }
-body { margin: 0; min-height: 100vh; background: #0c1218; }
-main { width: min(1180px, 100%); margin: 0 auto; padding: 20px; }
-h1 { margin: 0; font-size: 24px; }
-header { display: flex; align-items: baseline; gap: 18px; }
-#status { margin: 0; color: #9ce6c8; }
-#terminal { display: block; margin: 18px 0; max-width: 100%; height: auto; border: 1px solid #33414d; background: #000; image-rendering: pixelated; }
-form { display: flex; gap: 8px; max-width: 760px; }
-input { flex: 1; min-width: 0; padding: 10px; background: #121b23; color: inherit; border: 1px solid #40505d; font: inherit; }
-button { padding: 10px 14px; background: #1d2933; color: inherit; border: 1px solid #516371; font: inherit; }
-#reconnect { margin-top: 10px; }
-#facts { white-space: pre-wrap; color: #9eb0bd; font-size: 12px; }
-.note { color: #748692; font-size: 12px; }
+body { margin: 0; min-height: 100dvh; background: #0c1218; overscroll-behavior: none; }
+main { width: min(1180px, 100%); margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
+header { display: flex; align-items: baseline; gap: 14px; min-height: 32px; }
+h1 { margin: 0; font-size: 20px; }
+#status { margin: 0; color: #9ce6c8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#terminal { display: block; margin: 8px 0; max-width: 100%; height: auto; border: 1px solid #33414d; background: #000; image-rendering: pixelated; touch-action: manipulation; outline: none; }
+#terminal:focus { border-color: #6b8b82; }
+#toolbar { display: flex; flex-wrap: wrap; gap: 6px; }
+button { min-height: 38px; padding: 7px 11px; background: #1d2933; color: inherit; border: 1px solid #516371; border-radius: 4px; font: inherit; }
+button[aria-pressed="true"] { background: #315344; border-color: #85c8aa; color: #c7ffe5; }
+.ime-sink { position: fixed; left: 0; bottom: 0; width: 2px; height: 2px; opacity: .01; padding: 0; border: 0; resize: none; pointer-events: none; }
+details { margin-top: 8px; color: #8fa2af; font-size: 11px; }
+#facts { white-space: pre-wrap; color: #9eb0bd; font-size: 11px; }
+.note { color: #748692; font-size: 11px; margin: 8px 0 0; }
+@media (max-width: 600px) {
+  main { padding-top: max(6px, env(safe-area-inset-top)); }
+  header { min-height: 24px; }
+  h1 { font-size: 17px; }
+  #status { font-size: 10px; }
+  button { min-height: 34px; padding: 6px 9px; }
+}

@@ -18,11 +18,16 @@ var output: [p.header_bytes + 1 + 4096]u8 = undefined;
 var output_len: usize = 0;
 var identity: u64 = 0;
 var revision: u64 = 0;
+var terminal_revision: u64 = 0;
 var rows: u32 = 0;
 var columns: u32 = 0;
 var failure: []const u8 = "";
+const ControlOperation = enum { none, input, assign_resize, resize };
+var control_operation: ControlOperation = .none;
+var pending_resize_rows: u16 = 0;
+var pending_resize_columns: u16 = 0;
 // 0 closed, 1 awaiting welcome, 2 attached, 3 observing, 4 snapshot ready,
-// 5 awaiting input result, 6 input acknowledged, 99 terminal protocol error.
+// 5 awaiting a control result, 6 control acknowledged, 99 terminal protocol error.
 var phase: u32 = 0;
 
 export fn hw_input_ptr() usize {
@@ -64,11 +69,17 @@ export fn hw_identity() u64 {
 export fn hw_revision() u64 {
     return revision;
 }
+export fn hw_terminal_revision() u64 {
+    return terminal_revision;
+}
 export fn hw_rows() u32 {
     return rows;
 }
 export fn hw_columns() u32 {
     return columns;
+}
+export fn hw_control_ready() u32 {
+    return @intFromBool(controlReady());
 }
 
 fn fail(message: []const u8) u32 {
@@ -86,6 +97,27 @@ fn queue(kind: p.Kind, payload: []const u8) bool {
     return true;
 }
 
+fn controlReady() bool {
+    return control_operation == .none and (phase == 2 or phase == 4 or phase == 6);
+}
+
+fn beginInput(payload: []const u8) u32 {
+    if (!controlReady()) return 0;
+    if (!queue(.input, payload)) return fail("InputEncodingFailed");
+    control_operation = .input;
+    phase = 5;
+    return 1;
+}
+
+fn sendBytesInput(kind: p.InputKind, length: usize, validate_utf8: bool) u32 {
+    if (!controlReady() or length == 0 or length > 4096) return 0;
+    if (validate_utf8 and !std.unicode.utf8ValidateSlice(input[0..length])) return 0;
+    var payload: [4097]u8 = undefined;
+    payload[0] = @backingInt(kind);
+    @memcpy(payload[1..][0..length], input[0..length]);
+    return beginInput(payload[0 .. length + 1]);
+}
+
 export fn hw_reset() u32 {
     used = 0;
     needed = p.header_bytes;
@@ -93,16 +125,20 @@ export fn hw_reset() u32 {
     projection_len = 0;
     identity = 0;
     revision = 0;
+    terminal_revision = 0;
     rows = 0;
     columns = 0;
     failure = "";
+    control_operation = .none;
+    pending_resize_rows = 0;
+    pending_resize_columns = 0;
     phase = 1;
     if (!queue(.hello, &.{})) return fail("HelloEncodingFailed");
     return 1;
 }
 
 export fn hw_observe(immediate: u32) u32 {
-    if (phase != 2 and phase != 4 and phase != 6) return 0;
+    if (!controlReady()) return 0;
     var payload: [p.payload_bytes.observe]u8 = undefined;
     p.encodeObserve(&payload, .{ .after_revision = if (immediate != 0) 0 else revision });
     if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
@@ -112,14 +148,65 @@ export fn hw_observe(immediate: u32) u32 {
 }
 
 // Host writes committed UTF-8 bytes into input, then requests one serialized send.
-// This is not a general keyboard/IME implementation and never encodes VT replies.
+// Terminal escape encoding remains exclusively on the session/VT side.
 export fn hw_send_text(length: usize) u32 {
-    if (phase != 2 and phase != 4 and phase != 6) return 0;
-    if (length == 0 or length > 4096 or !std.unicode.utf8ValidateSlice(input[0..length])) return 0;
-    var payload: [4097]u8 = undefined;
-    payload[0] = @backingInt(p.InputKind.bytes);
-    @memcpy(payload[1..][0..length], input[0..length]);
-    if (!queue(.input, payload[0 .. length + 1])) return fail("InputEncodingFailed");
+    return sendBytesInput(.bytes, length, true);
+}
+
+export fn hw_send_paste(length: usize) u32 {
+    return sendBytesInput(.paste, length, false);
+}
+
+export fn hw_send_named_key(key_value: u32, action_value: u32, modifiers: u32) u32 {
+    if (!controlReady() or key_value < 1 or key_value > 58 or
+        action_value < 1 or action_value > 3 or modifiers > std.math.maxInt(u8))
+        return 0;
+    var body: [p.typed_input.key_header_bytes]u8 = undefined;
+    const encoded = p.encodeKeyInput(&body, .{
+        .kind = .named,
+        .key_value = key_value,
+        .action = @fromBackingInt(@as(u8, @intCast(action_value))),
+        .modifiers = @intCast(modifiers),
+    }) catch return 0;
+    var payload: [1 + p.typed_input.key_header_bytes]u8 = undefined;
+    payload[0] = @backingInt(p.InputKind.key);
+    @memcpy(payload[1..][0..encoded.len], encoded);
+    return beginInput(payload[0 .. 1 + encoded.len]);
+}
+
+export fn hw_send_unicode_key(scalar: u32, action_value: u32, modifiers: u32) u32 {
+    if (!controlReady() or action_value < 1 or action_value > 3 or modifiers > std.math.maxInt(u8)) return 0;
+    var body: [p.typed_input.key_header_bytes]u8 = undefined;
+    const encoded = p.encodeKeyInput(&body, .{
+        .kind = .unicode,
+        .key_value = scalar,
+        .action = @fromBackingInt(@as(u8, @intCast(action_value))),
+        .modifiers = @intCast(modifiers),
+    }) catch return 0;
+    var payload: [1 + p.typed_input.key_header_bytes]u8 = undefined;
+    payload[0] = @backingInt(p.InputKind.key);
+    @memcpy(payload[1..][0..encoded.len], encoded);
+    return beginInput(payload[0 .. 1 + encoded.len]);
+}
+
+export fn hw_send_focus(focus_value: u32) u32 {
+    if (!controlReady() or focus_value < 1 or focus_value > 2) return 0;
+    var body: [p.typed_input.focus_bytes]u8 = undefined;
+    p.encodeFocusInput(&body, @fromBackingInt(@as(u8, @intCast(focus_value))));
+    const payload = [1 + p.typed_input.focus_bytes]u8{ @backingInt(p.InputKind.focus), body[0] };
+    return beginInput(&payload);
+}
+
+export fn hw_send_resize(resize_rows: u32, resize_columns: u32) u32 {
+    if (!controlReady() or resize_rows == 0 or resize_rows > std.math.maxInt(u16) or
+        resize_columns == 0 or resize_columns > std.math.maxInt(u16))
+        return 0;
+    var payload: [p.payload_bytes.assign_leader]u8 = undefined;
+    p.encodeAssignLeader(&payload, .{ .client_id = identity });
+    if (!queue(.assign_leader, &payload)) return fail("ResizeLeaderEncodingFailed");
+    pending_resize_rows = @intCast(resize_rows);
+    pending_resize_columns = @intCast(resize_columns);
+    control_operation = .assign_resize;
     phase = 5;
     return 1;
 }
@@ -152,6 +239,7 @@ fn decodeSnapshot() rich.Error!void {
     }
     projection_len = length;
     revision = snapshot.begin.revision;
+    terminal_revision = snapshot.begin.terminal_revision;
     rows = snapshot.begin.rows;
     columns = snapshot.begin.columns;
 }
@@ -183,10 +271,34 @@ fn acceptFrame() u32 {
             }
         },
         5 => {
-            if (header.kind != .result) return fail("ExpectedInputResult");
+            if (header.kind != .result) return fail("ExpectedControlResult");
             const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
-            if (result.request_kind != .input or result.code != .ok) return fail("InputRejected");
-            phase = 6;
+            switch (control_operation) {
+                .input => {
+                    if (result.request_kind != .input or result.code != .ok) return fail("InputRejected");
+                    control_operation = .none;
+                    phase = 6;
+                },
+                .assign_resize => {
+                    if (result.request_kind != .assign_leader or result.code != .ok) return fail("ResizeLeaderRejected");
+                    var resize_payload: [p.payload_bytes.resize]u8 = undefined;
+                    p.encodeResize(&resize_payload, .{
+                        .rows = pending_resize_rows,
+                        .columns = pending_resize_columns,
+                    });
+                    if (!queue(.resize, &resize_payload)) return fail("ResizeEncodingFailed");
+                    control_operation = .resize;
+                    return 2;
+                },
+                .resize => {
+                    if (result.request_kind != .resize or result.code != .ok) return fail("ResizeRejected");
+                    pending_resize_rows = 0;
+                    pending_resize_columns = 0;
+                    control_operation = .none;
+                    phase = 6;
+                },
+                .none => return fail("MissingControlOperation"),
+            }
         },
         else => return fail("UnsolicitedFrame"),
     }
@@ -208,9 +320,14 @@ export fn hw_feed(length: usize) u32 {
             needed = p.header_bytes + header.payload_len;
             if (used != needed) continue;
         }
-        if (acceptFrame() != 1) return 0;
+        const accepted = acceptFrame();
+        if (accepted == 0) return 0;
         used = 0;
         needed = p.header_bytes;
+        if (accepted == 2) {
+            if (offset != length) return fail("ControlFollowupRequired");
+            return 2;
+        }
     }
     return 1;
 }
@@ -218,6 +335,9 @@ export fn hw_feed(length: usize) u32 {
 export fn hw_finish() u32 {
     if (phase == 99) return 0;
     if (used != 0 or phase == 1 or phase == 3 or phase == 5) return fail("TruncatedResponse");
+    control_operation = .none;
+    pending_resize_rows = 0;
+    pending_resize_columns = 0;
     phase = 0;
     output_len = 0;
     return 1;

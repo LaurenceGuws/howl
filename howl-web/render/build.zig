@@ -82,11 +82,17 @@ pub fn build(b: *std.Build) void {
     host_syntax.setCwd(b.path("."));
     host_syntax.setName("live browser host syntax");
     check.dependOn(&host_syntax.step);
+    const input_test = b.addSystemCommand(&.{ "node", "tests/input.mjs" });
+    input_test.setCwd(b.path("."));
+    input_test.setName("browser semantic input staging");
+    check.dependOn(&input_test.step);
 
     const web = b.step("web", "Build the local-only live terminal renderer site");
     web.dependOn(&b.addInstallFile(live.getEmittedBin(), "live-web/render.wasm").step);
-    web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/font.bin").step);
-    inline for (.{ "index.html", "host.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    web.dependOn(&b.addInstallFile(text.path("testdata/fira-code-medium.otf"), "live-web/font.bin").step);
+    web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
+    web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
+    inline for (.{ "index.html", "host.mjs", "input.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep

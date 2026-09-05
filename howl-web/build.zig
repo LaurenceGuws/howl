@@ -24,12 +24,13 @@ pub fn build(b: *std.Build) void {
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;
     root.export_symbol_names = &.{
-        "hw_input_ptr",    "hw_input_capacity", "hw_output_ptr",   "hw_output_len",
-        "hw_text_ptr",     "hw_text_len",       "hw_snapshot_ptr", "hw_snapshot_len",
-        "hw_error_ptr",    "hw_error_len",      "hw_phase",        "hw_identity",
-        "hw_revision",     "hw_rows",           "hw_columns",      "hw_reset",
-        "hw_observe",      "hw_send_text",      "hw_feed",         "hw_finish",
-        "hw_canvas_check",
+        "hw_input_ptr",     "hw_input_capacity",    "hw_output_ptr",       "hw_output_len",
+        "hw_text_ptr",      "hw_text_len",          "hw_snapshot_ptr",     "hw_snapshot_len",
+        "hw_error_ptr",     "hw_error_len",         "hw_phase",            "hw_identity",
+        "hw_revision",      "hw_terminal_revision", "hw_rows",             "hw_columns",
+        "hw_control_ready", "hw_reset",             "hw_observe",          "hw_send_text",
+        "hw_send_paste",    "hw_send_named_key",    "hw_send_unicode_key", "hw_send_focus",
+        "hw_send_resize",   "hw_feed",              "hw_finish",           "hw_canvas_check",
     };
     wasm.export_memory = true;
     wasm.initial_memory = 32 * 1024 * 1024;

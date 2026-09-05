@@ -14,19 +14,28 @@ real `howl-client.view -> howl-text -> howl-render.terminal.Content -> Canvas
 Composer` path with the pinned FreeType/HarfBuzz target. The node still owns the
 only canonical PTY and VT.
 
-The live loopback canary instantiates two independent wire modules: one observer
-and one control connection. This lets a long observation wait without blocking
-committed input. Complete framed snapshot bytes move directly from the observer
-module into the renderer module; JavaScript neither parses terminal cells nor
-shapes text. It retains Canvas resources, submits the final command stream, and
-captures ordinary browser input.
+The live canary instantiates two independent wire modules: one observer and one
+control connection. This lets a long observation wait without blocking semantic
+input. Complete framed snapshot bytes move directly from the observer module into
+the renderer module; JavaScript neither parses terminal cells, shapes text nor
+constructs terminal escape sequences. It retains Canvas resources, submits the
+final command stream, and captures platform input as Howl's existing semantic
+text, paste, key, focus and resize vocabulary.
 
-A dedicated echo-only PTY proved real committed input, Unicode rendering, observer
-disconnect/reconnect with a fresh client identity, recovery of the same canonical
-revision, and zero atlas re-upload for an unchanged recovered frame. Backend
-resource residency follows the already-proven Flutter lease rule: each completed
-frame names the exact resource generations still live, so superseded atlas
-generations do not accumulate.
+A dedicated echo-only PTY proved committed Unicode text, semantic Enter and
+Backspace, paste, focus transitions, canonical resize, observer disconnect and
+reconnect. Resize leadership gives observation and terminal revisions distinct
+meaning: releasing a leader may advance observation metadata while terminal
+content remains at the same terminal revision. Backend resource residency follows
+the already-proven Flutter lease rule, so an unchanged recovered frame needs no
+atlas upload and superseded generations do not accumulate.
+
+The browser input owner reuses Flutter's two-private-use-guard editor model for
+IME composition and software Backspace/Delete. Physical browser keys map to the
+frozen Howl key identities and modifier bits. The compact phone toolbar exposes
+one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ctrl
+latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
+changes produce explicit canonical resize mutations through the same wire owner.
 
 The browser byte bridge is now maintained in `gateway/`. It binds loopback only,
 serves a closed static route table and copies admitted binary WebSocket messages
@@ -70,11 +79,13 @@ cd howl-web
 zig build live -- ANNOUNCED_PORT
 ```
 
-The gate sends committed Unicode text, decodes the real PTY/VT response through
-Wasm one byte at a time, disconnects and obtains a fresh client identity while
-recovering the same canonical revision and text. Node hosts Wasm for this gate;
-it does not establish Safari, keyboard, graphics or WebSocket acceptance by
-itself. Stop the dedicated session after testing.
+The gate sends committed Unicode text plus semantic Enter, Backspace, paste,
+focus and resize operations, decodes the real PTY/VT response through Wasm one
+byte at a time, and reconnects with a fresh client identity while preserving
+terminal content and resized geometry. Resize is deliberately a two-request
+operation inside Wasm: assign-leader succeeds before the follow-up resize frame is
+published. Node hosts Wasm for this gate; Safari acceptance still requires the
+real phone. Stop the dedicated session after testing.
 
 ## Shared terminal-renderer target
 
@@ -87,7 +98,7 @@ and derives a Canvas Composer frame.
 
 The current live renderer uses coarse canary budgets: 128 MiB initial / 192 MiB
 maximum Wasm memory, a 24 MiB persistent Zig arena, a 20 MiB transient decode
-arena and a 1024x1024 alpha atlas. The browser proof stayed at 134,742,016 bytes
+arena and a 1024x1024 alpha atlas. The Fira-backed browser proof stayed at 134,873,088 bytes
 after initialization and across input/reconnect. These are explicit pressure-test
 ceilings, not a final footprint target.
 
@@ -103,23 +114,30 @@ rejected Host, Origin, Access and WebSocket requests cause zero upstream termina
 connections; only admitted binary WebSockets cross the byte-pump boundary. The
 full contract and standalone commands live in `gateway/README.md`.
 
-`render-web` now includes a manifest, the existing Howl iOS icon and a small service
-worker. The service worker is network-first while online and caches only successful,
+`render-web` includes a manifest, the existing Howl iOS icon, the tracked Fira
+Code terminal font, its redistribution notices and a small service worker. The
+service worker is network-first while online and caches only successful,
 non-redirected same-origin app responses. An Access login/redirect is therefore
-never stored as application content. With the origin stopped, the cached shell
-relaunches into an explicit `DISCONNECTED` state with no terminal frame; after the
-gateway returns, the page-level Reconnect control can restore observer/control
-connections without reloading.
+never stored as application content. With the origin stopped, the complete v3
+shell relaunches into an explicit `DISCONNECTED` state with no terminal frame but
+keeps the keyboard toolbar and IME owner available; after the gateway returns,
+the page-level Reconnect control restores observer/control connections without a
+page reload.
 
-## Next boundaries
+## Secure delivery and next boundary
 
-1. Put the maintained loopback gateway behind a whole-host Cloudflare Access app
-   and the existing Home tunnel, with the Access policy created before the tunnel
-   ingress is made reachable.
-2. Broaden browser control from committed lines to the existing semantic key,
-   paste, focus, resize and pointer actions without duplicating terminal encoding.
-3. Obtain real Safari/Home-Screen input, lifecycle, rotation and reconnect evidence
-   on the iPhone.
+The canary hostname is already behind a whole-host Cloudflare Access application
+and the existing Home tunnel. The Access application was created before DNS and
+before tunnel ingress. Home's `cloudflared` ingress additionally requires the
+exact Access audience before forwarding to the loopback gateway. Anonymous HTTP,
+a forged assertion and an anonymous WebSocket upgrade all stop at Access. The
+origin normally remains stopped outside a bounded canary run.
+
+The next acceptance is intentionally human: start one echo-only origin, authenticate
+in Safari, add Howl to the Home Screen, and verify actual iPhone composition,
+Backspace/Delete, the Ctrl toolbar, paste, soft-keyboard viewport resize, rotation,
+lock/resume, offline shell and reconnect. Pointer/mouse semantics and a normal
+interactive shell come only after that canary is healthy.
 
 Flutter remains the native regression client. Web is the preferred fast canary,
 not a reason to weaken or duplicate the core owners.
@@ -153,6 +171,7 @@ exactly four admitted host functions and bounded memory growth (64 MiB initial,
 96 MiB maximum). `text/web/runtime.mjs` is the restricted text host reused by Node and browser canaries; it grants no filesystem or socket access. These are honest current
 canary limits, not a finished renderer memory budget.
 
-The shared renderer, maintained loopback transport and offline-capable PWA shell
-are now proven. The remaining product work is Cloudflare Access delivery and full
-semantic browser input, followed by actual Safari/iPhone acceptance.
+The shared renderer, maintained fail-closed transport, semantic browser input,
+Access delivery edge and offline-capable PWA shell are now proven outside Safari.
+The remaining acceptance for this canary is the actual iPhone lifecycle and input
+pass; it has not been inferred from Chromium.

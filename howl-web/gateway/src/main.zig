@@ -311,6 +311,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
     const entries = [_]Entry{
         .{ .target = "/", .asset = .{ .relative_path = "index.html", .content_type = "text/html; charset=utf-8" } },
         .{ .target = "/host.mjs", .asset = .{ .relative_path = "host.mjs", .content_type = "text/javascript; charset=utf-8" } },
+        .{ .target = "/input.mjs", .asset = .{ .relative_path = "input.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/style.css", .asset = .{ .relative_path = "style.css", .content_type = "text/css; charset=utf-8" } },
         .{ .target = "/runtime.mjs", .asset = .{ .relative_path = "runtime.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/render.wasm", .asset = .{ .relative_path = "render.wasm", .content_type = "application/wasm" } },
@@ -319,6 +320,8 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/manifest.webmanifest", .asset = .{ .relative_path = "manifest.webmanifest", .content_type = "application/manifest+json" } },
         .{ .target = "/sw.js", .asset = .{ .relative_path = "sw.js", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/icon.png", .asset = .{ .relative_path = "icon.png", .content_type = "image/png" } },
+        .{ .target = "/font-licences.txt", .asset = .{ .relative_path = "font-licences.txt", .content_type = "text/plain; charset=utf-8" } },
+        .{ .target = "/dependencies.txt", .asset = .{ .relative_path = "dependencies.txt", .content_type = "text/plain; charset=utf-8" } },
     };
     for (entries) |entry| if (std.mem.eql(u8, target, entry.target)) return entry.asset;
     return null;

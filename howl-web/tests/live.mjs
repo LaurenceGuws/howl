@@ -41,7 +41,9 @@ async function attach() {
       // Deliberate single-byte deliveries pressure header and snapshot boundaries.
       for (const byte of bytes) {
         new Uint8Array(w.memory.buffer, w.hw_input_ptr(), 1)[0] = byte;
-        assert.equal(w.hw_feed(1), 1, error());
+        const accepted = w.hw_feed(1);
+        assert.ok(accepted === 1 || accepted === 2, error());
+        if (accepted === 2) send();
       }
       if (pending && w.hw_phase() === pending.phase) pending.resolve();
     } catch (e) { fault(e); }
@@ -61,6 +63,35 @@ async function untilContains(marker) {
   }
   throw new Error(`canonical snapshot lacks ${marker}`);
 }
+async function control(begin) {
+  assert.equal(w.hw_control_ready(), 1);
+  assert.equal(begin(), 1);
+  send(); await waitFor(6);
+}
+function stageText(value) {
+  const encoded = new TextEncoder().encode(value);
+  assert.ok(encoded.length > 0 && encoded.length <= w.hw_input_capacity());
+  new Uint8Array(w.memory.buffer, w.hw_input_ptr(), encoded.length).set(encoded);
+  return encoded.length;
+}
+async function committed(value) {
+  const length = stageText(value);
+  await control(() => w.hw_send_text(length));
+}
+async function paste(value) {
+  const length = stageText(value);
+  await control(() => w.hw_send_paste(length));
+}
+async function named(key, modifiers = 0) {
+  await control(() => w.hw_send_named_key(key, 1, modifiers));
+}
+async function focus(value) {
+  await control(() => w.hw_send_focus(value));
+}
+async function resize(rows, columns) {
+  await control(() => w.hw_send_resize(rows, columns));
+}
+
 async function disconnect() {
   const current = socket;
   assert.equal(w.hw_finish(), 1);
@@ -69,23 +100,38 @@ async function disconnect() {
 try {
   const first = await attach();
   await untilContains('HOWL_WEB_ECHO_READY');
-  const message = 'main canary: café λ\n';
-  const encoded = new TextEncoder().encode(message);
-  new Uint8Array(w.memory.buffer, w.hw_input_ptr(), encoded.length).set(encoded);
-  assert.equal(w.hw_send_text(encoded.length), 1);
-  send(); await waitFor(6);
-  await untilContains('ACK_FROM_PTY: main canary: café λ');
+  await committed('semantic canary: café λ');
+  await named(1); // Enter is a semantic physical key, not a browser newline byte.
+  await untilContains('ACK_FROM_PTY: semantic canary: café λ');
+
+  await committed('eraseX');
+  await named(3); // Canonical Backspace should erase X in the real PTY line discipline.
+  await named(1);
+  await untilContains('ACK_FROM_PTY: erase');
+
+  await paste('pasted λ');
+  await named(1);
+  await untilContains('ACK_FROM_PTY: pasted λ');
+  await focus(2);
+  await focus(1);
+
   assert.equal(w.hw_rows(), 12); assert.equal(w.hw_columns(), 72);
-  const before = text(), revision = w.hw_revision();
+  await resize(10, 60);
+  await observe(0);
+  assert.equal(w.hw_rows(), 10); assert.equal(w.hw_columns(), 60);
+  const before = text(), revision = w.hw_revision(), terminalRevision = w.hw_terminal_revision();
   await disconnect();
   const second = await attach();
   assert.notEqual(second, first);
   await observe(1);
   assert.equal(text(), before);
-  assert.equal(w.hw_revision(), revision);
+  assert.equal(w.hw_terminal_revision(), terminalRevision);
+  assert.ok(w.hw_revision() > revision); // Disconnect released resize leadership only.
+  assert.equal(w.hw_rows(), 10); assert.equal(w.hw_columns(), 60);
   console.log(JSON.stringify({status:'pass', firstClient:String(first), reconnectedClient:String(second),
-    revision:String(revision), rows:w.hw_rows(), columns:w.hw_columns(), textBytes:w.hw_text_len(), snapshotBytes:w.hw_snapshot_len(),
-    realPtyEcho:true, sharedRichDecoder:true, oneByteDelivery:true, reconnect:true}));
+    revisionBeforeDisconnect:String(revision), revisionAfterReconnect:String(w.hw_revision()), terminalRevision:String(terminalRevision), rows:w.hw_rows(), columns:w.hw_columns(), textBytes:w.hw_text_len(), snapshotBytes:w.hw_snapshot_len(),
+    realPtyEcho:true, semanticEnter:true, semanticBackspace:true, semanticPaste:true, semanticFocus:true, semanticResize:true,
+    sharedRichDecoder:true, oneByteDelivery:true, reconnect:true}));
   await disconnect();
 } finally {
   socket?.destroy();

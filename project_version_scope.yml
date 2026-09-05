@@ -26,7 +26,7 @@ active:
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - prioritize howl-web as a maintained fast browser canary alongside Flutter, reusing the client/text/Canvas owners
-  - put the maintained loopback Web gateway behind whole-host Cloudflare Access before any public iPhone canary, then broaden semantic browser input
+  - obtain attended iPhone Safari/Home-Screen acceptance for the Access-protected Web canary, especially composition, controls, viewport resize and reconnect
 
 deferred:
   - durable graphical Linux client

@@ -1,15 +1,23 @@
 import {assertTextImports, createTextRuntime} from './runtime.mjs';
+import {
+  TerminalInputStager, guardText, namedKeyForCode, NamedKey, KeyAction,
+  Modifier, modifierBits, singleScalar,
+} from './input.mjs';
 
+const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
 const terminal = document.querySelector('#terminal');
-const form = document.querySelector('#input-form');
-const input = document.querySelector('#committed');
+const toolbar = document.querySelector('#toolbar');
+const keyboard = document.querySelector('#keyboard');
+const keyboardButton = document.querySelector('#keyboard-button');
 const reconnect = document.querySelector('#reconnect');
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const resources = new Map();
 const context = terminal.getContext('2d', {alpha: false});
+const stager = new TerminalInputStager();
+const modifiedKeys = new Map();
 context.imageSmoothingEnabled = false;
 
 let wireModule;
@@ -19,6 +27,12 @@ let control;
 let previousObserverId = null;
 let lastFrame = null;
 let lastInput = '';
+let controlTail = Promise.resolve();
+let modifierLatch = 0;
+let compositionActive = false;
+let focusState = null;
+let resizeTimer = null;
+let requestedGeometry = null;
 
 const errorText = exports => decoder.decode(new Uint8Array(
   exports.memory.buffer, exports.hw_error_ptr?.() ?? exports.rv_error_ptr(),
@@ -26,6 +40,7 @@ const errorText = exports => decoder.decode(new Uint8Array(
 const bytesAt = (memory, pointer, length) => new Uint8Array(memory.buffer, Number(pointer), Number(length));
 const resourceKey = q => q.map(String).join(':');
 const rgba = color => `rgba(${color[0]},${color[1]},${color[2]},${color[3] / 255})`;
+const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 async function fetchBytes(path) {
   const response = await fetch(path, {cache: 'no-store'});
@@ -51,6 +66,8 @@ async function load() {
   if (renderer.exports.rv_init(font.length) !== 1) throw new Error(errorText(renderer.exports) || 'renderer init failed');
   observer = await WireConnection.connect('observer');
   control = await WireConnection.connect('control');
+  resetEditor();
+  syncFocus();
   updateFacts();
 }
 
@@ -89,33 +106,61 @@ class WireConnection {
   sendOutput() {
     const length = Number(this.exports.hw_output_len());
     if (length === 0) throw new Error(`${this.role}: empty outgoing frame`);
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error(`${this.role}: websocket is not open`);
     this.socket.send(bytesAt(this.exports.memory, this.exports.hw_output_ptr(), length).slice());
   }
   async onMessage(event) {
     const data = new Uint8Array(event.data);
     if (data.length > this.exports.hw_input_capacity()) throw new Error(`${this.role}: websocket fragment exceeds wire bound`);
     bytesAt(this.exports.memory, this.exports.hw_input_ptr(), data.length).set(data);
-    if (this.exports.hw_feed(data.length) !== 1) throw new Error(errorText(this.exports) || `${this.role}: wire feed failed`);
-    this.pulseWaiters?.();
+    const accepted = this.exports.hw_feed(data.length);
+    if (accepted !== 1 && accepted !== 2) throw new Error(errorText(this.exports) || `${this.role}: wire feed failed`);
+    if (accepted === 2) this.sendOutput();
     if (this.role === 'observer' && this.exports.hw_phase() === 4) {
       renderObserverSnapshot(this);
       this.observe(false);
     }
-    if (this.role === 'control' && this.exports.hw_phase() === 6) {
-      status.textContent = `Input acknowledged by canonical session${lastInput ? `: ${lastInput}` : ''}`;
-      updateFacts();
-    }
+    if (this.role === 'control' && this.exports.hw_phase() === 6) updateFacts();
   }
   observe(immediate) {
     if (this.exports.hw_observe(immediate ? 1 : 0) !== 1) throw new Error(`${this.role}: observe rejected`);
     this.sendOutput();
   }
-  sendLine(value) {
-    const bytes = encoder.encode(`${value}\n`);
-    if (bytes.length > this.exports.hw_input_capacity()) throw new Error('committed text exceeds wire input buffer');
+  stage(value) {
+    const bytes = encoder.encode(value);
+    if (bytes.length === 0 || bytes.length > 4096 || bytes.length > this.exports.hw_input_capacity())
+      throw new Error(`${this.role}: semantic text exceeds 4096-byte request bound`);
     bytesAt(this.exports.memory, this.exports.hw_input_ptr(), bytes.length).set(bytes);
-    if (this.exports.hw_send_text(bytes.length) !== 1) throw new Error(`${this.role}: committed text rejected`);
+    return bytes.length;
+  }
+  async operation(begin, label) {
+    if (this.closed || !this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error(`${this.role}: connection is not available`);
+    if (this.exports.hw_control_ready() !== 1) throw new Error(`${this.role}: prior control operation is still pending`);
+    if (begin() !== 1) throw new Error(`${this.role}: ${label} rejected before send`);
     this.sendOutput();
+    await this.waitForPhase(6);
+    lastInput = label;
+    updateFacts();
+  }
+  committedText(value) {
+    const length = this.stage(value);
+    return this.operation(() => this.exports.hw_send_text(length), `commit ${JSON.stringify(value)}`);
+  }
+  paste(value) {
+    const length = this.stage(value);
+    return this.operation(() => this.exports.hw_send_paste(length), `paste ${length} bytes`);
+  }
+  namedKey(key, action, modifiers) {
+    return this.operation(() => this.exports.hw_send_named_key(key, action, modifiers), `key ${key}/${action} mods=${modifiers}`);
+  }
+  unicodeKey(scalar, action, modifiers) {
+    return this.operation(() => this.exports.hw_send_unicode_key(scalar, action, modifiers), `unicode U+${scalar.toString(16)} mods=${modifiers}`);
+  }
+  focus(value) {
+    return this.operation(() => this.exports.hw_send_focus(value), `focus ${value === 1 ? 'in' : 'out'}`);
+  }
+  resize(rows, columns) {
+    return this.operation(() => this.exports.hw_send_resize(rows, columns), `resize ${rows}x${columns}`);
   }
   waitForPhase(wanted) {
     if (this.exports.hw_phase() === wanted) return Promise.resolve();
@@ -123,6 +168,7 @@ class WireConnection {
       const started = performance.now();
       const tick = () => {
         if (this.exports.hw_phase() === wanted) return resolve();
+        if (this.closed) return reject(new Error(`${this.role}: connection closed while waiting for phase ${wanted}`));
         if (this.exports.hw_phase() === 99) return reject(new Error(errorText(this.exports) || `${this.role}: protocol failure`));
         if (performance.now() - started > 5000) return reject(new Error(`${this.role}: phase ${wanted} timeout`));
         setTimeout(tick, 5);
@@ -144,6 +190,69 @@ class WireConnection {
   }
 }
 
+async function ensureControl() {
+  if (control && !control.closed && control.socket?.readyState === WebSocket.OPEN) return control;
+  control = await WireConnection.connect('control');
+  focusState = null;
+  return control;
+}
+
+function queueControl(run) {
+  const task = controlTail.then(async () => run(await ensureControl()));
+  controlTail = task.catch(fail);
+  return task;
+}
+
+function utf8Chunks(value, maximum = 4096) {
+  const result = [];
+  let current = '';
+  let bytes = 0;
+  for (const scalar of value) {
+    const size = encoder.encode(scalar).length;
+    if (size > maximum) throw new Error('one Unicode scalar exceeds semantic request bound');
+    if (bytes + size > maximum) { result.push(current); current = ''; bytes = 0; }
+    current += scalar; bytes += size;
+  }
+  if (current) result.push(current);
+  return result;
+}
+
+function queueCommitted(value) {
+  if (!value) return;
+  const latched = modifierLatch;
+  clearModifierLatch();
+  const scalar = latched ? singleScalar(value) : null;
+  if (scalar != null) {
+    queueKeyCycle({scalar, modifiers:latched});
+    return;
+  }
+  for (const chunk of utf8Chunks(value)) queueControl(connection => connection.committedText(chunk));
+}
+
+function queuePaste(value) {
+  if (!value) return;
+  clearModifierLatch();
+  if (encoder.encode(value).length > 4096) {
+    fail(new Error('paste exceeds current 4096-byte semantic request bound'));
+    return;
+  }
+  queueControl(connection => connection.paste(value));
+}
+
+function queueKeyCycle({named, scalar, modifiers = modifierLatch}) {
+  clearModifierLatch();
+  const operation = named != null
+    ? (connection, action) => connection.namedKey(named, action, modifiers)
+    : (connection, action) => connection.unicodeKey(scalar, action, modifiers);
+  queueControl(connection => operation(connection, KeyAction.press));
+  queueControl(connection => operation(connection, KeyAction.release));
+}
+
+function queueHardwareKey({named, scalar, action, modifiers}) {
+  if (named != null) queueControl(connection => connection.namedKey(named, action, modifiers));
+  else queueControl(connection => connection.unicodeKey(scalar, action, modifiers));
+}
+
 function renderObserverSnapshot(connection) {
   const wire = connection.exports;
   const length = Number(wire.hw_snapshot_len());
@@ -156,7 +265,10 @@ function renderObserverSnapshot(connection) {
   drawFrame(metadata, pixelBytes);
   if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
   lastFrame = {...metadata, observer: String(connection.clientId ?? wire.hw_identity())};
+  if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
+      metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
   status.textContent = 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
+  scheduleViewportResize();
   updateFacts();
 }
 
@@ -227,6 +339,140 @@ function drawFrame(frame, framePixels) {
   for (const key of [...resources.keys()]) if (!currentResources.has(key)) resources.delete(key);
 }
 
+function resetEditor() {
+  stager.reset();
+  keyboard.value = guardText;
+  keyboard.setSelectionRange(1, 1);
+}
+
+function dispatchStaged(actions) {
+  for (const action of actions) {
+    if (action.kind === 'text') queueCommitted(action.text);
+    else queueKeyCycle({named:action.key});
+  }
+}
+
+function processEditor(composing) {
+  const actions = stager.update(keyboard.value, {composing});
+  if (!composing) resetEditor();
+  dispatchStaged(actions);
+}
+
+function focusKeyboard() {
+  keyboard.focus({preventScroll:true});
+  if (!compositionActive) resetEditor();
+}
+
+keyboard.addEventListener('compositionstart', () => { compositionActive = true; });
+keyboard.addEventListener('compositionend', () => {
+  compositionActive = false;
+  const value = keyboard.value;
+  setTimeout(() => {
+    if (!compositionActive && keyboard.value === value && value !== guardText) processEditor(false);
+  }, 0);
+});
+keyboard.addEventListener('input', event => processEditor(Boolean(event.isComposing || compositionActive)));
+keyboard.addEventListener('paste', event => {
+  const value = event.clipboardData?.getData('text/plain');
+  if (value == null) return;
+  event.preventDefault();
+  resetEditor();
+  queuePaste(value);
+});
+keyboard.addEventListener('keydown', event => {
+  const named = namedKeyForCode(event.code);
+  const action = event.repeat ? KeyAction.repeat : KeyAction.press;
+  const modifiers = modifierBits(event);
+  if (named != null) {
+    queueHardwareKey({named, action, modifiers});
+    if (named < 15 || named > 22) event.preventDefault();
+    return;
+  }
+  const scalar = singleScalar(event.key);
+  if (scalar != null && (modifiers & (Modifier.alt | Modifier.control | Modifier.super)) !== 0) {
+    modifiedKeys.set(event.code, {scalar, modifiers});
+    queueHardwareKey({scalar, action, modifiers});
+    event.preventDefault();
+  }
+});
+keyboard.addEventListener('keyup', event => {
+  const named = namedKeyForCode(event.code);
+  if (named != null) {
+    queueHardwareKey({named, action:KeyAction.release, modifiers:modifierBits(event)});
+    if (named < 15 || named > 22) event.preventDefault();
+    return;
+  }
+  const tracked = modifiedKeys.get(event.code);
+  if (tracked) {
+    modifiedKeys.delete(event.code);
+    queueHardwareKey({...tracked, action:KeyAction.release});
+    event.preventDefault();
+  }
+});
+
+terminal.addEventListener('pointerdown', focusKeyboard);
+keyboardButton.addEventListener('click', focusKeyboard);
+
+function setModifierLatch(value) {
+  modifierLatch = value;
+  for (const button of toolbar.querySelectorAll('[data-modifier]')) {
+    const bit = button.dataset.modifier === 'control' ? Modifier.control : Modifier.alt;
+    button.setAttribute('aria-pressed', String((modifierLatch & bit) !== 0));
+  }
+  updateFacts();
+}
+function clearModifierLatch() { if (modifierLatch !== 0) setModifierLatch(0); }
+for (const button of toolbar.querySelectorAll('[data-modifier]')) {
+  button.addEventListener('click', () => {
+    const bit = button.dataset.modifier === 'control' ? Modifier.control : Modifier.alt;
+    setModifierLatch(modifierLatch ^ bit);
+    focusKeyboard();
+  });
+}
+for (const button of toolbar.querySelectorAll('[data-key]')) {
+  button.addEventListener('click', () => {
+    const key = NamedKey[button.dataset.key];
+    if (key == null) return fail(new Error(`unknown toolbar key ${button.dataset.key}`));
+    queueKeyCycle({named:key});
+    focusKeyboard();
+  });
+}
+
+function desiredFocus() { return document.visibilityState === 'visible' && document.hasFocus(); }
+function syncFocus() {
+  const next = desiredFocus() ? 1 : 2;
+  if (focusState === next || !wireModule) return;
+  focusState = next;
+  queueControl(connection => connection.focus(next));
+}
+window.addEventListener('focus', syncFocus);
+window.addEventListener('blur', syncFocus);
+document.addEventListener('visibilitychange', syncFocus);
+
+function scheduleViewportResize() {
+  if (resizeTimer) clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    resizeTimer = null;
+    if (!lastFrame?.cell || !control || control.closed) return;
+    const [cellWidth, cellHeight] = lastFrame.cell;
+    if (!cellWidth || !cellHeight) return;
+    const viewportHeight = Math.floor(window.visualViewport?.height ?? window.innerHeight);
+    const width = Math.floor(main.clientWidth);
+    const top = Math.max(0, terminal.getBoundingClientRect().top);
+    const toolbarHeight = Math.ceil(toolbar.getBoundingClientRect().height);
+    const columns = clamp(Math.floor(width / cellWidth), 20, 256);
+    const rows = clamp(Math.floor(Math.max(cellHeight * 2, viewportHeight - top - toolbarHeight - 28) / cellHeight), 2, 128);
+    const currentColumns = Math.floor(lastFrame.surface[0] / cellWidth);
+    const currentRows = Math.floor(lastFrame.surface[1] / cellHeight);
+    if ((rows === currentRows && columns === currentColumns) ||
+        (requestedGeometry?.rows === rows && requestedGeometry?.columns === columns)) return;
+    requestedGeometry = {rows, columns};
+    queueControl(connection => connection.resize(rows, columns)).catch(() => { requestedGeometry = null; });
+  }, 120);
+}
+window.addEventListener('resize', scheduleViewportResize);
+window.visualViewport?.addEventListener('resize', scheduleViewportResize);
+
 function updateFacts() {
   factsNode.textContent = JSON.stringify({
     observer_client: observer?.clientId ? String(observer.clientId) : null,
@@ -234,6 +480,13 @@ function updateFacts() {
     control_client: control?.clientId ? String(control.clientId) : null,
     observer_phase: observer?.exports.hw_phase() ?? null,
     control_phase: control?.exports.hw_phase() ?? null,
+    observation_revision: observer ? String(observer.exports.hw_revision()) : null,
+    terminal_revision: observer ? String(observer.exports.hw_terminal_revision()) : null,
+    semantic_control_ready: control?.exports.hw_control_ready() === 1,
+    modifier_latch: modifierLatch,
+    focus_state: focusState,
+    requested_geometry: requestedGeometry,
+    last_control: lastInput || null,
     render_count: renderer ? String(renderer.exports.rv_render_count()) : '0',
     renderer_memory_bytes: renderer?.exports.memory.buffer.byteLength ?? null,
     backend_resources: resources.size,
@@ -244,21 +497,10 @@ function updateFacts() {
       uploads: lastFrame.uploads.length,
       removals: lastFrame.removals.length,
       surface: lastFrame.surface,
+      cell: lastFrame.cell,
     } : null,
   }, null, 2);
 }
-
-form.addEventListener('submit', event => {
-  event.preventDefault();
-  try {
-    if (!control || control.closed) throw new Error('control connection is not available');
-    if (control.exports.hw_phase() !== 2 && control.exports.hw_phase() !== 6) throw new Error('control operation still pending');
-    lastInput = input.value;
-    control.sendLine(input.value);
-    input.value = '';
-    status.textContent = 'Committed text sent; waiting for canonical PTY/VT update…';
-  } catch (error) { fail(error); }
-});
 
 reconnect.addEventListener('click', async () => {
   try {
@@ -266,17 +508,20 @@ reconnect.addEventListener('click', async () => {
       previousObserverId = observer.clientId ? String(observer.clientId) : null;
       await observer.closeAndWait();
     }
-    if (!control || control.closed) control = await WireConnection.connect('control');
+    await ensureControl();
     observer = await WireConnection.connect('observer');
     if (previousObserverId && String(observer.clientId) === previousObserverId) throw new Error('observer reconnect reused client identity');
+    focusState = null;
+    syncFocus();
     status.textContent = 'Observer reconnected; waiting for canonical snapshot…';
+    scheduleViewportResize();
     updateFacts();
   } catch (error) { fail(error); }
 });
 
 function fail(error) {
   console.error(error);
-  const networkFailure = /websocket|open timeout|open error/i.test(error.message);
+  const networkFailure = /websocket|open timeout|open error|connection closed/i.test(error.message);
   status.textContent = `${networkFailure ? 'DISCONNECTED' : 'FAIL'}: ${error.message}`;
   factsNode.textContent = error.stack ?? String(error);
 }

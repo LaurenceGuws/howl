@@ -15,14 +15,25 @@
     <h1>Howl Web</h1>
     <p id="status">Booting shared renderer…</p>
   </header>
-  <canvas id="terminal" width="1" height="1" aria-label="Howl terminal canvas"></canvas>
-  <form id="input-form">
-    <input id="committed" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Committed terminal text">
-    <button type="submit">Send line</button>
-  </form>
-  <button id="reconnect" type="button">Reconnect</button>
-  <pre id="facts"></pre>
-  <p class="note">Loopback canary only. The PTY and canonical VT remain on Home.</p>
+  <canvas id="terminal" width="1" height="1" tabindex="0" aria-label="Howl terminal. Tap to open the keyboard."></canvas>
+  <div id="toolbar" role="toolbar" aria-label="Terminal controls">
+    <button type="button" data-modifier="control" aria-pressed="false">Ctrl</button>
+    <button type="button" data-modifier="alt" aria-pressed="false">Alt</button>
+    <button type="button" data-key="Escape">Esc</button>
+    <button type="button" data-key="Tab">Tab</button>
+    <button type="button" data-key="ArrowLeft">←</button>
+    <button type="button" data-key="ArrowDown">↓</button>
+    <button type="button" data-key="ArrowUp">↑</button>
+    <button type="button" data-key="ArrowRight">→</button>
+    <button id="keyboard-button" type="button">Keyboard</button>
+    <button id="reconnect" type="button">Reconnect</button>
+  </div>
+  <textarea id="keyboard" class="ime-sink" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="text" aria-label="Terminal keyboard capture"></textarea>
+  <details>
+    <summary>Canary facts</summary>
+    <pre id="facts"></pre>
+  </details>
+  <p class="note">The PTY and canonical VT remain on Home. Browser input is semantic Howl input, not JavaScript terminal escape encoding. <a href="/font-licences.txt">Font licences</a> · <a href="/dependencies.txt">Text dependencies</a></p>
 </main>
 <script type="module" src="host.mjs"></script>
 </body>
