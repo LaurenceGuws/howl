@@ -2,7 +2,7 @@
     .name = .howl_vk,
     .version = "0.1.6-dev",
     .fingerprint = 0x22701b3a48d82e22,
-    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{},
     .paths = .{
         "build.zig",

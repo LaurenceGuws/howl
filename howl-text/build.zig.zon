@@ -2,7 +2,7 @@
     .name = .howl_text,
     .version = "0.1.6-dev",
     .fingerprint = 0xfe0c84403ee39e7e,
-    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .minimum_zig_version = "0.17.0-dev.1980+e78ea8f2c",
     .dependencies = .{
         .freetype = .{
             .url = "git+https://github.com/freetype/freetype.git#25a08f24cfc0da879d1938352d026532f280b77e",

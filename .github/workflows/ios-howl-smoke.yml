@@ -22,7 +22,7 @@ jobs:
       - name: Install tracked Zig
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
         with:
-          version: 0.17.0-dev.1454+5faa79730
+          version: 0.17.0-dev.1980+e78ea8f2c
 
       - name: Install native iPhoneOS build tools
         run: brew install meson ninja pkg-config
