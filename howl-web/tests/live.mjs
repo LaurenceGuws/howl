@@ -84,7 +84,7 @@ try {
   assert.equal(text(), before);
   assert.equal(w.hw_revision(), revision);
   console.log(JSON.stringify({status:'pass', firstClient:String(first), reconnectedClient:String(second),
-    revision:String(revision), rows:w.hw_rows(), columns:w.hw_columns(), textBytes:w.hw_text_len(),
+    revision:String(revision), rows:w.hw_rows(), columns:w.hw_columns(), textBytes:w.hw_text_len(), snapshotBytes:w.hw_snapshot_len(),
     realPtyEcho:true, sharedRichDecoder:true, oneByteDelivery:true, reconnect:true}));
   await disconnect();
 } finally {

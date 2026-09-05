@@ -43,6 +43,12 @@ export fn hw_text_ptr() usize {
 export fn hw_text_len() usize {
     return projection_len;
 }
+export fn hw_snapshot_ptr() usize {
+    return @intFromPtr(&transcript);
+}
+export fn hw_snapshot_len() usize {
+    return transcript_len;
+}
 export fn hw_error_ptr() usize {
     return @intFromPtr(failure.ptr);
 }

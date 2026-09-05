@@ -6,7 +6,7 @@ const bytes = await readFile(process.argv[2]);
 const module = await WebAssembly.compile(bytes);
 assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
-  'hw_text_ptr', 'hw_text_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
+  'hw_text_ptr', 'hw_text_len', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
   'hw_revision', 'hw_rows', 'hw_columns', 'hw_reset', 'hw_observe', 'hw_send_text',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
 assert.deepEqual(WebAssembly.Module.exports(module).map(x => x.name).sort(), expected);

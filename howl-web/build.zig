@@ -24,11 +24,12 @@ pub fn build(b: *std.Build) void {
     const wasm = b.addExecutable(.{ .name = "howl-web", .root_module = root });
     wasm.entry = .disabled;
     root.export_symbol_names = &.{
-        "hw_input_ptr", "hw_input_capacity", "hw_output_ptr",   "hw_output_len",
-        "hw_text_ptr",  "hw_text_len",       "hw_error_ptr",    "hw_error_len",
-        "hw_phase",     "hw_identity",       "hw_revision",     "hw_rows",
-        "hw_columns",   "hw_reset",          "hw_observe",      "hw_send_text",
-        "hw_feed",      "hw_finish",         "hw_canvas_check",
+        "hw_input_ptr",    "hw_input_capacity", "hw_output_ptr",   "hw_output_len",
+        "hw_text_ptr",     "hw_text_len",       "hw_snapshot_ptr", "hw_snapshot_len",
+        "hw_error_ptr",    "hw_error_len",      "hw_phase",        "hw_identity",
+        "hw_revision",     "hw_rows",           "hw_columns",      "hw_reset",
+        "hw_observe",      "hw_send_text",      "hw_feed",         "hw_finish",
+        "hw_canvas_check",
     };
     wasm.export_memory = true;
     wasm.initial_memory = 32 * 1024 * 1024;
@@ -58,5 +59,9 @@ pub fn build(b: *std.Build) void {
     const render_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-j2" });
     render_run.setCwd(b.path("render"));
     render_check.dependOn(&render_run.step);
+    const render_web = b.step("render-web", "Build the local-only live browser renderer canary");
+    const render_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
+    render_site.setCwd(b.path("render"));
+    render_web.dependOn(&render_site.step);
     b.default_step = check;
 }

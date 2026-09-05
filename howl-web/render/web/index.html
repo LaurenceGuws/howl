@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Howl Web live renderer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <header>
+    <h1>Howl Web</h1>
+    <p id="status">Booting shared renderer…</p>
+  </header>
+  <canvas id="terminal" width="1" height="1" aria-label="Howl terminal canvas"></canvas>
+  <form id="input-form">
+    <input id="committed" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Committed terminal text">
+    <button type="submit">Send line</button>
+  </form>
+  <button id="reconnect" type="button">Reconnect observer</button>
+  <pre id="facts"></pre>
+  <p class="note">Loopback canary only. The PTY and canonical VT remain on Home.</p>
+</main>
+<script type="module" src="host.mjs"></script>
+</body>
+</html>
