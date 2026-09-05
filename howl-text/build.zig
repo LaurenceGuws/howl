@@ -3,6 +3,7 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const test_fonts = testFontModule(b);
     const bundled = b.option(bool, "bundled", "Build pinned memory-only FreeType/HarfBuzz for this target") orelse false;
     if (bundled) {
         const module = @import("bundled.zig").addModule(b, target, optimize);
@@ -20,15 +21,6 @@ pub fn build(b: *std.Build) void {
     module.addImport("native_c", native_c);
     module.linkSystemLibrary("freetype", .{});
     module.linkSystemLibrary("harfbuzz", .{});
-
-    const fonts = b.addOptions();
-    fonts.addOption([]const u8, "primary_font", b.root.joinString(b.allocator, "testdata/primary.ttf") catch @panic("OOM"));
-    fonts.addOption([]const u8, "symbol_font", b.root.joinString(b.allocator, "testdata/symbols.ttf") catch @panic("OOM"));
-    fonts.addOption([]const u8, "normal_ligature_font", b.root.joinString(b.allocator, "testdata/fira-code-medium.otf") catch @panic("OOM"));
-    fonts.addOption([]const u8, "mono_font", b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"));
-    const test_fonts = b.addModule("howl_text_test_fonts", .{
-        .root_source_file = fonts.getOutput(),
-    });
 
     const tested = b.createModule(.{
         .root_source_file = b.path("src/text.zig"),
@@ -70,6 +62,17 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(contract_tests).step);
     b.default_step = check;
+}
+
+fn testFontModule(b: *std.Build) *std.Build.Module {
+    const fonts = b.addOptions();
+    fonts.addOption([]const u8, "primary_font", b.root.joinString(b.allocator, "testdata/primary.ttf") catch @panic("OOM"));
+    fonts.addOption([]const u8, "symbol_font", b.root.joinString(b.allocator, "testdata/symbols.ttf") catch @panic("OOM"));
+    fonts.addOption([]const u8, "normal_ligature_font", b.root.joinString(b.allocator, "testdata/fira-code-medium.otf") catch @panic("OOM"));
+    fonts.addOption([]const u8, "mono_font", b.root.joinString(b.allocator, "testdata/mono.bdf") catch @panic("OOM"));
+    return b.addModule("howl_text_test_fonts", .{
+        .root_source_file = fonts.getOutput(),
+    });
 }
 
 fn nativeCModule(

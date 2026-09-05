@@ -7,5 +7,5 @@
         .howl_client = .{ .path = "../howl-client" },
         .howl_render = .{ .path = "../howl-render" },
     },
-    .paths = .{ "build.zig", "build.zig.zon", "src", "tests", "text", "README.md" },
+    .paths = .{ "build.zig", "build.zig.zon", "src", "tests", "text", "render", "README.md" },
 }

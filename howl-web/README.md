@@ -67,12 +67,25 @@ recovering the same canonical revision and text. Node hosts Wasm for this gate;
 it does not establish Safari, keyboard, graphics or WebSocket acceptance by
 itself. Stop the dedicated session after testing.
 
+## Shared terminal-renderer target
+
+`zig build render-check` now compiles the actual `howl-client.view -> howl-text ->
+howl-render.terminal.Content -> Canvas Composer` path to `wasm32-wasi` with the
+pinned text dependencies. Its first bounded semantic-view proof uses an owned
+memory font, shapes/rasterizes through the real text engine, publishes an atlas
+resource and derives a composed Canvas frame. The current specimen produces five
+alpha commands plus its background from four retained shape/atlas entries.
+
+This is deliberately one step short of the live browser client. It proves the
+shared renderer can cross the Wasm target boundary; it does not yet claim that a
+real session snapshot is the render input, that browser Canvas is the backend,
+or that reconnect/input lifecycles are accepted.
+
 ## Next boundaries
 
-1. Keep the shared text target and native memory-font regressions green while
-   integrating the full terminal rendering path.
-2. Consume the shared client view and actual terminal renderer to produce Canvas
-   state. Browser glyphs are not an undisclosed replacement for `howl-text`.
+1. Feed a real decoded Howl session snapshot into this exact Wasm renderer path.
+2. Present the resulting Canvas frame in a browser backend without browser text
+   shaping, then prove canonical input and reconnect against an echo-only PTY.
 3. Supply the browser byte-pump host and a separately owned WebSocket gateway.
    Use explicit operation and queue bounds, independent observation/control,
    and honest disconnect/error states.

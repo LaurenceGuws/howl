@@ -54,5 +54,9 @@ pub fn build(b: *std.Build) void {
     const text_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
     text_site.setCwd(b.path("text"));
     text_web.dependOn(&text_site.step);
+    const render_check = b.step("render-check", "Run the shared terminal renderer in Wasm");
+    const render_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-j2" });
+    render_run.setCwd(b.path("render"));
+    render_check.dependOn(&render_run.step);
     b.default_step = check;
 }

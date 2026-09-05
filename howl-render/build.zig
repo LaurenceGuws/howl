@@ -13,6 +13,13 @@ pub fn build(b: *std.Build) void {
         "generated_glyphs",
         "Expose the standalone generated terminal-glyph API",
     ) orelse true;
+    const bundled_text = b.option(
+        bool,
+        "bundled_text",
+        "Build howl-text with its pinned target FreeType/HarfBuzz sources",
+    ) orelse false;
+    if (bundled_text and !native_enabled)
+        @panic("bundled_text requires native_text");
     const root_source = if (native_enabled and generated_api_enabled)
         b.path("src/root_native_generated.zig")
     else if (native_enabled)
@@ -65,6 +72,7 @@ pub fn build(b: *std.Build) void {
         const dependency = b.dependency("howl_text", .{
             .target = target,
             .optimize = optimize,
+            .bundled = bundled_text,
         });
         text = dependency.module("howl_text");
         text_test_fonts = dependency.module("howl_text_test_fonts");

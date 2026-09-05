@@ -1,0 +1,12 @@
+.{
+    .name = .howl_web_render,
+    .version = "0.1.6-dev",
+    .fingerprint = 0xe1189fb0b1fd9b10,
+    .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
+    .dependencies = .{
+        .howl_client = .{ .path = "../../howl-client" },
+        .howl_render = .{ .path = "../../howl-render" },
+        .howl_text = .{ .path = "../../howl-text" },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "probe.zig", "tests" },
+}
