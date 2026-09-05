@@ -69,8 +69,8 @@ itself. Stop the dedicated session after testing.
 
 ## Next boundaries
 
-1. Target-build the real FreeType/HarfBuzz dependencies in the `howl-text` owner
-   and support retained font bytes instead of imposing host filesystem paths.
+1. Keep the shared text target and native memory-font regressions green while
+   integrating the full terminal rendering path.
 2. Consume the shared client view and actual terminal renderer to produce Canvas
    state. Browser glyphs are not an undisclosed replacement for `howl-text`.
 3. Supply the browser byte-pump host and a separately owned WebSocket gateway.
@@ -81,3 +81,37 @@ itself. Stop the dedicated session after testing.
 
 Flutter remains a native-platform regression client. Web is the preferred fast
 canary, not a reason to remove useful native coverage or weaken core contracts.
+
+## Shared text target checkpoint
+
+The real memory-font engine and pinned FreeType/HarfBuzz target build now live
+in the tracked `howl-text` module. Run the maintained consumer proof here:
+
+```sh
+zig build text-check
+zig build text-web
+```
+
+The first command compares target-built native and Wasm metrics, source clusters,
+glyph positions, natural raster geometry and every alpha-mask byte. It also
+checks real C nonlocal jumps, independent ownership after input overwrite,
+invalid-input recovery, 50 repeated lifetimes without further memory growth,
+and the browser runtime's range, descriptor, entropy and console bounds.
+
+The second command builds `text/zig-out/text-web/` for a local browser check.
+Serve only that directory on an explicitly selected loopback endpoint. The page
+places masks returned by Howl; it does not call browser text shaping. Its Repeat
+button rebuilds the font owner and reruns the native-reference comparison. This
+local-only test includes a licensed font fixture and must not be confused with
+the publicly deployable terminal application.
+
+Keep the two target contracts distinct. The existing wire/Canvas gate is
+zero-import freestanding Wasm. The text target uses WASI libc, exception handling,
+exactly four admitted host functions and bounded memory growth (64 MiB initial,
+96 MiB maximum). `text/web/runtime.mjs` is the same host in Node tests and the
+browser; it grants no filesystem or socket access. These are honest current
+canary limits, not a finished renderer memory budget.
+
+The remaining integration is the shared terminal producer and Canvas renderer,
+then maintained browser observation/control, and finally authenticated HTTPS/WSS
+and actual Safari/iPhone acceptance. The font proof alone earns none of those.

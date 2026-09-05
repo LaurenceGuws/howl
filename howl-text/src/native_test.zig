@@ -21,6 +21,11 @@ test "public font operations retain exact error sets" {
         u8,
         u32,
     ) text.RasterError!text.Raster = &text.FontSet.rasterize;
+    const init_memory: *const fn (
+        std.mem.Allocator,
+        text.MemoryConfig,
+    ) text.InitError!*text.FontSet = &text.FontSet.initMemory;
+    try std.testing.expect(init_memory == &text.FontSet.initMemory);
     try std.testing.expect(init == &text.FontSet.init);
     try std.testing.expect(shape == &text.FontSet.shape);
     try std.testing.expect(rasterize == &text.FontSet.rasterize);
@@ -623,4 +628,155 @@ fn rasterAllocation(
 ) !void {
     var raster = try set.rasterize(allocator, 0, glyph_id);
     raster.deinit();
+}
+
+fn loadMemoryFixture(allocator: std.mem.Allocator) ![]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(std.testing.io, fonts.primary_font, allocator, .limited(text.max_font_bytes));
+}
+
+fn memoryConstruction(allocator: std.mem.Allocator, bytes: []const u8) !void {
+    const set = try text.FontSet.initMemory(allocator, .{ .primary = bytes, .size = .{ .pixels = 20 } });
+    defer set.deinit();
+    try std.testing.expect(set.metrics().line_height > 0);
+}
+
+test "memory fonts preserve native path metrics and survive caller overwrite" {
+    const original = try loadMemoryFixture(std.testing.allocator);
+    defer std.testing.allocator.free(original);
+    const memory = try text.FontSet.initMemory(std.testing.allocator, .{ .primary = original, .size = .{ .pixels = 20 } });
+    defer memory.deinit();
+    @memset(original, 0xa5);
+    const path = try text.FontSet.init(std.testing.allocator, .{ .primary = fonts.primary_font, .size = .{ .pixels = 20 } });
+    defer path.deinit();
+    try std.testing.expectEqualDeep(path.metrics(), memory.metrics());
+    const buffer = try text.ShapeBuffer.init(std.testing.allocator, 32);
+    defer buffer.deinit();
+    var lhs: [32]text.Glyph = undefined;
+    var rhs: [32]text.Glyph = undefined;
+    const input: text.Text = .{ .codepoints = &.{ 'f', 'i', ' ', 'e', 0x301, ' ', 0x3bb }, .clusters = &.{ 0, 1, 2, 3, 3, 4, 5 } };
+    const a = try path.shape(buffer, input, &lhs);
+    const b = try memory.shape(buffer, input, &rhs);
+    try std.testing.expectEqualDeep(a.glyphs, b.glyphs);
+    for (a.glyphs) |glyph| {
+        var ar = try path.rasterize(std.testing.allocator, a.face_index, glyph.id);
+        defer ar.deinit();
+        var br = try memory.rasterize(std.testing.allocator, b.face_index, glyph.id);
+        defer br.deinit();
+        try std.testing.expectEqual(ar.width, br.width);
+        try std.testing.expectEqual(ar.height, br.height);
+        try std.testing.expectEqual(ar.left, br.left);
+        try std.testing.expectEqual(ar.top, br.top);
+        try std.testing.expectEqualSlices(u8, ar.pixels, br.pixels);
+    }
+}
+
+test "memory font construction rejects invalid data and unwinds allocation failures" {
+    const bytes = try loadMemoryFixture(std.testing.allocator);
+    defer std.testing.allocator.free(bytes);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, memoryConstruction, .{bytes});
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{ .primary = "", .size = .{ .pixels = 20 } }));
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{ .primary = bytes, .size = .{ .pixels = 0 } }));
+    var overflow: [text.max_fallbacks + 1][]const u8 = @splat(bytes);
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{ .primary = bytes, .fallbacks = &overflow, .size = .{ .pixels = 20 } }));
+    try std.testing.expectError(error.FontOpen, text.FontSet.initMemory(std.testing.allocator, .{ .primary = "not a font", .size = .{ .pixels = 20 } }));
+    const bad_fallback = [_][]const u8{"not a fallback font"};
+    try std.testing.expectError(error.FontOpen, text.FontSet.initMemory(std.testing.allocator, .{ .primary = bytes, .fallbacks = &bad_fallback, .size = .{ .pixels = 20 } }));
+}
+
+fn memoryFallbackConstruction(allocator: std.mem.Allocator, bytes: []const u8) !void {
+    const set = try text.FontSet.initMemory(allocator, .{
+        .primary = bytes,
+        .fallbacks = &.{ bytes, bytes },
+        .size = .{ .pixels = 20 },
+    });
+    defer set.deinit();
+    try std.testing.expect(set.metrics().advance_width > 0);
+}
+
+test "memory font fallback allocation failure unwinds already opened faces" {
+    const bytes = try loadMemoryFixture(std.testing.allocator);
+    defer std.testing.allocator.free(bytes);
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, memoryFallbackConstruction, .{bytes});
+}
+
+test "memory font byte ceilings reject before copy or native access" {
+    // These bytes need not be initialized: the complete config is rejected by
+    // lengths before either copying the data or passing it to FreeType.
+    const oversized = try std.testing.allocator.alloc(u8, text.max_font_bytes + 1);
+    defer std.testing.allocator.free(oversized);
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{
+        .primary = oversized,
+        .size = .{ .pixels = 20 },
+    }));
+    const at_limit = oversized[0..text.max_font_bytes];
+    // Exact per-font and aggregate ceilings are admitted by validation. The
+    // deliberately failing allocator then stops before any byte is read.
+    try std.testing.expectError(error.OutOfMemory, text.FontSet.initMemory(std.testing.failing_allocator, .{
+        .primary = at_limit,
+        .fallbacks = &.{at_limit},
+        .size = .{ .pixels = 20 },
+    }));
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{
+        .primary = at_limit,
+        .fallbacks = &.{ at_limit, oversized[0..1] },
+        .size = .{ .pixels = 20 },
+    }));
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{
+        .primary = at_limit,
+        .fallbacks = &.{ at_limit, at_limit },
+        .size = .{ .pixels = 20 },
+    }));
+    try std.testing.expectError(error.InvalidConfig, text.FontSet.initMemory(std.testing.failing_allocator, .{
+        .primary = "bounded",
+        .fallbacks = &.{""},
+        .size = .{ .pixels = 20 },
+    }));
+}
+
+test "memory fallback owns its bytes and preserves variation glyphs and masks" {
+    const primary = try loadMemoryFixture(std.testing.allocator);
+    defer std.testing.allocator.free(primary);
+    const fallback = try std.Io.Dir.cwd().readFileAlloc(
+        std.testing.io,
+        fonts.symbol_font,
+        std.testing.allocator,
+        .limited(text.max_font_bytes),
+    );
+    defer std.testing.allocator.free(fallback);
+    const memory = try text.FontSet.initMemory(std.testing.allocator, .{
+        .primary = primary,
+        .fallbacks = &.{fallback},
+        .size = .{ .pixels = 18 },
+    });
+    defer memory.deinit();
+    @memset(primary, 0xa5);
+    @memset(fallback, 0x5a);
+    const path = try text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.primary_font,
+        .fallbacks = &.{fonts.symbol_font},
+        .size = .{ .pixels = 18 },
+    });
+    defer path.deinit();
+    try std.testing.expectEqualDeep(path.metrics(), memory.metrics());
+    const shaper = try text.ShapeBuffer.init(std.testing.allocator, 8);
+    defer shaper.deinit();
+    const input: text.Text = .{ .codepoints = &.{ '0', 0xfe00 }, .clusters = &.{ 41, 41 } };
+    var left: [8]text.Glyph = undefined;
+    var right: [8]text.Glyph = undefined;
+    const native_run = try path.shape(shaper, input, &left);
+    const memory_run = try memory.shape(shaper, input, &right);
+    try std.testing.expectEqual(@as(u8, 1), native_run.face_index);
+    try std.testing.expectEqual(native_run.face_index, memory_run.face_index);
+    try std.testing.expectEqualDeep(native_run.glyphs, memory_run.glyphs);
+    for (native_run.glyphs) |glyph| {
+        var lhs = try path.rasterize(std.testing.allocator, native_run.face_index, glyph.id);
+        defer lhs.deinit();
+        var rhs = try memory.rasterize(std.testing.allocator, memory_run.face_index, glyph.id);
+        defer rhs.deinit();
+        try std.testing.expectEqual(lhs.width, rhs.width);
+        try std.testing.expectEqual(lhs.height, rhs.height);
+        try std.testing.expectEqual(lhs.left, rhs.left);
+        try std.testing.expectEqual(lhs.top, rhs.top);
+        try std.testing.expectEqualSlices(u8, lhs.pixels, rhs.pixels);
+    }
 }

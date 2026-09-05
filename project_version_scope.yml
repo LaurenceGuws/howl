@@ -26,7 +26,7 @@ active:
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
   - prioritize howl-web as a maintained fast browser canary alongside Flutter, reusing the client/text/Canvas owners
-  - target-build native text dependencies and memory-font loading before claiming browser glyph-renderer parity
+  - integrate the proven memory-font and target-built text path into the shared terminal renderer before claiming full browser glyph-renderer parity
 
 deferred:
   - durable graphical Linux client

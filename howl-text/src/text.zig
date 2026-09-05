@@ -5,6 +5,8 @@ const engine = @import("engine.zig");
 
 pub const max_fallbacks = engine.max_fallbacks;
 pub const max_font_path_bytes = engine.max_font_path_bytes;
+pub const max_font_bytes = engine.max_font_bytes;
+pub const max_font_set_bytes = engine.max_font_set_bytes;
 pub const max_codepoints = engine.max_codepoints;
 pub const max_glyphs = engine.max_glyphs;
 pub const max_raster_bytes = engine.max_raster_bytes;
@@ -18,6 +20,7 @@ pub const GlyphLookupError = engine.GlyphLookupError;
 pub const PointSize = engine.PointSize;
 pub const Size = engine.Size;
 pub const Config = engine.Config;
+pub const MemoryConfig = engine.MemoryConfig;
 pub const Metrics = engine.Metrics;
 pub const Text = engine.Text;
 pub const Glyph = engine.Glyph;
@@ -36,6 +39,16 @@ pub const FontSet = opaque {
         const owner = allocator.create(FontOwner) catch return error.OutOfMemory;
         errdefer allocator.destroy(owner);
         owner.* = .{ .value = try engine.FontSet.init(allocator, config) };
+        return @ptrCast(owner);
+    }
+
+    /// Copies bounded font bytes into this owner. Caller buffers may be
+    /// released or overwritten as soon as construction returns.
+    pub fn initMemory(allocator: std.mem.Allocator, config: MemoryConfig) InitError!*FontSet {
+        try engine.validateMemoryConfig(config);
+        const owner = allocator.create(FontOwner) catch return error.OutOfMemory;
+        errdefer allocator.destroy(owner);
+        owner.* = .{ .value = try engine.FontSet.initMemory(allocator, config) };
         return @ptrCast(owner);
     }
 

@@ -3,12 +3,25 @@
     .version = "0.1.6-dev",
     .fingerprint = 0xfe0c84403ee39e7e,
     .minimum_zig_version = "0.17.0-dev.1454+5faa79730",
-    .dependencies = .{},
+    .dependencies = .{
+        .freetype = .{
+            .url = "https://codeload.github.com/freetype/freetype/tar.gz/25a08f24cfc0da879d1938352d026532f280b77e",
+            .hash = "N-V-__8AAK-WqwBDvMqfXDgAoaTiGTd5EhRZ0IIL8tiZx09L",
+            .lazy = true,
+        },
+        .harfbuzz = .{
+            .url = "https://codeload.github.com/harfbuzz/harfbuzz/tar.gz/a95d2a18ab0084b3fed5e5c6737f60d2c985bbeb",
+            .hash = "N-V-__8AAPq56AWapmj6nRi0-3DaOlKqcpzSe9uotXDDGpy6",
+            .lazy = true,
+        },
+    },
     .paths = .{
         "README.md",
         "build.zig",
         "build.zig.zon",
         "src",
+        "bundled.zig",
+        "config",
         "testdata",
         "LICENSES",
     },

@@ -6,10 +6,14 @@ const c = @import("native_c");
 
 // Public bounds, failures, and owned text values.
 
-/// Bounds fallback paths supplied by one construction config.
+/// Bounds fallback sources supplied by one construction config.
 pub const max_fallbacks: u8 = 24;
 /// Bounds each copied font path to 4,096 bytes before native library access.
 pub const max_font_path_bytes: usize = 4_096;
+/// Bounds each owned in-memory font before any copy or native access.
+pub const max_font_bytes: usize = 32 * 1024 * 1024;
+/// Bounds aggregate copied font data in one in-memory font set.
+pub const max_font_set_bytes: usize = 64 * 1024 * 1024;
 /// Bounds one shaping call before native library ingestion.
 pub const max_codepoints: u32 = 65_536;
 /// Bounds one HarfBuzz result before allocation.
@@ -94,6 +98,17 @@ pub const Config = struct {
     /// Borrows the required primary font path for construction only.
     primary: []const u8,
     /// Borrows ordered fallback font paths for construction only.
+    fallbacks: []const []const u8 = &.{},
+    /// Selects exact pixel sizing or point/DPI sizing.
+    size: Size,
+};
+
+/// Borrows font bytes only during construction. A successful FontSet owns
+/// independent copies, retained until the corresponding native faces close.
+pub const MemoryConfig = struct {
+    /// Required primary font data, bounded by max_font_bytes.
+    primary: []const u8,
+    /// Ordered fallback data, bounded in count and aggregate copied bytes.
     fallbacks: []const []const u8 = &.{},
     /// Selects exact pixel sizing or point/DPI sizing.
     size: Size,
@@ -200,15 +215,27 @@ pub const Raster = struct {
     }
 };
 
-const Face = struct {
+const FontStorage = union(enum) {
     path: [:0]u8,
+    memory: []u8,
+
+    fn deinit(self: FontStorage, allocator: std.mem.Allocator) void {
+        switch (self) {
+            .path => |path| allocator.free(path),
+            .memory => |bytes| allocator.free(bytes),
+        }
+    }
+};
+
+const Face = struct {
+    storage: FontStorage,
     ft: c.FT_Face,
     hb: *c.hb_font_t,
 };
 
 // Native font construction, shaping, and rasterization.
 
-/// Owns copied paths, one FT library, and initialized FT/HB faces in fallback
+/// Owns copied paths or font data, one FT library, and initialized FT/HB faces in fallback
 /// order. Its mutable native faces support one exclusive caller at a time;
 /// methods borrow the owner for the call, and returned values retain no owner
 /// state.
@@ -217,7 +244,7 @@ pub const FontSet = struct {
     allocator: std.mem.Allocator,
     /// Owns the initialized FreeType library until `deinit`.
     library: c.FT_Library,
-    /// Owns ordered copied paths and initialized FreeType/HarfBuzz faces.
+    /// Owns copied font sources and initialized FreeType/HarfBuzz faces.
     faces: []Face,
     /// Retains validated font metrics for the configured size.
     metrics: Metrics,
@@ -227,12 +254,28 @@ pub const FontSet = struct {
     /// staged state.
     pub fn init(allocator: std.mem.Allocator, config: Config) InitError!FontSet {
         try validateConfig(config);
+        return initSources(false, allocator, config.primary, config.fallbacks, config.size);
+    }
 
+    /// Copies each font before creating its memory-backed native face. Native
+    /// faces are destroyed before their byte copies on every cleanup path.
+    pub fn initMemory(allocator: std.mem.Allocator, config: MemoryConfig) InitError!FontSet {
+        try validateMemoryConfig(config);
+        return initSources(true, allocator, config.primary, config.fallbacks, config.size);
+    }
+
+    fn initSources(
+        comptime memory_backed: bool,
+        allocator: std.mem.Allocator,
+        primary: []const u8,
+        fallbacks: []const []const u8,
+        size: Size,
+    ) InitError!FontSet {
         var library: c.FT_Library = undefined;
         if (c.FT_Init_FreeType(&library) != 0) return error.FreeTypeInit;
         errdefer doneLibrary(library);
 
-        const count = config.fallbacks.len + 1;
+        const count = fallbacks.len + 1;
         const faces = allocator.alloc(Face, count) catch return error.OutOfMemory;
         errdefer allocator.free(faces);
         var loaded: usize = 0;
@@ -240,24 +283,31 @@ pub const FontSet = struct {
             for (faces[0..loaded]) |face| {
                 c.hb_font_destroy(face.hb);
                 doneFace(face.ft);
-                allocator.free(face.path);
+                face.storage.deinit(allocator);
             }
         }
 
         while (loaded < count) : (loaded += 1) {
-            const source = if (loaded == 0) config.primary else config.fallbacks[loaded - 1];
-            const path = allocator.dupeSentinel(u8, source, 0) catch return error.OutOfMemory;
-            errdefer allocator.free(path);
+            const source = if (loaded == 0) primary else fallbacks[loaded - 1];
+            const storage: FontStorage = if (memory_backed)
+                .{ .memory = allocator.dupe(u8, source) catch return error.OutOfMemory }
+            else
+                .{ .path = allocator.dupeSentinel(u8, source, 0) catch return error.OutOfMemory };
+            errdefer storage.deinit(allocator);
             var ft: c.FT_Face = undefined;
-            if (c.FT_New_Face(library, path.ptr, 0, &ft) != 0) return error.FontOpen;
+            const opened = if (memory_backed)
+                c.FT_New_Memory_Face(library, storage.memory.ptr, @intCast(storage.memory.len), 0, &ft)
+            else
+                c.FT_New_Face(library, storage.path.ptr, 0, &ft);
+            if (opened != 0) return error.FontOpen;
             errdefer doneFace(ft);
             if (c.FT_Select_Charmap(ft, c.FT_ENCODING_UNICODE) != 0) return error.UnicodeCharmap;
-            try setConfiguredSize(ft, config.size);
+            try setConfiguredSize(ft, size);
             const hb = try createHbFont(ft);
-            faces[loaded] = .{ .path = path, .ft = ft, .hb = hb };
+            faces[loaded] = .{ .storage = storage, .ft = ft, .hb = hb };
         }
 
-        const nominal_height_px = try nominalPixelHeight(config.size);
+        const nominal_height_px = try nominalPixelHeight(size);
         const metrics = try metricsFromFace(faces[0].ft, nominal_height_px);
         return .{
             .allocator = allocator,
@@ -267,14 +317,14 @@ pub const FontSet = struct {
         };
     }
 
-    /// Exclusively releases every HB font, FT face, copied path, and FT
+    /// Exclusively releases every HB font, FT face, copied source, and FT
     /// library after all method borrows end. Independent runs and rasters may
     /// outlive this owner.
     pub fn deinit(self: *FontSet) void {
         for (self.faces) |face| {
             c.hb_font_destroy(face.hb);
             doneFace(face.ft);
-            self.allocator.free(face.path);
+            face.storage.deinit(self.allocator);
         }
         self.allocator.free(self.faces);
         doneLibrary(self.library);
@@ -522,6 +572,22 @@ pub fn validateConfig(config: Config) error{InvalidConfig}!void {
     std.debug.assert(nominal_height > 0);
     try validatePath(config.primary);
     for (config.fallbacks) |path| try validatePath(path);
+}
+
+/// Validates every memory source and sizing argument before allocation.
+pub fn validateMemoryConfig(config: MemoryConfig) error{InvalidConfig}!void {
+    if (config.fallbacks.len > max_fallbacks) return error.InvalidConfig;
+    const nominal_height = try nominalPixelHeight(config.size);
+    std.debug.assert(nominal_height > 0);
+    var total: usize = 0;
+    try accountFontBytes(&total, config.primary);
+    for (config.fallbacks) |bytes| try accountFontBytes(&total, bytes);
+}
+
+fn accountFontBytes(total: *usize, bytes: []const u8) error{InvalidConfig}!void {
+    if (bytes.len == 0 or bytes.len > max_font_bytes or bytes.len > max_font_set_bytes - total.*)
+        return error.InvalidConfig;
+    total.* += bytes.len;
 }
 
 fn validatePath(path: []const u8) error{InvalidConfig}!void {

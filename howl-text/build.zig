@@ -3,6 +3,12 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const bundled = b.option(bool, "bundled", "Build pinned memory-only FreeType/HarfBuzz for this target") orelse false;
+    if (bundled) {
+        const module = @import("bundled.zig").addModule(b, target, optimize);
+        std.debug.assert(b.modules.get("howl_text") == module);
+        return;
+    }
     const native_c = nativeCModule(b, target, optimize);
 
     const module = b.addModule("howl_text", .{

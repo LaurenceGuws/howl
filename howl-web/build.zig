@@ -46,5 +46,13 @@ pub fn build(b: *std.Build) void {
     live_command.addFileArg(wasm.getEmittedBin());
     live_command.addPassthruArgs();
     live.dependOn(&live_command.step);
+    const text_check = b.step("text-check", "Run the native/Wasm text engine and runtime parity gate");
+    const text_run = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-j2" });
+    text_run.setCwd(b.path("text"));
+    text_check.dependOn(&text_run.step);
+    const text_web = b.step("text-web", "Build the local-only browser font/raster canary");
+    const text_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
+    text_site.setCwd(b.path("text"));
+    text_web.dependOn(&text_site.step);
     b.default_step = check;
 }
