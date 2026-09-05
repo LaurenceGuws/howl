@@ -5174,8 +5174,14 @@ test "one-column resize transactionally omits unrepresentable semantic widths" {
 }
 
 test "one-column omission releases every failed prepared resize candidate" {
+    const backing_bytes = try std.testing.allocator.alloc(
+        u8,
+        Screen.retained_output_bytes_max * 4,
+    );
+    defer std.testing.allocator.free(backing_bytes);
+    var deterministic = std.heap.FixedBufferAllocator.init(backing_bytes);
     try std.testing.checkAllAllocationFailures(
-        std.testing.allocator,
+        deterministic.allocator(),
         oneColumnOmissionAllocation,
         .{},
     );
