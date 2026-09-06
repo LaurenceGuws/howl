@@ -166,7 +166,7 @@ local-only test includes a licensed font fixture and must not be confused with
 the publicly deployable terminal application.
 
 Keep the two target contracts distinct. The existing wire/Canvas gate is
-zero-import freestanding Wasm. The text target uses WASI libc, exception handling,
+zero-import freestanding Wasm. The text target uses WASI libc, exception handling plus reference types,
 exactly four admitted host functions and bounded memory growth (64 MiB initial,
 96 MiB maximum). `text/web/runtime.mjs` is the restricted text host reused by Node and browser canaries; it grants no filesystem or socket access. These are honest current
 canary limits, not a finished renderer memory budget.

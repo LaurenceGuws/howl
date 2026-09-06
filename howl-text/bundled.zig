@@ -6,8 +6,9 @@ const std = @import("std");
 pub fn addModule(b: *std.Build, target: std.Build.ResolvedTarget, optimize: std.builtin.OptimizeMode) *std.Build.Module {
     const wasm = target.result.cpu.arch == .wasm32;
     if (wasm and (target.result.os.tag != .wasi or
-        !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.exception_handling))))
-        @panic("bundled Wasm text requires wasm32-wasi with exception_handling");
+        !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.exception_handling)) or
+        !target.result.cpu.features.isEnabled(@backingInt(std.Target.wasm.Feature.reference_types))))
+        @panic("bundled Wasm text requires wasm32-wasi with exception_handling and reference_types");
     // A missing lazy package must restart configuration before a downstream
     // consumer asks for this module, not return a half-configured dependency.
     const ft = b.dependency("freetype", .{});

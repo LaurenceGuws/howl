@@ -85,7 +85,7 @@ Use `FontSet.initMemory`, not filesystem path loading, with that configuration.
 The normal system-backed module retains path loading. Both configurations retain
 the actual FreeType/HarfBuzz shaping and rasterization implementations.
 
-The current Web target is `wasm32-wasi` with exception handling, not the
+The current Web target is `wasm32-wasi` with exception handling plus reference types, not the
 zero-import freestanding wire canary. The exact pinned compiler's C nonlocal-jump
 path needs LLVM SjLj lowering, a matching declaration macro during C translation,
 and the narrow exception-tag definition in `config/wasi-exception-tag.c`. That

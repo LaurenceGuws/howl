@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .wasi,
-        .cpu_features_add = std.Target.wasm.featureSet(&.{.exception_handling}),
+        .cpu_features_add = std.Target.wasm.featureSet(&.{ .exception_handling, .reference_types }),
     });
     const wasm_text = b.dependency("howl_text", .{ .target = target, .optimize = optimize, .bundled = true });
     const native_text = b.dependency("howl_text", .{ .target = b.graph.host, .optimize = optimize, .bundled = true });

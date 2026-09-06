@@ -6,7 +6,7 @@ pub fn build(b: *std.Build) void {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = .wasm32,
         .os_tag = .wasi,
-        .cpu_features_add = std.Target.wasm.featureSet(&.{.exception_handling}),
+        .cpu_features_add = std.Target.wasm.featureSet(&.{ .exception_handling, .reference_types }),
     });
     const client = b.dependency("howl_client", .{ .target = target, .optimize = optimize });
     const client_module = client.module("howl_client");
