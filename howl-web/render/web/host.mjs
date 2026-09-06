@@ -45,6 +45,8 @@ let compositionActive = false;
 let focusState = null;
 let resizeTimer = null;
 let requestedGeometry = null;
+let reconnectTask = null;
+let lifecycleGeneration = 0;
 
 const errorText = exports => decoder.decode(new Uint8Array(
   exports.memory.buffer, exports.hw_error_ptr?.() ?? exports.rv_error_ptr(),
@@ -105,7 +107,7 @@ class WireConnection {
     this.socket = new WebSocket(`${scheme}//${location.host}/socket`);
     this.socket.binaryType = 'arraybuffer';
     this.socket.onmessage = event => this.onMessage(event).catch(fail);
-    this.socket.onerror = () => fail(new Error(`${this.role}: websocket error`));
+    this.socket.onerror = () => { if (!this.closed) fail(new Error(`${this.role}: websocket error`)); };
     this.socket.onclose = () => { this.closed = true; updateFacts(); };
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`${this.role}: open timeout`)), 5000);
@@ -593,16 +595,42 @@ for (const button of toolbar.querySelectorAll('[data-key]')) {
   });
 }
 
-function desiredFocus() { return document.visibilityState === 'visible' && document.hasFocus(); }
+function pageVisible() { return document.visibilityState === 'visible'; }
+function desiredFocus() { return pageVisible() && document.hasFocus(); }
+function connectionOpen(connection) {
+  return Boolean(connection && !connection.closed && connection.socket?.readyState === WebSocket.OPEN);
+}
 function syncFocus() {
   const next = desiredFocus() ? 1 : 2;
   if (focusState === next || !wireModule) return;
   focusState = next;
   queueControl(connection => connection.focus(next));
 }
-window.addEventListener('focus', syncFocus);
-window.addEventListener('blur', syncFocus);
-document.addEventListener('visibilitychange', syncFocus);
+function lifecycleProbe(generation) {
+  if (generation !== lifecycleGeneration || !wireModule || !pageVisible()) return;
+  if (connectionOpen(observer) && connectionOpen(control)) {
+    syncFocus();
+    return;
+  }
+  status.textContent = 'RESUMING: reconnecting browser transport…';
+  reconnectAll().catch(fail);
+}
+function handleLifecycle() {
+  lifecycleGeneration += 1;
+  const generation = lifecycleGeneration;
+  if (!pageVisible()) {
+    syncFocus();
+    return;
+  }
+  // Safari may report suspended sockets as OPEN briefly after an iPhone unlock.
+  // Probe twice, then stop; manual Reconnect remains the bounded fallback.
+  setTimeout(() => lifecycleProbe(generation), 250);
+  setTimeout(() => lifecycleProbe(generation), 1500);
+}
+window.addEventListener('focus', handleLifecycle);
+window.addEventListener('blur', handleLifecycle);
+document.addEventListener('visibilitychange', handleLifecycle);
+window.addEventListener('pageshow', handleLifecycle);
 
 function scheduleViewportResize() {
   if (resizeTimer) clearTimeout(resizeTimer);
@@ -668,8 +696,9 @@ function updateFacts() {
 
 reload.addEventListener('click', () => location.reload());
 
-reconnect.addEventListener('click', async () => {
-  try {
+async function reconnectAll() {
+  if (reconnectTask) return reconnectTask;
+  reconnectTask = (async () => {
     history.reset();
     historyGeneration += 1;
     historyRequestPending = false;
@@ -686,8 +715,15 @@ reconnect.addEventListener('click', async () => {
     status.textContent = 'Observer reconnected; waiting for canonical snapshot…';
     scheduleViewportResize();
     updateFacts();
-  } catch (error) { fail(error); }
-});
+  })();
+  try {
+    await reconnectTask;
+  } finally {
+    reconnectTask = null;
+  }
+}
+
+reconnect.addEventListener('click', () => reconnectAll().catch(fail));
 
 function fail(error) {
   console.error(error);

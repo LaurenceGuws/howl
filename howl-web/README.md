@@ -143,7 +143,10 @@ caches the complete versioned shell, then uses `skipWaiting()` plus
 indefinitely. With the origin stopped, the cached shell relaunches into an explicit
 `DISCONNECTED` state with no terminal frame; after the gateway returns, the
 page-level Reconnect control restores observer/control connections without a page
-reload.
+reload. On a visible-page transition, the browser host also performs two bounded
+transport-health probes so Safari/iOS suspension can automatically rebuild a dead
+observer/control pair; explicit Reconnect remains the fallback rather than an
+unbounded retry loop.
 
 ## Secure delivery and next boundary
 
