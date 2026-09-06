@@ -21,6 +21,10 @@ var revision: u64 = 0;
 var terminal_revision: u64 = 0;
 var rows: u32 = 0;
 var columns: u32 = 0;
+var history_offset: u32 = 0;
+var history_count: u32 = 0;
+var history_row_base: u32 = 0;
+var alternate_screen: bool = false;
 var failure: []const u8 = "";
 const ControlOperation = enum { none, input, assign_resize, resize };
 var control_operation: ControlOperation = .none;
@@ -78,6 +82,18 @@ export fn hw_rows() u32 {
 export fn hw_columns() u32 {
     return columns;
 }
+export fn hw_history_offset() u32 {
+    return history_offset;
+}
+export fn hw_history_count() u32 {
+    return history_count;
+}
+export fn hw_history_row_base() u32 {
+    return history_row_base;
+}
+export fn hw_alternate_screen() u32 {
+    return @intFromBool(alternate_screen);
+}
 export fn hw_control_ready() u32 {
     return @intFromBool(controlReady());
 }
@@ -128,6 +144,10 @@ export fn hw_reset() u32 {
     terminal_revision = 0;
     rows = 0;
     columns = 0;
+    history_offset = 0;
+    history_count = 0;
+    history_row_base = 0;
+    alternate_screen = false;
     failure = "";
     control_operation = .none;
     pending_resize_rows = 0;
@@ -137,10 +157,13 @@ export fn hw_reset() u32 {
     return 1;
 }
 
-export fn hw_observe(immediate: u32) u32 {
+export fn hw_observe(immediate: u32, requested_history_offset: u32) u32 {
     if (!controlReady()) return 0;
     var payload: [p.payload_bytes.observe]u8 = undefined;
-    p.encodeObserve(&payload, .{ .after_revision = if (immediate != 0) 0 else revision });
+    p.encodeObserve(&payload, .{
+        .after_revision = if (immediate != 0) 0 else revision,
+        .history_offset = requested_history_offset,
+    });
     if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
     transcript_len = 0;
     phase = 3;
@@ -242,6 +265,10 @@ fn decodeSnapshot() rich.Error!void {
     terminal_revision = snapshot.begin.terminal_revision;
     rows = snapshot.begin.rows;
     columns = snapshot.begin.columns;
+    history_offset = snapshot.begin.history_offset;
+    history_count = snapshot.begin.history_count;
+    history_row_base = snapshot.begin.history_row_base;
+    alternate_screen = snapshot.begin.alternate_screen;
 }
 
 fn acceptFrame() u32 {

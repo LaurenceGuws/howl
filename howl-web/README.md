@@ -14,13 +14,14 @@ real `howl-client.view -> howl-text -> howl-render.terminal.Content -> Canvas
 Composer` path with the pinned FreeType/HarfBuzz target. The node still owns the
 only canonical PTY and VT.
 
-The live canary instantiates two independent wire modules: one observer and one
-control connection. This lets a long observation wait without blocking semantic
-input. Complete framed snapshot bytes move directly from the observer module into
-the renderer module; JavaScript neither parses terminal cells, shapes text nor
-constructs terminal escape sequences. It retains Canvas resources, submits the
-final command stream, and captures platform input as Howl's existing semantic
-text, paste, key, focus and resize vocabulary.
+The live canary keeps independent live-observer and control wire modules, and
+lazily opens a third history observer only while the client is scrolled away from
+the live viewport. This lets long observations and canonical history requests
+run without blocking semantic input. Complete framed snapshot bytes move directly
+from the selected observer module into the renderer module; JavaScript neither
+parses terminal cells, shapes text nor constructs terminal escape sequences. It
+retains Canvas resources, submits the final command stream, and captures platform
+input as Howl's existing semantic text, paste, key, focus and resize vocabulary.
 
 A dedicated echo-only PTY proved committed Unicode text, semantic Enter and
 Backspace, paste, focus transitions, canonical resize, observer disconnect and
@@ -36,6 +37,14 @@ frozen Howl key identities and modifier bits. The compact phone toolbar exposes
 one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ctrl
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
 changes produce explicit canonical resize mutations through the same wire owner.
+
+Web scrollback now reuses Flutter's client-local absolute-anchor model. Wheel input
+changes only the requested `history_offset`; a lazy history observer asks the
+canonical session for retained rows while the live observer continues advancing at
+offset zero. New PTY output moves the requested offset to preserve the same absolute
+top row, returning to live closes the history observer, and any real input first
+leaves history. The gateway therefore admits at most three WebSockets for one page:
+live observer, control, and transient history observer; a fourth is refused.
 
 The browser byte bridge is now maintained in `gateway/`. It binds loopback only,
 serves a closed static route table and copies admitted binary WebSocket messages
@@ -142,11 +151,14 @@ exact Access audience before forwarding to the loopback gateway. Anonymous HTTP,
 a forged assertion and an anonymous WebSocket upgrade all stop at Access. The
 origin normally remains stopped outside a bounded canary run.
 
-The next acceptance is intentionally human: start one echo-only origin, authenticate
-in Safari, add Howl to the Home Screen, and verify actual iPhone composition,
-Backspace/Delete, the Ctrl toolbar, paste, soft-keyboard viewport resize, rotation,
-lock/resume, offline shell and reconnect. Pointer/mouse semantics and a normal
-interactive shell come only after that canary is healthy.
+A normal interactive Bash session is now proven in Chromium on Colt: semantic
+clipboard paste, Unicode output, shell history via Up, reconnect, canonical
+scrollback, anchored history while another client produces output, and return to
+live all work without moving PTY/VT authority into the browser. The remaining
+acceptance is intentionally human: authenticate in Safari, add Howl to the Home
+Screen, and finish the actual iPhone-only checks for clipboard permission/paste,
+lock/resume, offline shell/reconnect and final lifecycle behavior. Pointer/mouse
+semantics remain a later capability.
 
 Flutter remains the native regression client. Web is the preferred fast canary,
 not a reason to weaken or duplicate the core owners.

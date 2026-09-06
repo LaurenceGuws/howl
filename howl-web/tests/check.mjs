@@ -7,7 +7,7 @@ const module = await WebAssembly.compile(bytes);
 assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
   'hw_text_ptr', 'hw_text_len', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
-  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
+  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
   'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_resize',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
 assert.deepEqual(WebAssembly.Module.exports(module).map(x => x.name).sort(), expected);
@@ -107,8 +107,10 @@ assert.equal(payload.readUInt16BE(0), 20); assert.equal(payload.readUInt16BE(2),
 assert.equal(feed(ok(9)), 1); assert.equal(w.hw_phase(), 6); assert.equal(w.hw_control_ready(), 1);
 assert.equal(w.hw_send_resize(0, 80), 0);
 
-assert.equal(w.hw_observe(1), 1);
-assert.equal(w.hw_observe(1), 0); // at most one outstanding operation
+assert.equal(w.hw_observe(1, 37), 1);
+payload = output().subarray(12); assert.equal(output()[5], 3);
+assert.equal(payload.readBigUInt64BE(0), 0n); assert.equal(payload.readUInt32BE(8), 37);
+assert.equal(w.hw_observe(1, 0), 0); // at most one outstanding operation
 assert.equal(w.hw_send_text(1), 0);
 console.log(JSON.stringify({status:'pass', wasmBytes:bytes.length, memoryBytes:w.memory.buffer.byteLength,
   imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, resizeFollowup:true, canvasComposer:true}));

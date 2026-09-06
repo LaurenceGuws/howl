@@ -88,6 +88,10 @@ pub fn build(b: *std.Build) void {
     input_test.setCwd(b.path("."));
     input_test.setName("browser semantic input staging");
     check.dependOn(&input_test.step);
+    const history_test = b.addSystemCommand(&.{ "node", "tests/history.mjs" });
+    history_test.setCwd(b.path("."));
+    history_test.setName("browser history viewport model");
+    check.dependOn(&history_test.step);
 
     const web = b.step("web", "Build the local-only live terminal renderer site");
     web.dependOn(&b.addInstallFile(live.getEmittedBin(), "live-web/render.wasm").step);
@@ -95,7 +99,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/fallback-font.bin").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "input.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "input.mjs", "history.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep

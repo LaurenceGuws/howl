@@ -53,7 +53,7 @@ async function attach() {
   return w.hw_identity();
 }
 async function observe(immediate) {
-  assert.equal(w.hw_observe(immediate), 1);
+  assert.equal(w.hw_observe(immediate, 0), 1);
   send(); await waitFor(4);
 }
 async function untilContains(marker) {

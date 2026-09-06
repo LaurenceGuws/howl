@@ -3,6 +3,7 @@ import {
   TerminalInputStager, guardText, namedKeyForCode, NamedKey, KeyAction,
   Modifier, modifierBits, singleScalar,
 } from './input.mjs';
+import {HistoryViewport} from './history.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -24,9 +25,18 @@ context.imageSmoothingEnabled = false;
 let wireModule;
 let renderer;
 let observer;
+let historyObserver;
 let control;
 let previousObserverId = null;
 let lastFrame = null;
+let latestLiveSnapshot = null;
+let latestLiveClientId = null;
+let latestLiveHistory = null;
+const history = new HistoryViewport();
+let historyGeneration = 0;
+let historyRequestRunning = false;
+let historyRequestPending = false;
+let historyWheelTimer = null;
 let lastInput = '';
 let controlTail = Promise.resolve();
 let modifierLatch = 0;
@@ -104,7 +114,7 @@ class WireConnection {
     this.sendOutput();
     await this.waitForPhase(2);
     this.clientId = this.exports.hw_identity();
-    if (this.role === 'observer') this.observe(true);
+    if (this.role === 'observer') this.observe(true, 0);
   }
   sendOutput() {
     const length = Number(this.exports.hw_output_len());
@@ -120,13 +130,13 @@ class WireConnection {
     if (accepted !== 1 && accepted !== 2) throw new Error(errorText(this.exports) || `${this.role}: wire feed failed`);
     if (accepted === 2) this.sendOutput();
     if (this.role === 'observer' && this.exports.hw_phase() === 4) {
-      renderObserverSnapshot(this);
-      this.observe(false);
+      handleLiveSnapshot(this);
+      this.observe(false, 0);
     }
     if (this.role === 'control' && this.exports.hw_phase() === 6) updateFacts();
   }
-  observe(immediate) {
-    if (this.exports.hw_observe(immediate ? 1 : 0) !== 1) throw new Error(`${this.role}: observe rejected`);
+  observe(immediate, historyOffset = 0) {
+    if (this.exports.hw_observe(immediate ? 1 : 0, historyOffset) !== 1) throw new Error(`${this.role}: observe rejected`);
     this.sendOutput();
   }
   stage(value) {
@@ -222,6 +232,7 @@ function utf8Chunks(value, maximum = 4096) {
 
 function queueCommitted(value) {
   if (!value) return;
+  returnToLive();
   const latched = modifierLatch;
   clearModifierLatch();
   const scalar = latched ? singleScalar(value) : null;
@@ -234,6 +245,7 @@ function queueCommitted(value) {
 
 function queuePaste(value) {
   if (!value) return;
+  returnToLive();
   clearModifierLatch();
   if (encoder.encode(value).length > 4096) {
     fail(new Error('paste exceeds current 4096-byte semantic request bound'));
@@ -243,6 +255,7 @@ function queuePaste(value) {
 }
 
 function queueKeyCycle({named, scalar, modifiers = modifierLatch}) {
+  returnToLive();
   clearModifierLatch();
   const operation = named != null
     ? (connection, action) => connection.namedKey(named, action, modifiers)
@@ -252,27 +265,124 @@ function queueKeyCycle({named, scalar, modifiers = modifierLatch}) {
 }
 
 function queueHardwareKey({named, scalar, action, modifiers}) {
+  returnToLive();
   if (named != null) queueControl(connection => connection.namedKey(named, action, modifiers));
   else queueControl(connection => connection.unicodeKey(scalar, action, modifiers));
 }
 
-function renderObserverSnapshot(connection) {
+function historyMetadata(wire) {
+  return {
+    historyOffset: Number(wire.hw_history_offset()),
+    historyCount: Number(wire.hw_history_count()),
+    historyRowBase: Number(wire.hw_history_row_base()),
+    alternateScreen: wire.hw_alternate_screen() === 1,
+  };
+}
+
+function snapshotCopy(connection) {
   const wire = connection.exports;
   const length = Number(wire.hw_snapshot_len());
   if (length === 0 || length > renderer.exports.rv_snapshot_capacity()) throw new Error('snapshot exceeds renderer input bound');
-  bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), length)
-    .set(bytesAt(wire.memory, wire.hw_snapshot_ptr(), length));
-  if (renderer.exports.rv_render(length) !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
+  return bytesAt(wire.memory, wire.hw_snapshot_ptr(), length).slice();
+}
+
+function renderSnapshotBytes(snapshot, clientId, mode) {
+  if (snapshot.length === 0 || snapshot.length > renderer.exports.rv_snapshot_capacity()) throw new Error('snapshot exceeds renderer input bound');
+  bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
+  if (renderer.exports.rv_render(snapshot.length) !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
   const metadata = JSON.parse(decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len())));
   const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
   drawFrame(metadata, pixelBytes);
   if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
-  lastFrame = {...metadata, observer: String(connection.clientId ?? wire.hw_identity())};
+  lastFrame = {...metadata, observer:String(clientId), mode};
   if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
       metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
-  status.textContent = 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
-  scheduleViewportResize();
+  status.textContent = mode === 'history'
+    ? `HISTORY: ${history.targetOffset} rows above live`
+    : 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
+  if (mode === 'live') scheduleViewportResize();
   updateFacts();
+}
+
+function renderLatestLive() {
+  if (latestLiveSnapshot) renderSnapshotBytes(latestLiveSnapshot, latestLiveClientId, 'live');
+}
+
+function handleLiveSnapshot(connection) {
+  latestLiveSnapshot = snapshotCopy(connection);
+  latestLiveClientId = connection.clientId ?? connection.exports.hw_identity();
+  latestLiveHistory = historyMetadata(connection.exports);
+  if (!history.active) {
+    renderLatestLive();
+    return;
+  }
+  history.followLive(latestLiveHistory);
+  historyGeneration += 1;
+  if (!history.active) {
+    leaveHistory();
+    return;
+  }
+  scheduleHistorySnapshot();
+  updateFacts();
+}
+
+async function ensureHistoryObserver() {
+  if (historyObserver && !historyObserver.closed && historyObserver.socket?.readyState === WebSocket.OPEN) return historyObserver;
+  historyObserver = await WireConnection.connect('history');
+  return historyObserver;
+}
+
+function scheduleHistorySnapshot() {
+  if (!history.active) return;
+  historyRequestPending = true;
+  if (!historyRequestRunning) void drainHistorySnapshots();
+}
+
+async function drainHistorySnapshots() {
+  if (historyRequestRunning || !history.active) return;
+  historyRequestRunning = true;
+  try {
+    while (history.active && historyRequestPending) {
+      historyRequestPending = false;
+      const generation = historyGeneration;
+      const connection = await ensureHistoryObserver();
+      if (!history.active || generation !== historyGeneration) continue;
+      connection.observe(true, history.targetOffset);
+      await connection.waitForPhase(4);
+      if (!history.active || generation !== historyGeneration) continue;
+      history.acceptSnapshot(historyMetadata(connection.exports));
+      if (!history.active) {
+        leaveHistory();
+        continue;
+      }
+      renderSnapshotBytes(snapshotCopy(connection), connection.clientId ?? connection.exports.hw_identity(), 'history');
+    }
+  } catch (error) {
+    if (history.active) {
+      leaveHistory();
+      fail(error);
+    }
+  } finally {
+    historyRequestRunning = false;
+    if (history.active && historyRequestPending) void drainHistorySnapshots();
+  }
+}
+
+function leaveHistory() {
+  history.reset();
+  historyGeneration += 1;
+  historyRequestPending = false;
+  const oldObserver = historyObserver;
+  historyObserver = null;
+  oldObserver?.close();
+  renderLatestLive();
+  updateFacts();
+}
+
+function returnToLive() {
+  if (!history.active) return false;
+  leaveHistory();
+  return true;
 }
 
 function createResource(upload, framePixels) {
@@ -362,6 +472,7 @@ function processEditor(composing) {
 }
 
 function focusKeyboard() {
+  returnToLive();
   keyboard.focus({preventScroll:true});
   if (!compositionActive) resetEditor();
 }
@@ -414,6 +525,30 @@ keyboard.addEventListener('keyup', event => {
 });
 
 terminal.addEventListener('pointerdown', focusKeyboard);
+terminal.addEventListener('wheel', event => {
+  if (!lastFrame?.cell || !latestLiveHistory || latestLiveHistory.alternateScreen || latestLiveHistory.historyCount === 0) return;
+  event.preventDefault();
+  if (historyWheelTimer == null) history.beginGesture();
+  else clearTimeout(historyWheelTimer);
+  historyWheelTimer = setTimeout(() => { history.endGesture(); historyWheelTimer = null; }, 160);
+  const rowHeight = lastFrame.cell[1];
+  let deltaY = event.deltaY;
+  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaY *= rowHeight;
+  else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaY *= Math.max(rowHeight, terminal.clientHeight);
+  if (!history.scroll({
+    deltaY, rowHeight,
+    historyCount:latestLiveHistory.historyCount,
+    historyRowBase:latestLiveHistory.historyRowBase,
+    alternateScreen:latestLiveHistory.alternateScreen,
+  })) return;
+  historyGeneration += 1;
+  if (history.active) {
+    scheduleHistorySnapshot();
+    updateFacts();
+  } else {
+    leaveHistory();
+  }
+}, {passive:false});
 keyboardButton.addEventListener('click', focusKeyboard);
 pasteButton.addEventListener('click', async () => {
   try {
@@ -496,11 +631,19 @@ function updateFacts() {
   factsNode.textContent = JSON.stringify({
     observer_client: observer?.clientId ? String(observer.clientId) : null,
     previous_observer_client: previousObserverId,
+    history_observer_client: historyObserver?.clientId ? String(historyObserver.clientId) : null,
     control_client: control?.clientId ? String(control.clientId) : null,
     observer_phase: observer?.exports.hw_phase() ?? null,
     control_phase: control?.exports.hw_phase() ?? null,
     observation_revision: observer ? String(observer.exports.hw_revision()) : null,
     terminal_revision: observer ? String(observer.exports.hw_terminal_revision()) : null,
+    history_active: history.active,
+    history_target_offset: history.targetOffset,
+    history_anchor_top_row: history.anchorTopRow,
+    live_history_offset: latestLiveHistory?.historyOffset ?? null,
+    live_history_count: latestLiveHistory?.historyCount ?? null,
+    live_history_row_base: latestLiveHistory?.historyRowBase ?? null,
+    alternate_screen: latestLiveHistory?.alternateScreen ?? null,
     semantic_control_ready: control?.exports.hw_control_ready() === 1,
     modifier_latch: modifierLatch,
     focus_state: focusState,
@@ -517,12 +660,17 @@ function updateFacts() {
       removals: lastFrame.removals.length,
       surface: lastFrame.surface,
       cell: lastFrame.cell,
+      mode: lastFrame.mode,
     } : null,
   }, null, 2);
 }
 
 reconnect.addEventListener('click', async () => {
   try {
+    history.reset();
+    historyGeneration += 1;
+    historyRequestPending = false;
+    if (historyObserver) { await historyObserver.closeAndWait(); historyObserver = null; }
     if (observer) {
       previousObserverId = observer.clientId ? String(observer.clientId) : null;
       await observer.closeAndWait();

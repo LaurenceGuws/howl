@@ -3,7 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const max_http_connections: u8 = 8;
-const max_websockets: u8 = 2;
+const max_websockets: u8 = 3;
 const max_http_header_bytes: usize = 32 * 1024;
 const max_static_bytes: usize = 4 * 1024 * 1024;
 const max_ws_message_bytes: usize = 64 * 1024;
@@ -312,6 +312,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/", .asset = .{ .relative_path = "index.html", .content_type = "text/html; charset=utf-8" } },
         .{ .target = "/host.mjs", .asset = .{ .relative_path = "host.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/input.mjs", .asset = .{ .relative_path = "input.mjs", .content_type = "text/javascript; charset=utf-8" } },
+        .{ .target = "/history.mjs", .asset = .{ .relative_path = "history.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/style.css", .asset = .{ .relative_path = "style.css", .content_type = "text/css; charset=utf-8" } },
         .{ .target = "/runtime.mjs", .asset = .{ .relative_path = "runtime.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/render.wasm", .asset = .{ .relative_path = "render.wasm", .content_type = "application/wasm" } },
@@ -395,6 +396,7 @@ test "static routes are closed and do not traverse the site root" {
     try std.testing.expectEqualStrings("index.html", staticAsset("/").?.relative_path);
     try std.testing.expectEqualStrings("@wire", staticAsset("/wire.wasm").?.relative_path);
     try std.testing.expectEqualStrings("fallback-font.bin", staticAsset("/fallback-font.bin").?.relative_path);
+    try std.testing.expectEqualStrings("history.mjs", staticAsset("/history.mjs").?.relative_path);
     try std.testing.expect(staticAsset("/../secret") == null);
     try std.testing.expect(staticAsset("/?x=1") == null);
 }

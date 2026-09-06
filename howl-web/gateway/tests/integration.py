@@ -173,19 +173,21 @@ def main() -> None:
 
             two, status, _ = ws_open(listen, host, origin, True)
             assert status == 101
+            three, status, _ = ws_open(listen, host, origin, True)
+            assert status == 101
             deadline = time.monotonic()+2
-            while echo.accepted < 2 and time.monotonic() < deadline: time.sleep(.01)
-            assert echo.accepted == 2
-            third, status, _ = ws_open(listen, host, origin, True)
-            third.close(); assert status == 503 and echo.accepted == 2
+            while echo.accepted < 3 and time.monotonic() < deadline: time.sleep(.01)
+            assert echo.accepted == 3
+            fourth, status, _ = ws_open(listen, host, origin, True)
+            fourth.close(); assert status == 503 and echo.accepted == 3
 
             send_masked(one, 1, b'text-is-rejected')
             one.settimeout(2)
             assert one.recv(1) == b''
-            one.close(); two.close()
+            one.close(); two.close(); three.close()
             print(json.dumps({
                 'status':'pass', 'access_before_upstream':True, 'host_origin_exact':True,
-                'binary_bridge':True, 'text_rejected':True, 'websocket_capacity':2,
+                'binary_bridge':True, 'text_rejected':True, 'websocket_capacity':3,
                 'static_csp':True, 'upstream_accepts':echo.accepted,
             }))
         finally:
