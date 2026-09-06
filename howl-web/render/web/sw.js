@@ -1,4 +1,4 @@
-const CACHE = 'howl-web-canary-v5';
+const CACHE = 'howl-web-canary-v6';
 const SHELL = [
   '/', '/host.mjs', '/input.mjs', '/style.css', '/runtime.mjs', '/wire.wasm',
   '/render.wasm', '/font.bin', '/fallback-font.bin', '/manifest.webmanifest', '/icon.png', '/font-licences.txt', '/dependencies.txt',
@@ -6,7 +6,11 @@ const SHELL = [
 const SHELL_SET = new Set(SHELL);
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await cache.addAll(SHELL);
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', event => {

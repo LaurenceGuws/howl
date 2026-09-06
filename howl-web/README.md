@@ -122,14 +122,16 @@ connections; only admitted binary WebSockets cross the byte-pump boundary. The
 full contract and standalone commands live in `gateway/README.md`.
 
 `render-web` includes a manifest, the existing Howl iOS icon, the tracked Fira
-Code terminal font, its redistribution notices and a small service worker. The
-service worker is network-first while online and caches only successful,
-non-redirected same-origin app responses. An Access login/redirect is therefore
-never stored as application content. With the origin stopped, the complete v3
-shell relaunches into an explicit `DISCONNECTED` state with no terminal frame but
-keeps the keyboard toolbar and IME owner available; after the gateway returns,
-the page-level Reconnect control restores observer/control connections without a
-page reload.
+Code terminal font, its tracked Noto fallback, redistribution notices and a small
+service worker. The service worker is network-first while online and caches only
+successful, non-redirected same-origin app responses. An Access login/redirect is
+therefore never stored as application content. A newly installed worker first
+caches the complete versioned shell, then uses `skipWaiting()` plus
+`clients.claim()` so a changed asset set cannot remain behind an older controller
+indefinitely. With the origin stopped, the cached shell relaunches into an explicit
+`DISCONNECTED` state with no terminal frame; after the gateway returns, the
+page-level Reconnect control restores observer/control connections without a page
+reload.
 
 ## Secure delivery and next boundary
 
