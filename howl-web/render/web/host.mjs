@@ -6,6 +6,7 @@ import {
 import {HistoryViewport} from './history.mjs';
 import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
+import {LatestFrameScheduler} from './frame_scheduler.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -25,6 +26,8 @@ const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const resources = new Map();
 const context = terminal.getContext('2d', {alpha: false});
+const alphaScratch = document.createElement('canvas');
+const alphaScratchContext = alphaScratch.getContext('2d');
 const stager = new TerminalInputStager();
 const modifiedKeys = new Map();
 context.imageSmoothingEnabled = false;
@@ -46,6 +49,10 @@ let historyRequestPending = false;
 let historyWheelTimer = null;
 let lastInput = '';
 const telemetry = new Telemetry({capacity:768});
+const liveFrameScheduler = new LatestFrameScheduler({
+  schedule:callback => requestAnimationFrame(callback),
+  draw:frame => { if (!history.active) renderSnapshotBytes(frame.snapshot, frame.clientId, 'live'); },
+});
 const controlQueue = new ControlQueue({
   maximumPending:256, maximumTextBytes:4096, onError:fail,
   onEvent:(kind, data) => telemetry.record(`queue_${kind}`, data),
@@ -343,11 +350,17 @@ function renderSnapshotBytes(snapshot, clientId, mode) {
   lastRenderTelemetryAt = renderStarted;
   if (snapshot.length === 0 || snapshot.length > renderer.exports.rv_snapshot_capacity()) throw new Error('snapshot exceeds renderer input bound');
   bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
+  const wasmStarted = performance.now();
   if (renderer.exports.rv_render(snapshot.length) !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
+  const wasmFinished = performance.now();
+  const metadataStarted = performance.now();
   const metadata = JSON.parse(decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len())));
   const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
+  const metadataFinished = performance.now();
   drawFrame(metadata, pixelBytes);
+  const drawFinished = performance.now();
   if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
+  const ackFinished = performance.now();
   lastFrame = {...metadata, observer:String(clientId), mode};
   if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
       metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
@@ -355,9 +368,14 @@ function renderSnapshotBytes(snapshot, clientId, mode) {
     ? `HISTORY: ${history.targetOffset} rows above live`
     : 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
   telemetry.record('render', {
-    mode, ms:Math.round((performance.now() - renderStarted) * 10) / 10,
+    mode, ms:Math.round((ackFinished - renderStarted) * 10) / 10,
+    wasm_ms:Math.round((wasmFinished - wasmStarted) * 10) / 10,
+    metadata_ms:Math.round((metadataFinished - metadataStarted) * 10) / 10,
+    canvas_ms:Math.round((drawFinished - metadataFinished) * 10) / 10,
+    ack_ms:Math.round((ackFinished - drawFinished) * 10) / 10,
     gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
     commands:metadata.commands.length, uploads:metadata.uploads.length,
+    scratch:[alphaScratch.width, alphaScratch.height],
     terminal:String(metadata.terminal), observation:String(metadata.observation),
   });
   if (mode === 'live') scheduleViewportResize();
@@ -373,7 +391,7 @@ function handleLiveSnapshot(connection) {
   latestLiveClientId = connection.clientId ?? connection.exports.hw_identity();
   latestLiveHistory = historyMetadata(connection.exports);
   if (!history.active) {
-    renderLatestLive();
+    liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
     return;
   }
   history.followLive(latestLiveHistory);
@@ -495,15 +513,18 @@ function drawFrame(frame, framePixels) {
     if (command.k === 2) {
       context.drawImage(resource.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
     } else if (command.k === 1) {
-      const scratch = document.createElement('canvas');
-      scratch.width = dw; scratch.height = dh;
-      const sctx = scratch.getContext('2d');
-      sctx.imageSmoothingEnabled = false;
-      sctx.drawImage(resource.canvas, sx, sy, sw, sh, 0, 0, dw, dh);
-      sctx.globalCompositeOperation = 'source-in';
-      sctx.fillStyle = rgba(command.color);
-      sctx.fillRect(0, 0, dw, dh);
-      context.drawImage(scratch, dx, dy);
+      if (alphaScratch.width < dw || alphaScratch.height < dh) {
+        alphaScratch.width = Math.max(alphaScratch.width, dw);
+        alphaScratch.height = Math.max(alphaScratch.height, dh);
+      }
+      alphaScratchContext.globalCompositeOperation = 'source-over';
+      alphaScratchContext.clearRect(0, 0, dw, dh);
+      alphaScratchContext.imageSmoothingEnabled = false;
+      alphaScratchContext.drawImage(resource.canvas, sx, sy, sw, sh, 0, 0, dw, dh);
+      alphaScratchContext.globalCompositeOperation = 'source-in';
+      alphaScratchContext.fillStyle = rgba(command.color);
+      alphaScratchContext.fillRect(0, 0, dw, dh);
+      context.drawImage(alphaScratch, 0, 0, dw, dh, dx, dy, dw, dh);
     } else throw new Error(`unknown Canvas command ${command.k}`);
     context.restore();
   }

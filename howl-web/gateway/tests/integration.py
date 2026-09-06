@@ -159,6 +159,10 @@ def main() -> None:
             status, headers, body = http_get(listen, host, '/telemetry.mjs', True)
             assert status == 200 and body == b'export const telemetry = true;\n'
             assert headers['content-type'].startswith('text/javascript')
+            (root/'frame_scheduler.mjs').write_text('export const frames = true;\n')
+            status, headers, body = http_get(listen, host, '/frame_scheduler.mjs', True)
+            assert status == 200 and body == b'export const frames = true;\n'
+            assert headers['content-type'].startswith('text/javascript')
             assert http_get(listen, 'wrong.test', '/', True)[0] == 403
             assert echo.accepted == 0
 

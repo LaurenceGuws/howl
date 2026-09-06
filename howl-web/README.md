@@ -128,6 +128,14 @@ frame. It acknowledges residency only after successfully drawing that frame; a
 failed draw therefore cannot cause the renderer to assume an upload exists. This
 matches the native Flutter resource-lifetime contract.
 
+The browser presentation path reuses one alpha-compositing scratch Canvas instead
+of allocating a temporary Canvas per glyph command. Live snapshots are still
+observed canonically, but unpainted browser frames are coalesced to the newest
+complete snapshot at `requestAnimationFrame` cadence so a fast terminal cannot
+force Safari to synchronously paint more frames than the display can present.
+History snapshots remain explicit client requests rather than part of this live
+presentation coalescing.
+
 The live Web font set keeps Fira Code as the terminal metrics/primary face and
 loads the tracked Noto Sans fixture as an ordered fallback. `howl-render` already
 owns the final missing-sequence policy: if no configured face covers a sequence,
