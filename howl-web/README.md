@@ -41,6 +41,14 @@ one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ct
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
 changes produce explicit canonical resize mutations through the same wire owner.
 
+The live browser shell also carries a bounded client-local telemetry flight recorder
+for mobile canary diagnosis. It retains at most 768 metadata events and records
+IME/input staging counts, control-queue coalescing/depth, control acknowledgement
+latency, WebSocket lifecycle, renderer duration/cadence, lifecycle transitions and
+large event-loop stalls. The recorder mechanically rejects raw text/content/error
+message fields, never uploads telemetry, and exposes only a collapsed Telemetry
+panel with Copy/Clear controls; Copy emits compact `howl.web-telemetry/v1` JSON.
+
 Web scrollback now reuses Flutter's client-local absolute-anchor model. Wheel input
 changes only the requested `history_offset`; a lazy history observer asks the
 canonical session for retained rows while the live observer continues advancing at

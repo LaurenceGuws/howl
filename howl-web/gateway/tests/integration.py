@@ -155,6 +155,10 @@ def main() -> None:
             status, headers, body = http_get(listen, host, '/control_queue.mjs', True)
             assert status == 200 and body == b'export const queue = true;\n'
             assert headers['content-type'].startswith('text/javascript')
+            (root/'telemetry.mjs').write_text('export const telemetry = true;\n')
+            status, headers, body = http_get(listen, host, '/telemetry.mjs', True)
+            assert status == 200 and body == b'export const telemetry = true;\n'
+            assert headers['content-type'].startswith('text/javascript')
             assert http_get(listen, 'wrong.test', '/', True)[0] == 403
             assert echo.accepted == 0
 

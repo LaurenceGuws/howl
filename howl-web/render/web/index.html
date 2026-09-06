@@ -35,7 +35,15 @@
     <summary>Canary facts</summary>
     <pre id="facts"></pre>
   </details>
-  <p class="note">The serving node retains the canonical PTY and VT. Browser input is semantic Howl input, not JavaScript terminal escape encoding. <a href="/font-licences.txt">Font licences</a> · <a href="/dependencies.txt">Text dependencies</a></p>
+  <details id="telemetry-panel">
+    <summary>Telemetry</summary>
+    <div class="telemetry-actions">
+      <button id="telemetry-copy" type="button">Copy</button>
+      <button id="telemetry-clear" type="button">Clear</button>
+    </div>
+    <pre id="telemetry-log"></pre>
+  </details>
+  <p class="note">The serving node retains the canonical PTY and VT. Browser input is semantic Howl input, not JavaScript terminal escape encoding. Telemetry is a bounded client-local metadata log and never records terminal text. <a href="/font-licences.txt">Font licences</a> · <a href="/dependencies.txt">Text dependencies</a></p>
 </main>
 <script type="module" src="host.mjs"></script>
 </body>

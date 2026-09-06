@@ -5,6 +5,7 @@ import {
 } from './input.mjs';
 import {HistoryViewport} from './history.mjs';
 import {ControlQueue} from './control_queue.mjs';
+import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -16,6 +17,10 @@ const keyboardButton = document.querySelector('#keyboard-button');
 const pasteButton = document.querySelector('#paste-button');
 const reconnect = document.querySelector('#reconnect');
 const reload = document.querySelector('#reload');
+const telemetryPanel = document.querySelector('#telemetry-panel');
+const telemetryLog = document.querySelector('#telemetry-log');
+const telemetryCopy = document.querySelector('#telemetry-copy');
+const telemetryClear = document.querySelector('#telemetry-clear');
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const resources = new Map();
@@ -40,7 +45,13 @@ let historyRequestRunning = false;
 let historyRequestPending = false;
 let historyWheelTimer = null;
 let lastInput = '';
-const controlQueue = new ControlQueue({maximumPending:256, maximumTextBytes:4096, onError:fail});
+const telemetry = new Telemetry({capacity:768});
+const controlQueue = new ControlQueue({
+  maximumPending:256, maximumTextBytes:4096, onError:fail,
+  onEvent:(kind, data) => telemetry.record(`queue_${kind}`, data),
+});
+let lastRenderTelemetryAt = null;
+let telemetryUiTimer = null;
 let modifierLatch = 0;
 let compositionActive = false;
 let focusState = null;
@@ -56,6 +67,31 @@ const bytesAt = (memory, pointer, length) => new Uint8Array(memory.buffer, Numbe
 const resourceKey = q => q.map(String).join(':');
 const rgba = color => `rgba(${color[0]},${color[1]},${color[2]},${color[3] / 255})`;
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
+
+function telemetryContext() {
+  return {
+    display_mode: matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser',
+    visibility: document.visibilityState,
+    focused: document.hasFocus(),
+    viewport: [Math.round(window.visualViewport?.width ?? innerWidth), Math.round(window.visualViewport?.height ?? innerHeight)],
+    dpr: devicePixelRatio,
+    observer_client: observer?.clientId ? String(observer.clientId) : null,
+    control_client: control?.clientId ? String(control.clientId) : null,
+  };
+}
+
+function renderTelemetryLog() {
+  if (!telemetryLog || !telemetryPanel?.open) return;
+  telemetryLog.textContent = telemetry.visibleLines(80);
+  telemetryLog.scrollTop = telemetryLog.scrollHeight;
+}
+function scheduleTelemetryLog() {
+  if (!telemetryPanel?.open || telemetryUiTimer != null) return;
+  telemetryUiTimer = setTimeout(() => { telemetryUiTimer = null; renderTelemetryLog(); }, 120);
+}
+telemetry.subscribe(scheduleTelemetryLog);
+startEventLoopProbe(telemetry);
+telemetry.record('boot', telemetryContext());
 
 async function fetchBytes(path) {
   const response = await fetch(path, {cache: 'no-store'});
@@ -103,13 +139,19 @@ class WireConnection {
     this.closed = false;
   }
   async open() {
+    const started = performance.now();
+    telemetry.record('ws_connect_start', {role:this.role});
     if (this.exports.hw_reset() !== 1) throw new Error(`${this.role}: reset failed`);
     const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
     this.socket = new WebSocket(`${scheme}//${location.host}/socket`);
     this.socket.binaryType = 'arraybuffer';
     this.socket.onmessage = event => this.onMessage(event).catch(fail);
-    this.socket.onerror = () => { if (!this.closed) fail(new Error(`${this.role}: websocket error`)); };
-    this.socket.onclose = () => { this.closed = true; updateFacts(); };
+    this.socket.onerror = () => {
+      if (!this.closed) { telemetry.record('ws_error', {role:this.role}); fail(new Error(`${this.role}: websocket error`)); }
+    };
+    this.socket.onclose = () => {
+      this.closed = true; telemetry.record('ws_close', {role:this.role}); updateFacts();
+    };
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`${this.role}: open timeout`)), 5000);
       this.socket.addEventListener('open', () => { clearTimeout(timer); resolve(); }, {once:true});
@@ -118,6 +160,7 @@ class WireConnection {
     this.sendOutput();
     await this.waitForPhase(2);
     this.clientId = this.exports.hw_identity();
+    telemetry.record('ws_ready', {role:this.role, ms:Math.round((performance.now() - started) * 10) / 10});
     if (this.role === 'observer') this.observe(true, 0);
   }
   sendOutput() {
@@ -150,34 +193,37 @@ class WireConnection {
     bytesAt(this.exports.memory, this.exports.hw_input_ptr(), bytes.length).set(bytes);
     return bytes.length;
   }
-  async operation(begin, label) {
+  async operation(begin, label, telemetryKind = 'control') {
+    const started = performance.now();
+    telemetry.record('control_start', {kind:telemetryKind, pending:controlQueue.pending});
     if (this.closed || !this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error(`${this.role}: connection is not available`);
     if (this.exports.hw_control_ready() !== 1) throw new Error(`${this.role}: prior control operation is still pending`);
     if (begin() !== 1) throw new Error(`${this.role}: ${label} rejected before send`);
     this.sendOutput();
     await this.waitForPhase(6);
     lastInput = label;
+    telemetry.record('control_ack', {kind:telemetryKind, ms:Math.round((performance.now() - started) * 10) / 10, pending:controlQueue.pending});
     updateFacts();
   }
   committedText(value) {
     const length = this.stage(value);
-    return this.operation(() => this.exports.hw_send_text(length), `commit ${JSON.stringify(value)}`);
+    return this.operation(() => this.exports.hw_send_text(length), `commit ${JSON.stringify(value)}`, 'text');
   }
   paste(value) {
     const length = this.stage(value);
-    return this.operation(() => this.exports.hw_send_paste(length), `paste ${length} bytes`);
+    return this.operation(() => this.exports.hw_send_paste(length), `paste ${length} bytes`, 'paste');
   }
   namedKey(key, action, modifiers) {
-    return this.operation(() => this.exports.hw_send_named_key(key, action, modifiers), `key ${key}/${action} mods=${modifiers}`);
+    return this.operation(() => this.exports.hw_send_named_key(key, action, modifiers), `key ${key}/${action} mods=${modifiers}`, 'key');
   }
   unicodeKey(scalar, action, modifiers) {
-    return this.operation(() => this.exports.hw_send_unicode_key(scalar, action, modifiers), `unicode U+${scalar.toString(16)} mods=${modifiers}`);
+    return this.operation(() => this.exports.hw_send_unicode_key(scalar, action, modifiers), `unicode U+${scalar.toString(16)} mods=${modifiers}`, 'key');
   }
   focus(value) {
-    return this.operation(() => this.exports.hw_send_focus(value), `focus ${value === 1 ? 'in' : 'out'}`);
+    return this.operation(() => this.exports.hw_send_focus(value), `focus ${value === 1 ? 'in' : 'out'}`, 'focus');
   }
   resize(rows, columns) {
-    return this.operation(() => this.exports.hw_send_resize(rows, columns), `resize ${rows}x${columns}`);
+    return this.operation(() => this.exports.hw_send_resize(rows, columns), `resize ${rows}x${columns}`, 'resize');
   }
   waitForPhase(wanted) {
     if (this.exports.hw_phase() === wanted) return Promise.resolve();
@@ -214,8 +260,8 @@ async function ensureControl() {
   return control;
 }
 
-function queueControl(run) {
-  return controlQueue.operation(async () => run(await ensureControl()));
+function queueControl(run, kind = 'control') {
+  return controlQueue.operation(async () => run(await ensureControl()), kind);
 }
 
 function utf8Chunks(value, maximum = 4096) {
@@ -256,7 +302,7 @@ function queuePaste(value) {
     fail(new Error('paste exceeds current 4096-byte semantic request bound'));
     return;
   }
-  queueControl(connection => connection.paste(value));
+  queueControl(connection => connection.paste(value), 'paste');
 }
 
 function queueKeyCycle({named, scalar, modifiers = modifierLatch}) {
@@ -265,14 +311,14 @@ function queueKeyCycle({named, scalar, modifiers = modifierLatch}) {
   const operation = named != null
     ? (connection, action) => connection.namedKey(named, action, modifiers)
     : (connection, action) => connection.unicodeKey(scalar, action, modifiers);
-  queueControl(connection => operation(connection, KeyAction.press));
-  queueControl(connection => operation(connection, KeyAction.release));
+  queueControl(connection => operation(connection, KeyAction.press), 'key');
+  queueControl(connection => operation(connection, KeyAction.release), 'key');
 }
 
 function queueHardwareKey({named, scalar, action, modifiers}) {
   returnToLive();
-  if (named != null) queueControl(connection => connection.namedKey(named, action, modifiers));
-  else queueControl(connection => connection.unicodeKey(scalar, action, modifiers));
+  if (named != null) queueControl(connection => connection.namedKey(named, action, modifiers), 'key');
+  else queueControl(connection => connection.unicodeKey(scalar, action, modifiers), 'key');
 }
 
 function historyMetadata(wire) {
@@ -292,6 +338,9 @@ function snapshotCopy(connection) {
 }
 
 function renderSnapshotBytes(snapshot, clientId, mode) {
+  const renderStarted = performance.now();
+  const renderGap = lastRenderTelemetryAt == null ? null : renderStarted - lastRenderTelemetryAt;
+  lastRenderTelemetryAt = renderStarted;
   if (snapshot.length === 0 || snapshot.length > renderer.exports.rv_snapshot_capacity()) throw new Error('snapshot exceeds renderer input bound');
   bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
   if (renderer.exports.rv_render(snapshot.length) !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
@@ -305,6 +354,12 @@ function renderSnapshotBytes(snapshot, clientId, mode) {
   status.textContent = mode === 'history'
     ? `HISTORY: ${history.targetOffset} rows above live`
     : 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
+  telemetry.record('render', {
+    mode, ms:Math.round((performance.now() - renderStarted) * 10) / 10,
+    gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
+    commands:metadata.commands.length, uploads:metadata.uploads.length,
+    terminal:String(metadata.terminal), observation:String(metadata.observation),
+  });
   if (mode === 'live') scheduleViewportResize();
   updateFacts();
 }
@@ -471,7 +526,14 @@ function dispatchStaged(actions) {
 }
 
 function processEditor(composing) {
+  const editorBytes = encoder.encode(keyboard.value).length;
   const actions = stager.update(keyboard.value, {composing});
+  let textBytes = 0, textActions = 0, keyActions = 0;
+  for (const action of actions) {
+    if (action.kind === 'text') { textActions += 1; textBytes += encoder.encode(action.text).length; }
+    else keyActions += 1;
+  }
+  telemetry.record('editor_stage', {composing, editor_bytes:editorBytes, actions:actions.length, text_actions:textActions, key_actions:keyActions, text_bytes:textBytes});
   if (!composing) resetEditor();
   dispatchStaged(actions);
 }
@@ -482,15 +544,19 @@ function focusKeyboard() {
   if (!compositionActive) resetEditor();
 }
 
-keyboard.addEventListener('compositionstart', () => { compositionActive = true; });
+keyboard.addEventListener('compositionstart', () => { compositionActive = true; telemetry.record('composition_start'); });
 keyboard.addEventListener('compositionend', () => {
   compositionActive = false;
+  telemetry.record('composition_end', {editor_bytes:encoder.encode(keyboard.value).length});
   const value = keyboard.value;
   setTimeout(() => {
     if (!compositionActive && keyboard.value === value && value !== guardText) processEditor(false);
   }, 0);
 });
-keyboard.addEventListener('input', event => processEditor(Boolean(event.isComposing || compositionActive)));
+keyboard.addEventListener('input', event => {
+  telemetry.record('input_event', {input_type:event.inputType ?? null, composing:Boolean(event.isComposing || compositionActive), editor_bytes:encoder.encode(keyboard.value).length});
+  processEditor(Boolean(event.isComposing || compositionActive));
+});
 keyboard.addEventListener('paste', event => {
   const value = event.clipboardData?.getData('text/plain');
   if (value == null) return;
@@ -606,7 +672,7 @@ function syncFocus() {
   const next = desiredFocus() ? 1 : 2;
   if (focusState === next || !wireModule) return;
   focusState = next;
-  queueControl(connection => connection.focus(next));
+  queueControl(connection => connection.focus(next), 'focus');
 }
 function lifecycleProbe(generation) {
   if (generation !== lifecycleGeneration || !wireModule || !pageVisible()) return;
@@ -619,6 +685,7 @@ function lifecycleProbe(generation) {
 }
 function handleLifecycle() {
   lifecycleGeneration += 1;
+  telemetry.record('lifecycle', {visibility:document.visibilityState, focused:document.hasFocus(), observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   const generation = lifecycleGeneration;
   if (!pageVisible()) {
     syncFocus();
@@ -652,7 +719,7 @@ function scheduleViewportResize() {
     if ((rows === currentRows && columns === currentColumns) ||
         (requestedGeometry?.rows === rows && requestedGeometry?.columns === columns)) return;
     requestedGeometry = {rows, columns};
-    queueControl(connection => connection.resize(rows, columns)).catch(() => { requestedGeometry = null; });
+    queueControl(connection => connection.resize(rows, columns), 'resize').catch(() => { requestedGeometry = null; });
   }, 120);
 }
 window.addEventListener('resize', scheduleViewportResize);
@@ -697,10 +764,25 @@ function updateFacts() {
   }, null, 2);
 }
 
+telemetryPanel?.addEventListener('toggle', renderTelemetryLog);
+telemetryCopy?.addEventListener('click', async () => {
+  try {
+    const text = telemetry.compact({context:telemetryContext()});
+    await navigator.clipboard.writeText(text);
+    status.textContent = `Telemetry copied (${telemetry.retained} events)`;
+  } catch (error) {
+    status.textContent = `TELEMETRY COPY FAILED: ${error.message}`;
+  }
+});
+telemetryClear?.addEventListener('click', () => {
+  telemetry.clear(); renderTelemetryLog(); status.textContent = 'Telemetry cleared';
+});
+
 reload.addEventListener('click', () => location.reload());
 
 async function reconnectAll() {
   if (reconnectTask) return reconnectTask;
+  telemetry.record('reconnect_start', {observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   reconnectTask = (async () => {
     history.reset();
     historyGeneration += 1;
@@ -717,6 +799,7 @@ async function reconnectAll() {
     syncFocus();
     status.textContent = 'Observer reconnected; waiting for canonical snapshot…';
     scheduleViewportResize();
+    telemetry.record('reconnect_ready', {observer:String(observer.clientId), control:String(control.clientId)});
     updateFacts();
   })();
   try {
@@ -731,6 +814,7 @@ reconnect.addEventListener('click', () => reconnectAll().catch(fail));
 function fail(error) {
   console.error(error);
   const networkFailure = /websocket|open timeout|open error|connection closed/i.test(error.message);
+  telemetry?.record('failure', {network:networkFailure});
   status.textContent = `${networkFailure ? 'DISCONNECTED' : 'FAIL'}: ${error.message}`;
   factsNode.textContent = error.stack ?? String(error);
 }

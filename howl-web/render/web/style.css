@@ -12,7 +12,10 @@ button { min-height: 38px; padding: 7px 11px; background: #1d2933; color: inheri
 button[aria-pressed="true"] { background: #315344; border-color: #85c8aa; color: #c7ffe5; }
 .ime-sink { position: fixed; left: 0; bottom: 0; width: 2px; height: 2px; opacity: .01; padding: 0; border: 0; resize: none; pointer-events: none; }
 details { margin-top: 8px; color: #8fa2af; font-size: 11px; }
-#facts { white-space: pre-wrap; color: #9eb0bd; font-size: 11px; }
+#facts, #telemetry-log { white-space: pre-wrap; overflow-wrap: anywhere; color: #9eb0bd; font-size: 11px; }
+#telemetry-log { max-height: 240px; overflow: auto; }
+.telemetry-actions { display: flex; gap: 6px; margin: 6px 0; }
+.telemetry-actions button { min-height: 30px; padding: 4px 8px; }
 .note { color: #748692; font-size: 11px; margin: 8px 0 0; }
 @media (max-width: 600px) {
   main { padding-top: max(6px, env(safe-area-inset-top)); }

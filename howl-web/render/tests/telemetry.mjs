@@ -1,0 +1,42 @@
+import assert from 'node:assert/strict';
+import {Telemetry, startEventLoopProbe} from '../web/telemetry.mjs';
+
+let now = 1000;
+const telemetry = new Telemetry({capacity:32, now:() => now});
+telemetry.record('input', {bytes:1});
+now += 12.34;
+telemetry.record('queue', {pending:2});
+assert.equal(telemetry.events.length, 2);
+assert.equal(telemetry.events[1].t, 12.3);
+for (let index = 0; index < 40; index++) { now += 1; telemetry.record('burst', {index}); }
+assert.equal(telemetry.events.length, 32);
+assert.equal(telemetry.events[0].index, 8);
+assert.equal(telemetry.events.at(-1).index, 39);
+const exported = telemetry.export({version:'test'});
+assert.equal(exported.schema, 'howl.web-telemetry/v1');
+assert.equal(exported.capacity, 32);
+assert.equal(exported.retained, 32);
+assert.equal(exported.version, 'test');
+assert.throws(() => telemetry.record('bad', {text:'secret terminal text'}), /forbidden/);
+assert.throws(() => telemetry.record('bad', {message:'secret error text'}), /forbidden/);
+assert.ok(!telemetry.compact().includes('secret terminal text'));
+
+let scheduled;
+let cleared = false;
+let clock = 0;
+const probe = new Telemetry({capacity:32, now:() => clock});
+const stop = startEventLoopProbe(probe, {
+  intervalMs:250,
+  reportLagMs:80,
+  now:() => clock,
+  setIntervalFn:callback => { scheduled = callback; return 7; },
+  clearIntervalFn:id => { assert.equal(id, 7); cleared = true; },
+});
+clock = 400; scheduled();
+assert.equal(probe.events.at(-1).k, 'event_loop_lag');
+assert.equal(probe.events.at(-1).ms, 150);
+stop(); assert.equal(cleared, true);
+telemetry.clear();
+assert.equal(telemetry.retained, 1);
+assert.equal(telemetry.events[0].k, 'telemetry_clear');
+console.log(JSON.stringify({status:'pass', boundedRing:true, exportSchema:true, rawTextRefused:true, eventLoopLag:true, clear:true}));
