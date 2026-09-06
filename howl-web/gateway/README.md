@@ -26,8 +26,11 @@ The last check is an origin misrouting guard. Cloudflare Access remains the
 authentication authority, matching Remoter's established tunnel boundary. The
 origin is not independently exposed on any network interface.
 
-Two simultaneous WebSockets are admitted so the browser can keep observation
-and control independent. One message is at most 64 KiB, one connection may send
+At most six simultaneous WebSockets are admitted. One Howl Web page uses two
+steady sockets (live observation + control) and may lazily use a third for
+canonical history, so this bounded budget permits a normal two-page or
+Safari-to-standalone handoff without making browser transport unbounded. One
+message is at most 64 KiB, one connection may send
 at most 1 MiB and receive at most 8 MiB, and upstream reads are emitted as at
 most 16 KiB binary WebSocket messages. Text and fragmented browser messages fail
 closed. Ordinary HTTP concurrency is bounded to eight connections.
@@ -46,8 +49,8 @@ zig build install -Doptimize=ReleaseSafe
 `test` includes a Python-standard-library black-box proof. Denied Host, Origin,
 Access and malformed WebSocket requests are verified to make zero upstream
 connections. A fully admitted binary connection echoes opaque bytes through a
-fake loopback upstream, text is rejected, and a third simultaneous WebSocket is
-refused.
+fake loopback upstream, text is rejected, six simultaneous WebSockets are admitted,
+and a seventh is refused.
 
 The executable is:
 

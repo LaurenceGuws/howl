@@ -171,23 +171,25 @@ def main() -> None:
             send_masked(one, 2, b'opaque-howl-bytes')
             assert recv_frame(one) == (2, b'opaque-howl-bytes')
 
-            two, status, _ = ws_open(listen, host, origin, True)
-            assert status == 101
-            three, status, _ = ws_open(listen, host, origin, True)
-            assert status == 101
+            peers = []
+            for _ in range(5):
+                peer, status, _ = ws_open(listen, host, origin, True)
+                assert status == 101
+                peers.append(peer)
             deadline = time.monotonic()+2
-            while echo.accepted < 3 and time.monotonic() < deadline: time.sleep(.01)
-            assert echo.accepted == 3
-            fourth, status, _ = ws_open(listen, host, origin, True)
-            fourth.close(); assert status == 503 and echo.accepted == 3
+            while echo.accepted < 6 and time.monotonic() < deadline: time.sleep(.01)
+            assert echo.accepted == 6
+            seventh, status, _ = ws_open(listen, host, origin, True)
+            seventh.close(); assert status == 503 and echo.accepted == 6
 
             send_masked(one, 1, b'text-is-rejected')
             one.settimeout(2)
             assert one.recv(1) == b''
-            one.close(); two.close(); three.close()
+            one.close()
+            for peer in peers: peer.close()
             print(json.dumps({
                 'status':'pass', 'access_before_upstream':True, 'host_origin_exact':True,
-                'binary_bridge':True, 'text_rejected':True, 'websocket_capacity':3,
+                'binary_bridge':True, 'text_rejected':True, 'websocket_capacity':6,
                 'static_csp':True, 'upstream_accepts':echo.accepted,
             }))
         finally:

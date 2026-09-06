@@ -43,8 +43,9 @@ changes only the requested `history_offset`; a lazy history observer asks the
 canonical session for retained rows while the live observer continues advancing at
 offset zero. New PTY output moves the requested offset to preserve the same absolute
 top row, returning to live closes the history observer, and any real input first
-leaves history. The gateway therefore admits at most three WebSockets for one page:
-live observer, control, and transient history observer; a fourth is refused.
+leaves history. One page therefore uses at most three WebSockets: live observer,
+control, and transient history observer. The gateway admits six globally so a Safari page and
+its newly launched standalone PWA may overlap during handoff; a seventh is refused.
 
 The browser byte bridge is now maintained in `gateway/`. It binds loopback only,
 serves a closed static route table and copies admitted binary WebSocket messages

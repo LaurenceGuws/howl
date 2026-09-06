@@ -3,7 +3,7 @@ const std = @import("std");
 const Io = std.Io;
 
 const max_http_connections: u8 = 8;
-const max_websockets: u8 = 3;
+const max_websockets: u8 = 6;
 const max_http_header_bytes: usize = 32 * 1024;
 const max_static_bytes: usize = 4 * 1024 * 1024;
 const max_ws_message_bytes: usize = 64 * 1024;
