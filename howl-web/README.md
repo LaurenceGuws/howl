@@ -33,7 +33,10 @@ atlas upload and superseded generations do not accumulate.
 
 The browser input owner reuses Flutter's two-private-use-guard editor model for
 IME composition and software Backspace/Delete. Physical browser keys map to the
-frozen Howl key identities and modifier bits. The compact phone toolbar exposes
+frozen Howl key identities and modifier bits. Browser control mutations remain
+strictly serialized, but adjacent committed text waiting behind an in-flight
+request is coalesced up to the existing 4096-byte semantic bound; keys, paste,
+focus and resize remain ordering barriers and the pending control queue is bounded. The compact phone toolbar exposes
 one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ctrl
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
 changes produce explicit canonical resize mutations through the same wire owner.

@@ -4,6 +4,7 @@ import {
   Modifier, modifierBits, singleScalar,
 } from './input.mjs';
 import {HistoryViewport} from './history.mjs';
+import {ControlQueue} from './control_queue.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -39,7 +40,7 @@ let historyRequestRunning = false;
 let historyRequestPending = false;
 let historyWheelTimer = null;
 let lastInput = '';
-let controlTail = Promise.resolve();
+const controlQueue = new ControlQueue({maximumPending:256, maximumTextBytes:4096, onError:fail});
 let modifierLatch = 0;
 let compositionActive = false;
 let focusState = null;
@@ -214,9 +215,7 @@ async function ensureControl() {
 }
 
 function queueControl(run) {
-  const task = controlTail.then(async () => run(await ensureControl()));
-  controlTail = task.catch(fail);
-  return task;
+  return controlQueue.operation(async () => run(await ensureControl()));
 }
 
 function utf8Chunks(value, maximum = 4096) {
@@ -243,7 +242,10 @@ function queueCommitted(value) {
     queueKeyCycle({scalar, modifiers:latched});
     return;
   }
-  for (const chunk of utf8Chunks(value)) queueControl(connection => connection.committedText(chunk));
+  for (const chunk of utf8Chunks(value)) {
+    const bytes = encoder.encode(chunk).length;
+    controlQueue.text(chunk, bytes, async merged => (await ensureControl()).committedText(merged));
+  }
 }
 
 function queuePaste(value) {
@@ -674,6 +676,7 @@ function updateFacts() {
     live_history_row_base: latestLiveHistory?.historyRowBase ?? null,
     alternate_screen: latestLiveHistory?.alternateScreen ?? null,
     semantic_control_ready: control?.exports.hw_control_ready() === 1,
+    control_queue_pending: controlQueue.pending,
     modifier_latch: modifierLatch,
     focus_state: focusState,
     requested_geometry: requestedGeometry,
