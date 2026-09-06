@@ -316,6 +316,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/runtime.mjs", .asset = .{ .relative_path = "runtime.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/render.wasm", .asset = .{ .relative_path = "render.wasm", .content_type = "application/wasm" } },
         .{ .target = "/font.bin", .asset = .{ .relative_path = "font.bin", .content_type = "application/octet-stream" } },
+        .{ .target = "/fallback-font.bin", .asset = .{ .relative_path = "fallback-font.bin", .content_type = "application/octet-stream" } },
         .{ .target = "/wire.wasm", .asset = .{ .relative_path = "@wire", .content_type = "application/wasm" } },
         .{ .target = "/manifest.webmanifest", .asset = .{ .relative_path = "manifest.webmanifest", .content_type = "application/manifest+json" } },
         .{ .target = "/sw.js", .asset = .{ .relative_path = "sw.js", .content_type = "text/javascript; charset=utf-8" } },
@@ -393,6 +394,7 @@ test "websocket token and key validation fail closed" {
 test "static routes are closed and do not traverse the site root" {
     try std.testing.expectEqualStrings("index.html", staticAsset("/").?.relative_path);
     try std.testing.expectEqualStrings("@wire", staticAsset("/wire.wasm").?.relative_path);
+    try std.testing.expectEqualStrings("fallback-font.bin", staticAsset("/fallback-font.bin").?.relative_path);
     try std.testing.expect(staticAsset("/../secret") == null);
     try std.testing.expect(staticAsset("/?x=1") == null);
 }

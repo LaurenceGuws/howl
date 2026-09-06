@@ -50,8 +50,8 @@ async function fetchBytes(path) {
 }
 
 async function load() {
-  const [wireBytes, renderBytes, font] = await Promise.all([
-    fetchBytes('/wire.wasm'), fetchBytes('render.wasm'), fetchBytes('font.bin'),
+  const [wireBytes, renderBytes, font, fallbackFont] = await Promise.all([
+    fetchBytes('/wire.wasm'), fetchBytes('render.wasm'), fetchBytes('font.bin'), fetchBytes('fallback-font.bin'),
   ]);
   wireModule = await WebAssembly.compile(wireBytes);
   if (WebAssembly.Module.imports(wireModule).length !== 0) throw new Error('wire module gained host imports');
@@ -63,8 +63,10 @@ async function load() {
   instance.exports._initialize?.();
   renderer = {exports: instance.exports, runtime, bytes: renderBytes.length};
   if (font.length > renderer.exports.rv_font_capacity()) throw new Error('font exceeds renderer input bound');
+  if (fallbackFont.length > renderer.exports.rv_fallback_font_capacity()) throw new Error('fallback font exceeds renderer input bound');
   bytesAt(renderer.exports.memory, renderer.exports.rv_font_ptr(), font.length).set(font);
-  if (renderer.exports.rv_init(font.length) !== 1) throw new Error(errorText(renderer.exports) || 'renderer init failed');
+  bytesAt(renderer.exports.memory, renderer.exports.rv_fallback_font_ptr(), fallbackFont.length).set(fallbackFont);
+  if (renderer.exports.rv_init(font.length, fallbackFont.length) !== 1) throw new Error(errorText(renderer.exports) || 'renderer init failed');
   observer = await WireConnection.connect('observer');
   control = await WireConnection.connect('control');
   resetEditor();

@@ -107,6 +107,13 @@ frame. It acknowledges residency only after successfully drawing that frame; a
 failed draw therefore cannot cause the renderer to assume an upload exists. This
 matches the native Flutter resource-lifetime contract.
 
+The live Web font set keeps Fira Code as the terminal metrics/primary face and
+loads the tracked Noto Sans fixture as an ordered fallback. `howl-render` already
+owns the final missing-sequence policy: if no configured face covers a sequence,
+it shapes U+FFFD instead of failing the frame. The Web fallback therefore makes
+that existing degradation path complete without moving glyph policy into the
+browser host.
+
 ## Maintained gateway and PWA shell
 
 `gateway/` owns the loopback HTTP/WebSocket origin. Its black-box test proves that

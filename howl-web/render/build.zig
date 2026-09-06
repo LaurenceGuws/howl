@@ -64,10 +64,12 @@ pub fn build(b: *std.Build) void {
     live_root.addImport("howl_client", client_module);
     live_root.addImport("howl_render", render.module("howl_render"));
     live_root.export_symbol_names = &.{
-        "rv_font_ptr",  "rv_font_capacity", "rv_snapshot_ptr", "rv_snapshot_capacity",
-        "rv_frame_ptr", "rv_frame_len",     "rv_pixels_ptr",   "rv_pixels_len",
-        "rv_error_ptr", "rv_error_len",     "rv_render_count", "rv_ready",
-        "rv_init",      "rv_reset",         "rv_render",       "rv_ack",
+        "rv_font_ptr",               "rv_font_capacity", "rv_fallback_font_ptr",
+        "rv_fallback_font_capacity", "rv_snapshot_ptr",  "rv_snapshot_capacity",
+        "rv_frame_ptr",              "rv_frame_len",     "rv_pixels_ptr",
+        "rv_pixels_len",             "rv_error_ptr",     "rv_error_len",
+        "rv_render_count",           "rv_ready",         "rv_init",
+        "rv_reset",                  "rv_render",        "rv_ack",
     };
     const live = b.addExecutable(.{ .name = "howl-live-render", .root_module = live_root });
     live.entry = .disabled;
@@ -90,6 +92,7 @@ pub fn build(b: *std.Build) void {
     const web = b.step("web", "Build the local-only live terminal renderer site");
     web.dependOn(&b.addInstallFile(live.getEmittedBin(), "live-web/render.wasm").step);
     web.dependOn(&b.addInstallFile(text.path("testdata/fira-code-medium.otf"), "live-web/font.bin").step);
+    web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/fallback-font.bin").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
     inline for (.{ "index.html", "host.mjs", "input.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
