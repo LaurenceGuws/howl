@@ -135,7 +135,9 @@ full contract and standalone commands live in `gateway/README.md`.
 Code terminal font, its tracked Noto fallback, redistribution notices and a small
 service worker. The service worker is network-first while online and caches only
 successful, non-redirected same-origin app responses. An Access login/redirect is
-therefore never stored as application content. A newly installed worker first
+therefore never stored as application content. The shell keeps an explicit Reload
+control because installed mobile Web Apps may expose no browser refresh chrome or
+gesture. A newly installed worker first
 caches the complete versioned shell, then uses `skipWaiting()` plus
 `clients.claim()` so a changed asset set cannot remain behind an older controller
 indefinitely. With the origin stopped, the cached shell relaunches into an explicit

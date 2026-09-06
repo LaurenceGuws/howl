@@ -14,6 +14,7 @@ const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
 const pasteButton = document.querySelector('#paste-button');
 const reconnect = document.querySelector('#reconnect');
+const reload = document.querySelector('#reload');
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 const resources = new Map();
@@ -664,6 +665,8 @@ function updateFacts() {
     } : null,
   }, null, 2);
 }
+
+reload.addEventListener('click', () => location.reload());
 
 reconnect.addEventListener('click', async () => {
   try {

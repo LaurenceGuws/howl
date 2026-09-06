@@ -1,4 +1,4 @@
-const CACHE = 'howl-web-canary-v7';
+const CACHE = 'howl-web-canary-v8';
 const SHELL = [
   '/', '/host.mjs', '/input.mjs', '/history.mjs', '/style.css', '/runtime.mjs', '/wire.wasm',
   '/render.wasm', '/font.bin', '/fallback-font.bin', '/manifest.webmanifest', '/icon.png', '/font-licences.txt', '/dependencies.txt',
