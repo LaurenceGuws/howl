@@ -62,6 +62,10 @@ pub fn build(b: *std.Build) void {
     render_run.setCwd(b.path("render"));
     render_check.dependOn(&render_run.step);
     const render_web = b.step("render-web", "Build the local-only live browser renderer canary");
+    // The live host and wire Wasm are one browser compatibility generation.
+    // Refresh the installed wire artifact whenever the live Web site is rebuilt
+    // so a canary cannot serve a newer host against an older module.
+    render_web.dependOn(b.getInstallStep());
     const render_site = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "web", "-j2" });
     render_site.setCwd(b.path("render"));
     render_web.dependOn(&render_site.step);
