@@ -31,6 +31,8 @@ content remains at the same terminal revision. Backend resource residency follow
 the already-proven Flutter lease rule, so an unchanged recovered frame needs no
 atlas upload and superseded generations do not accumulate.
 
+Live browser presentation prefers requestAnimationFrame, with a visible-page 50 ms timer fallback so a throttled mobile rAF cannot leave fresh complete snapshots unpainted indefinitely. The first display callback wins and cancels the other; latest-complete-frame coalescing remains bounded.
+
 The browser input owner reuses Flutter's two-private-use-guard editor model for
 IME composition and software Backspace/Delete. Physical browser keys map to the
 frozen Howl key identities and modifier bits. Browser control mutations remain

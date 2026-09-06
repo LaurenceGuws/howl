@@ -7,6 +7,7 @@ import {HistoryViewport} from './history.mjs';
 import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
+import {scheduleDisplay} from './display_schedule.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -50,7 +51,7 @@ let historyWheelTimer = null;
 let lastInput = '';
 const telemetry = new Telemetry({capacity:768});
 const liveFrameScheduler = new LatestFrameScheduler({
-  schedule:callback => requestAnimationFrame(callback),
+  schedule:callback => scheduleDisplay(callback, {onWinner:source => telemetry.record('frame_tick', {source})}),
   draw:frame => { if (!history.active) renderSnapshotBytes(frame.snapshot, frame.clientId, 'live'); },
 });
 const controlQueue = new ControlQueue({

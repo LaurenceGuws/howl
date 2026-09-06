@@ -92,6 +92,10 @@ pub fn build(b: *std.Build) void {
     queue_test.setCwd(b.path("."));
     queue_test.setName("browser control queue");
     check.dependOn(&queue_test.step);
+    const display_test = b.addSystemCommand(&.{ "node", "tests/display_schedule.mjs" });
+    display_test.setCwd(b.path("."));
+    display_test.setName("browser display scheduler");
+    check.dependOn(&display_test.step);
     const frame_scheduler_test = b.addSystemCommand(&.{ "node", "tests/frame_scheduler.mjs" });
     frame_scheduler_test.setCwd(b.path("."));
     frame_scheduler_test.setName("browser latest-frame scheduler");
@@ -111,7 +115,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/fallback-font.bin").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep
