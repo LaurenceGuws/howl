@@ -25,8 +25,10 @@ var history_offset: u32 = 0;
 var history_count: u32 = 0;
 var history_row_base: u32 = 0;
 var alternate_screen: bool = false;
+var leader_present: bool = false;
 var failure: []const u8 = "";
-const ControlOperation = enum { none, input, assign_resize, resize };
+var last_result_code: u32 = 0;
+const ControlOperation = enum { none, input, assign_resize, resize_claim, resize_owned };
 var control_operation: ControlOperation = .none;
 var pending_resize_rows: u16 = 0;
 var pending_resize_columns: u16 = 0;
@@ -94,6 +96,12 @@ export fn hw_history_row_base() u32 {
 export fn hw_alternate_screen() u32 {
     return @intFromBool(alternate_screen);
 }
+export fn hw_leader_present() u32 {
+    return @intFromBool(leader_present);
+}
+export fn hw_last_result_code() u32 {
+    return last_result_code;
+}
 export fn hw_control_ready() u32 {
     return @intFromBool(controlReady());
 }
@@ -148,7 +156,9 @@ export fn hw_reset() u32 {
     history_count = 0;
     history_row_base = 0;
     alternate_screen = false;
+    leader_present = false;
     failure = "";
+    last_result_code = 0;
     control_operation = .none;
     pending_resize_rows = 0;
     pending_resize_columns = 0;
@@ -220,16 +230,39 @@ export fn hw_send_focus(focus_value: u32) u32 {
     return beginInput(&payload);
 }
 
-export fn hw_send_resize(resize_rows: u32, resize_columns: u32) u32 {
+fn stageResize(resize_rows: u32, resize_columns: u32) bool {
     if (!controlReady() or resize_rows == 0 or resize_rows > std.math.maxInt(u16) or
         resize_columns == 0 or resize_columns > std.math.maxInt(u16))
-        return 0;
+        return false;
+    pending_resize_rows = @intCast(resize_rows);
+    pending_resize_columns = @intCast(resize_columns);
+    last_result_code = std.math.maxInt(u32);
+    return true;
+}
+
+// Claim geometry leadership and then resize. Browser policy uses this only when
+// the latest canonical observation reports that no leader exists.
+export fn hw_send_resize(resize_rows: u32, resize_columns: u32) u32 {
+    if (!stageResize(resize_rows, resize_columns)) return 0;
     var payload: [p.payload_bytes.assign_leader]u8 = undefined;
     p.encodeAssignLeader(&payload, .{ .client_id = identity });
     if (!queue(.assign_leader, &payload)) return fail("ResizeLeaderEncodingFailed");
-    pending_resize_rows = @intCast(resize_rows);
-    pending_resize_columns = @intCast(resize_columns);
     control_operation = .assign_resize;
+    phase = 5;
+    return 1;
+}
+
+// Resize without changing authority. `not_leader` is a normal race/transfer
+// outcome and is exposed to the host through hw_last_result_code().
+export fn hw_send_resize_owned(resize_rows: u32, resize_columns: u32) u32 {
+    if (!stageResize(resize_rows, resize_columns)) return 0;
+    var payload: [p.payload_bytes.resize]u8 = undefined;
+    p.encodeResize(&payload, .{
+        .rows = pending_resize_rows,
+        .columns = pending_resize_columns,
+    });
+    if (!queue(.resize, &payload)) return fail("ResizeEncodingFailed");
+    control_operation = .resize_owned;
     phase = 5;
     return 1;
 }
@@ -269,6 +302,7 @@ fn decodeSnapshot() rich.Error!void {
     history_count = snapshot.begin.history_count;
     history_row_base = snapshot.begin.history_row_base;
     alternate_screen = snapshot.begin.alternate_screen;
+    leader_present = snapshot.begin.leader_present;
 }
 
 fn acceptFrame() u32 {
@@ -308,17 +342,20 @@ fn acceptFrame() u32 {
                 },
                 .assign_resize => {
                     if (result.request_kind != .assign_leader or result.code != .ok) return fail("ResizeLeaderRejected");
+                    last_result_code = @backingInt(result.code);
                     var resize_payload: [p.payload_bytes.resize]u8 = undefined;
                     p.encodeResize(&resize_payload, .{
                         .rows = pending_resize_rows,
                         .columns = pending_resize_columns,
                     });
                     if (!queue(.resize, &resize_payload)) return fail("ResizeEncodingFailed");
-                    control_operation = .resize;
+                    control_operation = .resize_claim;
                     return 2;
                 },
-                .resize => {
-                    if (result.request_kind != .resize or result.code != .ok) return fail("ResizeRejected");
+                .resize_claim, .resize_owned => {
+                    if (result.request_kind != .resize) return fail("ResizeResultMismatch");
+                    if (result.code != .ok and result.code != .not_leader) return fail("ResizeRejected");
+                    last_result_code = @backingInt(result.code);
                     pending_resize_rows = 0;
                     pending_resize_columns = 0;
                     control_operation = .none;

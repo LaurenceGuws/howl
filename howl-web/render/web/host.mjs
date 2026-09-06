@@ -8,6 +8,7 @@ import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
+import {ResizePolicy} from './resize_policy.mjs';
 
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
@@ -54,6 +55,7 @@ const liveFrameScheduler = new LatestFrameScheduler({
   schedule:callback => scheduleDisplay(callback, {onWinner:source => telemetry.record('frame_tick', {source})}),
   draw:frame => { if (!history.active) renderSnapshotBytes(frame.snapshot, frame.clientId, 'live'); },
 });
+const resizePolicy = new ResizePolicy();
 const controlQueue = new ControlQueue({
   maximumPending:256, maximumTextBytes:4096, onError:fail,
   onEvent:(kind, data) => telemetry.record(`queue_${kind}`, data),
@@ -230,8 +232,10 @@ class WireConnection {
   focus(value) {
     return this.operation(() => this.exports.hw_send_focus(value), `focus ${value === 1 ? 'in' : 'out'}`, 'focus');
   }
-  resize(rows, columns) {
-    return this.operation(() => this.exports.hw_send_resize(rows, columns), `resize ${rows}x${columns}`, 'resize');
+  async resize(rows, columns, {claim = false} = {}) {
+    const begin = claim ? this.exports.hw_send_resize : this.exports.hw_send_resize_owned;
+    await this.operation(() => begin(rows, columns), `${claim ? 'claim+resize' : 'resize'} ${rows}x${columns}`, 'resize');
+    return Number(this.exports.hw_last_result_code());
   }
   waitForPhase(wanted) {
     if (this.exports.hw_phase() === wanted) return Promise.resolve();
@@ -264,6 +268,7 @@ class WireConnection {
 async function ensureControl() {
   if (control && !control.closed && control.socket?.readyState === WebSocket.OPEN) return control;
   control = await WireConnection.connect('control');
+  resizePolicy.reset();
   focusState = null;
   return control;
 }
@@ -335,6 +340,7 @@ function historyMetadata(wire) {
     historyCount: Number(wire.hw_history_count()),
     historyRowBase: Number(wire.hw_history_row_base()),
     alternateScreen: wire.hw_alternate_screen() === 1,
+    leaderPresent: wire.hw_leader_present() === 1,
   };
 }
 
@@ -740,8 +746,31 @@ function scheduleViewportResize() {
     const currentRows = Math.floor(lastFrame.surface[1] / cellHeight);
     if ((rows === currentRows && columns === currentColumns) ||
         (requestedGeometry?.rows === rows && requestedGeometry?.columns === columns)) return;
+    const controlId = control?.clientId == null ? null : String(control.clientId);
+    const decision = resizePolicy.decide({
+      leaderPresent:latestLiveHistory?.leaderPresent ?? false,
+      controlId,
+    });
+    if (decision === 'wait' || decision === 'follow') return;
     requestedGeometry = {rows, columns};
-    queueControl(connection => connection.resize(rows, columns), 'resize').catch(() => { requestedGeometry = null; });
+    queueControl(connection => connection.resize(rows, columns, {claim:decision === 'claim'}), 'resize')
+      .then(code => {
+        if (code === 0) {
+          if (decision === 'claim') {
+            resizePolicy.accepted(connection.clientId);
+            telemetry.record('resize_leader_acquired', {control:String(connection.clientId)});
+          }
+          return;
+        }
+        if (code === 4) {
+          resizePolicy.rejected(connection.clientId);
+          requestedGeometry = null;
+          telemetry.record('resize_not_leader', {control:String(connection.clientId)});
+          return;
+        }
+        throw new Error(`resize result ${code}`);
+      })
+      .catch(error => { requestedGeometry = null; fail(error); });
   }, 120);
 }
 window.addEventListener('resize', scheduleViewportResize);
@@ -764,6 +793,8 @@ function updateFacts() {
     live_history_count: latestLiveHistory?.historyCount ?? null,
     live_history_row_base: latestLiveHistory?.historyRowBase ?? null,
     alternate_screen: latestLiveHistory?.alternateScreen ?? null,
+    resize_leader_present: latestLiveHistory?.leaderPresent ?? null,
+    resize_authority_owned: resizePolicy.owns(control?.clientId == null ? null : String(control.clientId)),
     semantic_control_ready: control?.exports.hw_control_ready() === 1,
     control_queue_pending: controlQueue.pending,
     modifier_latch: modifierLatch,

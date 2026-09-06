@@ -41,7 +41,7 @@ request is coalesced up to the existing 4096-byte semantic bound; keys, paste,
 focus and resize remain ordering barriers and the pending control queue is bounded. The compact phone toolbar exposes
 one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ctrl
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
-changes produce explicit canonical resize mutations through the same wire owner.
+changes produce explicit canonical resize mutations through the same wire owner. Browser geometry follows the session's existing explicit resize authority instead of fighting it: a Web control connection claims geometry only when the latest canonical observation reports no leader, keeps resizing only while that control connection owns the local claim, and otherwise follows the leader's canonical geometry. A lost or raced claim returns `not_leader` as a normal control outcome so the browser becomes a follower rather than stealing authority back.
 
 The live browser shell also carries a bounded client-local telemetry flight recorder
 for mobile canary diagnosis. It retains at most 768 metadata events and records

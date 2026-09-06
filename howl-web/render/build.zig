@@ -96,6 +96,10 @@ pub fn build(b: *std.Build) void {
     display_test.setCwd(b.path("."));
     display_test.setName("browser display scheduler");
     check.dependOn(&display_test.step);
+    const resize_policy_test = b.addSystemCommand(&.{ "node", "tests/resize_policy.mjs" });
+    resize_policy_test.setCwd(b.path("."));
+    resize_policy_test.setName("browser resize authority policy");
+    check.dependOn(&resize_policy_test.step);
     const frame_scheduler_test = b.addSystemCommand(&.{ "node", "tests/frame_scheduler.mjs" });
     frame_scheduler_test.setCwd(b.path("."));
     frame_scheduler_test.setName("browser latest-frame scheduler");
@@ -115,7 +119,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/fallback-font.bin").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep
