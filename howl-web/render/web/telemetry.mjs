@@ -89,6 +89,8 @@ export class Telemetry {
       metrics: {
         render_ms: metric('render', 'ms'),
         canvas_ms: metric('render', 'canvas_ms'),
+        upload_ms: metric('render', 'upload_ms'),
+        draw_commands_ms: metric('render', 'draw_commands_ms'),
         render_gap_ms: metric('render', 'gap_ms'),
         render_commands: metric('render', 'commands'),
         control_ack_ms: metric('control_ack', 'ms'),
@@ -99,6 +101,7 @@ export class Telemetry {
         control_acks: top('control_ack', 'ms'),
         event_loop_lags: top('event_loop_lag', 'ms'),
       },
+      incidents: incidentWindows(events),
       recent_edges: events.filter(event => diagnosticKinds.has(event.k)).slice(-24),
     };
   }
@@ -148,4 +151,31 @@ function summarizeNumbers(values) {
     p95: sorted[p95Index],
     max: sorted.at(-1),
   };
+}
+
+
+function incidentWindows(events) {
+  const candidates = events
+    .filter(event => (event.k === 'render' && Number.isFinite(event.ms)) ||
+      (event.k === 'event_loop_lag' && Number.isFinite(event.ms)))
+    .sort((left, right) => right.ms - left.ms)
+    .slice(0, 2);
+  return candidates.map(trigger => {
+    const index = events.findIndex(event => event.n === trigger.n);
+    return {
+      trigger:compactIncidentEvent(trigger),
+      window:events.slice(Math.max(0, index - 3), index + 4).map(compactIncidentEvent),
+    };
+  });
+}
+
+function compactIncidentEvent(event) {
+  const out = {n:event.n, t:event.t, k:event.k};
+  for (const key of [
+    'ms', 'canvas_ms', 'upload_ms', 'draw_commands_ms', 'gap_ms', 'commands', 'uploads',
+    'upload_bytes', 'upload_pixels', 'max_upload_pixels', 'surface_resized',
+    'solid_commands', 'alpha_commands', 'image_commands', 'pending', 'kind',
+    'source', 'viewport', 'rows', 'columns', 'leader_present', 'owned', 'decision', 'code',
+  ]) if (event[key] != null) out[key] = event[key];
+  return out;
 }

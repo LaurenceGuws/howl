@@ -365,7 +365,7 @@ function renderSnapshotBytes(snapshot, clientId, mode) {
   const metadata = JSON.parse(decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len())));
   const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
   const metadataFinished = performance.now();
-  drawFrame(metadata, pixelBytes);
+  const canvas = drawFrame(metadata, pixelBytes);
   const drawFinished = performance.now();
   if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
   const ackFinished = performance.now();
@@ -383,6 +383,11 @@ function renderSnapshotBytes(snapshot, clientId, mode) {
     ack_ms:Math.round((ackFinished - drawFinished) * 10) / 10,
     gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
     commands:metadata.commands.length, uploads:metadata.uploads.length,
+    upload_ms:canvas.upload_ms, draw_commands_ms:canvas.draw_commands_ms,
+    surface_ms:canvas.surface_ms, retire_ms:canvas.retire_ms,
+    upload_bytes:canvas.upload_bytes, upload_pixels:canvas.upload_pixels,
+    max_upload_pixels:canvas.max_upload_pixels, surface_resized:canvas.surface_resized,
+    solid_commands:canvas.solid_commands, alpha_commands:canvas.alpha_commands, image_commands:canvas.image_commands,
     scratch:[alphaScratch.width, alphaScratch.height],
     terminal:String(metadata.terminal), observation:String(metadata.observation),
   });
@@ -497,16 +502,30 @@ function createResource(upload, framePixels) {
 }
 
 function drawFrame(frame, framePixels) {
+  const started = performance.now();
   for (const q of frame.removals) resources.delete(resourceKey(q));
-  for (const upload of frame.uploads) resources.set(resourceKey(upload.q), createResource(upload, framePixels));
+  const removalsFinished = performance.now();
+  let uploadBytes = 0, uploadPixels = 0, maxUploadPixels = 0;
+  for (const upload of frame.uploads) {
+    const pixels = upload.z[0] * upload.z[1];
+    uploadBytes += upload.n;
+    uploadPixels += pixels;
+    maxUploadPixels = Math.max(maxUploadPixels, pixels);
+    resources.set(resourceKey(upload.q), createResource(upload, framePixels));
+  }
+  const uploadsFinished = performance.now();
   const [width, height] = frame.surface;
-  if (terminal.width !== width || terminal.height !== height) { terminal.width = width; terminal.height = height; }
+  const surfaceResized = terminal.width !== width || terminal.height !== height;
+  if (surfaceResized) { terminal.width = width; terminal.height = height; }
   context.imageSmoothingEnabled = false;
   context.clearRect(0, 0, width, height);
+  const surfaceFinished = performance.now();
   const currentResources = new Set();
+  let solidCommands = 0, alphaCommands = 0, imageCommands = 0;
   for (const command of frame.commands) {
     if (command.k !== 0) currentResources.add(resourceKey(command.q));
     if (command.k === 0) {
+      solidCommands += 1;
       context.fillStyle = rgba(command.color);
       context.fillRect(...command.r);
       continue;
@@ -519,8 +538,10 @@ function drawFrame(frame, framePixels) {
     context.save();
     context.beginPath(); context.rect(cx, cy, cw, ch); context.clip();
     if (command.k === 2) {
+      imageCommands += 1;
       context.drawImage(resource.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
     } else if (command.k === 1) {
+      alphaCommands += 1;
       if (alphaScratch.width < dw || alphaScratch.height < dh) {
         alphaScratch.width = Math.max(alphaScratch.width, dw);
         alphaScratch.height = Math.max(alphaScratch.height, dh);
@@ -536,9 +557,21 @@ function drawFrame(frame, framePixels) {
     } else throw new Error(`unknown Canvas command ${command.k}`);
     context.restore();
   }
+  const commandsFinished = performance.now();
   // Match Flutter's lease: every completed frame names the exact resource
   // generations it still references. Retire superseded generations here.
   for (const key of [...resources.keys()]) if (!currentResources.has(key)) resources.delete(key);
+  const finished = performance.now();
+  const ms = (end, begin) => Math.round((end - begin) * 10) / 10;
+  return {
+    removals_ms:ms(removalsFinished, started),
+    upload_ms:ms(uploadsFinished, removalsFinished),
+    surface_ms:ms(surfaceFinished, uploadsFinished),
+    draw_commands_ms:ms(commandsFinished, surfaceFinished),
+    retire_ms:ms(finished, commandsFinished),
+    upload_bytes:uploadBytes, upload_pixels:uploadPixels, max_upload_pixels:maxUploadPixels,
+    surface_resized:surfaceResized, solid_commands:solidCommands, alpha_commands:alphaCommands, image_commands:imageCommands,
+  };
 }
 
 function resetEditor() {

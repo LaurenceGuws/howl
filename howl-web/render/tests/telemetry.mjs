@@ -20,8 +20,8 @@ assert.equal(exported.version, 'test');
 assert.throws(() => telemetry.record('bad', {text:'secret terminal text'}), /forbidden/);
 assert.throws(() => telemetry.record('bad', {message:'secret error text'}), /forbidden/);
 assert.ok(!telemetry.compact().includes('secret terminal text'));
-telemetry.record('render', {ms:5, canvas_ms:2, gap_ms:40, commands:20});
-telemetry.record('render', {ms:50, canvas_ms:45, gap_ms:200, commands:200});
+telemetry.record('render', {ms:5, canvas_ms:2, upload_ms:0, draw_commands_ms:2, gap_ms:40, commands:20});
+telemetry.record('render', {ms:50, canvas_ms:45, upload_ms:40, draw_commands_ms:5, gap_ms:200, commands:200});
 telemetry.record('control_ack', {ms:30, kind:'text'});
 telemetry.record('event_loop_lag', {ms:120});
 telemetry.record('viewport_resize', {source:'visual', viewport:[390, 420]});
@@ -29,9 +29,21 @@ const summary = telemetry.summary({context:{display_mode:'standalone'}});
 assert.equal(summary.schema, 'howl.web-telemetry-summary/v1');
 assert.equal(summary.metrics.render_ms.max, 50);
 assert.equal(summary.metrics.canvas_ms.p95, 45);
+assert.equal(summary.metrics.upload_ms.max, 40);
+assert.equal(summary.metrics.draw_commands_ms.max, 5);
 assert.equal(summary.slow.renders[0].ms, 50);
+assert.equal(summary.incidents.length, 2);
+assert.ok(summary.incidents[0].window.some(event => event.n === summary.incidents[0].trigger.n));
 assert.equal(summary.recent_edges.at(-1).k, 'viewport_resize');
-assert.ok(telemetry.summaryCompact().length < telemetry.compact().length);
+const dense = new Telemetry({capacity:768, now:() => now});
+for (let index = 0; index < 768; index++) {
+  now += 1;
+  dense.record(index % 17 === 0 ? 'render' : 'input_event', index % 17 === 0
+    ? {ms:index % 91, canvas_ms:index % 83, upload_ms:index % 23, draw_commands_ms:index % 61, commands:200 + index % 50}
+    : {input_type:'insertText', composing:false, editor_bytes:1});
+}
+assert.ok(dense.summaryCompact().length < dense.compact().length / 4);
+assert.ok(dense.summaryCompact().length < 20000);
 
 let scheduled;
 let cleared = false;
