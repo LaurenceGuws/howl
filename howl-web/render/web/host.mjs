@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v19';
+const CANARY_GENERATION = 'v20';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');

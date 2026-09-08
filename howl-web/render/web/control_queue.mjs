@@ -48,7 +48,7 @@ export class ControlQueue {
     this.onEvent('queued', {id, kind, pending:this.pending});
     const task = this.tail.then(async () => {
       this.onEvent('start', {id, kind, pending:this.pending});
-      await run();
+      return await run();
     });
     const settled = task.finally(() => {
       this.pending -= 1;

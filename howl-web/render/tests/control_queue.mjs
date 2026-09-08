@@ -20,6 +20,9 @@ await queue.tail;
 assert.deepEqual(log, ['first:start','first:end','text:abé','backspace','text:cd']);
 assert.equal(queue.pending, 0);
 
+const returnQueue = new ControlQueue();
+assert.equal(await returnQueue.operation(async () => 17), 17);
+
 const chunks = [];
 let releaseChunkGate;
 const chunkGate = new Promise(resolve => { releaseChunkGate = resolve; });
@@ -59,4 +62,4 @@ releaseBound();
 await bounded.tail;
 assert.equal(bounded.pending, 0);
 
-console.log(JSON.stringify({status:'pass', coalescing:true, barriers:true, utf8Bytes:true, chunkBound:true, queueBound:true, burst1000:true}));
+console.log(JSON.stringify({status:'pass', coalescing:true, barriers:true, returnValue:true, utf8Bytes:true, chunkBound:true, queueBound:true, burst1000:true}));
