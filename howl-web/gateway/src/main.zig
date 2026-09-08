@@ -318,6 +318,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/frame_scheduler.mjs", .asset = .{ .relative_path = "frame_scheduler.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/display_schedule.mjs", .asset = .{ .relative_path = "display_schedule.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/resize_policy.mjs", .asset = .{ .relative_path = "resize_policy.mjs", .content_type = "text/javascript; charset=utf-8" } },
+        .{ .target = "/lifecycle_policy.mjs", .asset = .{ .relative_path = "lifecycle_policy.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/style.css", .asset = .{ .relative_path = "style.css", .content_type = "text/css; charset=utf-8" } },
         .{ .target = "/runtime.mjs", .asset = .{ .relative_path = "runtime.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/render.wasm", .asset = .{ .relative_path = "render.wasm", .content_type = "application/wasm" } },
@@ -402,6 +403,7 @@ test "static routes are closed and do not traverse the site root" {
     try std.testing.expectEqualStrings("@wire", staticAsset("/wire.wasm").?.relative_path);
     try std.testing.expectEqualStrings("fallback-font.bin", staticAsset("/fallback-font.bin").?.relative_path);
     try std.testing.expectEqualStrings("history.mjs", staticAsset("/history.mjs").?.relative_path);
+    try std.testing.expectEqualStrings("lifecycle_policy.mjs", staticAsset("/lifecycle_policy.mjs").?.relative_path);
     try std.testing.expect(staticAsset("/../secret") == null);
     try std.testing.expect(staticAsset("/?x=1") == null);
 }
