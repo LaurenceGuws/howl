@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v20';
+const CANARY_GENERATION = 'v21';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -167,7 +167,11 @@ class WireConnection {
       if (!this.closed) { telemetry.record('ws_error', {role:this.role}); fail(new Error(`${this.role}: websocket error`)); }
     };
     this.socket.onclose = () => {
-      this.closed = true; telemetry.record('ws_close', {role:this.role}); updateFacts();
+      const unexpected = !this.closed;
+      this.closed = true;
+      telemetry.record('ws_close', {role:this.role, unexpected});
+      updateFacts();
+      if (unexpected) handleTransportClose(this.role);
     };
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(`${this.role}: open timeout`)), 5000);
@@ -761,20 +765,24 @@ function lifecycleProbe(generation) {
   status.textContent = 'RESUMING: reconnecting browser transport…';
   reconnectAll().catch(fail);
 }
-function handleLifecycle() {
+function scheduleRecoveryProbes(source, extra = {}) {
   lifecycleGeneration += 1;
   const decision = lifecycleDecision();
-  telemetry.record('lifecycle', {visibility:document.visibilityState, focused:document.hasFocus(), observer_open:connectionOpen(observer), control_open:connectionOpen(control), decision});
+  telemetry.record(source, {visibility:document.visibilityState, focused:document.hasFocus(), observer_open:connectionOpen(observer), control_open:connectionOpen(control), decision, ...extra});
   const generation = lifecycleGeneration;
   if (decision === 'boot') return;
   if (decision === 'hidden') {
     syncFocus();
     return;
   }
-  // Safari may report suspended sockets as OPEN briefly after an iPhone unlock.
-  // Probe twice, then stop; manual Reconnect remains the bounded fallback.
   setTimeout(() => lifecycleProbe(generation), 250);
   setTimeout(() => lifecycleProbe(generation), 1500);
+}
+function handleTransportClose(role) {
+  scheduleRecoveryProbes('transport_close', {role});
+}
+function handleLifecycle() {
+  scheduleRecoveryProbes('lifecycle');
 }
 window.addEventListener('focus', handleLifecycle);
 window.addEventListener('blur', handleLifecycle);

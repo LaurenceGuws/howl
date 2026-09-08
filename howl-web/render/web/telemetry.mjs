@@ -78,7 +78,7 @@ export class Telemetry {
       .slice(0, limit);
     const diagnosticKinds = new Set([
       'viewport_resize', 'viewport_scroll', 'resize_request', 'resize_ack',
-      'resize_leader_acquired', 'resize_not_leader', 'lifecycle',
+      'resize_leader_acquired', 'resize_not_leader', 'lifecycle', 'transport_close',
       'ws_error', 'ws_close', 'reconnect_start', 'reconnect_ready', 'failure',
     ]);
     return {
