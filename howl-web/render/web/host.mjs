@@ -772,17 +772,14 @@ function scheduleViewportResize() {
     queueControl(connection => connection.resize(rows, columns, {claim:decision === 'claim'}), 'resize')
       .then(code => {
         telemetry.record('resize_ack', {rows, columns, code, claim:decision === 'claim'});
-        if (code === 0) {
-          if (decision === 'claim') {
-            resizePolicy.accepted(connection.clientId);
-            telemetry.record('resize_leader_acquired', {control:String(connection.clientId)});
-          }
+        const settled = resizePolicy.settle({decision, controlId, code});
+        if (settled === 'ok') {
+          if (decision === 'claim') telemetry.record('resize_leader_acquired', {control:controlId});
           return;
         }
-        if (code === 4) {
-          resizePolicy.rejected(connection.clientId);
+        if (settled === 'not_leader') {
           requestedGeometry = null;
-          telemetry.record('resize_not_leader', {control:String(connection.clientId)});
+          telemetry.record('resize_not_leader', {control:controlId});
           return;
         }
         throw new Error(`resize result ${code}`);
@@ -855,7 +852,10 @@ telemetryCopy?.addEventListener('click', async () => {
   }
 });
 telemetryClear?.addEventListener('click', () => {
-  telemetry.clear(); renderTelemetryLog(); status.textContent = 'Telemetry cleared';
+  telemetry.clear();
+  lastRenderTelemetryAt = null;
+  renderTelemetryLog();
+  status.textContent = 'Telemetry cleared';
 });
 
 reload.addEventListener('click', () => location.reload());

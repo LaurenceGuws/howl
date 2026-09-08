@@ -28,4 +28,16 @@ export class ResizePolicy {
   rejected(controlId) {
     if (this.owns(controlId)) this.controlId = null;
   }
+
+  settle({decision, controlId, code}) {
+    if (code === 0) {
+      if (decision === 'claim') this.accepted(controlId);
+      return 'ok';
+    }
+    if (code === 4) {
+      this.rejected(controlId);
+      return 'not_leader';
+    }
+    return 'error';
+  }
 }
