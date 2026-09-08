@@ -4,6 +4,7 @@ body { margin: 0; min-height: 100dvh; background: #0c1218; overscroll-behavior: 
 main { width: min(1180px, 100%); margin: 0 auto; padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left)); }
 header { display: flex; align-items: baseline; gap: 14px; min-height: 32px; }
 h1 { margin: 0; font-size: 20px; }
+#generation { color: #748692; font-size: 11px; font-weight: normal; }
 #status { margin: 0; color: #9ce6c8; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #terminal { display: block; margin: 8px 0; max-width: 100%; height: auto; border: 1px solid #33414d; background: #000; image-rendering: pixelated; touch-action: manipulation; outline: none; }
 #terminal:focus { border-color: #6b8b82; }

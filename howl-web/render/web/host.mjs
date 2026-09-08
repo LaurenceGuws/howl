@@ -10,6 +10,7 @@ import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 
+const CANARY_GENERATION = 'v18';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -81,6 +82,7 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
 function telemetryContext() {
   return {
+    generation: CANARY_GENERATION,
     display_mode: matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser',
     visibility: document.visibilityState,
     focused: document.hasFocus(),
@@ -826,6 +828,7 @@ window.visualViewport?.addEventListener('scroll', () => recordViewport('viewport
 
 function updateFacts() {
   factsNode.textContent = JSON.stringify({
+    generation: CANARY_GENERATION,
     observer_client: observer?.clientId ? String(observer.clientId) : null,
     previous_observer_client: previousObserverId,
     history_observer_client: historyObserver?.clientId ? String(historyObserver.clientId) : null,
@@ -891,7 +894,15 @@ telemetryClear?.addEventListener('click', () => {
   status.textContent = 'Telemetry cleared';
 });
 
-reload.addEventListener('click', () => location.reload());
+reload.addEventListener('click', async () => {
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration();
+    await registration?.update();
+  } catch (error) {
+    console.warn('service worker update check failed', error);
+  }
+  location.reload();
+});
 
 async function reconnectAll() {
   if (reconnectTask) return reconnectTask;

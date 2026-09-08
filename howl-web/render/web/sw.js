@@ -1,4 +1,4 @@
-const CACHE = 'howl-web-canary-v17';
+const CACHE = 'howl-web-canary-v18';
 const SHELL = [
   '/', '/host.mjs', '/input.mjs', '/history.mjs', '/control_queue.mjs', '/telemetry.mjs', '/frame_scheduler.mjs', '/display_schedule.mjs', '/resize_policy.mjs', '/style.css', '/runtime.mjs', '/wire.wasm',
   '/render.wasm', '/font.bin', '/fallback-font.bin', '/manifest.webmanifest', '/icon.png', '/font-licences.txt', '/dependencies.txt',
@@ -27,7 +27,7 @@ self.addEventListener('fetch', event => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     try {
-      const response = await fetch(event.request);
+      const response = await fetch(event.request, {cache: 'no-store'});
       // An Access redirect or login response is authentication UI, never app cache.
       if (response.ok && !response.redirected && new URL(response.url).origin === self.location.origin) {
         await cache.put(event.request, response.clone());
