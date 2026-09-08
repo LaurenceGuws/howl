@@ -9,8 +9,9 @@ import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
+import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v18';
+const CANARY_GENERATION = 'v19';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -58,6 +59,7 @@ const liveFrameScheduler = new LatestFrameScheduler({
   draw:frame => { if (!history.active) renderSnapshotBytes(frame.snapshot, frame.clientId, 'live'); },
 });
 const resizePolicy = new ResizePolicy();
+const lifecyclePolicy = new LifecycleRecoveryPolicy();
 const controlQueue = new ControlQueue({
   maximumPending:256, maximumTextBytes:4096, onError:fail,
   onEvent:(kind, data) => telemetry.record(`queue_${kind}`, data),
@@ -133,8 +135,10 @@ async function load() {
   observer = await WireConnection.connect('observer');
   control = await WireConnection.connect('control');
   resetEditor();
+  lifecyclePolicy.activate();
   syncFocus();
   updateFacts();
+  handleLifecycle();
 }
 
 class WireConnection {
@@ -738,9 +742,19 @@ function syncFocus() {
   focusState = next;
   queueControl(connection => connection.focus(next), 'focus');
 }
+function lifecycleDecision() {
+  return lifecyclePolicy.decide({
+    visible:pageVisible(),
+    observerOpen:connectionOpen(observer),
+    controlOpen:connectionOpen(control),
+  });
+}
 function lifecycleProbe(generation) {
-  if (generation !== lifecycleGeneration || !wireModule || !pageVisible()) return;
-  if (connectionOpen(observer) && connectionOpen(control)) {
+  if (generation !== lifecycleGeneration || !wireModule) return;
+  const decision = lifecycleDecision();
+  telemetry.record('lifecycle_probe', {decision});
+  if (decision === 'boot' || decision === 'hidden') return;
+  if (decision === 'healthy') {
     syncFocus();
     return;
   }
@@ -749,9 +763,11 @@ function lifecycleProbe(generation) {
 }
 function handleLifecycle() {
   lifecycleGeneration += 1;
-  telemetry.record('lifecycle', {visibility:document.visibilityState, focused:document.hasFocus(), observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
+  const decision = lifecycleDecision();
+  telemetry.record('lifecycle', {visibility:document.visibilityState, focused:document.hasFocus(), observer_open:connectionOpen(observer), control_open:connectionOpen(control), decision});
   const generation = lifecycleGeneration;
-  if (!pageVisible()) {
+  if (decision === 'boot') return;
+  if (decision === 'hidden') {
     syncFocus();
     return;
   }
@@ -905,6 +921,7 @@ reload.addEventListener('click', async () => {
 });
 
 async function reconnectAll() {
+  if (lifecycleDecision() === 'boot') return;
   if (reconnectTask) return reconnectTask;
   telemetry.record('reconnect_start', {observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   reconnectTask = (async () => {
