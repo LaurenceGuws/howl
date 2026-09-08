@@ -65,6 +65,46 @@ export class Telemetry {
 
   compact(extra = {}) { return JSON.stringify(this.export(extra)); }
 
+  summary(extra = {}) {
+    const events = this.#ordered();
+    const counts = {};
+    for (const event of events) counts[event.k] = (counts[event.k] ?? 0) + 1;
+    const metric = (kind, key) => summarizeNumbers(events
+      .filter(event => event.k === kind && Number.isFinite(event[key]))
+      .map(event => event[key]));
+    const top = (kind, key, limit = 5) => events
+      .filter(event => event.k === kind && Number.isFinite(event[key]))
+      .sort((left, right) => right[key] - left[key])
+      .slice(0, limit);
+    const diagnosticKinds = new Set([
+      'viewport_resize', 'viewport_scroll', 'resize_request', 'resize_ack',
+      'resize_leader_acquired', 'resize_not_leader', 'lifecycle',
+      'ws_error', 'ws_close', 'reconnect_start', 'reconnect_ready', 'failure',
+    ]);
+    return {
+      schema: 'howl.web-telemetry-summary/v1',
+      retained: this.size,
+      ...extra,
+      counts,
+      metrics: {
+        render_ms: metric('render', 'ms'),
+        canvas_ms: metric('render', 'canvas_ms'),
+        render_gap_ms: metric('render', 'gap_ms'),
+        render_commands: metric('render', 'commands'),
+        control_ack_ms: metric('control_ack', 'ms'),
+        event_loop_lag_ms: metric('event_loop_lag', 'ms'),
+      },
+      slow: {
+        renders: top('render', 'ms'),
+        control_acks: top('control_ack', 'ms'),
+        event_loop_lags: top('event_loop_lag', 'ms'),
+      },
+      recent_edges: events.filter(event => diagnosticKinds.has(event.k)).slice(-24),
+    };
+  }
+
+  summaryCompact(extra = {}) { return JSON.stringify(this.summary(extra)); }
+
   visibleLines(limit = 80) {
     return this.#ordered(Math.max(0, Math.min(limit, this.size))).map(event => JSON.stringify(event)).join('\n');
   }
@@ -95,4 +135,17 @@ export function startEventLoopProbe(telemetry, {
     if (lag >= reportLagMs) telemetry.record('event_loop_lag', {ms:Math.round(lag * 10) / 10});
   }, intervalMs);
   return () => clearIntervalFn(timer);
+}
+
+function summarizeNumbers(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((left, right) => left - right);
+  const p95Index = Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1);
+  const sum = sorted.reduce((total, value) => total + value, 0);
+  return {
+    count: sorted.length,
+    mean: Math.round((sum / sorted.length) * 10) / 10,
+    p95: sorted[p95Index],
+    max: sorted.at(-1),
+  };
 }

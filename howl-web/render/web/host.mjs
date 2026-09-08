@@ -22,6 +22,7 @@ const reconnect = document.querySelector('#reconnect');
 const reload = document.querySelector('#reload');
 const telemetryPanel = document.querySelector('#telemetry-panel');
 const telemetryLog = document.querySelector('#telemetry-log');
+const telemetrySummaryCopy = document.querySelector('#telemetry-summary-copy');
 const telemetryCopy = document.querySelector('#telemetry-copy');
 const telemetryClear = document.querySelector('#telemetry-clear');
 const decoder = new TextDecoder();
@@ -729,6 +730,18 @@ window.addEventListener('blur', handleLifecycle);
 document.addEventListener('visibilitychange', handleLifecycle);
 window.addEventListener('pageshow', handleLifecycle);
 
+function recordViewport(kind, source) {
+  const viewport = window.visualViewport;
+  telemetry.record(kind, {
+    source,
+    viewport:[Math.round(viewport?.width ?? innerWidth), Math.round(viewport?.height ?? innerHeight)],
+    inner:[Math.round(innerWidth), Math.round(innerHeight)],
+    offset:[Math.round(viewport?.offsetLeft ?? 0), Math.round(viewport?.offsetTop ?? 0)],
+    scale:Math.round((viewport?.scale ?? 1) * 1000) / 1000,
+    keyboard_focused:document.activeElement === keyboard,
+  });
+}
+
 function scheduleViewportResize() {
   if (resizeTimer) clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
@@ -747,14 +760,18 @@ function scheduleViewportResize() {
     if ((rows === currentRows && columns === currentColumns) ||
         (requestedGeometry?.rows === rows && requestedGeometry?.columns === columns)) return;
     const controlId = control?.clientId == null ? null : String(control.clientId);
-    const decision = resizePolicy.decide({
-      leaderPresent:latestLiveHistory?.leaderPresent ?? false,
-      controlId,
+    const leaderPresent = latestLiveHistory?.leaderPresent ?? false;
+    const decision = resizePolicy.decide({leaderPresent, controlId});
+    telemetry.record('resize_request', {
+      rows, columns, current_rows:currentRows, current_columns:currentColumns,
+      viewport_height:viewportHeight, width, leader_present:leaderPresent,
+      owned:resizePolicy.owns(controlId), decision,
     });
     if (decision === 'wait' || decision === 'follow') return;
     requestedGeometry = {rows, columns};
     queueControl(connection => connection.resize(rows, columns, {claim:decision === 'claim'}), 'resize')
       .then(code => {
+        telemetry.record('resize_ack', {rows, columns, code, claim:decision === 'claim'});
         if (code === 0) {
           if (decision === 'claim') {
             resizePolicy.accepted(connection.clientId);
@@ -773,8 +790,9 @@ function scheduleViewportResize() {
       .catch(error => { requestedGeometry = null; fail(error); });
   }, 120);
 }
-window.addEventListener('resize', scheduleViewportResize);
-window.visualViewport?.addEventListener('resize', scheduleViewportResize);
+window.addEventListener('resize', () => { recordViewport('viewport_resize', 'window'); scheduleViewportResize(); });
+window.visualViewport?.addEventListener('resize', () => { recordViewport('viewport_resize', 'visual'); scheduleViewportResize(); });
+window.visualViewport?.addEventListener('scroll', () => recordViewport('viewport_scroll', 'visual'));
 
 function updateFacts() {
   factsNode.textContent = JSON.stringify({
@@ -818,6 +836,15 @@ function updateFacts() {
 }
 
 telemetryPanel?.addEventListener('toggle', renderTelemetryLog);
+telemetrySummaryCopy?.addEventListener('click', async () => {
+  try {
+    const text = telemetry.summaryCompact({context:telemetryContext()});
+    await navigator.clipboard.writeText(text);
+    status.textContent = `Telemetry summary copied (${telemetry.retained} events)`;
+  } catch (error) {
+    status.textContent = `TELEMETRY SUMMARY COPY FAILED: ${error.message}`;
+  }
+});
 telemetryCopy?.addEventListener('click', async () => {
   try {
     const text = telemetry.compact({context:telemetryContext()});
