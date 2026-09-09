@@ -68,22 +68,20 @@ final class _TerminalSelectionChromeState
     final ordered = widget.range.ordered;
     final startRow = widget.viewport.viewportRowFor(ordered.start);
     final endRow = widget.viewport.viewportRowFor(ordered.end);
-    final start =
-        startRow == null
-            ? null
-            : widget.geometry.handlePoint(
-              row: startRow,
-              column: ordered.start.column,
-              end: false,
-            );
-    final end =
-        endRow == null
-            ? null
-            : widget.geometry.handlePoint(
-              row: endRow,
-              column: ordered.end.column,
-              end: true,
-            );
+    final start = startRow == null
+        ? null
+        : widget.geometry.handlePoint(
+            row: startRow,
+            column: ordered.start.column,
+            end: false,
+          );
+    final end = endRow == null
+        ? null
+        : widget.geometry.handlePoint(
+            row: endRow,
+            column: ordered.end.column,
+            end: true,
+          );
     if (widget.geometry.terminalRect == null) return null;
     return _SelectionChromeGeometry(
       start: start,
@@ -116,12 +114,12 @@ final class _TerminalSelectionChromeState
           lineHeightAtStart: metrics.lineHeight,
           onStartHandleDragStart: _onStartDragStart,
           onStartHandleDragUpdate: _onStartDragUpdate,
-          onStartHandleDragEnd: (_) => _startDragGlobal = null,
+          onStartHandleDragEnd: _onStartDragEnd,
           endHandleType: TextSelectionHandleType.right,
           lineHeightAtEnd: metrics.lineHeight,
           onEndHandleDragStart: _onEndDragStart,
           onEndHandleDragUpdate: _onEndDragUpdate,
-          onEndHandleDragEnd: (_) => _endDragGlobal = null,
+          onEndHandleDragEnd: _onEndDragEnd,
           selectionEndpoints: endpoints,
           selectionControls: materialTextSelectionHandleControls,
           selectionDelegate: null,
@@ -225,6 +223,11 @@ final class _TerminalSelectionChromeState
     if (point != null) widget.onStartChanged(point);
   }
 
+  void _onStartDragEnd(DragEndDetails _) {
+    _startDragGlobal = null;
+    _scheduleOverlayUpdate(show: true);
+  }
+
   void _onEndDragStart(DragStartDetails _) {
     final end = _chromeGeometry?.end;
     final renderObject = context.findRenderObject();
@@ -248,6 +251,11 @@ final class _TerminalSelectionChromeState
     if (cell == null) return;
     final point = widget.viewport.pointAt(cell.row, cell.column);
     if (point != null) widget.onEndChanged(point);
+  }
+
+  void _onEndDragEnd(DragEndDetails _) {
+    _endDragGlobal = null;
+    _scheduleOverlayUpdate(show: true);
   }
 
   @override

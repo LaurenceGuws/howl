@@ -575,6 +575,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _scheduleTextInputShow();
   }
 
+  void _showSoftKeyboard() {
+    _returnToLiveForInput();
+    _activateTextInput();
+  }
+
   void _onPointerDown(PointerDownEvent event, Size viewport) {
     if (event.kind == PointerDeviceKind.touch) return;
     _activateTextInput();
@@ -1035,6 +1040,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
+            onKeyboard: _showSoftKeyboard,
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
           ),
