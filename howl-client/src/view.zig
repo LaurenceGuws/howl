@@ -251,6 +251,101 @@ pub fn uris(snapshot: *const Snapshot) []const u8 {
     return ownerBytes(impl)[impl.uris_offset .. impl.uris_offset + impl.uri_bytes];
 }
 
+pub const TextProjection = struct {
+    bytes_written: usize,
+    truncated: bool,
+};
+
+/// Writes one bounded UTF-8 projection of the currently projected viewport.
+///
+/// Visual row boundaries and interior blank cells are retained, while trailing
+/// blank cells/rows are trimmed. Multicell continuation fragments do not repeat
+/// text and concealed cells project as blanks. The caller owns the output
+/// buffer; exhaustion truncates rather than allocating or failing the snapshot.
+pub fn writeVisibleText(snapshot: *const Snapshot, output: []u8) TextProjection {
+    var writer = TextWriter{ .bytes = output };
+    const snapshot_rows = rows(snapshot);
+    const snapshot_cells = cells(snapshot);
+    const snapshot_scalars = scalars(snapshot);
+    const last_row = lastTextRow(snapshot_rows, snapshot_cells) orelse
+        return .{ .bytes_written = 0, .truncated = false };
+
+    for (snapshot_rows[0 .. last_row + 1], 0..) |row, row_index| {
+        if (row_index != 0 and !writer.writeByte('\n')) break;
+        const row_cells = snapshot_cells[row.cell_offset .. row.cell_offset + row.cell_count];
+        const last_cell = lastTextCell(row_cells) orelse continue;
+        for (row_cells[0 .. last_cell + 1]) |cell| {
+            if (cell.x != 0 or cell.y != 0) continue;
+            if (!textCellVisible(cell) or cell.scalar_count == 0) {
+                if (!writer.writeByte(' ')) break;
+                continue;
+            }
+            const begin_offset = cell.scalar_offset;
+            const end_offset = begin_offset + cell.scalar_count;
+            for (snapshot_scalars[begin_offset..end_offset]) |scalar| {
+                if (!writer.writeScalar(scalar)) break;
+            }
+            if (writer.truncated) break;
+        }
+        if (writer.truncated) break;
+    }
+    return .{ .bytes_written = writer.offset, .truncated = writer.truncated };
+}
+
+const TextWriter = struct {
+    bytes: []u8,
+    offset: usize = 0,
+    truncated: bool = false,
+
+    fn writeByte(self: *TextWriter, value: u8) bool {
+        if (self.offset == self.bytes.len) {
+            self.truncated = true;
+            return false;
+        }
+        self.bytes[self.offset] = value;
+        self.offset += 1;
+        return true;
+    }
+
+    fn writeScalar(self: *TextWriter, scalar: u32) bool {
+        var encoded: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(@intCast(scalar), &encoded) catch unreachable;
+        if (len > self.bytes.len - self.offset) {
+            self.truncated = true;
+            return false;
+        }
+        @memcpy(self.bytes[self.offset .. self.offset + len], encoded[0..len]);
+        self.offset += len;
+        return true;
+    }
+};
+
+fn lastTextRow(snapshot_rows: []const Row, snapshot_cells: []const Cell) ?usize {
+    var index = snapshot_rows.len;
+    while (index > 0) {
+        index -= 1;
+        const row = snapshot_rows[index];
+        if (lastTextCell(snapshot_cells[row.cell_offset .. row.cell_offset + row.cell_count]) != null)
+            return index;
+    }
+    return null;
+}
+
+fn lastTextCell(row_cells: []const Cell) ?usize {
+    var index = row_cells.len;
+    while (index > 0) {
+        index -= 1;
+        const cell = row_cells[index];
+        if (cell.x == 0 and cell.y == 0 and textCellVisible(cell) and cell.scalar_count != 0)
+            return index;
+    }
+    return null;
+}
+
+fn textCellVisible(cell: Cell) bool {
+    return cell.style_bits & protocol.text_v1.style.invisible == 0;
+}
+
 const Counts = struct {
     cells: usize,
     scalars: usize,
@@ -423,6 +518,70 @@ fn testPresentation(palette: [256]rich.Rgba) Presentation {
         .selection_background = null,
         .selection_foreground = null,
     };
+}
+
+fn testCell(scalar_values: []const u32) rich.Cell {
+    return .{
+        .scalars = scalar_values,
+        .width = 1,
+        .height = 1,
+        .x = 0,
+        .y = 0,
+        .subscale_n = 1,
+        .subscale_d = 1,
+        .vertical_align = 0,
+        .horizontal_align = 0,
+        .semantic_width = false,
+        .font = 0,
+        .baseline = 0,
+        .underline_style = 0,
+        .protection = 0,
+        .style_bits = 0,
+        .foreground = .{ .kind = .default, .value = 0 },
+        .background = .{ .kind = .default, .value = 0 },
+        .underline_color = .{ .kind = .default, .value = 0 },
+        .link_id = 0,
+    };
+}
+
+test "visible text projection preserves blanks and suppresses concealed continuations" {
+    var row_zero_cells = [_]rich.Cell{
+        testCell(&.{'A'}),
+        testCell(&.{}),
+        testCell(&.{'X'}),
+        testCell(&.{0x754c}),
+        testCell(&.{}),
+    };
+    row_zero_cells[2].style_bits = protocol.text_v1.style.invisible;
+    row_zero_cells[3].width = 2;
+    row_zero_cells[4].width = 2;
+    row_zero_cells[4].x = 1;
+    var row_one_cells = [_]rich.Cell{ testCell(&.{'B'}), testCell(&.{}), testCell(&.{}), testCell(&.{}), testCell(&.{}) };
+    var row_two_cells = [_]rich.Cell{ testCell(&.{}), testCell(&.{}), testCell(&.{}), testCell(&.{}), testCell(&.{}) };
+    var rows_source = [_]rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_zero_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_one_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_two_cells },
+    };
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    const source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBegin(3, 5),
+        .presentation = testPresentation(palette),
+        .rows = &rows_source,
+        .hyperlinks = &.{},
+    };
+    const snapshot = try project(std.testing.allocator, &source);
+    defer deinit(snapshot);
+    var output: [64]u8 = undefined;
+    const result = writeVisibleText(snapshot, &output);
+    try std.testing.expect(!result.truncated);
+    try std.testing.expectEqualStrings("A  界\nB", output[0..result.bytes_written]);
+
+    var short: [4]u8 = undefined;
+    const short_result = writeVisibleText(snapshot, &short);
+    try std.testing.expect(short_result.truncated);
+    try std.testing.expectEqualStrings("A  ", short[0..short_result.bytes_written]);
 }
 
 test "coarse view preserves rich semantics in one allocation" {

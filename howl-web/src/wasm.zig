@@ -1,7 +1,8 @@
 //! Experimental browser byte pump. Session protocol and rich decoding stay shared.
 const std = @import("std");
 const p = @import("howl_session").protocol;
-const rich = @import("howl_client").rich;
+const client = @import("howl_client");
+const rich = client.rich;
 const canvas = @import("howl_render").canvas;
 
 // A deliberately coarse canary budget, not the final terminal-renderer budget.
@@ -14,6 +15,7 @@ var transcript_len: usize = 0;
 var arena: [20 * 1024 * 1024]u8 = undefined;
 var projection: [65536]u8 = undefined;
 var projection_len: usize = 0;
+var projection_truncated: bool = false;
 var output: [p.header_bytes + 1 + 4096]u8 = undefined;
 var output_len: usize = 0;
 var identity: u64 = 0;
@@ -53,6 +55,9 @@ export fn hw_text_ptr() usize {
 }
 export fn hw_text_len() usize {
     return projection_len;
+}
+export fn hw_text_truncated() u32 {
+    return @intFromBool(projection_truncated);
 }
 export fn hw_snapshot_ptr() usize {
     return @intFromPtr(&transcript);
@@ -147,6 +152,7 @@ export fn hw_reset() u32 {
     needed = p.header_bytes;
     transcript_len = 0;
     projection_len = 0;
+    projection_truncated = false;
     identity = 0;
     revision = 0;
     terminal_revision = 0;
@@ -248,8 +254,8 @@ export fn hw_send_mouse(
         return 0;
     var body: [p.typed_input.mouse_bytes]u8 = undefined;
     p.encodeMouseInput(&body, .{
-        .kind = @enumFromInt(@as(u8, @intCast(kind_value))),
-        .button = @enumFromInt(@as(u8, @intCast(button_value))),
+        .kind = @fromBackingInt(@intCast(@as(u8, @intCast(kind_value)))),
+        .button = @fromBackingInt(@intCast(@as(u8, @intCast(button_value)))),
         .modifiers = @intCast(modifiers),
         .buttons_down = @intCast(buttons_down),
         .row = row_value,
@@ -300,33 +306,15 @@ export fn hw_send_resize_owned(resize_rows: u32, resize_columns: u32) u32 {
     return 1;
 }
 
-fn decodeSnapshot() rich.Error!void {
+fn decodeSnapshot() (rich.Error || client.view.Error)!void {
     var memory = std.heap.FixedBufferAllocator.init(&arena);
     var snapshot = try rich.decodeFrames(memory.allocator(), transcript[0..transcript_len]);
     defer snapshot.deinit();
-    // Diagnostic text only. Real glyph rendering will consume the rich view.
-    var length: usize = 0;
-    for (snapshot.rows) |row| {
-        for (row.cells) |cell| {
-            if (cell.scalars.len == 0) {
-                if (length == projection.len) return error.SnapshotTooLarge;
-                projection[length] = ' ';
-                length += 1;
-            }
-            for (cell.scalars) |scalar| {
-                if (scalar > 0x10ffff) return error.InvalidSnapshot;
-                var bytes: [4]u8 = undefined;
-                const count = std.unicode.utf8Encode(@intCast(scalar), &bytes) catch return error.InvalidSnapshot;
-                if (count > projection.len - length) return error.SnapshotTooLarge;
-                @memcpy(projection[length..][0..count], bytes[0..count]);
-                length += count;
-            }
-        }
-        if (length == projection.len) return error.SnapshotTooLarge;
-        projection[length] = '\n';
-        length += 1;
-    }
-    projection_len = length;
+    const view = try client.view.project(memory.allocator(), &snapshot);
+    defer client.view.deinit(view);
+    const text_projection = client.view.writeVisibleText(view, &projection);
+    projection_len = text_projection.bytes_written;
+    projection_truncated = text_projection.truncated;
     revision = snapshot.begin.revision;
     terminal_revision = snapshot.begin.terminal_revision;
     rows = snapshot.begin.rows;

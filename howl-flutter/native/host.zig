@@ -435,24 +435,23 @@ fn observe(
     const hcr_len = hcr_end - hcr_start;
     if (hcr_end > canvas_packet_budget or hcr_end + semantic_capacity > output.len)
         return error.BufferTooSmall;
-    var semantic_writer = SemanticWriter{ .bytes = output[hcr_end .. hcr_end + semantic_capacity] };
-    writeSemanticText(&semantic_writer, view);
-    writer.offset = hcr_end + semantic_writer.offset;
+    const semantic = client.view.writeVisibleText(view, output[hcr_end .. hcr_end + semantic_capacity]);
+    writer.offset = hcr_end + semantic.bytes_written;
     const total = writer.offset;
     if (total > std.math.maxInt(u32) or hcr_len > std.math.maxInt(u32) or
-        semantic_writer.offset > std.math.maxInt(u32))
+        semantic.bytes_written > std.math.maxInt(u32))
         return error.IntegerOverflow;
     const total_bytes: *[4]u8 = @ptrCast(output[8..12].ptr);
     std.mem.writeInt(u32, total_bytes, @intCast(total), .little);
     const hcr_bytes: *[4]u8 = @ptrCast(output[16..20].ptr);
     std.mem.writeInt(u32, hcr_bytes, @intCast(hcr_len), .little);
-    if (semantic_writer.truncated) {
+    if (semantic.truncated) {
         const flags_bytes: *[4]u8 = @ptrCast(output[20..24].ptr);
         const flags = std.mem.readInt(u32, flags_bytes, .little) | (1 << 6);
         std.mem.writeInt(u32, flags_bytes, flags, .little);
     }
     const semantic_bytes: *[4]u8 = @ptrCast(output[60..64].ptr);
-    std.mem.writeInt(u32, semantic_bytes, @intCast(semantic_writer.offset), .little);
+    std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     return total;
 }
 
@@ -483,83 +482,6 @@ fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
     try writer.writeU16(begin.cursor_column);
     try writer.writeU32(0); // semantic UTF-8 bytes, patched after serialization
     if (writer.offset != host_header_bytes) return error.InvalidFrame;
-}
-
-const SemanticWriter = struct {
-    bytes: []u8,
-    offset: usize = 0,
-    truncated: bool = false,
-
-    fn writeByte(self: *SemanticWriter, value: u8) bool {
-        if (self.offset == self.bytes.len) {
-            self.truncated = true;
-            return false;
-        }
-        self.bytes[self.offset] = value;
-        self.offset += 1;
-        return true;
-    }
-
-    fn writeScalar(self: *SemanticWriter, scalar: u32) bool {
-        var encoded: [4]u8 = undefined;
-        const len = std.unicode.utf8Encode(@intCast(scalar), &encoded) catch unreachable;
-        if (len > self.bytes.len - self.offset) {
-            self.truncated = true;
-            return false;
-        }
-        @memcpy(self.bytes[self.offset .. self.offset + len], encoded[0..len]);
-        self.offset += len;
-        return true;
-    }
-};
-
-fn writeSemanticText(writer: *SemanticWriter, snapshot: *const client.view.Snapshot) void {
-    const rows = client.view.rows(snapshot);
-    const cells = client.view.cells(snapshot);
-    const scalars = client.view.scalars(snapshot);
-    const last_row = lastSemanticRow(rows, cells) orelse return;
-
-    for (rows[0 .. last_row + 1], 0..) |row, row_index| {
-        if (row_index != 0 and !writer.writeByte('\n')) return;
-        const row_cells = cells[row.cell_offset .. row.cell_offset + row.cell_count];
-        const last_cell = lastSemanticCell(row_cells) orelse continue;
-        for (row_cells[0 .. last_cell + 1]) |cell| {
-            if (cell.x != 0 or cell.y != 0) continue;
-            if (!semanticCellVisible(cell) or cell.scalar_count == 0) {
-                if (!writer.writeByte(' ')) return;
-                continue;
-            }
-            const begin = cell.scalar_offset;
-            const end = begin + cell.scalar_count;
-            for (scalars[begin..end]) |scalar| if (!writer.writeScalar(scalar)) return;
-        }
-    }
-}
-
-fn lastSemanticRow(rows: []const client.view.Row, cells: []const client.view.Cell) ?usize {
-    var index = rows.len;
-    while (index > 0) {
-        index -= 1;
-        const row = rows[index];
-        const row_cells = cells[row.cell_offset .. row.cell_offset + row.cell_count];
-        if (lastSemanticCell(row_cells) != null) return index;
-    }
-    return null;
-}
-
-fn lastSemanticCell(cells: []const client.view.Cell) ?usize {
-    var index = cells.len;
-    while (index > 0) {
-        index -= 1;
-        const cell = cells[index];
-        if (cell.x == 0 and cell.y == 0 and semanticCellVisible(cell) and cell.scalar_count != 0)
-            return index;
-    }
-    return null;
-}
-
-fn semanticCellVisible(cell: client.view.Cell) bool {
-    return cell.style_bits & protocol.text_v1.style.invisible == 0;
 }
 
 fn writeGlobalHeader(writer: *Writer, surface: canvas.Size) !void {

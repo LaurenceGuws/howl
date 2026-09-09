@@ -25,7 +25,8 @@ pub fn build(b: *std.Build) void {
     wasm.entry = .disabled;
     root.export_symbol_names = &.{
         "hw_input_ptr",        "hw_input_capacity",    "hw_output_ptr",       "hw_output_len",
-        "hw_text_ptr",         "hw_text_len",          "hw_snapshot_ptr",     "hw_snapshot_len",
+        "hw_text_ptr",         "hw_text_len",          "hw_text_truncated",    "hw_snapshot_ptr",
+        "hw_snapshot_len",
         "hw_error_ptr",        "hw_error_len",         "hw_phase",            "hw_identity",
         "hw_revision",         "hw_terminal_revision", "hw_rows",             "hw_columns",
         "hw_history_offset",   "hw_history_count",     "hw_history_row_base", "hw_alternate_screen",
