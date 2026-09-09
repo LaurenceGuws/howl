@@ -230,6 +230,39 @@ export fn hw_send_focus(focus_value: u32) u32 {
     return beginInput(&payload);
 }
 
+export fn hw_send_mouse(
+    kind_value: u32,
+    button_value: u32,
+    modifiers: u32,
+    buttons_down: u32,
+    row_value: i32,
+    column_value: u32,
+    pixels_present: u32,
+    pixel_x: u32,
+    pixel_y: u32,
+) u32 {
+    if (!controlReady() or kind_value < 1 or kind_value > 4 or
+        button_value > 5 or modifiers > std.math.maxInt(u8) or
+        buttons_down > std.math.maxInt(u8) or column_value > std.math.maxInt(u16) or
+        pixels_present > 1 or (pixels_present == 0 and (pixel_x != 0 or pixel_y != 0)))
+        return 0;
+    var body: [p.typed_input.mouse_bytes]u8 = undefined;
+    p.encodeMouseInput(&body, .{
+        .kind = @enumFromInt(@as(u8, @intCast(kind_value))),
+        .button = @enumFromInt(@as(u8, @intCast(button_value))),
+        .modifiers = @intCast(modifiers),
+        .buttons_down = @intCast(buttons_down),
+        .row = row_value,
+        .column = @intCast(column_value),
+        .pixel_x = if (pixels_present == 1) pixel_x else null,
+        .pixel_y = if (pixels_present == 1) pixel_y else null,
+    }) catch return 0;
+    var payload: [1 + p.typed_input.mouse_bytes]u8 = undefined;
+    payload[0] = @backingInt(p.InputKind.mouse);
+    @memcpy(payload[1..], &body);
+    return beginInput(&payload);
+}
+
 fn stageResize(resize_rows: u32, resize_columns: u32) bool {
     if (!controlReady() or resize_rows == 0 or resize_rows > std.math.maxInt(u16) or
         resize_columns == 0 or resize_columns > std.math.maxInt(u16))

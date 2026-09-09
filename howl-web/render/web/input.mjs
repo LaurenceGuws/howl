@@ -2,6 +2,8 @@
 // never terminal escape strings.
 export const KeyAction = Object.freeze({press: 1, repeat: 2, release: 3});
 export const Modifier = Object.freeze({shift:1, alt:2, control:4, super:8, capsLock:64, numLock:128});
+export const MouseKind = Object.freeze({press:1, release:2, move:3, wheel:4});
+export const MouseButton = Object.freeze({none:0, left:1, middle:2, right:3, wheelUp:4, wheelDown:5});
 export const NamedKey = Object.freeze({
   Enter:1, Tab:2, Backspace:3, Escape:4, ArrowUp:5, ArrowDown:6,
   ArrowLeft:7, ArrowRight:8, Insert:9, Delete:10, Home:11, End:12,

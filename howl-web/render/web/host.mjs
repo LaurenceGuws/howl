@@ -1,8 +1,9 @@
 import {assertTextImports, createTextRuntime} from './runtime.mjs';
 import {
   TerminalInputStager, guardText, namedKeyForCode, NamedKey, KeyAction,
-  Modifier, modifierBits, singleScalar,
+  Modifier, MouseKind, modifierBits, singleScalar,
 } from './input.mjs';
+import {TerminalPointerAdapter, TerminalPointerGeometry, LatestPointerMoveScheduler} from './pointer_input.mjs';
 import {HistoryViewport} from './history.mjs';
 import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
@@ -11,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v26';
+const CANARY_GENERATION = 'v27';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -64,6 +65,11 @@ const lifecyclePolicy = new LifecycleRecoveryPolicy();
 const controlQueue = new ControlQueue({
   maximumPending:256, maximumTextBytes:4096, onError:fail,
   onEvent:(kind, data) => telemetry.record(`queue_${kind}`, data),
+});
+const terminalPointer = new TerminalPointerAdapter();
+const pointerMoveScheduler = new LatestPointerMoveScheduler({
+  send:input => queueControl(connection => connection.mouse(input), 'mouse_move'),
+  onError:fail,
 });
 let lastRenderTelemetryAt = null;
 let telemetryUiTimer = null;
@@ -243,6 +249,12 @@ class WireConnection {
   }
   focus(value) {
     return this.operation(() => this.exports.hw_send_focus(value), `focus ${value === 1 ? 'in' : 'out'}`, 'focus');
+  }
+  mouse(input) {
+    return this.operation(() => this.exports.hw_send_mouse(
+      input.kind, input.button, input.modifiers, input.buttonsDown,
+      input.row, input.column, 1, input.pixelX, input.pixelY,
+    ), `mouse ${input.kind}/${input.button} at ${input.row},${input.column}`, 'mouse');
   }
   async resize(rows, columns, {claim = false} = {}) {
     const begin = claim ? this.exports.hw_send_resize : this.exports.hw_send_resize_owned;
@@ -736,7 +748,48 @@ keyboard.addEventListener('keyup', event => {
   }
 });
 
-terminal.addEventListener('pointerdown', focusKeyboard);
+function currentPointerGeometry() {
+  if (!lastFrame?.cell || !lastFrame?.surface) return null;
+  const rect = terminal.getBoundingClientRect();
+  return new TerminalPointerGeometry({
+    left:rect.left + terminal.clientLeft, top:rect.top + terminal.clientTop,
+    width:terminal.clientWidth, height:terminal.clientHeight,
+    surfaceWidth:lastFrame.surface[0], surfaceHeight:lastFrame.surface[1],
+    cellWidth:lastFrame.cell[0], cellHeight:lastFrame.cell[1],
+  });
+}
+
+function handleTerminalPointer(event) {
+  const inputs = terminalPointer.translate(event, {
+    geometry:currentPointerGeometry(), modifiers:modifierBits(event),
+  });
+  if (inputs.length === 0) return false;
+  returnToLive();
+  for (const input of inputs) {
+    if (input.kind === MouseKind.move) pointerMoveScheduler.push(input);
+    else {
+      pointerMoveScheduler.clear();
+      queueControl(connection => connection.mouse(input), 'mouse');
+    }
+  }
+  return true;
+}
+
+terminal.addEventListener('pointerdown', event => {
+  focusKeyboard();
+  if (!handleTerminalPointer(event)) return;
+  try { terminal.setPointerCapture(event.pointerId); } catch {}
+  event.preventDefault();
+});
+terminal.addEventListener('pointermove', event => { handleTerminalPointer(event); });
+terminal.addEventListener('pointerup', event => {
+  if (handleTerminalPointer(event)) event.preventDefault();
+  try { terminal.releasePointerCapture(event.pointerId); } catch {}
+});
+terminal.addEventListener('pointercancel', event => {
+  handleTerminalPointer(event);
+  try { terminal.releasePointerCapture(event.pointerId); } catch {}
+});
 terminal.addEventListener('wheel', event => {
   if (!lastFrame?.cell || !latestLiveHistory || latestLiveHistory.alternateScreen || latestLiveHistory.historyCount === 0) return;
   event.preventDefault();

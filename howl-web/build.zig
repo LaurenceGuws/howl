@@ -31,7 +31,8 @@ pub fn build(b: *std.Build) void {
         "hw_history_offset",   "hw_history_count",     "hw_history_row_base", "hw_alternate_screen",
         "hw_leader_present",   "hw_last_result_code",  "hw_control_ready",    "hw_reset",
         "hw_observe",          "hw_send_text",         "hw_send_paste",       "hw_send_named_key",
-        "hw_send_unicode_key", "hw_send_focus",        "hw_send_resize",      "hw_send_resize_owned",
+        "hw_send_unicode_key", "hw_send_focus",        "hw_send_mouse",       "hw_send_resize",
+        "hw_send_resize_owned",
         "hw_feed",             "hw_finish",            "hw_canvas_check",
     };
     wasm.export_memory = true;

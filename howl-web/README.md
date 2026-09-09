@@ -43,6 +43,17 @@ one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ct
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
 changes produce explicit canonical resize mutations through the same wire owner. Browser geometry follows the session's existing explicit resize authority instead of fighting it: a Web control connection claims geometry only when the latest canonical observation reports no leader, keeps resizing only while that control connection owns the local claim, and otherwise follows the leader's canonical geometry. A lost or raced claim returns `not_leader` as a normal control outcome so the browser becomes a follower rather than stealing authority back.
 
+Pointer capture follows the same mobile policy as Flutter. Finger touch remains
+browser/mobile UI input and never becomes a terminal mouse event. Mouse and pen
+PointerEvents are mapped from the actually displayed Canvas content rectangle
+back into canonical cell and logical-pixel coordinates, with out-of-bounds or
+non-integral terminal geometry refused rather than guessed. Press/release
+transitions remain ordered control barriers; high-rate pointer moves are
+latest-wins with at most one move on the wire and one newer move retained
+client-locally. Wheel input remains client-local history behavior for now. The
+Wasm owner serializes the frozen semantic mouse grammar; terminal SGR/X10/etc.
+encoding remains solely in the canonical VT.
+
 The live browser shell also carries a bounded client-local telemetry flight recorder
 for mobile canary diagnosis. It retains at most 768 metadata events and records
 IME/input staging counts, control-queue coalescing/depth, control acknowledgement
@@ -185,8 +196,10 @@ paste, physical keyboard input, bounded burst input, reconnect, canonical
 scrollback and stable resize ownership. Safari/Home-Screen has separately proven
 single-client input/viewport behavior and Safari-leader/Chromium-follower geometry
 without resize ping-pong. Visible unexpected WebSocket closure self-heals through
-bounded reconnect probes. True offline cached-shell restoration remains a useful
-platform acceptance edge; pointer/mouse semantics remain a later capability.
+bounded reconnect probes. The Note10 Web canary also physically proved the
+pointer split under Neovim SGR mouse tracking: a real Android finger tap left the
+canonical cursor unchanged, while Android's `stylus` source traversed Brave's pen
+PointerEvent path and moved the canonical cursor to the addressed terminal row.
 
 Flutter and Web remain sibling visual canaries rather than successors. Flutter
 pressures the native TCP/client/platform-host path; Web pressures the

@@ -92,6 +92,10 @@ pub fn build(b: *std.Build) void {
     input_test.setCwd(b.path("."));
     input_test.setName("browser semantic input staging");
     check.dependOn(&input_test.step);
+    const pointer_input_test = b.addSystemCommand(&.{ "node", "tests/pointer_input.mjs" });
+    pointer_input_test.setCwd(b.path("."));
+    pointer_input_test.setName("browser semantic pointer input");
+    check.dependOn(&pointer_input_test.step);
     const queue_test = b.addSystemCommand(&.{ "node", "tests/control_queue.mjs" });
     queue_test.setCwd(b.path("."));
     queue_test.setName("browser control queue");
@@ -127,7 +131,7 @@ pub fn build(b: *std.Build) void {
     web.dependOn(&b.addInstallFile(text.path("testdata/primary.ttf"), "live-web/fallback-font.bin").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/test-fonts.txt"), "live-web/font-licences.txt").step);
     web.dependOn(&b.addInstallFile(text.path("LICENSES/bundled-dependencies.txt"), "live-web/dependencies.txt").step);
-    inline for (.{ "index.html", "host.mjs", "lifecycle_policy.mjs", "input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
+    inline for (.{ "index.html", "host.mjs", "lifecycle_policy.mjs", "input.mjs", "pointer_input.mjs", "history.mjs", "control_queue.mjs", "telemetry.mjs", "frame_scheduler.mjs", "display_schedule.mjs", "resize_policy.mjs", "style.css", "manifest.webmanifest", "sw.js", "icon.png" }) |file| {
         web.dependOn(&b.addInstallFile(b.path("web/" ++ file), "live-web/" ++ file).step);
     }
     // The restricted WASI host is shared with the preceding text canary. Keep

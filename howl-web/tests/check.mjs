@@ -8,7 +8,7 @@ assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
   'hw_text_ptr', 'hw_text_len', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
   'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
-  'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_resize', 'hw_send_resize_owned',
+  'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_mouse', 'hw_send_resize', 'hw_send_resize_owned',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
 assert.deepEqual(WebAssembly.Module.exports(module).map(x => x.name).sort(), expected);
 const w = (await WebAssembly.instantiate(module)).exports;
@@ -100,6 +100,20 @@ assert.equal(w.hw_send_focus(1), 1);
 assert.deepEqual([...output().subarray(12)], [5, 1]); assert.equal(feed(ok(7)), 1);
 assert.equal(w.hw_send_focus(3), 0);
 
+assert.equal(w.hw_send_mouse(3, 0, 2, 4, 7, 9, 1, 95, 123), 1);
+payload = output().subarray(12);
+assert.equal(payload[0], 4);
+assert.deepEqual([...payload.subarray(1, 5)], [3, 0, 2, 4]);
+assert.equal(payload.readInt32BE(5), 7);
+assert.equal(payload.readUInt16BE(9), 9);
+assert.equal(payload[11], 1);
+assert.equal(payload.readUInt32BE(12), 95);
+assert.equal(payload.readUInt32BE(16), 123);
+assert.equal(feed(ok(7)), 1);
+assert.equal(w.hw_send_mouse(0, 0, 0, 0, 0, 0, 0, 0, 0), 0);
+assert.equal(w.hw_send_mouse(1, 1, 0, 8, 0, 0, 0, 0, 0), 0);
+assert.equal(w.hw_send_mouse(1, 1, 0, 1, 0, 0, 0, 1, 0), 0);
+
 assert.equal(w.hw_send_resize(20, 80), 1);
 assert.equal(output()[5], 8); assert.equal(output().subarray(12).readBigUInt64BE(), 42n);
 assert.equal(w.hw_control_ready(), 0);
@@ -121,4 +135,4 @@ assert.equal(payload.readBigUInt64BE(0), 0n); assert.equal(payload.readUInt32BE(
 assert.equal(w.hw_observe(1, 0), 0); // at most one outstanding operation
 assert.equal(w.hw_send_text(1), 0);
 console.log(JSON.stringify({status:'pass', wasmBytes:bytes.length, memoryBytes:w.memory.buffer.byteLength,
-  imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, resizeFollowup:true, canvasComposer:true}));
+  imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, semanticMouse:true, resizeFollowup:true, canvasComposer:true}));
