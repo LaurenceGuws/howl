@@ -61,6 +61,14 @@ pub fn build(b: *std.Build) void {
     var client: ?*std.Build.Module = null;
     var text: ?*std.Build.Module = null;
     var text_test_fonts: ?*std.Build.Module = null;
+    var generated: ?*std.Build.Module = null;
+    if (native_enabled or generated_api_enabled) {
+        generated = b.createModule(.{
+            .root_source_file = b.path("src/generated.zig"),
+            .target = target,
+            .optimize = optimize,
+        });
+    }
     if (native_enabled) {
         const client_dependency = b.dependency("howl_client", .{
             .target = target,
@@ -96,6 +104,7 @@ pub fn build(b: *std.Build) void {
             client.?,
             text.?,
             canvas,
+            generated.?,
         ));
         const tested_chrome = chromeNativeModule(
             b,
@@ -113,19 +122,15 @@ pub fn build(b: *std.Build) void {
             client.?,
             text.?,
             canvas,
+            generated.?,
         ));
     } else {
         module.addImport("chrome", chrome);
         test_module.addImport("chrome", chrome);
     }
     if (generated_api_enabled) {
-        const generated = b.createModule(.{
-            .root_source_file = b.path("src/generated.zig"),
-            .target = target,
-            .optimize = optimize,
-        });
-        module.addImport("generated_glyphs", generated);
-        test_module.addImport("generated_glyphs", generated);
+        module.addImport("generated_glyphs", generated.?);
+        test_module.addImport("generated_glyphs", generated.?);
     }
     const selected = b.addOptions();
     selected.addOption(bool, "native_text", native_enabled);
@@ -138,6 +143,7 @@ pub fn build(b: *std.Build) void {
     capability_tests.addImport("howl_render", test_module);
     capability_tests.addImport("canvas", canvas);
     if (client) |value| capability_tests.addImport("howl_client", value);
+    if (generated) |value| capability_tests.addImport("generated_glyphs", value);
     capability_tests.addImport("selected_capabilities", selected.createModule());
     if (text_test_fonts) |fonts| capability_tests.addImport("test_fonts", fonts);
 
@@ -182,6 +188,7 @@ fn terminalNativeModule(
     client: *std.Build.Module,
     text: *std.Build.Module,
     canvas: *std.Build.Module,
+    generated: *std.Build.Module,
 ) *std.Build.Module {
     const terminal = b.createModule(.{
         .root_source_file = b.path("src/terminal_native.zig"),
@@ -191,5 +198,6 @@ fn terminalNativeModule(
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
     terminal.addImport("canvas", canvas);
+    terminal.addImport("generated_glyphs", generated);
     return terminal;
 }

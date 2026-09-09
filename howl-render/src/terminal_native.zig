@@ -2,12 +2,14 @@
 //!
 //! This layer owns presentation derivation only. It neither parses `text_v1` nor
 //! retains terminal truth. Every font metric, shape, source-cluster mapping,
-//! glyph identity, and alpha raster comes from `howl-text`.
+//! ordinary glyph identity and alpha raster come from `howl-text`; terminal
+//! drawing glyphs use the repository's Kitty-derived generated rasterizer.
 
 const std = @import("std");
 const client = @import("howl_client");
 const text = @import("howl_text");
 const canvas = @import("canvas");
+const generated = @import("generated_glyphs");
 
 pub const View = client.view;
 const TextColor = View.TextColor;
@@ -64,7 +66,7 @@ const AtlasView = struct {
     pixels: []const u8,
 };
 
-pub const AtlasError = std.mem.Allocator.Error || text.RasterError || error{
+pub const AtlasError = std.mem.Allocator.Error || text.RasterError || generated.Error || error{
     InvalidAtlasConfig,
     CacheFull,
     AtlasFull,
@@ -90,6 +92,7 @@ pub const ShapeCacheError = text.ShapeError || error{
 /// producer. None of these values are terminal truth or stable ABI.
 pub const ContentConfig = struct {
     cell_size: canvas.Size,
+    box_drawing: generated.BoxDrawingConfig,
     shape_cache: ShapeCacheConfig,
     atlas: AtlasConfig,
     shaped_capacity: usize,
@@ -136,9 +139,21 @@ pub const ContentError = AtlasError || ShapeCacheError || error{
     ResourceGenerationOverflow,
 };
 
+const AtlasKey = union(enum) {
+    font: struct {
+        face_index: u8,
+        glyph_id: u32,
+    },
+    generated: struct {
+        codepoint: u32,
+        width: u16,
+        height: u16,
+        sizing: generated.BoxDrawingSizing,
+    },
+};
+
 const AtlasEntry = struct {
-    face_index: u8,
-    glyph_id: u32,
+    key: AtlasKey,
     atlas_x: u16,
     atlas_y: u16,
     width: u16,
@@ -461,6 +476,7 @@ pub fn takeContentUpdate(
         surface,
         impl.commands,
         impl.config.cell_size,
+        impl.config.box_drawing,
         impl.clusters,
         impl.shaped,
         impl.raster,
@@ -774,6 +790,7 @@ fn buildContentCommands(
     surface: canvas.Size,
     output: []canvas.Input,
     cell_size: canvas.Size,
+    box_drawing: generated.BoxDrawingConfig,
     cluster_scratch: []u32,
     shaped_scratch: []text.Glyph,
     raster_scratch: []u8,
@@ -858,15 +875,50 @@ fn buildContentCommands(
             const scalar_end = std.math.add(usize, scalar_first, scalar_count) catch
                 return error.InvalidView;
             if (scalar_end > scalars.len) return error.InvalidView;
-            const run = try resolveShape(
-                shape_cache,
-                scalars[scalar_first..scalar_end],
-                cluster_scratch,
-                shaped_scratch,
-            );
+            const sequence = scalars[scalar_first..scalar_end];
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
             const clip = try contentLeadClip(row_index, column, cell.width, cell_size);
+
+            if (sequence.len == 1 and generated.classify(sequence[0]) != null) {
+                const generated_raster = try resolveGeneratedAtlas(
+                    atlas,
+                    sequence[0],
+                    clip.width,
+                    clip.height,
+                    generatedSizing(cell),
+                    box_drawing,
+                    raster_scratch,
+                );
+                has_raster = true;
+                try appendContentInput(output, &used, .{ .alpha_mask = .{
+                    .destination = clip,
+                    .clip = clip,
+                    .resource = .{
+                        .resource = placeholder_resource,
+                        .format = .alpha8,
+                        .size = .{
+                            .width = atlas_impl.config.width,
+                            .height = atlas_impl.config.height,
+                        },
+                        .source = .{
+                            .x = generated_raster.atlas_x,
+                            .y = generated_raster.atlas_y,
+                            .width = generated_raster.width,
+                            .height = generated_raster.height,
+                        },
+                    },
+                    .color = colors.foreground,
+                    .cursor_component = true,
+                } });
+                continue;
+            }
+            const run = try resolveShape(
+                shape_cache,
+                sequence,
+                cluster_scratch,
+                shaped_scratch,
+            );
 
             var pen_x = std.math.mul(i64, @as(i64, physical.x), 64) catch
                 return error.InvalidPresentationGeometry;
@@ -878,7 +930,7 @@ fn buildContentCommands(
             ) catch return error.InvalidPresentationGeometry;
             var pen_y: i64 = 0;
             for (run.glyphs) |shaped| {
-                const raster = try resolveAtlas(
+                const raster = try resolveFontAtlas(
                     atlas,
                     run.face_index,
                     shaped.id,
@@ -932,6 +984,14 @@ fn buildContentCommands(
         }
     }
     return .{ .command_count = used, .has_raster = has_raster };
+}
+
+fn generatedSizing(cell: View.Cell) generated.BoxDrawingSizing {
+    return .{
+        .scale = cell.height,
+        .subscale_n = @intCast(cell.subscale_n),
+        .subscale_d = @intCast(cell.subscale_d),
+    };
 }
 
 fn bindContentResource(commands: []canvas.Input, resource: canvas.ResourceRef) void {
@@ -1065,19 +1125,15 @@ fn resolveShape(
     };
 }
 
-fn resolveAtlas(
+fn resolveFontAtlas(
     atlas: *Atlas,
     face_index: u8,
     glyph_id: u32,
     raster_scratch: []u8,
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
-    for (impl.entries[0..impl.entry_count]) |entry| {
-        if (entry.face_index == face_index and entry.glyph_id == glyph_id) {
-            return atlasRaster(entry);
-        }
-    }
-    if (impl.entry_count == impl.entries.len) return error.CacheFull;
+    const key = AtlasKey{ .font = .{ .face_index = face_index, .glyph_id = glyph_id } };
+    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
 
     var raster_allocator = std.heap.FixedBufferAllocator.init(raster_scratch);
     var raster = try impl.fonts.rasterize(
@@ -1092,14 +1148,111 @@ fn resolveAtlas(
         @as(usize, raster.height),
     ) catch return error.RasterExtentMismatch;
     if (expected != raster.pixels.len) return error.RasterExtentMismatch;
+    return cacheAtlas(
+        impl,
+        key,
+        raster.width,
+        raster.height,
+        raster.left,
+        raster.top,
+        raster.pixels,
+    );
+}
 
-    const pack = try planAtlas(impl, raster.width, raster.height);
-    if (raster.width != 0 and raster.height != 0) {
-        const width = @as(usize, raster.width);
-        const height = @as(usize, raster.height);
+fn resolveGeneratedAtlas(
+    atlas: *Atlas,
+    codepoint: u32,
+    width: u16,
+    height: u16,
+    sizing: generated.BoxDrawingSizing,
+    box_drawing: generated.BoxDrawingConfig,
+    raster_scratch: []u8,
+) AtlasError!AtlasRaster {
+    const impl = atlasImpl(atlas);
+    const key = AtlasKey{ .generated = .{
+        .codepoint = codepoint,
+        .width = width,
+        .height = height,
+        .sizing = sizing,
+    } };
+    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
+
+    const required = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch
+        return error.RasterTooLarge;
+    if (required > raster_scratch.len) return error.BufferTooSmall;
+    const pixels = raster_scratch[0..required];
+    const family = generated.classify(codepoint) orelse return error.UnsupportedGlyph;
+    switch (family) {
+        .box => try generated.rasterizeBox(
+            pixels,
+            width,
+            height,
+            codepoint,
+            box_drawing,
+            sizing,
+        ),
+        .progress => try generated.rasterizeProgress(
+            pixels,
+            width,
+            height,
+            codepoint,
+            box_drawing,
+            sizing,
+        ),
+        .branch => if (codepoint == 0xf5ee)
+            try generated.rasterize(pixels, width, height, codepoint)
+        else
+            try generated.rasterizeBranch(
+                pixels,
+                width,
+                height,
+                codepoint,
+                box_drawing,
+                sizing,
+            ),
+        .powerline => generated.rasterize(pixels, width, height, codepoint) catch |failure| switch (failure) {
+            error.InvalidMetrics => try generated.rasterizePowerline(
+                pixels,
+                width,
+                height,
+                codepoint,
+                box_drawing,
+                sizing,
+            ),
+            else => return failure,
+        },
+        .block, .braille, .sextant, .octant => try generated.rasterize(pixels, width, height, codepoint),
+    }
+    return cacheAtlas(impl, key, width, height, 0, 0, pixels);
+}
+
+fn findAtlas(impl: *const AtlasImpl, key: AtlasKey) ?AtlasEntry {
+    for (impl.entries[0..impl.entry_count]) |entry|
+        if (std.meta.eql(entry.key, key)) return entry;
+    return null;
+}
+
+fn cacheAtlas(
+    impl: *AtlasImpl,
+    key: AtlasKey,
+    width: u16,
+    height: u16,
+    left: i16,
+    top: i16,
+    pixels: []const u8,
+) AtlasError!AtlasRaster {
+    if (impl.entry_count == impl.entries.len) return error.CacheFull;
+    const expected = std.math.mul(usize, @as(usize, width), @as(usize, height)) catch
+        return error.RasterExtentMismatch;
+    if (pixels.len != expected) return error.RasterExtentMismatch;
+
+    const pack = try planAtlas(impl, width, height);
+    if (width != 0 and height != 0) {
+        const pixel_width = @as(usize, width);
+        const pixel_height = @as(usize, height);
         const atlas_width = @as(usize, impl.config.width);
-        for (0..height) |row| {
-            const source_start = row * width;
+        for (0..pixel_height) |row| {
+            const source_start = row * pixel_width;
             const destination_row = std.math.add(usize, pack.y, row) catch
                 return error.AtlasFull;
             const destination_start = std.math.mul(
@@ -1110,8 +1263,8 @@ fn resolveAtlas(
             const destination = std.math.add(usize, destination_start, pack.x) catch
                 return error.AtlasFull;
             @memcpy(
-                impl.pixels[destination .. destination + width],
-                raster.pixels[source_start .. source_start + width],
+                impl.pixels[destination .. destination + pixel_width],
+                pixels[source_start .. source_start + pixel_width],
             );
         }
     }
@@ -1119,14 +1272,13 @@ fn resolveAtlas(
     impl.shelf_y = pack.shelf_y;
     impl.shelf_height = pack.shelf_height;
     const entry = AtlasEntry{
-        .face_index = face_index,
-        .glyph_id = glyph_id,
+        .key = key,
         .atlas_x = @intCast(pack.x),
         .atlas_y = @intCast(pack.y),
-        .width = raster.width,
-        .height = raster.height,
-        .left = raster.left,
-        .top = raster.top,
+        .width = width,
+        .height = height,
+        .left = left,
+        .top = top,
     };
     impl.entries[impl.entry_count] = entry;
     impl.entry_count += 1;

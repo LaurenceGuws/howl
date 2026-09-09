@@ -79,6 +79,10 @@ const Host = struct {
 fn contentConfig() terminal.ContentConfig {
     return .{
         .cell_size = .{ .width = 10, .height = 20 },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
         .shape_cache = .{
             .entry_capacity = 256,
             .scalar_capacity = 512,

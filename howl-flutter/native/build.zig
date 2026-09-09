@@ -49,11 +49,13 @@ pub fn build(b: *std.Build) void {
     const validation = localModule(b, target, optimize, repo, "howl-render/src/canvas_validation.zig");
     const canvas = localModule(b, target, optimize, repo, "howl-render/src/canvas.zig");
     canvas.addImport("canvas_validation", validation);
+    const generated = localModule(b, target, optimize, repo, "howl-render/src/generated.zig");
 
     const terminal = localModule(b, target, optimize, repo, "howl-render/src/terminal_native.zig");
     terminal.addImport("howl_client", client);
     terminal.addImport("howl_text", text);
     terminal.addImport("canvas", canvas);
+    terminal.addImport("generated_glyphs", generated);
 
     const root = b.createModule(.{
         .root_source_file = b.path("host.zig"),

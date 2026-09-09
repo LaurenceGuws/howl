@@ -4,6 +4,7 @@ const std = @import("std");
 const render = @import("howl_render");
 const client = @import("howl_client");
 const fonts = @import("test_fonts");
+const generated = @import("generated_glyphs");
 
 fn presentation() client.rich.Presentation {
     return .{
@@ -28,8 +29,8 @@ fn cell(scalars: []u32, width: u8, x: u8) client.rich.Cell {
         .height = 1,
         .x = x,
         .y = 0,
-        .subscale_n = 1,
-        .subscale_d = 1,
+        .subscale_n = 0,
+        .subscale_d = 0,
         .vertical_align = 0,
         .horizontal_align = 0,
         .semantic_width = width > 1,
@@ -76,6 +77,10 @@ fn sourceSnapshot(rows: []client.rich.Row, columns: u16) client.rich.Snapshot {
 fn contentConfig(command_capacity: usize) render.terminal.ContentConfig {
     return .{
         .cell_size = .{ .width = 10, .height = 20 },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
         .shape_cache = .{
             .entry_capacity = 16,
             .scalar_capacity = 32,
@@ -137,9 +142,65 @@ test "terminal Canvas content reuses exact combining runs" {
     try std.testing.expectEqualDeep(usage.shape, render.terminal.contentUsage(content).shape);
 }
 
-test "terminal Canvas content retains howl-text fallback presentation" {
+test "terminal Canvas content routes generated glyphs outside font shaping" {
     var symbol = [_]u32{0xe0b0};
     var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    try std.testing.expect(firstAlphaResource(update.commands) != null);
+    const usage = render.terminal.contentUsage(content);
+    try std.testing.expectEqual(@as(usize, 0), usage.shape.entries);
+    try std.testing.expectEqual(@as(usize, 1), usage.atlas_entries);
+}
+
+test "terminal Canvas generated box raster matches Kitty-derived cell geometry" {
+    var symbol = [_]u32{0x2500};
+    var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 1);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const config = contentConfig(64);
+    const content = try render.terminal.initContent(std.testing.allocator, font, config);
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
+    var expected: [10 * 20]u8 = undefined;
+    try generated.rasterizeBox(
+        &expected,
+        10,
+        20,
+        symbol[0],
+        config.box_drawing,
+        .{},
+    );
+    const atlas = update.uploads[0].pixels;
+    try std.testing.expectEqual(@as(u16, 64), atlas.width);
+    try std.testing.expectEqual(@as(u16, 64), atlas.height);
+    for (0..20) |row| {
+        try std.testing.expectEqualSlices(
+            u8,
+            expected[row * 10 ..][0..10],
+            atlas.bytes[row * atlas.stride ..][0..10],
+        );
+    }
+    try std.testing.expectEqual(@as(usize, 0), render.terminal.contentUsage(content).shape.entries);
+}
+
+test "terminal Canvas content retains howl-text whole-sequence fallback" {
+    var variation = [_]u32{ '0', 0xfe00 };
+    var cells = [_]client.rich.Cell{cell(&variation, 1, 0)};
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     const source = sourceSnapshot(&rows, 1);
     const view = try client.view.project(std.testing.allocator, &source);
