@@ -74,6 +74,16 @@ from under the running app until the canonical session had zero clients, then
 restored it; the same Flutter process reattached, reclaimed 32x51 geometry and
 rendered the surviving Bash session without an app restart.
 
+Android accessibility is projected from the same immutable `howl-client.view`
+used by the native renderer; Flutter does not OCR its Canvas or maintain a
+second terminal model. The private native-host packet reserves the original
+256 KiB Canvas budget unchanged and carries at most 64 KiB of visible UTF-8
+semantic text beside it. Interior blanks and visual row boundaries are
+preserved, trailing blank cells/rows are trimmed, wide-cell continuations are
+not duplicated, and SGR-concealed cells project as blanks. If that semantic
+allowance is exhausted the visual frame still succeeds and the accessibility
+node discloses that its visible-text projection was truncated.
+
 ## Linux
 
 Build the native host first, then the normal Flutter bundle:

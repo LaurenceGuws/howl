@@ -11,7 +11,7 @@ import 'package:flutter/services.dart';
 import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 
-const int nativeHostOutputBytes = 256 * 1024;
+const int nativeHostOutputBytes = 320 * 1024;
 const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 32;
 
@@ -60,10 +60,17 @@ final class NativeHostMetadata {
 }
 
 final class NativeHostFrame {
-  const NativeHostFrame({required this.metadata, required this.canvas});
+  const NativeHostFrame({
+    required this.metadata,
+    required this.canvas,
+    required this.semanticText,
+    required this.semanticTruncated,
+  });
 
   final NativeHostMetadata metadata;
   final NativeCanvasFrame canvas;
+  final String semanticText;
+  final bool semanticTruncated;
 }
 
 NativeHostFrame parseNativeHostPacket(Uint8List bytes) {
@@ -77,16 +84,19 @@ NativeHostFrame parseNativeHostPacket(Uint8List bytes) {
     throw const NativeHostException('packet_magic');
   }
   final data = ByteData.sublistView(bytes);
-  if (data.getUint16(4, Endian.little) != 1 ||
+  if (data.getUint16(4, Endian.little) != 2 ||
       data.getUint16(6, Endian.little) != _hostHeaderBytes) {
     throw const NativeHostException('packet_version');
   }
   final total = data.getUint32(8, Endian.little);
   final canvasOffset = data.getUint32(12, Endian.little);
   final canvasLength = data.getUint32(16, Endian.little);
+  final semanticLength = data.getUint32(60, Endian.little);
+  final semanticOffset = canvasOffset + canvasLength;
   if (total != bytes.length ||
       canvasOffset != _hostHeaderBytes ||
-      canvasLength != bytes.length - canvasOffset) {
+      semanticOffset > bytes.length ||
+      semanticLength != bytes.length - semanticOffset) {
     throw const NativeHostException('packet_layout');
   }
   final flags = data.getUint32(20, Endian.little);
@@ -120,7 +130,14 @@ NativeHostFrame parseNativeHostPacket(Uint8List bytes) {
       frame.surfaceHeight != metadata.rows * 20) {
     throw const NativeHostException('packet_canvas');
   }
-  return NativeHostFrame(metadata: metadata, canvas: frame);
+  final semanticBytes = Uint8List.sublistView(bytes, semanticOffset);
+  final semanticText = utf8.decode(semanticBytes, allowMalformed: false);
+  return NativeHostFrame(
+    metadata: metadata,
+    canvas: frame,
+    semanticText: semanticText,
+    semanticTruncated: flags & (1 << 6) != 0,
+  );
 }
 
 Uint8List encodeNativeHostResidency(NativeCanvasLease? lease) {

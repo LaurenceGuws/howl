@@ -16,6 +16,7 @@ import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
+import 'terminal_semantics.dart';
 import 'touch_surface.dart';
 import 'transport_recovery.dart';
 import 'visible_viewport.dart';
@@ -102,6 +103,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   NativeHostControl? _nativeControl;
   NativeHostMetadata? _nativeLiveMetadata;
   NativeHostMetadata? _nativeHistoryMetadata;
+  String _nativeLiveSemanticText = '';
+  String _nativeHistorySemanticText = '';
+  bool _nativeLiveSemanticTruncated = false;
+  bool _nativeHistorySemanticTruncated = false;
   NativeCanvasLease? _nativeLiveLease;
   NativeCanvasLease? _nativeHistoryLease;
   Object? _failure;
@@ -230,6 +235,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           break;
         }
         _nativeLiveMetadata = packet.metadata;
+        _nativeLiveSemanticText = packet.semanticText;
+        _nativeLiveSemanticTruncated = packet.semanticTruncated;
         _nativeLiveLease = prepared.lease;
         _transportRecovery.succeeded();
         _failure = null;
@@ -632,6 +639,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           continue;
         }
         _nativeHistoryMetadata = packet.metadata;
+        _nativeHistorySemanticText = packet.semanticText;
+        _nativeHistorySemanticTruncated = packet.semanticTruncated;
         _nativeHistoryLease = prepared.lease;
         setState(() {});
         await WidgetsBinding.instance.endOfFrame;
@@ -670,6 +679,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final oldNativeHistory = _nativeHistoryLease;
     _nativeHistoryLease = null;
     _nativeHistoryMetadata = null;
+    _nativeHistorySemanticText = '';
+    _nativeHistorySemanticTruncated = false;
     if (mounted && !_stopping && _nativeLiveLease != null) {
       setState(() {});
       if (oldNativeHistory != null) {
@@ -744,6 +755,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final nativeLease = _history.active
         ? _nativeHistoryLease
         : _nativeLiveLease;
+    final semanticText = _history.active
+        ? _nativeHistorySemanticText
+        : _nativeLiveSemanticText;
+    final semanticTruncated = _history.active
+        ? _nativeHistorySemanticTruncated
+        : _nativeLiveSemanticTruncated;
     if (failure != null) {
       content = ColoredBox(
         color: const Color(0xff090b0e),
@@ -790,29 +807,33 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         children: <Widget>[
           Expanded(
             child: LayoutBuilder(
-              builder: (context, constraints) => TerminalTouchSurface(
-                onTap: _activateTextInput,
-                onVerticalDragStart: _beginHistoryDrag,
-                onVerticalDragUpdate: _updateHistoryDrag,
-                onVerticalDragEnd: _endHistoryDrag,
-                child: Listener(
-                  behavior: HitTestBehavior.opaque,
-                  onPointerDown: (event) =>
-                      _onPointerDown(event, constraints.biggest),
-                  onPointerMove: (event) =>
-                      _onPointerMove(event, constraints.biggest),
-                  onPointerHover: (event) =>
-                      _onPointerHover(event, constraints.biggest),
-                  onPointerUp: (event) =>
-                      _onPointerUp(event, constraints.biggest),
-                  onPointerCancel: (event) =>
-                      _onPointerCancel(event, constraints.biggest),
-                  child: Focus(
-                    focusNode: _focusNode,
-                    autofocus: true,
-                    onFocusChange: _onFocusChange,
-                    onKeyEvent: _onKeyEvent,
-                    child: content,
+              builder: (context, constraints) => TerminalSemanticSurface(
+                value: semanticText,
+                truncated: semanticTruncated,
+                child: TerminalTouchSurface(
+                  onTap: _activateTextInput,
+                  onVerticalDragStart: _beginHistoryDrag,
+                  onVerticalDragUpdate: _updateHistoryDrag,
+                  onVerticalDragEnd: _endHistoryDrag,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: (event) =>
+                        _onPointerDown(event, constraints.biggest),
+                    onPointerMove: (event) =>
+                        _onPointerMove(event, constraints.biggest),
+                    onPointerHover: (event) =>
+                        _onPointerHover(event, constraints.biggest),
+                    onPointerUp: (event) =>
+                        _onPointerUp(event, constraints.biggest),
+                    onPointerCancel: (event) =>
+                        _onPointerCancel(event, constraints.biggest),
+                    child: Focus(
+                      focusNode: _focusNode,
+                      autofocus: true,
+                      onFocusChange: _onFocusChange,
+                      onKeyEvent: _onKeyEvent,
+                      child: content,
+                    ),
                   ),
                 ),
               ),

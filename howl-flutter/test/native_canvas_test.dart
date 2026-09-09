@@ -112,17 +112,22 @@ Uint8List _batchedAlphaCanvas() {
   return bytes;
 }
 
-Uint8List _hostPacket() {
+Uint8List _hostPacket({bool semanticTruncated = false}) {
   final canvas = _oneFrameCanvas();
-  final bytes = Uint8List(64 + canvas.length);
+  final semantics = Uint8List.fromList('visible terminal'.codeUnits);
+  final bytes = Uint8List(64 + canvas.length + semantics.length);
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x4e, 0x48, 0x31]);
-  data.setUint16(4, 1, Endian.little);
+  data.setUint16(4, 2, Endian.little);
   data.setUint16(6, 64, Endian.little);
   data.setUint32(8, bytes.length, Endian.little);
   data.setUint32(12, 64, Endian.little);
   data.setUint32(16, canvas.length, Endian.little);
-  data.setUint32(20, 1 << 5, Endian.little);
+  data.setUint32(
+    20,
+    (1 << 5) | (semanticTruncated ? 1 << 6 : 0),
+    Endian.little,
+  );
   data.setUint64(24, 7, Endian.little);
   data.setUint64(32, 11, Endian.little);
   data.setUint32(40, 0, Endian.little);
@@ -132,7 +137,9 @@ Uint8List _hostPacket() {
   data.setUint16(54, 1, Endian.little);
   data.setUint16(56, 0, Endian.little);
   data.setUint16(58, 0, Endian.little);
+  data.setUint32(60, semantics.length, Endian.little);
   bytes.setAll(64, canvas);
+  bytes.setAll(64 + canvas.length, semantics);
   return bytes;
 }
 
@@ -163,7 +170,20 @@ void main() {
     expect(packet.metadata.columns, 1);
     expect(packet.metadata.cursorVisible, isTrue);
     expect(packet.canvas.commandCount, 3);
+    expect(packet.semanticText, 'visible terminal');
+    expect(packet.semanticTruncated, isFalse);
   });
+
+  test(
+    'native host exposes bounded semantic truncation without changing text',
+    () {
+      final packet = parseNativeHostPacket(
+        _hostPacket(semanticTruncated: true),
+      );
+      expect(packet.semanticText, 'visible terminal');
+      expect(packet.semanticTruncated, isTrue);
+    },
+  );
 
   test('sprite clipping crops source and destination identically', () {
     final clipped = clipNativeCanvasSprite(
@@ -194,6 +214,17 @@ void main() {
     expect(
       () => parseNativeHostPacket(badHost),
       throwsA(isA<NativeHostException>()),
+    );
+    final badSemanticLayout = _hostPacket();
+    ByteData.sublistView(badSemanticLayout).setUint32(60, 999, Endian.little);
+    expect(
+      () => parseNativeHostPacket(badSemanticLayout),
+      throwsA(isA<NativeHostException>()),
+    );
+    final badUtf8 = _hostPacket()..[badHost.length - 1] = 0xff;
+    expect(
+      () => parseNativeHostPacket(badUtf8),
+      throwsA(isA<FormatException>()),
     );
   });
 }
