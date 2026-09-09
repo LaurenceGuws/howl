@@ -821,6 +821,25 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     setState(() => _selection = selection.withOrderedEnd(point));
   }
 
+  void _autoScrollSelection(int rows) {
+    if (_selection == null || rows == 0) return;
+    final metadata = _nativeLiveMetadata;
+    if (metadata == null) return;
+    final changed = _history.scrollRows(
+      rows,
+      historyCount: metadata.historyCount,
+      historyRowBase: metadata.historyRowBase,
+      alternateScreen: metadata.alternateScreen,
+    );
+    if (!changed) return;
+    _historyGeneration += 1;
+    if (_history.active) {
+      _scheduleHistorySnapshot();
+    } else {
+      _leaveHistory();
+    }
+  }
+
   void _leaveHistory() {
     _history.reset();
     _historyGeneration += 1;
@@ -1027,6 +1046,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                           ),
                           onStartChanged: _changeSelectionStart,
                           onEndChanged: _changeSelectionEnd,
+                          onAutoScrollRows: _autoScrollSelection,
                           onCopy: _copyVisibleText,
                           onPaste: _pasteClipboard,
                         ),

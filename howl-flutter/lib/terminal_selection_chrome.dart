@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'terminal_selection.dart';
@@ -15,6 +17,7 @@ final class TerminalSelectionChrome extends StatefulWidget {
     required this.geometry,
     required this.onStartChanged,
     required this.onEndChanged,
+    required this.onAutoScrollRows,
     required this.onCopy,
     required this.onPaste,
   });
@@ -24,6 +27,7 @@ final class TerminalSelectionChrome extends StatefulWidget {
   final TerminalSelectionGeometry geometry;
   final ValueChanged<TerminalSelectionPoint> onStartChanged;
   final ValueChanged<TerminalSelectionPoint> onEndChanged;
+  final ValueChanged<int> onAutoScrollRows;
   final VoidCallback onCopy;
   final VoidCallback onPaste;
 
@@ -43,6 +47,11 @@ final class _TerminalSelectionChromeState
   SelectionOverlay? _overlay;
   Offset? _startDragGlobal;
   Offset? _endDragGlobal;
+  Timer? _autoScrollTimer;
+  int _autoScrollRows = 0;
+  bool _toolbarDesired = true;
+
+  static const Duration _autoScrollInterval = Duration(milliseconds: 100);
 
   @override
   void initState() {
@@ -54,10 +63,12 @@ final class _TerminalSelectionChromeState
   void didUpdateWidget(TerminalSelectionChrome oldWidget) {
     super.didUpdateWidget(oldWidget);
     _scheduleOverlayUpdate(show: false);
+    _scheduleDraggingEndpointRefresh();
   }
 
   @override
   void dispose() {
+    _stopAutoScroll();
     _overlay?.dispose();
     _startVisible.dispose();
     _endVisible.dispose();
@@ -68,17 +79,21 @@ final class _TerminalSelectionChromeState
     final ordered = widget.range.ordered;
     final startRow = widget.viewport.viewportRowFor(ordered.start);
     final endRow = widget.viewport.viewportRowFor(ordered.end);
-    final start = startRow == null
+    final startHandleRow =
+        startRow ?? widget.viewport.viewportEdgeRowFor(ordered.start);
+    final endHandleRow =
+        endRow ?? widget.viewport.viewportEdgeRowFor(ordered.end);
+    final start = startHandleRow == null
         ? null
         : widget.geometry.handlePoint(
-            row: startRow,
+            row: startHandleRow,
             column: ordered.start.column,
             end: false,
           );
-    final end = endRow == null
+    final end = endHandleRow == null
         ? null
         : widget.geometry.handlePoint(
-            row: endRow,
+            row: endHandleRow,
             column: ordered.end.column,
             end: true,
           );
@@ -86,6 +101,8 @@ final class _TerminalSelectionChromeState
     return _SelectionChromeGeometry(
       start: start,
       end: end,
+      startVisible: startRow != null,
+      endVisible: endRow != null,
       lineHeight: widget.geometry.rowHeight * widget.geometry.scale!,
     );
   }
@@ -98,8 +115,8 @@ final class _TerminalSelectionChromeState
         _overlay?.hide();
         return;
       }
-      _startVisible.value = metrics.start != null;
-      _endVisible.value = metrics.end != null;
+      _startVisible.value = metrics.startVisible;
+      _endVisible.value = metrics.endVisible;
       final endpoints = _selectionEndpoints(metrics);
       if (endpoints == null) {
         _overlay?.hide();
@@ -132,10 +149,7 @@ final class _TerminalSelectionChromeState
         );
         _overlay = overlay;
         overlay.showHandles();
-        overlay.showToolbar(
-          context: context,
-          contextMenuBuilder: _buildToolbar,
-        );
+        _showToolbarIfDesired(overlay);
         return;
       }
       overlay
@@ -144,12 +158,14 @@ final class _TerminalSelectionChromeState
         ..selectionEndpoints = endpoints;
       if (show) {
         overlay.showHandles();
-        overlay.showToolbar(
-          context: context,
-          contextMenuBuilder: _buildToolbar,
-        );
       }
+      _showToolbarIfDesired(overlay);
     });
+  }
+
+  void _showToolbarIfDesired(SelectionOverlay overlay) {
+    if (!_toolbarDesired || overlay.toolbarIsVisible) return;
+    overlay.showToolbar(context: context, contextMenuBuilder: _buildToolbar);
   }
 
   List<TextSelectionPoint>? _selectionEndpoints(
@@ -203,6 +219,7 @@ final class _TerminalSelectionChromeState
     final renderObject = context.findRenderObject();
     if (start == null || renderObject is! RenderBox) return;
     _startDragGlobal = renderObject.localToGlobal(start);
+    _toolbarDesired = false;
     _overlay?.hideToolbar();
   }
 
@@ -214,17 +231,13 @@ final class _TerminalSelectionChromeState
       return;
     }
     _startDragGlobal = current + details.delta;
-    final local = renderObject.globalToLocal(
-      _startDragGlobal! - Offset(0, metrics.lineHeight / 2),
-    );
-    final cell = widget.geometry.cellAt(local);
-    if (cell == null) return;
-    final point = widget.viewport.pointAt(cell.row, cell.column);
-    if (point != null) widget.onStartChanged(point);
+    _updateDraggingEndpoint(start: true);
   }
 
   void _onStartDragEnd(DragEndDetails _) {
+    _stopAutoScroll();
     _startDragGlobal = null;
+    _toolbarDesired = true;
     _scheduleOverlayUpdate(show: true);
   }
 
@@ -233,6 +246,7 @@ final class _TerminalSelectionChromeState
     final renderObject = context.findRenderObject();
     if (end == null || renderObject is! RenderBox) return;
     _endDragGlobal = renderObject.localToGlobal(end);
+    _toolbarDesired = false;
     _overlay?.hideToolbar();
   }
 
@@ -244,18 +258,69 @@ final class _TerminalSelectionChromeState
       return;
     }
     _endDragGlobal = current + details.delta;
-    final local = renderObject.globalToLocal(
-      _endDragGlobal! - Offset(0, metrics.lineHeight / 2),
-    );
-    final cell = widget.geometry.cellAt(local);
-    if (cell == null) return;
-    final point = widget.viewport.pointAt(cell.row, cell.column);
-    if (point != null) widget.onEndChanged(point);
+    _updateDraggingEndpoint(start: false);
   }
 
   void _onEndDragEnd(DragEndDetails _) {
+    _stopAutoScroll();
     _endDragGlobal = null;
+    _toolbarDesired = true;
     _scheduleOverlayUpdate(show: true);
+  }
+
+  void _scheduleDraggingEndpointRefresh() {
+    if (_startDragGlobal == null && _endDragGlobal == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_startDragGlobal != null) {
+        _updateDraggingEndpoint(start: true);
+      } else if (_endDragGlobal != null) {
+        _updateDraggingEndpoint(start: false);
+      }
+    });
+  }
+
+  void _updateDraggingEndpoint({required bool start}) {
+    final global = start ? _startDragGlobal : _endDragGlobal;
+    final metrics = _chromeGeometry;
+    final renderObject = context.findRenderObject();
+    if (global == null || metrics == null || renderObject is! RenderBox) return;
+    final local = renderObject.globalToLocal(
+      global - Offset(0, metrics.lineHeight / 2),
+    );
+    _updateAutoScroll(local);
+    final cell = widget.geometry.clampedCellAt(local);
+    if (cell == null) return;
+    final point = widget.viewport.pointAt(cell.row, cell.column);
+    if (point == null) return;
+    final ordered = widget.range.ordered;
+    if (start) {
+      if (point != ordered.start) widget.onStartChanged(point);
+    } else if (point != ordered.end) {
+      widget.onEndChanged(point);
+    }
+  }
+
+  void _updateAutoScroll(Offset local) {
+    final rows = widget.geometry.selectionEdgeScrollRows(local);
+    if (rows == _autoScrollRows) return;
+    _stopAutoScroll();
+    if (rows == 0) return;
+    _autoScrollRows = rows;
+    widget.onAutoScrollRows(rows);
+    _autoScrollTimer = Timer.periodic(_autoScrollInterval, (_) {
+      if (!mounted || (_startDragGlobal == null && _endDragGlobal == null)) {
+        _stopAutoScroll();
+        return;
+      }
+      widget.onAutoScrollRows(_autoScrollRows);
+    });
+  }
+
+  void _stopAutoScroll() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
+    _autoScrollRows = 0;
   }
 
   @override
@@ -300,10 +365,14 @@ final class _SelectionChromeGeometry {
   const _SelectionChromeGeometry({
     required this.start,
     required this.end,
+    required this.startVisible,
+    required this.endVisible,
     required this.lineHeight,
   });
 
   final Offset? start;
   final Offset? end;
+  final bool startVisible;
+  final bool endVisible;
   final double lineHeight;
 }

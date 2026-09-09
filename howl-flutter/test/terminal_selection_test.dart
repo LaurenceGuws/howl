@@ -128,4 +128,53 @@ void main() {
       const Offset(72, 80),
     );
   });
+
+  test(
+    'selection drag clamps outside cells and detects a two-row edge band',
+    () {
+      const geometry = TerminalSelectionGeometry(
+        viewportSize: Size(80, 100),
+        rows: 5,
+        columns: 8,
+        cellWidth: 10,
+        rowHeight: 20,
+      );
+      expect(geometry.clampedCellAt(const Offset(-50, -50)), (
+        row: 0,
+        column: 0,
+      ));
+      expect(geometry.clampedCellAt(const Offset(500, 500)), (
+        row: 4,
+        column: 7,
+      ));
+      expect(geometry.selectionEdgeScrollRows(const Offset(40, 10)), 1);
+      expect(geometry.selectionEdgeScrollRows(const Offset(40, 39)), 1);
+      expect(geometry.selectionEdgeScrollRows(const Offset(40, 50)), 0);
+      expect(geometry.selectionEdgeScrollRows(const Offset(40, 60)), -1);
+      expect(geometry.selectionEdgeScrollRows(const Offset(40, 110)), -1);
+    },
+  );
+
+  test('offscreen endpoint projects to nearest viewport edge', () {
+    const history = TerminalSelectionViewport(
+      historyOffset: 5,
+      historyCount: 10,
+      historyRowBase: 100,
+      rows: 5,
+      columns: 8,
+      alternateScreen: false,
+    );
+    expect(
+      history.viewportEdgeRowFor(
+        const TerminalSelectionPoint(row: 102, column: 3),
+      ),
+      0,
+    );
+    expect(
+      history.viewportEdgeRowFor(
+        const TerminalSelectionPoint(row: 112, column: 3),
+      ),
+      4,
+    );
+  });
 }

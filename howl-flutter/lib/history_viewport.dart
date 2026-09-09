@@ -58,6 +58,30 @@ final class HistoryViewport {
     return true;
   }
 
+  /// Moves by an exact number of canonical rows. Positive rows reveal older
+  /// history; negative rows move toward the live viewport.
+  bool scrollRows(
+    int rows, {
+    required int historyCount,
+    required int historyRowBase,
+    required bool alternateScreen,
+  }) {
+    if (historyCount < 0 || historyRowBase < 0) {
+      throw ArgumentError('history counters must be non-negative');
+    }
+    if (rows == 0 || alternateScreen || historyCount == 0) return false;
+
+    final requested = _targetOffset + rows;
+    final clamped = requested.clamp(0, historyCount);
+    if (clamped == _targetOffset) return false;
+
+    _targetOffset = clamped;
+    _anchorTopRow = clamped == 0
+        ? null
+        : historyRowBase + historyCount - clamped;
+    return true;
+  }
+
   /// Repositions a scrolled viewport after the live terminal advances while
   /// preserving the previously displayed absolute top row where possible.
   ///

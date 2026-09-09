@@ -2,6 +2,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/history_viewport.dart';
 
 void main() {
+  test('exact row scroll supports selection edge autoscroll', () {
+    final viewport = HistoryViewport();
+    expect(
+      viewport.scrollRows(
+        1,
+        historyCount: 20,
+        historyRowBase: 100,
+        alternateScreen: false,
+      ),
+      isTrue,
+    );
+    expect(viewport.targetOffset, 1);
+    expect(viewport.anchorTopRow, 119);
+    expect(
+      viewport.scrollRows(
+        -1,
+        historyCount: 20,
+        historyRowBase: 100,
+        alternateScreen: false,
+      ),
+      isTrue,
+    );
+    expect(viewport.targetOffset, 0);
+    expect(viewport.anchorTopRow, isNull);
+  });
+
   test('touch drag accumulates whole rows with terminal direction', () {
     final viewport = HistoryViewport()..beginDrag();
 

@@ -76,6 +76,17 @@ final class TerminalSelectionViewport {
     return row;
   }
 
+  /// Projects a retained endpoint onto the nearest visible row so Flutter can
+  /// keep the opposite, visible selection handle alive while one endpoint is
+  /// outside the viewport. Handle visibility remains caller-owned.
+  int? viewportEdgeRowFor(TerminalSelectionPoint point) {
+    if (rows <= 0 || point.column < 0 || point.column >= columns) return null;
+    final row = alternateScreen
+        ? point.row
+        : point.row - (historyRowBase + historyCount - historyOffset);
+    return row.clamp(0, rows - 1);
+  }
+
   TerminalSelectionValidity validity(TerminalSelectionRange range) {
     if (range.columns != columns || range.alternateScreen != alternateScreen) {
       return TerminalSelectionValidity.contextChanged;
@@ -228,6 +239,38 @@ final class TerminalSelectionGeometry {
       row: ((localPosition.dy - rect.top) / (rowHeight * fit)).floor(),
       column: ((localPosition.dx - rect.left) / (cellWidth * fit)).floor(),
     );
+  }
+
+  /// Maps a selection-handle hotspot to the closest terminal cell even after
+  /// the finger crosses an edge. This is selection presentation policy, not a
+  /// replacement for strict hit-testing via [cellAt].
+  ({int row, int column})? clampedCellAt(Offset localPosition) {
+    final rect = terminalRect;
+    if (rect == null ||
+        !localPosition.dx.isFinite ||
+        !localPosition.dy.isFinite) {
+      return null;
+    }
+    final fit = scale!;
+    final row = ((localPosition.dy - rect.top) / (rowHeight * fit))
+        .floor()
+        .clamp(0, rows - 1);
+    final column = ((localPosition.dx - rect.left) / (cellWidth * fit))
+        .floor()
+        .clamp(0, columns - 1);
+    return (row: row, column: column);
+  }
+
+  /// Returns +1 near/above the top edge (older history), -1 near/below the
+  /// bottom edge (toward live), and zero elsewhere.
+  int selectionEdgeScrollRows(Offset localPosition, {int edgeRows = 2}) {
+    final rect = terminalRect;
+    if (rect == null || edgeRows <= 0 || !localPosition.dy.isFinite) return 0;
+    final fit = scale!;
+    final band = math.min(edgeRows, rows) * rowHeight * fit;
+    if (localPosition.dy < rect.top + band) return 1;
+    if (localPosition.dy >= rect.bottom - band) return -1;
+    return 0;
   }
 
   Offset? handlePoint({
