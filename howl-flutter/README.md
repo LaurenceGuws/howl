@@ -54,6 +54,15 @@ The native control canary is deterministic and does not rely on Android's vendor
 
 It checks committed UTF-8, Enter, Backspace, Delete, Unicode physical key input, paste, focus, tracking-off semantic mouse behavior, resize, and the resulting canonical shell/geometry state.
 
+On touch-first Android, the terminal reserves finger gestures for client-local
+history and text-input focus rather than pretending a finger is a terminal
+mouse. Mouse/stylus devices continue through canonical semantic mouse input. A
+compact strip above the software keyboard exposes one-shot Ctrl/Alt latches plus
+Esc, Tab and arrow keys; a latched modifier applies to the next special key or
+single committed Unicode scalar, then clears. The strip lives inside the same
+visible-viewport owner as the terminal so IME/safe-area insets cannot hide it or
+silently overlap terminal cells.
+
 ## Linux
 
 Build the native host first, then the normal Flutter bundle:
