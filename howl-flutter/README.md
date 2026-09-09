@@ -63,6 +63,17 @@ single committed Unicode scalar, then clears. The strip lives inside the same
 visible-viewport owner as the terminal so IME/safe-area insets cannot hide it or
 silently overlap terminal cells.
 
+The long-lived native observer/control pair also owns bounded transport
+recovery. Endpoint attach failures and failures on an already-established
+transport retry at 250 ms, 500 ms, 1 s, 2 s and then at most every 5 s. A
+successful canonical frame resets that cadence. Each transport lifetime has a
+generation, so queued control work from a dead connection is discarded rather
+than replayed into its replacement. Platform/font/packet validation failures
+remain hard failures. Physical Note10 qualification cut a localhost relay out
+from under the running app until the canonical session had zero clients, then
+restored it; the same Flutter process reattached, reclaimed 32x51 geometry and
+rendered the surviving Bash session without an app restart.
+
 ## Linux
 
 Build the native host first, then the normal Flutter bundle:

@@ -17,6 +17,7 @@ import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
 import 'touch_surface.dart';
+import 'transport_recovery.dart';
 import 'visible_viewport.dart';
 
 const double terminalCellWidth = 10;
@@ -104,7 +105,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   NativeCanvasLease? _nativeLiveLease;
   NativeCanvasLease? _nativeHistoryLease;
   Object? _failure;
+  bool _reconnecting = false;
   bool _stopping = false;
+  int _transportGeneration = 0;
+  Completer<Object>? _transportFault;
+  final TransportRecovery _transportRecovery = TransportRecovery();
   bool _historyRequestRunning = false;
   bool _historyRequestPending = false;
   int _historyGeneration = 0;
@@ -152,21 +157,51 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   Future<void> _observe() => _observeNative();
 
   Future<void> _observeNative() async {
+    while (!_stopping) {
+      final generation = ++_transportGeneration;
+      var attached = false;
+      try {
+        await _observeNativeLifetime(generation, () => attached = true);
+        return;
+      } catch (error) {
+        if (_stopping || !mounted) return;
+        _dropTransport(generation);
+        if (!retriableTransportFailure(error, attached: attached)) {
+          _reportFailure(error);
+          return;
+        }
+        _leaveHistory();
+        _proposedRows = 0;
+        _proposedColumns = 0;
+        final delay = _transportRecovery.failed();
+        setState(() {
+          _failure = error;
+          _reconnecting = true;
+        });
+        await Future<void>.delayed(delay);
+      }
+    }
+  }
+
+  Future<void> _observeNativeLifetime(
+    int generation,
+    void Function() markAttached,
+  ) async {
+    NativeHostObserver? observer;
+    NativeHostControl? control;
     try {
-      final observer = await NativeHostObserver.createPlatform(
+      observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         armNextLiveObservation: true,
       );
-      final control = await NativeHostControl.create(
+      control = await NativeHostControl.create(
         endpoint: widget.endpoint.toString(),
       );
-      if (!mounted || _stopping) {
-        unawaited(observer.close());
-        unawaited(control.close());
-        return;
-      }
+      if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
       _nativeControl = control;
+      _transportFault = Completer<Object>();
+      markAttached();
       if (_focusNode.hasFocus) {
         _textInput.attach(viewId: View.of(context).viewId);
         _scheduleTextInputShow();
@@ -178,21 +213,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         historyOffset: 0,
         residency: encodeNativeHostResidency(_nativeLiveLease),
       );
-      while (!_stopping) {
-        final bytes = await pendingObservation;
+      while (!_stopping && generation == _transportGeneration) {
+        final bytes = await _observeOrTransportFault(
+          pendingObservation,
+          generation,
+        );
         final packet = parseNativeHostPacket(bytes);
         revision = packet.metadata.revision;
-        if (!mounted || _stopping) break;
+        if (!mounted || _stopping || generation != _transportGeneration) break;
         final prepared = await prepareNativeCanvasFrame(
           _nativeLiveLease,
           packet.canvas,
         );
-        if (!mounted || _stopping) {
+        if (!mounted || _stopping || generation != _transportGeneration) {
           disposeNativeCanvasLease(prepared.lease);
           break;
         }
         _nativeLiveMetadata = packet.metadata;
         _nativeLiveLease = prepared.lease;
+        _transportRecovery.succeeded();
+        _failure = null;
+        _reconnecting = false;
         if (_history.active) {
           _history.followLive(
             historyCount: packet.metadata.historyCount,
@@ -219,14 +260,52 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           image.dispose();
         }
       }
-    } catch (error) {
-      _reportFailure(error);
+    } finally {
+      if (identical(_nativeObserver, observer)) _nativeObserver = null;
+      if (identical(_nativeControl, control)) _nativeControl = null;
+      if (generation == _transportGeneration) _transportFault = null;
+      if (observer != null) unawaited(observer.close().catchError((_) {}));
+      if (control != null) unawaited(control.close().catchError((_) {}));
     }
+  }
+
+  Future<Uint8List> _observeOrTransportFault(
+    Future<Uint8List> observation,
+    int generation,
+  ) {
+    final fault = _transportFault;
+    if (fault == null || generation != _transportGeneration) return observation;
+    return Future.any<Uint8List>(<Future<Uint8List>>[
+      observation,
+      fault.future.then<Uint8List>((error) => throw error),
+    ]);
+  }
+
+  void _dropTransport(int generation) {
+    if (generation != _transportGeneration) return;
+    _transportGeneration += 1;
+    final observer = _nativeObserver;
+    final control = _nativeControl;
+    _nativeObserver = null;
+    _nativeControl = null;
+    _transportFault = null;
+    if (observer != null) unawaited(observer.close().catchError((_) {}));
+    if (control != null) unawaited(control.close().catchError((_) {}));
+  }
+
+  void _signalTransportFault(Object error, int generation) {
+    if (generation != _transportGeneration || _stopping) return;
+    final fault = _transportFault;
+    if (fault == null || fault.isCompleted) return;
+    fault.complete(error);
   }
 
   void _reportFailure(Object error) {
     if (!mounted || _stopping) return;
-    setState(() => _failure = error);
+    setState(() {
+      _failure = error;
+      _reconnecting = false;
+    });
   }
 
   bool get _hasControl => _nativeControl != null;
@@ -235,10 +314,25 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (_stopping) return Future<void>.value();
     final control = _nativeControl;
     if (control == null) return Future<void>.value();
-    _controlTail = _controlTail.then((_) => action(control));
-    _controlTail = _controlTail.catchError((Object error) {
-      _reportFailure(error);
+    final generation = _transportGeneration;
+    _controlTail = _controlTail.then((_) async {
+      if (_stopping ||
+          generation != _transportGeneration ||
+          !identical(control, _nativeControl)) {
+        return;
+      }
+      try {
+        await action(control);
+      } catch (error) {
+        if (retriableTransportFailure(error, attached: true)) {
+          _signalTransportFault(error, generation);
+        } else {
+          _reportFailure(error);
+        }
+        rethrow;
+      }
     });
+    _controlTail = _controlTail.catchError((Object _) {});
     return _controlTail;
   }
 
@@ -654,7 +748,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       content = ColoredBox(
         color: const Color(0xff090b0e),
         child: Center(
-          child: TerminalStatusText('Howl attach failed\n$failure'),
+          child: TerminalStatusText(
+            '${_reconnecting ? 'Howl reconnecting…' : 'Howl attach failed'}\n$failure',
+          ),
         ),
       );
     } else {
