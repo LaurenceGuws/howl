@@ -48,19 +48,26 @@ assert.ok(dense.summaryCompact().length < 20000);
 let scheduled;
 let cleared = false;
 let clock = 0;
+let active = true;
 const probe = new Telemetry({capacity:32, now:() => clock});
 const stop = startEventLoopProbe(probe, {
   intervalMs:250,
   reportLagMs:80,
   now:() => clock,
+  isActive:() => active,
   setIntervalFn:callback => { scheduled = callback; return 7; },
   clearIntervalFn:id => { assert.equal(id, 7); cleared = true; },
 });
 clock = 400; scheduled();
 assert.equal(probe.events.at(-1).k, 'event_loop_lag');
 assert.equal(probe.events.at(-1).ms, 150);
+const beforeHidden = probe.retained;
+active = false; clock = 1400; scheduled();
+assert.equal(probe.retained, beforeHidden);
+active = true; clock = 1650; scheduled();
+assert.equal(probe.retained, beforeHidden);
 stop(); assert.equal(cleared, true);
 telemetry.clear();
 assert.equal(telemetry.retained, 1);
 assert.equal(telemetry.events[0].k, 'telemetry_clear');
-console.log(JSON.stringify({status:'pass', boundedRing:true, exportSchema:true, summarySchema:true, rawTextRefused:true, eventLoopLag:true, clear:true}));
+console.log(JSON.stringify({status:'pass', boundedRing:true, exportSchema:true, summarySchema:true, rawTextRefused:true, eventLoopLag:true, hiddenTimerSuppressed:true, clear:true}));

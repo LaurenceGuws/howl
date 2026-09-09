@@ -129,10 +129,17 @@ export function startEventLoopProbe(telemetry, {
   setIntervalFn = setInterval,
   clearIntervalFn = clearInterval,
   now = () => performance.now(),
+  isActive = () => true,
 } = {}) {
   let expected = now() + intervalMs;
   const timer = setIntervalFn(() => {
     const current = now();
+    if (!isActive()) {
+      // Hidden browser tabs deliberately throttle timers. That is platform
+      // scheduling policy, not evidence that Howl blocked the event loop.
+      expected = current + intervalMs;
+      return;
+    }
     const lag = current - expected;
     expected = current + intervalMs;
     if (lag >= reportLagMs) telemetry.record('event_loop_lag', {ms:Math.round(lag * 10) / 10});

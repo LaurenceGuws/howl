@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v21';
+const CANARY_GENERATION = 'v22';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -33,6 +33,7 @@ const resources = new Map();
 const context = terminal.getContext('2d', {alpha: false});
 const alphaScratch = document.createElement('canvas');
 const alphaScratchContext = alphaScratch.getContext('2d');
+const alphaSpritePixelBudget = 1024 * 1024;
 const stager = new TerminalInputStager();
 const modifiedKeys = new Map();
 context.imageSmoothingEnabled = false;
@@ -105,7 +106,7 @@ function scheduleTelemetryLog() {
   telemetryUiTimer = setTimeout(() => { telemetryUiTimer = null; renderTelemetryLog(); }, 120);
 }
 telemetry.subscribe(scheduleTelemetryLog);
-startEventLoopProbe(telemetry);
+startEventLoopProbe(telemetry, {isActive:() => document.visibilityState === 'visible'});
 telemetry.record('boot', telemetryContext());
 
 async function fetchBytes(path) {
@@ -489,7 +490,10 @@ function returnToLive() {
 function createResource(upload, framePixels) {
   const [width, height] = upload.z;
   const bytes = framePixels.slice(upload.o, upload.o + upload.n);
-  const resource = {format: upload.f, width, height, stride: upload.stride, bytes};
+  const resource = {
+    format:upload.f, width, height, stride:upload.stride, bytes,
+    alphaSprites:new Map(), alphaSpritePixels:0,
+  };
   const image = document.createElement('canvas');
   image.width = width; image.height = height;
   const ctx = image.getContext('2d');
@@ -509,6 +513,58 @@ function createResource(upload, framePixels) {
   ctx.putImageData(data, 0, 0);
   resource.canvas = image;
   return resource;
+}
+
+function clippedSprite(destination, clip, source) {
+  const [dx, dy, dw, dh] = destination;
+  const [cx, cy, cw, ch] = clip;
+  const [sx, sy, sw, sh] = source;
+  if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0 || cw <= 0 || ch <= 0) return null;
+  const left = Math.max(dx, cx), top = Math.max(dy, cy);
+  const right = Math.min(dx + dw, cx + cw), bottom = Math.min(dy + dh, cy + ch);
+  if (right <= left || bottom <= top) return null;
+  const scaleX = sw / dw, scaleY = sh / dh;
+  return {
+    destination:[left, top, right - left, bottom - top],
+    source:[
+      sx + (left - dx) * scaleX,
+      sy + (top - dy) * scaleY,
+      (right - left) * scaleX,
+      (bottom - top) * scaleY,
+    ],
+  };
+}
+
+function alphaSprite(resource, source, color) {
+  const [sx, sy, sw, sh] = source;
+  const width = Math.ceil(sw), height = Math.ceil(sh);
+  const pixels = width * height;
+  if (width <= 0 || height <= 0 || pixels > alphaSpritePixelBudget) return null;
+  const key = `${sx}:${sy}:${sw}:${sh}:${color.join(':')}`;
+  const existing = resource.alphaSprites.get(key);
+  if (existing) {
+    // Map insertion order is our tiny LRU. Frequently reused glyph/color pairs
+    // stay resident while bounded uncommon combinations fall out naturally.
+    resource.alphaSprites.delete(key);
+    resource.alphaSprites.set(key, existing);
+    return existing.canvas;
+  }
+  while (resource.alphaSpritePixels + pixels > alphaSpritePixelBudget && resource.alphaSprites.size !== 0) {
+    const [oldKey, old] = resource.alphaSprites.entries().next().value;
+    resource.alphaSprites.delete(oldKey);
+    resource.alphaSpritePixels -= old.pixels;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(resource.canvas, sx, sy, sw, sh, 0, 0, width, height);
+  ctx.globalCompositeOperation = 'source-in';
+  ctx.fillStyle = rgba(color);
+  ctx.fillRect(0, 0, width, height);
+  resource.alphaSprites.set(key, {canvas, pixels});
+  resource.alphaSpritePixels += pixels;
+  return canvas;
 }
 
 function drawFrame(frame, framePixels) {
@@ -542,30 +598,43 @@ function drawFrame(frame, framePixels) {
     }
     const resource = resources.get(resourceKey(command.q));
     if (!resource) throw new Error(`missing backend resource ${resourceKey(command.q)}`);
-    const [dx, dy, dw, dh] = command.d;
-    const [cx, cy, cw, ch] = command.c;
-    const [sx, sy, sw, sh] = command.s;
-    context.save();
-    context.beginPath(); context.rect(cx, cy, cw, ch); context.clip();
+    const visible = clippedSprite(command.d, command.c, command.s);
+    if (!visible) continue;
+    const [dx, dy, dw, dh] = visible.destination;
+    const [sx, sy, sw, sh] = visible.source;
     if (command.k === 2) {
       imageCommands += 1;
       context.drawImage(resource.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
     } else if (command.k === 1) {
       alphaCommands += 1;
-      if (alphaScratch.width < dw || alphaScratch.height < dh) {
-        alphaScratch.width = Math.max(alphaScratch.width, dw);
-        alphaScratch.height = Math.max(alphaScratch.height, dh);
+      // Cache the complete source glyph/color pair, then crop that tinted
+      // sprite mathematically. This matches Flutter's atlas-batching intent
+      // without asking Chromium to perform source-in composition per cell.
+      const full = alphaSprite(resource, command.s, command.color);
+      if (full) {
+        const [fullSx, fullSy, fullSw, fullSh] = command.s;
+        const localX = (sx - fullSx) * full.width / fullSw;
+        const localY = (sy - fullSy) * full.height / fullSh;
+        const localW = sw * full.width / fullSw;
+        const localH = sh * full.height / fullSh;
+        context.drawImage(full, localX, localY, localW, localH, dx, dy, dw, dh);
+      } else {
+        const scratchWidth = Math.max(1, Math.ceil(dw));
+        const scratchHeight = Math.max(1, Math.ceil(dh));
+        if (alphaScratch.width < scratchWidth || alphaScratch.height < scratchHeight) {
+          alphaScratch.width = Math.max(alphaScratch.width, scratchWidth);
+          alphaScratch.height = Math.max(alphaScratch.height, scratchHeight);
+        }
+        alphaScratchContext.globalCompositeOperation = 'source-over';
+        alphaScratchContext.clearRect(0, 0, scratchWidth, scratchHeight);
+        alphaScratchContext.imageSmoothingEnabled = false;
+        alphaScratchContext.drawImage(resource.canvas, sx, sy, sw, sh, 0, 0, scratchWidth, scratchHeight);
+        alphaScratchContext.globalCompositeOperation = 'source-in';
+        alphaScratchContext.fillStyle = rgba(command.color);
+        alphaScratchContext.fillRect(0, 0, scratchWidth, scratchHeight);
+        context.drawImage(alphaScratch, 0, 0, scratchWidth, scratchHeight, dx, dy, dw, dh);
       }
-      alphaScratchContext.globalCompositeOperation = 'source-over';
-      alphaScratchContext.clearRect(0, 0, dw, dh);
-      alphaScratchContext.imageSmoothingEnabled = false;
-      alphaScratchContext.drawImage(resource.canvas, sx, sy, sw, sh, 0, 0, dw, dh);
-      alphaScratchContext.globalCompositeOperation = 'source-in';
-      alphaScratchContext.fillStyle = rgba(command.color);
-      alphaScratchContext.fillRect(0, 0, dw, dh);
-      context.drawImage(alphaScratch, 0, 0, dw, dh, dx, dy, dw, dh);
     } else throw new Error(`unknown Canvas command ${command.k}`);
-    context.restore();
   }
   const commandsFinished = performance.now();
   // Match Flutter's lease: every completed frame names the exact resource
