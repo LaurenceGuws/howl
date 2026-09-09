@@ -502,6 +502,30 @@ test "text extraction resolves projected history reverse ranges and bounded copy
     );
 }
 
+test "text extraction rejects evicted or out of bounds ranges instead of copying a partial survivor" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 2, 4, 1);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("ONE\r\nTWO\r\nTHREE")).stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expect(view.history_row_base > 0);
+    try std.testing.expectError(
+        error.InvalidRange,
+        terminal.copyText(
+            std.testing.allocator,
+            .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 2, .col = 2 } },
+            64,
+        ),
+    );
+    try std.testing.expectError(
+        error.InvalidRange,
+        terminal.copyText(
+            std.testing.allocator,
+            .{ .start = .{ .row = @intCast(view.history_row_base), .col = 4 }, .end = .{ .row = @intCast(view.history_row_base), .col = 4 } },
+            64,
+        ),
+    );
+}
+
 test "text extraction joins soft-wrapped rows without inventing a newline" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 3);
     defer terminal.deinit();
@@ -513,6 +537,19 @@ test "text extraction joins soft-wrapped rows without inventing a newline" {
     );
     defer std.testing.allocator.free(copied);
     try std.testing.expectEqualStrings("ABCDEF", copied);
+}
+
+test "text extraction keeps grapheme scalars and suppresses concealed cells" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 8);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("e\xcc\x81\x1b[8mSECRET\x1b[28mZ")).stateChanged());
+    const copied = try terminal.copyText(
+        std.testing.allocator,
+        .{ .start = .{ .row = 0, .col = 0 }, .end = .{ .row = 0, .col = 7 } },
+        32,
+    );
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("e\xcc\x81      Z", copied);
 }
 
 fn copyTextAllocation(allocator: std.mem.Allocator) !void {

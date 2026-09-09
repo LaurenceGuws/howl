@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 1 and session protocol
-version 1. All multi-byte integers are unsigned big-endian unless a field is
+This document is the client contract for framing version 2 and session protocol
+version 2. All multi-byte integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v1-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v2-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `1` |
+| 4 | 1 | framing version, currently `2` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -52,6 +52,15 @@ Frame kinds are:
 | 11 | `result` | endpoint → client |
 | 12 | `interaction_state` | client → endpoint |
 | 13 | `interaction_state_snapshot` | endpoint → client |
+| 14 | `assign_consequence_leader` | client → endpoint |
+| 15 | `consequence_observe` | client → endpoint |
+| 16 | `consequence_begin` | endpoint → client |
+| 17 | `consequence_data` | endpoint → client |
+| 18 | `consequence_end` | endpoint → client |
+| 19 | `consequence_consume` | client → endpoint |
+| 20 | `consequence_reply` | client → endpoint |
+| 21 | `text_extract` | client → endpoint |
+| 22 | `text_extract_data` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -430,6 +439,26 @@ uses cell coordinates, pixel coordinates, or no report at all.
 After input kind `5`, exactly one byte follows: `1=focus in`, `2=focus out`.
 The VT emits no terminal bytes when focus reporting is disabled by the child.
 
+## Selected-text extraction
+
+Selection state remains entirely client-local. A client that wants canonical UTF-8 for an
+inclusive terminal-cell range sends `text_extract`; the endpoint does not retain, mutate,
+or authorize a selection. Rows are stable projected history-and-screen identities, not
+indices into whichever scrollback snapshot the client currently displays.
+
+`text_extract` is exactly 16 bytes: `start.row:i32`, `start.column:u16`,
+`end.row:i32`, `end.column:u16`, expected `columns:u16`, `alternate_screen:u8`,
+and one reserved-zero byte, all multi-byte fields big-endian. The endpoint rejects a bank or
+column-geometry mismatch so a remote resize/screen-switch race cannot retarget a selection. The endpoint orders reversed ranges,
+resolves retained history plus the active screen, joins soft-wrapped rows without inventing
+a newline, emits complete retained grapheme scalars once per lead cell, and projects SGR
+concealed cells as blanks. An endpoint that has been evicted from the bounded history ring
+or is outside canonical columns rejects the request rather than returning partial text.
+
+A successful request returns one `text_extract_data` frame containing bounded UTF-8, at
+most the ordinary 1 MiB response-frame ceiling. Extraction is read-only and does not change
+the terminal or observation revision.
+
 ## Resize leadership
 
 Geometry has one optional explicit leader. Attach does not resize and does not
@@ -495,7 +524,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v1-vectors.json
+python3 tools/validate_vectors.py protocol/v2-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

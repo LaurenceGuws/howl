@@ -2019,6 +2019,7 @@ fn orderedTextRange(range: Terminal.TextRange) Terminal.TextRange {
 // Failures produced while copying terminal cells into UTF-8 caller storage.
 const CopyError = error{
     CodepointTooLarge,
+    InvalidRange,
     OutOfMemory,
     TextLimit,
     Utf8CannotEncodeSurrogateHalf,
@@ -2072,11 +2073,17 @@ fn copyTextRange(
     max_bytes: usize,
 ) CopyError![]const u8 {
     const ordered_selection = orderedTextRange(range);
+    const active = screen_state.activeConst();
+    if (active.cols == 0 or
+        ordered_selection.start.col >= active.cols or ordered_selection.end.col >= active.cols or
+        rowSource(screen_state, ordered_selection.start.row) == null or
+        rowSource(screen_state, ordered_selection.end.row) == null)
+        return error.InvalidRange;
     var out = std.ArrayList(u8).empty;
     errdefer out.deinit(allocator);
     var row = ordered_selection.start.row;
     while (row <= ordered_selection.end.row) : (row += 1) {
-        const source = rowSource(screen_state, row) orelse break;
+        const source = rowSource(screen_state, row) orelse return error.InvalidRange;
         const row_start = if (row == ordered_selection.start.row) ordered_selection.start.col else 0;
         const row_end = if (row == ordered_selection.end.row)
             @as(u16, @intCast(@min(@as(u32, ordered_selection.end.col) + 1, @as(u32, screen_state.activeConst().cols))))
@@ -2089,12 +2096,24 @@ fn copyTextRange(
                     .history => |recency| screen_state.primary.historyCellAt(recency, col),
                     .screen => |screen_row| screen_state.activeConst().cellInfoAt(screen_row, col),
                 };
-                if (cell.codepoint == 0) continue;
-                var utf8: [4]u8 = undefined;
-                const codepoint = std.math.cast(u21, cell.codepoint) orelse return error.CodepointTooLarge;
-                const len = try std.unicode.utf8Encode(codepoint, &utf8);
-                if (out.items.len > max_bytes -| len) return error.TextLimit;
-                try out.appendSlice(allocator, utf8[0..len]);
+                if (cell.x != 0 or cell.y != 0 or cell.codepoint == 0) continue;
+                if (cell.attrs.invisible) {
+                    if (out.items.len == max_bytes) return error.TextLimit;
+                    try out.append(allocator, ' ');
+                    continue;
+                }
+                var retained: [24]u32 = undefined;
+                const scalars = switch (source) {
+                    .history => |recency| screen_state.primary.historyCellScalarsAt(recency, col, &retained),
+                    .screen => |screen_row| screen_state.activeConst().cellScalarsAt(screen_row, col, &retained),
+                };
+                for (scalars) |scalar| {
+                    var utf8: [4]u8 = undefined;
+                    const codepoint = std.math.cast(u21, scalar) orelse return error.CodepointTooLarge;
+                    const len = try std.unicode.utf8Encode(codepoint, &utf8);
+                    if (out.items.len > max_bytes -| len) return error.TextLimit;
+                    try out.appendSlice(allocator, utf8[0..len]);
+                }
             }
         }
         if (row != ordered_selection.end.row and !sourceRowWrapped(screen_state.activeConst(), source)) {

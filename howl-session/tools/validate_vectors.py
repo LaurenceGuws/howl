@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Independent Howl session v1 wire-vector decoder and validator.
+"""Independent Howl session v2 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
-contract.  Keeping this decoder boring and separate gives the tracked golden
+contract. Consequence payload semantics remain witnessed by Zig protocol tests; this
+independent corpus currently treats established consequence bodies as bounded opaque bytes.  Keeping this decoder boring and separate gives the tracked golden
 vectors a witness with a different implementation and language.
 """
 
@@ -17,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 1
+FRAMING_VERSION = 2
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -36,6 +37,15 @@ KINDS = {
     11: "result",
     12: "interaction_state",
     13: "interaction_state_snapshot",
+    14: "assign_consequence_leader",
+    15: "consequence_observe",
+    16: "consequence_begin",
+    17: "consequence_data",
+    18: "consequence_end",
+    19: "consequence_consume",
+    20: "consequence_reply",
+    21: "text_extract",
+    22: "text_extract_data",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -574,6 +584,27 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
         "end": end,
     }
 
+def decode_text_extract(payload: bytes) -> dict:
+    require(len(payload) == 16, "text_extract_size")
+    require(payload[14] <= 1 and payload[15] == 0, "text_extract_flags")
+    columns = u16(payload[12:14])
+    require(columns > 0, "text_extract_columns")
+    return {
+        "start": {"row": i32(payload[0:4]), "column": u16(payload[4:6])},
+        "end": {"row": i32(payload[6:10]), "column": u16(payload[10:12])},
+        "columns": columns,
+        "alternate_screen": bool(payload[14]),
+    }
+
+
+def decode_text_extract_data(payload: bytes) -> dict:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        reject("text_extract_utf8")
+    return {"text": text}
+
+
 def decode_fixed_payload(kind: int, payload: bytes) -> dict:
     if kind == 1:
         return decode_hello(payload)
@@ -599,6 +630,12 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_interaction_state(payload)
     if kind == 13:
         return decode_interaction_state_snapshot(payload)
+    if 14 <= kind <= 20:
+        return {"bytes_hex": payload.hex()}
+    if kind == 21:
+        return decode_text_extract(payload)
+    if kind == 22:
+        return decode_text_extract_data(payload)
     reject("snapshot_data_without_begin")
 
 
@@ -684,7 +721,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v1/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v2/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -697,7 +734,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v1-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v2-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

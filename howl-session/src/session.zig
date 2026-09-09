@@ -42,6 +42,12 @@ pub const ColorKind = vt.Terminal.ColorKind;
 pub const Presentation = vt.Terminal.Presentation;
 /// Copies one row's DEC presentation geometry.
 pub const LineGeometry = vt.Terminal.LineGeometry;
+/// Identifies one terminal cell in stable projected history-and-screen coordinates.
+pub const TextPoint = vt.Terminal.TextPoint;
+/// Identifies one inclusive terminal-text range.
+pub const TextRange = vt.Terminal.TextRange;
+/// Reports bounded canonical terminal-text extraction failure.
+pub const TextError = vt.Terminal.TextError;
 /// Maximum scalars retained by one bounded terminal grapheme.
 pub const maximum_cell_scalars = vt.scalar.maximum_scalars;
 /// Bounds one retained OSC 8 hyperlink target in bytes.
@@ -224,6 +230,16 @@ pub fn lineGeometry(session: *const Session, history_offset: u32, row: u16) Line
 /// Reports whether one visible row is a soft continuation of its predecessor.
 pub fn rowWrapped(session: *const Session, history_offset: u32, row: u16) bool {
     return stateConst(session).terminal.semanticView(history_offset).rowWrapped(row);
+}
+
+/// Copies one stable projected terminal range as bounded UTF-8 without mutating the session.
+pub fn copyText(
+    session: *const Session,
+    allocator: std.mem.Allocator,
+    range: TextRange,
+    max_bytes: usize,
+) TextError![]const u8 {
+    return stateConst(session).terminal.copyText(allocator, range, max_bytes);
 }
 
 /// Copies the terminal modes that direct the next caller interaction.

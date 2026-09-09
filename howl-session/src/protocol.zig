@@ -32,7 +32,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 1;
+pub const framing_version: u8 = 2;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -71,6 +71,8 @@ pub const Kind = enum(u8) {
     consequence_end = 18,
     consequence_consume = 19,
     consequence_reply = 20,
+    text_extract = 21,
+    text_extract_data = 22,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -677,6 +679,20 @@ pub const Resize = struct {
     columns: u16,
 };
 
+/// Stable projected terminal cell used by bounded selected-text extraction.
+pub const TextPoint = struct {
+    row: i32,
+    column: u16,
+};
+
+/// Inclusive selected-text extraction range. Selection state itself remains client-local.
+pub const TextExtract = struct {
+    start: TextPoint,
+    end: TextPoint,
+    columns: u16,
+    alternate_screen: bool,
+};
+
 /// Explicit leader assignment. `no_client` clears leadership.
 pub const AssignLeader = struct {
     client_id: ClientId,
@@ -718,6 +734,8 @@ pub const payload_bytes = struct {
     pub const consequence_consume: usize = 8;
     /// Fixed header bytes before one typed consequence-reply body.
     pub const consequence_reply_header: usize = 12;
+    /// Two stable points plus expected columns and screen-bank identity.
+    pub const text_extract: usize = 16;
 };
 
 // =============================================================================
@@ -1116,6 +1134,31 @@ pub fn encodeSignal(output: *[payload_bytes.signal]u8, value: Signal) void {
 pub fn decodeSignal(input: []const u8) PayloadError!Signal {
     if (input.len != payload_bytes.signal) return error.InvalidPayload;
     return enumFromInt(Signal, input[0]) orelse error.InvalidPayload;
+}
+
+/// Encodes one inclusive stable projected terminal-text extraction range.
+pub fn encodeTextExtract(output: *[payload_bytes.text_extract]u8, value: TextExtract) void {
+    writeI32(output[0..4], value.start.row);
+    writeU16(output[4..6], value.start.column);
+    writeI32(output[6..10], value.end.row);
+    writeU16(output[10..12], value.end.column);
+    writeU16(output[12..14], value.columns);
+    output[14] = @intFromBool(value.alternate_screen);
+    output[15] = 0;
+}
+
+/// Decodes one inclusive stable projected terminal-text extraction range.
+pub fn decodeTextExtract(input: []const u8) PayloadError!TextExtract {
+    if (input.len != payload_bytes.text_extract) return error.InvalidPayload;
+    if (input[14] > 1 or input[15] != 0) return error.InvalidPayload;
+    const columns = readU16(input[12..14]);
+    if (columns == 0) return error.InvalidPayload;
+    return .{
+        .start = .{ .row = readI32(input[0..4]), .column = readU16(input[4..6]) },
+        .end = .{ .row = readI32(input[6..10]), .column = readU16(input[10..12]) },
+        .columns = columns,
+        .alternate_screen = input[14] == 1,
+    };
 }
 
 // -- Host-consequence codecs -------------------------------------------------
@@ -1541,6 +1584,24 @@ test "wire integers round trip beyond one byte" {
     const resize = try decodeResize(&resize_bytes);
     try std.testing.expectEqual(@as(u16, 512), resize.rows);
     try std.testing.expectEqual(@as(u16, 1025), resize.columns);
+}
+
+test "selected text extraction range is fixed and signed-row safe" {
+    var bytes: [payload_bytes.text_extract]u8 = undefined;
+    encodeTextExtract(&bytes, .{
+        .start = .{ .row = -123456, .column = 513 },
+        .end = .{ .row = 0x1234567, .column = 65535 },
+        .columns = 0x1234,
+        .alternate_screen = true,
+    });
+    const decoded = try decodeTextExtract(&bytes);
+    try std.testing.expectEqual(@as(i32, -123456), decoded.start.row);
+    try std.testing.expectEqual(@as(u16, 513), decoded.start.column);
+    try std.testing.expectEqual(@as(i32, 0x1234567), decoded.end.row);
+    try std.testing.expectEqual(@as(u16, 65535), decoded.end.column);
+    try std.testing.expectEqual(@as(u16, 0x1234), decoded.columns);
+    try std.testing.expect(decoded.alternate_screen);
+    try std.testing.expectError(error.InvalidPayload, decodeTextExtract(bytes[0 .. bytes.len - 1]));
 }
 
 test "snapshot begin bytes stay frozen" {

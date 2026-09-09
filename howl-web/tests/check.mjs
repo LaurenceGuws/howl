@@ -22,8 +22,8 @@ function feed(bytes) {
   new Uint8Array(w.memory.buffer, w.hw_input_ptr(), bytes.length).set(bytes);
   return w.hw_feed(bytes.length);
 }
-const welcome = Buffer.from('48574c530102000000000008000000000000002a', 'hex');
-const hello = '48574c530101000000000000';
+const welcome = Buffer.from('48574c530202000000000008000000000000002a', 'hex');
+const hello = '48574c530201000000000000';
 for (let split = 0; split <= welcome.length; split++) {
   assert.equal(w.hw_reset(), 1);
   assert.equal(Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len()).toString('hex'), hello);
@@ -43,7 +43,7 @@ assert.equal(w.hw_finish(), 0); // waiting for welcome is not a clean EOF
 w.hw_reset();
 assert.equal(feed(welcome.subarray(0, 19)), 1);
 assert.equal(w.hw_finish(), 0);
-for (const [offset, value] of [[0, 0], [4, 2], [6, 1]]) {
+for (const [offset, value] of [[0, 0], [4, 1], [6, 1]]) {
   w.hw_reset(); const bad = Buffer.from(welcome); bad[offset] = value;
   assert.equal(feed(bad), 0);
   assert.equal(w.hw_phase(), 99);
@@ -63,7 +63,7 @@ assert.equal(w.hw_send_text(1), 0);
 const output = () => Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len());
 function frame(kind, payload) {
   const result = Buffer.alloc(12 + payload.length);
-  result.write('HWLS', 0, 'ascii'); result[4] = 1; result[5] = kind;
+  result.write('HWLS', 0, 'ascii'); result[4] = 2; result[5] = kind;
   result.writeUInt32BE(payload.length, 8); Buffer.from(payload).copy(result, 12);
   return result;
 }

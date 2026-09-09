@@ -16,3 +16,4 @@ pub const state = @import("state.zig");
 pub const snapshot = @import("snapshot.zig");
 pub const rich = @import("rich.zig");
 pub const view = @import("view.zig");
+pub const selection = @import("selection.zig");

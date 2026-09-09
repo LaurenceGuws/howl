@@ -377,6 +377,7 @@ const Server = struct {
             .resize => try self.handleResize(client, payload),
             .signal => try self.handleSignal(client, payload),
             .interaction_state => try self.handleInteractionState(client, payload),
+            .text_extract => try self.handleTextExtract(client, payload),
             else => try self.queueResult(client, kind, .unsupported),
         }
     }
@@ -486,6 +487,25 @@ const Server = struct {
             .pointer_mode = state.pointer_mode,
         });
         try self.queueFrame(client, .interaction_state_snapshot, &encoded);
+    }
+
+    fn handleTextExtract(self: *Server, client: *Client, payload: []const u8) !void {
+        const request = protocol.decodeTextExtract(payload) catch
+            return self.queueResult(client, .text_extract, .malformed);
+        const current = howl.status(self.session, 0);
+        if (request.columns != current.columns or request.alternate_screen != current.alternate_screen)
+            return self.queueResult(client, .text_extract, .rejected);
+        const text = howl.copyText(
+            self.session,
+            self.allocator,
+            .{
+                .start = .{ .row = request.start.row, .col = request.start.column },
+                .end = .{ .row = request.end.row, .col = request.end.column },
+            },
+            protocol.maximum_payload_bytes,
+        ) catch return self.queueResult(client, .text_extract, .rejected);
+        defer self.allocator.free(text);
+        try self.queueFrame(client, .text_extract_data, text);
     }
 
     // -------------------------------------------------------------------------
@@ -1611,6 +1631,66 @@ test "interaction state exposes invisible input modes" {
     const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
     try std.testing.expect(state.bracketed_paste);
     try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
+}
+
+test "selected text extracts stable history range without mutating canonical terminal" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-text-extract.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 2,
+            .columns = 8,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "printf 'ONE\\r\\nTWO\\r\\nTHREE'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    var visible = try observeUntilContains(&peer, &server, 0, "THREE");
+    defer visible.deinit();
+    try std.testing.expectEqual(@as(u32, 1), visible.begin.history_count);
+    const first_row = visible.begin.history_row_base;
+    const before_revision = howl.revision(server.session);
+
+    var request: [protocol.payload_bytes.text_extract]u8 = undefined;
+    protocol.encodeTextExtract(&request, .{
+        .start = .{ .row = @intCast(first_row), .column = 0 },
+        .end = .{ .row = @intCast(first_row + 2), .column = 4 },
+        .columns = 8,
+        .alternate_screen = false,
+    });
+    try peer.sendFrame(&server, .text_extract, &request);
+    var frame = try awaitFrame(&peer, &server);
+    defer frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.text_extract_data, frame.kind);
+    try std.testing.expectEqualStrings("ONE\nTWO\nTHREE", frame.payload);
+    try std.testing.expectEqual(before_revision, howl.revision(server.session));
+
+    try peer.sendFrame(&server, .text_extract, request[0 .. request.len - 1]);
+    try expectResult(&peer, &server, .text_extract, .malformed);
+
+    protocol.encodeTextExtract(&request, .{
+        .start = .{ .row = -1, .column = 0 },
+        .end = .{ .row = @intCast(first_row + 2), .column = 4 },
+        .columns = 8,
+        .alternate_screen = false,
+    });
+    try peer.sendFrame(&server, .text_extract, &request);
+    try expectResult(&peer, &server, .text_extract, .rejected);
+    try std.testing.expectEqual(before_revision, howl.revision(server.session));
 }
 
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
