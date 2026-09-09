@@ -49,7 +49,8 @@ IME/input staging counts, control-queue coalescing/depth, control acknowledgemen
 latency, WebSocket lifecycle, renderer duration/cadence, lifecycle transitions and
 large event-loop stalls. The recorder mechanically rejects raw text/content/error
 message fields, never uploads telemetry, and exposes only a collapsed Telemetry
-panel with Copy/Clear controls; Copy emits compact `howl.web-telemetry/v1` JSON.
+panel with compact-summary, full-log and Clear controls. The compact path emits
+`howl.web-telemetry-summary/v1` JSON for physical canary diagnosis.
 
 Web scrollback now reuses Flutter's client-local absolute-anchor model. Wheel input
 changes only the requested `history_offset`; a lazy history observer asks the
@@ -66,7 +67,8 @@ to one explicit loopback Howl session without parsing the Howl protocol. Host,
 Origin, WebSocket structure and connection/byte budgets fail closed before the
 upstream socket opens. Public authentication still belongs to Cloudflare Access;
 the optional Access-assertion check is an origin misrouting guard, not a second
-identity system. Safari acceptance is not yet claimed.
+identity system. Chromium is the primary fast acceptance lane; Safari/Home-Screen
+is retained as the narrower WebKit/PWA platform canary.
 
 ## Build and check
 
@@ -178,17 +180,18 @@ exact Access audience before forwarding to the loopback gateway. Anonymous HTTP,
 a forged assertion and an anonymous WebSocket upgrade all stop at Access. The
 origin normally remains stopped outside a bounded canary run.
 
-A normal interactive Bash session is now proven in Chromium on Colt: semantic
-clipboard paste, Unicode output, shell history via Up, reconnect, canonical
-scrollback, anchored history while another client produces output, and return to
-live all work without moving PTY/VT authority into the browser. The remaining
-acceptance is intentionally human: authenticate in Safari, add Howl to the Home
-Screen, and finish the actual iPhone-only checks for clipboard permission/paste,
-lock/resume, offline shell/reconnect and final lifecycle behavior. Pointer/mouse
-semantics remain a later capability.
+A normal interactive session is proven in Chromium through semantic Unicode
+paste, physical keyboard input, bounded burst input, reconnect, canonical
+scrollback and stable resize ownership. Safari/Home-Screen has separately proven
+single-client input/viewport behavior and Safari-leader/Chromium-follower geometry
+without resize ping-pong. Visible unexpected WebSocket closure self-heals through
+bounded reconnect probes. True offline cached-shell restoration remains a useful
+platform acceptance edge; pointer/mouse semantics remain a later capability.
 
-Flutter remains the native regression client. Web is the preferred fast canary,
-not a reason to weaken or duplicate the core owners.
+Flutter and Web remain sibling visual canaries rather than successors. Flutter
+pressures the native TCP/client/platform-host path; Web pressures the
+WebSocket/Wasm/browser path. Both reuse and challenge the same canonical session,
+client, text and Canvas owners.
 
 ## Shared text target checkpoint
 
@@ -220,6 +223,6 @@ exactly four admitted host functions and bounded memory growth (64 MiB initial,
 canary limits, not a finished renderer memory budget.
 
 The shared renderer, maintained fail-closed transport, semantic browser input,
-Access delivery edge and offline-capable PWA shell are now proven outside Safari.
-The remaining acceptance for this canary is the actual iPhone lifecycle and input
-pass; it has not been inferred from Chromium.
+Access delivery edge, Chromium lifecycle and Safari/Home-Screen input/resize paths
+are physically proven. Keep iPhone rounds scoped to WebKit/PWA-specific behavior
+rather than using the phone as the primary Web development lane.

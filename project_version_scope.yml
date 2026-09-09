@@ -21,12 +21,11 @@ invariants:
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
 active:
-  - define and prove the first native Howl CLI as a compact semantic client of the canonical session
-  - pressure the text/session boundaries with the disposable visual client after the CLI contract is healthy
+  - dogfood the native Howl CLI as the compact semantic human/agent client of the canonical session
+  - pressure the same session/client/text/Canvas owners through both maintained visual canaries: Flutter over the native TCP/client path and Web over WebSocket/Wasm/browser presentation
   - allow caller-supplied numeric IPv4 TCP peers without adding discovery, authentication, or route policy to Howl
   - keep iOS client-only: no native PTY, shell, or Unix-userland ownership
-  - prioritize howl-web as a maintained fast browser canary alongside Flutter, reusing the client/text/Canvas owners
-  - obtain attended iPhone Safari/Home-Screen acceptance for the Access-protected Web canary, especially composition, controls, viewport resize and reconnect
+  - keep Chromium as the fast primary Web acceptance lane and iPhone Safari/Home-Screen as the narrower WebKit/PWA platform canary
 
 deferred:
   - durable graphical Linux client

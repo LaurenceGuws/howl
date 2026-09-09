@@ -15,7 +15,7 @@ core:
     role: tracked native font metrics, fallback, shaping, source-cluster identity, glyph lookup, and bounded natural alpha rasterization
 
 planned:
-  clients: native Howl CLI plus Linux/Android/iOS visual clients and a WebAssembly browser canary; iOS and web remain client-only with no PTY/userland ownership
+  clients: native Howl CLI plus maintained Flutter/native and WebAssembly/browser visual canaries that deliberately pressure the same canonical session through different transport/platform paths; iOS and web remain client-only with no PTY/userland ownership
 
 experimental:
   - howl-client

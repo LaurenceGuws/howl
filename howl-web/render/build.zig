@@ -80,6 +80,10 @@ pub fn build(b: *std.Build) void {
 
     // The accepted check compiles both the synthetic proof and the live renderer.
     check.dependOn(&live.step);
+    const asset_contract_test = b.addSystemCommand(&.{ "node", "tests/asset_contract.mjs" });
+    asset_contract_test.setCwd(b.path("."));
+    asset_contract_test.setName("browser module asset contract");
+    check.dependOn(&asset_contract_test.step);
     const host_syntax = b.addSystemCommand(&.{ "node", "--check", "web/host.mjs" });
     host_syntax.setCwd(b.path("."));
     host_syntax.setName("live browser host syntax");
