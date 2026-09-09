@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
@@ -417,6 +418,28 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final modifiers = _takeModifierLatch();
     _sendNamedKeyCycle(keyName, modifiers: modifiers);
     _activateTextInput();
+  }
+
+  void _pasteClipboard() {
+    _returnToLiveForInput();
+    _takeModifierLatch();
+    unawaited(_pasteClipboardAsync());
+  }
+
+  Future<void> _pasteClipboardAsync() async {
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (!mounted || _stopping) return;
+      final text = data?.text;
+      if (text == null || text.isEmpty) return;
+      if (utf8.encode(text).length > HowlInput.maximumPasteBytes) return;
+      await _queueControl((control) => control.paste(text));
+    } catch (_) {
+      // Clipboard availability is platform/UI state, not a terminal failure.
+      // Empty or unavailable clipboard is intentionally a no-op.
+    } finally {
+      if (mounted && !_stopping) _activateTextInput();
+    }
   }
 
   void _sendFocus(bool focused) {
@@ -843,6 +866,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
+            onPaste: _pasteClipboard,
           ),
         ],
       ),

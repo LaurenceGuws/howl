@@ -9,6 +9,7 @@ void main() {
     (tester) async {
       final modifiers = <int>[];
       final keys = <int>[];
+      var pastes = 0;
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -16,6 +17,7 @@ void main() {
               modifierLatch: HowlInput.modifierControl | HowlInput.modifierAlt,
               onModifier: modifiers.add,
               onKey: keys.add,
+              onPaste: () => pastes += 1,
             ),
           ),
         ),
@@ -30,6 +32,7 @@ void main() {
         '↓',
         '↑',
         '→',
+        'Paste',
       ]) {
         expect(find.text(label), findsOneWidget);
       }
@@ -37,11 +40,14 @@ void main() {
       await tester.tap(find.text('Alt'));
       await tester.tap(find.text('Esc'));
       await tester.tap(find.text('→'));
+      await tester.tap(find.text('Paste'));
       expect(modifiers, <int>[
         HowlInput.modifierControl,
         HowlInput.modifierAlt,
       ]);
       expect(keys, <int>[HowlInput.namedEscape, HowlInput.namedArrowRight]);
+      expect(pastes, 1);
+      expect(HowlInput.maximumPasteBytes, 65535);
 
       final toggled = tester
           .widgetList<Semantics>(find.byType(Semantics))

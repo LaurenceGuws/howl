@@ -11,11 +11,13 @@ final class TerminalControlStrip extends StatelessWidget {
     required this.modifierLatch,
     required this.onModifier,
     required this.onKey,
+    required this.onPaste,
   });
 
   final int modifierLatch;
   final ValueChanged<int> onModifier;
   final ValueChanged<int> onKey;
+  final VoidCallback onPaste;
 
   @override
   Widget build(BuildContext context) => ColoredBox(
@@ -32,6 +34,7 @@ final class TerminalControlStrip extends StatelessWidget {
           _key('↓', HowlInput.namedArrowDown),
           _key('↑', HowlInput.namedArrowUp),
           _key('→', HowlInput.namedArrowRight),
+          _action('Paste', onPaste),
         ],
       ),
     ),
@@ -47,6 +50,10 @@ final class TerminalControlStrip extends StatelessWidget {
 
   Widget _key(String label, int keyName) => Expanded(
     child: _TerminalControlButton(label: label, onTap: () => onKey(keyName)),
+  );
+
+  Widget _action(String label, VoidCallback action) => Expanded(
+    child: _TerminalControlButton(label: label, onTap: action),
   );
 }
 

@@ -58,10 +58,19 @@ On touch-first Android, the terminal reserves finger gestures for client-local
 history and text-input focus rather than pretending a finger is a terminal
 mouse. Mouse/stylus devices continue through canonical semantic mouse input. A
 compact strip above the software keyboard exposes one-shot Ctrl/Alt latches plus
-Esc, Tab and arrow keys; a latched modifier applies to the next special key or
-single committed Unicode scalar, then clears. The strip lives inside the same
-visible-viewport owner as the terminal so IME/safe-area insets cannot hide it or
-silently overlap terminal cells.
+Esc, Tab, arrow keys and Paste; a latched modifier applies to the next special
+key or single committed Unicode scalar, then clears. The strip lives inside the
+same visible-viewport owner as the terminal so IME/safe-area insets cannot hide
+it or silently overlap terminal cells.
+
+IME commits remain typing semantics: Android text edits are translated into
+committed text and edit keys. The explicit Paste control is deliberately
+different. It reads `text/plain` from the platform clipboard and sends one
+canonical Howl semantic paste request, bounded to 65,535 UTF-8 bytes so the
+outer input-kind byte still fits the frozen 64 KiB request ceiling. This keeps
+bracketed-paste policy in the canonical VT instead of approximating a multi-line
+paste as text plus synthetic Enter keys. Empty, unavailable or oversized
+clipboard content is a client-local no-op rather than a terminal attach failure.
 
 The long-lived native observer/control pair also owns bounded transport
 recovery. Endpoint attach failures and failures on an already-established
