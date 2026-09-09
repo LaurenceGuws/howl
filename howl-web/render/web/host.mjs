@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v22';
+const CANARY_GENERATION = 'v23';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -844,6 +844,7 @@ function scheduleRecoveryProbes(source, extra = {}) {
     syncFocus();
     return;
   }
+  if (decision === 'healthy' && !history.active) liveFrameScheduler.resume();
   setTimeout(() => lifecycleProbe(generation), 250);
   setTimeout(() => lifecycleProbe(generation), 1500);
 }

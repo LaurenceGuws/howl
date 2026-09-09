@@ -8,14 +8,32 @@ export class LatestFrameScheduler {
     this.draw = draw;
     this.pending = false;
     this.latest = null;
+    this.cancelScheduled = null;
   }
 
   push(frame) {
     this.latest = frame;
     if (this.pending) return;
+    this.#arm();
+  }
+
+  // Hidden browsers may suspend an already-requested animation frame forever.
+  // On visible resume, re-arm presentation for the same coalesced newest frame
+  // instead of waiting for that stale platform callback to wake up.
+  resume() {
+    if (!this.pending || this.latest == null) return false;
+    this.cancelScheduled?.();
+    this.pending = false;
+    this.cancelScheduled = null;
+    this.#arm();
+    return true;
+  }
+
+  #arm() {
     this.pending = true;
-    this.schedule(() => {
+    this.cancelScheduled = this.schedule(() => {
       this.pending = false;
+      this.cancelScheduled = null;
       const latest = this.latest;
       this.latest = null;
       if (latest != null) this.draw(latest);
