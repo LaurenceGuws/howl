@@ -43,6 +43,15 @@ one-shot Ctrl/Alt plus Esc, Tab and arrows; a real browser/PTY proof used the Ct
 latch to send Ctrl+U and let the kernel TTY kill an unfinished line. Viewport
 changes produce explicit canonical resize mutations through the same wire owner. Browser geometry follows the session's existing explicit resize authority instead of fighting it: a Web control connection claims geometry only when the latest canonical observation reports no leader, keeps resizing only while that control connection owns the local claim, and otherwise follows the leader's canonical geometry. A lost or raced claim returns `not_leader` as a normal control outcome so the browser becomes a follower rather than stealing authority back.
 
+Copy is presentation-local rather than terminal input. The currently displayed
+live/history observer exposes the same bounded conceal-safe
+`howl-client.view.writeVisibleText` projection used by Flutter accessibility and
+Copy, and the browser toolbar writes that UTF-8 text to the platform clipboard.
+Wide-cell continuations, trailing blanks and SGR concealment therefore have one
+shared owner; the Web status reports when the 64 KiB projection was truncated.
+On physical Note10 v29, visible markers and Nerd glyphs copied successfully while
+an exact concealed canonical marker remained absent from the clipboard.
+
 Pointer capture follows the same mobile policy as Flutter. Finger touch remains
 browser/mobile UI input and never becomes a terminal mouse event. Mouse and pen
 PointerEvents are mapped from the actually displayed Canvas content rectangle

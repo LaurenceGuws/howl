@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v28';
+const CANARY_GENERATION = 'v29';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -20,6 +20,7 @@ const terminal = document.querySelector('#terminal');
 const toolbar = document.querySelector('#toolbar');
 const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
+const copyButton = document.querySelector('#copy-button');
 const pasteButton = document.querySelector('#paste-button');
 const reconnect = document.querySelector('#reconnect');
 const reload = document.querySelector('#reload');
@@ -817,6 +818,22 @@ terminal.addEventListener('wheel', event => {
   }
 }, {passive:false});
 keyboardButton.addEventListener('click', focusKeyboard);
+copyButton.addEventListener('click', async () => {
+  try {
+    const connection = history.active ? historyObserver : observer;
+    if (!connection) throw new Error('displayed terminal text is not ready');
+    const wire = connection.exports;
+    const length = Number(wire.hw_text_len());
+    const value = decoder.decode(bytesAt(wire.memory, wire.hw_text_ptr(), length));
+    await navigator.clipboard.writeText(value);
+    const truncated = wire.hw_text_truncated() === 1;
+    status.textContent = `Visible terminal copied (${length} bytes${truncated ? ', truncated' : ''})`;
+  } catch (error) {
+    status.textContent = `COPY UNAVAILABLE: ${error.message}`;
+  } finally {
+    focusKeyboard();
+  }
+});
 pasteButton.addEventListener('click', async () => {
   try {
     if (!navigator.clipboard?.readText) throw new Error('browser clipboard read is unavailable');
