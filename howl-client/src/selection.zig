@@ -8,6 +8,7 @@
 const std = @import("std");
 const protocol = @import("howl_session").protocol;
 const client = @import("client.zig");
+const rich = @import("rich.zig");
 const view = @import("view.zig");
 
 pub const Point = protocol.TextPoint;
@@ -100,6 +101,51 @@ pub fn point(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Err
     return viewportPoint(begin, viewport_row, column, cell.x, cell.y);
 }
 
+/// Expands one displayed nonblank terminal cell to the contiguous non-space word,
+/// crossing only canonical soft-wrap boundaries. Returns null for blank/concealed cells.
+pub fn word(snapshot: *const view.Snapshot, viewport_row: u16, column: u16) Error!?Range {
+    const begin = view.begin(snapshot);
+    if (viewport_row >= begin.rows or column >= begin.columns) return error.InvalidPoint;
+    const start_pos = leadViewportPosition(snapshot, viewport_row, column) orelse return error.InvalidPoint;
+    if (!selectableLead(snapshot, start_pos.row, start_pos.column)) return null;
+
+    var first = start_pos;
+    while (previousLead(snapshot, first.row, first.column)) |candidate| {
+        if (!selectableLead(snapshot, candidate.row, candidate.column)) break;
+        first = candidate;
+    }
+
+    var last = start_pos;
+    while (nextLead(snapshot, last.row, last.column)) |candidate| {
+        if (!selectableLead(snapshot, candidate.row, candidate.column)) break;
+        last = candidate;
+    }
+    return .{
+        .anchor = try point(snapshot, first.row, first.column),
+        .focus = try point(snapshot, last.row, last.column),
+        .columns = begin.columns,
+        .alternate_screen = begin.alternate_screen,
+    };
+}
+
+/// Returns the painted column span for one displayed row, expanding a selected
+/// final lead cell across its complete horizontal terminal-cell width.
+pub fn visualSpan(snapshot: *const view.Snapshot, range: Range, viewport_row: u16) ?Span {
+    const span = range.viewportSpan(view.begin(snapshot), viewport_row) orelse return null;
+    const ordered = range.ordered();
+    const row_identity = viewportRow(view.begin(snapshot), viewport_row) catch return null;
+    if (row_identity != ordered.end.row) return span;
+    const row = view.rows(snapshot)[viewport_row];
+    if (span.end_column >= row.cell_count) return span;
+    const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + span.end_column];
+    if (cell.x != 0 or cell.y != 0) return span;
+    const expanded = @min(
+        @as(u32, range.columns - 1),
+        @as(u32, span.end_column) + @as(u32, @max(cell.width, 1)) - 1,
+    );
+    return .{ .start_column = span.start_column, .end_column = @intCast(expanded) };
+}
+
 /// Requests canonical UTF-8 for one client-local range. The returned allocation belongs to `allocator`.
 pub fn extract(connection: *client.Connection, allocator: std.mem.Allocator, range: Range) Error![]u8 {
     var payload: [protocol.payload_bytes.text_extract]u8 = undefined;
@@ -165,6 +211,46 @@ fn pointBeforeOrEqual(left: Point, right: Point) bool {
     return left.row < right.row or left.row == right.row and left.column <= right.column;
 }
 
+const ViewportPosition = struct { row: u16, column: u16 };
+
+fn leadViewportPosition(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?ViewportPosition {
+    const row = view.rows(snapshot)[row_index];
+    if (column >= row.cell_count) return null;
+    const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
+    if (cell.x > column or cell.y > row_index) return null;
+    return .{ .row = row_index - cell.y, .column = column - cell.x };
+}
+
+fn selectableLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) bool {
+    const row = view.rows(snapshot)[row_index];
+    if (column >= row.cell_count) return false;
+    const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
+    if (cell.x != 0 or cell.y != 0 or cell.scalar_count == 0 or
+        cell.style_bits & protocol.text_v1.style.invisible != 0)
+        return false;
+    const first_scalar = view.scalars(snapshot)[cell.scalar_offset];
+    return first_scalar != ' ';
+}
+
+fn previousLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?ViewportPosition {
+    if (column > 0) return leadViewportPosition(snapshot, row_index, column - 1);
+    if (row_index == 0) return null;
+    const previous_row = view.rows(snapshot)[row_index - 1];
+    if (!previous_row.wrapped or previous_row.cell_count == 0) return null;
+    return leadViewportPosition(snapshot, row_index - 1, @intCast(previous_row.cell_count - 1));
+}
+
+fn nextLead(snapshot: *const view.Snapshot, row_index: u16, column: u16) ?ViewportPosition {
+    const rows = view.rows(snapshot);
+    const row = rows[row_index];
+    if (column >= row.cell_count) return null;
+    const cell = view.cells(snapshot)[@as(usize, row.cell_offset) + column];
+    const next_column = @as(u32, column) + @as(u32, @max(cell.width, 1));
+    if (next_column < row.cell_count) return leadViewportPosition(snapshot, row_index, @intCast(next_column));
+    if (!row.wrapped or row_index + 1 >= rows.len) return null;
+    return leadViewportPosition(snapshot, row_index + 1, 0);
+}
+
 test "viewport points retain stable row identity while history offset changes" {
     var begin = testBegin();
     try std.testing.expectEqual(Point{ .row = 104, .column = 7 }, try viewportPoint(&begin, 1, 7, 0, 0));
@@ -220,6 +306,90 @@ test "selection invalidates on eviction bank change or geometry change" {
     const ordered = range.ordered();
     try std.testing.expectEqual(Point{ .row = 0, .column = 1 }, ordered.start);
     try std.testing.expectEqual(Point{ .row = 2, .column = 2 }, ordered.end);
+}
+
+test "word selection crosses soft wrap and visual span covers a wide grapheme" {
+    var cells0 = [_]rich.Cell{
+        testCell(&.{'f'}, 1), testCell(&.{'o'}, 1), testCell(&.{'o'}, 1),
+        testCell(&.{' '}, 1), testCell(&.{'b'}, 1), testCell(&.{'a'}, 1),
+    };
+    var cells1 = [_]rich.Cell{
+        testCell(&.{'r'}, 1), testCell(&.{' '}, 1), testCell(&.{0x754c}, 2),
+        testCell(&.{}, 2),    testCell(&.{'z'}, 1), testCell(&.{' '}, 1),
+    };
+    cells1[3].x = 1;
+    var source_rows = [_]rich.Row{
+        .{ .wrapped = true, .line_geometry = 0, .cells = &cells0 },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &cells1 },
+    };
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    const source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBeginForRows(2, 6),
+        .presentation = testPresentation(palette),
+        .rows = &source_rows,
+        .hyperlinks = &.{},
+    };
+    const snapshot = try view.project(std.testing.allocator, &source);
+    defer view.deinit(snapshot);
+
+    const wrapped_word = (try word(snapshot, 1, 0)).?;
+    const ordered_word = wrapped_word.ordered();
+    try std.testing.expectEqual(Point{ .row = 0, .column = 4 }, ordered_word.start);
+    try std.testing.expectEqual(Point{ .row = 1, .column = 0 }, ordered_word.end);
+    try std.testing.expect((try word(snapshot, 0, 3)) == null);
+
+    const wide = (try word(snapshot, 1, 2)).?;
+    try std.testing.expectEqual(@as(?Span, .{ .start_column = 2, .end_column = 3 }), visualSpan(snapshot, wide, 1));
+}
+
+fn testCell(scalars: []const u32, width: u8) rich.Cell {
+    return .{
+        .scalars = scalars,
+        .width = width,
+        .height = 1,
+        .x = 0,
+        .y = 0,
+        .subscale_n = 1,
+        .subscale_d = 1,
+        .vertical_align = 0,
+        .horizontal_align = 0,
+        .semantic_width = false,
+        .font = 0,
+        .baseline = 0,
+        .underline_style = 0,
+        .protection = 0,
+        .style_bits = 0,
+        .foreground = .{ .kind = .default, .value = 0 },
+        .background = .{ .kind = .default, .value = 0 },
+        .underline_color = .{ .kind = .default, .value = 0 },
+        .link_id = 0,
+    };
+}
+
+fn testBeginForRows(rows: u16, columns: u16) protocol.SnapshotBegin {
+    var value = testBegin();
+    value.history_count = 0;
+    value.history_row_base = 0;
+    value.rows = rows;
+    value.columns = columns;
+    return value;
+}
+
+fn testPresentation(palette: [256]rich.Rgba) rich.Presentation {
+    return .{
+        .cursor_age_ns = 0,
+        .presence_bits = 0,
+        .flags = 0,
+        .reverse_screen = false,
+        .palette = palette,
+        .foreground = .{ .r = 0xee, .g = 0xee, .b = 0xee, .a = 0xff },
+        .background = .{ .r = 0, .g = 0, .b = 0, .a = 0xff },
+        .cursor = null,
+        .cursor_text = null,
+        .selection_background = null,
+        .selection_foreground = null,
+    };
 }
 
 fn testBegin() protocol.SnapshotBegin {

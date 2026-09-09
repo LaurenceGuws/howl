@@ -17,6 +17,8 @@ import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
+import 'terminal_selection.dart';
+import 'terminal_selection_chrome.dart';
 import 'terminal_semantics.dart';
 import 'touch_surface.dart';
 import 'transport_recovery.dart';
@@ -125,6 +127,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int? _pendingResizeColumns;
   bool _resizeDrainRunning = false;
   int _modifierLatch = 0;
+  TerminalSelectionRange? _selection;
   Future<void> _controlTail = Future<void>.value();
 
   @override
@@ -208,7 +211,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _nativeControl = control;
       _transportFault = Completer<Object>();
       markAttached();
-      if (_focusNode.hasFocus) {
+      if (_focusNode.hasFocus && _selection == null) {
         _textInput.attach(viewId: View.of(context).viewId);
         _scheduleTextInputShow();
         _sendFocus(true);
@@ -236,6 +239,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           break;
         }
         _nativeLiveMetadata = packet.metadata;
+        _validateSelection(packet.metadata);
         _nativeLiveSemanticText = packet.semanticText;
         _nativeLiveSemanticTruncated = packet.semanticTruncated;
         _nativeLiveLease = prepared.lease;
@@ -427,11 +431,41 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _copyVisibleText() {
+    final selection = _selection;
+    if (selection != null) {
+      unawaited(_copySelectionAsync(selection));
+      return;
+    }
     final text = _history.active
         ? _nativeHistorySemanticText
         : _nativeLiveSemanticText;
     if (text.isEmpty) return;
     unawaited(_copyVisibleTextAsync(text));
+  }
+
+  Future<void> _copySelectionAsync(TerminalSelectionRange selection) async {
+    final control = _nativeControl;
+    if (control == null) return;
+    try {
+      final text = await control.selectedText(
+        startRow: selection.anchor.row,
+        startColumn: selection.anchor.column,
+        endRow: selection.focus.row,
+        endColumn: selection.focus.column,
+        columns: selection.columns,
+        alternateScreen: selection.alternateScreen,
+      );
+      if (text.isEmpty) return;
+      await Clipboard.setData(ClipboardData(text: text));
+      if (mounted && identical(_selection, selection)) {
+        setState(() => _selection = null);
+      }
+    } catch (_) {
+      // A stale/evicted selection or unavailable clipboard is presentation
+      // state, not a reason to fail the terminal attachment.
+    } finally {
+      if (mounted && !_stopping) _activateTextInput();
+    }
   }
 
   Future<void> _copyVisibleTextAsync(String text) async {
@@ -534,6 +568,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _activateTextInput() {
+    if (_selection != null) return;
     if (!_focusNode.hasFocus) _focusNode.requestFocus();
     if (!_hasControl) return;
     _textInput.attach(viewId: View.of(context).viewId);
@@ -588,10 +623,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _beginHistoryDrag(DragStartDetails _) {
+    if (_selection != null) return;
     _history.beginDrag();
   }
 
   void _updateHistoryDrag(DragUpdateDetails details) {
+    if (_selection != null) return;
     final metadata = _nativeLiveMetadata;
     final deltaY = details.primaryDelta;
     final historyCount = metadata?.historyCount;
@@ -620,6 +657,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _endHistoryDrag(DragEndDetails _) {
+    if (_selection != null) return;
     _history.endDrag();
   }
 
@@ -680,6 +718,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           continue;
         }
         _nativeHistoryMetadata = packet.metadata;
+        _validateSelection(packet.metadata);
         _nativeHistorySemanticText = packet.semanticText;
         _nativeHistorySemanticTruncated = packet.semanticTruncated;
         _nativeHistoryLease = prepared.lease;
@@ -705,7 +744,76 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _returnToLiveForInput() {
+    if (_selection != null) setState(() => _selection = null);
     if (_history.active) _leaveHistory();
+  }
+
+  TerminalSelectionViewport _selectionViewport(NativeHostMetadata metadata) =>
+      TerminalSelectionViewport(
+        historyOffset: metadata.historyOffset,
+        historyCount: metadata.historyCount,
+        historyRowBase: metadata.historyRowBase,
+        rows: metadata.rows,
+        columns: metadata.columns,
+        alternateScreen: metadata.alternateScreen,
+      );
+
+  void _validateSelection(NativeHostMetadata metadata) {
+    final selection = _selection;
+    if (selection == null) return;
+    if (_selectionViewport(metadata).validity(selection) !=
+        TerminalSelectionValidity.valid) {
+      _selection = null;
+    }
+  }
+
+  void _onTerminalTap() {
+    if (_selection != null) {
+      setState(() => _selection = null);
+      return;
+    }
+    _activateTextInput();
+  }
+
+  void _startSelection(
+    LongPressStartDetails details,
+    Size viewportSize,
+    NativeHostMetadata? metadata,
+  ) {
+    if (metadata == null || _stopping) return;
+    final viewport = _selectionViewport(metadata);
+    final geometry = TerminalSelectionGeometry(
+      viewportSize: viewportSize,
+      rows: metadata.rows,
+      columns: metadata.columns,
+      cellWidth: terminalCellWidth,
+      rowHeight: terminalLineHeight,
+    );
+    final cell = geometry.cellAt(details.localPosition);
+    if (cell == null) return;
+    final point = viewport.pointAt(cell.row, cell.column);
+    if (point == null) return;
+    _textInput.detach();
+    setState(() {
+      _selection = TerminalSelectionRange(
+        anchor: point,
+        focus: point,
+        columns: metadata.columns,
+        alternateScreen: metadata.alternateScreen,
+      );
+    });
+  }
+
+  void _changeSelectionStart(TerminalSelectionPoint point) {
+    final selection = _selection;
+    if (selection == null) return;
+    setState(() => _selection = selection.withOrderedStart(point));
+  }
+
+  void _changeSelectionEnd(TerminalSelectionPoint point) {
+    final selection = _selection;
+    if (selection == null) return;
+    setState(() => _selection = selection.withOrderedEnd(point));
   }
 
   void _leaveHistory() {
@@ -736,7 +844,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _onFocusChange(bool focused) {
-    if (focused && _hasControl) {
+    if (focused && _hasControl && _selection == null) {
       _textInput.attach(viewId: View.of(context).viewId);
       _scheduleTextInputShow();
     } else {
@@ -851,31 +959,74 @@ final class _HowlTerminalState extends State<HowlTerminal> {
               builder: (context, constraints) => TerminalSemanticSurface(
                 value: semanticText,
                 truncated: semanticTruncated,
-                child: TerminalTouchSurface(
-                  onTap: _activateTextInput,
-                  onVerticalDragStart: _beginHistoryDrag,
-                  onVerticalDragUpdate: _updateHistoryDrag,
-                  onVerticalDragEnd: _endHistoryDrag,
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerDown: (event) =>
-                        _onPointerDown(event, constraints.biggest),
-                    onPointerMove: (event) =>
-                        _onPointerMove(event, constraints.biggest),
-                    onPointerHover: (event) =>
-                        _onPointerHover(event, constraints.biggest),
-                    onPointerUp: (event) =>
-                        _onPointerUp(event, constraints.biggest),
-                    onPointerCancel: (event) =>
-                        _onPointerCancel(event, constraints.biggest),
-                    child: Focus(
-                      focusNode: _focusNode,
-                      autofocus: true,
-                      onFocusChange: _onFocusChange,
-                      onKeyEvent: _onKeyEvent,
-                      child: content,
+                child: Stack(
+                  children: <Widget>[
+                    Positioned.fill(
+                      child: TerminalTouchSurface(
+                        onTap: _onTerminalTap,
+                        onLongPressStart: (details) => _startSelection(
+                          details,
+                          constraints.biggest,
+                          nativeMetadata,
+                        ),
+                        onVerticalDragStart: _beginHistoryDrag,
+                        onVerticalDragUpdate: _updateHistoryDrag,
+                        onVerticalDragEnd: _endHistoryDrag,
+                        child: Listener(
+                          behavior: HitTestBehavior.opaque,
+                          onPointerDown: (event) =>
+                              _onPointerDown(event, constraints.biggest),
+                          onPointerMove: (event) =>
+                              _onPointerMove(event, constraints.biggest),
+                          onPointerHover: (event) =>
+                              _onPointerHover(event, constraints.biggest),
+                          onPointerUp: (event) =>
+                              _onPointerUp(event, constraints.biggest),
+                          onPointerCancel: (event) =>
+                              _onPointerCancel(event, constraints.biggest),
+                          child: Focus(
+                            focusNode: _focusNode,
+                            autofocus: true,
+                            onFocusChange: _onFocusChange,
+                            onKeyEvent: _onKeyEvent,
+                            child: content,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    if (_selection case final selection?)
+                      Positioned.fill(
+                        child: TerminalSelectionHighlight(
+                          viewport: _selectionViewport(nativeMetadata!),
+                          range: selection,
+                          geometry: TerminalSelectionGeometry(
+                            viewportSize: constraints.biggest,
+                            rows: nativeMetadata.rows,
+                            columns: nativeMetadata.columns,
+                            cellWidth: terminalCellWidth,
+                            rowHeight: terminalLineHeight,
+                          ),
+                        ),
+                      ),
+                    if (_selection case final selection?)
+                      Positioned.fill(
+                        child: TerminalSelectionChrome(
+                          viewport: _selectionViewport(nativeMetadata!),
+                          range: selection,
+                          geometry: TerminalSelectionGeometry(
+                            viewportSize: constraints.biggest,
+                            rows: nativeMetadata.rows,
+                            columns: nativeMetadata.columns,
+                            cellWidth: terminalCellWidth,
+                            rowHeight: terminalLineHeight,
+                          ),
+                          onStartChanged: _changeSelectionStart,
+                          onEndChanged: _changeSelectionEnd,
+                          onCopy: _copyVisibleText,
+                          onPaste: _pasteClipboard,
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),

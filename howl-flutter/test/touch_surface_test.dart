@@ -7,6 +7,7 @@ void main() {
     tester,
   ) async {
     var taps = 0;
+    var longPresses = 0;
     var starts = 0;
     var updates = 0;
     var ends = 0;
@@ -19,6 +20,7 @@ void main() {
           height: 300,
           child: TerminalTouchSurface(
             onTap: () => taps += 1,
+            onLongPressStart: (_) => longPresses += 1,
             onVerticalDragStart: (_) => starts += 1,
             onVerticalDragUpdate: (_) => updates += 1,
             onVerticalDragEnd: (_) => ends += 1,
@@ -32,6 +34,11 @@ void main() {
     await tester.pump();
     expect(taps, 1);
     expect(starts, 0);
+    expect(longPresses, 0);
+
+    await tester.longPressAt(const Offset(150, 150));
+    await tester.pump();
+    expect(longPresses, 1);
 
     await tester.dragFrom(const Offset(150, 220), const Offset(0, -120));
     await tester.pump();

@@ -291,6 +291,38 @@ pub export fn howl_native_control_mouse(
     return 0;
 }
 
+pub export fn howl_native_control_text_extract(
+    raw: ?*ControlHandle,
+    start_row: i32,
+    start_column: u16,
+    end_row: i32,
+    end_column: u16,
+    columns: u16,
+    alternate_screen: u8,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const control = controlFromRaw(raw) orelse return 1;
+    if (columns == 0 or alternate_screen > 1) return 3;
+    const selected = client.selection.extract(
+        &control.connection,
+        control.allocator,
+        .{
+            .anchor = .{ .row = start_row, .column = start_column },
+            .focus = .{ .row = end_row, .column = end_column },
+            .columns = columns,
+            .alternate_screen = alternate_screen == 1,
+        },
+    ) catch return 2;
+    defer control.allocator.free(selected);
+    if (selected.len > output_capacity) return 4;
+    @memcpy(output_ptr[0..selected.len], selected);
+    output_len.* = selected.len;
+    return 0;
+}
+
 fn controlFromRaw(raw: ?*ControlHandle) ?*Control {
     const value = raw orelse return null;
     return @ptrCast(@alignCast(value));

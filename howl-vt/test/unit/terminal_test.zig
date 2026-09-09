@@ -552,6 +552,19 @@ test "text extraction keeps grapheme scalars and suppresses concealed cells" {
     try std.testing.expectEqualStrings("e\xcc\x81      Z", copied);
 }
 
+test "text extraction normalizes a continuation endpoint to its grapheme lead" {
+    var terminal = try Terminal.init(std.testing.allocator, 1, 4);
+    defer terminal.deinit();
+    try std.testing.expect((try terminal.feed("界Z")).stateChanged());
+    const copied = try terminal.copyText(
+        std.testing.allocator,
+        .{ .start = .{ .row = 0, .col = 1 }, .end = .{ .row = 0, .col = 1 } },
+        16,
+    );
+    defer std.testing.allocator.free(copied);
+    try std.testing.expectEqualStrings("界", copied);
+}
+
 fn copyTextAllocation(allocator: std.mem.Allocator) !void {
     var terminal = try Terminal.init(allocator, 1, 4);
     defer terminal.deinit();

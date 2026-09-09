@@ -11,6 +11,7 @@ final class TerminalTouchSurface extends StatelessWidget {
   const TerminalTouchSurface({
     super.key,
     required this.onTap,
+    required this.onLongPressStart,
     required this.onVerticalDragStart,
     required this.onVerticalDragUpdate,
     required this.onVerticalDragEnd,
@@ -18,6 +19,7 @@ final class TerminalTouchSurface extends StatelessWidget {
   });
 
   final VoidCallback onTap;
+  final GestureLongPressStartCallback onLongPressStart;
   final GestureDragStartCallback onVerticalDragStart;
   final GestureDragUpdateCallback onVerticalDragUpdate;
   final GestureDragEndCallback onVerticalDragEnd;
@@ -28,6 +30,7 @@ final class TerminalTouchSurface extends StatelessWidget {
     behavior: HitTestBehavior.opaque,
     supportedDevices: const <PointerDeviceKind>{PointerDeviceKind.touch},
     onTap: onTap,
+    onLongPressStart: onLongPressStart,
     onVerticalDragStart: onVerticalDragStart,
     onVerticalDragUpdate: onVerticalDragUpdate,
     onVerticalDragEnd: onVerticalDragEnd,

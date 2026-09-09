@@ -2062,6 +2062,23 @@ fn sourceRowWrapped(screen: *const Screen, source: RowSource) bool {
     };
 }
 
+fn normalizeTextPoint(screen_state: *const ScreenSet, point: Terminal.TextPoint) CopyError!Terminal.TextPoint {
+    const active = screen_state.activeConst();
+    if (active.cols == 0 or point.col >= active.cols) return error.InvalidRange;
+    const source = rowSource(screen_state, point.row) orelse return error.InvalidRange;
+    const cell = switch (source) {
+        .history => |recency| screen_state.primary.historyCellAt(recency, point.col),
+        .screen => |screen_row| active.cellInfoAt(screen_row, point.col),
+    };
+    if (cell.x > point.col or @as(i64, point.row) < cell.y) return error.InvalidRange;
+    const normalized = Terminal.TextPoint{
+        .row = point.row - @as(i32, cell.y),
+        .col = point.col - cell.x,
+    };
+    if (rowSource(screen_state, normalized.row) == null) return error.InvalidRange;
+    return normalized;
+}
+
 // Copy one caller-selected semantic range into caller-owned UTF-8 memory.
 //
 // The caller owns a successful non-empty result. Invalid stored codepoints
@@ -2072,7 +2089,11 @@ fn copyTextRange(
     range: Terminal.TextRange,
     max_bytes: usize,
 ) CopyError![]const u8 {
-    const ordered_selection = orderedTextRange(range);
+    const normalized = Terminal.TextRange{
+        .start = try normalizeTextPoint(screen_state, range.start),
+        .end = try normalizeTextPoint(screen_state, range.end),
+    };
+    const ordered_selection = orderedTextRange(normalized);
     const active = screen_state.activeConst();
     if (active.cols == 0 or
         ordered_selection.start.col >= active.cols or ordered_selection.end.col >= active.cols or

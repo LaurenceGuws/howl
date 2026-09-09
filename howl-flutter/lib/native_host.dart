@@ -12,6 +12,7 @@ import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 
 const int nativeHostOutputBytes = 320 * 1024;
+const int nativeSelectionOutputBytes = 1024 * 1024;
 const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 32;
 
@@ -601,7 +602,7 @@ final class NativeHostControl {
   final SendPort _commands;
   final ReceivePort _responses;
   final Isolate _isolate;
-  final Map<int, Completer<void>> _pending = <int, Completer<void>>{};
+  final Map<int, Completer<Object?>> _pending = <int, Completer<Object?>>{};
   int _nextId = 1;
   bool _closed = false;
 
@@ -634,28 +635,29 @@ final class NativeHostControl {
     return NativeHostControl._(first, responses, isolate);
   }
 
-  Future<void> committedText(String text) => _request(<Object?>[0, text]);
+  Future<void> committedText(String text) => _requestVoid(<Object?>[0, text]);
 
-  Future<void> paste(String text) => _request(<Object?>[1, text]);
+  Future<void> paste(String text) => _requestVoid(<Object?>[1, text]);
 
   Future<void> namedKey({
     required int keyName,
     required int action,
     int modifiers = 0,
-  }) => _request(<Object?>[2, keyName, action, modifiers]);
+  }) => _requestVoid(<Object?>[2, keyName, action, modifiers]);
 
   Future<void> unicodeKey({
     required int scalar,
     required int action,
     int modifiers = 0,
-  }) => _request(<Object?>[3, scalar, action, modifiers]);
+  }) => _requestVoid(<Object?>[3, scalar, action, modifiers]);
 
-  Future<void> focus(bool focused) => _request(<Object?>[4, focused ? 1 : 2]);
+  Future<void> focus(bool focused) =>
+      _requestVoid(<Object?>[4, focused ? 1 : 2]);
 
   Future<void> resize(int rows, int columns) =>
-      _request(<Object?>[5, rows, columns]);
+      _requestVoid(<Object?>[5, rows, columns]);
 
-  Future<void> signal(int value) => _request(<Object?>[6, value]);
+  Future<void> signal(int value) => _requestVoid(<Object?>[6, value]);
 
   Future<void> mouse({
     required int kind,
@@ -666,7 +668,7 @@ final class NativeHostControl {
     required int column,
     int? pixelX,
     int? pixelY,
-  }) => _request(<Object?>[
+  }) => _requestVoid(<Object?>[
     7,
     kind,
     button,
@@ -678,10 +680,40 @@ final class NativeHostControl {
     pixelY,
   ]);
 
-  Future<void> _request(List<Object?> action) {
+  Future<String> selectedText({
+    required int startRow,
+    required int startColumn,
+    required int endRow,
+    required int endColumn,
+    required int columns,
+    required bool alternateScreen,
+  }) async {
+    final response = await _request(<Object?>[
+      8,
+      startRow,
+      startColumn,
+      endRow,
+      endColumn,
+      columns,
+      alternateScreen ? 1 : 0,
+    ]);
+    if (response is! TransferableTypedData) {
+      throw const NativeHostException('control_selection_response');
+    }
+    return utf8.decode(
+      response.materialize().asUint8List(),
+      allowMalformed: false,
+    );
+  }
+
+  Future<void> _requestVoid(List<Object?> action) async {
+    await _request(action);
+  }
+
+  Future<Object?> _request(List<Object?> action) {
     if (_closed) throw const NativeHostException('control_worker_closed');
     final id = _nextId++;
-    final completer = Completer<void>();
+    final completer = Completer<Object?>();
     _pending[id] = completer;
     _commands.send(<Object?>[action[0], id, ...action.skip(1)]);
     return completer.future;
@@ -691,7 +723,7 @@ final class NativeHostControl {
     if (_closed) return;
     _closed = true;
     final id = _nextId++;
-    final completer = Completer<void>();
+    final completer = Completer<Object?>();
     _pending[id] = completer;
     _commands.send(<Object?>[8, id]);
     try {
@@ -718,7 +750,7 @@ final class NativeHostControl {
     final completer = _pending.remove(id);
     if (completer == null) return;
     if (code == 0) {
-      completer.complete();
+      completer.complete(message.length > 2 ? message[2] : null);
     } else {
       completer.completeError(NativeHostException('control_$code'));
     }
@@ -804,6 +836,30 @@ typedef _ControlMouseDart = int Function(
   int,
   int,
 );
+typedef _ControlTextExtractNative = ffi.Int32 Function(
+  ffi.Pointer<ffi.Void>,
+  ffi.Int32,
+  ffi.Uint16,
+  ffi.Int32,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint8,
+  ffi.Pointer<ffi.Uint8>,
+  ffi.Size,
+  ffi.Pointer<ffi.Size>,
+);
+typedef _ControlTextExtractDart = int Function(
+  ffi.Pointer<ffi.Void>,
+  int,
+  int,
+  int,
+  int,
+  int,
+  int,
+  ffi.Pointer<ffi.Uint8>,
+  int,
+  ffi.Pointer<ffi.Size>,
+);
 
 Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
@@ -843,6 +899,10 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final mouse = dylib.lookupFunction<_ControlMouseNative, _ControlMouseDart>(
     'howl_native_control_mouse',
   );
+  final textExtract = dylib
+      .lookupFunction<_ControlTextExtractNative, _ControlTextExtractDart>(
+        'howl_native_control_text_extract',
+      );
 
   final endpointBytes = utf8.encode(endpoint);
   final endpointPointer = calloc<ffi.Uint8>(endpointBytes.length);
@@ -854,6 +914,8 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
     commands.close();
     return;
   }
+  final selectionOutput = calloc<ffi.Uint8>(nativeSelectionOutputBytes);
+  final selectionLength = calloc<ffi.Size>();
   ready.send(commands.sendPort);
 
   int textAction(_ControlTextDart function, String value) {
@@ -874,11 +936,12 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       final kind = message[0];
       final id = message[1];
       if (kind is! int || id is! int) continue;
-      if (kind == 8) {
+      if (kind == 9) {
         responses.send(<Object?>[id, 0]);
         break;
       }
       int code;
+      Object? response;
       switch (kind) {
         case 0:
           code = textAction(committed, message[2]! as String);
@@ -923,13 +986,37 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
               pixelY ?? 0,
             );
           }
+        case 8:
+          selectionLength.value = 0;
+          code = textExtract(
+            control,
+            message[2]! as int,
+            message[3]! as int,
+            message[4]! as int,
+            message[5]! as int,
+            message[6]! as int,
+            message[7]! as int,
+            selectionOutput,
+            nativeSelectionOutputBytes,
+            selectionLength,
+          );
+          if (code == 0 &&
+              selectionLength.value <= nativeSelectionOutputBytes) {
+            response = TransferableTypedData.fromList(<Uint8List>[
+              selectionOutput.asTypedList(selectionLength.value),
+            ]);
+          } else if (code == 0) {
+            code = 4;
+          }
         default:
           code = 3;
       }
-      responses.send(<Object?>[id, code]);
+      responses.send(<Object?>[id, code, response]);
     }
   } finally {
     destroy(control);
+    calloc.free(selectionOutput);
+    calloc.free(selectionLength);
     commands.close();
   }
 }
