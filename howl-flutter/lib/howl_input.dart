@@ -20,8 +20,17 @@ abstract final class HowlInput {
   static const mouseWheelDown = 5;
 
   static const namedEnter = 1;
+  static const namedTab = 2;
   static const namedBackspace = 3;
+  static const namedEscape = 4;
+  static const namedArrowUp = 5;
+  static const namedArrowDown = 6;
+  static const namedArrowLeft = 7;
+  static const namedArrowRight = 8;
   static const namedDelete = 10;
+
+  static const modifierAlt = 1 << 1;
+  static const modifierControl = 1 << 2;
 
   static const maximumRows = 128;
   static const maximumColumns = 256;

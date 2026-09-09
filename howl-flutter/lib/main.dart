@@ -15,6 +15,7 @@ import 'native_host.dart';
 import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
+import 'terminal_controls.dart';
 import 'touch_surface.dart';
 import 'visible_viewport.dart';
 
@@ -112,6 +113,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int? _pendingResizeRows;
   int? _pendingResizeColumns;
   bool _resizeDrainRunning = false;
+  int _modifierLatch = 0;
   Future<void> _controlTail = Future<void>.value();
 
   @override
@@ -121,16 +123,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       inputType: _platformInput.inputType,
       onCommit: (text) {
         _returnToLiveForInput();
-        _sendCommittedText(text);
+        final modifiers = _takeModifierLatch();
+        final runes = text.runes.toList(growable: false);
+        if (modifiers != 0 && runes.length == 1) {
+          _sendUnicodeKeyCycle(runes.single, modifiers: modifiers);
+        } else {
+          _sendCommittedText(text);
+        }
       },
       onEditKey: (key) {
         _returnToLiveForInput();
+        final modifiers = _takeModifierLatch();
         final keyName = switch (key) {
           TerminalEditKey.enter => HowlInput.namedEnter,
           TerminalEditKey.backspace => HowlInput.namedBackspace,
           TerminalEditKey.delete => HowlInput.namedDelete,
         };
-        _sendNamedKey(keyName: keyName, action: HowlInput.keyPress);
+        _sendNamedKey(
+          keyName: keyName,
+          action: HowlInput.keyPress,
+          modifiers: modifiers,
+        );
       },
     );
     unawaited(_observe());
@@ -245,6 +258,64 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         modifiers: modifiers,
       ),
     );
+  }
+
+  void _sendUnicodeKey({
+    required int scalar,
+    required int action,
+    int modifiers = 0,
+  }) {
+    _queueControl(
+      (control) => control.unicodeKey(
+        scalar: scalar,
+        action: action,
+        modifiers: modifiers,
+      ),
+    );
+  }
+
+  void _sendNamedKeyCycle(int keyName, {int modifiers = 0}) {
+    _returnToLiveForInput();
+    _sendNamedKey(
+      keyName: keyName,
+      action: HowlInput.keyPress,
+      modifiers: modifiers,
+    );
+    _sendNamedKey(
+      keyName: keyName,
+      action: HowlInput.keyRelease,
+      modifiers: modifiers,
+    );
+  }
+
+  void _sendUnicodeKeyCycle(int scalar, {int modifiers = 0}) {
+    _sendUnicodeKey(
+      scalar: scalar,
+      action: HowlInput.keyPress,
+      modifiers: modifiers,
+    );
+    _sendUnicodeKey(
+      scalar: scalar,
+      action: HowlInput.keyRelease,
+      modifiers: modifiers,
+    );
+  }
+
+  void _toggleModifier(int bit) {
+    setState(() => _modifierLatch ^= bit);
+    _activateTextInput();
+  }
+
+  int _takeModifierLatch() {
+    final value = _modifierLatch;
+    if (value != 0) setState(() => _modifierLatch = 0);
+    return value;
+  }
+
+  void _sendToolbarKey(int keyName) {
+    final modifiers = _takeModifierLatch();
+    _sendNamedKeyCycle(keyName, modifiers: modifiers);
+    _activateTextInput();
   }
 
   void _sendFocus(bool focused) {
@@ -619,32 +690,44 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       }
     }
     return TerminalVisibleViewport(
-      child: LayoutBuilder(
-        builder: (context, constraints) => TerminalTouchSurface(
-          onTap: _activateTextInput,
-          onVerticalDragStart: _beginHistoryDrag,
-          onVerticalDragUpdate: _updateHistoryDrag,
-          onVerticalDragEnd: _endHistoryDrag,
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerDown: (event) =>
-                _onPointerDown(event, constraints.biggest),
-            onPointerMove: (event) =>
-                _onPointerMove(event, constraints.biggest),
-            onPointerHover: (event) =>
-                _onPointerHover(event, constraints.biggest),
-            onPointerUp: (event) => _onPointerUp(event, constraints.biggest),
-            onPointerCancel: (event) =>
-                _onPointerCancel(event, constraints.biggest),
-            child: Focus(
-              focusNode: _focusNode,
-              autofocus: true,
-              onFocusChange: _onFocusChange,
-              onKeyEvent: _onKeyEvent,
-              child: content,
+      child: Column(
+        children: <Widget>[
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) => TerminalTouchSurface(
+                onTap: _activateTextInput,
+                onVerticalDragStart: _beginHistoryDrag,
+                onVerticalDragUpdate: _updateHistoryDrag,
+                onVerticalDragEnd: _endHistoryDrag,
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (event) =>
+                      _onPointerDown(event, constraints.biggest),
+                  onPointerMove: (event) =>
+                      _onPointerMove(event, constraints.biggest),
+                  onPointerHover: (event) =>
+                      _onPointerHover(event, constraints.biggest),
+                  onPointerUp: (event) =>
+                      _onPointerUp(event, constraints.biggest),
+                  onPointerCancel: (event) =>
+                      _onPointerCancel(event, constraints.biggest),
+                  child: Focus(
+                    focusNode: _focusNode,
+                    autofocus: true,
+                    onFocusChange: _onFocusChange,
+                    onKeyEvent: _onKeyEvent,
+                    child: content,
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
+          TerminalControlStrip(
+            modifierLatch: _modifierLatch,
+            onModifier: _toggleModifier,
+            onKey: _sendToolbarKey,
+          ),
+        ],
       ),
     );
   }
@@ -652,13 +735,13 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
 final howlNamedKeys = <PhysicalKeyboardKey, int>{
   PhysicalKeyboardKey.enter: HowlInput.namedEnter,
-  PhysicalKeyboardKey.tab: 2,
+  PhysicalKeyboardKey.tab: HowlInput.namedTab,
   PhysicalKeyboardKey.backspace: HowlInput.namedBackspace,
-  PhysicalKeyboardKey.escape: 4,
-  PhysicalKeyboardKey.arrowUp: 5,
-  PhysicalKeyboardKey.arrowDown: 6,
-  PhysicalKeyboardKey.arrowLeft: 7,
-  PhysicalKeyboardKey.arrowRight: 8,
+  PhysicalKeyboardKey.escape: HowlInput.namedEscape,
+  PhysicalKeyboardKey.arrowUp: HowlInput.namedArrowUp,
+  PhysicalKeyboardKey.arrowDown: HowlInput.namedArrowDown,
+  PhysicalKeyboardKey.arrowLeft: HowlInput.namedArrowLeft,
+  PhysicalKeyboardKey.arrowRight: HowlInput.namedArrowRight,
   PhysicalKeyboardKey.insert: 9,
   PhysicalKeyboardKey.delete: HowlInput.namedDelete,
   PhysicalKeyboardKey.home: 11,
