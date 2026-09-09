@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 
 import 'native_canvas.dart';
+import 'terminal_fit.dart';
 
 sealed class _PaintSegment {
   const _PaintSegment();
@@ -368,18 +369,14 @@ final class NativeCanvasPainter extends CustomPainter {
 
   @override
   void paint(ui.Canvas canvas, ui.Size size) {
-    final scale = (size.width / logicalWidth).clamp(
-      0.0,
-      size.height / logicalHeight,
+    final fit = TerminalFit.contain(
+      viewportSize: size,
+      logicalSize: ui.Size(logicalWidth, logicalHeight),
     );
-    final paintedWidth = logicalWidth * scale;
-    final paintedHeight = logicalHeight * scale;
+    if (fit == null) return;
     canvas.save();
-    canvas.translate(
-      (size.width - paintedWidth) / 2,
-      (size.height - paintedHeight) / 2,
-    );
-    canvas.scale(scale);
+    canvas.translate(fit.rect.left, fit.rect.top);
+    canvas.scale(fit.scale);
     lease.plan.paint(canvas, lease.images);
     canvas.restore();
   }

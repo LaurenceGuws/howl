@@ -96,18 +96,18 @@ void main() {
       cellWidth: 10,
       rowHeight: 20,
     );
-    expect(geometry.scale, 1.4);
-    expect(geometry.terminalRect, const Rect.fromLTWH(4, 0, 112, 140));
-    expect(geometry.cellAt(const Offset(10, 10)), (row: 0, column: 0));
-    expect(geometry.cellAt(const Offset(110, 130)), (row: 4, column: 7));
-    expect(geometry.cellAt(const Offset(2, 25)), isNull);
+    expect(geometry.scale, 1.0);
+    expect(geometry.terminalRect, const Rect.fromLTWH(20, 20, 80, 100));
+    expect(geometry.cellAt(const Offset(25, 25)), (row: 0, column: 0));
+    expect(geometry.cellAt(const Offset(95, 115)), (row: 4, column: 7));
+    expect(geometry.cellAt(const Offset(15, 25)), isNull);
     expect(
       geometry.handlePoint(row: 2, column: 3, end: false),
-      const Offset(46, 84),
+      const Offset(50, 80),
     );
     expect(
       geometry.handlePoint(row: 2, column: 3, end: true),
-      const Offset(60, 84),
+      const Offset(60, 80),
     );
   });
 

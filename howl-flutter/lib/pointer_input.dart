@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:flutter/gestures.dart';
 
 import 'howl_input.dart';
+import 'terminal_fit.dart';
 
 final class TerminalPointerLocation {
   const TerminalPointerLocation({
@@ -34,31 +35,20 @@ final class TerminalPointerGeometry {
   final double rowHeight;
 
   TerminalPointerLocation? locate(Offset position) {
-    if (!viewport.width.isFinite ||
-        !viewport.height.isFinite ||
-        rows <= 0 ||
-        columns <= 0 ||
-        cellWidth <= 0 ||
-        rowHeight <= 0) {
+    if (rows <= 0 || columns <= 0 || cellWidth <= 0 || rowHeight <= 0) {
       return null;
     }
-    final terminalWidth = columns * cellWidth;
-    final terminalHeight = rows * rowHeight;
-    if (terminalWidth > viewport.width || terminalHeight > viewport.height) {
-      return null;
-    }
-    final left = (viewport.width - terminalWidth) / 2;
-    final top = (viewport.height - terminalHeight) / 2;
-    final x = position.dx - left;
-    final y = position.dy - top;
-    if (x < 0 || y < 0 || x >= terminalWidth || y >= terminalHeight) {
-      return null;
-    }
+    final fit = TerminalFit.contain(
+      viewportSize: viewport,
+      logicalSize: Size(columns * cellWidth, rows * rowHeight),
+    );
+    final logical = fit?.logicalOffset(position);
+    if (logical == null) return null;
     return TerminalPointerLocation(
-      row: (y / rowHeight).floor(),
-      column: (x / cellWidth).floor(),
-      pixelX: x.floor(),
-      pixelY: y.floor(),
+      row: (logical.dy / rowHeight).floor(),
+      column: (logical.dx / cellWidth).floor(),
+      pixelX: logical.dx.floor(),
+      pixelY: logical.dy.floor(),
     );
   }
 }

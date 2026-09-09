@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/widgets.dart';
 
+import 'terminal_fit.dart';
+
 final class TerminalSelectionPoint {
   const TerminalSelectionPoint({required this.row, required this.column});
 
@@ -120,14 +122,6 @@ final class TerminalSelectionRange {
   final int columns;
   final bool alternateScreen;
 
-  TerminalSelectionRange withFocus(TerminalSelectionPoint value) =>
-      TerminalSelectionRange(
-        anchor: anchor,
-        focus: value,
-        columns: columns,
-        alternateScreen: alternateScreen,
-      );
-
   TerminalSelectionRange withOrderedStart(TerminalSelectionPoint value) {
     final bounds = ordered;
     final start = _beforeOrEqual(value, bounds.end) ? value : bounds.end;
@@ -198,32 +192,14 @@ final class TerminalSelectionGeometry {
   final double cellWidth;
   final double rowHeight;
 
-  double? get scale {
-    final width = columns * cellWidth;
-    final height = rows * rowHeight;
-    if (!viewportSize.width.isFinite ||
-        !viewportSize.height.isFinite ||
-        viewportSize.width <= 0 ||
-        viewportSize.height <= 0 ||
-        width <= 0 ||
-        height <= 0) {
-      return null;
-    }
-    return math.min(viewportSize.width / width, viewportSize.height / height);
-  }
+  TerminalFit? get _fit => TerminalFit.contain(
+    viewportSize: viewportSize,
+    logicalSize: Size(columns * cellWidth, rows * rowHeight),
+  );
 
-  Rect? get terminalRect {
-    final fit = scale;
-    if (fit == null) return null;
-    final width = columns * cellWidth * fit;
-    final height = rows * rowHeight * fit;
-    return Rect.fromLTWH(
-      (viewportSize.width - width) / 2,
-      (viewportSize.height - height) / 2,
-      width,
-      height,
-    );
-  }
+  double? get scale => _fit?.scale;
+
+  Rect? get terminalRect => _fit?.rect;
 
   ({int row, int column})? cellAt(Offset localPosition) {
     final rect = terminalRect;

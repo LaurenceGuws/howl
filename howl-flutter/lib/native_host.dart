@@ -635,29 +635,42 @@ final class NativeHostControl {
     return NativeHostControl._(first, responses, isolate);
   }
 
-  Future<void> committedText(String text) => _requestVoid(<Object?>[0, text]);
+  Future<void> committedText(String text) =>
+      _requestVoid(<Object?>[_NativeControlOperation.committedText, text]);
 
-  Future<void> paste(String text) => _requestVoid(<Object?>[1, text]);
+  Future<void> paste(String text) =>
+      _requestVoid(<Object?>[_NativeControlOperation.paste, text]);
 
   Future<void> namedKey({
     required int keyName,
     required int action,
     int modifiers = 0,
-  }) => _requestVoid(<Object?>[2, keyName, action, modifiers]);
+  }) => _requestVoid(<Object?>[
+    _NativeControlOperation.namedKey,
+    keyName,
+    action,
+    modifiers,
+  ]);
 
   Future<void> unicodeKey({
     required int scalar,
     required int action,
     int modifiers = 0,
-  }) => _requestVoid(<Object?>[3, scalar, action, modifiers]);
+  }) => _requestVoid(<Object?>[
+    _NativeControlOperation.unicodeKey,
+    scalar,
+    action,
+    modifiers,
+  ]);
 
   Future<void> focus(bool focused) =>
-      _requestVoid(<Object?>[4, focused ? 1 : 2]);
+      _requestVoid(<Object?>[_NativeControlOperation.focus, focused ? 1 : 2]);
 
   Future<void> resize(int rows, int columns) =>
-      _requestVoid(<Object?>[5, rows, columns]);
+      _requestVoid(<Object?>[_NativeControlOperation.resize, rows, columns]);
 
-  Future<void> signal(int value) => _requestVoid(<Object?>[6, value]);
+  Future<void> signal(int value) =>
+      _requestVoid(<Object?>[_NativeControlOperation.signal, value]);
 
   Future<void> mouse({
     required int kind,
@@ -669,7 +682,7 @@ final class NativeHostControl {
     int? pixelX,
     int? pixelY,
   }) => _requestVoid(<Object?>[
-    7,
+    _NativeControlOperation.mouse,
     kind,
     button,
     modifiers,
@@ -689,7 +702,7 @@ final class NativeHostControl {
     required bool alternateScreen,
   }) async {
     final response = await _request(<Object?>[
-      8,
+      _NativeControlOperation.textExtract,
       startRow,
       startColumn,
       endRow,
@@ -725,7 +738,7 @@ final class NativeHostControl {
     final id = _nextId++;
     final completer = Completer<Object?>();
     _pending[id] = completer;
-    _commands.send(<Object?>[8, id]);
+    _commands.send(<Object?>[_NativeControlOperation.close, id]);
     try {
       await completer.future;
     } finally {
@@ -755,6 +768,24 @@ final class NativeHostControl {
       completer.completeError(NativeHostException('control_$code'));
     }
   }
+}
+
+/// Private message vocabulary shared by both sides of the control isolate.
+///
+/// These values are process-local implementation details, not Howl wire
+/// protocol. Keep callers and the worker on this single table so adding an
+/// operation cannot silently steal the shutdown opcode again.
+enum _NativeControlOperation {
+  committedText,
+  paste,
+  namedKey,
+  unicodeKey,
+  focus,
+  resize,
+  signal,
+  mouse,
+  textExtract,
+  close,
 }
 
 typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
@@ -935,39 +966,39 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
       if (message is! List<Object?> || message.length < 2) continue;
       final kind = message[0];
       final id = message[1];
-      if (kind is! int || id is! int) continue;
-      if (kind == 9) {
+      if (kind is! _NativeControlOperation || id is! int) continue;
+      if (kind == _NativeControlOperation.close) {
         responses.send(<Object?>[id, 0]);
         break;
       }
       int code;
       Object? response;
       switch (kind) {
-        case 0:
+        case _NativeControlOperation.committedText:
           code = textAction(committed, message[2]! as String);
-        case 1:
+        case _NativeControlOperation.paste:
           code = textAction(paste, message[2]! as String);
-        case 2:
+        case _NativeControlOperation.namedKey:
           code = named(
             control,
             message[2]! as int,
             message[3]! as int,
             message[4]! as int,
           );
-        case 3:
+        case _NativeControlOperation.unicodeKey:
           code = unicode(
             control,
             message[2]! as int,
             message[3]! as int,
             message[4]! as int,
           );
-        case 4:
+        case _NativeControlOperation.focus:
           code = focus(control, message[2]! as int);
-        case 5:
+        case _NativeControlOperation.resize:
           code = resize(control, message[2]! as int, message[3]! as int);
-        case 6:
+        case _NativeControlOperation.signal:
           code = signal(control, message[2]! as int);
-        case 7:
+        case _NativeControlOperation.mouse:
           final pixelX = message[8] as int?;
           final pixelY = message[9] as int?;
           if ((pixelX == null) != (pixelY == null)) {
@@ -986,7 +1017,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
               pixelY ?? 0,
             );
           }
-        case 8:
+        case _NativeControlOperation.textExtract:
           selectionLength.value = 0;
           code = textExtract(
             control,

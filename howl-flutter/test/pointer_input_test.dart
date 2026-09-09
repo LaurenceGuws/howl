@@ -31,7 +31,7 @@ void main() {
     expect(geometry.locate(const Offset(900, 100)), isNull);
   });
 
-  test('clipped terminal geometry refuses guessed coordinates', () {
+  test('larger terminal uses the same contain fit as Canvas painting', () {
     const clipped = TerminalPointerGeometry(
       viewport: Size(700, 300),
       rows: 20,
@@ -39,7 +39,12 @@ void main() {
       cellWidth: 10,
       rowHeight: 20,
     );
-    expect(clipped.locate(const Offset(350, 150)), isNull);
+    final middle = clipped.locate(const Offset(350, 150));
+    expect(middle?.row, 10);
+    expect(middle?.column, 40);
+    expect(middle?.pixelX, 400);
+    expect(middle?.pixelY, 200);
+    expect(clipped.locate(const Offset(49, 150)), isNull);
   });
 
   test('mouse press drag and release preserve canonical held-button mask', () {
