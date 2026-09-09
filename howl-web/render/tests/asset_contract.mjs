@@ -19,4 +19,11 @@ for (const module of modules) {
   assert(gateway.includes(`.target = "${route}"`), `${module} is imported by the browser host but absent from the gateway allowlist`);
 }
 
+for (const asset of ['nerd-font.bin', 'nerd-font-license.txt']) {
+  const route = `/${asset}`;
+  assert(shell.has(route), `${asset} is required by the browser host but absent from the offline shell`);
+  assert(renderBuild.includes(asset), `${asset} is required by the browser host but absent from the render install graph`);
+  assert(gateway.includes(`.target = "${route}"`), `${asset} is required by the browser host but absent from the gateway allowlist`);
+}
+
 console.log(JSON.stringify({status:'pass', browserModules:modules.length, offline:true, installed:true, gateway:true}));

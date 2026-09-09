@@ -151,12 +151,17 @@ force Safari to synchronously paint more frames than the display can present.
 History snapshots remain explicit client requests rather than part of this live
 presentation coalescing.
 
-The live Web font set keeps Fira Code as the terminal metrics/primary face and
-loads the tracked Noto Sans fixture as an ordered fallback. `howl-render` already
-owns the final missing-sequence policy: if no configured face covers a sequence,
-it shapes U+FFFD instead of failing the frame. The Web fallback therefore makes
-that existing degradation path complete without moving glyph policy into the
-browser host.
+The live Web font set keeps Fira Code as the terminal metrics/primary face,
+loads the tracked Noto Sans fixture as the first ordered fallback, then uses the
+unmodified Nerd Fonts 3.4.0 symbols-only face for terminal PUA/icon coverage.
+The symbols face adds about 2.5 MB to the cached PWA shell but does not change
+cell metrics; the physical Note10 v27/v28 A/B kept the same 11x23 cell and
+32x51 geometry while replacing prompt tofu with the canonical Nerd glyphs. The
+renderer grew by only one 64 KiB Wasm memory page in that run. Provenance,
+checksum and the complete redistribution license are tracked under
+`render/fonts/` and the license is linked from the Web shell. `howl-render`
+still owns the final missing-sequence policy: if no configured face covers a
+sequence, it shapes U+FFFD instead of failing the frame.
 
 ## Maintained gateway and PWA shell
 

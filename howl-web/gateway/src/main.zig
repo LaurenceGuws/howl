@@ -325,11 +325,13 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/render.wasm", .asset = .{ .relative_path = "render.wasm", .content_type = "application/wasm" } },
         .{ .target = "/font.bin", .asset = .{ .relative_path = "font.bin", .content_type = "application/octet-stream" } },
         .{ .target = "/fallback-font.bin", .asset = .{ .relative_path = "fallback-font.bin", .content_type = "application/octet-stream" } },
+        .{ .target = "/nerd-font.bin", .asset = .{ .relative_path = "nerd-font.bin", .content_type = "application/octet-stream" } },
         .{ .target = "/wire.wasm", .asset = .{ .relative_path = "@wire", .content_type = "application/wasm" } },
         .{ .target = "/manifest.webmanifest", .asset = .{ .relative_path = "manifest.webmanifest", .content_type = "application/manifest+json" } },
         .{ .target = "/sw.js", .asset = .{ .relative_path = "sw.js", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/icon.png", .asset = .{ .relative_path = "icon.png", .content_type = "image/png" } },
         .{ .target = "/font-licences.txt", .asset = .{ .relative_path = "font-licences.txt", .content_type = "text/plain; charset=utf-8" } },
+        .{ .target = "/nerd-font-license.txt", .asset = .{ .relative_path = "nerd-font-license.txt", .content_type = "text/plain; charset=utf-8" } },
         .{ .target = "/dependencies.txt", .asset = .{ .relative_path = "dependencies.txt", .content_type = "text/plain; charset=utf-8" } },
     };
     for (entries) |entry| if (std.mem.eql(u8, target, entry.target)) return entry.asset;
@@ -406,6 +408,8 @@ test "static routes are closed and do not traverse the site root" {
     try std.testing.expectEqualStrings("history.mjs", staticAsset("/history.mjs").?.relative_path);
     try std.testing.expectEqualStrings("lifecycle_policy.mjs", staticAsset("/lifecycle_policy.mjs").?.relative_path);
     try std.testing.expectEqualStrings("pointer_input.mjs", staticAsset("/pointer_input.mjs").?.relative_path);
+    try std.testing.expectEqualStrings("nerd-font.bin", staticAsset("/nerd-font.bin").?.relative_path);
+    try std.testing.expectEqualStrings("nerd-font-license.txt", staticAsset("/nerd-font-license.txt").?.relative_path);
     try std.testing.expect(staticAsset("/../secret") == null);
     try std.testing.expect(staticAsset("/?x=1") == null);
 }

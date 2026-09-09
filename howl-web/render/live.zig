@@ -18,6 +18,7 @@ const residency_capacity = 4;
 
 var font_input: [8 * 1024 * 1024]u8 = undefined;
 var fallback_font_input: [2 * 1024 * 1024]u8 = undefined;
+var symbol_font_input: [3 * 1024 * 1024]u8 = undefined;
 var snapshot_input: [p.maximum_snapshot_bytes]u8 = undefined;
 var persistent_heap: [24 * 1024 * 1024]u8 = undefined;
 var transient_heap: [20 * 1024 * 1024]u8 = undefined;
@@ -58,6 +59,12 @@ export fn rv_fallback_font_ptr() usize {
 export fn rv_fallback_font_capacity() usize {
     return fallback_font_input.len;
 }
+export fn rv_symbol_font_ptr() usize {
+    return @intFromPtr(&symbol_font_input);
+}
+export fn rv_symbol_font_capacity() usize {
+    return symbol_font_input.len;
+}
 export fn rv_snapshot_ptr() usize {
     return @intFromPtr(&snapshot_input);
 }
@@ -96,9 +103,10 @@ fn fail(message: []const u8) u32 {
     return 0;
 }
 
-export fn rv_init(font_length: usize, fallback_font_length: usize) u32 {
+export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_length: usize) u32 {
     if (composer_ready or font_length == 0 or font_length > font_input.len or
-        fallback_font_length == 0 or fallback_font_length > fallback_font_input.len) return 0;
+        fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
+        symbol_font_length == 0 or symbol_font_length > symbol_font_input.len) return 0;
     persistent.reset();
     transient.reset();
     accepted_residency_count = 0;
@@ -110,7 +118,10 @@ export fn rv_init(font_length: usize, fallback_font_length: usize) u32 {
     pixels_used = 0;
 
     const allocator = persistent.allocator();
-    const fallback_sources = [_][]const u8{fallback_font_input[0..fallback_font_length]};
+    const fallback_sources = [_][]const u8{
+        fallback_font_input[0..fallback_font_length],
+        symbol_font_input[0..symbol_font_length],
+    };
     const new_fonts = text.FontSet.initMemory(allocator, .{
         .primary = font_input[0..font_length],
         .fallbacks = &fallback_sources,
@@ -119,6 +130,7 @@ export fn rv_init(font_length: usize, fallback_font_length: usize) u32 {
     errdefer new_fonts.deinit();
     @memset(font_input[0..font_length], 0xa5);
     @memset(fallback_font_input[0..fallback_font_length], 0x5a);
+    @memset(symbol_font_input[0..symbol_font_length], 0x3c);
     const metrics = new_fonts.metrics();
     const new_content = render.terminal.initContent(allocator, new_fonts, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
