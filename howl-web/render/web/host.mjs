@@ -10,9 +10,9 @@ import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
-import {LifecycleRecoveryPolicy, reconnectAllowed} from './lifecycle_policy.mjs';
+import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v29';
+const CANARY_GENERATION = 'v30';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -1066,7 +1066,8 @@ telemetryClear?.addEventListener('click', () => {
 reload.addEventListener('click', async () => {
   try {
     const registration = await navigator.serviceWorker?.getRegistration();
-    await registration?.update();
+    const result = await updateAndPromoteServiceWorker(registration);
+    if (registration?.waiting && !result.promoted) console.warn('waiting service worker did not activate before reload');
   } catch (error) {
     console.warn('service worker update check failed', error);
   }

@@ -1,4 +1,4 @@
-const CACHE = 'howl-web-canary-v29';
+const CACHE = 'howl-web-canary-v30';
 const SHELL = [
   '/', '/host.mjs', '/lifecycle_policy.mjs', '/input.mjs', '/pointer_input.mjs', '/history.mjs', '/control_queue.mjs', '/telemetry.mjs', '/frame_scheduler.mjs', '/display_schedule.mjs', '/resize_policy.mjs', '/style.css', '/runtime.mjs', '/wire.wasm',
   '/render.wasm', '/font.bin', '/fallback-font.bin', '/nerd-font.bin', '/manifest.webmanifest', '/icon.png', '/font-licences.txt', '/nerd-font-license.txt', '/dependencies.txt',
@@ -18,6 +18,11 @@ self.addEventListener('activate', event => {
     for (const name of await caches.keys()) if (name !== CACHE) await caches.delete(name);
     await self.clients.claim();
   })());
+});
+
+self.addEventListener('message', event => {
+  if (event.data !== 'howl.promote-waiting-v1') return;
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('fetch', event => {

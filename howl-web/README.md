@@ -185,10 +185,12 @@ service worker. The service worker is network-first while online and caches only
 successful, non-redirected same-origin app responses. An Access login/redirect is
 therefore never stored as application content. The shell keeps an explicit Reload
 control because installed mobile Web Apps may expose no browser refresh chrome or
-gesture. A newly installed worker first
-caches the complete versioned shell, then uses `skipWaiting()` plus
-`clients.claim()` so a changed asset set cannot remain behind an older controller
-indefinitely. With the origin stopped, the cached shell relaunches into an explicit
+gesture. A newly installed worker first caches the complete versioned shell and
+requests `skipWaiting()`; Reload additionally promotes any already-waiting worker,
+checks for a newer installation, explicitly promotes that worker too, and waits
+for activation before navigating. `clients.claim()` then adopts open pages. This
+bounded handoff exists because physical Brave can retain a fully installed worker
+in `waiting` across ordinary reloads. With the origin stopped, the cached shell relaunches into an explicit
 `DISCONNECTED` state with no terminal frame; after the gateway returns, the
 page-level Reconnect control restores observer/control connections without a page
 reload. On a visible-page transition, the browser host also performs two bounded
