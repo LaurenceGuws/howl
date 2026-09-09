@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v23';
+const CANARY_GENERATION = 'v24';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -106,7 +106,7 @@ function scheduleTelemetryLog() {
   telemetryUiTimer = setTimeout(() => { telemetryUiTimer = null; renderTelemetryLog(); }, 120);
 }
 telemetry.subscribe(scheduleTelemetryLog);
-startEventLoopProbe(telemetry, {isActive:() => document.visibilityState === 'visible'});
+const eventLoopProbe = startEventLoopProbe(telemetry, {isActive:() => document.visibilityState === 'visible'});
 telemetry.record('boot', telemetryContext());
 
 async function fetchBytes(path) {
@@ -852,6 +852,7 @@ function handleTransportClose(role) {
   scheduleRecoveryProbes('transport_close', {role});
 }
 function handleLifecycle() {
+  eventLoopProbe.reset();
   scheduleRecoveryProbes('lifecycle');
 }
 window.addEventListener('focus', handleLifecycle);
@@ -1003,6 +1004,7 @@ async function reconnectAll() {
   if (reconnectTask) return reconnectTask;
   telemetry.record('reconnect_start', {observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   reconnectTask = (async () => {
+    liveFrameScheduler.reset();
     history.reset();
     historyGeneration += 1;
     historyRequestPending = false;

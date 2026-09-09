@@ -39,4 +39,27 @@ resumableCallbacks[1]();
 assert.deepEqual(resumedPaints, [{revision:6}]);
 assert.equal(resumable.resume(), false);
 
-console.log(JSON.stringify({status:'pass', latestWins:true, oneScheduled:true, visibleResume:true}));
+const resetCallbacks = [];
+let resetCancelled = 0;
+const resetPaints = [];
+const resettable = new LatestFrameScheduler({
+  schedule:callback => {
+    let active = true;
+    resetCallbacks.push(() => { if (active) callback(); });
+    return () => { active = false; resetCancelled += 1; };
+  },
+  draw:frame => resetPaints.push(frame),
+});
+resettable.push({revision:7});
+resettable.reset();
+assert.equal(resettable.pending, false);
+assert.equal(resettable.latest, null);
+assert.equal(resetCancelled, 1);
+resettable.push({revision:1});
+assert.equal(resetCallbacks.length, 2);
+resetCallbacks[0]();
+assert.deepEqual(resetPaints, []);
+resetCallbacks[1]();
+assert.deepEqual(resetPaints, [{revision:1}]);
+
+console.log(JSON.stringify({status:'pass', latestWins:true, oneScheduled:true, visibleResume:true, reconnectReset:true}));

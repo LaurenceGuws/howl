@@ -29,6 +29,13 @@ export class LatestFrameScheduler {
     return true;
   }
 
+  reset() {
+    this.cancelScheduled?.();
+    this.pending = false;
+    this.cancelScheduled = null;
+    this.latest = null;
+  }
+
   #arm() {
     this.pending = true;
     this.cancelScheduled = this.schedule(() => {

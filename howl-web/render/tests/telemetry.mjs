@@ -50,7 +50,7 @@ let cleared = false;
 let clock = 0;
 let active = true;
 const probe = new Telemetry({capacity:32, now:() => clock});
-const stop = startEventLoopProbe(probe, {
+const eventLoopProbe = startEventLoopProbe(probe, {
   intervalMs:250,
   reportLagMs:80,
   now:() => clock,
@@ -66,8 +66,12 @@ active = false; clock = 1400; scheduled();
 assert.equal(probe.retained, beforeHidden);
 active = true; clock = 1650; scheduled();
 assert.equal(probe.retained, beforeHidden);
-stop(); assert.equal(cleared, true);
+clock = 5000;
+eventLoopProbe.reset();
+clock = 5250; scheduled();
+assert.equal(probe.retained, beforeHidden);
+eventLoopProbe.stop(); assert.equal(cleared, true);
 telemetry.clear();
 assert.equal(telemetry.retained, 1);
 assert.equal(telemetry.events[0].k, 'telemetry_clear');
-console.log(JSON.stringify({status:'pass', boundedRing:true, exportSchema:true, summarySchema:true, rawTextRefused:true, eventLoopLag:true, hiddenTimerSuppressed:true, clear:true}));
+console.log(JSON.stringify({status:'pass', boundedRing:true, exportSchema:true, summarySchema:true, rawTextRefused:true, eventLoopLag:true, hiddenTimerSuppressed:true, lifecycleReset:true, clear:true}));

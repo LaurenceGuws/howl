@@ -132,6 +132,7 @@ export function startEventLoopProbe(telemetry, {
   isActive = () => true,
 } = {}) {
   let expected = now() + intervalMs;
+  const reset = () => { expected = now() + intervalMs; };
   const timer = setIntervalFn(() => {
     const current = now();
     if (!isActive()) {
@@ -144,7 +145,10 @@ export function startEventLoopProbe(telemetry, {
     expected = current + intervalMs;
     if (lag >= reportLagMs) telemetry.record('event_loop_lag', {ms:Math.round(lag * 10) / 10});
   }, intervalMs);
-  return () => clearIntervalFn(timer);
+  return {
+    reset,
+    stop:() => clearIntervalFn(timer),
+  };
 }
 
 function summarizeNumbers(values) {
