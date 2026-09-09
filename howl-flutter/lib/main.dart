@@ -426,6 +426,24 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     unawaited(_pasteClipboardAsync());
   }
 
+  void _copyVisibleText() {
+    final text = _history.active
+        ? _nativeHistorySemanticText
+        : _nativeLiveSemanticText;
+    if (text.isEmpty) return;
+    unawaited(_copyVisibleTextAsync(text));
+  }
+
+  Future<void> _copyVisibleTextAsync(String text) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } catch (_) {
+      // Clipboard availability is platform/UI state, not terminal failure.
+    } finally {
+      if (mounted && !_stopping) _activateTextInput();
+    }
+  }
+
   Future<void> _pasteClipboardAsync() async {
     try {
       final data = await Clipboard.getData(Clipboard.kTextPlain);
@@ -866,6 +884,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             modifierLatch: _modifierLatch,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
+            onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
           ),
         ],

@@ -11,12 +11,14 @@ final class TerminalControlStrip extends StatelessWidget {
     required this.modifierLatch,
     required this.onModifier,
     required this.onKey,
+    required this.onCopy,
     required this.onPaste,
   });
 
   final int modifierLatch;
   final ValueChanged<int> onModifier;
   final ValueChanged<int> onKey;
+  final VoidCallback onCopy;
   final VoidCallback onPaste;
 
   @override
@@ -34,6 +36,7 @@ final class TerminalControlStrip extends StatelessWidget {
           _key('↓', HowlInput.namedArrowDown),
           _key('↑', HowlInput.namedArrowUp),
           _key('→', HowlInput.namedArrowRight),
+          _action('Copy', onCopy),
           _action('Paste', onPaste),
         ],
       ),

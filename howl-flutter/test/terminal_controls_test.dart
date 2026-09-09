@@ -9,6 +9,7 @@ void main() {
     (tester) async {
       final modifiers = <int>[];
       final keys = <int>[];
+      var copies = 0;
       var pastes = 0;
       await tester.pumpWidget(
         MaterialApp(
@@ -17,6 +18,7 @@ void main() {
               modifierLatch: HowlInput.modifierControl | HowlInput.modifierAlt,
               onModifier: modifiers.add,
               onKey: keys.add,
+              onCopy: () => copies += 1,
               onPaste: () => pastes += 1,
             ),
           ),
@@ -32,6 +34,7 @@ void main() {
         '↓',
         '↑',
         '→',
+        'Copy',
         'Paste',
       ]) {
         expect(find.text(label), findsOneWidget);
@@ -40,12 +43,14 @@ void main() {
       await tester.tap(find.text('Alt'));
       await tester.tap(find.text('Esc'));
       await tester.tap(find.text('→'));
+      await tester.tap(find.text('Copy'));
       await tester.tap(find.text('Paste'));
       expect(modifiers, <int>[
         HowlInput.modifierControl,
         HowlInput.modifierAlt,
       ]);
       expect(keys, <int>[HowlInput.namedEscape, HowlInput.namedArrowRight]);
+      expect(copies, 1);
       expect(pastes, 1);
       expect(HowlInput.maximumPasteBytes, 65535);
 
