@@ -9,9 +9,9 @@ import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
 import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
-import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
+import {LifecycleRecoveryPolicy, reconnectAllowed} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v25';
+const CANARY_GENERATION = 'v26';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -1001,8 +1001,10 @@ reload.addEventListener('click', async () => {
   location.reload();
 });
 
-async function reconnectAll() {
-  if (lifecycleDecision() === 'boot') return;
+async function reconnectAll({manual = false} = {}) {
+  const decision = lifecycleDecision();
+  if (!reconnectAllowed(decision, {manual})) return;
+  const completesBoot = decision === 'boot';
   if (reconnectTask) return reconnectTask;
   telemetry.record('reconnect_start', {observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   reconnectTask = (async () => {
@@ -1018,6 +1020,7 @@ async function reconnectAll() {
     await ensureControl();
     observer = await WireConnection.connect('observer');
     if (previousObserverId && String(observer.clientId) === previousObserverId) throw new Error('observer reconnect reused client identity');
+    if (completesBoot) lifecyclePolicy.activate();
     focusState = null;
     syncFocus();
     status.textContent = 'Observer reconnected; waiting for canonical snapshot…';
@@ -1032,7 +1035,7 @@ async function reconnectAll() {
   }
 }
 
-reconnect.addEventListener('click', () => reconnectAll().catch(fail));
+reconnect.addEventListener('click', () => reconnectAll({manual:true}).catch(fail));
 
 function fail(error) {
   console.error(error);
