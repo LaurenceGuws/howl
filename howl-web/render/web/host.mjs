@@ -11,7 +11,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v24';
+const CANARY_GENERATION = 'v25';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -905,11 +905,13 @@ function scheduleViewportResize() {
         const settled = resizePolicy.settle({decision, controlId, code});
         if (settled === 'ok') {
           if (decision === 'claim') telemetry.record('resize_leader_acquired', {control:controlId});
+          updateFacts();
           return;
         }
         if (settled === 'not_leader') {
           requestedGeometry = null;
           telemetry.record('resize_not_leader', {control:controlId});
+          updateFacts();
           return;
         }
         throw new Error(`resize result ${code}`);
