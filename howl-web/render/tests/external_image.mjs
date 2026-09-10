@@ -42,13 +42,7 @@ while (offset < snapshot.length) {
   const length = snapshot.readUInt32BE(offset + 8);
   const end = offset + 12 + length;
   assert.ok(end <= snapshot.length);
-  if (kind === 23) {
-    // The frozen corpus deliberately carries z=-3. This first renderer lane is
-    // intentionally z>=0, so mutate only that final signed field to z=0 while
-    // preserving the corpus's complete v4 text/graphics framing and identities.
-    snapshot.writeInt32BE(0, end - 4);
-    graphicsFound = true;
-  }
+  if (kind === 23) graphicsFound = true;
   offset = end;
 }
 assert.equal(offset, snapshot.length);
@@ -88,6 +82,8 @@ const frame = JSON.parse(decoder.decode(bytesAt(w.rv_frame_ptr(), w.rv_frame_len
 const pixels = bytesAt(w.rv_pixels_ptr(), w.rv_pixels_len());
 const rgba = frame.commands.filter(command => command.k === 2);
 assert.equal(rgba.length, 1);
+const rgbaIndex = frame.commands.findIndex(command => command.k === 2);
+assert.ok(rgbaIndex > 0); // default background remains below the ordinary negative image
 assert.deepEqual(rgba[0].q.map(String), externalKey);
 assert.deepEqual(rgba[0].z, [2, 2]);
 assert.equal(frame.uploads.some(upload => upload.q.map(String).join(':') === externalKey.join(':')), false);

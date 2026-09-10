@@ -587,8 +587,7 @@ fn takeHostContentUpdate(
         host.image_binding = null;
         return update;
     }
-    if (graphics.images.len != 1 or graphics.placements.len != 1 or
-        graphics.placements[0].z < 0)
+    if (graphics.images.len != 1 or graphics.placements.len != 1)
         return error.InvalidHost;
 
     const image = graphics.images[0];

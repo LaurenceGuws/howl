@@ -147,7 +147,6 @@ pub const ContentError = AtlasError || ShapeCacheError || error{
     InvalidCursorContext,
     InvalidImageBinding,
     ImageLimit,
-    ImageLayerUnsupported,
     InvalidPresentationGeometry,
     CommandLimit,
     ProducerRevisionOverflow,
@@ -244,6 +243,7 @@ const PublishedImage = struct {
 const ProjectedImage = struct {
     published: PublishedImage,
     command: canvas.Input,
+    z: i32,
 };
 
 const AtlasPack = struct {
@@ -505,8 +505,8 @@ pub fn takeContentUpdate(
 
 /// Projects one immutable terminal view plus one exact Host image binding.
 ///
-/// This deliberately narrow first image lane accepts exactly one visible image
-/// and one placement, and only the already-reviewed nonnegative-z paint phase.
+/// This deliberately narrow image lane accepts exactly one visible image and
+/// one placement. Kitty z-index selects one of the three terminal paint phases;
 /// RGBA bytes remain outside Content and Canvas recovery storage.
 pub fn takeContentUpdateWithImageBinding(
     content: *Content,
@@ -609,7 +609,13 @@ fn takeContentUpdateInner(
             impl.external_resources[0] = image.published.external;
             external_count = 1;
         }
-        try appendContentInput(impl.commands, &command_count, image.command);
+        const image_index = if (image.z < content_image_below_background_threshold)
+            projection.default_background_end
+        else if (image.z < 0)
+            projection.background_end
+        else
+            command_count;
+        try insertContentInput(impl.commands, &command_count, image_index, image.command);
         next_published_image = image.published;
     } else if (impl.published_image) |published| {
         impl.removals[0] = .{ .resource = published.external.resource };
@@ -667,6 +673,10 @@ const content_style_invisible: u16 = 1 << 6;
 const content_style_underline: u16 = 1 << 7;
 const content_style_strike: u16 = 1 << 8;
 const maximum_operator_run_cells: usize = 4;
+/// Kitty's deepest image layer is strictly below INT32_MIN/2. That phase is
+/// painted after the terminal default background but before non-default cell
+/// backgrounds. Ordinary negative z remains under foreground content.
+const content_image_below_background_threshold: i32 = std.math.minInt(i32) / 2;
 
 const ContentCellColors = struct {
     foreground: canvas.Color,
@@ -1108,6 +1118,23 @@ fn appendContentInput(
     used.* += 1;
 }
 
+fn insertContentInput(
+    output: []canvas.Input,
+    used: *usize,
+    index: usize,
+    value: canvas.Input,
+) ContentError!void {
+    if (index > used.*) return error.InvalidPresentationGeometry;
+    if (used.* >= output.len) return error.CommandLimit;
+    std.mem.copyBackwards(
+        canvas.Input,
+        output[index + 1 .. used.* + 1],
+        output[index..used.*],
+    );
+    output[index] = value;
+    used.* += 1;
+}
+
 fn appendContentSolid(
     output: []canvas.Input,
     used: *usize,
@@ -1230,6 +1257,8 @@ fn contentLineOffset(metrics: Metrics, cell_size: canvas.Size) i64 {
 
 const ContentProjection = struct {
     command_count: usize,
+    default_background_end: usize,
+    background_end: usize,
     has_raster: bool,
 };
 
@@ -1261,9 +1290,10 @@ fn buildContentCommands(
     const line_offset = contentLineOffset(metrics, cell_size);
     var used: usize = 0;
     try appendContentSolid(output, &used, whole, whole, default_background);
+    const default_background_end = used;
 
-    // Preserve terminal paint ordering: all backgrounds and decorations are
-    // established before any glyph mask can overlap a later cell.
+    // Cell backgrounds are a distinct Kitty graphics boundary: the deepest
+    // image phase sits between the default background and these overrides.
     for (rows, 0..) |row, row_index| {
         const first = @as(usize, row.cell_offset);
         const count = @as(usize, row.cell_count);
@@ -1285,9 +1315,24 @@ fn buildContentCommands(
                     cell_size,
                     surface,
                 );
+        }
+    }
+    const background_end = used;
+
+    // Decorations are foreground content. Ordinary negative-z images must sit
+    // below them together with glyphs, not above them as if they were cells.
+    for (rows, 0..) |row, row_index| {
+        const first = @as(usize, row.cell_offset);
+        const count = @as(usize, row.cell_count);
+        const end = std.math.add(usize, first, count) catch return error.InvalidView;
+        if (end > cells.len or count != begin.columns) return error.InvalidView;
+        const line_columns = try contentLineColumnCount(begin.columns, row.line_geometry);
+        for (cells[first..][0..line_columns], 0..) |cell, column| {
             if (cell.scalar_count == 0 or cell.x != 0 or cell.y != 0 or
                 cell.style_bits & content_style_invisible != 0)
                 continue;
+            const colors = try contentCellColors(cell, presentation);
+            const physical = try contentCellRect(row_index, column, cell_size);
             const sizing = try contentCellSizing(row_index, column, cell, cell_size);
             const clip = sizing.origin;
             if (cell.style_bits & content_style_underline != 0) {
@@ -1560,7 +1605,12 @@ fn buildContentCommands(
             }
         }
     }
-    return .{ .command_count = used, .has_raster = has_raster };
+    return .{
+        .command_count = used,
+        .default_background_end = default_background_end,
+        .background_end = background_end,
+        .has_raster = has_raster,
+    };
 }
 
 fn generatedSizing(cell: View.Cell) generated.BoxDrawingSizing {
@@ -1639,7 +1689,6 @@ fn projectExternalImage(
     if (binding.image_id != image.image_id or binding.generation != image.generation)
         return error.InvalidImageBinding;
     if (placement.image_id != image.image_id) return error.InvalidView;
-    if (placement.z < 0) return error.ImageLayerUnsupported;
     if (graphics.cell_pixel_width == 0 or graphics.cell_pixel_height == 0)
         return error.InvalidView;
     const image_width = std.math.cast(u16, image.width) orelse
@@ -1738,6 +1787,7 @@ fn projectExternalImage(
                 },
             },
         } },
+        .z = placement.z,
     };
 }
 

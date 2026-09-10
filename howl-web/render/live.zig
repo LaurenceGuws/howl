@@ -343,8 +343,7 @@ fn takeContentUpdate(
         image_binding = null;
         return update;
     }
-    if (graphics.images.len != 1 or graphics.placements.len != 1 or
-        graphics.placements[0].z < 0)
+    if (graphics.images.len != 1 or graphics.placements.len != 1)
         return error.UnsupportedGraphics;
     const image = graphics.images[0];
     const binding = try nextImageBinding(image.image_id, image.generation);

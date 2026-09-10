@@ -311,6 +311,132 @@ test "terminal Canvas emits one Host-bound RGBA image across presentation lattic
     }
 }
 
+test "terminal Canvas places Kitty z phases around cell backgrounds and foreground" {
+    var a = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    cells[0].background = .{ .kind = .rgb, .value = 0x112233 };
+    cells[0].underline_color = .{ .kind = .rgb, .value = 0x445566 };
+    cells[0].style_bits |= (1 << 7) | (1 << 8);
+    var rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &cells,
+    }};
+    var images = [_]client.view.Image{.{
+        .image_id = 7,
+        .generation = 9,
+        .width = 1,
+        .height = 1,
+    }};
+    var placements = [_]client.view.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 3,
+        .row = 0,
+        .column = 0,
+        .source_x = 0,
+        .source_y = 0,
+        .source_width = 1,
+        .source_height = 1,
+        .cell_x = 0,
+        .cell_y = 0,
+        .pixel_width = 10,
+        .pixel_height = 20,
+        .z = 0,
+    }};
+    var source = sourceSnapshot(&rows, 1);
+    source.graphics = .{
+        .generation = 11,
+        .content_generation = 10,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
+        .images = &images,
+        .placements = &placements,
+    };
+    const image_resource = render.canvas.ResourceRef{
+        .resource = try render.canvas.ResourceId.local(2),
+        .generation = @fromBackingInt(1),
+    };
+    const binding = render.terminal.ExternalImageBinding{
+        .image_id = 7,
+        .generation = 9,
+        .resource = image_resource,
+    };
+    const default_background = render.canvas.Color{ .r = 1, .g = 2, .b = 3, .a = 255 };
+    const cell_background = render.canvas.Color{ .r = 0x11, .g = 0x22, .b = 0x33, .a = 255 };
+    const decoration = render.canvas.Color{ .r = 0x44, .g = 0x55, .b = 0x66, .a = 255 };
+    const threshold: i32 = std.math.minInt(i32) / 2;
+    const cases = [_]struct {
+        z: i32,
+        phase: enum { below_cell_background, below_foreground, above_foreground },
+    }{
+        .{ .z = threshold - 1, .phase = .below_cell_background },
+        .{ .z = threshold, .phase = .below_foreground },
+        .{ .z = -1, .phase = .below_foreground },
+        .{ .z = 0, .phase = .above_foreground },
+    };
+
+    for (cases) |case| {
+        placements[0].z = case.z;
+        const view = try client.view.project(std.testing.allocator, &source);
+        defer client.view.deinit(view);
+        const font = try contentFont();
+        defer font.deinit();
+        const content = try render.terminal.initContent(
+            std.testing.allocator,
+            font,
+            contentConfig(16),
+        );
+        defer render.terminal.deinitContent(content);
+        const update = try render.terminal.takeContentUpdateWithImageBinding(
+            content,
+            view,
+            null,
+            binding,
+        );
+
+        var default_index: ?usize = null;
+        var cell_background_index: ?usize = null;
+        var first_decoration_index: ?usize = null;
+        var first_glyph_index: ?usize = null;
+        var image_index: ?usize = null;
+        for (update.commands, 0..) |command, index| switch (command) {
+            .solid => |solid| {
+                if (std.meta.eql(solid.color, default_background) and default_index == null)
+                    default_index = index;
+                if (std.meta.eql(solid.color, cell_background) and cell_background_index == null)
+                    cell_background_index = index;
+                if (std.meta.eql(solid.color, decoration) and first_decoration_index == null)
+                    first_decoration_index = index;
+            },
+            .alpha_mask => {
+                if (first_glyph_index == null) first_glyph_index = index;
+            },
+            .rgba => {
+                image_index = index;
+            },
+        };
+        const default_at = default_index orelse return error.MissingDefaultBackground;
+        const cell_background_at = cell_background_index orelse return error.MissingCellBackground;
+        const decoration_at = first_decoration_index orelse return error.MissingDecoration;
+        const glyph_at = first_glyph_index orelse return error.MissingCanvasAlphaResource;
+        const image_at = image_index orelse return error.MissingCanvasRgbaResource;
+        try std.testing.expect(default_at < cell_background_at);
+        try std.testing.expect(cell_background_at < decoration_at);
+        try std.testing.expect(decoration_at < glyph_at);
+        switch (case.phase) {
+            .below_cell_background => {
+                try std.testing.expect(default_at < image_at);
+                try std.testing.expect(image_at < cell_background_at);
+            },
+            .below_foreground => {
+                try std.testing.expect(cell_background_at < image_at);
+                try std.testing.expect(image_at < decoration_at);
+            },
+            .above_foreground => try std.testing.expect(glyph_at < image_at),
+        }
+    }
+}
+
 test "terminal Canvas keeps image-first and later atlas identities monotonic" {
     var empty_cells = [_]client.rich.Cell{cell(&.{}, 1, 0)};
     var empty_rows = [_]client.rich.Row{.{
