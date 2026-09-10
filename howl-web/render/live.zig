@@ -19,7 +19,7 @@ const residency_capacity = 4;
 var font_input: [8 * 1024 * 1024]u8 = undefined;
 var fallback_font_input: [2 * 1024 * 1024]u8 = undefined;
 var symbol_font_input: [3 * 1024 * 1024]u8 = undefined;
-var snapshot_input: [p.maximum_text_snapshot_bytes]u8 = undefined;
+var snapshot_input: [p.maximum_observation_bytes]u8 = undefined;
 var persistent_heap: [24 * 1024 * 1024]u8 = undefined;
 var transient_heap: [20 * 1024 * 1024]u8 = undefined;
 var metadata: [2 * 1024 * 1024]u8 = undefined;
@@ -33,6 +33,9 @@ var accepted_residency: [residency_capacity]canvas.Residency = undefined;
 var accepted_residency_count: usize = 0;
 var pending_residency: [residency_capacity]canvas.Residency = undefined;
 var pending_residency_count: usize = 0;
+var missing_external_storage: [1]canvas.FrameExternalResource = undefined;
+var missing_external: ?canvas.FrameExternalResource = null;
+var image_binding: ?ImageBinding = null;
 var pending_ack = false;
 var failure: []const u8 = "";
 
@@ -46,6 +49,17 @@ var producer: canvas.SourceId = @fromBackingInt(0);
 var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
 var surface: canvas.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
+
+const ImageBinding = struct {
+    image_id: u32,
+    generation: u64,
+    resource: canvas.ResourceRef,
+};
+
+const RenderResult = enum {
+    frame,
+    external,
+};
 
 export fn rv_font_ptr() usize {
     return @intFromPtr(&font_input);
@@ -95,6 +109,36 @@ export fn rv_render_count() u64 {
 export fn rv_ready() u32 {
     return @intFromBool(composer_ready);
 }
+export fn rv_missing_external() u32 {
+    return @intFromBool(missing_external != null);
+}
+export fn rv_missing_source() u64 {
+    return if (missing_external) |value| @backingInt(value.resource.source) else 0;
+}
+export fn rv_missing_resource() u64 {
+    return if (missing_external) |value| @backingInt(value.resource.resource) else 0;
+}
+export fn rv_missing_generation() u64 {
+    return if (missing_external) |value| @backingInt(value.resource.generation) else 0;
+}
+export fn rv_missing_format() u32 {
+    return if (missing_external) |value| @backingInt(value.format) else 0;
+}
+export fn rv_missing_width() u32 {
+    return if (missing_external) |value| value.size.width else 0;
+}
+export fn rv_missing_height() u32 {
+    return if (missing_external) |value| value.size.height else 0;
+}
+export fn rv_missing_stride() usize {
+    return if (missing_external) |value| value.stride else 0;
+}
+export fn rv_missing_image_id() u32 {
+    return if (missing_external != null and image_binding != null) image_binding.?.image_id else 0;
+}
+export fn rv_missing_image_generation() u64 {
+    return if (missing_external != null and image_binding != null) image_binding.?.generation else 0;
+}
 
 fn fail(message: []const u8) u32 {
     failure = message;
@@ -111,6 +155,8 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     transient.reset();
     accepted_residency_count = 0;
     pending_residency_count = 0;
+    missing_external = null;
+    image_binding = null;
     pending_ack = false;
     rendered = 0;
     failure = "";
@@ -186,6 +232,8 @@ export fn rv_reset() u32 {
     transient.reset();
     accepted_residency_count = 0;
     pending_residency_count = 0;
+    missing_external = null;
+    image_binding = null;
     pending_ack = false;
     metadata_used = 0;
     pixels_used = 0;
@@ -200,11 +248,15 @@ export fn rv_render(snapshot_length: usize) u32 {
     failure = "";
     metadata_used = 0;
     pixels_used = 0;
-    renderSnapshot(snapshot_input[0..snapshot_length]) catch |err| return fail(@errorName(err));
-    return 1;
+    missing_external = null;
+    const result = renderSnapshot(snapshot_input[0..snapshot_length]) catch |err| return fail(@errorName(err));
+    return switch (result) {
+        .frame => 1,
+        .external => 2,
+    };
 }
 
-fn renderSnapshot(bytes: []const u8) !void {
+fn renderSnapshot(bytes: []const u8) !RenderResult {
     transient.reset();
     defer transient.reset();
     const allocator = transient.allocator();
@@ -214,12 +266,13 @@ fn renderSnapshot(bytes: []const u8) !void {
     defer client.view.deinit(view);
     const begin = client.view.begin(view);
     const next_render = std.math.add(u64, rendered, 1) catch return error.RenderRevisionOverflow;
-    const update = try render.terminal.takeContentUpdate(content.?, view, .{
+    const cursor = render.terminal.CursorContext{
         .pane = 1,
         .source = producer,
         .visible_set_revision = next_render,
         .lifecycle_revision = 1,
-    });
+    };
+    const update = try takeContentUpdate(view, cursor);
     try composer.apply(producer, update);
     surface = .{
         .width = std.math.mul(u16, begin.columns, cell_size.width) catch return error.SurfaceOverflow,
@@ -234,17 +287,126 @@ fn renderSnapshot(bytes: []const u8) !void {
         }},
         .focused_source = producer,
     });
-    const frame = try composer.frame(accepted_residency[0..accepted_residency_count], .{
+    const frame = composer.frame(accepted_residency[0..accepted_residency_count], .{
         .uploads = &frame_uploads,
         .removals = &frame_removals,
         .commands = &frame_commands,
         .pixels = &pixels,
-    });
+    }) catch |err| switch (err) {
+        error.MissingExternalResource => {
+            try prepareMissingExternal();
+            return .external;
+        },
+        else => return err,
+    };
     pixels_used = frame.pixels.len;
     try collectPendingResidency(frame.commands);
     try writeFrame(frame, begin.revision, begin.terminal_revision, next_render);
     rendered = next_render;
     pending_ack = true;
+    return .frame;
+}
+
+/// Installs the exact externally uploaded resource currently requested by
+/// `rv_render`. The browser calls this only after its backend resource exists.
+export fn rv_accept_external() u32 {
+    if (!composer_ready or pending_ack) return 0;
+    const value = missing_external orelse return 0;
+    const residency = canvas.Residency{
+        .resource = value.resource,
+        .format = value.format,
+        .size = value.size,
+    };
+    for (accepted_residency[0..accepted_residency_count]) |*current| {
+        if (@backingInt(current.resource.source) == @backingInt(residency.resource.source) and
+            @backingInt(current.resource.resource) == @backingInt(residency.resource.resource))
+        {
+            current.* = residency;
+            missing_external = null;
+            return 1;
+        }
+    }
+    if (accepted_residency_count == accepted_residency.len) return 0;
+    accepted_residency[accepted_residency_count] = residency;
+    accepted_residency_count += 1;
+    missing_external = null;
+    return 1;
+}
+
+fn takeContentUpdate(
+    view: *const client.view.Snapshot,
+    cursor: render.terminal.CursorContext,
+) !canvas.ProducerUpdate {
+    const graphics = client.view.graphics(view);
+    if (graphics.images.len == 0 and graphics.placements.len == 0) {
+        const update = try render.terminal.takeContentUpdate(content.?, view, cursor);
+        image_binding = null;
+        return update;
+    }
+    if (graphics.images.len != 1 or graphics.placements.len != 1 or
+        graphics.placements[0].z < 0)
+        return error.UnsupportedGraphics;
+    const image = graphics.images[0];
+    const binding = try nextImageBinding(image.image_id, image.generation);
+    const update = try render.terminal.takeContentUpdateWithImageBinding(
+        content.?,
+        view,
+        cursor,
+        .{
+            .image_id = binding.image_id,
+            .generation = binding.generation,
+            .resource = binding.resource,
+        },
+    );
+    image_binding = binding;
+    return update;
+}
+
+fn nextImageBinding(image_id_value: u32, generation: u64) !ImageBinding {
+    if (image_id_value == 0 or generation == 0) return error.InvalidImageBinding;
+    if (image_binding) |current| {
+        if (current.image_id == image_id_value and current.generation == generation)
+            return current;
+        if (current.image_id == image_id_value and generation > current.generation) {
+            return .{
+                .image_id = image_id_value,
+                .generation = generation,
+                .resource = .{
+                    .resource = current.resource.resource,
+                    .generation = @fromBackingInt(@intCast(generation)),
+                },
+            };
+        }
+    }
+    const usage = render.terminal.contentUsage(content.?);
+    const reserve: u64 = if (usage.resource_generation == 0) 2 else 1;
+    const identity = std.math.add(u64, usage.resource_high_water, reserve) catch
+        return error.ResourceIdentityOverflow;
+    if (identity == 0 or identity > canvas.ResourceId.max_identity)
+        return error.ResourceIdentityOverflow;
+    return .{
+        .image_id = image_id_value,
+        .generation = generation,
+        .resource = .{
+            .resource = canvas.ResourceId.local(identity) catch
+                return error.ResourceIdentityOverflow,
+            .generation = @fromBackingInt(@intCast(generation)),
+        },
+    };
+}
+
+fn prepareMissingExternal() !void {
+    const missing = try composer.missingExternalResources(
+        accepted_residency[0..accepted_residency_count],
+        &missing_external_storage,
+    );
+    if (missing.len != 1) return error.InvalidExternalResource;
+    const binding = image_binding orelse return error.InvalidExternalResource;
+    const expected = canvas.FrameResourceRef.local(producer, binding.resource) catch
+        return error.InvalidExternalResource;
+    if (!std.meta.eql(expected, missing[0].resource) or missing[0].format != .rgba8)
+        return error.InvalidExternalResource;
+    missing_external = missing[0];
 }
 
 export fn rv_ack() u32 {

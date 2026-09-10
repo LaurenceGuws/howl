@@ -64,13 +64,17 @@ pub fn build(b: *std.Build) void {
     live_root.addImport("howl_client", client_module);
     live_root.addImport("howl_render", render.module("howl_render"));
     live_root.export_symbol_names = &.{
-        "rv_font_ptr",               "rv_font_capacity", "rv_fallback_font_ptr",
-        "rv_fallback_font_capacity", "rv_symbol_font_ptr", "rv_symbol_font_capacity",
-        "rv_snapshot_ptr",           "rv_snapshot_capacity",
-        "rv_frame_ptr",              "rv_frame_len",     "rv_pixels_ptr",
-        "rv_pixels_len",             "rv_error_ptr",     "rv_error_len",
-        "rv_render_count",           "rv_ready",         "rv_init",
-        "rv_reset",                  "rv_render",        "rv_ack",
+        "rv_font_ptr",               "rv_font_capacity",     "rv_fallback_font_ptr",
+        "rv_fallback_font_capacity", "rv_symbol_font_ptr",   "rv_symbol_font_capacity",
+        "rv_snapshot_ptr",           "rv_snapshot_capacity", "rv_frame_ptr",
+        "rv_frame_len",              "rv_pixels_ptr",        "rv_pixels_len",
+        "rv_error_ptr",              "rv_error_len",         "rv_render_count",
+        "rv_ready",                  "rv_init",              "rv_missing_external",
+        "rv_missing_source",         "rv_missing_resource",  "rv_missing_generation",
+        "rv_missing_format",         "rv_missing_width",     "rv_missing_height",
+        "rv_missing_stride",         "rv_missing_image_id",  "rv_missing_image_generation",
+        "rv_accept_external",        "rv_reset",             "rv_render",
+        "rv_ack",
     };
     const live = b.addExecutable(.{ .name = "howl-live-render", .root_module = live_root });
     live.entry = .disabled;
@@ -81,6 +85,14 @@ pub fn build(b: *std.Build) void {
 
     // The accepted check compiles both the synthetic proof and the live renderer.
     check.dependOn(&live.step);
+    const external_image_test = b.addSystemCommand(&.{ "node", "tests/external_image.mjs" });
+    external_image_test.setCwd(b.path("."));
+    external_image_test.addFileArg(live.getEmittedBin());
+    external_image_test.addFileArg(text.path("testdata/primary.ttf"));
+    external_image_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    external_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    external_image_test.setName("live renderer external image residency");
+    check.dependOn(&external_image_test.step);
     const asset_contract_test = b.addSystemCommand(&.{ "node", "tests/asset_contract.mjs" });
     asset_contract_test.setCwd(b.path("."));
     asset_contract_test.setName("browser module asset contract");
