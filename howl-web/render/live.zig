@@ -134,6 +134,10 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     const metrics = new_fonts.metrics();
     const new_content = render.terminal.initContent(allocator, new_fonts, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
         .shape_cache = .{
             .entry_capacity = 4096,
             .scalar_capacity = 32768,

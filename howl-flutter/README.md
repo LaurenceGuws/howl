@@ -115,6 +115,17 @@ node discloses that its visible-text projection was truncated.
 
 ## Linux
 
+For an interactive Home/Linux comparison against the same local PTY as the Web
+client, run from the repository root:
+
+```sh
+./tools/run-linux-canary.sh both
+```
+
+`flutter` and `web` are also accepted as single-client modes. The helper uses
+Flutter 3.47.2, starts only loopback listeners, and stops its session/gateway
+and Flutter process on Ctrl-C.
+
 Build the native host first, then the normal Flutter bundle:
 
 ```sh

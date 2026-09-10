@@ -66,8 +66,8 @@ fn cell(scalars: []const u32) client.rich.Cell {
         .height = 1,
         .x = 0,
         .y = 0,
-        .subscale_n = 1,
-        .subscale_d = 1,
+        .subscale_n = 0,
+        .subscale_d = 0,
         .vertical_align = 0,
         .horizontal_align = 0,
         .semantic_width = false,
@@ -114,10 +114,12 @@ fn execute(font_input: []u8) !void {
     var c = [_]u32{'i'};
     var d = [_]u32{ 'e', 0x0301 };
     var e = [_]u32{0x03bb};
+    var box = [_]u32{0x2500};
     const empty: []const u32 = &.{};
     var cells = [_]client.rich.Cell{
-        cell(&a), cell(&b),    cell(&c), cell(empty),
-        cell(&d), cell(empty), cell(&e), cell(empty),
+        cell(&a),   cell(&b),    cell(&c), cell(empty),
+        cell(&d),   cell(empty), cell(&e), cell(empty),
+        cell(&box),
     };
     var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
     var source = client.rich.Snapshot{
@@ -150,6 +152,10 @@ fn execute(font_input: []u8) !void {
 
     const content = try render.terminal.initContent(allocator, fonts, .{
         .cell_size = .{ .width = metrics.advance_width, .height = metrics.line_height },
+        .box_drawing = .{
+            .dpi_x = .{ .numerator = 96, .denominator = 1 },
+            .dpi_y = .{ .numerator = 96, .denominator = 1 },
+        },
         .shape_cache = .{ .entry_capacity = 32, .scalar_capacity = 64, .glyph_capacity = 64, .max_sequence_scalars = 16 },
         .atlas = .{ .width = 256, .height = 256, .entry_capacity = 64 },
         .shaped_capacity = 64,

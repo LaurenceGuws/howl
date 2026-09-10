@@ -47,7 +47,8 @@ final class _AtlasSegment extends _PaintSegment {
       transforms,
       rects,
       colors,
-      ui.BlendMode.dstIn,
+      // Per-sprite foreground is the source; atlas coverage is the mask.
+      ui.BlendMode.srcIn,
       null,
       ui.Paint(),
     );

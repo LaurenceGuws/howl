@@ -92,6 +92,17 @@ is retained as the narrower WebKit/PWA platform canary.
 
 ## Build and check
 
+For a local Linux PWA/Flutter comparison against one shared interactive PTY,
+run from the repository root:
+
+```sh
+./tools/run-linux-canary.sh both
+```
+
+Use `web` to launch only the browser lane. The local PWA origin is kept stable
+at `http://127.0.0.1:43129/`; the helper binds loopback only and tears down its
+session and gateway on Ctrl-C.
+
 Use the workspace `.zigversion` compiler, Node.js and Python 3 standard library:
 
 ```sh
