@@ -27,9 +27,11 @@ authentication authority, matching Remoter's established tunnel boundary. The
 origin is not independently exposed on any network interface.
 
 At most six simultaneous WebSockets are admitted. One Howl Web page uses two
-steady sockets (live observation + control) and may lazily use a third for
-canonical history, so this bounded budget permits a normal two-page or
-Safari-to-standalone handoff without making browser transport unbounded. One
+steady sockets (live observation + control), lazily adds a third while terminal
+image resources are resident, and may use a fourth only while canonical history
+is active. Six therefore still permits a normal two-page/Safari-to-standalone
+handoff with image resources, while history during such a handoff remains an
+explicit bounded capacity edge rather than silently growing transport. One
 message is at most 64 KiB, one connection may send
 at most 1 MiB and receive at most 8 MiB, and upstream reads are emitted as at
 most 16 KiB binary WebSocket messages. Text and fragmented browser messages fail

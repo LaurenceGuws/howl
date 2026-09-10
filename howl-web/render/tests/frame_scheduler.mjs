@@ -62,4 +62,29 @@ assert.deepEqual(resetPaints, []);
 resetCallbacks[1]();
 assert.deepEqual(resetPaints, [{revision:1}]);
 
-console.log(JSON.stringify({status:'pass', latestWins:true, oneScheduled:true, visibleResume:true, reconnectReset:true}));
+const asyncCallbacks = [];
+const asyncPaints = [];
+let releaseAsync;
+const asyncDraw = new Promise(resolve => { releaseAsync = resolve; });
+const asynchronous = new LatestFrameScheduler({
+  schedule:callback => asyncCallbacks.push(callback),
+  draw:async frame => {
+    asyncPaints.push(frame);
+    await asyncDraw;
+  },
+});
+asynchronous.push({revision:8});
+asyncCallbacks.shift()();
+assert.equal(asynchronous.drawing, true);
+asynchronous.push({revision:9});
+asynchronous.push({revision:10});
+assert.equal(asyncCallbacks.length, 0);
+releaseAsync();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(asynchronous.drawing, false);
+assert.equal(asyncCallbacks.length, 1);
+asyncCallbacks.shift()();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.deepEqual(asyncPaints, [{revision:8},{revision:10}]);
+
+console.log(JSON.stringify({status:'pass', latestWins:true, oneScheduled:true, visibleResume:true, reconnectReset:true, asyncCoalescing:true}));

@@ -2,18 +2,21 @@
 // complete canonical snapshots arrive before that callback, only the newest is
 // painted. Canonical observation remains outside this client-local presentation seam.
 export class LatestFrameScheduler {
-  constructor({schedule, draw}) {
+  constructor({schedule, draw, onError = error => { throw error; }}) {
     if (typeof schedule !== 'function' || typeof draw !== 'function') throw new Error('frame scheduler requires callbacks');
+    if (typeof onError !== 'function') throw new Error('frame scheduler error handler must be callable');
     this.schedule = schedule;
     this.draw = draw;
+    this.onError = onError;
     this.pending = false;
+    this.drawing = false;
     this.latest = null;
     this.cancelScheduled = null;
   }
 
   push(frame) {
     this.latest = frame;
-    if (this.pending) return;
+    if (this.pending || this.drawing) return;
     this.#arm();
   }
 
@@ -43,7 +46,16 @@ export class LatestFrameScheduler {
       this.cancelScheduled = null;
       const latest = this.latest;
       this.latest = null;
-      if (latest != null) this.draw(latest);
+      if (latest == null) return;
+      const result = this.draw(latest);
+      if (result == null || typeof result.then !== 'function') return;
+      this.drawing = true;
+      Promise.resolve(result)
+        .catch(error => this.onError(error))
+        .finally(() => {
+          this.drawing = false;
+          if (this.latest != null && !this.pending) this.#arm();
+        });
     });
   }
 }

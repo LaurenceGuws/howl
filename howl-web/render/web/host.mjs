@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v30';
+const CANARY_GENERATION = 'v31';
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -45,6 +45,7 @@ let renderer;
 let observer;
 let historyObserver;
 let control;
+let imageConnection;
 let previousObserverId = null;
 let lastFrame = null;
 let latestLiveSnapshot = null;
@@ -59,7 +60,16 @@ let lastInput = '';
 const telemetry = new Telemetry({capacity:768});
 const liveFrameScheduler = new LatestFrameScheduler({
   schedule:callback => scheduleDisplay(callback, {onWinner:source => telemetry.record('frame_tick', {source})}),
-  draw:frame => { if (!history.active) renderSnapshotBytes(frame.snapshot, frame.clientId, 'live'); },
+  draw:frame => history.active
+    ? null
+    : renderSnapshotBytes(
+      frame.snapshot,
+      frame.clientId,
+      'live',
+      () => !history.active && latestLiveSnapshot === frame.snapshot &&
+        String(observer?.clientId ?? '') === String(frame.clientId),
+    ),
+  onError:fail,
 });
 const resizePolicy = new ResizePolicy();
 const lifecyclePolicy = new LifecycleRecoveryPolicy();
@@ -100,6 +110,7 @@ function telemetryContext() {
     dpr: devicePixelRatio,
     observer_client: observer?.clientId ? String(observer.clientId) : null,
     control_client: control?.clientId ? String(control.clientId) : null,
+    image_client: imageConnection?.clientId ? String(imageConnection.clientId) : null,
   };
 }
 
@@ -217,6 +228,26 @@ class WireConnection {
     if (this.exports.hw_observe(immediate ? 1 : 0, historyOffset) !== 1) throw new Error(`${this.role}: observe rejected`);
     this.sendOutput();
   }
+  async image(imageId, generation) {
+    if (this.closed || !this.socket || this.socket.readyState !== WebSocket.OPEN) throw new Error(`${this.role}: connection is not available`);
+    try {
+      if (this.exports.hw_request_image(imageId, generation) !== 1) throw new Error(`${this.role}: image request rejected`);
+      this.sendOutput();
+      await this.waitForPhase(8);
+      const result = {
+        imageId:Number(this.exports.hw_image_id()),
+        generation:this.exports.hw_image_generation(),
+        width:Number(this.exports.hw_image_width()),
+        height:Number(this.exports.hw_image_height()),
+        pixels:bytesAt(this.exports.memory, this.exports.hw_image_ptr(), this.exports.hw_image_len()).slice(),
+      };
+      if (this.exports.hw_release_image() !== 1) throw new Error(`${this.role}: image release failed`);
+      return result;
+    } catch (error) {
+      this.close();
+      throw error;
+    }
+  }
   stage(value) {
     const bytes = encoder.encode(value);
     if (bytes.length === 0 || bytes.length > 4096 || bytes.length > this.exports.hw_input_capacity())
@@ -300,6 +331,13 @@ async function ensureControl() {
   return control;
 }
 
+async function ensureImageConnection() {
+  if (imageConnection && !imageConnection.closed && imageConnection.socket?.readyState === WebSocket.OPEN) return imageConnection;
+  imageConnection = await WireConnection.connect('image');
+  updateFacts();
+  return imageConnection;
+}
+
 function queueControl(run, kind = 'control') {
   return controlQueue.operation(async () => run(await ensureControl()), kind);
 }
@@ -378,51 +416,156 @@ function snapshotCopy(connection) {
   return bytesAt(wire.memory, wire.hw_snapshot_ptr(), length).slice();
 }
 
-function renderSnapshotBytes(snapshot, clientId, mode) {
+let renderTail = Promise.resolve();
+
+function rendererMissingExternal() {
+  if (renderer.exports.rv_missing_external() !== 1) return null;
+  const q = [
+    renderer.exports.rv_missing_source(),
+    renderer.exports.rv_missing_resource(),
+    renderer.exports.rv_missing_generation(),
+  ];
+  const value = {
+    q,
+    key:resourceKey(q),
+    format:Number(renderer.exports.rv_missing_format()),
+    width:Number(renderer.exports.rv_missing_width()),
+    height:Number(renderer.exports.rv_missing_height()),
+    stride:Number(renderer.exports.rv_missing_stride()),
+    imageId:Number(renderer.exports.rv_missing_image_id()),
+    imageGeneration:renderer.exports.rv_missing_image_generation(),
+  };
+  if (value.q.some(part => part === 0n) || value.format !== 1 || value.width <= 0 || value.height <= 0 ||
+      value.stride !== value.width * 4 || value.imageId <= 0 || value.imageGeneration === 0n) {
+    throw new Error('renderer exposed invalid external image request');
+  }
+  return value;
+}
+
+function externalResourceMatches(resource, missing) {
+  return resource?.format === missing.format && resource.width === missing.width &&
+    resource.height === missing.height && resource.stride === missing.stride;
+}
+
+async function ensureExternalResource(missing) {
+  const existing = resources.get(missing.key);
+  if (existing) {
+    if (!externalResourceMatches(existing, missing)) throw new Error(`backend resource metadata changed for ${missing.key}`);
+    return {bytes:0, ms:0, reused:true};
+  }
+  const started = performance.now();
+  const connection = await ensureImageConnection();
+  const image = await connection.image(missing.imageId, missing.imageGeneration);
+  if (image.imageId !== missing.imageId || image.generation !== missing.imageGeneration ||
+      image.width !== missing.width || image.height !== missing.height ||
+      image.pixels.length !== missing.stride * missing.height) {
+    throw new Error(`terminal image refill does not match Canvas external ${missing.key}`);
+  }
+  const upload = {
+    q:missing.q, f:missing.format, z:[missing.width, missing.height],
+    o:0, n:image.pixels.length, stride:missing.stride,
+  };
+  resources.set(missing.key, createResource(upload, image.pixels));
+  const ms = performance.now() - started;
+  telemetry.record('image_refill', {
+    image_id:missing.imageId,
+    image_generation:String(missing.imageGeneration),
+    canvas_resource:missing.key,
+    bytes:image.pixels.length,
+    ms:Math.round(ms * 10) / 10,
+  });
+  updateFacts();
+  return {bytes:image.pixels.length, ms, reused:false};
+}
+
+function renderSnapshotBytes(snapshot, clientId, mode, stillCurrent = () => true) {
+  const run = renderTail.then(() => renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent));
+  renderTail = run.catch(() => {});
+  return run;
+}
+
+async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent) {
+  if (!stillCurrent()) return;
   const renderStarted = performance.now();
   const renderGap = lastRenderTelemetryAt == null ? null : renderStarted - lastRenderTelemetryAt;
   lastRenderTelemetryAt = renderStarted;
   if (snapshot.length === 0 || snapshot.length > renderer.exports.rv_snapshot_capacity()) throw new Error('snapshot exceeds renderer input bound');
-  bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
-  const wasmStarted = performance.now();
-  if (renderer.exports.rv_render(snapshot.length) !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
-  const wasmFinished = performance.now();
-  const metadataStarted = performance.now();
-  const metadata = JSON.parse(decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len())));
-  const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
-  const metadataFinished = performance.now();
-  const canvas = drawFrame(metadata, pixelBytes);
-  const drawFinished = performance.now();
-  if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
-  const ackFinished = performance.now();
-  lastFrame = {...metadata, observer:String(clientId), mode};
-  if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
-      metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
-  status.textContent = mode === 'history'
-    ? `HISTORY: ${history.targetOffset} rows above live`
-    : 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
-  telemetry.record('render', {
-    mode, ms:Math.round((ackFinished - renderStarted) * 10) / 10,
-    wasm_ms:Math.round((wasmFinished - wasmStarted) * 10) / 10,
-    metadata_ms:Math.round((metadataFinished - metadataStarted) * 10) / 10,
-    canvas_ms:Math.round((drawFinished - metadataFinished) * 10) / 10,
-    ack_ms:Math.round((ackFinished - drawFinished) * 10) / 10,
-    gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
-    commands:metadata.commands.length, uploads:metadata.uploads.length,
-    upload_ms:canvas.upload_ms, draw_commands_ms:canvas.draw_commands_ms,
-    surface_ms:canvas.surface_ms, retire_ms:canvas.retire_ms,
-    upload_bytes:canvas.upload_bytes, upload_pixels:canvas.upload_pixels,
-    max_upload_pixels:canvas.max_upload_pixels, surface_resized:canvas.surface_resized,
-    solid_commands:canvas.solid_commands, alpha_commands:canvas.alpha_commands, image_commands:canvas.image_commands,
-    scratch:[alphaScratch.width, alphaScratch.height],
-    terminal:String(metadata.terminal), observation:String(metadata.observation),
-  });
-  if (mode === 'live') scheduleViewportResize();
-  updateFacts();
+  let externalBytes = 0;
+  let externalMs = 0;
+  let externalReused = false;
+  let wasmMs = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
+    const wasmStarted = performance.now();
+    const result = renderer.exports.rv_render(snapshot.length);
+    wasmMs += performance.now() - wasmStarted;
+    if (result === 2) {
+      const missing = rendererMissingExternal();
+      if (!missing) throw new Error('renderer requested external image without exact metadata');
+      let refill;
+      try {
+        refill = await ensureExternalResource(missing);
+      } catch (error) {
+        if (!stillCurrent()) return;
+        throw error;
+      }
+      externalBytes += refill.bytes;
+      externalMs += refill.ms;
+      externalReused ||= refill.reused;
+      if (!stillCurrent()) return;
+      const current = rendererMissingExternal();
+      if (!current || current.key !== missing.key || current.imageId !== missing.imageId ||
+          current.imageGeneration !== missing.imageGeneration) {
+        throw new Error('renderer external image request changed during refill');
+      }
+      if (renderer.exports.rv_accept_external() !== 1) throw new Error(errorText(renderer.exports) || 'renderer external residency rejected');
+      continue;
+    }
+    if (result !== 1) throw new Error(errorText(renderer.exports) || 'terminal renderer failed');
+    if (!stillCurrent()) return;
+
+    const metadataStarted = performance.now();
+    const metadata = JSON.parse(decoder.decode(bytesAt(renderer.exports.memory, renderer.exports.rv_frame_ptr(), renderer.exports.rv_frame_len())));
+    const pixelBytes = bytesAt(renderer.exports.memory, renderer.exports.rv_pixels_ptr(), renderer.exports.rv_pixels_len()).slice();
+    const metadataFinished = performance.now();
+    const canvas = drawFrame(metadata, pixelBytes);
+    const drawFinished = performance.now();
+    if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
+    const ackFinished = performance.now();
+    lastFrame = {...metadata, observer:String(clientId), mode};
+    if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
+        metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
+    status.textContent = mode === 'history'
+      ? `HISTORY: ${history.targetOffset} rows above live`
+      : 'LIVE: canonical Howl snapshot rendered by the shared Zig pipeline';
+    telemetry.record('render', {
+      mode, ms:Math.round((ackFinished - renderStarted) * 10) / 10,
+      wasm_ms:Math.round(wasmMs * 10) / 10,
+      metadata_ms:Math.round((metadataFinished - metadataStarted) * 10) / 10,
+      canvas_ms:Math.round((drawFinished - metadataFinished) * 10) / 10,
+      ack_ms:Math.round((ackFinished - drawFinished) * 10) / 10,
+      external_ms:Math.round(externalMs * 10) / 10,
+      external_bytes:externalBytes,
+      external_reused:externalReused,
+      gap_ms:renderGap == null ? null : Math.round(renderGap * 10) / 10,
+      commands:metadata.commands.length, uploads:metadata.uploads.length,
+      upload_ms:canvas.upload_ms, draw_commands_ms:canvas.draw_commands_ms,
+      surface_ms:canvas.surface_ms, retire_ms:canvas.retire_ms,
+      upload_bytes:canvas.upload_bytes, upload_pixels:canvas.upload_pixels,
+      max_upload_pixels:canvas.max_upload_pixels, surface_resized:canvas.surface_resized,
+      solid_commands:canvas.solid_commands, alpha_commands:canvas.alpha_commands, image_commands:canvas.image_commands,
+      scratch:[alphaScratch.width, alphaScratch.height],
+      terminal:String(metadata.terminal), observation:String(metadata.observation),
+    });
+    if (mode === 'live') scheduleViewportResize();
+    updateFacts();
+    return;
+  }
+  throw new Error('renderer external image retry limit exceeded');
 }
 
 function renderLatestLive() {
-  if (latestLiveSnapshot) renderSnapshotBytes(latestLiveSnapshot, latestLiveClientId, 'live');
+  if (latestLiveSnapshot) liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
 }
 
 function handleLiveSnapshot(connection) {
@@ -472,7 +615,12 @@ async function drainHistorySnapshots() {
         leaveHistory();
         continue;
       }
-      renderSnapshotBytes(snapshotCopy(connection), connection.clientId ?? connection.exports.hw_identity(), 'history');
+      await renderSnapshotBytes(
+        snapshotCopy(connection),
+        connection.clientId ?? connection.exports.hw_identity(),
+        'history',
+        () => history.active && generation === historyGeneration,
+      );
     }
   } catch (error) {
     if (history.active) {
@@ -1002,8 +1150,10 @@ function updateFacts() {
     previous_observer_client: previousObserverId,
     history_observer_client: historyObserver?.clientId ? String(historyObserver.clientId) : null,
     control_client: control?.clientId ? String(control.clientId) : null,
+    image_client: imageConnection?.clientId ? String(imageConnection.clientId) : null,
     observer_phase: observer?.exports.hw_phase() ?? null,
     control_phase: control?.exports.hw_phase() ?? null,
+    image_phase: imageConnection?.exports.hw_phase() ?? null,
     observation_revision: observer ? String(observer.exports.hw_revision()) : null,
     terminal_revision: observer ? String(observer.exports.hw_terminal_revision()) : null,
     history_active: history.active,
@@ -1086,6 +1236,7 @@ async function reconnectAll({manual = false} = {}) {
     historyGeneration += 1;
     historyRequestPending = false;
     if (historyObserver) { await historyObserver.closeAndWait(); historyObserver = null; }
+    if (imageConnection) { await imageConnection.closeAndWait(); imageConnection = null; }
     if (observer) {
       previousObserverId = observer.clientId ? String(observer.clientId) : null;
       await observer.closeAndWait();
