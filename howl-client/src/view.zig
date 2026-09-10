@@ -61,12 +61,14 @@ pub const Hyperlink = struct {
 pub const Graphics = struct {
     generation: u64,
     content_generation: u64,
+    cell_pixel_width: u32,
+    cell_pixel_height: u32,
     images: []const Image,
     placements: []const ImagePlacement,
 };
 
 const maximum_view_bytes = protocol.maximum_text_snapshot_bytes * 2 +
-    protocol.graphics_v1.maximum_manifest_bytes * 2;
+    protocol.graphics_v2.maximum_manifest_bytes * 2;
 
 const Impl = struct {
     allocator: std.mem.Allocator,
@@ -88,6 +90,8 @@ const Impl = struct {
     placement_count: usize,
     graphics_generation: u64,
     graphics_content_generation: u64,
+    graphics_cell_pixel_width: u32,
+    graphics_cell_pixel_height: u32,
     begin: Begin,
     presentation: Presentation,
 };
@@ -106,7 +110,7 @@ comptime {
         protocol.text_v1.record_header_bytes + protocol.text_v1.hyperlink_header_bytes;
     const fixed_wire = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
         protocol.header_bytes + protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes +
-        protocol.header_bytes + protocol.graphics_v1.manifest_header_bytes +
+        protocol.header_bytes + protocol.graphics_v2.manifest_header_bytes +
         protocol.header_bytes + protocol.payload_bytes.snapshot_end;
     const fixed_view = @sizeOf(Impl) +
         (@alignOf(Row) - 1) + (@alignOf(Cell) - 1) +
@@ -117,9 +121,9 @@ comptime {
     if (@sizeOf(Cell) > protocol.text_v1.cell_header_bytes * 2) @compileError("coarse cell exceeds 2x wire bound");
     if (@sizeOf(u32) != 4) @compileError("coarse scalar no longer matches text_v1 scalar width");
     if (@sizeOf(Hyperlink) > hyperlink_wire_fixed * 2) @compileError("coarse hyperlink exceeds 2x wire bound");
-    if (@sizeOf(Image) > protocol.graphics_v1.image_bytes * 2)
+    if (@sizeOf(Image) > protocol.graphics_v2.image_bytes * 2)
         @compileError("coarse image descriptor exceeds 2x wire bound");
-    if (@sizeOf(ImagePlacement) > protocol.graphics_v1.placement_bytes * 2)
+    if (@sizeOf(ImagePlacement) > protocol.graphics_v2.placement_bytes * 2)
         @compileError("coarse image placement exceeds 2x wire bound");
     if (fixed_view > fixed_wire * 2) @compileError("coarse fixed owner exceeds 2x wire bound");
 }
@@ -179,6 +183,8 @@ pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error
         .placement_count = source.graphics.placements.len,
         .graphics_generation = source.graphics.generation,
         .graphics_content_generation = source.graphics.content_generation,
+        .graphics_cell_pixel_width = source.graphics.cell_pixel_width,
+        .graphics_cell_pixel_height = source.graphics.cell_pixel_height,
         .begin = source.begin,
         .presentation = source.presentation,
     };
@@ -301,6 +307,8 @@ pub fn graphics(snapshot: *const Snapshot) Graphics {
     return .{
         .generation = impl.graphics_generation,
         .content_generation = impl.graphics_content_generation,
+        .cell_pixel_width = impl.graphics_cell_pixel_width,
+        .cell_pixel_height = impl.graphics_cell_pixel_height,
         .images = constSliceAt(Image, bytes, impl.images_offset, impl.image_count),
         .placements = constSliceAt(
             ImagePlacement,
@@ -468,19 +476,22 @@ fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
 }
 
 fn validGraphics(source: *const rich.Snapshot) bool {
-    if (source.graphics.images.len > protocol.graphics_v1.maximum_images or
-        source.graphics.placements.len > protocol.graphics_v1.maximum_placements)
+    if (source.graphics.images.len > protocol.graphics_v2.maximum_images or
+        source.graphics.placements.len > protocol.graphics_v2.maximum_placements)
+        return false;
+    if ((source.graphics.images.len != 0 or source.graphics.placements.len != 0) and
+        (source.graphics.cell_pixel_width == 0 or source.graphics.cell_pixel_height == 0))
         return false;
     for (source.graphics.images, 0..) |image, index| {
         if (image.image_id == 0 or image.generation == 0 or image.width == 0 or image.height == 0 or
-            image.width > protocol.graphics_v1.maximum_dimension or
-            image.height > protocol.graphics_v1.maximum_dimension or
-            @as(u64, image.width) * @as(u64, image.height) * 4 > protocol.graphics_v1.maximum_image_bytes)
+            image.width > protocol.graphics_v2.maximum_dimension or
+            image.height > protocol.graphics_v2.maximum_dimension or
+            @as(u64, image.width) * @as(u64, image.height) * 4 > protocol.graphics_v2.maximum_image_bytes)
             return false;
         for (source.graphics.images[0..index]) |prior| if (prior.image_id == image.image_id)
             return false;
     }
-    var referenced: [protocol.graphics_v1.maximum_images]bool = @splat(false);
+    var referenced: [protocol.graphics_v2.maximum_images]bool = @splat(false);
     for (source.graphics.placements) |placement| {
         if (placement.image_id == 0 or placement.generation == 0 or
             placement.row >= source.begin.rows or placement.column >= source.begin.columns or
@@ -797,6 +808,8 @@ test "coarse view preserves rich semantics in one allocation" {
         .graphics = .{
             .generation = 14,
             .content_generation = 12,
+            .cell_pixel_width = 10,
+            .cell_pixel_height = 20,
             .images = &image_source,
             .placements = &placement_source,
         },
@@ -834,6 +847,8 @@ test "coarse view preserves rich semantics in one allocation" {
     const image_view = graphics(snapshot);
     try std.testing.expectEqual(@as(u64, 14), image_view.generation);
     try std.testing.expectEqual(@as(u64, 12), image_view.content_generation);
+    try std.testing.expectEqual(@as(u32, 10), image_view.cell_pixel_width);
+    try std.testing.expectEqual(@as(u32, 20), image_view.cell_pixel_height);
     try std.testing.expectEqual(@as(usize, 1), image_view.images.len);
     try std.testing.expectEqual(@as(u32, 2), image_view.images[0].width);
     try std.testing.expectEqual(@as(usize, 1), image_view.placements.len);

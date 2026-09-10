@@ -65,6 +65,8 @@ pub const Hyperlink = struct {
 pub const Graphics = struct {
     generation: u64 = 0,
     content_generation: u64 = 0,
+    cell_pixel_width: u32 = 0,
+    cell_pixel_height: u32 = 0,
     images: []protocol.SnapshotImage = &.{},
     placements: []protocol.SnapshotImagePlacement = &.{},
 
@@ -255,23 +257,23 @@ fn decodeGraphics(
     begin: protocol.SnapshotBegin,
     payload: []const u8,
 ) Error!Graphics {
-    if (payload.len < protocol.graphics_v1.manifest_header_bytes) return error.InvalidSnapshot;
+    if (payload.len < protocol.graphics_v2.manifest_header_bytes) return error.InvalidSnapshot;
     const header = protocol.decodeSnapshotGraphicsHeader(
-        payload[0..protocol.graphics_v1.manifest_header_bytes],
+        payload[0..protocol.graphics_v2.manifest_header_bytes],
     ) catch return error.InvalidSnapshot;
     const image_bytes = std.math.mul(
         usize,
         header.image_count,
-        protocol.graphics_v1.image_bytes,
+        protocol.graphics_v2.image_bytes,
     ) catch return error.InvalidSnapshot;
     const placement_bytes = std.math.mul(
         usize,
         header.placement_count,
-        protocol.graphics_v1.placement_bytes,
+        protocol.graphics_v2.placement_bytes,
     ) catch return error.InvalidSnapshot;
     const expected = std.math.add(
         usize,
-        protocol.graphics_v1.manifest_header_bytes + image_bytes,
+        protocol.graphics_v2.manifest_header_bytes + image_bytes,
         placement_bytes,
     ) catch return error.InvalidSnapshot;
     if (payload.len != expected) return error.InvalidSnapshot;
@@ -281,14 +283,14 @@ fn decodeGraphics(
     const placements = try allocator.alloc(protocol.SnapshotImagePlacement, header.placement_count);
     errdefer allocator.free(placements);
 
-    var offset: usize = protocol.graphics_v1.manifest_header_bytes;
+    var offset: usize = protocol.graphics_v2.manifest_header_bytes;
     for (images, 0..) |*image, index| {
         image.* = protocol.decodeSnapshotImage(
-            payload[offset..][0..protocol.graphics_v1.image_bytes],
+            payload[offset..][0..protocol.graphics_v2.image_bytes],
         ) catch return error.InvalidSnapshot;
         for (images[0..index]) |prior| if (prior.image_id == image.image_id)
             return error.InvalidSnapshot;
-        offset += protocol.graphics_v1.image_bytes;
+        offset += protocol.graphics_v2.image_bytes;
     }
 
     var referenced = try allocator.alloc(bool, images.len);
@@ -296,7 +298,7 @@ fn decodeGraphics(
     @memset(referenced, false);
     for (placements) |*placement| {
         placement.* = protocol.decodeSnapshotImagePlacement(
-            payload[offset..][0..protocol.graphics_v1.placement_bytes],
+            payload[offset..][0..protocol.graphics_v2.placement_bytes],
         ) catch return error.InvalidSnapshot;
         if (placement.row >= begin.rows or placement.column >= begin.columns)
             return error.InvalidSnapshot;
@@ -308,13 +310,15 @@ fn decodeGraphics(
             placement.source_height > image.height - placement.source_y)
             return error.InvalidSnapshot;
         referenced[image_index] = true;
-        offset += protocol.graphics_v1.placement_bytes;
+        offset += protocol.graphics_v2.placement_bytes;
     }
     for (referenced) |used| if (!used) return error.InvalidSnapshot;
     if (offset != payload.len) return error.InvalidSnapshot;
     return .{
         .generation = header.generation,
         .content_generation = header.content_generation,
+        .cell_pixel_width = header.cell_pixel_width,
+        .cell_pixel_height = header.cell_pixel_height,
         .images = images,
         .placements = placements,
     };
@@ -346,19 +350,21 @@ test "rich graphics owns visible image identities and placements" {
         .you_are_leader = false,
     };
     var payload: [
-        protocol.graphics_v1.manifest_header_bytes +
-            protocol.graphics_v1.image_bytes + protocol.graphics_v1.placement_bytes
+        protocol.graphics_v2.manifest_header_bytes +
+            protocol.graphics_v2.image_bytes + protocol.graphics_v2.placement_bytes
     ]u8 = undefined;
-    var header: [protocol.graphics_v1.manifest_header_bytes]u8 = undefined;
+    var header: [protocol.graphics_v2.manifest_header_bytes]u8 = undefined;
     protocol.encodeSnapshotGraphicsHeader(&header, .{
         .generation = 11,
         .content_generation = 10,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
         .image_count = 1,
         .placement_count = 1,
     });
     @memcpy(payload[0..header.len], &header);
     var offset: usize = header.len;
-    var image: [protocol.graphics_v1.image_bytes]u8 = undefined;
+    var image: [protocol.graphics_v2.image_bytes]u8 = undefined;
     protocol.encodeSnapshotImage(&image, .{
         .image_id = 7,
         .generation = 9,
@@ -367,7 +373,7 @@ test "rich graphics owns visible image identities and placements" {
     });
     @memcpy(payload[offset..][0..image.len], &image);
     offset += image.len;
-    var placement: [protocol.graphics_v1.placement_bytes]u8 = undefined;
+    var placement: [protocol.graphics_v2.placement_bytes]u8 = undefined;
     protocol.encodeSnapshotImagePlacement(&placement, .{
         .image_id = 7,
         .generation = 12,
@@ -399,7 +405,7 @@ test "rich graphics owns visible image identities and placements" {
 
     var bad = payload;
     // A source crop extending beyond the advertised image must fail closed.
-    bad[protocol.graphics_v1.manifest_header_bytes + protocol.graphics_v1.image_bytes + 27] = 4;
+    bad[protocol.graphics_v2.manifest_header_bytes + protocol.graphics_v2.image_bytes + 27] = 4;
     try std.testing.expectError(
         error.InvalidSnapshot,
         decodeGraphics(std.testing.allocator, begin, &bad),
@@ -990,7 +996,7 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
     });
     const compressed = try testDeflateBody(allocator, &body);
     defer allocator.free(compressed);
-    const graphics_bytes = protocol.graphics_v1.manifest_header_bytes;
+    const graphics_bytes = protocol.graphics_v2.manifest_header_bytes;
     const length = 4 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
         compressed.len + graphics_bytes + protocol.payload_bytes.snapshot_end;
     const frames = try allocator.alloc(u8, length);
@@ -1015,10 +1021,12 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
         .payload_len = graphics_bytes,
     });
     at += protocol.header_bytes;
-    var graphics_header: [protocol.graphics_v1.manifest_header_bytes]u8 = undefined;
+    var graphics_header: [protocol.graphics_v2.manifest_header_bytes]u8 = undefined;
     protocol.encodeSnapshotGraphicsHeader(&graphics_header, .{
         .generation = 0,
         .content_generation = 0,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
         .image_count = 0,
         .placement_count = 0,
     });

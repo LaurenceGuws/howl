@@ -102,6 +102,9 @@ pub const Launch = struct {
     cwd: ?[]const u8 = null,
     rows: u16,
     columns: u16,
+    /// Stable canonical terminal pixel lattice used by graphics/window queries.
+    cell_pixel_width: u32 = 10,
+    cell_pixel_height: u32 = 20,
     history_rows: u16 = 4096,
     term: []const u8 = "xterm-256color",
     colorterm: ?[]const u8 = "truecolor",
@@ -402,7 +405,9 @@ const State = struct {
         inherited_environment: std.process.Environ,
         launch: Launch,
     ) InitError!State {
-        if (launch.rows == 0 or launch.columns == 0) return error.InvalidDimensions;
+        if (launch.rows == 0 or launch.columns == 0 or
+            launch.cell_pixel_width == 0 or launch.cell_pixel_height == 0)
+            return error.InvalidDimensions;
         var transport = try pty.Owned.init(
             allocator,
             inherited_environment,
@@ -420,6 +425,7 @@ const State = struct {
             launch.history_rows,
         );
         errdefer terminal.deinit();
+        try terminal.setCellPixelSize(launch.cell_pixel_width, launch.cell_pixel_height);
         return .{ .allocator = allocator, .transport = transport, .terminal = terminal };
     }
 

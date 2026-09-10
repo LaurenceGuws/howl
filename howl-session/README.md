@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 3. All multi-byte
+This document is the client contract for framing version 4. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v3-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v4-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `3` |
+| 4 | 1 | framing version, currently `4` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -33,7 +33,7 @@ One frame payload is at most 1 MiB. The node-local endpoint accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
 be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
-v3 observation additionally carries one graphics manifest of at most 58,388
+v4 observation additionally carries one graphics manifest of at most 58,396
 bytes plus bounded frame headers; exact image pixels use separate resource
 transactions.
 
@@ -331,16 +331,16 @@ The payload is:
 Only hyperlink ids referenced by rows are emitted. Clients should therefore
 build the resolver table per snapshot rather than assuming a node-global table.
 
-## `graphics_v1` manifest and image resources
+## `graphics_v2` manifest and image resources
 
 Terminal image pixels do not belong inside `text_v1` or the 4 MiB text snapshot
 body. The canonical VT may retain one decoded RGBA image up to 16 MiB, so
 copying image bytes into every observation could not be complete within the
 snapshot bound and would retransmit unchanged content unnecessarily.
 
-Every v3 observation therefore includes exactly one `snapshot_graphics` frame
+Every v4 observation therefore includes exactly one `snapshot_graphics` frame
 after the final `snapshot_data` chunk and before `snapshot_end`. Its payload is
-one 20-byte header, zero or more 20-byte image descriptors, then zero or more
+one 28-byte header, zero or more 20-byte image descriptors, then zero or more
 52-byte visible placements. The complete manifest always fits in one ordinary
 response frame.
 
@@ -350,8 +350,16 @@ The manifest header is:
 | --- | ---: | --- |
 | 0 | 8 | image-plane generation |
 | 8 | 8 | image-content generation |
-| 16 | 2 | referenced image descriptor count, `0..256` |
-| 18 | 2 | visible placement count, `0..1024` |
+| 16 | 4 | canonical terminal cell pixel width |
+| 20 | 4 | canonical terminal cell pixel height |
+| 24 | 2 | referenced image descriptor count, `0..256` |
+| 26 | 2 | visible placement count, `0..1024` |
+
+The cell-pixel dimensions belong to the canonical session graphics lattice,
+not to any one attached client's font or display. Image placement pixel fields
+are expressed in that stable lattice. A graphical client scales them into its
+own presentation lattice while preserving terminal cell anchors and source
+pixel rectangles.
 
 Only images referenced by a placement visible in the selected snapshot
 viewport are described. One image descriptor is:
@@ -602,7 +610,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v3-vectors.json
+python3 tools/validate_vectors.py protocol/v4-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

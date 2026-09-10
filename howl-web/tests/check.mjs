@@ -22,8 +22,8 @@ function feed(bytes) {
   new Uint8Array(w.memory.buffer, w.hw_input_ptr(), bytes.length).set(bytes);
   return w.hw_feed(bytes.length);
 }
-const welcome = Buffer.from('48574c530302000000000008000000000000002a', 'hex');
-const hello = '48574c530301000000000000';
+const welcome = Buffer.from('48574c530402000000000008000000000000002a', 'hex');
+const hello = '48574c530401000000000000';
 for (let split = 0; split <= welcome.length; split++) {
   assert.equal(w.hw_reset(), 1);
   assert.equal(Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len()).toString('hex'), hello);
@@ -63,7 +63,7 @@ assert.equal(w.hw_send_text(1), 0);
 const output = () => Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len());
 function frame(kind, payload) {
   const result = Buffer.alloc(12 + payload.length);
-  result.write('HWLS', 0, 'ascii'); result[4] = 3; result[5] = kind;
+  result.write('HWLS', 0, 'ascii'); result[4] = 4; result[5] = kind;
   result.writeUInt32BE(payload.length, 8); Buffer.from(payload).copy(result, 12);
   return result;
 }

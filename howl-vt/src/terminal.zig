@@ -5694,6 +5694,8 @@ pub const Terminal = struct {
         rows: u16,
         generation: u64,
         content_generation: u64,
+        cell_pixel_width: u32,
+        cell_pixel_height: u32,
 
         /// Returns the dense retained image count.
         pub fn imageCount(self: *const Images) usize {
@@ -6713,6 +6715,7 @@ pub const Terminal = struct {
     /// Borrows decoded images and placements at one caller-selected history offset.
     pub fn images(self: *const Terminal, history_offset: u32) Images {
         const view = visibleView(&self.screen_state, history_offset);
+        const cell = self.cellPixelSize();
         return .{
             .plane = &self.graphics,
             .bank = if (view.is_alternate_screen) .alternate else .primary,
@@ -6723,6 +6726,8 @@ pub const Terminal = struct {
             .rows = view.rows,
             .generation = self.graphics.generation(),
             .content_generation = self.graphics.imageGeneration(),
+            .cell_pixel_width = if (cell) |value| value.width else 0,
+            .cell_pixel_height = if (cell) |value| value.height else 0,
         };
     }
 

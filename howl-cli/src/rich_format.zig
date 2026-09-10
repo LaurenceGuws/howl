@@ -26,7 +26,7 @@ const BeginRecord = struct {
     revision: u64,
     terminal_revision: u64,
     format: []const u8 = "text_v1",
-    graphics_format: []const u8 = "graphics_v1",
+    graphics_format: []const u8 = "graphics_v2",
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -95,6 +95,8 @@ const GraphicsRecord = struct {
     record: []const u8 = "graphics",
     generation: u64,
     content_generation: u64,
+    cell_pixel_width: u32,
+    cell_pixel_height: u32,
     images: []const protocol.SnapshotImage,
     placements: []const protocol.SnapshotImagePlacement,
 };
@@ -199,6 +201,8 @@ pub fn emitNative(allocator: std.mem.Allocator, writer: *std.Io.Writer, snapshot
     try emitJson(writer, GraphicsRecord{
         .generation = snapshot.graphics.generation,
         .content_generation = snapshot.graphics.content_generation,
+        .cell_pixel_width = snapshot.graphics.cell_pixel_width,
+        .cell_pixel_height = snapshot.graphics.cell_pixel_height,
         .images = snapshot.graphics.images,
         .placements = snapshot.graphics.placements,
     });

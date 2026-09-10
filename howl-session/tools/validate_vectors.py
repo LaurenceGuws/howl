@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 3
+FRAMING_VERSION = 4
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -91,7 +91,7 @@ TEXT_PRESENTATION_PRESENCE_KNOWN = 0x0F
 TEXT_PRESENTATION_FLAGS_KNOWN = 0x01
 TEXT_STYLE_KNOWN = 0x01FF
 
-GRAPHICS_HEADER_BYTES = 20
+GRAPHICS_HEADER_BYTES = 28
 GRAPHICS_IMAGE_BYTES = 20
 GRAPHICS_PLACEMENT_BYTES = 52
 GRAPHICS_MAXIMUM_IMAGES = 256
@@ -606,8 +606,11 @@ def decode_snapshot_graphics(payload: bytes, begin: dict) -> dict:
     require(len(payload) >= GRAPHICS_HEADER_BYTES, "snapshot_graphics_size")
     generation = u64(payload[0:8])
     content_generation = u64(payload[8:16])
-    image_count = u16(payload[16:18])
-    placement_count = u16(payload[18:20])
+    cell_pixel_width = u32(payload[16:20])
+    cell_pixel_height = u32(payload[20:24])
+    image_count = u16(payload[24:26])
+    placement_count = u16(payload[26:28])
+    require(cell_pixel_width != 0 and cell_pixel_height != 0, "snapshot_graphics_cell_pixels")
     require(image_count <= GRAPHICS_MAXIMUM_IMAGES, "snapshot_graphics_images")
     require(placement_count <= GRAPHICS_MAXIMUM_PLACEMENTS, "snapshot_graphics_placements")
     expected = GRAPHICS_HEADER_BYTES + image_count * GRAPHICS_IMAGE_BYTES + placement_count * GRAPHICS_PLACEMENT_BYTES
@@ -674,6 +677,8 @@ def decode_snapshot_graphics(payload: bytes, begin: dict) -> dict:
     return {
         "generation": generation,
         "content_generation": content_generation,
+        "cell_pixel_width": cell_pixel_width,
+        "cell_pixel_height": cell_pixel_height,
         "images": images,
         "placements": placements,
     }
@@ -874,7 +879,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v3/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v4/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -887,7 +892,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v3-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v4-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

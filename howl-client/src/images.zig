@@ -68,7 +68,7 @@ fn receiveFrom(
         var frame = try connection.receive();
         defer frame.deinit();
         if (frame.kind != .image_data or frame.payload.len == 0 or
-            frame.payload.len > protocol.graphics_v1.data_chunk_bytes or
+            frame.payload.len > protocol.graphics_v2.data_chunk_bytes or
             frame.payload.len > pixels.len - offset)
             return error.InvalidResource;
         @memcpy(pixels[offset..][0..frame.payload.len], frame.payload);

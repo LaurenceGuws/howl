@@ -120,9 +120,9 @@ explicit formatting choice rather than TTY-dependent magic.
 
 ## Rich snapshot
 
-`snapshot --rich` exposes the complete v3 semantic snapshot manifest: the
+`snapshot --rich` exposes the complete v4 semantic snapshot manifest: the
 unchanged `text_v1` lifecycle/authority and terminal-text records plus the
-`graphics_v1` image identities and visible placements. Exact RGBA image bytes are
+`graphics_v2` canonical cell lattice, image identities, and visible placements. Exact RGBA image bytes are
 not copied into every snapshot; graphical clients fetch a named image generation
 on demand through the separate bounded image-resource request.
 
