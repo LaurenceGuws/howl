@@ -546,6 +546,7 @@ const content_style_reverse: u16 = 1 << 5;
 const content_style_invisible: u16 = 1 << 6;
 const content_style_underline: u16 = 1 << 7;
 const content_style_strike: u16 = 1 << 8;
+const maximum_operator_run_cells: usize = 4;
 
 const ContentCellColors = struct {
     foreground: canvas.Color,
@@ -824,6 +825,44 @@ fn contentUsesMulticellAllocation(cell: View.Cell) bool {
     return cell.height > 1 or cell.subscale_n != 0 or cell.subscale_d != 0 or
         cell.vertical_align != 0 or cell.horizontal_align != 0 or
         (cell.width > 1 and !cell.semantic_width);
+}
+
+fn contentIsContextualOperatorCell(
+    cell: View.Cell,
+    scalars: []const u32,
+) ContentError!bool {
+    if (cell.scalar_count != 1 or cell.width != 1 or cell.height != 1 or
+        cell.x != 0 or cell.y != 0 or cell.subscale_n != 0 or cell.subscale_d != 0 or
+        cell.vertical_align != 0 or cell.horizontal_align != 0 or cell.semantic_width or
+        cell.font != 0 or cell.baseline != 0 or cell.style_bits & content_style_invisible != 0)
+        return false;
+    const index = @as(usize, cell.scalar_offset);
+    if (index >= scalars.len) return error.InvalidView;
+    const value = scalars[index];
+    return value >= 0x21 and value <= 0x2f or
+        value >= 0x3a and value <= 0x40 or
+        value >= 0x5b and value <= 0x60 or
+        value >= 0x7b and value <= 0x7e;
+}
+
+fn contentSameContextualRendition(left: View.Cell, right: View.Cell) bool {
+    return left.style_bits == right.style_bits and left.font == right.font and
+        left.baseline == right.baseline and left.underline_style == right.underline_style and
+        left.protection == right.protection and left.link_id == right.link_id and
+        std.meta.eql(left.foreground, right.foreground) and
+        std.meta.eql(left.background, right.background) and
+        std.meta.eql(left.underline_color, right.underline_color);
+}
+
+fn contentContextualClustersPreserveCells(glyphs: []const text.Glyph, cell_count: usize) bool {
+    if (cell_count < 2 or cell_count > maximum_operator_run_cells) return false;
+    var seen: u8 = 0;
+    for (glyphs) |glyph| {
+        if (glyph.cluster >= cell_count) return false;
+        seen |= @as(u8, 1) << @intCast(glyph.cluster);
+    }
+    const expected = (@as(u8, 1) << @intCast(cell_count)) - 1;
+    return seen == expected;
 }
 
 fn contentFontVisibleClip(
@@ -1174,8 +1213,10 @@ fn buildContentCommands(
         const end = std.math.add(usize, first, count) catch return error.InvalidView;
         if (end > cells.len or count != begin.columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(begin.columns, row.line_geometry);
-        for (cells[first..][0..line_columns], 0..) |cell, column| {
-            if (cell.scalar_count == 0) continue;
+        const row_cells = cells[first..][0..line_columns];
+        var skip_until: usize = 0;
+        for (row_cells, 0..) |cell, column| {
+            if (column < skip_until or cell.scalar_count == 0) continue;
             if (cell.x != 0 or cell.y != 0) return error.InvalidView;
             if (cell.style_bits & content_style_invisible != 0) continue;
 
@@ -1186,6 +1227,64 @@ fn buildContentCommands(
             if (scalar_end > scalars.len) return error.InvalidView;
             const sequence = scalars[scalar_first..scalar_end];
             const colors = try contentCellColors(cell, presentation);
+
+            var run: text.Run = undefined;
+            var contextual = false;
+            var cluster_stride_26_6: i64 = 0;
+            if (row.line_geometry == 0 and
+                try contentIsContextualOperatorCell(cell, scalars))
+            {
+                const run_limit = @min(
+                    row_cells.len - column,
+                    @min(
+                        maximum_operator_run_cells,
+                        @as(usize, shapeCacheImpl(shape_cache).max_sequence_scalars),
+                    ),
+                );
+                var run_end = column + 1;
+                var run_scalar_end = scalar_end;
+                while (run_end - column < run_limit) : (run_end += 1) {
+                    const next = row_cells[run_end];
+                    if (!contentSameContextualRendition(cell, next)) break;
+                    if (!try contentIsContextualOperatorCell(next, scalars)) break;
+                    if (@as(usize, next.scalar_offset) != run_scalar_end)
+                        return error.InvalidView;
+                    run_scalar_end = std.math.add(usize, run_scalar_end, 1) catch
+                        return error.InvalidView;
+                }
+                if (run_end - column >= 2) {
+                    if (try shapeContextualPrimary(
+                        shape_cache,
+                        scalars[scalar_first..run_scalar_end],
+                        cluster_scratch,
+                        shaped_scratch,
+                    )) |candidate| {
+                        if (contentContextualClustersPreserveCells(
+                            candidate.glyphs,
+                            run_end - column,
+                        )) {
+                            const cell_advance = std.math.mul(
+                                i64,
+                                @as(i64, cell_size.width),
+                                64,
+                            ) catch return error.InvalidPresentationGeometry;
+                            const font_advance = std.math.mul(
+                                i64,
+                                @as(i64, metrics.advance_width),
+                                64,
+                            ) catch return error.InvalidPresentationGeometry;
+                            cluster_stride_26_6 = std.math.sub(
+                                i64,
+                                cell_advance,
+                                font_advance,
+                            ) catch return error.InvalidPresentationGeometry;
+                            run = candidate;
+                            contextual = true;
+                            skip_until = run_end;
+                        }
+                    }
+                }
+            }
             const physical = try contentCellRect(row_index, column, cell_size);
             const sizing = try contentCellSizing(row_index, column, cell, cell_size);
             const allocation_clip = try contentCellVisibleClip(
@@ -1235,13 +1334,24 @@ fn buildContentCommands(
                 } });
                 continue;
             }
-            const run = try resolveShape(
-                shape_cache,
-                sequence,
-                cluster_scratch,
-                shaped_scratch,
-            );
-            const font_clip = try contentFontVisibleClip(
+            if (!contextual)
+                run = try resolveShape(
+                    shape_cache,
+                    sequence,
+                    cluster_scratch,
+                    shaped_scratch,
+                );
+            const font_clip = if (contextual) blk: {
+                var row_clip = try contentCellRect(row_index, 0, cell_size);
+                row_clip.width = surface.width;
+                break :blk try contentLineClip(
+                    row_clip,
+                    row_index,
+                    row.line_geometry,
+                    cell_size,
+                    surface,
+                ) orelse continue;
+            } else try contentFontVisibleClip(
                 cell,
                 sizing,
                 row_index,
@@ -1260,6 +1370,11 @@ fn buildContentCommands(
             ) catch return error.InvalidPresentationGeometry;
             var pen_y: i64 = 0;
             for (run.glyphs) |shaped| {
+                const cluster_adjust = std.math.mul(
+                    i64,
+                    @as(i64, shaped.cluster),
+                    cluster_stride_26_6,
+                ) catch return error.InvalidPresentationGeometry;
                 const raster = try resolveFontAtlas(
                     atlas,
                     run.face_index,
@@ -1268,7 +1383,9 @@ fn buildContentCommands(
                 );
                 if (raster.width != 0 and raster.height != 0) {
                     has_raster = true;
-                    var left = std.math.add(i64, pen_x, shaped.x_offset) catch
+                    var left = std.math.add(i64, pen_x, cluster_adjust) catch
+                        return error.InvalidPresentationGeometry;
+                    left = std.math.add(i64, left, shaped.x_offset) catch
                         return error.InvalidPresentationGeometry;
                     left = std.math.add(i64, left, @as(i64, raster.left) * 64) catch
                         return error.InvalidPresentationGeometry;
@@ -1409,6 +1526,26 @@ fn contentImpl(content: *Content) *ContentImpl {
 
 fn constContentImpl(content: *const Content) *const ContentImpl {
     return @ptrCast(@alignCast(content));
+}
+
+fn shapeContextualPrimary(
+    cache: *ShapeCache,
+    sequence: []const u32,
+    cluster_scratch: []u32,
+    glyph_scratch: []text.Glyph,
+) ShapeCacheError!?text.Run {
+    const impl = shapeCacheImpl(cache);
+    if (sequence.len < 2 or sequence.len > @as(usize, impl.max_sequence_scalars) or
+        sequence.len > cluster_scratch.len)
+        return null;
+    if ((try impl.fonts.faceFor(sequence)) != 0) return null;
+    for (cluster_scratch[0..sequence.len], 0..) |*cluster, index|
+        cluster.* = @intCast(index);
+    return try impl.fonts.shape(
+        impl.shape,
+        .{ .codepoints = sequence, .clusters = cluster_scratch[0..sequence.len] },
+        glyph_scratch,
+    );
 }
 
 fn resolveShape(

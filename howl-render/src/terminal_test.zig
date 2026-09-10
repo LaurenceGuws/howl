@@ -142,6 +142,70 @@ test "terminal Canvas content reuses exact combining runs" {
     try std.testing.expectEqualDeep(usage.shape, render.terminal.contentUsage(content).shape);
 }
 
+test "terminal Canvas contextually shapes bounded primary operators without collapsing cells" {
+    var dash = [_]u32{'-'};
+    var greater = [_]u32{'>'};
+    var contextual_cells = [_]client.rich.Cell{
+        cell(&dash, 1, 0),
+        cell(&greater, 1, 0),
+    };
+    var contextual_rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &contextual_cells,
+    }};
+    const contextual_source = sourceSnapshot(&contextual_rows, 2);
+    const contextual_view = try client.view.project(std.testing.allocator, &contextual_source);
+    defer client.view.deinit(contextual_view);
+    const font = try render.text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.normal_ligature_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer font.deinit();
+    const contextual = try render.terminal.initContent(
+        std.testing.allocator,
+        font,
+        contentConfig(64),
+    );
+    defer render.terminal.deinitContent(contextual);
+
+    const contextual_update = try render.terminal.takeContentUpdate(
+        contextual,
+        contextual_view,
+        null,
+    );
+    try std.testing.expectEqual(@as(usize, 1), contextual_update.uploads.len);
+    try std.testing.expectEqualDeep(
+        render.terminal.ShapeCacheUsage{ .entries = 0, .scalars = 0, .glyphs = 0 },
+        render.terminal.contentUsage(contextual).shape,
+    );
+
+    var split_cells = contextual_cells;
+    split_cells[1].style_bits |= 1 << 2;
+    var split_rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &split_cells,
+    }};
+    const split_source = sourceSnapshot(&split_rows, 2);
+    const split_view = try client.view.project(std.testing.allocator, &split_source);
+    defer client.view.deinit(split_view);
+    const split = try render.terminal.initContent(
+        std.testing.allocator,
+        font,
+        contentConfig(64),
+    );
+    defer render.terminal.deinitContent(split);
+    const split_update = try render.terminal.takeContentUpdate(split, split_view, null);
+    try std.testing.expectEqual(@as(usize, 1), split_update.uploads.len);
+    try std.testing.expectEqual(@as(usize, 2), render.terminal.contentUsage(split).shape.entries);
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        contextual_update.uploads[0].pixels.bytes,
+        split_update.uploads[0].pixels.bytes,
+    ));
+}
+
 test "terminal Canvas content routes generated glyphs outside font shaping" {
     var symbol = [_]u32{0xe0b0};
     var cells = [_]client.rich.Cell{cell(&symbol, 1, 0)};
