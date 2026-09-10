@@ -406,6 +406,43 @@ test "terminal Canvas scales the ordinary OSC 66 font raster instead of construc
     try std.testing.expectEqual(@as(usize, 1), render.terminal.contentUsage(content).shape.entries);
 }
 
+test "terminal Canvas preserves ordinary font overhang across neighboring cells" {
+    var empty = [_]u32{};
+    var symbol = [_]u32{0xf303};
+    var cells = [_]client.rich.Cell{
+        cell(&empty, 1, 0),
+        cell(&symbol, 1, 0),
+        cell(&empty, 1, 0),
+    };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 3);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try render.text.FontSet.init(std.testing.allocator, .{
+        .primary = fonts.symbol_font,
+        .size = .{ .pixels = 18 },
+    });
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(16));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    var glyph: ?@FieldType(render.canvas.Input, "alpha_mask") = null;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| glyph = value,
+        else => {},
+    };
+    const alpha = glyph orelse return error.MissingCanvasAlphaResource;
+    const cell_left: i64 = 10;
+    const cell_right: i64 = 20;
+    const destination_right = @as(i64, alpha.destination.x) + alpha.destination.width;
+    try std.testing.expect(alpha.destination.x < cell_left or destination_right > cell_right);
+    try std.testing.expectEqualDeep(
+        render.canvas.Rect{ .x = 0, .y = 0, .width = 30, .height = 20 },
+        alpha.clip,
+    );
+}
+
 test "terminal Canvas content retains howl-text whole-sequence fallback" {
     var variation = [_]u32{ '0', 0xfe00 };
     var cells = [_]client.rich.Cell{cell(&variation, 1, 0)};

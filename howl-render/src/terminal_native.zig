@@ -820,6 +820,27 @@ fn contentCellVisibleClip(
     return contentIntersectRects(transformed, contentSurfaceRect(surface));
 }
 
+fn contentUsesMulticellAllocation(cell: View.Cell) bool {
+    return cell.height > 1 or cell.subscale_n != 0 or cell.subscale_d != 0 or
+        cell.vertical_align != 0 or cell.horizontal_align != 0 or
+        (cell.width > 1 and !cell.semantic_width);
+}
+
+fn contentFontVisibleClip(
+    cell: View.Cell,
+    sizing: ContentCellSizing,
+    row: usize,
+    geometry: u8,
+    cell_size: canvas.Size,
+    surface: canvas.Size,
+) ContentError!?canvas.Rect {
+    if (contentUsesMulticellAllocation(cell))
+        return contentCellVisibleClip(sizing, row, geometry, cell_size, surface);
+    var row_strip = try contentCellRect(row, 0, cell_size);
+    row_strip.width = surface.width;
+    return contentLineClip(row_strip, row, geometry, cell_size, surface);
+}
+
 fn appendContentLineSolid(
     output: []canvas.Input,
     used: *usize,
@@ -1167,7 +1188,7 @@ fn buildContentCommands(
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
             const sizing = try contentCellSizing(row_index, column, cell, cell_size);
-            const line_clip = try contentCellVisibleClip(
+            const allocation_clip = try contentCellVisibleClip(
                 sizing,
                 row_index,
                 row.line_geometry,
@@ -1194,7 +1215,7 @@ fn buildContentCommands(
                         row.line_geometry,
                         cell_size,
                     ),
-                    .clip = line_clip,
+                    .clip = allocation_clip,
                     .resource = .{
                         .resource = placeholder_resource,
                         .format = .alpha8,
@@ -1220,6 +1241,14 @@ fn buildContentCommands(
                 cluster_scratch,
                 shaped_scratch,
             );
+            const font_clip = try contentFontVisibleClip(
+                cell,
+                sizing,
+                row_index,
+                row.line_geometry,
+                cell_size,
+                surface,
+            ) orelse continue;
 
             var pen_x = std.math.mul(i64, @as(i64, physical.x), 64) catch
                 return error.InvalidPresentationGeometry;
@@ -1268,7 +1297,7 @@ fn buildContentCommands(
                             row.line_geometry,
                             cell_size,
                         ),
-                        .clip = line_clip,
+                        .clip = font_clip,
                         .resource = .{
                             .resource = placeholder_resource,
                             .format = .alpha8,
