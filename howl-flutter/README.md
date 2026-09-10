@@ -31,8 +31,12 @@ ANDROID_NDK_ROOT=/path/to/android-ndk \
 JAVA_HOME=/path/to/jdk21 \
 ./build-android.sh profile \
   --dart-define=HOWL_ENDPOINT=tcp://127.0.0.1:43127 \
-  --dart-define=HOWL_GEOMETRY_LEADER=1
+  --dart-define=HOWL_GEOMETRY_LEADER=true
 ```
+
+`HOWL_GEOMETRY_LEADER` accepts `1` or `true`. When enabled, viewport/font-size
+changes are explicit serialized session resizes; attaching the client still does
+not otherwise mutate canonical geometry.
 
 The wrapper always performs a clean Flutter build with `--target-platform android-arm64`, verifies that no other ABI entered the APK, and requires `libhowl_native_host.so`. Gradle independently refuses a non-arm64 Flutter target or a missing generated host library.
 
@@ -58,8 +62,15 @@ On touch-first Android, the terminal reserves finger gestures for client-local
 history and text-input focus rather than pretending a finger is a terminal
 mouse. Mouse/stylus devices continue through canonical semantic mouse input. A
 compact strip above the software keyboard exposes one-shot Ctrl/Alt latches plus
-Esc, Tab, arrow keys, Copy and Paste; a latched modifier applies to the next special
-key or single committed Unicode scalar, then clears. The strip lives inside the
+Esc, Tab, arrow keys, keyboard restore, the current raster-size cycle, Copy and
+Paste; a latched modifier applies to the next special key or single committed
+Unicode scalar, then clears.
+The size control shows the current raster size and cycles `16px -> 12px -> 9px
+-> 16px`. Those are three native presentation identities: Compact (9 px, 6x12
+cell), Small (12 px, 8x15), and Normal (16 px, 10x20). A size change recreates
+the private presentation host so `howl-text` rerasterizes at the target size
+rather than scaling an old Flutter bitmap. A geometry-leading client also
+resizes the canonical PTY to the resulting row/column count. The strip lives inside the
 same visible-viewport owner as the terminal so IME/safe-area insets cannot hide
 it or silently overlap terminal cells.
 
@@ -72,12 +83,14 @@ bracketed-paste policy in the canonical VT instead of approximating a multi-line
 paste as text plus synthetic Enter keys. Empty, unavailable or oversized
 clipboard content is a client-local no-op rather than a terminal attach failure.
 
-Copy is likewise presentation-local: it writes the current live or scrolled
-history viewport's bounded `howl-client.view.writeVisibleText` projection to the
-platform clipboard without mutating the session. It therefore shares the same
-wide-cell, trailing-blank and concealment policy as Android accessibility. A
-physical Note10 canary copied visible before/after markers and Nerd glyphs while
-an exact SGR-concealed canonical marker remained absent from the clipboard.
+Copy is likewise presentation-local. With no active selection it writes the
+current live or scrolled viewport's bounded `howl-client.view.writeVisibleText`
+projection. With an active selection, Flutter retains only stable canonical
+cell endpoints and asks the session to extract the exact UTF-8 range. Viewport
+scrolling therefore does not retarget selected text, and eviction, bank or
+geometry changes invalidate rather than guess. Physical Note10 acceptance has
+proved Material handles, floating toolbar, canonical selected-text Copy, and
+two-row edge autoscroll across offscreen history.
 
 The long-lived native observer/control pair also owns bounded transport
 recovery. Endpoint attach failures and failures on an already-established
@@ -127,7 +140,7 @@ iOS remains a client only: it does not own a PTY, shell, or Unix userland. The n
 - `howl-session` + `howl-vt` remain canonical terminal truth and never wait for Flutter.
 - `howl-client.rich` remains the single `text_v1` byte parser.
 - `howl-client.view` is immutable, explicitly owned native semantic state.
-- `howl-text` owns native metrics, fallback, shaping, glyph identity, and rasterization.
+- `howl-text` owns native metrics, fallback, ordinary shaping, glyph identity, and rasterization; the Kitty-derived generated renderer owns supported terminal drawing glyph geometry.
 - `howl-render.terminal.Content` owns bounded shape/atlas caches and emits complete Canvas state.
 - Flutter owns only platform capture, viewport/history UX, copied resource lifetime, and backend batching.
 - The app-private host packet and FFI symbols are version-locked implementation details, not compatibility surfaces.

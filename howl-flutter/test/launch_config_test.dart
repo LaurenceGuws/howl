@@ -8,6 +8,10 @@ void main() {
       isTrue,
     );
     expect(
+      geometryLeaderEnabled(compiledValue: 'true', environmentValue: null),
+      isTrue,
+    );
+    expect(
       geometryLeaderEnabled(compiledValue: '0', environmentValue: '1'),
       isFalse,
     );

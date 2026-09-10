@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 
 import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
+import 'terminal_presentation.dart';
 
 const int nativeHostOutputBytes = 320 * 1024;
 const int nativeSelectionOutputBytes = 1024 * 1024;
@@ -204,6 +205,7 @@ final class NativeHostObserver {
 
   static Future<NativeHostObserver> createPlatform({
     required String endpoint,
+    required TerminalPresentation presentation,
     bool armNextLiveObservation = false,
   }) async {
     final fonts = await _nativeHostFonts();
@@ -212,6 +214,7 @@ final class NativeHostObserver {
       primaryFontPath: fonts.primary,
       fallbackFontPath: fonts.fallback,
       secondaryFallbackFontPath: fonts.secondaryFallback,
+      presentation: presentation,
       armNextLiveObservation: armNextLiveObservation,
     );
   }
@@ -221,6 +224,7 @@ final class NativeHostObserver {
     required String primaryFontPath,
     required String fallbackFontPath,
     required String secondaryFallbackFontPath,
+    required TerminalPresentation presentation,
     bool armNextLiveObservation = false,
   }) async {
     final ready = ReceivePort();
@@ -237,6 +241,9 @@ final class NativeHostObserver {
         fallbackFontPath,
         secondaryFallbackFontPath,
         armNextLiveObservation,
+        presentation.fontPixels,
+        presentation.cellWidth,
+        presentation.lineHeight,
       ],
       debugName: 'Howl native observer',
       onError: errors.sendPort,
@@ -414,6 +421,9 @@ typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
   ffi.Size,
   ffi.Pointer<ffi.Uint8>,
   ffi.Size,
+  ffi.Uint16,
+  ffi.Uint16,
+  ffi.Uint16,
 );
 typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
@@ -423,6 +433,9 @@ typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
   ffi.Pointer<ffi.Uint8>,
   int,
   ffi.Pointer<ffi.Uint8>,
+  int,
+  int,
+  int,
   int,
 );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
@@ -465,6 +478,9 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final fallback = init[4]! as String;
   final secondaryFallback = init[5]! as String;
   final armNextLiveObservation = init[6]! as bool;
+  final fontPixels = init[7]! as int;
+  final cellWidth = init[8]! as int;
+  final lineHeight = init[9]! as int;
   final commands = ReceivePort();
 
   final dylib = _nativeHostLibrary();
@@ -509,6 +525,9 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     fallbackBytes.length,
     secondaryFallbackPointer,
     secondaryFallbackBytes.length,
+    fontPixels,
+    cellWidth,
+    lineHeight,
   );
   calloc.free(endpointPointer);
   calloc.free(primaryPointer);

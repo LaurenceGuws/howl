@@ -17,15 +17,13 @@ import 'pointer_input.dart';
 import 'text_input.dart';
 import 'terminal_status.dart';
 import 'terminal_controls.dart';
+import 'terminal_presentation.dart';
 import 'terminal_selection.dart';
 import 'terminal_selection_chrome.dart';
 import 'terminal_semantics.dart';
 import 'touch_surface.dart';
 import 'transport_recovery.dart';
 import 'visible_viewport.dart';
-
-const double terminalCellWidth = 10;
-const double terminalLineHeight = 20;
 
 Future<void> main(List<String> args) async {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
@@ -95,6 +93,10 @@ final class HowlTerminal extends StatefulWidget {
   State<HowlTerminal> createState() => _HowlTerminalState();
 }
 
+final class _PresentationRestart implements Exception {
+  const _PresentationRestart();
+}
+
 final class _HowlTerminalState extends State<HowlTerminal> {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Howl terminal');
   final TerminalPlatformInput _platformInput = const TerminalPlatformInput();
@@ -127,6 +129,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int? _pendingResizeColumns;
   bool _resizeDrainRunning = false;
   int _modifierLatch = 0;
+  TerminalZoomPreset _zoomPreset = TerminalZoomPreset.normal;
+  bool? _restoreImeAfterPresentationRestart;
+  Size? _terminalViewportSize;
   TerminalSelectionRange? _selection;
   Future<void> _controlTail = Future<void>.value();
 
@@ -175,6 +180,16 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       } catch (error) {
         if (_stopping || !mounted) return;
         _dropTransport(generation);
+        if (error is _PresentationRestart) {
+          _transportRecovery.succeeded();
+          _proposedRows = 0;
+          _proposedColumns = 0;
+          setState(() {
+            _failure = null;
+            _reconnecting = false;
+          });
+          continue;
+        }
         if (!retriableTransportFailure(error, attached: attached)) {
           _reportFailure(error);
           return;
@@ -198,23 +213,51 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   ) async {
     NativeHostObserver? observer;
     NativeHostControl? control;
+    final zoomPreset = _zoomPreset;
+    final presentation = zoomPreset.presentation;
     try {
-      observer = await NativeHostObserver.createPlatform(
-        endpoint: widget.endpoint.toString(),
-        armNextLiveObservation: true,
-      );
       control = await NativeHostControl.create(
         endpoint: widget.endpoint.toString(),
       );
+      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+      if (!mounted || _stopping || generation != _transportGeneration) return;
+      markAttached();
+
+      if (widget.geometryLeader) {
+        if (_terminalViewportSize == null) {
+          await WidgetsBinding.instance.endOfFrame;
+        }
+        if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+        final viewport = _terminalViewportSize;
+        final geometry = viewport == null
+            ? null
+            : _geometryFor(viewport, presentation);
+        if (geometry != null) {
+          await control.resize(geometry.rows, geometry.columns);
+          _proposedRows = geometry.rows;
+          _proposedColumns = geometry.columns;
+        }
+      }
+      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+
+      observer = await NativeHostObserver.createPlatform(
+        endpoint: widget.endpoint.toString(),
+        presentation: presentation,
+        armNextLiveObservation: true,
+      );
+      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
       _nativeControl = control;
       _transportFault = Completer<Object>();
-      markAttached();
+      final restoreIme = _restoreImeAfterPresentationRestart;
       if (_focusNode.hasFocus && _selection == null) {
         _textInput.attach(viewId: View.of(context).viewId);
-        _scheduleTextInputShow();
+        if (restoreIme ?? true) _scheduleTextInputShow();
         _sendFocus(true);
+      }
+      if (zoomPreset == _zoomPreset) {
+        _restoreImeAfterPresentationRestart = null;
       }
       var revision = 0;
       var pendingObservation = observer.observe(
@@ -321,6 +364,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   bool get _hasControl => _nativeControl != null;
+  TerminalPresentation get _presentation => _zoomPreset.presentation;
+  double get _cellWidth => _presentation.cellWidth.toDouble();
+  double get _lineHeight => _presentation.lineHeight.toDouble();
 
   Future<void> _queueControl(Future<void> Function(NativeHostControl) action) {
     if (_stopping) return Future<void>.value();
@@ -615,8 +661,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         viewport: viewport,
         rows: rows,
         columns: columns,
-        cellWidth: terminalCellWidth,
-        rowHeight: terminalLineHeight,
+        cellWidth: _cellWidth,
+        rowHeight: _lineHeight,
       ),
       modifiers: howlModifierBits(),
     );
@@ -647,7 +693,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     }
     final changed = _history.drag(
       deltaY: deltaY,
-      rowHeight: terminalLineHeight,
+      rowHeight: _lineHeight,
       historyCount: historyCount,
       historyRowBase: historyRowBase,
       alternateScreen: alternateScreen,
@@ -686,6 +732,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         if (observer == null) {
           observer = await NativeHostObserver.createPlatform(
             endpoint: widget.endpoint.toString(),
+            presentation: _presentation,
           );
           if (!mounted || _stopping || !_history.active) {
             unawaited(observer.close());
@@ -791,8 +838,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       viewportSize: viewportSize,
       rows: metadata.rows,
       columns: metadata.columns,
-      cellWidth: terminalCellWidth,
-      rowHeight: terminalLineHeight,
+      cellWidth: _cellWidth,
+      rowHeight: _lineHeight,
     );
     final cell = geometry.cellAt(details.localPosition);
     if (cell == null) return;
@@ -867,6 +914,33 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     disposeNativeCanvasLease(lease);
   }
 
+  void _changeZoom(TerminalZoomPreset preset) {
+    if (_stopping || preset == _zoomPreset) return;
+    _restoreImeAfterPresentationRestart =
+        MediaQuery.viewInsetsOf(context).bottom > 0;
+    _leaveHistory();
+    final oldLive = _nativeLiveLease;
+    setState(() {
+      _zoomPreset = preset;
+      _selection = null;
+      _nativeLiveLease = null;
+      _nativeLiveMetadata = null;
+      _nativeLiveSemanticText = '';
+      _nativeLiveSemanticTruncated = false;
+      _proposedRows = 0;
+      _proposedColumns = 0;
+      _pendingResizeRows = null;
+      _pendingResizeColumns = null;
+      _failure = null;
+      _reconnecting = false;
+    });
+    if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
+    final fault = _transportFault;
+    if (fault != null && !fault.isCompleted) {
+      fault.complete(const _PresentationRestart());
+    }
+  }
+
   void _onFocusChange(bool focused) {
     if (focused && _hasControl && _selection == null) {
       _textInput.attach(viewId: View.of(context).viewId);
@@ -878,26 +952,40 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _proposeGeometry(Size size) {
-    if (!widget.geometryLeader ||
-        !_hasControl ||
-        !size.width.isFinite ||
-        !size.height.isFinite) {
-      return;
-    }
-    final rows = (size.height / terminalLineHeight)
-        .floor()
-        .clamp(1, HowlInput.maximumRows)
-        .toInt();
-    final columns = (size.width / terminalCellWidth)
-        .floor()
-        .clamp(1, HowlInput.maximumColumns)
-        .toInt();
+    _terminalViewportSize = size;
+    if (!widget.geometryLeader || !_hasControl) return;
+    final geometry = _geometryFor(size, _presentation);
+    if (geometry == null) return;
+    final rows = geometry.rows;
+    final columns = geometry.columns;
     if (rows == _proposedRows && columns == _proposedColumns) return;
     _proposedRows = rows;
     _proposedColumns = columns;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _sendResize(rows, columns);
     });
+  }
+
+  ({int rows, int columns})? _geometryFor(
+    Size size,
+    TerminalPresentation presentation,
+  ) {
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 0 ||
+        size.height <= 0) {
+      return null;
+    }
+    return (
+      rows: (size.height / presentation.lineHeight)
+          .floor()
+          .clamp(1, HowlInput.maximumRows)
+          .toInt(),
+      columns: (size.width / presentation.cellWidth)
+          .floor()
+          .clamp(1, HowlInput.maximumColumns)
+          .toInt(),
+    );
   }
 
   @override
@@ -950,28 +1038,23 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           child: Center(child: TerminalStatusText('attaching to native Howl…')),
         );
       } else {
-        content = LayoutBuilder(
-          builder: (context, constraints) {
-            _proposeGeometry(constraints.biggest);
-            return ColoredBox(
-              color: const Color(0xff090b0e),
-              child: Center(
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    size: Size(
-                      nativeMetadata.columns * terminalCellWidth,
-                      nativeMetadata.rows * terminalLineHeight,
-                    ),
-                    painter: NativeCanvasPainter(
-                      lease: nativeLease,
-                      logicalWidth: nativeMetadata.columns * terminalCellWidth,
-                      logicalHeight: nativeMetadata.rows * terminalLineHeight,
-                    ),
-                  ),
+        content = ColoredBox(
+          color: const Color(0xff090b0e),
+          child: Center(
+            child: RepaintBoundary(
+              child: CustomPaint(
+                size: Size(
+                  nativeMetadata.columns * _cellWidth,
+                  nativeMetadata.rows * _lineHeight,
+                ),
+                painter: NativeCanvasPainter(
+                  lease: nativeLease,
+                  logicalWidth: nativeMetadata.columns * _cellWidth,
+                  logicalHeight: nativeMetadata.rows * _lineHeight,
                 ),
               ),
-            );
-          },
+            ),
+          ),
         );
       }
     }
@@ -980,86 +1063,91 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         children: <Widget>[
           Expanded(
             child: LayoutBuilder(
-              builder: (context, constraints) => TerminalSemanticSurface(
-                value: semanticText,
-                truncated: semanticTruncated,
-                child: Stack(
-                  children: <Widget>[
-                    Positioned.fill(
-                      child: TerminalTouchSurface(
-                        onTap: _onTerminalTap,
-                        onLongPressStart: (details) => _startSelection(
-                          details,
-                          constraints.biggest,
-                          nativeMetadata,
-                        ),
-                        onVerticalDragStart: _beginHistoryDrag,
-                        onVerticalDragUpdate: _updateHistoryDrag,
-                        onVerticalDragEnd: _endHistoryDrag,
-                        child: Listener(
-                          behavior: HitTestBehavior.opaque,
-                          onPointerDown: (event) =>
-                              _onPointerDown(event, constraints.biggest),
-                          onPointerMove: (event) =>
-                              _onPointerMove(event, constraints.biggest),
-                          onPointerHover: (event) =>
-                              _onPointerHover(event, constraints.biggest),
-                          onPointerUp: (event) =>
-                              _onPointerUp(event, constraints.biggest),
-                          onPointerCancel: (event) =>
-                              _onPointerCancel(event, constraints.biggest),
-                          child: Focus(
-                            focusNode: _focusNode,
-                            autofocus: true,
-                            onFocusChange: _onFocusChange,
-                            onKeyEvent: _onKeyEvent,
-                            child: content,
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (_selection case final selection?)
+              builder: (context, constraints) {
+                _proposeGeometry(constraints.biggest);
+                return TerminalSemanticSurface(
+                  value: semanticText,
+                  truncated: semanticTruncated,
+                  child: Stack(
+                    children: <Widget>[
                       Positioned.fill(
-                        child: TerminalSelectionHighlight(
-                          viewport: _selectionViewport(nativeMetadata!),
-                          range: selection,
-                          geometry: TerminalSelectionGeometry(
-                            viewportSize: constraints.biggest,
-                            rows: nativeMetadata.rows,
-                            columns: nativeMetadata.columns,
-                            cellWidth: terminalCellWidth,
-                            rowHeight: terminalLineHeight,
+                        child: TerminalTouchSurface(
+                          onTap: _onTerminalTap,
+                          onLongPressStart: (details) => _startSelection(
+                            details,
+                            constraints.biggest,
+                            nativeMetadata,
+                          ),
+                          onVerticalDragStart: _beginHistoryDrag,
+                          onVerticalDragUpdate: _updateHistoryDrag,
+                          onVerticalDragEnd: _endHistoryDrag,
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (event) =>
+                                _onPointerDown(event, constraints.biggest),
+                            onPointerMove: (event) =>
+                                _onPointerMove(event, constraints.biggest),
+                            onPointerHover: (event) =>
+                                _onPointerHover(event, constraints.biggest),
+                            onPointerUp: (event) =>
+                                _onPointerUp(event, constraints.biggest),
+                            onPointerCancel: (event) =>
+                                _onPointerCancel(event, constraints.biggest),
+                            child: Focus(
+                              focusNode: _focusNode,
+                              autofocus: true,
+                              onFocusChange: _onFocusChange,
+                              onKeyEvent: _onKeyEvent,
+                              child: content,
+                            ),
                           ),
                         ),
                       ),
-                    if (_selection case final selection?)
-                      Positioned.fill(
-                        child: TerminalSelectionChrome(
-                          viewport: _selectionViewport(nativeMetadata!),
-                          range: selection,
-                          geometry: TerminalSelectionGeometry(
-                            viewportSize: constraints.biggest,
-                            rows: nativeMetadata.rows,
-                            columns: nativeMetadata.columns,
-                            cellWidth: terminalCellWidth,
-                            rowHeight: terminalLineHeight,
+                      if (_selection case final selection?)
+                        Positioned.fill(
+                          child: TerminalSelectionHighlight(
+                            viewport: _selectionViewport(nativeMetadata!),
+                            range: selection,
+                            geometry: TerminalSelectionGeometry(
+                              viewportSize: constraints.biggest,
+                              rows: nativeMetadata.rows,
+                              columns: nativeMetadata.columns,
+                              cellWidth: _cellWidth,
+                              rowHeight: _lineHeight,
+                            ),
                           ),
-                          onStartChanged: _changeSelectionStart,
-                          onEndChanged: _changeSelectionEnd,
-                          onAutoScrollRows: _autoScrollSelection,
-                          onCopy: _copyVisibleText,
-                          onPaste: _pasteClipboard,
                         ),
-                      ),
-                  ],
-                ),
-              ),
+                      if (_selection case final selection?)
+                        Positioned.fill(
+                          child: TerminalSelectionChrome(
+                            viewport: _selectionViewport(nativeMetadata!),
+                            range: selection,
+                            geometry: TerminalSelectionGeometry(
+                              viewportSize: constraints.biggest,
+                              rows: nativeMetadata.rows,
+                              columns: nativeMetadata.columns,
+                              cellWidth: _cellWidth,
+                              rowHeight: _lineHeight,
+                            ),
+                            onStartChanged: _changeSelectionStart,
+                            onEndChanged: _changeSelectionEnd,
+                            onAutoScrollRows: _autoScrollSelection,
+                            onCopy: _copyVisibleText,
+                            onPaste: _pasteClipboard,
+                          ),
+                        ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
           TerminalControlStrip(
             modifierLatch: _modifierLatch,
+            zoomPreset: _zoomPreset,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
+            onZoom: _changeZoom,
             onKeyboard: _showSoftKeyboard,
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,

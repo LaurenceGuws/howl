@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'howl_input.dart';
+import 'terminal_presentation.dart';
 
 /// Compact mobile terminal controls that software keyboards do not reliably
 /// expose. Modifiers are caller-owned one-shot latches; this widget only
@@ -9,16 +10,20 @@ final class TerminalControlStrip extends StatelessWidget {
   const TerminalControlStrip({
     super.key,
     required this.modifierLatch,
+    required this.zoomPreset,
     required this.onModifier,
     required this.onKey,
+    required this.onZoom,
     required this.onKeyboard,
     required this.onCopy,
     required this.onPaste,
   });
 
   final int modifierLatch;
+  final TerminalZoomPreset zoomPreset;
   final ValueChanged<int> onModifier;
   final ValueChanged<int> onKey;
+  final ValueChanged<TerminalZoomPreset> onZoom;
   final VoidCallback onKeyboard;
   final VoidCallback onCopy;
   final VoidCallback onPaste;
@@ -39,6 +44,10 @@ final class TerminalControlStrip extends StatelessWidget {
           _key('↑', HowlInput.namedArrowUp),
           _key('→', HowlInput.namedArrowRight),
           _action('Kbd', onKeyboard),
+          _action(
+            '${zoomPreset.presentation.fontPixels}px',
+            () => onZoom(zoomPreset.next),
+          ),
           _action('Copy', onCopy),
           _action('Paste', onPaste),
         ],
@@ -89,18 +98,27 @@ final class _TerminalControlButton extends StatelessWidget {
           canRequestFocus: false,
           borderRadius: BorderRadius.circular(4),
           onTap: onTap,
-          child: Center(
-            child: Text(
-              label,
-              maxLines: 1,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12,
-                color: Color(0xffd7e0e7),
-              ),
-            ),
-          ),
+          child: _TerminalControlFace(label: label),
         ),
+      ),
+    ),
+  );
+}
+
+final class _TerminalControlFace extends StatelessWidget {
+  const _TerminalControlFace({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Text(
+      label,
+      maxLines: 1,
+      style: const TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 12,
+        color: Color(0xffd7e0e7),
       ),
     ),
   );

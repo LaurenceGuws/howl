@@ -3,5 +3,5 @@ bool geometryLeaderEnabled({
   String? environmentValue,
 }) {
   final value = compiledValue.isNotEmpty ? compiledValue : environmentValue;
-  return value == '1';
+  return value == '1' || value == 'true';
 }

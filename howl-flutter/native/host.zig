@@ -76,9 +76,9 @@ const Host = struct {
     armed_live_after_revision: ?u64 = null,
 };
 
-fn contentConfig() terminal.ContentConfig {
+fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
     return .{
-        .cell_size = .{ .width = 10, .height = 20 },
+        .cell_size = .{ .width = cell_width, .height = cell_height },
         .box_drawing = .{
             .dpi_x = .{ .numerator = 96, .denominator = 1 },
             .dpi_y = .{ .numerator = 96, .denominator = 1 },
@@ -97,7 +97,7 @@ fn contentConfig() terminal.ContentConfig {
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 1;
+    return 2;
 }
 
 pub export fn howl_native_host_create(
@@ -109,8 +109,13 @@ pub export fn howl_native_host_create(
     fallback_len: usize,
     secondary_fallback_ptr: ?[*]const u8,
     secondary_fallback_len: usize,
+    font_pixels: u16,
+    cell_width: u16,
+    cell_height: u16,
 ) ?*HostHandle {
-    if (endpoint_len == 0 or primary_len == 0) return null;
+    if (endpoint_len == 0 or primary_len == 0 or
+        font_pixels == 0 or cell_width == 0 or cell_height == 0)
+        return null;
     const allocator = std.heap.c_allocator;
     var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch return null;
     errdefer connection.deinit();
@@ -130,10 +135,14 @@ pub export fn howl_native_host_create(
     const fonts = text.FontSet.init(allocator, .{
         .primary = primary_ptr[0..primary_len],
         .fallbacks = fallbacks,
-        .size = .{ .pixels = 16 },
+        .size = .{ .pixels = font_pixels },
     }) catch return null;
     errdefer fonts.deinit();
-    const content = terminal.initContent(allocator, fonts, contentConfig()) catch return null;
+    const content = terminal.initContent(
+        allocator,
+        fonts,
+        contentConfig(cell_width, cell_height),
+    ) catch return null;
     errdefer terminal.deinitContent(content);
     var composer = canvas.Composer.init(allocator, .{
         .sources = 1,
@@ -385,10 +394,12 @@ pub export fn howl_native_host_observe(
         history_offset,
         residency_bytes,
         output_ptr[0..output_capacity],
-    ) catch |failure| return switch (failure) {
-        error.BufferTooSmall => 1,
-        error.InvalidResidency => 3,
-        else => 4,
+    ) catch |failure| {
+        return switch (failure) {
+            error.BufferTooSmall => 1,
+            error.InvalidResidency => 3,
+            else => 4,
+        };
     };
     output_len.* = written;
     return 0;
