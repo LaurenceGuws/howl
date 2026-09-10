@@ -185,7 +185,7 @@ void main() {
     },
   );
 
-  test('sprite clipping crops source and destination identically', () {
+  test('sprite clipping maps destination clipping back into source space', () {
     final clipped = clipNativeCanvasSprite(
       const ui.Rect.fromLTWH(10, 10, 10, 10),
       const ui.Rect.fromLTWH(15, 12, 10, 5),
@@ -194,14 +194,14 @@ void main() {
     expect(clipped, isNotNull);
     expect(clipped!.destination, const ui.Rect.fromLTWH(15, 12, 5, 5));
     expect(clipped.source, const ui.Rect.fromLTWH(25, 32, 5, 5));
-    expect(
-      () => clipNativeCanvasSprite(
-        const ui.Rect.fromLTWH(0, 0, 20, 10),
-        const ui.Rect.fromLTWH(0, 0, 20, 10),
-        const ui.Rect.fromLTWH(0, 0, 10, 10),
-      ),
-      throwsA(isA<NativeCanvasException>()),
+    final scaled = clipNativeCanvasSprite(
+      const ui.Rect.fromLTWH(0, 0, 20, 10),
+      const ui.Rect.fromLTWH(5, 2, 10, 5),
+      const ui.Rect.fromLTWH(0, 0, 10, 10),
     );
+    expect(scaled, isNotNull);
+    expect(scaled!.destination, const ui.Rect.fromLTWH(5, 2, 10, 5));
+    expect(scaled.source, const ui.Rect.fromLTWH(2.5, 2, 5, 5));
   });
 
   test('Canvas and native-host parsers reject corrupt identity/layout', () {

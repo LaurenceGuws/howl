@@ -55,6 +55,36 @@ final class _AtlasSegment extends _PaintSegment {
   }
 }
 
+final class _ScaledAlphaSegment extends _PaintSegment {
+  const _ScaledAlphaSegment({
+    required this.resource,
+    required this.source,
+    required this.destination,
+    required this.color,
+  });
+
+  final NativeCanvasResourceKey resource;
+  final ui.Rect source;
+  final ui.Rect destination;
+  final ui.Color color;
+
+  @override
+  void paint(ui.Canvas canvas, Map<NativeCanvasResourceKey, ui.Image> images) {
+    final image = images[resource];
+    if (image == null) {
+      throw StateError('missing native Canvas resource $resource');
+    }
+    canvas.drawImageRect(
+      image,
+      source,
+      destination,
+      ui.Paint()
+        ..filterQuality = ui.FilterQuality.none
+        ..colorFilter = ui.ColorFilter.mode(color, ui.BlendMode.srcIn),
+    );
+  }
+}
+
 final class _RgbaSegment extends _PaintSegment {
   const _RgbaSegment({
     required this.resource,
@@ -123,10 +153,32 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
     final resource = resources[resourceIndex];
 
     if (tag == 1) {
+      final destination = _destination(frame, index);
+      final source = _source(frame, index);
+      if (!_sameExtent(destination, source)) {
+        final clipped = clipNativeCanvasSprite(
+          destination,
+          _clip(frame, index),
+          source,
+        );
+        if (clipped != null) {
+          segments.add(
+            _ScaledAlphaSegment(
+              resource: resource.key,
+              source: clipped.source,
+              destination: clipped.destination,
+              color: _rgbaBitsToColor(frame.commandColorRgba(index)),
+            ),
+          );
+        }
+        index += 1;
+        continue;
+      }
       var end = index + 1;
       while (end < frame.commandCount &&
           frame.commandTag(end) == 1 &&
-          frame.commandResourceIndex(end) == resourceIndex) {
+          frame.commandResourceIndex(end) == resourceIndex &&
+          _sameExtent(_destination(frame, end), _source(frame, end))) {
         end += 1;
       }
       final segment = _buildAtlasSegment(frame, resource.key, index, end);
@@ -221,22 +273,23 @@ NativeCanvasClip? clipNativeCanvasSprite(
   ui.Rect clip,
   ui.Rect source,
 ) {
-  if (destination.width != source.width ||
-      destination.height != source.height) {
-    throw const NativeCanvasException('scaled_alpha');
-  }
   final visible = destination.intersect(clip);
   if (visible.isEmpty) return null;
+  final scaleX = source.width / destination.width;
+  final scaleY = source.height / destination.height;
   return NativeCanvasClip(
     visible,
     ui.Rect.fromLTWH(
-      source.left + visible.left - destination.left,
-      source.top + visible.top - destination.top,
-      visible.width,
-      visible.height,
+      source.left + (visible.left - destination.left) * scaleX,
+      source.top + (visible.top - destination.top) * scaleY,
+      visible.width * scaleX,
+      visible.height * scaleY,
     ),
   );
 }
+
+bool _sameExtent(ui.Rect left, ui.Rect right) =>
+    left.width == right.width && left.height == right.height;
 
 final class NativeCanvasLease {
   const NativeCanvasLease({

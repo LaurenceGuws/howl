@@ -198,6 +198,90 @@ test "terminal Canvas generated box raster matches Kitty-derived cell geometry" 
     try std.testing.expectEqual(@as(usize, 0), render.terminal.contentUsage(content).shape.entries);
 }
 
+test "terminal Canvas projects DEC double width and height as clipped line transforms" {
+    var block = [_]u32{0x2588};
+    var empty = [_]u32{};
+    var row0_cells = [_]client.rich.Cell{
+        cell(&block, 1, 0),
+        cell(&empty, 1, 0),
+    };
+    var row1_cells = row0_cells;
+    var row2_cells = row0_cells;
+    var row3_cells = row0_cells;
+    var rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row0_cells },
+        .{ .wrapped = false, .line_geometry = 1, .cells = &row1_cells },
+        .{ .wrapped = false, .line_geometry = 2, .cells = &row2_cells },
+        .{ .wrapped = false, .line_geometry = 3, .cells = &row3_cells },
+    };
+    var source = sourceSnapshot(&rows, 2);
+    source.begin.cursor_visible = true;
+    source.begin.cursor_row = 1;
+    source.begin.cursor_column = 0;
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(32));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, .{
+        .pane = 1,
+        .source = @fromBackingInt(@intCast(1)),
+        .visible_set_revision = 1,
+        .lifecycle_revision = 1,
+    });
+    var destinations: [4]render.canvas.Rect = undefined;
+    var clips: [4]render.canvas.Rect = undefined;
+    var sources: [4]render.canvas.SourceRect = undefined;
+    var alpha_count: usize = 0;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (alpha_count == destinations.len) return error.TooManyAlphaCommands;
+            destinations[alpha_count] = value.destination;
+            clips[alpha_count] = value.clip;
+            sources[alpha_count] = value.resource.source.?;
+            alpha_count += 1;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(destinations.len, alpha_count);
+    try std.testing.expectEqualDeep(
+        [4]render.canvas.Rect{
+            .{ .x = 0, .y = 0, .width = 10, .height = 20 },
+            .{ .x = 0, .y = 20, .width = 20, .height = 20 },
+            .{ .x = 0, .y = 40, .width = 20, .height = 40 },
+            .{ .x = 0, .y = 40, .width = 20, .height = 40 },
+        },
+        destinations,
+    );
+    try std.testing.expectEqualDeep(
+        [4]render.canvas.Rect{
+            .{ .x = 0, .y = 0, .width = 10, .height = 20 },
+            .{ .x = 0, .y = 20, .width = 20, .height = 20 },
+            .{ .x = 0, .y = 40, .width = 20, .height = 20 },
+            .{ .x = 0, .y = 60, .width = 20, .height = 20 },
+        },
+        clips,
+    );
+    for (sources) |source_rect| {
+        try std.testing.expectEqualDeep(
+            render.canvas.SourceRect{ .x = 0, .y = 0, .width = 10, .height = 20 },
+            source_rect,
+        );
+    }
+    try std.testing.expectEqualDeep(
+        render.canvas.Rect{ .x = 0, .y = 20, .width = 20, .height = 20 },
+        update.cursor_binding.?.rect,
+    );
+    try std.testing.expectEqualDeep(
+        render.canvas.Size{ .width = 20, .height = 20 },
+        update.cursor_binding.?.cell_size,
+    );
+    try std.testing.expectEqual(@as(usize, 1), render.terminal.contentUsage(content).atlas_entries);
+    try std.testing.expectEqual(@as(usize, 0), render.terminal.contentUsage(content).shape.entries);
+}
+
 test "terminal Canvas content retains howl-text whole-sequence fallback" {
     var variation = [_]u32{ '0', 0xfe00 };
     var cells = [_]client.rich.Cell{cell(&variation, 1, 0)};
