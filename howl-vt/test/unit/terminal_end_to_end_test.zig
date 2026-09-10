@@ -1710,18 +1710,52 @@ test "terminal: static graphics follow scroll erase resize bank and reset lifeti
     try std.testing.expect(
         (try terminal.feed("\x1b_Ga=p,i=7\x1b\\")).stateChanged(),
     );
-    try std.testing.expect(terminal.images(0).placement(1) != null);
+    const before_resize = terminal.images(0);
+    const retained_placement = before_resize.placement(1) orelse
+        return error.MissingImagePlacement;
+    const graphics_generation = before_resize.generation;
+    const content_generation = before_resize.content_generation;
     var discarded = try terminal.prepareResize(4, 5);
     discarded.deinit();
-    try std.testing.expect(terminal.images(0).placement(1) != null);
+    try std.testing.expectEqualDeep(
+        retained_placement,
+        terminal.images(0).placement(1) orelse return error.MissingImagePlacement,
+    );
     var committed = try terminal.prepareResize(4, 5);
     defer committed.deinit();
     committed.commit();
-    try std.testing.expectEqual(@as(usize, 1), terminal.images(0).imageCount());
+    const resized = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), resized.imageCount());
     try std.testing.expect(terminal.images(0).placement(0) == null);
-    try std.testing.expect(terminal.images(0).placement(1) == null);
+    try std.testing.expectEqualDeep(
+        retained_placement,
+        resized.placement(1) orelse return error.MissingImagePlacement,
+    );
+    try std.testing.expectEqual(graphics_generation, resized.generation);
+    try std.testing.expectEqual(content_generation, resized.content_generation);
     terminal.hardReset();
     try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+}
+
+test "terminal: resize clips only graphics anchors outside replacement bounds" {
+    var terminal = try Terminal.init(std.testing.allocator, 4, 5);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+    try std.testing.expect((try terminal.feed(
+        "\x1b[4;5H\x1b_Ga=T,f=32,s=1,v=1,i=7,C=1;AQIDBA==\x1b\\",
+    )).stateChanged());
+    const before = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), before.imageCount());
+    try std.testing.expect(before.placement(0) != null);
+    const content_generation = before.content_generation;
+    const graphics_generation = before.generation;
+
+    try terminal.resize(2, 3);
+    const after = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), after.imageCount());
+    try std.testing.expectEqual(@as(usize, 0), after.placementCount());
+    try std.testing.expectEqual(content_generation, after.content_generation);
+    try std.testing.expect(after.generation > graphics_generation);
 }
 
 test "terminal: fragmented Sixel retains exact image placement and cursor lifetime" {

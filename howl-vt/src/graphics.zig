@@ -1082,6 +1082,42 @@ pub const Plane = struct {
         return changed;
     }
 
+    /// Retains only placement anchors representable by one resized screen bank.
+    ///
+    /// Primary callers pass the replacement screen's absolute retained-row
+    /// interval (`history_row_base`, `history_count + rows`). Alternate callers
+    /// pass row zero and the replacement visible-row count. Pixel geometry and
+    /// placement generations remain unchanged for every retained anchor.
+    pub fn retainBankBounds(
+        self: *Plane,
+        bank: Bank,
+        row_start: u64,
+        row_count: u64,
+        columns: u16,
+    ) bool {
+        const row_end = std.math.add(u64, row_start, row_count) catch
+            @panic("terminal graphics retained-row interval overflow");
+        var changed = false;
+        var index: usize = 0;
+        while (index < self.placement_count) {
+            const retained = self.placements[index];
+            if (retained.bank != bank) {
+                index += 1;
+                continue;
+            }
+            if (retained.row < row_start or retained.row >= row_end or
+                retained.col >= columns)
+            {
+                self.removePlacement(index);
+                changed = true;
+                continue;
+            }
+            index += 1;
+        }
+        if (changed) self.advance();
+        return changed;
+    }
+
     /// Drops primary placements whose complete anchor row was evicted.
     pub fn evictBefore(self: *Plane, absolute_row: u64) bool {
         var changed = false;

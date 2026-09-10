@@ -5413,8 +5413,20 @@ pub const Terminal = struct {
                 &old_replies,
             );
             old_replies.deinit();
-            const primary_changed = self.terminal.graphics.clearBank(.primary);
-            const alternate_changed = self.terminal.graphics.clearBank(.alternate);
+            const replacement_primary = &self.terminal.screen_state.primary;
+            const replacement_alternate = &self.terminal.screen_state.alternate;
+            const primary_changed = self.terminal.graphics.retainBankBounds(
+                .primary,
+                replacement_primary.historyRowBase(),
+                @as(u64, replacement_primary.historyCount()) + replacement_primary.rows,
+                replacement_primary.cols,
+            );
+            const alternate_changed = self.terminal.graphics.retainBankBounds(
+                .alternate,
+                0,
+                replacement_alternate.rows,
+                replacement_alternate.cols,
+            );
             std.debug.assert(!primary_changed or self.terminal.graphics.generation() != 0);
             std.debug.assert(!alternate_changed or self.terminal.graphics.generation() != 0);
             advanceIdentity(&self.terminal.semantic_sequence);
