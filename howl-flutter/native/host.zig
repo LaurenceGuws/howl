@@ -31,6 +31,7 @@ const command_capacity: usize = (canvas_packet_budget - maximum_non_command_pack
     command_record_bytes;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity *
     command_record_bytes;
+const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
     if (maximum_non_command_packet_bytes > canvas_packet_budget)
@@ -43,6 +44,8 @@ comptime {
         @compileError("native host command capacity does not consume the available packet budget");
     if (output_minimum_bytes - canvas_packet_budget != semantic_capacity)
         @compileError("native host semantic allowance drifted from its packet budget");
+    if (maximum_terminal_images + 1 > maximum_frame_resources)
+        @compileError("native image bound leaves no room for the terminal glyph atlas");
 }
 
 const HostPacketError = error{
@@ -64,11 +67,7 @@ const Control = struct {
     connection: client.Connection,
 };
 
-const HostImageBinding = struct {
-    image_id: u32,
-    generation: u64,
-    resource: canvas.ResourceRef,
-};
+const HostImageBinding = terminal.ExternalImageBinding;
 
 const PendingImage = struct {
     binding: HostImageBinding,
@@ -88,8 +87,9 @@ const Host = struct {
     frame_commands: [command_capacity]canvas.Command = undefined,
     frame_pixels: [pixel_capacity]u8 = undefined,
     residencies: [maximum_frame_resources]canvas.Residency = undefined,
-    missing_external: [1]canvas.FrameExternalResource = undefined,
-    image_binding: ?HostImageBinding = null,
+    missing_external: [maximum_terminal_images]canvas.FrameExternalResource = undefined,
+    image_bindings: [maximum_terminal_images]HostImageBinding = undefined,
+    image_binding_count: usize = 0,
     pending_image: ?PendingImage = null,
     live_observe_pipeline: bool = false,
     armed_live_after_revision: ?u64 = null,
@@ -582,65 +582,116 @@ fn takeHostContentUpdate(
     cursor: terminal.CursorContext,
 ) !canvas.ProducerUpdate {
     const graphics = client.view.graphics(view);
-    if (graphics.images.len == 0 and graphics.placements.len == 0) {
-        const update = try terminal.takeContentUpdate(host.content, view, cursor);
-        host.image_binding = null;
-        return update;
-    }
-    if (graphics.images.len != 1 or graphics.placements.len != 1)
+    if (graphics.images.len > maximum_terminal_images)
         return error.InvalidHost;
-
-    const image = graphics.images[0];
-    const binding = try hostImageBinding(host, image.image_id, image.generation);
-    const update = try terminal.takeContentUpdateWithImageBinding(
+    var candidate: [maximum_terminal_images]HostImageBinding = undefined;
+    const bindings = try prepareImageBindings(host, graphics.images, &candidate);
+    const update = try terminal.takeContentUpdateWithImageBindings(
         host.content,
         view,
         cursor,
-        .{
-            .image_id = binding.image_id,
-            .generation = binding.generation,
-            .resource = binding.resource,
-        },
+        bindings,
     );
-    host.image_binding = binding;
+    @memcpy(host.image_bindings[0..bindings.len], bindings);
+    host.image_binding_count = bindings.len;
     return update;
 }
 
-fn hostImageBinding(
+fn prepareImageBindings(
     host: *const Host,
-    image_id: u32,
-    generation: u64,
-) !HostImageBinding {
-    if (image_id == 0 or generation == 0) return error.InvalidHost;
-    if (host.image_binding) |current| {
-        if (current.image_id == image_id and current.generation == generation)
-            return current;
-        if (current.image_id == image_id and generation > current.generation) {
-            return .{
-                .image_id = image_id,
-                .generation = generation,
-                .resource = .{
-                    .resource = current.resource.resource,
-                    .generation = @fromBackingInt(@intCast(generation)),
-                },
-            };
-        }
-    }
+    images: []const client.view.Image,
+    output: *[maximum_terminal_images]HostImageBinding,
+) ![]const HostImageBinding {
+    return planImageBindings(
+        host.image_bindings[0..host.image_binding_count],
+        terminal.contentUsage(host.content),
+        images,
+        output,
+    );
+}
 
-    const usage = terminal.contentUsage(host.content);
-    const reserve: u64 = if (usage.resource_generation == 0) 2 else 1;
-    const identity = std.math.add(u64, usage.resource_high_water, reserve) catch
-        return error.InvalidHost;
-    if (identity == 0 or identity > canvas.ResourceId.max_identity)
-        return error.InvalidHost;
-    return .{
-        .image_id = image_id,
-        .generation = generation,
-        .resource = .{
-            .resource = canvas.ResourceId.local(identity) catch return error.InvalidHost,
-            .generation = @fromBackingInt(@intCast(generation)),
-        },
-    };
+fn planImageBindings(
+    current: []const HostImageBinding,
+    usage: terminal.ContentUsage,
+    images: []const client.view.Image,
+    output: *[maximum_terminal_images]HostImageBinding,
+) ![]const HostImageBinding {
+    if (images.len > output.len) return error.InvalidHost;
+    var allocation_cursor = usage.resource_high_water;
+    var first_new = true;
+    for (images, 0..) |image, index| {
+        if (image.image_id == 0 or image.generation == 0) return error.InvalidHost;
+        if (findImageBindingById(
+            current,
+            image.image_id,
+        )) |prior| {
+            if (image.generation < prior.generation) return error.InvalidHost;
+            var binding = prior;
+            if (image.generation > prior.generation) {
+                binding.generation = image.generation;
+                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
+            }
+            output[index] = binding;
+            continue;
+        }
+
+        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
+        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
+            return error.InvalidHost;
+        first_new = false;
+        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
+            return error.InvalidHost;
+        output[index] = .{
+            .image_id = image.image_id,
+            .generation = image.generation,
+            .resource = .{
+                .resource = canvas.ResourceId.local(allocation_cursor) catch
+                    return error.InvalidHost,
+                .generation = @fromBackingInt(@intCast(image.generation)),
+            },
+        };
+    }
+    return output[0..images.len];
+}
+
+fn findImageBindingById(
+    bindings: []const HostImageBinding,
+    image_id: u32,
+) ?HostImageBinding {
+    for (bindings) |binding| {
+        if (binding.image_id == image_id) return binding;
+    }
+    return null;
+}
+
+fn findImageBindingByResource(
+    bindings: []const HostImageBinding,
+    resource: canvas.FrameResourceRef,
+) ?HostImageBinding {
+    for (bindings) |binding| {
+        if (binding.resource.resource == resource.resource and
+            binding.resource.generation == resource.generation)
+            return binding;
+    }
+    return null;
+}
+
+fn selectPendingImage(
+    source: canvas.SourceId,
+    bindings: []const HostImageBinding,
+    missing: []const canvas.FrameExternalResource,
+) !PendingImage {
+    if (missing.len == 0 or missing.len > bindings.len) return error.InvalidHost;
+    var selected: ?PendingImage = null;
+    for (missing, 0..) |value, index| {
+        if (@backingInt(value.resource.source) != @backingInt(source) or
+            value.format != .rgba8)
+            return error.InvalidHost;
+        const binding = findImageBindingByResource(bindings, value.resource) orelse
+            return error.InvalidHost;
+        if (index == 0) selected = .{ .binding = binding, .external = value };
+    }
+    return selected orelse error.InvalidHost;
 }
 
 fn prepareImageRefill(
@@ -651,19 +702,14 @@ fn prepareImageRefill(
         residency,
         &host.missing_external,
     );
-    if (missing.len != 1) return error.InvalidHost;
-    const binding = host.image_binding orelse return error.InvalidHost;
-    const expected = canvas.FrameResourceRef.local(host.source, binding.resource) catch
-        return error.InvalidHost;
-    if (!std.meta.eql(expected, missing[0].resource) or
-        missing[0].format != .rgba8)
-        return error.InvalidHost;
-    const pixel_bytes = try imageRefillPixelBytes(missing[0].size);
+    const pending = try selectPendingImage(
+        host.source,
+        host.image_bindings[0..host.image_binding_count],
+        missing,
+    );
+    const pixel_bytes = try imageRefillPixelBytes(pending.external.size);
     if (pixel_bytes == 0) return error.InvalidHost;
-    host.pending_image = .{
-        .binding = binding,
-        .external = missing[0],
-    };
+    host.pending_image = pending;
 }
 
 fn imageRefillPixelBytes(size: canvas.Size) !usize {
@@ -737,6 +783,123 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(usize, 384 * 1024), output_minimum_bytes);
     try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
     try std.testing.expect(command_capacity >= 7_000);
+    try std.testing.expectEqual(@as(usize, 7), maximum_terminal_images);
+    try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
+}
+
+test "native host plans seven image bindings with stable logical resources" {
+    var images: [maximum_terminal_images]client.view.Image = undefined;
+    for (&images, 0..) |*image, index| image.* = .{
+        .image_id = @intCast(index + 1),
+        .generation = 1,
+        .width = 1,
+        .height = 1,
+    };
+    var output: [maximum_terminal_images]HostImageBinding = undefined;
+    const empty_usage = terminal.ContentUsage{
+        .shape = .{ .entries = 0, .scalars = 0, .glyphs = 0 },
+        .atlas_entries = 0,
+        .producer_revision = 0,
+        .resource_generation = 0,
+        .resource_high_water = 0,
+    };
+    const first = try planImageBindings(&.{}, empty_usage, &images, &output);
+    try std.testing.expectEqual(maximum_terminal_images, first.len);
+    for (first, 0..) |binding, index| {
+        try std.testing.expectEqual(@as(u32, @intCast(index + 1)), binding.image_id);
+        try std.testing.expectEqual(@as(u64, 1), binding.generation);
+        try std.testing.expectEqual(
+            @as(u64, @intCast(index + 2)),
+            try binding.resource.resource.identity(),
+        );
+        try std.testing.expectEqual(@as(u64, 1), @backingInt(binding.resource.generation));
+    }
+
+    var retained: [maximum_terminal_images]HostImageBinding = undefined;
+    @memcpy(&retained, first);
+    images[0].generation = 2;
+    var replacement: [maximum_terminal_images]HostImageBinding = undefined;
+    var later_usage = empty_usage;
+    later_usage.resource_high_water = maximum_terminal_images + 1;
+    const second = try planImageBindings(&retained, later_usage, &images, &replacement);
+    try std.testing.expectEqual(@as(u64, 2), second[0].generation);
+    try std.testing.expectEqual(@as(u64, 2), try second[0].resource.resource.identity());
+    try std.testing.expectEqual(@as(u64, 2), @backingInt(second[0].resource.generation));
+    try std.testing.expectEqual(@as(u64, 1), retained[0].generation);
+    try std.testing.expectEqual(@as(u64, 1), @backingInt(retained[0].resource.generation));
+
+    images[0].generation = 1;
+    try std.testing.expectError(
+        error.InvalidHost,
+        planImageBindings(second, later_usage, &images, &output),
+    );
+
+    var too_many: [maximum_terminal_images + 1]client.view.Image = undefined;
+    for (&too_many, 0..) |*image, index| image.* = .{
+        .image_id = @intCast(index + 1),
+        .generation = 1,
+        .width = 1,
+        .height = 1,
+    };
+    try std.testing.expectError(
+        error.InvalidHost,
+        planImageBindings(&.{}, empty_usage, &too_many, &output),
+    );
+}
+
+test "native host selects one exact refill from multiple missing images" {
+    const source: canvas.SourceId = @fromBackingInt(3);
+    const other_source: canvas.SourceId = @fromBackingInt(4);
+    const first_local = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.local(2),
+        .generation = @fromBackingInt(5),
+    };
+    const second_local = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.local(3),
+        .generation = @fromBackingInt(7),
+    };
+    const bindings = [_]HostImageBinding{
+        .{ .image_id = 11, .generation = 5, .resource = first_local },
+        .{ .image_id = 12, .generation = 7, .resource = second_local },
+    };
+    var missing = [_]canvas.FrameExternalResource{
+        .{
+            .resource = try canvas.FrameResourceRef.local(source, first_local),
+            .format = .rgba8,
+            .size = .{ .width = 2, .height = 2 },
+            .stride = 8,
+        },
+        .{
+            .resource = try canvas.FrameResourceRef.local(source, second_local),
+            .format = .rgba8,
+            .size = .{ .width = 3, .height = 1 },
+            .stride = 12,
+        },
+    };
+    const selected = try selectPendingImage(source, &bindings, &missing);
+    try std.testing.expectEqualDeep(bindings[0], selected.binding);
+    try std.testing.expectEqualDeep(missing[0], selected.external);
+
+    const first_resource = missing[0].resource;
+    missing[0].resource = try canvas.FrameResourceRef.local(other_source, first_local);
+    try std.testing.expectError(error.InvalidHost, selectPendingImage(source, &bindings, &missing));
+    missing[0].resource = first_resource;
+
+    const second_resource = missing[1].resource;
+    const unknown = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.local(9),
+        .generation = @fromBackingInt(1),
+    };
+    missing[1].resource = try canvas.FrameResourceRef.local(source, unknown);
+    try std.testing.expectError(error.InvalidHost, selectPendingImage(source, &bindings, &missing));
+    missing[1].resource = second_resource;
+
+    missing[1].format = .alpha8;
+    try std.testing.expectError(error.InvalidHost, selectPendingImage(source, &bindings, &missing));
+    try std.testing.expectError(
+        error.InvalidHost,
+        selectPendingImage(source, &bindings, missing[0..0]),
+    );
 }
 
 test "native host image refill packet carries exact Canvas and terminal identity" {
