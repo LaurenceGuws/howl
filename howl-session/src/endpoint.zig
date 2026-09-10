@@ -69,6 +69,14 @@ comptime {
         @compileError("text_v1 hyperlink identity bound must match canonical VT bound");
     if (howl.maximum_hyperlink_uri_bytes != protocol.text_v1.maximum_hyperlink_uri_bytes)
         @compileError("text_v1 hyperlink URI bound must match canonical VT bound");
+    if (howl.maximum_image_bytes != protocol.graphics_v1.maximum_image_bytes)
+        @compileError("graphics image byte bound must match canonical VT bound");
+    if (howl.maximum_image_dimension != protocol.graphics_v1.maximum_dimension)
+        @compileError("graphics image dimension bound must match canonical VT bound");
+    if (howl.maximum_images != protocol.graphics_v1.maximum_images)
+        @compileError("graphics image count must match canonical VT bound");
+    if (howl.maximum_image_placements != protocol.graphics_v1.maximum_placements)
+        @compileError("graphics placement count must match canonical VT bound");
     if (howl.maximum_key_text_bytes != protocol.typed_input.maximum_key_text_bytes)
         @compileError("typed key committed-text bound must match canonical VT bound");
     if (howl.maximum_legacy_key_bytes != protocol.typed_input.maximum_legacy_key_bytes)
@@ -378,6 +386,7 @@ const Server = struct {
             .signal => try self.handleSignal(client, payload),
             .interaction_state => try self.handleInteractionState(client, payload),
             .text_extract => try self.handleTextExtract(client, payload),
+            .image_request => try self.handleImageRequest(client, payload),
             else => try self.queueResult(client, kind, .unsupported),
         }
     }
@@ -508,6 +517,52 @@ const Server = struct {
         try self.queueFrame(client, .text_extract_data, text);
     }
 
+    fn handleImageRequest(self: *Server, client: *Client, payload: []const u8) !void {
+        const request = protocol.decodeImageRequest(payload) catch
+            return self.queueResult(client, .image_request, .malformed);
+        const image = howl.image(self.session, request.image_id, request.generation) orelse
+            return self.queueResult(client, .image_request, .rejected);
+        const expected = std.math.mul(u64, image.width, image.height) catch
+            return self.queueResult(client, .image_request, .rejected);
+        const rgba_bytes = std.math.mul(u64, expected, 4) catch
+            return self.queueResult(client, .image_request, .rejected);
+        if (rgba_bytes != image.pixels.len or rgba_bytes > protocol.graphics_v1.maximum_image_bytes)
+            return self.queueResult(client, .image_request, .rejected);
+
+        const data_frames = std.math.divCeil(
+            usize,
+            image.pixels.len,
+            protocol.graphics_v1.data_chunk_bytes,
+        ) catch return self.queueResult(client, .image_request, .rejected);
+        const total_bound = protocol.header_bytes + protocol.payload_bytes.image_begin +
+            data_frames * protocol.header_bytes + image.pixels.len +
+            protocol.header_bytes + protocol.payload_bytes.image_end;
+
+        client.resetOutput(self.allocator);
+        errdefer client.resetOutput(self.allocator);
+        try client.output.ensureTotalCapacity(self.allocator, total_bound);
+        var begin: [protocol.payload_bytes.image_begin]u8 = undefined;
+        protocol.encodeImageBegin(&begin, .{
+            .image_id = image.id,
+            .generation = image.generation,
+            .width = image.width,
+            .height = image.height,
+            .byte_count = @intCast(image.pixels.len),
+        });
+        try self.appendFrame(&client.output, .image_begin, &begin);
+        var offset: usize = 0;
+        while (offset < image.pixels.len) {
+            const count = @min(protocol.graphics_v1.data_chunk_bytes, image.pixels.len - offset);
+            try self.appendFrame(&client.output, .image_data, image.pixels[offset..][0..count]);
+            offset += count;
+        }
+        var end: [protocol.payload_bytes.image_end]u8 = undefined;
+        protocol.encodeImageEnd(&end, .{ .image_id = image.id, .generation = image.generation });
+        try self.appendFrame(&client.output, .image_end, &end);
+        std.debug.assert(client.output.items.len == total_bound);
+        client.output_offset = 0;
+    }
+
     // -------------------------------------------------------------------------
     // Leadership, resize, and signals
     // -------------------------------------------------------------------------
@@ -618,6 +673,8 @@ const Server = struct {
 
     fn queueTextSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
         const status = howl.status(self.session, history_offset);
+        var graphics = howl.images(self.session, status.history_offset);
+        const graphics_counts = try countSnapshotGraphics(&graphics);
         const observed_ns = nowNs(self.io);
         const cursor_age_ns = if (status.cursor_movement_timestamp_ns == 0)
             protocol.text_v1.no_cursor_movement_age_ns
@@ -699,7 +756,7 @@ const Server = struct {
             ) catch return error.SnapshotTooLarge;
         }
 
-        if (body_bytes == 0 or body_bytes > protocol.maximum_snapshot_bytes or
+        if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
             body_bytes > std.math.maxInt(u32))
             return error.SnapshotTooLarge;
 
@@ -780,6 +837,8 @@ const Server = struct {
             protocol.text_v1.compressed_header_bytes,
             compressed.written().len,
         ) catch return error.SnapshotTooLarge;
+        if (encoded_bytes > protocol.maximum_text_snapshot_bytes)
+            return error.SnapshotTooLarge;
         const data_frames = std.math.divCeil(
             usize,
             encoded_bytes,
@@ -787,8 +846,9 @@ const Server = struct {
         ) catch return error.SnapshotTooLarge;
         const total_bound = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
             data_frames * protocol.header_bytes + encoded_bytes +
+            protocol.header_bytes + graphics_counts.payload_bytes +
             protocol.header_bytes + protocol.payload_bytes.snapshot_end;
-        if (total_bound > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+        if (total_bound > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
 
         client.resetOutput(self.allocator);
         errdefer client.resetOutput(self.allocator);
@@ -819,6 +879,11 @@ const Server = struct {
         var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
         encodeU32(&raw_len, @intCast(body_bytes));
         try self.appendSnapshotData(&client.output, &raw_len, compressed.written());
+
+        const graphics_payload = try self.allocator.alloc(u8, graphics_counts.payload_bytes);
+        defer self.allocator.free(graphics_payload);
+        try encodeSnapshotGraphics(&graphics, graphics_counts, graphics_payload);
+        try self.appendFrame(&client.output, .snapshot_graphics, graphics_payload);
 
         var end_payload: [protocol.payload_bytes.snapshot_end]u8 = undefined;
         protocol.encodeSnapshotEnd(&end_payload, .{ .revision = self.observation_revision });
@@ -983,6 +1048,122 @@ const Server = struct {
 // =============================================================================
 // Terminal input and rich snapshot adapters
 // =============================================================================
+
+const SnapshotGraphicsCounts = struct {
+    images: u16,
+    placements: u16,
+    payload_bytes: usize,
+};
+
+fn countSnapshotGraphics(images: *const howl.Images) !SnapshotGraphicsCounts {
+    var image_count: usize = 0;
+    var image_index: usize = 0;
+    while (image_index < images.imageCount()) : (image_index += 1) {
+        const image = images.image(image_index) orelse return error.InvalidSnapshot;
+        if (imageVisible(images, image.id)) image_count += 1;
+    }
+    var placement_count: usize = 0;
+    var placement_index: usize = 0;
+    while (placement_index < images.placementCount()) : (placement_index += 1) {
+        if (images.placement(placement_index) != null) placement_count += 1;
+    }
+    if (image_count > protocol.graphics_v1.maximum_images or
+        placement_count > protocol.graphics_v1.maximum_placements)
+        return error.InvalidSnapshot;
+    const image_bytes = std.math.mul(usize, image_count, protocol.graphics_v1.image_bytes) catch
+        return error.SnapshotTooLarge;
+    const placement_bytes = std.math.mul(
+        usize,
+        placement_count,
+        protocol.graphics_v1.placement_bytes,
+    ) catch return error.SnapshotTooLarge;
+    const payload_bytes = std.math.add(
+        usize,
+        protocol.graphics_v1.manifest_header_bytes + image_bytes,
+        placement_bytes,
+    ) catch return error.SnapshotTooLarge;
+    return .{
+        .images = @intCast(image_count),
+        .placements = @intCast(placement_count),
+        .payload_bytes = payload_bytes,
+    };
+}
+
+fn encodeSnapshotGraphics(
+    images: *const howl.Images,
+    counts: SnapshotGraphicsCounts,
+    output: []u8,
+) !void {
+    if (output.len != counts.payload_bytes) return error.InvalidSnapshot;
+
+    var header: [protocol.graphics_v1.manifest_header_bytes]u8 = undefined;
+    protocol.encodeSnapshotGraphicsHeader(&header, .{
+        .generation = images.generation,
+        .content_generation = images.content_generation,
+        .image_count = counts.images,
+        .placement_count = counts.placements,
+    });
+    @memcpy(output[0..header.len], &header);
+    var offset: usize = header.len;
+
+    var image_index: usize = 0;
+    while (image_index < images.imageCount()) : (image_index += 1) {
+        const image = images.image(image_index) orelse return error.InvalidSnapshot;
+        if (!imageVisible(images, image.id)) continue;
+        var encoded: [protocol.graphics_v1.image_bytes]u8 = undefined;
+        protocol.encodeSnapshotImage(&encoded, .{
+            .image_id = image.id,
+            .generation = image.generation,
+            .width = image.width,
+            .height = image.height,
+        });
+        @memcpy(output[offset..][0..encoded.len], &encoded);
+        offset += encoded.len;
+    }
+
+    var placement_index: usize = 0;
+    while (placement_index < images.placementCount()) : (placement_index += 1) {
+        const placement = images.placement(placement_index) orelse continue;
+        if (!imagePresent(images, placement.image_id)) return error.InvalidSnapshot;
+        var encoded: [protocol.graphics_v1.placement_bytes]u8 = undefined;
+        protocol.encodeSnapshotImagePlacement(&encoded, .{
+            .image_id = placement.image_id,
+            .generation = placement.generation,
+            .row = placement.row,
+            .column = placement.col,
+            .source_x = placement.source_x,
+            .source_y = placement.source_y,
+            .source_width = placement.source_width,
+            .source_height = placement.source_height,
+            .cell_x = placement.cell_x,
+            .cell_y = placement.cell_y,
+            .pixel_width = placement.pixel_width,
+            .pixel_height = placement.pixel_height,
+            .z = placement.z,
+        });
+        @memcpy(output[offset..][0..encoded.len], &encoded);
+        offset += encoded.len;
+    }
+    if (offset != output.len) return error.InvalidSnapshot;
+}
+
+fn imageVisible(images: *const howl.Images, image_id: u32) bool {
+    var index: usize = 0;
+    while (index < images.placementCount()) : (index += 1) {
+        const placement = images.placement(index) orelse continue;
+        if (placement.image_id == image_id) return true;
+    }
+    return false;
+}
+
+fn imagePresent(images: *const howl.Images, image_id: u32) bool {
+    var index: usize = 0;
+    while (index < images.imageCount()) : (index += 1) {
+        const image = images.image(index) orelse continue;
+        if (image.id == image_id) return true;
+    }
+    return false;
+}
 
 fn typedKeyName(value: u32) ?howl.KeyName {
     return switch (value) {
@@ -1512,9 +1693,11 @@ const TestWireSnapshot = struct {
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
     body: []u8,
+    graphics: []u8,
 
     fn deinit(self: *TestWireSnapshot) void {
         self.allocator.free(self.body);
+        self.allocator.free(self.graphics);
         self.* = undefined;
     }
 };
@@ -1693,6 +1876,112 @@ test "selected text extracts stable history range without mutating canonical ter
     try std.testing.expectEqual(before_revision, howl.revision(server.session));
 }
 
+test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-image-resource.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 8,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "printf '\\033_Ga=T,f=32,s=2,v=2,i=9,q=2;AQIDBAUGBwgJCgsMDQ4PEA==\\033\\\\'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    var wire: ?TestWireSnapshot = null;
+    defer if (wire) |*value| value.deinit();
+    var after_revision: u64 = 0;
+    var attempts: usize = 0;
+    while (attempts < 8) : (attempts += 1) {
+        try sendObserve(&peer, &server, after_revision);
+        var candidate = try receiveWireSnapshot(&peer, &server);
+        const graphics_header = protocol.decodeSnapshotGraphicsHeader(
+            candidate.graphics[0..protocol.graphics_v1.manifest_header_bytes],
+        ) catch return error.MalformedTestSnapshot;
+        if (graphics_header.image_count == 1 and graphics_header.placement_count == 1) {
+            wire = candidate;
+            break;
+        }
+        after_revision = candidate.begin.revision;
+        candidate.deinit();
+    }
+    const captured = if (wire) |*value| value else return error.TestTimeout;
+    const header = try protocol.decodeSnapshotGraphicsHeader(
+        captured.graphics[0..protocol.graphics_v1.manifest_header_bytes],
+    );
+    try std.testing.expect(header.generation != 0);
+    try std.testing.expect(header.content_generation != 0);
+    try std.testing.expectEqual(@as(u16, 1), header.image_count);
+    try std.testing.expectEqual(@as(u16, 1), header.placement_count);
+
+    var offset: usize = protocol.graphics_v1.manifest_header_bytes;
+    const image = try protocol.decodeSnapshotImage(
+        captured.graphics[offset..][0..protocol.graphics_v1.image_bytes],
+    );
+    offset += protocol.graphics_v1.image_bytes;
+    try std.testing.expectEqual(@as(u32, 2), image.width);
+    try std.testing.expectEqual(@as(u32, 2), image.height);
+    const placement = try protocol.decodeSnapshotImagePlacement(
+        captured.graphics[offset..][0..protocol.graphics_v1.placement_bytes],
+    );
+    try std.testing.expectEqual(image.image_id, placement.image_id);
+    try std.testing.expect(placement.row < captured.begin.rows);
+    try std.testing.expect(placement.column < captured.begin.columns);
+    try std.testing.expectEqual(@as(u32, 2), placement.source_width);
+    try std.testing.expectEqual(@as(u32, 2), placement.source_height);
+
+    const before_fetch = howl.revision(server.session);
+    var request: [protocol.payload_bytes.image_request]u8 = undefined;
+    protocol.encodeImageRequest(&request, .{
+        .image_id = image.image_id,
+        .generation = image.generation,
+    });
+    try peer.sendFrame(&server, .image_request, &request);
+    var begin_frame = try awaitFrame(&peer, &server);
+    defer begin_frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.image_begin, begin_frame.kind);
+    const begin = try protocol.decodeImageBegin(begin_frame.payload);
+    try std.testing.expectEqual(image.image_id, begin.image_id);
+    try std.testing.expectEqual(image.generation, begin.generation);
+    try std.testing.expectEqual(@as(u32, 16), begin.byte_count);
+    var data = try awaitFrame(&peer, &server);
+    defer data.deinit();
+    try std.testing.expectEqual(protocol.Kind.image_data, data.kind);
+    try std.testing.expectEqualSlices(u8, &.{
+        1, 2,  3,  4,  5,  6,  7,  8,
+        9, 10, 11, 12, 13, 14, 15, 16,
+    }, data.payload);
+    var end_frame = try awaitFrame(&peer, &server);
+    defer end_frame.deinit();
+    try std.testing.expectEqual(protocol.Kind.image_end, end_frame.kind);
+    const end = try protocol.decodeImageEnd(end_frame.payload);
+    try std.testing.expectEqual(begin.image_id, end.image_id);
+    try std.testing.expectEqual(begin.generation, end.generation);
+    try std.testing.expectEqual(before_fetch, howl.revision(server.session));
+
+    protocol.encodeImageRequest(&request, .{
+        .image_id = image.image_id,
+        .generation = image.generation + 1,
+    });
+    try peer.sendFrame(&server, .image_request, &request);
+    try expectResult(&peer, &server, .image_request, .rejected);
+    try std.testing.expectEqual(before_fetch, howl.revision(server.session));
+}
+
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
     var payload: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&payload, .{ .after_revision = after_revision });
@@ -1713,16 +2002,24 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
 
     var encoded: std.ArrayList(u8) = .empty;
     defer encoded.deinit(peer.allocator);
+    var graphics: ?[]u8 = null;
+    errdefer if (graphics) |value| peer.allocator.free(value);
     while (true) {
         var frame = try awaitFrame(peer, server);
         defer frame.deinit();
         switch (frame.kind) {
             .snapshot_data => {
-                if (encoded.items.len + frame.payload.len > protocol.maximum_snapshot_bytes)
+                if (graphics != null) return error.MalformedTestSnapshot;
+                if (encoded.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                     return error.MalformedTestSnapshot;
                 try encoded.appendSlice(peer.allocator, frame.payload);
             },
+            .snapshot_graphics => {
+                if (graphics != null) return error.MalformedTestSnapshot;
+                graphics = try peer.allocator.dupe(u8, frame.payload);
+            },
             .snapshot_end => {
+                if (graphics == null) return error.MalformedTestSnapshot;
                 const snapshot_end = protocol.decodeSnapshotEnd(frame.payload) catch
                     return error.MalformedTestSnapshot;
                 if (snapshot_end.revision != begin.revision) return error.MalformedTestSnapshot;
@@ -1735,7 +2032,7 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     if (encoded.items.len <= protocol.text_v1.compressed_header_bytes)
         return error.MalformedTestSnapshot;
     const raw_len = readU32(encoded.items[0..protocol.text_v1.compressed_header_bytes]);
-    if (raw_len == 0 or raw_len > protocol.maximum_snapshot_bytes)
+    if (raw_len == 0 or raw_len > protocol.maximum_text_snapshot_bytes)
         return error.MalformedTestSnapshot;
     const body = try peer.allocator.alloc(u8, raw_len);
     errdefer peer.allocator.free(body);
@@ -1748,7 +2045,12 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
         return error.MalformedTestSnapshot;
     if (decoded_count != raw_len or output.buffered().len != raw_len or input.seek != input.end)
         return error.MalformedTestSnapshot;
-    return .{ .allocator = peer.allocator, .begin = begin, .body = body };
+    return .{
+        .allocator = peer.allocator,
+        .begin = begin,
+        .body = body,
+        .graphics = graphics.?,
+    };
 }
 
 fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {

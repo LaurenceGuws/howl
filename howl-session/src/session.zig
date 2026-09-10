@@ -42,6 +42,12 @@ pub const ColorKind = vt.Terminal.ColorKind;
 pub const Presentation = vt.Terminal.Presentation;
 /// Copies one row's DEC presentation geometry.
 pub const LineGeometry = vt.Terminal.LineGeometry;
+/// Borrows one immutable decoded terminal image.
+pub const Image = vt.Terminal.Image;
+/// Copies one image placement resolved into a visible terminal view.
+pub const ImagePlacement = vt.Terminal.ImagePlacement;
+/// Borrows coherent image-plane state for one terminal view.
+pub const Images = vt.Terminal.Images;
 /// Identifies one terminal cell in stable projected history-and-screen coordinates.
 pub const TextPoint = vt.Terminal.TextPoint;
 /// Identifies one inclusive terminal-text range.
@@ -54,6 +60,14 @@ pub const maximum_cell_scalars = vt.scalar.maximum_scalars;
 pub const maximum_hyperlink_uri_bytes = vt.Terminal.maximum_hyperlink_uri_bytes;
 /// Bounds stable one-based OSC 8 hyperlink identities.
 pub const maximum_hyperlinks = vt.Terminal.maximum_hyperlinks;
+/// Bounds one decoded RGBA image retained by the canonical terminal.
+pub const maximum_image_bytes = vt.Terminal.maximum_image_bytes;
+/// Bounds either decoded image dimension.
+pub const maximum_image_dimension = vt.Terminal.maximum_image_dimension;
+/// Bounds retained terminal image identities.
+pub const maximum_images = vt.Terminal.maximum_images;
+/// Bounds retained terminal image placements.
+pub const maximum_image_placements = vt.Terminal.maximum_image_placements;
 /// Fixed process-group signal vocabulary.
 pub const Signal = pty.Signal;
 /// Exact process-group signal delivery outcome.
@@ -220,6 +234,22 @@ pub fn presentation(session: *const Session) Presentation {
 /// Borrows the URI interned for one nonzero terminal-cell hyperlink identity.
 pub fn hyperlinkUri(session: *const Session, link_id: u32) ?[]const u8 {
     return stateConst(session).terminal.hyperlinkUri(link_id);
+}
+
+/// Borrows coherent image resources and visible placements for one viewport.
+pub fn images(session: *const Session, history_offset: u32) Images {
+    return stateConst(session).terminal.images(history_offset);
+}
+
+/// Borrows one exact decoded RGBA image identity, rejecting stale generations.
+pub fn image(session: *const Session, image_id: u32, generation: u64) ?Image {
+    var view = stateConst(session).terminal.images(0);
+    var index: usize = 0;
+    while (index < view.imageCount()) : (index += 1) {
+        const candidate = view.image(index) orelse continue;
+        if (candidate.id == image_id and candidate.generation == generation) return candidate;
+    }
+    return null;
 }
 
 /// Copies one visible row's DEC presentation geometry.

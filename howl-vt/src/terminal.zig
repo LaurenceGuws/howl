@@ -5649,6 +5649,14 @@ pub const Terminal = struct {
     pub const maximum_hyperlinks = properties.hyperlink_target_max_count;
     /// Borrows one immutable decoded terminal image.
     pub const Image = graphics_mod.ImageView;
+    /// Bounds one decoded RGBA image retained by the canonical terminal.
+    pub const maximum_image_bytes = graphics_mod.max_image_bytes;
+    /// Bounds either decoded image dimension.
+    pub const maximum_image_dimension = graphics_mod.max_dimension;
+    /// Bounds retained image identities.
+    pub const maximum_images = graphics_mod.max_images;
+    /// Bounds retained image placements.
+    pub const maximum_image_placements = graphics_mod.max_placements;
     /// Copies one image placement resolved into the visible terminal view.
     pub const ImagePlacement = struct {
         /// Resolves retained image content.

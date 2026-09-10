@@ -15,6 +15,8 @@ pub const Detail = struct {
     linked_cells: u32 = 0,
     multicell_cells: u32 = 0,
     hyperlinks: u32 = 0,
+    images: u32 = 0,
+    image_placements: u32 = 0,
 };
 
 pub const LineGeometry = struct {
@@ -61,7 +63,11 @@ pub fn project(allocator: std.mem.Allocator, full: *const rich.Snapshot) std.mem
     errdefer wrapped_rows.deinit(allocator);
     var line_geometry: std.ArrayList(LineGeometry) = .empty;
     errdefer line_geometry.deinit(allocator);
-    var detail: Detail = .{ .hyperlinks = @intCast(full.hyperlinks.len) };
+    var detail: Detail = .{
+        .hyperlinks = @intCast(full.hyperlinks.len),
+        .images = @intCast(full.graphics.images.len),
+        .image_placements = @intCast(full.graphics.placements.len),
+    };
 
     for (full.rows, 0..) |row, row_index| {
         lines[row_index] = try projectRow(allocator, row, &detail);

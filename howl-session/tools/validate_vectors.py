@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v2 wire-vector decoder and validator.
+"""Independent Howl session v3 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,10 +18,10 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 2
+FRAMING_VERSION = 3
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
-MAXIMUM_SNAPSHOT_BYTES = 4 * 1024 * 1024
+MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
 
 KINDS = {
     1: "hello",
@@ -46,6 +46,11 @@ KINDS = {
     20: "consequence_reply",
     21: "text_extract",
     22: "text_extract_data",
+    23: "snapshot_graphics",
+    24: "image_request",
+    25: "image_begin",
+    26: "image_data",
+    27: "image_end",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -85,6 +90,15 @@ TEXT_MAXIMUM_HYPERLINK_URI_BYTES = 2048
 TEXT_PRESENTATION_PRESENCE_KNOWN = 0x0F
 TEXT_PRESENTATION_FLAGS_KNOWN = 0x01
 TEXT_STYLE_KNOWN = 0x01FF
+
+GRAPHICS_HEADER_BYTES = 20
+GRAPHICS_IMAGE_BYTES = 20
+GRAPHICS_PLACEMENT_BYTES = 52
+GRAPHICS_MAXIMUM_IMAGES = 256
+GRAPHICS_MAXIMUM_PLACEMENTS = 1024
+GRAPHICS_MAXIMUM_DIMENSION = 4096
+GRAPHICS_MAXIMUM_IMAGE_BYTES = 16 * 1024 * 1024
+GRAPHICS_DATA_CHUNK_BYTES = 256 * 1024
 
 TYPED_KEY_HEADER_BYTES = 20
 TYPED_MAXIMUM_LEGACY_KEY_BYTES = 511
@@ -514,6 +528,7 @@ def new_snapshot(begin: dict) -> dict:
         "referenced_links": set(),
         "resolved_links": {},
         "phase": "presentation",
+        "graphics": None,
     }
 
 
@@ -563,7 +578,7 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
     encoded = bytes(snapshot["encoded_body"])
     require(len(encoded) > 4, "snapshot_compressed_size")
     raw_len = u32(encoded[0:4])
-    require(0 < raw_len <= MAXIMUM_SNAPSHOT_BYTES, "snapshot_raw_limit")
+    require(0 < raw_len <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
     inflater = zlib.decompressobj()
     try:
         body = inflater.decompress(encoded[4:], raw_len + 1)
@@ -576,13 +591,122 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
     require(snapshot["presentation"] is not None, "text_presentation_missing")
     require(len(snapshot["text_rows"]) == begin["rows"], "text_row_count")
     require(snapshot["referenced_links"] == set(snapshot["resolved_links"]), "text_unresolved_hyperlink")
+    require(snapshot["graphics"] is not None, "snapshot_graphics_missing")
     return {
         "begin": begin,
         "presentation": snapshot["presentation"],
         "rows": snapshot["text_rows"],
         "hyperlinks": snapshot["hyperlinks"],
+        "graphics": snapshot["graphics"],
         "end": end,
     }
+
+
+def decode_snapshot_graphics(payload: bytes, begin: dict) -> dict:
+    require(len(payload) >= GRAPHICS_HEADER_BYTES, "snapshot_graphics_size")
+    generation = u64(payload[0:8])
+    content_generation = u64(payload[8:16])
+    image_count = u16(payload[16:18])
+    placement_count = u16(payload[18:20])
+    require(image_count <= GRAPHICS_MAXIMUM_IMAGES, "snapshot_graphics_images")
+    require(placement_count <= GRAPHICS_MAXIMUM_PLACEMENTS, "snapshot_graphics_placements")
+    expected = GRAPHICS_HEADER_BYTES + image_count * GRAPHICS_IMAGE_BYTES + placement_count * GRAPHICS_PLACEMENT_BYTES
+    require(len(payload) == expected, "snapshot_graphics_size")
+    images = []
+    image_by_id = {}
+    offset = GRAPHICS_HEADER_BYTES
+    for _ in range(image_count):
+        item = payload[offset : offset + GRAPHICS_IMAGE_BYTES]
+        image_id = u32(item[0:4])
+        image_generation = u64(item[4:12])
+        width = u32(item[12:16])
+        height = u32(item[16:20])
+        require(image_id != 0 and image_generation != 0, "snapshot_image_identity")
+        require(0 < width <= GRAPHICS_MAXIMUM_DIMENSION and 0 < height <= GRAPHICS_MAXIMUM_DIMENSION, "snapshot_image_extent")
+        require(width * height * 4 <= GRAPHICS_MAXIMUM_IMAGE_BYTES, "snapshot_image_bytes")
+        require(image_id not in image_by_id, "snapshot_image_duplicate")
+        decoded = {"image_id": image_id, "generation": image_generation, "width": width, "height": height}
+        image_by_id[image_id] = decoded
+        images.append(decoded)
+        offset += GRAPHICS_IMAGE_BYTES
+    placements = []
+    referenced = set()
+    for _ in range(placement_count):
+        item = payload[offset : offset + GRAPHICS_PLACEMENT_BYTES]
+        image_id = u32(item[0:4])
+        placement_generation = u64(item[4:12])
+        row = u16(item[12:14])
+        column = u16(item[14:16])
+        source_x = u32(item[16:20])
+        source_y = u32(item[20:24])
+        source_width = u32(item[24:28])
+        source_height = u32(item[28:32])
+        cell_x = u32(item[32:36])
+        cell_y = u32(item[36:40])
+        pixel_width = u32(item[40:44])
+        pixel_height = u32(item[44:48])
+        z = i32(item[48:52])
+        require(image_id != 0 and placement_generation != 0, "snapshot_placement_identity")
+        require(source_width != 0 and source_height != 0 and pixel_width != 0 and pixel_height != 0, "snapshot_placement_extent")
+        require(row < begin["rows"] and column < begin["columns"], "snapshot_placement_cell")
+        require(image_id in image_by_id, "snapshot_placement_image")
+        image = image_by_id[image_id]
+        require(source_x <= image["width"] and source_y <= image["height"], "snapshot_placement_source")
+        require(source_width <= image["width"] - source_x and source_height <= image["height"] - source_y, "snapshot_placement_source")
+        referenced.add(image_id)
+        placements.append({
+            "image_id": image_id,
+            "generation": placement_generation,
+            "row": row,
+            "column": column,
+            "source_x": source_x,
+            "source_y": source_y,
+            "source_width": source_width,
+            "source_height": source_height,
+            "cell_x": cell_x,
+            "cell_y": cell_y,
+            "pixel_width": pixel_width,
+            "pixel_height": pixel_height,
+            "z": z,
+        })
+        offset += GRAPHICS_PLACEMENT_BYTES
+    require(referenced == set(image_by_id), "snapshot_image_unreferenced")
+    return {
+        "generation": generation,
+        "content_generation": content_generation,
+        "images": images,
+        "placements": placements,
+    }
+
+
+def decode_image_request(payload: bytes) -> dict:
+    require(len(payload) == 12, "image_request_size")
+    image_id = u32(payload[0:4])
+    generation = u64(payload[4:12])
+    require(image_id != 0 and generation != 0, "image_request_identity")
+    return {"image_id": image_id, "generation": generation}
+
+
+def decode_image_begin(payload: bytes) -> dict:
+    require(len(payload) == 24, "image_begin_size")
+    image_id = u32(payload[0:4])
+    generation = u64(payload[4:12])
+    width = u32(payload[12:16])
+    height = u32(payload[16:20])
+    byte_count = u32(payload[20:24])
+    require(image_id != 0 and generation != 0, "image_begin_identity")
+    require(0 < width <= GRAPHICS_MAXIMUM_DIMENSION and 0 < height <= GRAPHICS_MAXIMUM_DIMENSION, "image_begin_extent")
+    require(byte_count == width * height * 4 and byte_count <= GRAPHICS_MAXIMUM_IMAGE_BYTES, "image_begin_bytes")
+    return {"image_id": image_id, "generation": generation, "width": width, "height": height, "byte_count": byte_count}
+
+
+def decode_image_end(payload: bytes) -> dict:
+    require(len(payload) == 12, "image_end_size")
+    image_id = u32(payload[0:4])
+    generation = u64(payload[4:12])
+    require(image_id != 0 and generation != 0, "image_end_identity")
+    return {"image_id": image_id, "generation": generation}
+
 
 def decode_text_extract(payload: bytes) -> dict:
     require(len(payload) == 16, "text_extract_size")
@@ -636,13 +760,17 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_text_extract(payload)
     if kind == 22:
         return decode_text_extract_data(payload)
+    if kind == 24:
+        return decode_image_request(payload)
     reject("snapshot_data_without_begin")
 
 
 def decode_stream(data: bytes) -> dict:
     frames = []
     snapshots = []
+    image_resources = []
     snapshot = None
+    image_resource = None
     offset = 0
     while offset < len(data):
         require(len(data) - offset >= HEADER_BYTES, "truncated_header")
@@ -661,26 +789,51 @@ def decode_stream(data: bytes) -> dict:
 
         name = KINDS[kind]
         if kind == 4:
-            require(snapshot is None, "snapshot_nested")
+            require(snapshot is None and image_resource is None, "snapshot_nested")
             decoded = decode_snapshot_begin(payload)
             snapshot = new_snapshot(decoded)
         elif kind == 5:
             require(snapshot is not None, "snapshot_data_without_begin")
-            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_SNAPSHOT_BYTES, "snapshot_compressed_limit")
+            require(snapshot["graphics"] is None, "snapshot_graphics_order")
+            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_compressed_limit")
             snapshot["encoded_body"].extend(payload)
             decoded = {"bytes": len(payload)}
+        elif kind == 23:
+            require(snapshot is not None, "snapshot_graphics_without_begin")
+            require(snapshot["graphics"] is None, "snapshot_graphics_duplicate")
+            decoded = decode_snapshot_graphics(payload, snapshot["begin"])
+            snapshot["graphics"] = decoded
         elif kind == 6:
             require(snapshot is not None, "snapshot_end_without_begin")
             decoded = decode_snapshot_end(payload)
             snapshots.append(finish_snapshot(snapshot, decoded))
             snapshot = None
+        elif kind == 25:
+            require(snapshot is None and image_resource is None, "image_begin_nested")
+            decoded = decode_image_begin(payload)
+            image_resource = {"begin": decoded, "bytes": 0}
+        elif kind == 26:
+            require(image_resource is not None, "image_data_without_begin")
+            require(0 < len(payload) <= GRAPHICS_DATA_CHUNK_BYTES, "image_data_size")
+            require(image_resource["bytes"] + len(payload) <= image_resource["begin"]["byte_count"], "image_data_bytes")
+            image_resource["bytes"] += len(payload)
+            decoded = {"bytes": len(payload)}
+        elif kind == 27:
+            require(image_resource is not None, "image_end_without_begin")
+            decoded = decode_image_end(payload)
+            begin = image_resource["begin"]
+            require(decoded["image_id"] == begin["image_id"] and decoded["generation"] == begin["generation"], "image_end_identity")
+            require(image_resource["bytes"] == begin["byte_count"], "image_data_bytes")
+            image_resources.append({"begin": begin, "bytes": image_resource["bytes"], "end": decoded})
+            image_resource = None
         else:
-            require(snapshot is None, "snapshot_interleaved")
+            require(snapshot is None and image_resource is None, "snapshot_interleaved")
             decoded = decode_fixed_payload(kind, payload)
         frames.append({"kind": name, "payload": decoded})
 
     require(snapshot is None, "snapshot_unterminated")
-    return {"frames": frames, "snapshots": snapshots}
+    require(image_resource is None, "image_unterminated")
+    return {"frames": frames, "snapshots": snapshots, "image_resources": image_resources}
 
 
 def assert_subset(expected, actual, path: str = "value") -> None:
@@ -721,7 +874,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v2/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v3/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -734,7 +887,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v2-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v3-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

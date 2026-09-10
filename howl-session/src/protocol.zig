@@ -32,15 +32,15 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 2;
+pub const framing_version: u8 = 3;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
 pub const maximum_payload_bytes: u32 = 1024 * 1024;
 /// Hard upper bound the node-local endpoint admits for one client request payload.
 pub const maximum_request_payload_bytes: u32 = 64 * 1024;
-/// Hard upper bound materialized for one observer snapshot response.
-pub const maximum_snapshot_bytes: usize = 4 * 1024 * 1024;
+/// Hard upper bound for one encoded or decoded `text_v1` snapshot body.
+pub const maximum_text_snapshot_bytes: usize = 4 * 1024 * 1024;
 /// Sentinel used only where an optional client identity is serialized.
 pub const no_client: ClientId = 0;
 
@@ -73,6 +73,11 @@ pub const Kind = enum(u8) {
     consequence_reply = 20,
     text_extract = 21,
     text_extract_data = 22,
+    snapshot_graphics = 23,
+    image_request = 24,
+    image_begin = 25,
+    image_data = 26,
+    image_end = 27,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -641,6 +646,97 @@ pub const text_v1 = struct {
     };
 };
 
+/// Frozen image-resource and visible-placement grammar introduced with framing v3.
+///
+/// `text_v1` remains byte-for-byte unchanged. A snapshot carries one separate
+/// `snapshot_graphics` frame containing only lightweight resource identities and
+/// visible placements. Exact RGBA8 pixels are fetched on demand by image id and
+/// content generation, so the 4 MiB snapshot bound never competes with the
+/// canonical terminal's larger decoded-image quota.
+pub const graphics_v1 = struct {
+    /// Fixed snapshot graphics prefix: plane generation, content generation,
+    /// image descriptor count, placement count.
+    pub const manifest_header_bytes: usize = 20;
+    /// One visible referenced image: id, content generation, width, height.
+    pub const image_bytes: usize = 20;
+    /// One visible placement resolved to viewport row/column and pixel geometry.
+    pub const placement_bytes: usize = 52;
+    /// Bounds image identities in one canonical terminal graphics plane.
+    pub const maximum_images: usize = 256;
+    /// Bounds placements in one canonical terminal graphics plane.
+    pub const maximum_placements: usize = 1024;
+    /// Bounds either decoded image dimension.
+    pub const maximum_dimension: u32 = 4096;
+    /// Bounds one exact decoded RGBA8 resource body.
+    pub const maximum_image_bytes: usize = 16 * 1024 * 1024;
+    /// Image bytes are segmented independently of terminal snapshot framing.
+    pub const data_chunk_bytes: usize = 256 * 1024;
+    /// Largest possible lightweight graphics manifest payload.
+    pub const maximum_manifest_bytes: usize = manifest_header_bytes +
+        maximum_images * image_bytes + maximum_placements * placement_bytes;
+
+    comptime {
+        if (maximum_manifest_bytes > maximum_payload_bytes)
+            @compileError("graphics manifest exceeds one frame payload");
+        if (data_chunk_bytes == 0 or data_chunk_bytes > maximum_payload_bytes)
+            @compileError("graphics image chunk exceeds one frame payload");
+    }
+};
+
+/// Snapshot graphics prefix shared by the lightweight manifest codecs.
+pub const SnapshotGraphicsHeader = struct {
+    generation: u64,
+    content_generation: u64,
+    image_count: u16,
+    placement_count: u16,
+};
+
+/// One image resource identity referenced by a visible placement.
+pub const SnapshotImage = struct {
+    image_id: u32,
+    generation: u64,
+    width: u32,
+    height: u32,
+};
+
+/// One image placement resolved into the current snapshot viewport.
+pub const SnapshotImagePlacement = struct {
+    image_id: u32,
+    generation: u64,
+    row: u16,
+    column: u16,
+    source_x: u32,
+    source_y: u32,
+    source_width: u32,
+    source_height: u32,
+    cell_x: u32,
+    cell_y: u32,
+    pixel_width: u32,
+    pixel_height: u32,
+    z: i32,
+};
+
+/// Requests one exact immutable image generation named by a snapshot manifest.
+pub const ImageRequest = struct {
+    image_id: u32,
+    generation: u64,
+};
+
+/// Starts one exact RGBA8 image resource response.
+pub const ImageBegin = struct {
+    image_id: u32,
+    generation: u64,
+    width: u32,
+    height: u32,
+    byte_count: u32,
+};
+
+/// Closes one exact RGBA8 image resource response.
+pub const ImageEnd = struct {
+    image_id: u32,
+    generation: u64,
+};
+
 // =============================================================================
 // Snapshot lifecycle and fixed payload sizes
 // =============================================================================
@@ -736,7 +832,32 @@ pub const payload_bytes = struct {
     pub const consequence_reply_header: usize = 12;
     /// Two stable points plus expected columns and screen-bank identity.
     pub const text_extract: usize = 16;
+    /// Exact image resource request identity.
+    pub const image_request: usize = 12;
+    /// Fixed image resource response prefix.
+    pub const image_begin: usize = 24;
+    /// Exact image resource response suffix.
+    pub const image_end: usize = 12;
 };
+
+/// Maximum `snapshot_data` frame count under the frozen 4 MiB text-body bound.
+pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
+    usize,
+    maximum_text_snapshot_bytes,
+    @as(usize, maximum_payload_bytes),
+) catch unreachable;
+
+/// Hard upper bound for one complete v3 observation response.
+///
+/// This includes the bounded `text_v1` transport body, all possible data-frame
+/// headers, one complete `graphics_v1` manifest, and the begin/end envelopes.
+/// Demand-fetched RGBA image resources are separate transactions and do not
+/// consume this budget.
+pub const maximum_observation_bytes: usize =
+    header_bytes + payload_bytes.snapshot_begin +
+    maximum_snapshot_data_frames * header_bytes + maximum_text_snapshot_bytes +
+    header_bytes + graphics_v1.maximum_manifest_bytes +
+    header_bytes + payload_bytes.snapshot_end;
 
 // =============================================================================
 // Geometry and host-consequence authority
@@ -933,6 +1054,183 @@ pub fn decodeTextColor(input: *const [text_v1.color_bytes]u8) PayloadError!TextC
     var canonical: [text_v1.color_bytes]u8 = undefined;
     try encodeTextColor(&canonical, value);
     return value;
+}
+
+/// Encodes the fixed prefix of one snapshot graphics manifest.
+pub fn encodeSnapshotGraphicsHeader(
+    output: *[graphics_v1.manifest_header_bytes]u8,
+    value: SnapshotGraphicsHeader,
+) void {
+    std.debug.assert(value.image_count <= graphics_v1.maximum_images);
+    std.debug.assert(value.placement_count <= graphics_v1.maximum_placements);
+    writeU64(output[0..8], value.generation);
+    writeU64(output[8..16], value.content_generation);
+    writeU16(output[16..18], value.image_count);
+    writeU16(output[18..20], value.placement_count);
+}
+
+/// Decodes the fixed prefix of one bounded snapshot graphics manifest.
+pub fn decodeSnapshotGraphicsHeader(input: []const u8) PayloadError!SnapshotGraphicsHeader {
+    if (input.len != graphics_v1.manifest_header_bytes) return error.InvalidPayload;
+    const image_count = readU16(input[16..18]);
+    const placement_count = readU16(input[18..20]);
+    if (image_count > graphics_v1.maximum_images or
+        placement_count > graphics_v1.maximum_placements)
+        return error.InvalidPayload;
+    return .{
+        .generation = readU64(input[0..8]),
+        .content_generation = readU64(input[8..16]),
+        .image_count = image_count,
+        .placement_count = placement_count,
+    };
+}
+
+/// Encodes one visible image resource descriptor.
+pub fn encodeSnapshotImage(output: *[graphics_v1.image_bytes]u8, value: SnapshotImage) void {
+    std.debug.assert(validImageExtent(value.image_id, value.generation, value.width, value.height));
+    writeU32(output[0..4], value.image_id);
+    writeU64(output[4..12], value.generation);
+    writeU32(output[12..16], value.width);
+    writeU32(output[16..20], value.height);
+}
+
+/// Decodes one visible image resource descriptor.
+pub fn decodeSnapshotImage(input: []const u8) PayloadError!SnapshotImage {
+    if (input.len != graphics_v1.image_bytes) return error.InvalidPayload;
+    const value = SnapshotImage{
+        .image_id = readU32(input[0..4]),
+        .generation = readU64(input[4..12]),
+        .width = readU32(input[12..16]),
+        .height = readU32(input[16..20]),
+    };
+    if (!validImageExtent(value.image_id, value.generation, value.width, value.height))
+        return error.InvalidPayload;
+    return value;
+}
+
+/// Encodes one image placement resolved into the snapshot viewport.
+pub fn encodeSnapshotImagePlacement(
+    output: *[graphics_v1.placement_bytes]u8,
+    value: SnapshotImagePlacement,
+) void {
+    std.debug.assert(value.image_id != 0 and value.generation != 0);
+    std.debug.assert(value.source_width != 0 and value.source_height != 0);
+    std.debug.assert(value.pixel_width != 0 and value.pixel_height != 0);
+    writeU32(output[0..4], value.image_id);
+    writeU64(output[4..12], value.generation);
+    writeU16(output[12..14], value.row);
+    writeU16(output[14..16], value.column);
+    writeU32(output[16..20], value.source_x);
+    writeU32(output[20..24], value.source_y);
+    writeU32(output[24..28], value.source_width);
+    writeU32(output[28..32], value.source_height);
+    writeU32(output[32..36], value.cell_x);
+    writeU32(output[36..40], value.cell_y);
+    writeU32(output[40..44], value.pixel_width);
+    writeU32(output[44..48], value.pixel_height);
+    writeI32(output[48..52], value.z);
+}
+
+/// Decodes one image placement resolved into the snapshot viewport.
+pub fn decodeSnapshotImagePlacement(input: []const u8) PayloadError!SnapshotImagePlacement {
+    if (input.len != graphics_v1.placement_bytes) return error.InvalidPayload;
+    const value = SnapshotImagePlacement{
+        .image_id = readU32(input[0..4]),
+        .generation = readU64(input[4..12]),
+        .row = readU16(input[12..14]),
+        .column = readU16(input[14..16]),
+        .source_x = readU32(input[16..20]),
+        .source_y = readU32(input[20..24]),
+        .source_width = readU32(input[24..28]),
+        .source_height = readU32(input[28..32]),
+        .cell_x = readU32(input[32..36]),
+        .cell_y = readU32(input[36..40]),
+        .pixel_width = readU32(input[40..44]),
+        .pixel_height = readU32(input[44..48]),
+        .z = readI32(input[48..52]),
+    };
+    if (value.image_id == 0 or value.generation == 0 or
+        value.source_width == 0 or value.source_height == 0 or
+        value.pixel_width == 0 or value.pixel_height == 0)
+        return error.InvalidPayload;
+    return value;
+}
+
+/// Encodes one exact image resource request.
+pub fn encodeImageRequest(output: *[payload_bytes.image_request]u8, value: ImageRequest) void {
+    std.debug.assert(value.image_id != 0 and value.generation != 0);
+    writeU32(output[0..4], value.image_id);
+    writeU64(output[4..12], value.generation);
+}
+
+/// Decodes one exact image resource request.
+pub fn decodeImageRequest(input: []const u8) PayloadError!ImageRequest {
+    if (input.len != payload_bytes.image_request) return error.InvalidPayload;
+    const value = ImageRequest{
+        .image_id = readU32(input[0..4]),
+        .generation = readU64(input[4..12]),
+    };
+    if (value.image_id == 0 or value.generation == 0) return error.InvalidPayload;
+    return value;
+}
+
+/// Encodes one exact RGBA8 image response prefix.
+pub fn encodeImageBegin(output: *[payload_bytes.image_begin]u8, value: ImageBegin) void {
+    std.debug.assert(validImageExtent(value.image_id, value.generation, value.width, value.height));
+    std.debug.assert(value.byte_count == imageByteCount(value.width, value.height).?);
+    writeU32(output[0..4], value.image_id);
+    writeU64(output[4..12], value.generation);
+    writeU32(output[12..16], value.width);
+    writeU32(output[16..20], value.height);
+    writeU32(output[20..24], value.byte_count);
+}
+
+/// Decodes one exact RGBA8 image response prefix.
+pub fn decodeImageBegin(input: []const u8) PayloadError!ImageBegin {
+    if (input.len != payload_bytes.image_begin) return error.InvalidPayload;
+    const value = ImageBegin{
+        .image_id = readU32(input[0..4]),
+        .generation = readU64(input[4..12]),
+        .width = readU32(input[12..16]),
+        .height = readU32(input[16..20]),
+        .byte_count = readU32(input[20..24]),
+    };
+    if (!validImageExtent(value.image_id, value.generation, value.width, value.height) or
+        imageByteCount(value.width, value.height) != value.byte_count)
+        return error.InvalidPayload;
+    return value;
+}
+
+/// Encodes the exact identity closing one RGBA8 image response.
+pub fn encodeImageEnd(output: *[payload_bytes.image_end]u8, value: ImageEnd) void {
+    std.debug.assert(value.image_id != 0 and value.generation != 0);
+    writeU32(output[0..4], value.image_id);
+    writeU64(output[4..12], value.generation);
+}
+
+/// Decodes the exact identity closing one RGBA8 image response.
+pub fn decodeImageEnd(input: []const u8) PayloadError!ImageEnd {
+    if (input.len != payload_bytes.image_end) return error.InvalidPayload;
+    const value = ImageEnd{
+        .image_id = readU32(input[0..4]),
+        .generation = readU64(input[4..12]),
+    };
+    if (value.image_id == 0 or value.generation == 0) return error.InvalidPayload;
+    return value;
+}
+
+fn validImageExtent(image_id: u32, generation: u64, width: u32, height: u32) bool {
+    return image_id != 0 and generation != 0 and width != 0 and height != 0 and
+        width <= graphics_v1.maximum_dimension and height <= graphics_v1.maximum_dimension and
+        imageByteCount(width, height) != null;
+}
+
+fn imageByteCount(width: u32, height: u32) ?u32 {
+    const pixels = std.math.mul(u64, width, height) catch return null;
+    const bytes = std.math.mul(u64, pixels, 4) catch return null;
+    if (bytes == 0 or bytes > graphics_v1.maximum_image_bytes or bytes > std.math.maxInt(u32))
+        return null;
+    return @intCast(bytes);
 }
 
 // -- Typed input codecs -------------------------------------------------------
@@ -1570,9 +1868,9 @@ test "header round trips and rejects framing ambiguity" {
 
 test "wire integers round trip beyond one byte" {
     var header_bytes_out: [header_bytes]u8 = undefined;
-    try encodeHeader(&header_bytes_out, .{ .kind = .snapshot_data, .payload_len = 0x00f1_a2b3 });
+    try encodeHeader(&header_bytes_out, .{ .kind = .snapshot_data, .payload_len = 0x000f_a2b3 });
     const header = try decodeHeader(&header_bytes_out);
-    try std.testing.expectEqual(@as(u32, 0x00f1_a2b3), header.payload_len);
+    try std.testing.expectEqual(@as(u32, 0x000f_a2b3), header.payload_len);
 
     var welcome_bytes: [payload_bytes.welcome]u8 = undefined;
     encodeWelcome(&welcome_bytes, .{ .client_id = 0xf123_4567_89ab_cdef });
@@ -1584,6 +1882,120 @@ test "wire integers round trip beyond one byte" {
     const resize = try decodeResize(&resize_bytes);
     try std.testing.expectEqual(@as(u16, 512), resize.rows);
     try std.testing.expectEqual(@as(u16, 1025), resize.columns);
+}
+
+test "graphics v1 manifest and exact image resource grammar are bounded" {
+    var manifest_header: [graphics_v1.manifest_header_bytes]u8 = undefined;
+    encodeSnapshotGraphicsHeader(&manifest_header, .{
+        .generation = 0x0102_0304_0506_0708,
+        .content_generation = 0x1112_1314_1516_1718,
+        .image_count = 2,
+        .placement_count = 3,
+    });
+    try std.testing.expectEqualDeep(
+        SnapshotGraphicsHeader{
+            .generation = 0x0102_0304_0506_0708,
+            .content_generation = 0x1112_1314_1516_1718,
+            .image_count = 2,
+            .placement_count = 3,
+        },
+        try decodeSnapshotGraphicsHeader(&manifest_header),
+    );
+
+    var image: [graphics_v1.image_bytes]u8 = undefined;
+    encodeSnapshotImage(&image, .{
+        .image_id = 9,
+        .generation = 0x2122_2324_2526_2728,
+        .width = 2,
+        .height = 3,
+    });
+    try std.testing.expectEqualDeep(
+        SnapshotImage{
+            .image_id = 9,
+            .generation = 0x2122_2324_2526_2728,
+            .width = 2,
+            .height = 3,
+        },
+        try decodeSnapshotImage(&image),
+    );
+
+    var placement: [graphics_v1.placement_bytes]u8 = undefined;
+    encodeSnapshotImagePlacement(&placement, .{
+        .image_id = 9,
+        .generation = 33,
+        .row = 4,
+        .column = 5,
+        .source_x = 1,
+        .source_y = 2,
+        .source_width = 3,
+        .source_height = 4,
+        .cell_x = 5,
+        .cell_y = 6,
+        .pixel_width = 7,
+        .pixel_height = 8,
+        .z = -9,
+    });
+    try std.testing.expectEqualDeep(
+        SnapshotImagePlacement{
+            .image_id = 9,
+            .generation = 33,
+            .row = 4,
+            .column = 5,
+            .source_x = 1,
+            .source_y = 2,
+            .source_width = 3,
+            .source_height = 4,
+            .cell_x = 5,
+            .cell_y = 6,
+            .pixel_width = 7,
+            .pixel_height = 8,
+            .z = -9,
+        },
+        try decodeSnapshotImagePlacement(&placement),
+    );
+
+    var request: [payload_bytes.image_request]u8 = undefined;
+    encodeImageRequest(&request, .{ .image_id = 9, .generation = 33 });
+    try std.testing.expectEqualDeep(
+        ImageRequest{ .image_id = 9, .generation = 33 },
+        try decodeImageRequest(&request),
+    );
+
+    var begin: [payload_bytes.image_begin]u8 = undefined;
+    encodeImageBegin(&begin, .{
+        .image_id = 9,
+        .generation = 33,
+        .width = 2,
+        .height = 2,
+        .byte_count = 16,
+    });
+    try std.testing.expectEqualDeep(
+        ImageBegin{
+            .image_id = 9,
+            .generation = 33,
+            .width = 2,
+            .height = 2,
+            .byte_count = 16,
+        },
+        try decodeImageBegin(&begin),
+    );
+
+    var end: [payload_bytes.image_end]u8 = undefined;
+    encodeImageEnd(&end, .{ .image_id = 9, .generation = 33 });
+    try std.testing.expectEqualDeep(
+        ImageEnd{ .image_id = 9, .generation = 33 },
+        try decodeImageEnd(&end),
+    );
+
+    var bad_image = image;
+    @memset(bad_image[12..20], 0xff);
+    try std.testing.expectError(error.InvalidPayload, decodeSnapshotImage(&bad_image));
+    var bad_begin = begin;
+    bad_begin[23] = 15;
+    try std.testing.expectError(error.InvalidPayload, decodeImageBegin(&bad_begin));
+    var bad_request = request;
+    @memset(bad_request[0..4], 0);
+    try std.testing.expectError(error.InvalidPayload, decodeImageRequest(&bad_request));
 }
 
 test "selected text extraction range is fixed and signed-row safe" {

@@ -17,9 +17,9 @@ const max_storage_bytes: usize = 64 * 1024 * 1024;
 /// Bounds one decoded RGBA image.
 pub const max_image_bytes: usize = 16 * 1024 * 1024;
 /// Bounds retained image identities.
-const max_images: usize = 256;
+pub const max_images: usize = 256;
 /// Bounds retained image placements.
-const max_placements: usize = 1024;
+pub const max_placements: usize = 1024;
 /// Bounds retained animation frames across one terminal.
 const max_frames: usize = 256;
 /// Bounds either image dimension before byte-count validation.

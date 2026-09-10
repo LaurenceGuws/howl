@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 2 and session protocol
-version 2. All multi-byte integers are unsigned big-endian unless a field is
+This document is the client contract for framing version 3. All multi-byte
+integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v2-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v3-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `2` |
+| 4 | 1 | framing version, currently `3` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -32,8 +32,10 @@ payload bytes. There are no transport delimiters between frames.
 One frame payload is at most 1 MiB. The node-local endpoint accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
-be larger. One materialized observation response, including frame headers, is
-bounded to 4 MiB.
+be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
+v3 observation additionally carries one graphics manifest of at most 58,388
+bytes plus bounded frame headers; exact image pixels use separate resource
+transactions.
 
 Frame kinds are:
 
@@ -61,6 +63,11 @@ Frame kinds are:
 | 20 | `consequence_reply` | client → endpoint |
 | 21 | `text_extract` | client → endpoint |
 | 22 | `text_extract_data` | endpoint → client |
+| 23 | `snapshot_graphics` | endpoint → client |
+| 24 | `image_request` | client → endpoint |
+| 25 | `image_begin` | endpoint → client |
+| 26 | `image_data` | endpoint → client |
+| 27 | `image_end` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -146,7 +153,8 @@ Each observation is:
 
 1. one `snapshot_begin`;
 2. one or more `snapshot_data` transport chunks;
-3. one `snapshot_end` with the same observation revision.
+3. one `snapshot_graphics` manifest;
+4. one `snapshot_end` with the same observation revision.
 
 The endpoint materializes the coherent snapshot before emitting
 `snapshot_begin`. PTY/VT progress may continue while those already-copied bytes
@@ -192,9 +200,10 @@ Flag byte bits are:
 
 ## `text_v1`
 
-`text_v1` is the one renderer-complete snapshot representation. It remains
-renderer-neutral: there are no font file names, glyph ids, GPU objects, Flutter
-types, or window-system concepts on this wire.
+`text_v1` remains the frozen renderer-neutral terminal-text representation.
+There are no font file names, glyph ids, GPU objects, Flutter types, or
+window-system concepts on this wire. Framing v3 adds terminal graphics beside
+it rather than changing its record grammar.
 
 The `snapshot_data` payloads are transport chunks only. Concatenate them in
 order. The resulting bytes are:
@@ -321,6 +330,75 @@ The payload is:
 
 Only hyperlink ids referenced by rows are emitted. Clients should therefore
 build the resolver table per snapshot rather than assuming a node-global table.
+
+## `graphics_v1` manifest and image resources
+
+Terminal image pixels do not belong inside `text_v1` or the 4 MiB text snapshot
+body. The canonical VT may retain one decoded RGBA image up to 16 MiB, so
+copying image bytes into every observation could not be complete within the
+snapshot bound and would retransmit unchanged content unnecessarily.
+
+Every v3 observation therefore includes exactly one `snapshot_graphics` frame
+after the final `snapshot_data` chunk and before `snapshot_end`. Its payload is
+one 20-byte header, zero or more 20-byte image descriptors, then zero or more
+52-byte visible placements. The complete manifest always fits in one ordinary
+response frame.
+
+The manifest header is:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 8 | image-plane generation |
+| 8 | 8 | image-content generation |
+| 16 | 2 | referenced image descriptor count, `0..256` |
+| 18 | 2 | visible placement count, `0..1024` |
+
+Only images referenced by a placement visible in the selected snapshot
+viewport are described. One image descriptor is:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 4 | nonzero canonical image id |
+| 4 | 8 | nonzero exact content generation |
+| 12 | 4 | decoded pixel width, `1..4096` |
+| 16 | 4 | decoded pixel height, `1..4096` |
+
+One placement is:
+
+| Offset | Bytes | Meaning |
+| --- | ---: | --- |
+| 0 | 4 | referenced image id |
+| 4 | 8 | nonzero placement generation |
+| 12 | 2 | viewport row |
+| 14 | 2 | physical terminal column |
+| 16 | 4 | source x in decoded pixels |
+| 20 | 4 | source y in decoded pixels |
+| 24 | 4 | source width in decoded pixels |
+| 28 | 4 | source height in decoded pixels |
+| 32 | 4 | destination x offset within anchor cell |
+| 36 | 4 | destination y offset within anchor cell |
+| 40 | 4 | destination pixel width |
+| 44 | 4 | destination pixel height |
+| 48 | 4 | signed z order |
+
+The source rectangle must lie inside the referenced image. Placement row and
+column must lie inside `snapshot_begin` geometry. Every descriptor must be
+referenced by at least one visible placement.
+
+Pixels are demand-driven. A client sends one 12-byte `image_request` containing
+image id followed by content generation. The endpoint returns `result/rejected`
+if that exact generation is no longer retained. Otherwise it returns:
+
+1. `image_begin`, 24 bytes: id, generation, width, height, and exact RGBA8 byte
+   count;
+2. one or more nonempty `image_data` frames, each at most 256 KiB;
+3. `image_end`, 12 bytes repeating id and generation.
+
+The declared byte count must equal `width × height × 4` and is bounded to 16
+MiB. Image fetches are read-only: they do not advance terminal semantic or
+observation revision. A graphical client owns cache/residency policy and should
+reuse an already-fetched `image_id + generation` until a later manifest names a
+different content generation.
 
 ## Input
 
@@ -524,7 +602,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v2-vectors.json
+python3 tools/validate_vectors.py protocol/v3-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

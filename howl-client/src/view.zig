@@ -16,6 +16,8 @@ pub const Error = std.mem.Allocator.Error || error{
 pub const Begin = protocol.SnapshotBegin;
 pub const Presentation = rich.Presentation;
 pub const TextColor = protocol.TextColor;
+pub const Image = protocol.SnapshotImage;
+pub const ImagePlacement = protocol.SnapshotImagePlacement;
 
 /// Opaque owner of one immutable projected revision.
 pub const Snapshot = opaque {};
@@ -56,7 +58,15 @@ pub const Hyperlink = struct {
     uri_len: u32,
 };
 
-const maximum_view_bytes = protocol.maximum_snapshot_bytes * 2;
+pub const Graphics = struct {
+    generation: u64,
+    content_generation: u64,
+    images: []const Image,
+    placements: []const ImagePlacement,
+};
+
+const maximum_view_bytes = protocol.maximum_text_snapshot_bytes * 2 +
+    protocol.graphics_v1.maximum_manifest_bytes * 2;
 
 const Impl = struct {
     allocator: std.mem.Allocator,
@@ -67,11 +77,17 @@ const Impl = struct {
     scalars_offset: usize,
     hyperlinks_offset: usize,
     uris_offset: usize,
+    images_offset: usize,
+    placements_offset: usize,
     row_count: usize,
     cell_count: usize,
     scalar_count: usize,
     hyperlink_count: usize,
     uri_bytes: usize,
+    image_count: usize,
+    placement_count: usize,
+    graphics_generation: u64,
+    graphics_content_generation: u64,
     begin: Begin,
     presentation: Presentation,
 };
@@ -79,27 +95,32 @@ const Impl = struct {
 comptime {
     if (@alignOf(Impl) > @alignOf(u128)) @compileError("view owner alignment exceeds backing allocation");
 
-    // `rich.receive` already caps the complete framed snapshot at 4 MiB. Prove
-    // that every coarse fixed record costs at most twice its corresponding
+    // `rich.receive` caps `text_v1` at 4 MiB and graphics metadata separately.
+    // Prove that every coarse fixed record costs at most twice its corresponding
     // frozen wire record. Scalar and URI payload bytes retain their native byte
     // width. The fixed owner plus worst section-alignment padding must likewise
-    // fit inside twice the snapshot begin/presentation/end wire overhead. These
-    // assertions make the 8 MiB view ceiling mechanically follow the wire cap.
+    // fit inside twice the snapshot begin/presentation/graphics/end overhead.
     const row_wire_fixed = protocol.header_bytes +
         protocol.text_v1.record_header_bytes + protocol.text_v1.row_header_bytes;
     const hyperlink_wire_fixed = protocol.header_bytes +
         protocol.text_v1.record_header_bytes + protocol.text_v1.hyperlink_header_bytes;
     const fixed_wire = protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
         protocol.header_bytes + protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes +
+        protocol.header_bytes + protocol.graphics_v1.manifest_header_bytes +
         protocol.header_bytes + protocol.payload_bytes.snapshot_end;
     const fixed_view = @sizeOf(Impl) +
         (@alignOf(Row) - 1) + (@alignOf(Cell) - 1) +
-        (@alignOf(u32) - 1) + (@alignOf(Hyperlink) - 1);
+        (@alignOf(u32) - 1) + (@alignOf(Hyperlink) - 1) +
+        (@alignOf(Image) - 1) + (@alignOf(ImagePlacement) - 1);
 
     if (@sizeOf(Row) > row_wire_fixed * 2) @compileError("coarse row exceeds 2x wire bound");
     if (@sizeOf(Cell) > protocol.text_v1.cell_header_bytes * 2) @compileError("coarse cell exceeds 2x wire bound");
     if (@sizeOf(u32) != 4) @compileError("coarse scalar no longer matches text_v1 scalar width");
     if (@sizeOf(Hyperlink) > hyperlink_wire_fixed * 2) @compileError("coarse hyperlink exceeds 2x wire bound");
+    if (@sizeOf(Image) > protocol.graphics_v1.image_bytes * 2)
+        @compileError("coarse image descriptor exceeds 2x wire bound");
+    if (@sizeOf(ImagePlacement) > protocol.graphics_v1.placement_bytes * 2)
+        @compileError("coarse image placement exceeds 2x wire bound");
     if (fixed_view > fixed_wire * 2) @compileError("coarse fixed owner exceeds 2x wire bound");
 }
 
@@ -119,8 +140,16 @@ pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error
     const hyperlinks_offset = alignAfter(Hyperlink, scalars_end);
     const hyperlinks_end = try sectionEnd(Hyperlink, hyperlinks_offset, source.hyperlinks.len);
     const uris_offset = hyperlinks_end;
-    const total_bytes = std.math.add(usize, uris_offset, counts.uri_bytes) catch
+    const uris_end = std.math.add(usize, uris_offset, counts.uri_bytes) catch
         return error.ViewTooLarge;
+    const images_offset = alignAfter(Image, uris_end);
+    const images_end = try sectionEnd(Image, images_offset, source.graphics.images.len);
+    const placements_offset = alignAfter(ImagePlacement, images_end);
+    const total_bytes = try sectionEnd(
+        ImagePlacement,
+        placements_offset,
+        source.graphics.placements.len,
+    );
     if (total_bytes > maximum_view_bytes) return error.ViewTooLarge;
 
     const word_count = std.math.divCeil(usize, total_bytes, @sizeOf(u128)) catch unreachable;
@@ -139,11 +168,17 @@ pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error
         .scalars_offset = scalars_offset,
         .hyperlinks_offset = hyperlinks_offset,
         .uris_offset = uris_offset,
+        .images_offset = images_offset,
+        .placements_offset = placements_offset,
         .row_count = source.rows.len,
         .cell_count = counts.cells,
         .scalar_count = counts.scalars,
         .hyperlink_count = source.hyperlinks.len,
         .uri_bytes = counts.uri_bytes,
+        .image_count = source.graphics.images.len,
+        .placement_count = source.graphics.placements.len,
+        .graphics_generation = source.graphics.generation,
+        .graphics_content_generation = source.graphics.content_generation,
         .begin = source.begin,
         .presentation = source.presentation,
     };
@@ -153,6 +188,13 @@ pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error
     const output_scalars = mutableSliceAt(u32, bytes, scalars_offset, counts.scalars);
     const output_links = mutableSliceAt(Hyperlink, bytes, hyperlinks_offset, source.hyperlinks.len);
     const output_uris = bytes[uris_offset .. uris_offset + counts.uri_bytes];
+    const output_images = mutableSliceAt(Image, bytes, images_offset, source.graphics.images.len);
+    const output_placements = mutableSliceAt(
+        ImagePlacement,
+        bytes,
+        placements_offset,
+        source.graphics.placements.len,
+    );
 
     var cell_index: usize = 0;
     var scalar_index: usize = 0;
@@ -205,6 +247,8 @@ pub fn project(allocator: std.mem.Allocator, source: *const rich.Snapshot) Error
         @memcpy(output_uris[uri_index .. uri_index + source_link.uri_bytes.len], source_link.uri_bytes);
         uri_index += source_link.uri_bytes.len;
     }
+    @memcpy(output_images, source.graphics.images);
+    @memcpy(output_placements, source.graphics.placements);
 
     return @ptrCast(impl);
 }
@@ -249,6 +293,22 @@ pub fn hyperlinks(snapshot: *const Snapshot) []const Hyperlink {
 pub fn uris(snapshot: *const Snapshot) []const u8 {
     const impl = constImpl(snapshot);
     return ownerBytes(impl)[impl.uris_offset .. impl.uris_offset + impl.uri_bytes];
+}
+
+pub fn graphics(snapshot: *const Snapshot) Graphics {
+    const impl = constImpl(snapshot);
+    const bytes = ownerBytes(impl);
+    return .{
+        .generation = impl.graphics_generation,
+        .content_generation = impl.graphics_content_generation,
+        .images = constSliceAt(Image, bytes, impl.images_offset, impl.image_count),
+        .placements = constSliceAt(
+            ImagePlacement,
+            bytes,
+            impl.placements_offset,
+            impl.placement_count,
+        ),
+    };
 }
 
 pub const TextProjection = struct {
@@ -396,6 +456,7 @@ fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
     for (referenced[1..], resolved[1..]) |needed, seen| {
         if (needed != seen) return error.InvalidRichSnapshot;
     }
+    if (!validGraphics(source)) return error.InvalidRichSnapshot;
 
     if (cell_count > std.math.maxInt(u32) or
         scalar_count > std.math.maxInt(u32) or
@@ -404,6 +465,43 @@ fn validateAndCount(source: *const rich.Snapshot) Error!Counts {
         return error.ViewTooLarge;
     }
     return .{ .cells = cell_count, .scalars = scalar_count, .uri_bytes = uri_bytes };
+}
+
+fn validGraphics(source: *const rich.Snapshot) bool {
+    if (source.graphics.images.len > protocol.graphics_v1.maximum_images or
+        source.graphics.placements.len > protocol.graphics_v1.maximum_placements)
+        return false;
+    for (source.graphics.images, 0..) |image, index| {
+        if (image.image_id == 0 or image.generation == 0 or image.width == 0 or image.height == 0 or
+            image.width > protocol.graphics_v1.maximum_dimension or
+            image.height > protocol.graphics_v1.maximum_dimension or
+            @as(u64, image.width) * @as(u64, image.height) * 4 > protocol.graphics_v1.maximum_image_bytes)
+            return false;
+        for (source.graphics.images[0..index]) |prior| if (prior.image_id == image.image_id)
+            return false;
+    }
+    var referenced: [protocol.graphics_v1.maximum_images]bool = @splat(false);
+    for (source.graphics.placements) |placement| {
+        if (placement.image_id == 0 or placement.generation == 0 or
+            placement.row >= source.begin.rows or placement.column >= source.begin.columns or
+            placement.source_width == 0 or placement.source_height == 0 or
+            placement.pixel_width == 0 or placement.pixel_height == 0)
+            return false;
+        const image_index = richImageIndex(source.graphics.images, placement.image_id) orelse return false;
+        const image = source.graphics.images[image_index];
+        if (placement.source_x > image.width or placement.source_y > image.height or
+            placement.source_width > image.width - placement.source_x or
+            placement.source_height > image.height - placement.source_y)
+            return false;
+        referenced[image_index] = true;
+    }
+    for (referenced[0..source.graphics.images.len]) |used| if (!used) return false;
+    return true;
+}
+
+fn richImageIndex(images: []const protocol.SnapshotImage, image_id: u32) ?usize {
+    for (images, 0..) |image, index| if (image.image_id == image_id) return index;
+    return null;
 }
 
 fn validPresentation(value: Presentation) bool {
@@ -637,6 +735,27 @@ test "coarse view preserves rich semantics in one allocation" {
     }};
     var uri = [_]u8{ 'A', 0, 0xff, 'Z' };
     var links_source = [_]rich.Hyperlink{.{ .link_id = 7, .uri_bytes = uri[0..] }};
+    var image_source = [_]protocol.SnapshotImage{.{
+        .image_id = 9,
+        .generation = 12,
+        .width = 2,
+        .height = 3,
+    }};
+    var placement_source = [_]protocol.SnapshotImagePlacement{.{
+        .image_id = 9,
+        .generation = 13,
+        .row = 0,
+        .column = 1,
+        .source_x = 0,
+        .source_y = 1,
+        .source_width = 2,
+        .source_height = 2,
+        .cell_x = 1,
+        .cell_y = 2,
+        .pixel_width = 20,
+        .pixel_height = 30,
+        .z = -2,
+    }};
     var palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
     palette[4] = .{ .r = 1, .g = 2, .b = 3, .a = 0xff };
     const source = rich.Snapshot{
@@ -675,6 +794,12 @@ test "coarse view preserves rich semantics in one allocation" {
         },
         .rows = rows_source[0..],
         .hyperlinks = links_source[0..],
+        .graphics = .{
+            .generation = 14,
+            .content_generation = 12,
+            .images = &image_source,
+            .placements = &placement_source,
+        },
     };
 
     var allocator = std.testing.FailingAllocator.init(std.testing.allocator, .{ .fail_index = 1 });
@@ -687,6 +812,8 @@ test "coarse view preserves rich semantics in one allocation" {
     uri[0] = 'B';
     cells_source[0].foreground = .{ .kind = .rgb, .value = 0xaabbcc };
     rows_source[0].wrapped = false;
+    image_source[0].width = 1;
+    placement_source[0].z = 99;
 
     try std.testing.expectEqual(@as(u64, 11), begin(snapshot).revision);
     try std.testing.expect(presentation(snapshot).reverse_screen);
@@ -704,6 +831,13 @@ test "coarse view preserves rich semantics in one allocation" {
     try std.testing.expectEqual(@as(usize, 1), hyperlinks(snapshot).len);
     try std.testing.expectEqual(@as(u32, 7), hyperlinks(snapshot)[0].link_id);
     try std.testing.expectEqualSlices(u8, &.{ 'A', 0, 0xff, 'Z' }, uris(snapshot));
+    const image_view = graphics(snapshot);
+    try std.testing.expectEqual(@as(u64, 14), image_view.generation);
+    try std.testing.expectEqual(@as(u64, 12), image_view.content_generation);
+    try std.testing.expectEqual(@as(usize, 1), image_view.images.len);
+    try std.testing.expectEqual(@as(u32, 2), image_view.images[0].width);
+    try std.testing.expectEqual(@as(usize, 1), image_view.placements.len);
+    try std.testing.expectEqual(@as(i32, -2), image_view.placements[0].z);
 
     deinit(snapshot);
     try std.testing.expectEqual(@as(usize, 1), allocator.deallocations);

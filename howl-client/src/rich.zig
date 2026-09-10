@@ -62,12 +62,26 @@ pub const Hyperlink = struct {
     uri_bytes: []u8,
 };
 
+pub const Graphics = struct {
+    generation: u64 = 0,
+    content_generation: u64 = 0,
+    images: []protocol.SnapshotImage = &.{},
+    placements: []protocol.SnapshotImagePlacement = &.{},
+
+    fn deinit(self: *Graphics, allocator: std.mem.Allocator) void {
+        if (self.images.len != 0) allocator.free(self.images);
+        if (self.placements.len != 0) allocator.free(self.placements);
+        self.* = undefined;
+    }
+};
+
 pub const Snapshot = struct {
     allocator: std.mem.Allocator,
     begin: protocol.SnapshotBegin,
     presentation: Presentation,
     rows: []Row,
     hyperlinks: []Hyperlink,
+    graphics: Graphics = .{},
 
     pub fn deinit(self: *Snapshot) void {
         for (self.rows) |row| {
@@ -77,6 +91,7 @@ pub const Snapshot = struct {
         self.allocator.free(self.rows);
         for (self.hyperlinks) |link| self.allocator.free(link.uri_bytes);
         self.allocator.free(self.hyperlinks);
+        self.graphics.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -118,7 +133,7 @@ pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Err
 /// allocations. Truncation and trailing frames are errors, not partial success.
 /// Asynchronous hosts must bound and assemble a complete response before calling.
 pub fn decodeFrames(allocator: std.mem.Allocator, bytes: []const u8) Error!Snapshot {
-    if (bytes.len > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+    if (bytes.len > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
     var reader = BufferedFrames{ .bytes = bytes };
     var snapshot = try receiveFrom(&reader, allocator);
     errdefer snapshot.deinit();
@@ -182,6 +197,8 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
     var phase: DecodePhase = .presentation;
     var compressed_body: std.ArrayList(u8) = .empty;
     defer compressed_body.deinit(allocator);
+    var graphics: ?Graphics = null;
+    errdefer if (graphics) |*value| value.deinit(allocator);
 
     while (true) {
         var frame = try connection.receive();
@@ -189,11 +206,17 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
         try accountFrame(&total_bytes, frame.payload.len);
         switch (frame.kind) {
             .snapshot_data => {
-                if (compressed_body.items.len + frame.payload.len > protocol.maximum_snapshot_bytes)
+                if (graphics != null) return error.InvalidSnapshot;
+                if (compressed_body.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                     return error.SnapshotTooLarge;
                 try compressed_body.appendSlice(allocator, frame.payload);
             },
+            .snapshot_graphics => {
+                if (graphics != null) return error.InvalidSnapshot;
+                graphics = try decodeGraphics(allocator, begin, frame.payload);
+            },
             .snapshot_end => {
+                if (graphics == null) return error.InvalidSnapshot;
                 const end = try protocol.decodeSnapshotEnd(frame.payload);
                 if (end.revision != begin.revision) return error.InvalidSnapshot;
                 try decodeTextBody(
@@ -219,11 +242,168 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                     .presentation = presentation,
                     .rows = rows,
                     .hyperlinks = try hyperlinks.toOwnedSlice(allocator),
+                    .graphics = graphics.?,
                 };
             },
             else => return error.UnexpectedFrame,
         }
     }
+}
+
+fn decodeGraphics(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    payload: []const u8,
+) Error!Graphics {
+    if (payload.len < protocol.graphics_v1.manifest_header_bytes) return error.InvalidSnapshot;
+    const header = protocol.decodeSnapshotGraphicsHeader(
+        payload[0..protocol.graphics_v1.manifest_header_bytes],
+    ) catch return error.InvalidSnapshot;
+    const image_bytes = std.math.mul(
+        usize,
+        header.image_count,
+        protocol.graphics_v1.image_bytes,
+    ) catch return error.InvalidSnapshot;
+    const placement_bytes = std.math.mul(
+        usize,
+        header.placement_count,
+        protocol.graphics_v1.placement_bytes,
+    ) catch return error.InvalidSnapshot;
+    const expected = std.math.add(
+        usize,
+        protocol.graphics_v1.manifest_header_bytes + image_bytes,
+        placement_bytes,
+    ) catch return error.InvalidSnapshot;
+    if (payload.len != expected) return error.InvalidSnapshot;
+
+    const images = try allocator.alloc(protocol.SnapshotImage, header.image_count);
+    errdefer allocator.free(images);
+    const placements = try allocator.alloc(protocol.SnapshotImagePlacement, header.placement_count);
+    errdefer allocator.free(placements);
+
+    var offset: usize = protocol.graphics_v1.manifest_header_bytes;
+    for (images, 0..) |*image, index| {
+        image.* = protocol.decodeSnapshotImage(
+            payload[offset..][0..protocol.graphics_v1.image_bytes],
+        ) catch return error.InvalidSnapshot;
+        for (images[0..index]) |prior| if (prior.image_id == image.image_id)
+            return error.InvalidSnapshot;
+        offset += protocol.graphics_v1.image_bytes;
+    }
+
+    var referenced = try allocator.alloc(bool, images.len);
+    defer allocator.free(referenced);
+    @memset(referenced, false);
+    for (placements) |*placement| {
+        placement.* = protocol.decodeSnapshotImagePlacement(
+            payload[offset..][0..protocol.graphics_v1.placement_bytes],
+        ) catch return error.InvalidSnapshot;
+        if (placement.row >= begin.rows or placement.column >= begin.columns)
+            return error.InvalidSnapshot;
+        const image_index = graphicsImageIndex(images, placement.image_id) orelse
+            return error.InvalidSnapshot;
+        const image = images[image_index];
+        if (placement.source_x > image.width or placement.source_y > image.height or
+            placement.source_width > image.width - placement.source_x or
+            placement.source_height > image.height - placement.source_y)
+            return error.InvalidSnapshot;
+        referenced[image_index] = true;
+        offset += protocol.graphics_v1.placement_bytes;
+    }
+    for (referenced) |used| if (!used) return error.InvalidSnapshot;
+    if (offset != payload.len) return error.InvalidSnapshot;
+    return .{
+        .generation = header.generation,
+        .content_generation = header.content_generation,
+        .images = images,
+        .placements = placements,
+    };
+}
+
+fn graphicsImageIndex(images: []const protocol.SnapshotImage, image_id: u32) ?usize {
+    for (images, 0..) |image, index| if (image.image_id == image_id) return index;
+    return null;
+}
+
+test "rich graphics owns visible image identities and placements" {
+    const begin = protocol.SnapshotBegin{
+        .revision = 5,
+        .terminal_revision = 6,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 2,
+        .columns = 3,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    var payload: [
+        protocol.graphics_v1.manifest_header_bytes +
+            protocol.graphics_v1.image_bytes + protocol.graphics_v1.placement_bytes
+    ]u8 = undefined;
+    var header: [protocol.graphics_v1.manifest_header_bytes]u8 = undefined;
+    protocol.encodeSnapshotGraphicsHeader(&header, .{
+        .generation = 11,
+        .content_generation = 10,
+        .image_count = 1,
+        .placement_count = 1,
+    });
+    @memcpy(payload[0..header.len], &header);
+    var offset: usize = header.len;
+    var image: [protocol.graphics_v1.image_bytes]u8 = undefined;
+    protocol.encodeSnapshotImage(&image, .{
+        .image_id = 7,
+        .generation = 9,
+        .width = 4,
+        .height = 3,
+    });
+    @memcpy(payload[offset..][0..image.len], &image);
+    offset += image.len;
+    var placement: [protocol.graphics_v1.placement_bytes]u8 = undefined;
+    protocol.encodeSnapshotImagePlacement(&placement, .{
+        .image_id = 7,
+        .generation = 12,
+        .row = 1,
+        .column = 2,
+        .source_x = 1,
+        .source_y = 1,
+        .source_width = 3,
+        .source_height = 2,
+        .cell_x = 2,
+        .cell_y = 3,
+        .pixel_width = 30,
+        .pixel_height = 20,
+        .z = -4,
+    });
+    @memcpy(payload[offset..][0..placement.len], &placement);
+
+    var graphics = try decodeGraphics(std.testing.allocator, begin, &payload);
+    defer graphics.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u64, 11), graphics.generation);
+    try std.testing.expectEqual(@as(u64, 10), graphics.content_generation);
+    try std.testing.expectEqual(@as(usize, 1), graphics.images.len);
+    try std.testing.expectEqual(@as(u32, 7), graphics.images[0].image_id);
+    try std.testing.expectEqual(@as(u64, 9), graphics.images[0].generation);
+    try std.testing.expectEqual(@as(usize, 1), graphics.placements.len);
+    try std.testing.expectEqual(@as(u16, 1), graphics.placements[0].row);
+    try std.testing.expectEqual(@as(u16, 2), graphics.placements[0].column);
+    try std.testing.expectEqual(@as(i32, -4), graphics.placements[0].z);
+
+    var bad = payload;
+    // A source crop extending beyond the advertised image must fail closed.
+    bad[protocol.graphics_v1.manifest_header_bytes + protocol.graphics_v1.image_bytes + 27] = 4;
+    try std.testing.expectError(
+        error.InvalidSnapshot,
+        decodeGraphics(std.testing.allocator, begin, &bad),
+    );
 }
 
 const DecodePhase = enum { presentation, rows, hyperlinks };
@@ -287,7 +467,7 @@ fn decodeTextBody(
 ) Error!void {
     if (encoded.len <= protocol.text_v1.compressed_header_bytes) return error.InvalidSnapshot;
     const uncompressed_len = readU32(encoded[0..protocol.text_v1.compressed_header_bytes]);
-    if (uncompressed_len == 0 or uncompressed_len > protocol.maximum_snapshot_bytes)
+    if (uncompressed_len == 0 or uncompressed_len > protocol.maximum_text_snapshot_bytes)
         return error.SnapshotTooLarge;
     const decoded = try allocator.alloc(u8, uncompressed_len);
     defer allocator.free(decoded);
@@ -488,7 +668,7 @@ fn decodeColor(bytes: []const u8) Error!protocol.TextColor {
 fn accountFrame(total: *usize, payload_len: usize) error{SnapshotTooLarge}!void {
     total.* = std.math.add(usize, total.*, protocol.header_bytes + payload_len) catch
         return error.SnapshotTooLarge;
-    if (total.* > protocol.maximum_snapshot_bytes) return error.SnapshotTooLarge;
+    if (total.* > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
 }
 
 fn rgba(bytes: []const u8) Rgba {
@@ -762,7 +942,7 @@ test "deflated rich body rejects corrupt and oversized streams" {
     ));
 
     var oversized: [protocol.text_v1.compressed_header_bytes + 1]u8 = @splat(0);
-    encodeU32(oversized[0..protocol.text_v1.compressed_header_bytes], protocol.maximum_snapshot_bytes + 1);
+    encodeU32(oversized[0..protocol.text_v1.compressed_header_bytes], protocol.maximum_text_snapshot_bytes + 1);
     initialized_rows = 0;
     presentation_seen = false;
     row_count = 0;
@@ -810,8 +990,9 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
     });
     const compressed = try testDeflateBody(allocator, &body);
     defer allocator.free(compressed);
-    const length = 3 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
-        compressed.len + protocol.payload_bytes.snapshot_end;
+    const graphics_bytes = protocol.graphics_v1.manifest_header_bytes;
+    const length = 4 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
+        compressed.len + graphics_bytes + protocol.payload_bytes.snapshot_end;
     const frames = try allocator.alloc(u8, length);
     errdefer allocator.free(frames);
     var at: usize = 0;
@@ -830,6 +1011,20 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
     @memcpy(frames[at..][0..compressed.len], compressed);
     at += compressed.len;
     try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
+        .kind = .snapshot_graphics,
+        .payload_len = graphics_bytes,
+    });
+    at += protocol.header_bytes;
+    var graphics_header: [protocol.graphics_v1.manifest_header_bytes]u8 = undefined;
+    protocol.encodeSnapshotGraphicsHeader(&graphics_header, .{
+        .generation = 0,
+        .content_generation = 0,
+        .image_count = 0,
+        .placement_count = 0,
+    });
+    @memcpy(frames[at..][0..graphics_header.len], &graphics_header);
+    at += graphics_header.len;
+    try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
         .kind = .snapshot_end,
         .payload_len = protocol.payload_bytes.snapshot_end,
     });
@@ -844,6 +1039,8 @@ fn testDecodeOwned(allocator: std.mem.Allocator, bytes: []const u8) !void {
     try std.testing.expectEqual(@as(u64, 3), snapshot.begin.revision);
     try std.testing.expectEqual(@as(u64, 9), snapshot.begin.terminal_revision);
     try std.testing.expectEqual(@as(usize, 0), snapshot.rows.len);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.graphics.images.len);
+    try std.testing.expectEqual(@as(usize, 0), snapshot.graphics.placements.len);
 }
 
 test "buffered frames share decoder and clean up at every allocation failure" {

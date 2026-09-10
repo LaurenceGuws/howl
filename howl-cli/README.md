@@ -93,7 +93,9 @@ compatibility promise while the client is experimental:
     "styled_cells": 42,
     "linked_cells": 0,
     "multicell_cells": 0,
-    "hyperlinks": 0
+    "hyperlinks": 0,
+    "images": 0,
+    "image_placements": 0
   }
 }
 ```
@@ -108,20 +110,21 @@ non-single-width DEC rows, with row index plus the canonical double-width or
 double-height identity.
 
 The compact projection is intentionally lossy in presentation detail, but never
-silently claims otherwise. `detail` reports when styled, linked or multicell
-facts exist so a caller knows when richer inspection may matter. Hyperlink URI
-projection and compact style runs may be promoted later if real TUI dogfood
-shows they routinely improve agent decisions.
+silently claims otherwise. `detail` reports when styled, linked, multicell, or
+terminal-image facts exist so a caller knows when richer inspection may matter.
+Hyperlink URI projection and compact style runs may be promoted later if real
+TUI dogfood shows they routinely improve agent decisions.
 
 `--text` emits only the readable rows for direct human consumption. It is an
 explicit formatting choice rather than TTY-dependent magic.
 
 ## Rich snapshot
 
-`snapshot --rich` exposes the lossless `text_v1` semantic snapshot: lifecycle and
-authority envelope, full presentation/palette state, every bounded cell and
-grapheme scalar, DEC/multicell geometry, styles/colors, hyperlink identities and
-resolved hyperlink targets.
+`snapshot --rich` exposes the complete v3 semantic snapshot manifest: the
+unchanged `text_v1` lifecycle/authority and terminal-text records plus the
+`graphics_v1` image identities and visible placements. Exact RGBA image bytes are
+not copied into every snapshot; graphical clients fetch a named image generation
+on demand through the separate bounded image-resource request.
 
 The rich form may remain NDJSON because streaming bounded records is useful for
 forensic inspection and tests. It is explicitly *not* the default AX surface.

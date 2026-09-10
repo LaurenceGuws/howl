@@ -26,6 +26,7 @@ const BeginRecord = struct {
     revision: u64,
     terminal_revision: u64,
     format: []const u8 = "text_v1",
+    graphics_format: []const u8 = "graphics_v1",
     history_offset: u32,
     history_count: u32,
     history_row_base: u32,
@@ -89,6 +90,13 @@ const HyperlinkRecord = struct {
     record: []const u8 = "hyperlink",
     link_id: u32,
     uri_bytes_hex: []const u8,
+};
+const GraphicsRecord = struct {
+    record: []const u8 = "graphics",
+    generation: u64,
+    content_generation: u64,
+    images: []const protocol.SnapshotImage,
+    placements: []const protocol.SnapshotImagePlacement,
 };
 const EndRecord = struct {
     record: []const u8 = "snapshot_end",
@@ -188,6 +196,12 @@ pub fn emitNative(allocator: std.mem.Allocator, writer: *std.Io.Writer, snapshot
         defer allocator.free(hex);
         try emitJson(writer, HyperlinkRecord{ .link_id = link.link_id, .uri_bytes_hex = hex });
     }
+    try emitJson(writer, GraphicsRecord{
+        .generation = snapshot.graphics.generation,
+        .content_generation = snapshot.graphics.content_generation,
+        .images = snapshot.graphics.images,
+        .placements = snapshot.graphics.placements,
+    });
     try emitJson(writer, EndRecord{ .revision = begin.revision });
 }
 
