@@ -12,6 +12,9 @@ const resource_record_bytes: usize = 48;
 const removal_record_bytes: usize = 24;
 const command_record_bytes: usize = 40;
 const maximum_frame_resources: usize = 8;
+const image_refill_header_bytes: usize = 64;
+const maximum_image_refill_bytes: usize = image_refill_header_bytes +
+    protocol.graphics_v2.maximum_image_bytes;
 const canvas_packet_budget: usize = 320 * 1024;
 const semantic_capacity: usize = 64 * 1024;
 const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
@@ -50,6 +53,7 @@ const HostPacketError = error{
     IntegerOverflow,
     InvalidResidency,
     InvalidHost,
+    ImageRefillRequired,
 };
 
 const HostHandle = opaque {};
@@ -58,6 +62,17 @@ const ControlHandle = opaque {};
 const Control = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+};
+
+const HostImageBinding = struct {
+    image_id: u32,
+    generation: u64,
+    resource: canvas.ResourceRef,
+};
+
+const PendingImage = struct {
+    binding: HostImageBinding,
+    external: canvas.FrameExternalResource,
 };
 
 const Host = struct {
@@ -73,6 +88,9 @@ const Host = struct {
     frame_commands: [command_capacity]canvas.Command = undefined,
     frame_pixels: [pixel_capacity]u8 = undefined,
     residencies: [maximum_frame_resources]canvas.Residency = undefined,
+    missing_external: [1]canvas.FrameExternalResource = undefined,
+    image_binding: ?HostImageBinding = null,
+    pending_image: ?PendingImage = null,
     live_observe_pipeline: bool = false,
     armed_live_after_revision: ?u64 = null,
 };
@@ -103,6 +121,50 @@ pub export fn howl_native_host_version() u32 {
 
 pub export fn howl_native_host_output_minimum_bytes() usize {
     return output_minimum_bytes;
+}
+
+pub export fn howl_native_host_image_refill_size(raw: ?*HostHandle) usize {
+    const raw_host = raw orelse return 0;
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    const pending = host.pending_image orelse return 0;
+    const pixels = imageRefillPixelBytes(pending.external.size) catch return 0;
+    return std.math.add(usize, image_refill_header_bytes, pixels) catch 0;
+}
+
+pub export fn howl_native_host_fetch_image_refill(
+    raw: ?*HostHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+    output_len: *usize,
+) i32 {
+    output_len.* = 0;
+    const raw_host = raw orelse return 2;
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    const pending = host.pending_image orelse return 3;
+    if (host.armed_live_after_revision != null) return 4;
+    const required = howl_native_host_image_refill_size(raw);
+    if (required == 0 or required > maximum_image_refill_bytes) return 4;
+    if (output_capacity < required) return 1;
+
+    var fetched = client.images.request(
+        &host.connection,
+        host.allocator,
+        pending.binding.image_id,
+        pending.binding.generation,
+    ) catch return 4;
+    defer fetched.deinit();
+    if (fetched.width != pending.external.size.width or
+        fetched.height != pending.external.size.height or
+        fetched.pixels.len != required - image_refill_header_bytes or
+        pending.external.format != .rgba8)
+        return 4;
+    writeImageRefill(
+        output_ptr[0..required],
+        pending,
+        fetched.pixels,
+    ) catch return 4;
+    output_len.* = required;
+    return 0;
 }
 
 pub export fn howl_native_host_create(
@@ -404,6 +466,7 @@ pub export fn howl_native_host_observe(
         return switch (failure) {
             error.BufferTooSmall => 1,
             error.InvalidResidency => 3,
+            error.ImageRefillRequired => 5,
             else => 4,
         };
     };
@@ -444,10 +507,6 @@ fn observe(
     var rich = try receiveRich(host, after_revision, history_offset);
     defer rich.deinit();
     const begin = rich.begin;
-    if (host.live_observe_pipeline and history_offset == 0) {
-        try client.rich.sendRequest(&host.connection, begin.revision, 0);
-        host.armed_live_after_revision = begin.revision;
-    }
     const view = try client.view.project(host.allocator, &rich);
     defer client.view.deinit(view);
 
@@ -462,19 +521,27 @@ fn observe(
         .sources = &.{placement},
         .focused_source = host.source,
     });
-    const update = try terminal.takeContentUpdate(host.content, view, .{
+    const cursor = terminal.CursorContext{
         .pane = 1,
         .source = host.source,
         .visible_set_revision = 1,
         .lifecycle_revision = 1,
-    });
+    };
+    const update = try takeHostContentUpdate(host, view, cursor);
     try host.composer.apply(host.source, update);
-    const frame = try host.composer.frame(residency, .{
+    const frame = host.composer.frame(residency, .{
         .uploads = &host.frame_uploads,
         .removals = &host.frame_removals,
         .commands = &host.frame_commands,
         .pixels = &host.frame_pixels,
-    });
+    }) catch |failure| switch (failure) {
+        error.MissingExternalResource => {
+            try prepareImageRefill(host, residency);
+            return error.ImageRefillRequired;
+        },
+        else => return failure,
+    };
+    host.pending_image = null;
 
     var writer = Writer{ .bytes = output };
     try writeHostHeader(&writer, begin);
@@ -502,7 +569,145 @@ fn observe(
     }
     const semantic_bytes: *[4]u8 = @ptrCast(output[60..64].ptr);
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
+    if (host.live_observe_pipeline and history_offset == 0) {
+        try client.rich.sendRequest(&host.connection, begin.revision, 0);
+        host.armed_live_after_revision = begin.revision;
+    }
     return total;
+}
+
+fn takeHostContentUpdate(
+    host: *Host,
+    view: *const client.view.Snapshot,
+    cursor: terminal.CursorContext,
+) !canvas.ProducerUpdate {
+    const graphics = client.view.graphics(view);
+    if (graphics.images.len == 0 and graphics.placements.len == 0) {
+        const update = try terminal.takeContentUpdate(host.content, view, cursor);
+        host.image_binding = null;
+        return update;
+    }
+    if (graphics.images.len != 1 or graphics.placements.len != 1 or
+        graphics.placements[0].z < 0)
+        return error.InvalidHost;
+
+    const image = graphics.images[0];
+    const binding = try hostImageBinding(host, image.image_id, image.generation);
+    const update = try terminal.takeContentUpdateWithImageBinding(
+        host.content,
+        view,
+        cursor,
+        .{
+            .image_id = binding.image_id,
+            .generation = binding.generation,
+            .resource = binding.resource,
+        },
+    );
+    host.image_binding = binding;
+    return update;
+}
+
+fn hostImageBinding(
+    host: *const Host,
+    image_id: u32,
+    generation: u64,
+) !HostImageBinding {
+    if (image_id == 0 or generation == 0) return error.InvalidHost;
+    if (host.image_binding) |current| {
+        if (current.image_id == image_id and current.generation == generation)
+            return current;
+        if (current.image_id == image_id and generation > current.generation) {
+            return .{
+                .image_id = image_id,
+                .generation = generation,
+                .resource = .{
+                    .resource = current.resource.resource,
+                    .generation = @fromBackingInt(@intCast(generation)),
+                },
+            };
+        }
+    }
+
+    const usage = terminal.contentUsage(host.content);
+    const reserve: u64 = if (usage.resource_generation == 0) 2 else 1;
+    const identity = std.math.add(u64, usage.resource_high_water, reserve) catch
+        return error.InvalidHost;
+    if (identity == 0 or identity > canvas.ResourceId.max_identity)
+        return error.InvalidHost;
+    return .{
+        .image_id = image_id,
+        .generation = generation,
+        .resource = .{
+            .resource = canvas.ResourceId.local(identity) catch return error.InvalidHost,
+            .generation = @fromBackingInt(@intCast(generation)),
+        },
+    };
+}
+
+fn prepareImageRefill(
+    host: *Host,
+    residency: []const canvas.Residency,
+) !void {
+    const missing = try host.composer.missingExternalResources(
+        residency,
+        &host.missing_external,
+    );
+    if (missing.len != 1) return error.InvalidHost;
+    const binding = host.image_binding orelse return error.InvalidHost;
+    const expected = canvas.FrameResourceRef.local(host.source, binding.resource) catch
+        return error.InvalidHost;
+    if (!std.meta.eql(expected, missing[0].resource) or
+        missing[0].format != .rgba8)
+        return error.InvalidHost;
+    const pixel_bytes = try imageRefillPixelBytes(missing[0].size);
+    if (pixel_bytes == 0) return error.InvalidHost;
+    host.pending_image = .{
+        .binding = binding,
+        .external = missing[0],
+    };
+}
+
+fn imageRefillPixelBytes(size: canvas.Size) !usize {
+    const stride = std.math.mul(usize, size.width, 4) catch return error.InvalidFrame;
+    return std.math.mul(usize, stride, size.height) catch return error.InvalidFrame;
+}
+
+fn writeImageRefill(
+    output: []u8,
+    pending: PendingImage,
+    pixels: []const u8,
+) !void {
+    const expected_pixels = try imageRefillPixelBytes(pending.external.size);
+    if (pixels.len != expected_pixels or
+        pending.external.stride != @as(usize, pending.external.size.width) * 4)
+        return error.InvalidFrame;
+    const expected_total = try checkedAdd(image_refill_header_bytes, pixels.len);
+    if (output.len != expected_total or expected_total > std.math.maxInt(u32) or
+        pixels.len > std.math.maxInt(u32) or
+        pending.external.stride > std.math.maxInt(u32))
+        return error.InvalidFrame;
+
+    var writer = Writer{ .bytes = output };
+    const magic = try writer.need(4);
+    @memcpy(magic, "HIR1");
+    try writer.writeU16(1);
+    try writer.writeU16(image_refill_header_bytes);
+    try writer.writeU32(@intCast(expected_total));
+    try writer.writeU32(@intCast(pixels.len));
+    try writer.writeU64(@backingInt(pending.external.resource.source));
+    try writer.writeU64(@backingInt(pending.external.resource.resource));
+    try writer.writeU64(@backingInt(pending.external.resource.generation));
+    try writer.writeU32(pending.binding.image_id);
+    try writer.writeU8(@backingInt(pending.external.format));
+    try writer.writeU8(0);
+    try writer.writeU16(pending.external.size.width);
+    try writer.writeU16(pending.external.size.height);
+    try writer.writeU16(0);
+    try writer.writeU32(@intCast(pending.external.stride));
+    try writer.writeU64(pending.binding.generation);
+    if (writer.offset != image_refill_header_bytes) return error.InvalidFrame;
+    @memcpy(try writer.need(pixels.len), pixels);
+    if (writer.offset != output.len) return error.InvalidFrame;
 }
 
 fn surfaceSize(rows: u16, columns: u16, cell_size: canvas.Size) !canvas.Size {
@@ -533,6 +738,74 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(usize, 384 * 1024), output_minimum_bytes);
     try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
     try std.testing.expect(command_capacity >= 7_000);
+}
+
+test "native host image refill packet carries exact Canvas and terminal identity" {
+    const source: canvas.SourceId = @fromBackingInt(3);
+    const local_resource = canvas.ResourceRef{
+        .resource = try canvas.ResourceId.local(7),
+        .generation = @fromBackingInt(11),
+    };
+    const pending = PendingImage{
+        .binding = .{
+            .image_id = 17,
+            .generation = 23,
+            .resource = local_resource,
+        },
+        .external = .{
+            .resource = try canvas.FrameResourceRef.local(source, local_resource),
+            .format = .rgba8,
+            .size = .{ .width = 2, .height = 2 },
+            .stride = 8,
+        },
+    };
+    const pixels = [_]u8{
+        1,  2,  3,  4,
+        5,  6,  7,  8,
+        9,  10, 11, 12,
+        13, 14, 15, 16,
+    };
+    var packet: [image_refill_header_bytes + pixels.len]u8 = undefined;
+    try writeImageRefill(&packet, pending, &pixels);
+
+    try std.testing.expectEqualSlices(u8, "HIR1", packet[0..4]);
+    try std.testing.expectEqual(@as(u16, 1), std.mem.readInt(u16, packet[4..6], .little));
+    try std.testing.expectEqual(
+        @as(u16, image_refill_header_bytes),
+        std.mem.readInt(u16, packet[6..8], .little),
+    );
+    try std.testing.expectEqual(
+        @as(u32, packet.len),
+        std.mem.readInt(u32, packet[8..12], .little),
+    );
+    try std.testing.expectEqual(
+        @as(u32, pixels.len),
+        std.mem.readInt(u32, packet[12..16], .little),
+    );
+    try std.testing.expectEqual(
+        @backingInt(source),
+        std.mem.readInt(u64, packet[16..24], .little),
+    );
+    try std.testing.expectEqual(
+        @backingInt(local_resource.resource),
+        std.mem.readInt(u64, packet[24..32], .little),
+    );
+    try std.testing.expectEqual(
+        @backingInt(local_resource.generation),
+        std.mem.readInt(u64, packet[32..40], .little),
+    );
+    try std.testing.expectEqual(@as(u32, 17), std.mem.readInt(u32, packet[40..44], .little));
+    try std.testing.expectEqual(@backingInt(canvas.ResourceFormat.rgba8), packet[44]);
+    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[46..48], .little));
+    try std.testing.expectEqual(@as(u16, 2), std.mem.readInt(u16, packet[48..50], .little));
+    try std.testing.expectEqual(@as(u32, 8), std.mem.readInt(u32, packet[52..56], .little));
+    try std.testing.expectEqual(@as(u64, 23), std.mem.readInt(u64, packet[56..64], .little));
+    try std.testing.expectEqualSlices(u8, &pixels, packet[image_refill_header_bytes..]);
+
+    try std.testing.expectError(
+        error.InvalidFrame,
+        writeImageRefill(packet[0 .. packet.len - 1], pending, &pixels),
+    );
 }
 
 fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {

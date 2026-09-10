@@ -303,67 +303,166 @@ final class NativeCanvasLease {
   final NativeCanvasPlan plan;
 }
 
+/// One decoded external resource which is resident before its retry frame.
+final class NativeCanvasPreloadedResource {
+  const NativeCanvasPreloadedResource({
+    required this.resource,
+    required this.image,
+  });
+
+  final NativeCanvasResource resource;
+  final ui.Image image;
+}
+
 final class NativeCanvasLeaseUpdate {
-  const NativeCanvasLeaseUpdate({required this.lease, required this.retired});
+  const NativeCanvasLeaseUpdate({
+    required this.lease,
+    required this.retired,
+    required this.introduced,
+  });
   final NativeCanvasLease lease;
+
+  /// Images owned by the previous lease which become disposable after adoption.
   final List<ui.Image> retired;
+
+  /// Images created for this candidate and safe to dispose if it is abandoned.
+  final List<ui.Image> introduced;
 }
 
 Future<NativeCanvasLeaseUpdate> prepareNativeCanvasFrame(
   NativeCanvasLease? previous,
-  NativeCanvasFrame frame,
-) async {
+  NativeCanvasFrame frame, {
+  Iterable<NativeCanvasPreloadedResource> preloaded = const [],
+}) async {
   final images = <NativeCanvasResourceKey, ui.Image>{...?previous?.images};
   final retired = <ui.Image>[];
+  final introduced = <ui.Image>[];
+  final preloadByKey =
+      <NativeCanvasResourceKey, NativeCanvasPreloadedResource>{};
+  final preloads = preloaded.toList(growable: false);
 
-  for (var index = 0; index < frame.removalCount; index++) {
-    final removed = images.remove(frame.removal(index));
-    if (removed != null) retired.add(removed);
+  void introduce(ui.Image image) {
+    if (!introduced.contains(image)) introduced.add(image);
   }
 
-  final resources = List<NativeCanvasResource>.generate(
-    frame.resourceCount,
-    frame.resource,
-    growable: false,
-  );
-  final currentKeys = resources.map((resource) => resource.key).toSet();
-  for (final key
-      in images.keys.where((key) => !currentKeys.contains(key)).toList()) {
-    final removed = images.remove(key);
-    if (removed != null) retired.add(removed);
-  }
-
-  for (final resource in resources) {
-    if (resource.uploaded) {
-      final old = images.remove(resource.key);
-      if (old != null) retired.add(old);
-      images[resource.key] = await _decodeResource(frame, resource);
-    }
-    if (!images.containsKey(resource.key)) {
-      for (final image in images.values) {
-        if (!retired.contains(image)) retired.add(image);
+  for (final preload in preloads) {
+    if (preloadByKey.containsKey(preload.resource.key)) {
+      for (final resource in preloads) {
+        if (!introduced.contains(resource.image)) introduce(resource.image);
       }
-      throw StateError(
-        'native Canvas frame references nonresident ${resource.key}',
-      );
+      for (final image in introduced) {
+        image.dispose();
+      }
+      throw const NativeCanvasException('external_upload_duplicate');
     }
+    preloadByKey[preload.resource.key] = preload;
+    introduce(preload.image);
   }
 
-  return NativeCanvasLeaseUpdate(
-    lease: NativeCanvasLease(
-      frame: frame,
-      images: Map.unmodifiable(images),
-      plan: buildNativeCanvasPlan(frame),
-    ),
-    retired: retired,
-  );
+  try {
+    for (final preload in preloadByKey.values) {
+      final old = images.remove(preload.resource.key);
+      if (old != null && old != preload.image) retired.add(old);
+      images[preload.resource.key] = preload.image;
+    }
+
+    for (var index = 0; index < frame.removalCount; index++) {
+      final removed = images.remove(frame.removal(index));
+      if (removed != null) retired.add(removed);
+    }
+
+    final resources = List<NativeCanvasResource>.generate(
+      frame.resourceCount,
+      frame.resource,
+      growable: false,
+    );
+    final currentKeys = resources.map((resource) => resource.key).toSet();
+    for (final key
+        in images.keys.where((key) => !currentKeys.contains(key)).toList()) {
+      final removed = images.remove(key);
+      if (removed != null) retired.add(removed);
+    }
+
+    for (final resource in resources) {
+      final preload = preloadByKey[resource.key];
+      if (preload != null &&
+          (preload.resource.format != resource.format ||
+              preload.resource.width != resource.width ||
+              preload.resource.height != resource.height)) {
+        throw const NativeCanvasException('external_upload_metadata');
+      }
+      if (resource.uploaded) {
+        final old = images.remove(resource.key);
+        if (old != null) retired.add(old);
+        final decoded = await _decodeResource(frame, resource);
+        introduce(decoded);
+        images[resource.key] = decoded;
+      }
+      if (!images.containsKey(resource.key)) {
+        throw StateError(
+          'native Canvas frame references nonresident ${resource.key}',
+        );
+      }
+    }
+
+    return NativeCanvasLeaseUpdate(
+      lease: NativeCanvasLease(
+        frame: frame,
+        images: Map.unmodifiable(images),
+        plan: buildNativeCanvasPlan(frame),
+      ),
+      retired: retired,
+      introduced: introduced,
+    );
+  } catch (_) {
+    for (final image in introduced) {
+      image.dispose();
+    }
+    rethrow;
+  }
+}
+
+/// Disposes only images created by an unadopted candidate.
+///
+/// Images in `retired` still belong to `previous` until the candidate is
+/// actually installed, so abandoning a candidate must leave them untouched.
+void disposeNativeCanvasLeaseCandidate(NativeCanvasLeaseUpdate update) {
+  for (final image in update.introduced) {
+    image.dispose();
+  }
 }
 
 Future<ui.Image> _decodeResource(
   NativeCanvasFrame frame,
   NativeCanvasResource resource,
 ) async {
-  final source = frame.uploadBytes(resource);
+  return _decodeResourceBytes(resource, frame.uploadBytes(resource));
+}
+
+Future<NativeCanvasPreloadedResource> prepareNativeCanvasExternalUpload(
+  NativeCanvasExternalUpload upload,
+) async {
+  if (upload.resource.uploaded || upload.resource.format != 1) {
+    throw const NativeCanvasException('external_upload_resource');
+  }
+  return NativeCanvasPreloadedResource(
+    resource: upload.resource,
+    image: await _decodeResourceBytes(upload.resource, upload.pixels),
+  );
+}
+
+void disposeNativeCanvasPreloadedResources(
+  Iterable<NativeCanvasPreloadedResource> resources,
+) {
+  for (final resource in resources) {
+    resource.image.dispose();
+  }
+}
+
+Future<ui.Image> _decodeResourceBytes(
+  NativeCanvasResource resource,
+  Uint8List source,
+) async {
   if (source.length < resource.stride * resource.height) {
     throw const NativeCanvasException('upload_stride');
   }

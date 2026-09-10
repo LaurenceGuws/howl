@@ -14,6 +14,10 @@ import 'terminal_presentation.dart';
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
 const int _nativeHostMaximumOutputBytes = 8 * 1024 * 1024;
+const int _nativeHostImageRefillHeaderBytes = 64;
+const int _nativeHostMaximumImageBytes = 16 * 1024 * 1024;
+const int _nativeHostMaximumImageRefillBytes =
+    _nativeHostImageRefillHeaderBytes + _nativeHostMaximumImageBytes;
 const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 32;
 
@@ -73,6 +77,20 @@ final class NativeHostFrame {
   final NativeCanvasFrame canvas;
   final String semanticText;
   final bool semanticTruncated;
+}
+
+sealed class NativeHostObservation {
+  const NativeHostObservation();
+}
+
+final class NativeHostFrameObservation extends NativeHostObservation {
+  const NativeHostFrameObservation(this.bytes);
+  final Uint8List bytes;
+}
+
+final class NativeHostImageRefillObservation extends NativeHostObservation {
+  const NativeHostImageRefillObservation(this.upload);
+  final NativeCanvasExternalUpload upload;
 }
 
 NativeHostFrame parseNativeHostPacket(
@@ -145,17 +163,93 @@ NativeHostFrame parseNativeHostPacket(
   );
 }
 
-Uint8List encodeNativeHostResidency(NativeCanvasLease? lease) {
-  if (lease == null || lease.images.isEmpty) return Uint8List(0);
-  final resources = <NativeCanvasResource>[];
-  for (var index = 0; index < lease.frame.resourceCount; index++) {
-    final resource = lease.frame.resource(index);
-    if (lease.images.containsKey(resource.key)) resources.add(resource);
+NativeCanvasExternalUpload parseNativeHostImageRefill(Uint8List bytes) {
+  if (bytes.length < _nativeHostImageRefillHeaderBytes ||
+      bytes.length > _nativeHostMaximumImageRefillBytes) {
+    throw const NativeHostException('image_refill_bounds');
   }
-  final bytes = Uint8List(resources.length * _residencyRecordBytes);
+  if (bytes[0] != 0x48 ||
+      bytes[1] != 0x49 ||
+      bytes[2] != 0x52 ||
+      bytes[3] != 0x31) {
+    throw const NativeHostException('image_refill_magic');
+  }
   final data = ByteData.sublistView(bytes);
-  for (var index = 0; index < resources.length; index++) {
-    final resource = resources[index];
+  if (data.getUint16(4, Endian.little) != 1 ||
+      data.getUint16(6, Endian.little) != _nativeHostImageRefillHeaderBytes) {
+    throw const NativeHostException('image_refill_version');
+  }
+  final total = data.getUint32(8, Endian.little);
+  final pixelLength = data.getUint32(12, Endian.little);
+  final source = data.getUint64(16, Endian.little);
+  final resource = data.getUint64(24, Endian.little);
+  final generation = data.getUint64(32, Endian.little);
+  final imageId = data.getUint32(40, Endian.little);
+  final format = data.getUint8(44);
+  final width = data.getUint16(46, Endian.little);
+  final height = data.getUint16(48, Endian.little);
+  final stride = data.getUint32(52, Endian.little);
+  final imageGeneration = data.getUint64(56, Endian.little);
+  final expectedPixels = stride * height;
+  if (total != bytes.length ||
+      pixelLength != bytes.length - _nativeHostImageRefillHeaderBytes ||
+      pixelLength == 0 ||
+      pixelLength > _nativeHostMaximumImageBytes ||
+      source == 0 ||
+      resource == 0 ||
+      generation == 0 ||
+      imageId == 0 ||
+      imageGeneration == 0 ||
+      format != 1 ||
+      width == 0 ||
+      height == 0 ||
+      stride != width * 4 ||
+      expectedPixels != pixelLength ||
+      data.getUint8(45) != 0 ||
+      data.getUint16(50, Endian.little) != 0) {
+    throw const NativeHostException('image_refill_layout');
+  }
+  return NativeCanvasExternalUpload(
+    resource: NativeCanvasResource(
+      key: NativeCanvasResourceKey(source, resource, generation),
+      format: format,
+      width: width,
+      height: height,
+      stride: stride,
+      uploadOffset: 0,
+      uploadLength: 0,
+    ),
+    pixels: Uint8List.sublistView(bytes, _nativeHostImageRefillHeaderBytes),
+  );
+}
+
+Uint8List encodeNativeHostResidency(
+  NativeCanvasLease? lease, {
+  Iterable<NativeCanvasPreloadedResource> preloaded = const [],
+}) {
+  final resources = <NativeCanvasResourceKey, NativeCanvasResource>{};
+  for (final value in preloaded) {
+    resources[value.resource.key] = value.resource;
+  }
+  if (lease != null) {
+    for (var index = 0; index < lease.frame.resourceCount; index++) {
+      final resource = lease.frame.resource(index);
+      if (lease.images.containsKey(resource.key) &&
+          !resources.containsKey(resource.key) &&
+          resources.length < 8) {
+        resources[resource.key] = resource;
+      }
+    }
+  }
+  if (resources.isEmpty) return Uint8List(0);
+  if (resources.length > 8) {
+    throw const NativeHostException('residency_limit');
+  }
+  final ordered = resources.values.toList(growable: false);
+  final bytes = Uint8List(ordered.length * _residencyRecordBytes);
+  final data = ByteData.sublistView(bytes);
+  for (var index = 0; index < ordered.length; index++) {
+    final resource = ordered[index];
     final offset = index * _residencyRecordBytes;
     data.setUint64(offset, resource.key.source, Endian.little);
     data.setUint64(offset + 8, resource.key.resource, Endian.little);
@@ -202,7 +296,8 @@ final class NativeHostObserver {
   final SendPort _commands;
   final ReceivePort _responses;
   final Isolate _isolate;
-  final Map<int, Completer<Uint8List>> _pending = <int, Completer<Uint8List>>{};
+  final Map<int, Completer<NativeHostObservation>> _pending =
+      <int, Completer<NativeHostObservation>>{};
   int _nextId = 1;
   bool _closed = false;
 
@@ -267,14 +362,14 @@ final class NativeHostObserver {
     return NativeHostObserver._(first, responses, isolate);
   }
 
-  Future<Uint8List> observe({
+  Future<NativeHostObservation> observe({
     required int afterRevision,
     required int historyOffset,
     required Uint8List residency,
   }) {
     if (_closed) throw const NativeHostException('worker_closed');
     final id = _nextId++;
-    final completer = Completer<Uint8List>();
+    final completer = Completer<NativeHostObservation>();
     _pending[id] = completer;
     _commands.send(<Object?>[
       0,
@@ -290,7 +385,7 @@ final class NativeHostObserver {
     if (_closed) return;
     _closed = true;
     final id = _nextId++;
-    final completer = Completer<Uint8List>();
+    final completer = Completer<NativeHostObservation>();
     _pending[id] = completer;
     _commands.send(<Object?>[1, id]);
     try {
@@ -314,7 +409,7 @@ final class NativeHostObserver {
     if (id is! int || code is! int) return;
     final completer = _pending.remove(id);
     if (completer == null) return;
-    if (code != 0) {
+    if (code != 0 && code != 6) {
       completer.completeError(NativeHostException('observe_$code'));
       return;
     }
@@ -323,7 +418,18 @@ final class NativeHostObserver {
       completer.completeError(const NativeHostException('worker_response'));
       return;
     }
-    completer.complete(transfer.materialize().asUint8List());
+    final bytes = transfer.materialize().asUint8List();
+    if (code == 6) {
+      try {
+        completer.complete(
+          NativeHostImageRefillObservation(parseNativeHostImageRefill(bytes)),
+        );
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+      return;
+    }
+    completer.complete(NativeHostFrameObservation(bytes));
   }
 }
 
@@ -419,65 +525,84 @@ Future<String> _fontconfigFile(String family) async {
   return path;
 }
 
-typedef _CreateNative = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Uint16,
-  ffi.Uint16,
-  ffi.Uint16,
-);
-typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  int,
-  int,
-  int,
-);
+typedef _CreateNative =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Uint16,
+      ffi.Uint16,
+      ffi.Uint16,
+    );
+typedef _CreateDart =
+    ffi.Pointer<ffi.Void> Function(
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      int,
+      int,
+      int,
+    );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _OutputMinimumBytesNative = ffi.Size Function();
 typedef _OutputMinimumBytesDart = int Function();
-typedef _ObserveNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint64,
-  ffi.Uint32,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Size>,
-);
-typedef _ObserveDart = int Function(
-  ffi.Pointer<ffi.Void>,
-  int,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Size>,
-);
-typedef _SetLiveObservePipelineNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint8,
-);
+typedef _ImageRefillSizeNative = ffi.Size Function(ffi.Pointer<ffi.Void>);
+typedef _ImageRefillSizeDart = int Function(ffi.Pointer<ffi.Void>);
+typedef _FetchImageRefillNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
+    );
+typedef _FetchImageRefillDart =
+    int Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Size>,
+    );
+typedef _ObserveNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Uint64,
+      ffi.Uint32,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
+    );
+typedef _ObserveDart =
+    int Function(
+      ffi.Pointer<ffi.Void>,
+      int,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Size>,
+    );
+typedef _SetLiveObservePipelineNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
 typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
 
-ffi.DynamicLibrary _nativeHostLibrary() => Platform.isIOS
-    ? ffi.DynamicLibrary.process()
-    : ffi.DynamicLibrary.open('libhowl_native_host.so');
+ffi.DynamicLibrary _nativeHostLibrary() =>
+    Platform.isIOS
+        ? ffi.DynamicLibrary.process()
+        : ffi.DynamicLibrary.open('libhowl_native_host.so');
 
 Future<void> _nativeHostWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;
@@ -499,8 +624,8 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
-  final outputMinimumBytes = dylib
-      .lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
+  final outputMinimumBytes =
+      dylib.lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
         'howl_native_host_output_minimum_bytes',
       )();
   if (outputMinimumBytes <
@@ -510,14 +635,21 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     commands.close();
     return;
   }
+  final imageRefillSize = dylib
+      .lookupFunction<_ImageRefillSizeNative, _ImageRefillSizeDart>(
+        'howl_native_host_image_refill_size',
+      );
+  final fetchImageRefill = dylib
+      .lookupFunction<_FetchImageRefillNative, _FetchImageRefillDart>(
+        'howl_native_host_fetch_image_refill',
+      );
   final observe = dylib.lookupFunction<_ObserveNative, _ObserveDart>(
     'howl_native_host_observe',
   );
-  final setLiveObservePipeline = dylib
-      .lookupFunction<
-        _SetLiveObservePipelineNative,
-        _SetLiveObservePipelineDart
-      >('howl_native_host_set_live_observe_pipeline');
+  final setLiveObservePipeline = dylib.lookupFunction<
+    _SetLiveObservePipelineNative,
+    _SetLiveObservePipelineDart
+  >('howl_native_host_set_live_observe_pipeline');
 
   ffi.Pointer<ffi.Uint8> copyString(String value) {
     final encoded = utf8.encode(value);
@@ -533,9 +665,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final endpointPointer = copyString(endpoint);
   final primaryPointer = copyString(primary);
   final fallbackPointer = copyString(fallback);
-  final secondaryFallbackPointer = secondaryFallbackBytes.isEmpty
-      ? ffi.nullptr
-      : copyString(secondaryFallback);
+  final secondaryFallbackPointer =
+      secondaryFallbackBytes.isEmpty
+          ? ffi.nullptr
+          : copyString(secondaryFallback);
   final host = create(
     endpointPointer,
     endpointBytes.length,
@@ -612,6 +745,39 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
         outputMinimumBytes,
         outputLength,
       );
+      if (code == 5) {
+        final refillSize = imageRefillSize(host);
+        if (refillSize < _nativeHostImageRefillHeaderBytes ||
+            refillSize > _nativeHostMaximumImageRefillBytes) {
+          responses.send(<Object?>[id, 7, null]);
+          continue;
+        }
+        final refill = calloc<ffi.Uint8>(refillSize);
+        final refillLength = calloc<ffi.Size>();
+        try {
+          final refillCode = fetchImageRefill(
+            host,
+            refill,
+            refillSize,
+            refillLength,
+          );
+          if (refillCode != 0 || refillLength.value != refillSize) {
+            responses.send(<Object?>[id, 7, null]);
+            continue;
+          }
+          responses.send(<Object?>[
+            id,
+            6,
+            TransferableTypedData.fromList(<Uint8List>[
+              refill.asTypedList(refillLength.value),
+            ]),
+          ]);
+        } finally {
+          calloc.free(refill);
+          calloc.free(refillLength);
+        }
+        continue;
+      }
       if (code != 0 || outputLength.value > outputMinimumBytes) {
         responses.send(<Object?>[id, code == 0 ? 5 : code, null]);
         continue;
@@ -827,109 +993,84 @@ enum _NativeControlOperation {
   close,
 }
 
-typedef _ControlCreateNative = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-);
-typedef _ControlCreateDart = ffi.Pointer<ffi.Void> Function(
-  ffi.Pointer<ffi.Uint8>,
-  int,
-);
+typedef _ControlCreateNative =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Uint8>, ffi.Size);
+typedef _ControlCreateDart =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Uint8>, int);
 typedef _ControlDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _ControlDestroyDart = void Function(ffi.Pointer<ffi.Void>);
-typedef _ControlTextNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-);
-typedef _ControlTextDart = int Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-);
-typedef _ControlNamedNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint8,
-  ffi.Uint8,
-  ffi.Uint8,
-);
+typedef _ControlTextNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, ffi.Size);
+typedef _ControlTextDart =
+    int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, int);
+typedef _ControlNamedNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8, ffi.Uint8, ffi.Uint8);
 typedef _ControlNamedDart = int Function(ffi.Pointer<ffi.Void>, int, int, int);
-typedef _ControlUnicodeNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint32,
-  ffi.Uint8,
-  ffi.Uint8,
-);
-typedef _ControlUnicodeDart = int Function(
-  ffi.Pointer<ffi.Void>,
-  int,
-  int,
-  int,
-);
-typedef _ControlFocusNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint8,
-);
+typedef _ControlUnicodeNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint32, ffi.Uint8, ffi.Uint8);
+typedef _ControlUnicodeDart =
+    int Function(ffi.Pointer<ffi.Void>, int, int, int);
+typedef _ControlFocusNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
 typedef _ControlFocusDart = int Function(ffi.Pointer<ffi.Void>, int);
-typedef _ControlResizeNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint16,
-  ffi.Uint16,
-);
+typedef _ControlResizeNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint16, ffi.Uint16);
 typedef _ControlResizeDart = int Function(ffi.Pointer<ffi.Void>, int, int);
-typedef _ControlSignalNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint8,
-);
+typedef _ControlSignalNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
 typedef _ControlSignalDart = int Function(ffi.Pointer<ffi.Void>, int);
-typedef _ControlMouseNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Uint8,
-  ffi.Uint8,
-  ffi.Uint8,
-  ffi.Uint8,
-  ffi.Int32,
-  ffi.Uint16,
-  ffi.Uint8,
-  ffi.Uint32,
-  ffi.Uint32,
-);
-typedef _ControlMouseDart = int Function(
-  ffi.Pointer<ffi.Void>,
-  int,
-  int,
-  int,
-  int,
-  int,
-  int,
-  int,
-  int,
-  int,
-);
-typedef _ControlTextExtractNative = ffi.Int32 Function(
-  ffi.Pointer<ffi.Void>,
-  ffi.Int32,
-  ffi.Uint16,
-  ffi.Int32,
-  ffi.Uint16,
-  ffi.Uint16,
-  ffi.Uint8,
-  ffi.Pointer<ffi.Uint8>,
-  ffi.Size,
-  ffi.Pointer<ffi.Size>,
-);
-typedef _ControlTextExtractDart = int Function(
-  ffi.Pointer<ffi.Void>,
-  int,
-  int,
-  int,
-  int,
-  int,
-  int,
-  ffi.Pointer<ffi.Uint8>,
-  int,
-  ffi.Pointer<ffi.Size>,
-);
+typedef _ControlMouseNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Uint8,
+      ffi.Uint8,
+      ffi.Uint8,
+      ffi.Uint8,
+      ffi.Int32,
+      ffi.Uint16,
+      ffi.Uint8,
+      ffi.Uint32,
+      ffi.Uint32,
+    );
+typedef _ControlMouseDart =
+    int Function(
+      ffi.Pointer<ffi.Void>,
+      int,
+      int,
+      int,
+      int,
+      int,
+      int,
+      int,
+      int,
+      int,
+    );
+typedef _ControlTextExtractNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void>,
+      ffi.Int32,
+      ffi.Uint16,
+      ffi.Int32,
+      ffi.Uint16,
+      ffi.Uint16,
+      ffi.Uint8,
+      ffi.Pointer<ffi.Uint8>,
+      ffi.Size,
+      ffi.Pointer<ffi.Size>,
+    );
+typedef _ControlTextExtractDart =
+    int Function(
+      ffi.Pointer<ffi.Void>,
+      int,
+      int,
+      int,
+      int,
+      int,
+      int,
+      ffi.Pointer<ffi.Uint8>,
+      int,
+      ffi.Pointer<ffi.Size>,
+    );
 
 Future<void> _nativeControlWorker(List<Object?> init) async {
   final ready = init[0]! as SendPort;

@@ -1,5 +1,7 @@
 howl_native_host_version
 howl_native_host_output_minimum_bytes
+howl_native_host_image_refill_size
+howl_native_host_fetch_image_refill
 howl_native_host_create
 howl_native_host_destroy
 howl_native_host_observe

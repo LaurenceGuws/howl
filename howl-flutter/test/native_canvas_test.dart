@@ -154,6 +154,100 @@ Uint8List _hostPacket({
   return bytes;
 }
 
+Uint8List _imageRefillPacket() {
+  const header = 64;
+  const pixels = <int>[
+    255,
+    0,
+    0,
+    255,
+    0,
+    255,
+    0,
+    255,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    255,
+    255,
+  ];
+  final bytes = Uint8List(header + pixels.length);
+  final data = ByteData.sublistView(bytes);
+  bytes.setAll(0, const <int>[0x48, 0x49, 0x52, 0x31]);
+  data.setUint16(4, 1, Endian.little);
+  data.setUint16(6, header, Endian.little);
+  data.setUint32(8, bytes.length, Endian.little);
+  data.setUint32(12, pixels.length, Endian.little);
+  data.setUint64(16, 3, Endian.little);
+  data.setUint64(24, 7, Endian.little);
+  data.setUint64(32, 11, Endian.little);
+  data.setUint32(40, 17, Endian.little);
+  data.setUint8(44, 1);
+  data.setUint16(46, 2, Endian.little);
+  data.setUint16(48, 2, Endian.little);
+  data.setUint32(52, 8, Endian.little);
+  data.setUint64(56, 23, Endian.little);
+  bytes.setAll(header, pixels);
+  return bytes;
+}
+
+Uint8List _externalRgbaCanvas() {
+  const global = NativeCanvasFrame.globalHeaderBytes;
+  const frame = NativeCanvasFrame.frameHeaderBytes;
+  const resource = NativeCanvasFrame.resourceRecordBytes;
+  const command = NativeCanvasFrame.commandRecordBytes;
+  const recordBytes = frame + resource + command;
+  final bytes = Uint8List(global + recordBytes);
+  final data = ByteData.sublistView(bytes);
+  bytes.setAll(0, const <int>[0x48, 0x43, 0x52, 0x31]);
+  data.setUint16(4, 1, Endian.little);
+  data.setUint16(6, global, Endian.little);
+  data.setUint32(8, 1, Endian.little);
+  data.setUint32(12, 1, Endian.little);
+  data.setUint16(16, 20, Endian.little);
+  data.setUint16(18, 20, Endian.little);
+
+  var at = global;
+  data.setUint32(at, recordBytes, Endian.little);
+  data.setUint32(at + 4, 1, Endian.little);
+  data.setUint64(at + 8, 5, Endian.little);
+  data.setUint32(at + 16, 1, Endian.little);
+  data.setUint32(at + 20, 0, Endian.little);
+  data.setUint32(at + 24, 1, Endian.little);
+  data.setUint32(at + 28, 0, Endian.little);
+  data.setUint32(at + 32, resource, Endian.little);
+  data.setUint32(at + 36, 0, Endian.little);
+  data.setUint32(at + 40, command, Endian.little);
+  at += frame;
+
+  data.setUint64(at, 3, Endian.little);
+  data.setUint64(at + 8, 7, Endian.little);
+  data.setUint64(at + 16, 11, Endian.little);
+  data.setUint8(at + 24, 1);
+  data.setUint16(at + 26, 2, Endian.little);
+  data.setUint16(at + 28, 2, Endian.little);
+  at += resource;
+
+  data.setUint8(at, 2);
+  data.setUint8(at + 1, 0);
+  data.setInt32(at + 8, 0, Endian.little);
+  data.setInt32(at + 12, 0, Endian.little);
+  data.setUint16(at + 16, 20, Endian.little);
+  data.setUint16(at + 18, 20, Endian.little);
+  data.setInt32(at + 20, 0, Endian.little);
+  data.setInt32(at + 24, 0, Endian.little);
+  data.setUint16(at + 28, 20, Endian.little);
+  data.setUint16(at + 30, 20, Endian.little);
+  data.setUint16(at + 32, 0, Endian.little);
+  data.setUint16(at + 34, 0, Endian.little);
+  data.setUint16(at + 36, 2, Endian.little);
+  data.setUint16(at + 38, 2, Endian.little);
+  return bytes;
+}
+
 void main() {
   test('one-frame Canvas packet preserves resource and batch order', () {
     final frame = NativeCanvasFrame.parse(_oneFrameCanvas());
@@ -186,6 +280,90 @@ void main() {
     expect(packet.canvas.commandCount, 3);
     expect(packet.semanticText, 'visible terminal');
     expect(packet.semanticTruncated, isFalse);
+  });
+
+  test('native host external refill becomes exact Canvas residency', () async {
+    final upload = parseNativeHostImageRefill(_imageRefillPacket());
+    expect(upload.resource.key, const NativeCanvasResourceKey(3, 7, 11));
+    expect(upload.resource.format, 1);
+    expect(upload.resource.width, 2);
+    expect(upload.resource.height, 2);
+    expect(upload.resource.stride, 8);
+    expect(upload.pixels.length, 16);
+
+    final preload = await prepareNativeCanvasExternalUpload(upload);
+    final beforeFrame = encodeNativeHostResidency(
+      null,
+      preloaded: <NativeCanvasPreloadedResource>[preload],
+    );
+    final residency = ByteData.sublistView(beforeFrame);
+    expect(beforeFrame.length, 32);
+    expect(residency.getUint64(0, Endian.little), 3);
+    expect(residency.getUint64(8, Endian.little), 7);
+    expect(residency.getUint64(16, Endian.little), 11);
+    expect(residency.getUint8(24), 1);
+    expect(residency.getUint16(26, Endian.little), 2);
+    expect(residency.getUint16(28, Endian.little), 2);
+
+    final frame = NativeCanvasFrame.parse(_externalRgbaCanvas());
+    final prepared = await prepareNativeCanvasFrame(
+      null,
+      frame,
+      preloaded: <NativeCanvasPreloadedResource>[preload],
+    );
+    try {
+      expect(prepared.lease.images.containsKey(upload.resource.key), isTrue);
+      expect(prepared.lease.plan.segmentCountForTesting, 1);
+      final afterFrame = encodeNativeHostResidency(prepared.lease);
+      expect(afterFrame, beforeFrame);
+    } finally {
+      disposeNativeCanvasLease(prepared.lease);
+      for (final image in prepared.retired) {
+        image.dispose();
+      }
+    }
+  });
+
+  test(
+    'abandoned Canvas candidate preserves previous lease ownership',
+    () async {
+      final previous = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(_oneFrameCanvas()),
+      );
+      final previousImage = previous.lease.images.values.single;
+      final preload = await prepareNativeCanvasExternalUpload(
+        parseNativeHostImageRefill(_imageRefillPacket()),
+      );
+      final candidate = await prepareNativeCanvasFrame(
+        previous.lease,
+        NativeCanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <NativeCanvasPreloadedResource>[preload],
+      );
+      try {
+        expect(candidate.retired, contains(same(previousImage)));
+        disposeNativeCanvasLeaseCandidate(candidate);
+        expect(previousImage.width, 1);
+        expect(previousImage.height, 1);
+      } finally {
+        disposeNativeCanvasLease(previous.lease);
+      }
+    },
+  );
+
+  test('native host external refill rejects stale packet layout', () {
+    final badStride = _imageRefillPacket();
+    ByteData.sublistView(badStride).setUint32(52, 4, Endian.little);
+    expect(
+      () => parseNativeHostImageRefill(badStride),
+      throwsA(isA<NativeHostException>()),
+    );
+    final badGeneration = _imageRefillPacket();
+    ByteData.sublistView(badGeneration).setUint64(32, 0, Endian.little);
+    expect(
+      () => parseNativeHostImageRefill(badGeneration),
+      throwsA(isA<NativeHostException>()),
+    );
   });
 
   test(

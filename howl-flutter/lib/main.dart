@@ -11,6 +11,7 @@ import 'history_viewport.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
 import 'launch_config.dart';
+import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
 import 'pointer_input.dart';
@@ -260,25 +261,34 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _restoreImeAfterPresentationRestart = null;
       }
       var revision = 0;
-      var pendingObservation = observer.observe(
+      var pendingObservation = _observeNativeFrame(
+        observer: observer,
         afterRevision: revision,
         historyOffset: 0,
-        residency: encodeNativeHostResidency(_nativeLiveLease),
+        lease: _nativeLiveLease,
+        transportGeneration: generation,
       );
       while (!_stopping && generation == _transportGeneration) {
-        final bytes = await _observeOrTransportFault(
-          pendingObservation,
-          generation,
-        );
-        final packet = parseNativeHostPacket(bytes, presentation);
-        revision = packet.metadata.revision;
-        if (!mounted || _stopping || generation != _transportGeneration) break;
+        final observed = await pendingObservation;
+        if (!mounted || _stopping || generation != _transportGeneration) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          break;
+        }
+        final NativeHostFrame packet;
+        try {
+          packet = parseNativeHostPacket(observed.bytes, presentation);
+        } catch (_) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          rethrow;
+        }
         final prepared = await prepareNativeCanvasFrame(
           _nativeLiveLease,
           packet.canvas,
+          preloaded: observed.preloaded,
         );
+        revision = packet.metadata.revision;
         if (!mounted || _stopping || generation != _transportGeneration) {
-          disposeNativeCanvasLease(prepared.lease);
+          disposeNativeCanvasLeaseCandidate(prepared);
           break;
         }
         _nativeLiveMetadata = packet.metadata;
@@ -305,10 +315,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() {});
         }
-        pendingObservation = observer.observe(
+        pendingObservation = _observeNativeFrame(
+          observer: observer,
           afterRevision: revision,
           historyOffset: 0,
-          residency: encodeNativeHostResidency(_nativeLiveLease),
+          lease: _nativeLiveLease,
+          transportGeneration: generation,
         );
         await WidgetsBinding.instance.endOfFrame;
         for (final image in prepared.retired) {
@@ -324,16 +336,60 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     }
   }
 
-  Future<Uint8List> _observeOrTransportFault(
-    Future<Uint8List> observation,
-    int generation,
-  ) {
+  Future<T> _observeOrTransportFault<T>(Future<T> observation, int generation) {
     final fault = _transportFault;
     if (fault == null || generation != _transportGeneration) return observation;
-    return Future.any<Uint8List>(<Future<Uint8List>>[
+    return Future.any<T>(<Future<T>>[
       observation,
-      fault.future.then<Uint8List>((error) => throw error),
+      fault.future.then<T>((error) => throw error),
     ]);
+  }
+
+  Future<({Uint8List bytes, List<NativeCanvasPreloadedResource> preloaded})>
+  _observeNativeFrame({
+    required NativeHostObserver observer,
+    required int afterRevision,
+    required int historyOffset,
+    required NativeCanvasLease? lease,
+    int? transportGeneration,
+  }) async {
+    final preloaded =
+        <NativeCanvasResourceKey, NativeCanvasPreloadedResource>{};
+    try {
+      while (true) {
+        final future = observer.observe(
+          afterRevision: afterRevision,
+          historyOffset: historyOffset,
+          residency: encodeNativeHostResidency(
+            lease,
+            preloaded: preloaded.values,
+          ),
+        );
+        final observation = transportGeneration == null
+            ? await future
+            : await _observeOrTransportFault(future, transportGeneration);
+        if (observation is NativeHostFrameObservation) {
+          return (
+            bytes: observation.bytes,
+            preloaded: preloaded.values.toList(growable: false),
+          );
+        }
+        if (observation is! NativeHostImageRefillObservation) {
+          throw const NativeHostException('observe_kind');
+        }
+        final decoded = await prepareNativeCanvasExternalUpload(
+          observation.upload,
+        );
+        final replaced = preloaded[decoded.resource.key];
+        if (replaced != null && replaced.image != decoded.image) {
+          replaced.image.dispose();
+        }
+        preloaded[decoded.resource.key] = decoded;
+      }
+    } catch (_) {
+      disposeNativeCanvasPreloadedResources(preloaded.values);
+      rethrow;
+    }
   }
 
   void _dropTransport(int generation) {
@@ -740,14 +796,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           }
           _nativeHistoryObserver = observer;
         }
-        final bytes = await observer.observe(
+        final observed = await _observeNativeFrame(
+          observer: observer,
           afterRevision: 0,
           historyOffset: _history.targetOffset,
-          residency: encodeNativeHostResidency(_nativeHistoryLease),
+          lease: _nativeHistoryLease,
         );
-        final packet = parseNativeHostPacket(bytes, _presentation);
-        if (!mounted || _stopping || !_history.active) return;
-        if (generation != _historyGeneration) continue;
+        if (!mounted || _stopping || !_history.active) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          return;
+        }
+        if (generation != _historyGeneration) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          continue;
+        }
+        final NativeHostFrame packet;
+        try {
+          packet = parseNativeHostPacket(observed.bytes, _presentation);
+        } catch (_) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          rethrow;
+        }
         _history.acceptSnapshot(
           historyOffset: packet.metadata.historyOffset,
           historyCount: packet.metadata.historyCount,
@@ -755,18 +824,22 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           alternateScreen: packet.metadata.alternateScreen,
         );
         if (!_history.active) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
           _leaveHistory();
           return;
         }
-        final prepared = await prepareNativeCanvasFrame(
+        final NativeCanvasLeaseUpdate prepared;
+        prepared = await prepareNativeCanvasFrame(
           _nativeHistoryLease,
           packet.canvas,
+          preloaded: observed.preloaded,
         );
-        if (!mounted || _stopping || !_history.active) return;
+        if (!mounted || _stopping || !_history.active) {
+          disposeNativeCanvasLeaseCandidate(prepared);
+          return;
+        }
         if (generation != _historyGeneration) {
-          for (final image in prepared.retired) {
-            image.dispose();
-          }
+          disposeNativeCanvasLeaseCandidate(prepared);
           continue;
         }
         _nativeHistoryMetadata = packet.metadata;

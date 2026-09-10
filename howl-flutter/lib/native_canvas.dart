@@ -51,6 +51,21 @@ final class NativeCanvasResource {
   bool get uploaded => uploadLength != 0;
 }
 
+/// One exact externally refilled resource supplied outside the bounded frame.
+///
+/// The resource metadata must match the later Canvas frame exactly. Pixels are
+/// raw source bytes and are decoded into the same residency cache as ordinary
+/// in-frame uploads before the frame is retried.
+final class NativeCanvasExternalUpload {
+  const NativeCanvasExternalUpload({
+    required this.resource,
+    required this.pixels,
+  });
+
+  final NativeCanvasResource resource;
+  final Uint8List pixels;
+}
+
 /// One copied, final native Canvas frame.
 ///
 /// This is an app-private, version-locked packet. It is deliberately not a
