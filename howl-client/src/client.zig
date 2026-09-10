@@ -14,10 +14,12 @@ const unix_prefix = "unix:";
 pub const Error = std.mem.Allocator.Error || protocol.HeaderError || protocol.PayloadError || error{
     InvalidEndpoint,
     SocketCreateFailed,
+    SocketDuplicateFailed,
     SocketConnectFailed,
     SocketConnectTimedOut,
     SocketOptionFailed,
     SocketReadFailed,
+    SocketShutdownFailed,
     SocketWriteFailed,
     ConnectionClosed,
     UnexpectedHandshakeFrame,
@@ -31,6 +33,21 @@ pub const Frame = struct {
 
     pub fn deinit(self: *Frame) void {
         self.allocator.free(self.payload);
+        self.* = undefined;
+    }
+};
+
+/// Independently owned duplicate of one connection socket used only to wake a
+/// blocking receive from another thread. It never sends protocol bytes.
+pub const Cancellation = struct {
+    fd: posix.fd_t,
+
+    pub fn cancel(self: *const Cancellation) error{SocketShutdownFailed}!void {
+        return shutdownFd(self.fd);
+    }
+
+    pub fn deinit(self: *Cancellation) void {
+        closeFd(self.fd);
         self.* = undefined;
     }
 };
@@ -53,6 +70,17 @@ pub const Connection = struct {
     pub fn deinit(self: *Connection) void {
         closeFd(self.fd);
         self.* = undefined;
+    }
+
+    /// Creates an independently owned duplicate which may wake a currently
+    /// blocked receive from another thread without releasing this connection.
+    pub fn cancellation(self: *const Connection) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {
+        const raw = system.dup(self.fd);
+        if (posix.errno(raw) != .SUCCESS) return error.SocketDuplicateFailed;
+        const fd: posix.fd_t = @intCast(raw);
+        errdefer closeFd(fd);
+        try setCloseOnExec(fd);
+        return .{ .fd = fd };
     }
 
     pub fn send(self: *Connection, kind: protocol.Kind, payload: []const u8) Error!void {
@@ -293,6 +321,17 @@ fn readExact(fd: posix.fd_t, output: []u8) error{ SocketReadFailed, ConnectionCl
     }
 }
 
+fn shutdownFd(fd: posix.fd_t) error{SocketShutdownFailed}!void {
+    while (true) {
+        const result = system.shutdown(fd, posix.SHUT.RDWR);
+        switch (posix.errno(result)) {
+            .SUCCESS, .NOTCONN => return,
+            .INTR => continue,
+            else => return error.SocketShutdownFailed,
+        }
+    }
+}
+
 fn closeFd(fd: posix.fd_t) void {
     const result = system.close(fd);
     const errno = posix.errno(result);
@@ -321,6 +360,41 @@ fn testHandshakePeer(fd: posix.fd_t) void {
     writeAll(fd, &welcome) catch @panic("welcome write");
 }
 
+fn testHandshakePeerUntilClosed(fd: posix.fd_t) void {
+    defer closeFd(fd);
+    var header: [protocol.header_bytes]u8 = undefined;
+    readExact(fd, &header) catch @panic("hello header");
+    const decoded_header = protocol.decodeHeader(&header) catch @panic("hello frame");
+    if (decoded_header.kind != .hello or decoded_header.payload_len != protocol.payload_bytes.hello)
+        @panic("wrong hello");
+    var welcome: [protocol.payload_bytes.welcome]u8 = undefined;
+    protocol.encodeWelcome(&welcome, .{ .client_id = 72 });
+    var response: [protocol.header_bytes]u8 = undefined;
+    protocol.encodeHeader(&response, .{ .kind = .welcome, .payload_len = welcome.len }) catch
+        @panic("welcome header");
+    writeAll(fd, &response) catch @panic("welcome header write");
+    writeAll(fd, &welcome) catch @panic("welcome write");
+    var byte: [1]u8 = undefined;
+    readExact(fd, &byte) catch |failure| switch (failure) {
+        error.ConnectionClosed => return,
+        else => @panic("peer wait"),
+    };
+    @panic("peer unexpectedly received data");
+}
+
+const CancelReceiveProbe = struct {
+    connection: *Connection,
+    closed: bool = false,
+};
+
+fn testBlockedReceive(probe: *CancelReceiveProbe) void {
+    var frame = probe.connection.receive() catch |failure| {
+        probe.closed = failure == error.ConnectionClosed;
+        return;
+    };
+    frame.deinit();
+}
+
 test "handshake establishes client identity without transport policy" {
     const pair = testSocketPair();
     const thread = try std.Thread.spawn(.{}, testHandshakePeer, .{pair[1]});
@@ -331,6 +405,23 @@ test "handshake establishes client identity without transport policy" {
     try std.testing.expectEqual(posix.E.SUCCESS, posix.errno(fd_flags));
     try std.testing.expect(fd_flags & posix.FD_CLOEXEC != 0);
     try std.testing.expectEqual(@as(protocol.ClientId, 71), connection.client_id);
+}
+
+test "connection cancellation wakes a blocked receive while owner retains close" {
+    const pair = testSocketPair();
+    const peer = try std.Thread.spawn(.{}, testHandshakePeerUntilClosed, .{pair[1]});
+    var connection = try initOwnedFd(std.testing.allocator, pair[0]);
+    defer connection.deinit();
+    try std.testing.expectEqual(@as(protocol.ClientId, 72), connection.client_id);
+
+    var probe = CancelReceiveProbe{ .connection = &connection };
+    const reader = try std.Thread.spawn(.{}, testBlockedReceive, .{&probe});
+    var cancellation = try connection.cancellation();
+    defer cancellation.deinit();
+    try cancellation.cancel();
+    reader.join();
+    peer.join();
+    try std.testing.expect(probe.closed);
 }
 
 test "endpoint parser accepts explicit numeric IPv4 and refuses ambiguous TCP" {

@@ -289,13 +289,23 @@ Future<Object?> _awaitWorkerStartup({
 }
 
 final class NativeHostObserver {
-  NativeHostObserver._(this._commands, this._responses, this._isolate) {
+  NativeHostObserver._(
+    this._commands,
+    this._responses,
+    this._isolate,
+    this._cancellation,
+    this._cancelCancellation,
+    this._destroyCancellation,
+  ) {
     _responses.listen(_onResponse);
   }
 
   final SendPort _commands;
   final ReceivePort _responses;
   final Isolate _isolate;
+  final ffi.Pointer<ffi.Void> _cancellation;
+  final _CancellationCancelDart _cancelCancellation;
+  final _CancellationDestroyDart _destroyCancellation;
   final Map<int, Completer<NativeHostObservation>> _pending =
       <int, Completer<NativeHostObservation>>{};
   int _nextId = 1;
@@ -329,6 +339,15 @@ final class NativeHostObserver {
     final responses = ReceivePort();
     final errors = ReceivePort();
     final exits = ReceivePort();
+    final dylib = _nativeHostLibrary();
+    final cancelCancellation = dylib.lookupFunction<
+      _CancellationCancelNative,
+      _CancellationCancelDart
+    >('howl_native_host_cancellation_cancel');
+    final destroyCancellation = dylib.lookupFunction<
+      _CancellationDestroyNative,
+      _CancellationDestroyDart
+    >('howl_native_host_cancellation_destroy');
     final isolate = await Isolate.spawn<List<Object?>>(
       _nativeHostWorker,
       <Object?>[
@@ -354,12 +373,24 @@ final class NativeHostObserver {
       errorCode: 'worker_isolate_error',
       exitCode: 'worker_isolate_exit',
     );
-    if (first is! SendPort) {
+    if (first is! List<Object?> ||
+        first.length != 2 ||
+        first[0] is! SendPort ||
+        first[1] is! int ||
+        (first[1]! as int) == 0) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
       throw NativeHostException(first is String ? first : 'worker_start');
     }
-    return NativeHostObserver._(first, responses, isolate);
+    final cancellation = ffi.Pointer<ffi.Void>.fromAddress(first[1]! as int);
+    return NativeHostObserver._(
+      first[0]! as SendPort,
+      responses,
+      isolate,
+      cancellation,
+      cancelCancellation,
+      destroyCancellation,
+    );
   }
 
   Future<NativeHostObservation> observe({
@@ -384,6 +415,11 @@ final class NativeHostObserver {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    final cancelCode = _cancelCancellation(_cancellation);
+    if (cancelCode != 0) {
+      _closed = false;
+      throw NativeHostException('worker_cancel_$cancelCode');
+    }
     final id = _nextId++;
     final completer = Completer<NativeHostObservation>();
     _pending[id] = completer;
@@ -391,6 +427,7 @@ final class NativeHostObserver {
     try {
       await completer.future;
     } finally {
+      _destroyCancellation(_cancellation);
       _responses.close();
       _isolate.kill(priority: Isolate.beforeNextEvent);
       for (final pending in _pending.values) {
@@ -555,6 +592,14 @@ typedef _CreateDart =
     );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationCreateNative =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationCreateDart =
+    ffi.Pointer<ffi.Void> Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationCancelNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationCancelDart = int Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationDestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
+typedef _CancellationDestroyDart = void Function(ffi.Pointer<ffi.Void>);
 typedef _OutputMinimumBytesNative = ffi.Size Function();
 typedef _OutputMinimumBytesDart = int Function();
 typedef _ImageRefillSizeNative = ffi.Size Function(ffi.Pointer<ffi.Void>);
@@ -624,6 +669,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
+  final createCancellation = dylib.lookupFunction<
+    _CancellationCreateNative,
+    _CancellationCreateDart
+  >('howl_native_host_cancellation_create');
   final outputMinimumBytes =
       dylib.lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
         'howl_native_host_output_minimum_bytes',
@@ -704,7 +753,19 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final output = calloc<ffi.Uint8>(outputMinimumBytes);
   final outputLength = calloc<ffi.Size>();
   final residency = calloc<ffi.Uint8>(8 * _residencyRecordBytes);
-  ready.send(commands.sendPort);
+  final cancellation = createCancellation(host);
+  if (cancellation == ffi.nullptr) {
+    destroy(host);
+    calloc.free(output);
+    calloc.free(outputLength);
+    calloc.free(residency);
+    ready.send('worker_cancellation_create');
+    commands.close();
+    return;
+  }
+  // Ownership of this independently allocated duplicate-socket handle moves to
+  // the creating isolate. The worker remains the sole owner of `host` itself.
+  ready.send(<Object?>[commands.sendPort, cancellation.address]);
 
   try {
     await for (final message in commands) {

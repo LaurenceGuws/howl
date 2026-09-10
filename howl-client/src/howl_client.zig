@@ -9,6 +9,7 @@ const impl = @import("client.zig");
 
 pub const Error = impl.Error;
 pub const Frame = impl.Frame;
+pub const Cancellation = impl.Cancellation;
 pub const Connection = impl.Connection;
 
 pub const actions = @import("actions.zig");

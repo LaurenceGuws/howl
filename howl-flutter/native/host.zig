@@ -60,6 +60,7 @@ const HostPacketError = error{
 };
 
 const HostHandle = opaque {};
+const CancellationHandle = opaque {};
 const ControlHandle = opaque {};
 
 const Control = struct {
@@ -116,7 +117,37 @@ fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 2;
+    return 3;
+}
+
+/// Creates an independently owned duplicate of the Host session socket. The
+/// returned private handle may be used from another Dart isolate to wake a
+/// blocking observation, and must be destroyed exactly once by its caller.
+pub export fn howl_native_host_cancellation_create(raw: ?*HostHandle) ?*CancellationHandle {
+    const raw_host = raw orelse return null;
+    const host: *Host = @ptrCast(@alignCast(raw_host));
+    const allocator = std.heap.c_allocator;
+    const cancellation = allocator.create(client.Cancellation) catch return null;
+    cancellation.* = host.connection.cancellation() catch {
+        allocator.destroy(cancellation);
+        return null;
+    };
+    return @ptrCast(cancellation);
+}
+
+pub export fn howl_native_host_cancellation_cancel(raw: ?*CancellationHandle) i32 {
+    const value = raw orelse return 1;
+    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
+    cancellation.cancel() catch return 2;
+    return 0;
+}
+
+pub export fn howl_native_host_cancellation_destroy(raw: ?*CancellationHandle) void {
+    const value = raw orelse return;
+    const cancellation: *client.Cancellation = @ptrCast(@alignCast(value));
+    const allocator = std.heap.c_allocator;
+    cancellation.deinit();
+    allocator.destroy(cancellation);
 }
 
 pub export fn howl_native_host_output_minimum_bytes() usize {

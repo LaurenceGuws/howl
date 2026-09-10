@@ -103,6 +103,14 @@ from under the running app until the canonical session had zero clients, then
 restored it; the same Flutter process reattached, reclaimed 32x51 geometry and
 rendered the surviving Bash session without an app restart.
 
+Observer cancellation is out-of-band from the blocking observation request.
+The private native host gives Flutter an independently owned duplicate of the
+observer socket; superseding a presentation shuts down that duplicate to wake
+the blocked receive, then the observer worker processes its ordinary close and
+remains the sole owner which destroys the native Host. This prevents idle
+presentation restarts from accumulating stale session clients without closing
+the same fd from two owners.
+
 Android accessibility is projected from the same immutable `howl-client.view`
 used by the native renderer; Flutter does not OCR its Canvas or maintain a
 second terminal model. The private native host currently reserves a 320 KiB
