@@ -105,9 +105,11 @@ rendered the surviving Bash session without an app restart.
 
 Android accessibility is projected from the same immutable `howl-client.view`
 used by the native renderer; Flutter does not OCR its Canvas or maintain a
-second terminal model. The private native-host packet reserves the original
-256 KiB Canvas budget unchanged and carries at most 64 KiB of visible UTF-8
-semantic text beside it. Interior blanks and visual row boundaries are
+second terminal model. The private native host currently reserves a 320 KiB
+Canvas envelope with a 192x192 alpha atlas and carries at most 64 KiB of
+visible UTF-8 semantic text beside it. Dart asks the version-locked native host
+for the exact required output-buffer size rather than mirroring that bound.
+Interior blanks and visual row boundaries are
 preserved, trailing blank cells/rows are trimmed, wide-cell continuations are
 not duplicated, and SGR-concealed cells project as blanks. If that semantic
 allowance is exhausted the visual frame still succeeds and the accessibility
@@ -136,7 +138,12 @@ flutter build linux --release \
 
 The Linux bundle installs `libhowl_native_host.so` into its existing `$ORIGIN/lib` directory and refuses to build if the native host is missing. Linux uses the system FreeType/HarfBuzz libraries.
 
-Font discovery is exact rather than permissive. `HOWL_FONT` and `HOWL_FALLBACK_FONT` may name explicit files. Otherwise fontconfig must actually resolve `IosevkaTerm Nerd Font` and `Noto Sans Arabic`; a silent family substitution is rejected.
+Font discovery is exact rather than permissive. `HOWL_FONT`,
+`HOWL_FALLBACK_FONT`, and `HOWL_SECONDARY_FALLBACK_FONT` may name explicit
+files. Otherwise fontconfig must actually resolve `IosevkaTerm Nerd Font`,
+`Noto Sans Arabic`, and `Noto Sans CJK JP`; a silent family substitution is
+rejected. The secondary Linux fallback gives the native client CJK coverage
+without bundling that large system font into the app or the Web/PWA artifact.
 
 A bare path or `unix:/path` remains a local Linux endpoint option. TCP accepts an explicit numeric IPv4 peer selected by platform/deployment policy; Howl performs no DNS, discovery, authentication, or route selection.
 

@@ -375,7 +375,11 @@ Future<_NativeHostFonts> _resolveNativeHostFonts() async {
       'HOWL_FALLBACK_FONT',
       'Noto Sans Arabic',
     );
-    return _NativeHostFonts(primary, fallback, '');
+    final secondaryFallback = await _configuredFont(
+      'HOWL_SECONDARY_FALLBACK_FONT',
+      'Noto Sans CJK JP',
+    );
+    return _NativeHostFonts(primary, fallback, secondaryFallback);
   }
   throw const NativeHostException('platform_transport_unavailable');
 }
