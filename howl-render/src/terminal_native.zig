@@ -122,6 +122,11 @@ pub const ExternalImageBinding = struct {
     resource: canvas.ResourceRef,
 };
 
+/// Portable static-image resource bound shared by the maintained native and Web
+/// hosts. Native Canvas retains eight resources total and may spend one on the
+/// glyph atlas, leaving seven exact terminal image resources.
+pub const maximum_external_images: usize = 7;
+
 /// Opaque bounded owner of terminal -> Canvas presentation state.
 ///
 /// Returned `canvas.ProducerUpdate` slices borrow this owner and must be applied
@@ -223,13 +228,15 @@ const ContentImpl = struct {
     raster: []u8,
     commands: []canvas.Input,
     uploads: [1]canvas.ResourceUpload = undefined,
-    external_resources: [1]canvas.ExternalResourceDeclaration = undefined,
-    removals: [1]canvas.ResourceRemoval = undefined,
+    external_resources: [maximum_external_images]canvas.ExternalResourceDeclaration = undefined,
+    removals: [maximum_external_images]canvas.ResourceRemoval = undefined,
+    placement_order: [View.maximum_image_placements]u16 = undefined,
     producer_revision: u64 = 0,
     resource_generation: u64 = 0,
     resource_high_water: u64 = 0,
     atlas_resource_id: ?canvas.ResourceId = null,
-    published_image: ?PublishedImage = null,
+    published_images: [maximum_external_images]PublishedImage = undefined,
+    published_image_count: usize = 0,
     published_atlas_generation: u64 = 0,
     published_atlas_entries: usize = 0,
 };
@@ -240,10 +247,8 @@ const PublishedImage = struct {
     external: canvas.ExternalResourceDeclaration,
 };
 
-const ProjectedImage = struct {
-    published: PublishedImage,
+const ProjectedPlacement = struct {
     command: canvas.Input,
-    z: i32,
 };
 
 const AtlasPack = struct {
@@ -500,7 +505,9 @@ pub fn takeContentUpdate(
     snapshot: *const View.Snapshot,
     cursor_context: ?CursorContext,
 ) ContentError!canvas.ProducerUpdate {
-    return takeContentUpdateInner(content, snapshot, cursor_context, null);
+    if (View.graphics(snapshot).images.len != 0)
+        return error.InvalidImageBinding;
+    return takeContentUpdateInner(content, snapshot, cursor_context, &.{});
 }
 
 /// Projects one immutable terminal view plus one exact Host image binding.
@@ -514,14 +521,33 @@ pub fn takeContentUpdateWithImageBinding(
     cursor_context: ?CursorContext,
     image_binding: ExternalImageBinding,
 ) ContentError!canvas.ProducerUpdate {
-    return takeContentUpdateInner(content, snapshot, cursor_context, image_binding);
+    return takeContentUpdateWithImageBindings(
+        content,
+        snapshot,
+        cursor_context,
+        &.{image_binding},
+    );
+}
+
+/// Projects one immutable terminal view plus bounded exact Host image bindings.
+///
+/// Every visible image descriptor requires exactly one matching binding. One
+/// image resource may have multiple placements. Placements are ordered by z,
+/// then by canonical placement generation, independent of backend storage order.
+pub fn takeContentUpdateWithImageBindings(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+    cursor_context: ?CursorContext,
+    image_bindings: []const ExternalImageBinding,
+) ContentError!canvas.ProducerUpdate {
+    return takeContentUpdateInner(content, snapshot, cursor_context, image_bindings);
 }
 
 fn takeContentUpdateInner(
     content: *Content,
     snapshot: *const View.Snapshot,
     cursor_context: ?CursorContext,
-    image_binding: ?ExternalImageBinding,
+    image_bindings: []const ExternalImageBinding,
 ) ContentError!canvas.ProducerUpdate {
     const impl = contentImpl(content);
     const surface = try contentSurfaceSize(View.begin(snapshot), impl.config.cell_size);
@@ -567,61 +593,71 @@ fn takeContentUpdateInner(
     if (resource) |value|
         bindContentResource(impl.commands[0..command_count], value);
 
-    const projected_image = if (image_binding) |binding|
-        try projectExternalImage(
-            snapshot,
-            binding,
-            surface,
-            impl.config.cell_size,
-        )
-    else
-        null;
-    var next_published_image = impl.published_image;
+    const graphics = View.graphics(snapshot);
+    if (graphics.images.len > maximum_external_images) return error.ImageLimit;
+    if (image_bindings.len != graphics.images.len) return error.InvalidImageBinding;
+    if (graphics.placements.len > impl.placement_order.len) return error.ImageLimit;
+
+    var next_published_images: [maximum_external_images]PublishedImage = undefined;
+    var next_published_count: usize = 0;
     var external_count: usize = 0;
     var removal_count: usize = 0;
-    if (projected_image) |image| {
-        const image_identity = try contentExternalIdentity(image.published.external.resource);
+    const new_resource_floor = next_resource_high_water;
+    for (graphics.images) |image| {
+        const binding = findExternalImageBinding(image_bindings, image.image_id, image.generation) orelse
+            return error.InvalidImageBinding;
+        const published = try publishedImage(image, binding);
+        const image_identity = try contentExternalIdentity(published.external.resource);
         if (next_atlas_resource_id) |atlas_id| {
-            if (atlas_id == image.published.external.resource.resource)
+            if (atlas_id == published.external.resource.resource)
                 return error.InvalidImageBinding;
         }
-        if (impl.published_image) |published| {
-            if (published.external.resource.resource == image.published.external.resource.resource) {
-                if (!std.meta.eql(published, image.published) and
-                    @backingInt(image.published.external.resource.generation) <=
-                        @backingInt(published.external.resource.generation))
-                    return error.InvalidImageBinding;
-            } else {
-                if (image_identity <= next_resource_high_water)
-                    return error.InvalidImageBinding;
-                impl.removals[0] = .{ .resource = published.external.resource };
-                removal_count = 1;
-                next_resource_high_water = image_identity;
-            }
+        for (next_published_images[0..next_published_count]) |prior| {
+            if (prior.image_id == published.image_id or
+                prior.external.resource.resource == published.external.resource.resource)
+                return error.InvalidImageBinding;
+        }
+
+        const prior_resource = findPublishedImageByResource(
+            impl.published_images[0..impl.published_image_count],
+            published.external.resource.resource,
+        );
+        if (prior_resource) |prior| {
+            if (prior.image_id != published.image_id) return error.InvalidImageBinding;
+            if (!std.meta.eql(prior, published) and
+                @backingInt(published.external.resource.generation) <=
+                    @backingInt(prior.external.resource.generation))
+                return error.InvalidImageBinding;
         } else {
-            if (image_identity <= next_resource_high_water)
-                return error.InvalidImageBinding;
-            next_resource_high_water = image_identity;
+            if (image_identity <= new_resource_floor) return error.InvalidImageBinding;
+            next_resource_high_water = @max(next_resource_high_water, image_identity);
         }
-        if (impl.published_image == null or
-            !std.meta.eql(impl.published_image.?, image.published))
-        {
-            impl.external_resources[0] = image.published.external;
-            external_count = 1;
+        if (prior_resource == null or !std.meta.eql(prior_resource.?, published)) {
+            impl.external_resources[external_count] = published.external;
+            external_count += 1;
         }
-        const image_index = if (image.z < content_image_below_background_threshold)
-            projection.default_background_end
-        else if (image.z < 0)
-            projection.background_end
-        else
-            command_count;
-        try insertContentInput(impl.commands, &command_count, image_index, image.command);
-        next_published_image = image.published;
-    } else if (impl.published_image) |published| {
-        impl.removals[0] = .{ .resource = published.external.resource };
-        removal_count = 1;
-        next_published_image = null;
+        next_published_images[next_published_count] = published;
+        next_published_count += 1;
     }
+    for (impl.published_images[0..impl.published_image_count]) |published| {
+        if (findPublishedImageByResource(
+            next_published_images[0..next_published_count],
+            published.external.resource.resource,
+        ) != null) continue;
+        impl.removals[removal_count] = .{ .resource = published.external.resource };
+        removal_count += 1;
+    }
+
+    try insertExternalPlacements(
+        snapshot,
+        image_bindings,
+        surface,
+        impl.config.cell_size,
+        projection,
+        impl.commands,
+        &command_count,
+        &impl.placement_order,
+    );
 
     const cursor_binding = try contentCursorBinding(
         snapshot,
@@ -651,7 +687,11 @@ fn takeContentUpdateInner(
     impl.producer_revision = next_producer_revision;
     impl.resource_high_water = next_resource_high_water;
     impl.atlas_resource_id = next_atlas_resource_id;
-    impl.published_image = next_published_image;
+    @memcpy(
+        impl.published_images[0..next_published_count],
+        next_published_images[0..next_published_count],
+    );
+    impl.published_image_count = next_published_count;
     if (publish_atlas) {
         impl.resource_generation = next_resource_generation;
         impl.published_atlas_generation = atlas.generation;
@@ -1115,23 +1155,6 @@ fn appendContentInput(
 ) ContentError!void {
     if (used.* >= output.len) return error.CommandLimit;
     output[used.*] = value;
-    used.* += 1;
-}
-
-fn insertContentInput(
-    output: []canvas.Input,
-    used: *usize,
-    index: usize,
-    value: canvas.Input,
-) ContentError!void {
-    if (index > used.*) return error.InvalidPresentationGeometry;
-    if (used.* >= output.len) return error.CommandLimit;
-    std.mem.copyBackwards(
-        canvas.Input,
-        output[index + 1 .. used.* + 1],
-        output[index..used.*],
-    );
-    output[index] = value;
     used.* += 1;
 }
 
@@ -1675,26 +1698,167 @@ fn contentGraphicsScaleCeil(
     return rounded / denominator;
 }
 
-fn projectExternalImage(
+fn findExternalImageBinding(
+    bindings: []const ExternalImageBinding,
+    image_id: u32,
+    generation: u64,
+) ?ExternalImageBinding {
+    for (bindings) |binding| {
+        if (binding.image_id == image_id and binding.generation == generation)
+            return binding;
+    }
+    return null;
+}
+
+fn findPublishedImageByResource(
+    images: []const PublishedImage,
+    resource: canvas.ResourceId,
+) ?PublishedImage {
+    for (images) |image| {
+        if (image.external.resource.resource == resource) return image;
+    }
+    return null;
+}
+
+fn publishedImage(
+    image: View.Image,
+    binding: ExternalImageBinding,
+) ContentError!PublishedImage {
+    if (binding.image_id != image.image_id or binding.generation != image.generation)
+        return error.InvalidImageBinding;
+    const image_width = std.math.cast(u16, image.width) orelse
+        return error.InvalidPresentationGeometry;
+    const image_height = std.math.cast(u16, image.height) orelse
+        return error.InvalidPresentationGeometry;
+    const stride = std.math.mul(usize, @as(usize, image_width), 4) catch
+        return error.InvalidPresentationGeometry;
+    return .{
+        .image_id = image.image_id,
+        .generation = image.generation,
+        .external = .{
+            .resource = binding.resource,
+            .format = .rgba8,
+            .size = .{ .width = image_width, .height = image_height },
+            .stride = stride,
+        },
+    };
+}
+
+fn findImage(images: []const View.Image, image_id: u32) ?View.Image {
+    for (images) |image| {
+        if (image.image_id == image_id) return image;
+    }
+    return null;
+}
+
+fn externalPlacementLessThan(
+    placements: []const View.ImagePlacement,
+    lhs_index: u16,
+    rhs_index: u16,
+) bool {
+    const lhs = placements[lhs_index];
+    const rhs = placements[rhs_index];
+    if (lhs.z != rhs.z) return lhs.z < rhs.z;
+    if (lhs.generation != rhs.generation) return lhs.generation < rhs.generation;
+    return lhs_index < rhs_index;
+}
+
+fn insertExternalPlacements(
     snapshot: *const View.Snapshot,
+    bindings: []const ExternalImageBinding,
+    surface: canvas.Size,
+    cell_size: canvas.Size,
+    projection: ContentProjection,
+    output: []canvas.Input,
+    used: *usize,
+    order_storage: *[View.maximum_image_placements]u16,
+) ContentError!void {
+    const graphics = View.graphics(snapshot);
+    if (graphics.placements.len == 0) return;
+    if (graphics.placements.len > order_storage.len) return error.ImageLimit;
+    if (graphics.placements.len > output.len - @min(used.*, output.len))
+        return error.CommandLimit;
+
+    const order = order_storage[0..graphics.placements.len];
+    for (order, 0..) |*index, value| index.* = @intCast(value);
+    std.sort.heap(
+        u16,
+        order,
+        graphics.placements,
+        externalPlacementLessThan,
+    );
+
+    var deep_count: usize = 0;
+    var negative_count: usize = 0;
+    for (order) |index| {
+        const z = graphics.placements[index].z;
+        if (z < content_image_below_background_threshold)
+            deep_count += 1
+        else if (z < 0)
+            negative_count += 1;
+    }
+
+    const old_count = used.*;
+    const foreground_shift = deep_count + negative_count;
+    std.mem.copyBackwards(
+        canvas.Input,
+        output[projection.background_end + foreground_shift .. old_count + foreground_shift],
+        output[projection.background_end..old_count],
+    );
+    std.mem.copyBackwards(
+        canvas.Input,
+        output[projection.default_background_end + deep_count .. projection.background_end + deep_count],
+        output[projection.default_background_end..projection.background_end],
+    );
+
+    var deep_at = projection.default_background_end;
+    var negative_at = projection.background_end + deep_count;
+    var positive_at = old_count + foreground_shift;
+    for (order) |index| {
+        const placement = graphics.placements[index];
+        const image = findImage(graphics.images, placement.image_id) orelse
+            return error.InvalidView;
+        const binding = findExternalImageBinding(
+            bindings,
+            image.image_id,
+            image.generation,
+        ) orelse return error.InvalidImageBinding;
+        const projected = try projectExternalPlacement(
+            graphics,
+            image,
+            placement,
+            binding,
+            surface,
+            cell_size,
+        );
+        if (placement.z < content_image_below_background_threshold) {
+            output[deep_at] = projected.command;
+            deep_at += 1;
+        } else if (placement.z < 0) {
+            output[negative_at] = projected.command;
+            negative_at += 1;
+        } else {
+            output[positive_at] = projected.command;
+            positive_at += 1;
+        }
+    }
+    used.* = old_count + graphics.placements.len;
+}
+
+fn projectExternalPlacement(
+    graphics: View.Graphics,
+    image: View.Image,
+    placement: View.ImagePlacement,
     binding: ExternalImageBinding,
     surface: canvas.Size,
     cell_size: canvas.Size,
-) ContentError!ProjectedImage {
-    const graphics = View.graphics(snapshot);
-    if (graphics.images.len != 1 or graphics.placements.len != 1)
-        return error.ImageLimit;
-    const image = graphics.images[0];
-    const placement = graphics.placements[0];
+) ContentError!ProjectedPlacement {
     if (binding.image_id != image.image_id or binding.generation != image.generation)
         return error.InvalidImageBinding;
     if (placement.image_id != image.image_id) return error.InvalidView;
     if (graphics.cell_pixel_width == 0 or graphics.cell_pixel_height == 0)
         return error.InvalidView;
-    const image_width = std.math.cast(u16, image.width) orelse
-        return error.InvalidPresentationGeometry;
-    const image_height = std.math.cast(u16, image.height) orelse
-        return error.InvalidPresentationGeometry;
+    const published = try publishedImage(image, binding);
     const source_x = std.math.cast(u16, placement.source_x) orelse
         return error.InvalidPresentationGeometry;
     const source_y = std.math.cast(u16, placement.source_y) orelse
@@ -1702,8 +1866,6 @@ fn projectExternalImage(
     const source_width = std.math.cast(u16, placement.source_width) orelse
         return error.InvalidPresentationGeometry;
     const source_height = std.math.cast(u16, placement.source_height) orelse
-        return error.InvalidPresentationGeometry;
-    const stride = std.math.mul(usize, @as(usize, image_width), 4) catch
         return error.InvalidPresentationGeometry;
 
     const canonical_x = std.math.add(
@@ -1751,18 +1913,7 @@ fn projectExternalImage(
     if (right <= left or bottom <= top)
         return error.InvalidPresentationGeometry;
 
-    const external = canvas.ExternalResourceDeclaration{
-        .resource = binding.resource,
-        .format = .rgba8,
-        .size = .{ .width = image_width, .height = image_height },
-        .stride = stride,
-    };
     return .{
-        .published = .{
-            .image_id = image.image_id,
-            .generation = image.generation,
-            .external = external,
-        },
         .command = .{ .rgba = .{
             .destination = .{
                 .x = std.math.cast(i32, left) orelse
@@ -1778,7 +1929,7 @@ fn projectExternalImage(
             .resource = .{
                 .resource = binding.resource,
                 .format = .rgba8,
-                .size = external.size,
+                .size = published.external.size,
                 .source = .{
                     .x = source_x,
                     .y = source_y,
@@ -1787,7 +1938,6 @@ fn projectExternalImage(
                 },
             },
         } },
-        .z = placement.z,
     };
 }
 

@@ -18,6 +18,8 @@ pub const Presentation = rich.Presentation;
 pub const TextColor = protocol.TextColor;
 pub const Image = protocol.SnapshotImage;
 pub const ImagePlacement = protocol.SnapshotImagePlacement;
+pub const maximum_images = protocol.graphics_v2.maximum_images;
+pub const maximum_image_placements = protocol.graphics_v2.maximum_placements;
 
 /// Opaque owner of one immutable projected revision.
 pub const Snapshot = opaque {};
