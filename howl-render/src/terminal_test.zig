@@ -282,6 +282,130 @@ test "terminal Canvas projects DEC double width and height as clipped line trans
     try std.testing.expectEqual(@as(usize, 0), render.terminal.contentUsage(content).shape.entries);
 }
 
+test "terminal Canvas projects OSC 66 fraction and alignment inside the multicell allocation" {
+    var block = [_]u32{0x2588};
+    var empty = [_]u32{};
+    var lead = cell(&block, 3, 0);
+    lead.height = 3;
+    lead.semantic_width = false;
+    lead.subscale_n = 1;
+    lead.subscale_d = 2;
+    lead.vertical_align = 1;
+    lead.horizontal_align = 2;
+    var row0_cells = [_]client.rich.Cell{ lead, lead, lead };
+    var row1_cells = row0_cells;
+    var row2_cells = row0_cells;
+    for (&row0_cells, 0..) |*value, x| {
+        value.x = @intCast(x);
+        if (x != 0) value.scalars = &empty;
+    }
+    for (&row1_cells, 0..) |*value, x| {
+        value.x = @intCast(x);
+        value.y = 1;
+        value.scalars = &empty;
+    }
+    for (&row2_cells, 0..) |*value, x| {
+        value.x = @intCast(x);
+        value.y = 2;
+        value.scalars = &empty;
+    }
+    var rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row0_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row1_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row2_cells },
+    };
+    const source = sourceSnapshot(&rows, 3);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(32));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    var destination: ?render.canvas.Rect = null;
+    var clip: ?render.canvas.Rect = null;
+    var source_rect: ?render.canvas.SourceRect = null;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (destination != null) return error.TooManyAlphaCommands;
+            destination = value.destination;
+            clip = value.clip;
+            source_rect = value.resource.source.?;
+        },
+        else => {},
+    };
+    try std.testing.expectEqualDeep(
+        render.canvas.Rect{ .x = 7, .y = 30, .width = 15, .height = 30 },
+        destination orelse return error.MissingCanvasAlphaResource,
+    );
+    try std.testing.expectEqualDeep(
+        render.canvas.Rect{ .x = 0, .y = 0, .width = 30, .height = 60 },
+        clip.?,
+    );
+    try std.testing.expectEqualDeep(
+        render.canvas.SourceRect{ .x = 0, .y = 0, .width = 15, .height = 30 },
+        source_rect.?,
+    );
+}
+
+test "terminal Canvas scales the ordinary OSC 66 font raster instead of constructing a second font" {
+    var a = [_]u32{'A'};
+    var empty = [_]u32{};
+    var lead = cell(&a, 2, 0);
+    lead.height = 2;
+    lead.semantic_width = false;
+    var row0_cells = [_]client.rich.Cell{ lead, lead };
+    var row1_cells = row0_cells;
+    row0_cells[1].x = 1;
+    row0_cells[1].scalars = &empty;
+    row1_cells[0].y = 1;
+    row1_cells[0].scalars = &empty;
+    row1_cells[1].x = 1;
+    row1_cells[1].y = 1;
+    row1_cells[1].scalars = &empty;
+    var rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row0_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row1_cells },
+    };
+    const source = sourceSnapshot(&rows, 2);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(32));
+    defer render.terminal.deinitContent(content);
+
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+    var destination: ?render.canvas.Rect = null;
+    var clip: ?render.canvas.Rect = null;
+    var source_rect: ?render.canvas.SourceRect = null;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            if (destination != null) return error.TooManyAlphaCommands;
+            destination = value.destination;
+            clip = value.clip;
+            source_rect = value.resource.source.?;
+        },
+        else => {},
+    };
+    const alpha_destination = destination orelse return error.MissingCanvasAlphaResource;
+    const alpha_source = source_rect.?;
+    try std.testing.expectEqual(
+        @as(u16, alpha_source.width * 2),
+        alpha_destination.width,
+    );
+    try std.testing.expectEqual(
+        @as(u16, alpha_source.height * 2),
+        alpha_destination.height,
+    );
+    try std.testing.expectEqualDeep(
+        render.canvas.Rect{ .x = 0, .y = 0, .width = 20, .height = 40 },
+        clip.?,
+    );
+    try std.testing.expectEqual(@as(usize, 1), render.terminal.contentUsage(content).shape.entries);
+}
+
 test "terminal Canvas content retains howl-text whole-sequence fallback" {
     var variation = [_]u32{ '0', 0xfe00 };
     var cells = [_]client.rich.Cell{cell(&variation, 1, 0)};

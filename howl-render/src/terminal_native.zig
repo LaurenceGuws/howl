@@ -587,21 +587,132 @@ fn contentCellRect(row: usize, column: usize, cell_size: canvas.Size) ContentErr
     };
 }
 
-fn contentLeadClip(
+const ContentCellSizing = struct {
+    origin: canvas.Rect,
+    allocation: canvas.Rect,
+    scale_n: u16,
+    scale_d: u16,
+    offset_x: u16,
+    offset_y: u16,
+};
+
+fn contentCellSizing(
     row: usize,
     column: usize,
-    width: u8,
+    cell: View.Cell,
     cell_size: canvas.Size,
-) ContentError!canvas.Rect {
-    var result = try contentCellRect(row, column, cell_size);
-    const extent = std.math.mul(
+) ContentError!ContentCellSizing {
+    if (cell.width == 0 or cell.height == 0 or cell.width % cell.height != 0)
+        return error.InvalidView;
+    const base_width_cells = cell.width / cell.height;
+    const base_width = std.math.mul(
         u16,
         cell_size.width,
-        @as(u16, width),
+        @as(u16, base_width_cells),
     ) catch return error.InvalidPresentationGeometry;
-    if (extent == 0) return error.InvalidPresentationGeometry;
-    result.width = extent;
-    return result;
+    const allocation_width = std.math.mul(
+        u16,
+        cell_size.width,
+        @as(u16, cell.width),
+    ) catch return error.InvalidPresentationGeometry;
+    const allocation_height = std.math.mul(
+        u16,
+        cell_size.height,
+        @as(u16, cell.height),
+    ) catch return error.InvalidPresentationGeometry;
+    var scale_n: u16 = cell.height;
+    var scale_d: u16 = 1;
+    if (cell.subscale_n != 0 and cell.subscale_d != 0 and
+        cell.subscale_n < cell.subscale_d)
+    {
+        scale_n = std.math.mul(
+            u16,
+            scale_n,
+            @as(u16, cell.subscale_n),
+        ) catch return error.InvalidPresentationGeometry;
+        scale_d = cell.subscale_d;
+    }
+    const scaled_width = try contentScaleExtent(base_width, scale_n, scale_d);
+    const scaled_height = try contentScaleExtent(cell_size.height, scale_n, scale_d);
+    if (scaled_width > allocation_width or scaled_height > allocation_height)
+        return error.InvalidPresentationGeometry;
+    const remaining_x = allocation_width - scaled_width;
+    const remaining_y = allocation_height - scaled_height;
+    const offset_x: u16 = switch (cell.horizontal_align) {
+        2 => remaining_x / 2,
+        1, 3 => remaining_x,
+        else => 0,
+    };
+    const offset_y: u16 = switch (cell.vertical_align) {
+        1 => remaining_y,
+        2 => remaining_y / 2,
+        else => 0,
+    };
+    const lead = try contentCellRect(row, column, cell_size);
+    return .{
+        .origin = .{
+            .x = lead.x,
+            .y = lead.y,
+            .width = base_width,
+            .height = cell_size.height,
+        },
+        .allocation = .{
+            .x = lead.x,
+            .y = lead.y,
+            .width = allocation_width,
+            .height = allocation_height,
+        },
+        .scale_n = scale_n,
+        .scale_d = scale_d,
+        .offset_x = offset_x,
+        .offset_y = offset_y,
+    };
+}
+
+fn contentScaleExtent(value: u16, numerator: u16, denominator: u16) ContentError!u16 {
+    if (value == 0 or numerator == 0 or denominator == 0)
+        return error.InvalidPresentationGeometry;
+    const product = std.math.mul(u32, value, numerator) catch
+        return error.InvalidPresentationGeometry;
+    const rounded = std.math.add(u32, product, denominator - 1) catch
+        return error.InvalidPresentationGeometry;
+    const result = rounded / denominator;
+    return std.math.cast(u16, result) orelse error.InvalidPresentationGeometry;
+}
+
+fn contentScaleCoordinate(value: i64, numerator: u16, denominator: u16) ContentError!i64 {
+    if (numerator == 0 or denominator == 0) return error.InvalidPresentationGeometry;
+    const product = std.math.mul(i64, value, numerator) catch
+        return error.InvalidPresentationGeometry;
+    return @divFloor(product, denominator);
+}
+
+fn contentCellTransformRect(
+    rect: canvas.Rect,
+    sizing: ContentCellSizing,
+) ContentError!canvas.Rect {
+    const local_x = std.math.sub(i64, rect.x, sizing.origin.x) catch
+        return error.InvalidPresentationGeometry;
+    const local_y = std.math.sub(i64, rect.y, sizing.origin.y) catch
+        return error.InvalidPresentationGeometry;
+    const scaled_x = try contentScaleCoordinate(local_x, sizing.scale_n, sizing.scale_d);
+    const scaled_y = try contentScaleCoordinate(local_y, sizing.scale_n, sizing.scale_d);
+    const x = std.math.add(
+        i64,
+        @as(i64, sizing.origin.x) + sizing.offset_x,
+        scaled_x,
+    ) catch return error.InvalidPresentationGeometry;
+    const y = std.math.add(
+        i64,
+        @as(i64, sizing.origin.y) + sizing.offset_y,
+        scaled_y,
+    ) catch return error.InvalidPresentationGeometry;
+    return .{
+        .x = std.math.cast(i32, x) orelse return error.InvalidPresentationGeometry,
+        .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
+        .width = try contentScaleExtent(rect.width, sizing.scale_n, sizing.scale_d),
+        .height = try contentScaleExtent(rect.height, sizing.scale_n, sizing.scale_d),
+    };
 }
 
 const ContentLineScale = struct {
@@ -691,6 +802,24 @@ fn contentLineClip(
     return contentIntersectRects(visible, contentSurfaceRect(surface));
 }
 
+fn contentCellVisibleClip(
+    sizing: ContentCellSizing,
+    row: usize,
+    geometry: u8,
+    cell_size: canvas.Size,
+    surface: canvas.Size,
+) ContentError!?canvas.Rect {
+    if (sizing.allocation.height == cell_size.height or geometry != 0)
+        return contentLineClip(sizing.allocation, row, geometry, cell_size, surface);
+    const transformed = try contentLineTransformRect(
+        sizing.allocation,
+        row,
+        geometry,
+        cell_size,
+    );
+    return contentIntersectRects(transformed, contentSurfaceRect(surface));
+}
+
 fn appendContentLineSolid(
     output: []canvas.Input,
     used: *usize,
@@ -707,6 +836,34 @@ fn appendContentLineSolid(
         output,
         used,
         try contentLineTransformRect(rect, row, geometry, cell_size),
+        visible_clip,
+        color,
+    );
+}
+
+fn appendContentCellSolid(
+    output: []canvas.Input,
+    used: *usize,
+    rect: canvas.Rect,
+    color: canvas.Color,
+    sizing: ContentCellSizing,
+    row: usize,
+    geometry: u8,
+    cell_size: canvas.Size,
+    surface: canvas.Size,
+) ContentError!void {
+    const visible_clip = try contentCellVisibleClip(
+        sizing,
+        row,
+        geometry,
+        cell_size,
+        surface,
+    ) orelse return;
+    const sized_rect = try contentCellTransformRect(rect, sizing);
+    try appendContentSolid(
+        output,
+        used,
+        try contentLineTransformRect(sized_rect, row, geometry, cell_size),
         visible_clip,
         color,
     );
@@ -793,6 +950,7 @@ fn appendContentUnderline(
     thickness: u16,
     style: u8,
     color: canvas.Color,
+    sizing: ContentCellSizing,
     row: usize,
     geometry: u8,
     cell_size: canvas.Size,
@@ -801,23 +959,23 @@ fn appendContentUnderline(
     const height = @max(@as(u16, 1), thickness);
     switch (style) {
         1 => {
-            try appendContentLineSolid(output, used, .{
+            try appendContentCellSolid(output, used, .{
                 .x = clip.x,
                 .y = y,
                 .width = clip.width,
                 .height = height,
-            }, clip, color, row, geometry, cell_size, surface);
+            }, color, sizing, row, geometry, cell_size, surface);
             const second_y = std.math.add(
                 i32,
                 y,
                 @as(i32, height) + 1,
             ) catch return error.InvalidPresentationGeometry;
-            try appendContentLineSolid(output, used, .{
+            try appendContentCellSolid(output, used, .{
                 .x = clip.x,
                 .y = second_y,
                 .width = clip.width,
                 .height = height,
-            }, clip, color, row, geometry, cell_size, surface);
+            }, color, sizing, row, geometry, cell_size, surface);
         },
         2 => for (0..clip.width) |offset| {
             const x = std.math.add(
@@ -830,12 +988,12 @@ fn appendContentUnderline(
                 y,
                 @as(i32, @intCast(offset & 1)),
             ) catch return error.InvalidPresentationGeometry;
-            try appendContentLineSolid(output, used, .{
+            try appendContentCellSolid(output, used, .{
                 .x = x,
                 .y = wave_y,
                 .width = 1,
                 .height = 1,
-            }, clip, color, row, geometry, cell_size, surface);
+            }, color, sizing, row, geometry, cell_size, surface);
         },
         3 => {
             var offset: usize = 0;
@@ -845,12 +1003,12 @@ fn appendContentUnderline(
                     clip.x,
                     @as(i32, @intCast(offset)),
                 ) catch return error.InvalidPresentationGeometry;
-                try appendContentLineSolid(output, used, .{
+                try appendContentCellSolid(output, used, .{
                     .x = x,
                     .y = y,
                     .width = 1,
                     .height = height,
-                }, clip, color, row, geometry, cell_size, surface);
+                }, color, sizing, row, geometry, cell_size, surface);
             }
         },
         4 => {
@@ -863,20 +1021,20 @@ fn appendContentUnderline(
                 ) catch return error.InvalidPresentationGeometry;
                 const remaining = @as(usize, clip.width) - offset;
                 const width: u16 = @intCast(@min(@as(usize, 3), remaining));
-                try appendContentLineSolid(output, used, .{
+                try appendContentCellSolid(output, used, .{
                     .x = x,
                     .y = y,
                     .width = width,
                     .height = height,
-                }, clip, color, row, geometry, cell_size, surface);
+                }, color, sizing, row, geometry, cell_size, surface);
             }
         },
-        else => try appendContentLineSolid(output, used, .{
+        else => try appendContentCellSolid(output, used, .{
             .x = clip.x,
             .y = y,
             .width = clip.width,
             .height = height,
-        }, clip, color, row, geometry, cell_size, surface),
+        }, color, sizing, row, geometry, cell_size, surface),
     }
 }
 
@@ -950,7 +1108,8 @@ fn buildContentCommands(
             if (cell.scalar_count == 0 or cell.x != 0 or cell.y != 0 or
                 cell.style_bits & content_style_invisible != 0)
                 continue;
-            const clip = try contentLeadClip(row_index, column, cell.width, cell_size);
+            const sizing = try contentCellSizing(row_index, column, cell, cell_size);
+            const clip = sizing.origin;
             if (cell.style_bits & content_style_underline != 0) {
                 const line_y = std.math.add(i64, @as(i64, physical.y), line_offset) catch
                     return error.InvalidPresentationGeometry;
@@ -964,6 +1123,7 @@ fn buildContentCommands(
                     metrics.underline_height,
                     cell.underline_style,
                     colors.underline,
+                    sizing,
                     row_index,
                     row.line_geometry,
                     cell_size,
@@ -975,12 +1135,12 @@ fn buildContentCommands(
                     return error.InvalidPresentationGeometry;
                 const y = std.math.add(i64, line_y, @as(i64, metrics.strike_y)) catch
                     return error.InvalidPresentationGeometry;
-                try appendContentLineSolid(output, &used, .{
+                try appendContentCellSolid(output, &used, .{
                     .x = clip.x,
                     .y = std.math.cast(i32, y) orelse return error.InvalidPresentationGeometry,
                     .width = clip.width,
                     .height = @max(@as(u16, 1), metrics.strike_height),
-                }, clip, colors.underline, row_index, row.line_geometry, cell_size, surface);
+                }, colors.underline, sizing, row_index, row.line_geometry, cell_size, surface);
             }
         }
     }
@@ -1006,9 +1166,9 @@ fn buildContentCommands(
             const sequence = scalars[scalar_first..scalar_end];
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
-            const clip = try contentLeadClip(row_index, column, cell.width, cell_size);
-            const line_clip = try contentLineClip(
-                clip,
+            const sizing = try contentCellSizing(row_index, column, cell, cell_size);
+            const line_clip = try contentCellVisibleClip(
+                sizing,
                 row_index,
                 row.line_geometry,
                 cell_size,
@@ -1016,11 +1176,12 @@ fn buildContentCommands(
             ) orelse continue;
 
             if (sequence.len == 1 and generated.classify(sequence[0]) != null) {
+                const sized_frame = try contentCellTransformRect(sizing.origin, sizing);
                 const generated_raster = try resolveGeneratedAtlas(
                     atlas,
                     sequence[0],
-                    clip.width,
-                    clip.height,
+                    sized_frame.width,
+                    sized_frame.height,
                     generatedSizing(cell),
                     box_drawing,
                     raster_scratch,
@@ -1028,7 +1189,7 @@ fn buildContentCommands(
                 has_raster = true;
                 try appendContentInput(output, &used, .{ .alpha_mask = .{
                     .destination = try contentLineTransformRect(
-                        clip,
+                        sized_frame,
                         row_index,
                         row.line_geometry,
                         cell_size,
@@ -1096,9 +1257,13 @@ fn buildContentCommands(
                         .width = raster.width,
                         .height = raster.height,
                     };
+                    const sized_destination = try contentCellTransformRect(
+                        base_destination,
+                        sizing,
+                    );
                     try appendContentInput(output, &used, .{ .alpha_mask = .{
                         .destination = try contentLineTransformRect(
-                            base_destination,
+                            sized_destination,
                             row_index,
                             row.line_geometry,
                             cell_size,
@@ -1133,10 +1298,12 @@ fn buildContentCommands(
 }
 
 fn generatedSizing(cell: View.Cell) generated.BoxDrawingSizing {
+    const proper_fraction = cell.subscale_n != 0 and cell.subscale_d != 0 and
+        cell.subscale_n < cell.subscale_d;
     return .{
         .scale = cell.height,
-        .subscale_n = @intCast(cell.subscale_n),
-        .subscale_d = @intCast(cell.subscale_d),
+        .subscale_n = if (proper_fraction) @intCast(cell.subscale_n) else 0,
+        .subscale_d = if (proper_fraction) @intCast(cell.subscale_d) else 0,
     };
 }
 
