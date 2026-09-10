@@ -157,7 +157,8 @@ PY
   done
   browser=${HOWL_BROWSER:-$(command -v chromium || true)}
   if [[ -n "$browser" ]]; then
-    "$browser" --app="$origin/" >"$runtime/browser-launch.log" 2>&1 &
+    "$browser" --no-first-run --no-default-browser-check --app="$origin/" \
+      >"$runtime/browser-launch.log" 2>&1 &
   else
     echo "Chromium not found; set HOWL_BROWSER or open $origin/ manually" >&2
   fi
