@@ -63,6 +63,7 @@ const Control = struct {
 const Host = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    cell_size: canvas.Size,
     fonts: *text.FontSet,
     content: *terminal.Content,
     composer: canvas.Composer,
@@ -160,6 +161,7 @@ pub export fn howl_native_host_create(
     host.* = .{
         .allocator = allocator,
         .connection = connection,
+        .cell_size = .{ .width = cell_width, .height = cell_height },
         .fonts = fonts,
         .content = content,
         .composer = composer,
@@ -445,10 +447,7 @@ fn observe(
     const view = try client.view.project(host.allocator, &rich);
     defer client.view.deinit(view);
 
-    const surface = canvas.Size{
-        .width = std.math.mul(u16, begin.columns, 10) catch return error.InvalidFrame,
-        .height = std.math.mul(u16, begin.rows, 20) catch return error.InvalidFrame,
-    };
+    const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
     const placement = canvas.Composer.Placement{
         .source = host.source,
         .origin = .{ .x = 0, .y = 0 },
@@ -500,6 +499,30 @@ fn observe(
     const semantic_bytes: *[4]u8 = @ptrCast(output[60..64].ptr);
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     return total;
+}
+
+fn surfaceSize(rows: u16, columns: u16, cell_size: canvas.Size) !canvas.Size {
+    if (rows == 0 or columns == 0 or cell_size.width == 0 or cell_size.height == 0)
+        return error.InvalidFrame;
+    return .{
+        .width = std.math.mul(u16, columns, cell_size.width) catch return error.InvalidFrame,
+        .height = std.math.mul(u16, rows, cell_size.height) catch return error.InvalidFrame,
+    };
+}
+
+test "native host surface follows configured presentation lattice" {
+    try std.testing.expectEqualDeep(
+        canvas.Size{ .width = 408, .height = 705 },
+        try surfaceSize(47, 51, .{ .width = 8, .height = 15 }),
+    );
+    try std.testing.expectEqualDeep(
+        canvas.Size{ .width = 510, .height = 948 },
+        try surfaceSize(79, 85, .{ .width = 6, .height = 12 }),
+    );
+    try std.testing.expectError(
+        error.InvalidFrame,
+        surfaceSize(1, std.math.maxInt(u16), .{ .width = 2, .height = 1 }),
+    );
 }
 
 fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {

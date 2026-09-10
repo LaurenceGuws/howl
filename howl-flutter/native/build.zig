@@ -79,6 +79,19 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(
         &b.addInstallFile(object.getEmittedBin(), "howl_flutter_native_host.o").step,
     );
+
+    const tests = b.addTest(.{
+        .name = "howl_flutter_native_host_tests",
+        .root_module = root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    if (ndk == null and apple_sdk == null) {
+        tests.root_module.linkSystemLibrary("freetype", .{});
+        tests.root_module.linkSystemLibrary("harfbuzz", .{});
+    }
+    const test_step = b.step("test", "Run native host presentation-lattice proofs");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
 }
 
 fn localModule(
