@@ -7692,6 +7692,96 @@ test "terminal services retained Kitty animation on caller monotonic time" {
     try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, root_image.pixels);
 }
 
+test "terminal animation service chooses earliest independent image boundary" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=31,C=1,q=2;/wAA/w==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=f,f=32,i=31,s=1,v=1,r=1,z=40,C=1,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=31,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\x1b\\" ++
+            "\x1b_Ga=a,i=31,s=3,q=2\x1b\\",
+    )).stateChanged());
+
+    try std.testing.expect((try terminal.feed("\x1b[2;1H")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=32,C=1,q=2;AP8A/w==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=f,f=32,i=32,s=1,v=1,r=1,z=60,C=1,q=2;AP8A/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=32,s=1,v=1,r=2,z=70,C=1,q=2;//8A/w==\x1b\\" ++
+            "\x1b_Ga=a,i=32,s=3,q=2\x1b\\",
+    )).stateChanged());
+
+    const started_revision = terminal.semanticSequence();
+    const started = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!started.changed);
+    try std.testing.expectEqual(@as(?u32, 40), started.next_ms);
+    try std.testing.expectEqual(started_revision, terminal.semanticSequence());
+
+    var initial = terminal.images(0);
+    const first_initial = initial.image(0) orelse return error.MissingImage;
+    const second_initial = initial.image(1) orelse return error.MissingImage;
+    const first_generation = first_initial.generation;
+    const second_generation = second_initial.generation;
+
+    const first_due = terminal.serviceAnimations(140 * std.time.ns_per_ms);
+    try std.testing.expect(first_due.changed);
+    try std.testing.expectEqual(@as(?u32, 20), first_due.next_ms);
+    try std.testing.expectEqual(started_revision + 1, terminal.semanticSequence());
+    var after_first = terminal.images(0);
+    const first_blue = after_first.image(0) orelse return error.MissingImage;
+    const second_green = after_first.image(1) orelse return error.MissingImage;
+    try std.testing.expect(first_blue.generation > first_generation);
+    try std.testing.expectEqual(second_generation, second_green.generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, first_blue.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, second_green.pixels);
+
+    const second_due = terminal.serviceAnimations(160 * std.time.ns_per_ms);
+    try std.testing.expect(second_due.changed);
+    try std.testing.expectEqual(@as(?u32, 30), second_due.next_ms);
+    try std.testing.expectEqual(started_revision + 2, terminal.semanticSequence());
+    var after_second = terminal.images(0);
+    const first_still_blue = after_second.image(0) orelse return error.MissingImage;
+    const second_yellow = after_second.image(1) orelse return error.MissingImage;
+    try std.testing.expectEqual(first_blue.generation, first_still_blue.generation);
+    try std.testing.expect(second_yellow.generation > second_generation);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 255, 0, 255 }, second_yellow.pixels);
+
+    const first_root = terminal.serviceAnimations(190 * std.time.ns_per_ms);
+    try std.testing.expect(first_root.changed);
+    try std.testing.expectEqual(@as(?u32, 40), first_root.next_ms);
+    try std.testing.expectEqual(started_revision + 3, terminal.semanticSequence());
+    var after_root = terminal.images(0);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        (after_root.image(0) orelse return error.MissingImage).pixels,
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 255, 0, 255 },
+        (after_root.image(1) orelse return error.MissingImage).pixels,
+    );
+
+    const before_both_first = (after_root.image(0) orelse return error.MissingImage).generation;
+    const before_both_second = (after_root.image(1) orelse return error.MissingImage).generation;
+    const both_due = terminal.serviceAnimations(230 * std.time.ns_per_ms);
+    try std.testing.expect(both_due.changed);
+    try std.testing.expectEqual(@as(?u32, 50), both_due.next_ms);
+    try std.testing.expectEqual(started_revision + 4, terminal.semanticSequence());
+    var after_both = terminal.images(0);
+    const both_first = after_both.image(0) orelse return error.MissingImage;
+    const both_second = after_both.image(1) orelse return error.MissingImage;
+    try std.testing.expect(both_first.generation > before_both_first);
+    try std.testing.expect(both_second.generation > before_both_second);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, both_first.pixels);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, both_second.pixels);
+}
+
 test "cursor trail timestamp follows Kitty absolute-position boundaries" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();
