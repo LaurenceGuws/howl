@@ -14,7 +14,13 @@ fn trapPanic(_: []const u8, _: ?usize) noreturn {
 
 const command_capacity = 16 * 1024;
 const atlas_bytes = 1024 * 1024;
-const residency_capacity = 4;
+const maximum_terminal_images: usize = render.terminal.maximum_external_images;
+const residency_capacity = maximum_terminal_images + 1;
+
+comptime {
+    if (maximum_terminal_images != 7)
+        @compileError("Web terminal image bound drifted from the portable client contract");
+}
 
 var font_input: [8 * 1024 * 1024]u8 = undefined;
 var fallback_font_input: [2 * 1024 * 1024]u8 = undefined;
@@ -33,9 +39,11 @@ var accepted_residency: [residency_capacity]canvas.Residency = undefined;
 var accepted_residency_count: usize = 0;
 var pending_residency: [residency_capacity]canvas.Residency = undefined;
 var pending_residency_count: usize = 0;
-var missing_external_storage: [1]canvas.FrameExternalResource = undefined;
+var missing_external_storage: [maximum_terminal_images]canvas.FrameExternalResource = undefined;
 var missing_external: ?canvas.FrameExternalResource = null;
-var image_binding: ?ImageBinding = null;
+var image_bindings: [maximum_terminal_images]ImageBinding = undefined;
+var image_binding_count: usize = 0;
+var missing_image_binding: ?ImageBinding = null;
 var pending_ack = false;
 var failure: []const u8 = "";
 
@@ -50,10 +58,11 @@ var cell_size: canvas.Size = .{ .width = 1, .height = 1 };
 var surface: canvas.Size = .{ .width = 1, .height = 1 };
 var rendered: u64 = 0;
 
-const ImageBinding = struct {
-    image_id: u32,
-    generation: u64,
-    resource: canvas.ResourceRef,
+const ImageBinding = render.terminal.ExternalImageBinding;
+
+const PendingExternal = struct {
+    binding: ImageBinding,
+    external: canvas.FrameExternalResource,
 };
 
 const RenderResult = enum {
@@ -134,10 +143,16 @@ export fn rv_missing_stride() usize {
     return if (missing_external) |value| value.stride else 0;
 }
 export fn rv_missing_image_id() u32 {
-    return if (missing_external != null and image_binding != null) image_binding.?.image_id else 0;
+    return if (missing_external != null and missing_image_binding != null)
+        missing_image_binding.?.image_id
+    else
+        0;
 }
 export fn rv_missing_image_generation() u64 {
-    return if (missing_external != null and image_binding != null) image_binding.?.generation else 0;
+    return if (missing_external != null and missing_image_binding != null)
+        missing_image_binding.?.generation
+    else
+        0;
 }
 
 fn fail(message: []const u8) u32 {
@@ -156,7 +171,8 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     accepted_residency_count = 0;
     pending_residency_count = 0;
     missing_external = null;
-    image_binding = null;
+    image_binding_count = 0;
+    missing_image_binding = null;
     pending_ack = false;
     rendered = 0;
     failure = "";
@@ -233,7 +249,8 @@ export fn rv_reset() u32 {
     accepted_residency_count = 0;
     pending_residency_count = 0;
     missing_external = null;
-    image_binding = null;
+    image_binding_count = 0;
+    missing_image_binding = null;
     pending_ack = false;
     metadata_used = 0;
     pixels_used = 0;
@@ -249,6 +266,7 @@ export fn rv_render(snapshot_length: usize) u32 {
     metadata_used = 0;
     pixels_used = 0;
     missing_external = null;
+    missing_image_binding = null;
     const result = renderSnapshot(snapshot_input[0..snapshot_length]) catch |err| return fail(@errorName(err));
     return switch (result) {
         .frame => 1,
@@ -323,6 +341,7 @@ export fn rv_accept_external() u32 {
         {
             current.* = residency;
             missing_external = null;
+            missing_image_binding = null;
             return 1;
         }
     }
@@ -330,6 +349,7 @@ export fn rv_accept_external() u32 {
     accepted_residency[accepted_residency_count] = residency;
     accepted_residency_count += 1;
     missing_external = null;
+    missing_image_binding = null;
     return 1;
 }
 
@@ -338,60 +358,97 @@ fn takeContentUpdate(
     cursor: render.terminal.CursorContext,
 ) !canvas.ProducerUpdate {
     const graphics = client.view.graphics(view);
-    if (graphics.images.len == 0 and graphics.placements.len == 0) {
-        const update = try render.terminal.takeContentUpdate(content.?, view, cursor);
-        image_binding = null;
-        return update;
-    }
-    if (graphics.images.len != 1 or graphics.placements.len != 1)
+    if (graphics.images.len > maximum_terminal_images)
         return error.UnsupportedGraphics;
-    const image = graphics.images[0];
-    const binding = try nextImageBinding(image.image_id, image.generation);
-    const update = try render.terminal.takeContentUpdateWithImageBinding(
+    var candidate: [maximum_terminal_images]ImageBinding = undefined;
+    const bindings = try prepareImageBindings(graphics.images, &candidate);
+    const update = try render.terminal.takeContentUpdateWithImageBindings(
         content.?,
         view,
         cursor,
-        .{
-            .image_id = binding.image_id,
-            .generation = binding.generation,
-            .resource = binding.resource,
-        },
+        bindings,
     );
-    image_binding = binding;
+    @memcpy(image_bindings[0..bindings.len], bindings);
+    image_binding_count = bindings.len;
     return update;
 }
 
-fn nextImageBinding(image_id_value: u32, generation: u64) !ImageBinding {
-    if (image_id_value == 0 or generation == 0) return error.InvalidImageBinding;
-    if (image_binding) |current| {
-        if (current.image_id == image_id_value and current.generation == generation)
-            return current;
-        if (current.image_id == image_id_value and generation > current.generation) {
-            return .{
-                .image_id = image_id_value,
-                .generation = generation,
-                .resource = .{
-                    .resource = current.resource.resource,
-                    .generation = @fromBackingInt(@intCast(generation)),
-                },
-            };
-        }
-    }
+fn prepareImageBindings(
+    images: []const client.view.Image,
+    output: *[maximum_terminal_images]ImageBinding,
+) ![]const ImageBinding {
+    if (images.len > output.len) return error.UnsupportedGraphics;
     const usage = render.terminal.contentUsage(content.?);
-    const reserve: u64 = if (usage.resource_generation == 0) 2 else 1;
-    const identity = std.math.add(u64, usage.resource_high_water, reserve) catch
-        return error.ResourceIdentityOverflow;
-    if (identity == 0 or identity > canvas.ResourceId.max_identity)
-        return error.ResourceIdentityOverflow;
-    return .{
-        .image_id = image_id_value,
-        .generation = generation,
-        .resource = .{
-            .resource = canvas.ResourceId.local(identity) catch
-                return error.ResourceIdentityOverflow,
-            .generation = @fromBackingInt(@intCast(generation)),
-        },
-    };
+    var allocation_cursor = usage.resource_high_water;
+    var first_new = true;
+    for (images, 0..) |image, index| {
+        if (image.image_id == 0 or image.generation == 0)
+            return error.InvalidImageBinding;
+        if (findImageBindingById(
+            image_bindings[0..image_binding_count],
+            image.image_id,
+        )) |prior| {
+            if (image.generation < prior.generation) return error.InvalidImageBinding;
+            var binding = prior;
+            if (image.generation > prior.generation) {
+                binding.generation = image.generation;
+                binding.resource.generation = @fromBackingInt(@intCast(image.generation));
+            }
+            output[index] = binding;
+            continue;
+        }
+
+        const step: u64 = if (first_new and usage.resource_generation == 0) 2 else 1;
+        allocation_cursor = std.math.add(u64, allocation_cursor, step) catch
+            return error.ResourceIdentityOverflow;
+        first_new = false;
+        if (allocation_cursor == 0 or allocation_cursor > canvas.ResourceId.max_identity)
+            return error.ResourceIdentityOverflow;
+        output[index] = .{
+            .image_id = image.image_id,
+            .generation = image.generation,
+            .resource = .{
+                .resource = canvas.ResourceId.local(allocation_cursor) catch
+                    return error.ResourceIdentityOverflow,
+                .generation = @fromBackingInt(@intCast(image.generation)),
+            },
+        };
+    }
+    return output[0..images.len];
+}
+
+fn findImageBindingById(bindings: []const ImageBinding, image_id: u32) ?ImageBinding {
+    for (bindings) |binding| if (binding.image_id == image_id) return binding;
+    return null;
+}
+
+fn findImageBindingByResource(
+    bindings: []const ImageBinding,
+    resource: canvas.FrameResourceRef,
+) ?ImageBinding {
+    for (bindings) |binding| {
+        if (binding.resource.resource == resource.resource and
+            binding.resource.generation == resource.generation)
+            return binding;
+    }
+    return null;
+}
+
+fn selectMissingExternal(missing: []const canvas.FrameExternalResource) !PendingExternal {
+    if (missing.len == 0 or missing.len > image_binding_count)
+        return error.InvalidExternalResource;
+    var selected: ?PendingExternal = null;
+    for (missing, 0..) |value, index| {
+        if (@backingInt(value.resource.source) != @backingInt(producer) or
+            value.format != .rgba8)
+            return error.InvalidExternalResource;
+        const binding = findImageBindingByResource(
+            image_bindings[0..image_binding_count],
+            value.resource,
+        ) orelse return error.InvalidExternalResource;
+        if (index == 0) selected = .{ .binding = binding, .external = value };
+    }
+    return selected orelse error.InvalidExternalResource;
 }
 
 fn prepareMissingExternal() !void {
@@ -399,13 +456,9 @@ fn prepareMissingExternal() !void {
         accepted_residency[0..accepted_residency_count],
         &missing_external_storage,
     );
-    if (missing.len != 1) return error.InvalidExternalResource;
-    const binding = image_binding orelse return error.InvalidExternalResource;
-    const expected = canvas.FrameResourceRef.local(producer, binding.resource) catch
-        return error.InvalidExternalResource;
-    if (!std.meta.eql(expected, missing[0].resource) or missing[0].format != .rgba8)
-        return error.InvalidExternalResource;
-    missing_external = missing[0];
+    const selected = try selectMissingExternal(missing);
+    missing_external = selected.external;
+    missing_image_binding = selected.binding;
 }
 
 export fn rv_ack() u32 {

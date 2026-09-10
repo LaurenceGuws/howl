@@ -164,14 +164,18 @@ failed draw therefore cannot cause the renderer to assume an upload exists. This
 matches the native Flutter resource-lifetime contract.
 
 Terminal images use the same lease without entering the renderer's recovery
-pixels. A complete v4 graphics snapshot may cause the live renderer to report
-one exact missing external Canvas resource plus its canonical terminal
-`image_id + generation`. The browser lazily opens a dedicated third Howl wire
-connection, demand-fetches that exact RGBA8 generation into the wire instance's
-bounded scratch, creates the ordinary Canvas backend resource, reports exact
-residency, and retries the same immutable snapshot. Only the successful drawn
-frame is acknowledged. The steady observer remains free to coalesce newer live
-snapshots while an asynchronous refill is in flight.
+pixels. The live renderer admits at most seven visible terminal image resources
+plus the glyph atlas and retains the protocol's bounded placement set. A
+complete v4 graphics snapshot may cause it to report one exact missing external
+Canvas resource plus its canonical terminal `image_id + generation`. The
+browser lazily opens one dedicated third Howl wire connection, demand-fetches
+that exact RGBA8 generation into the wire instance's bounded scratch, creates
+the ordinary Canvas backend resource, reports exact residency, and retries the
+same immutable snapshot. Several cold image resources therefore refill
+serially through the same connection; the eighth render attempt is reserved for
+the final frame after at most seven refills. Only the successful drawn frame is
+acknowledged. The steady observer remains free to coalesce newer live snapshots
+while an asynchronous refill is in flight.
 
 The browser presentation path reuses one alpha-compositing scratch Canvas instead
 of allocating a temporary Canvas per glyph command. Live snapshots are still

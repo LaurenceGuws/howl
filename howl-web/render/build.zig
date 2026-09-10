@@ -93,6 +93,14 @@ pub fn build(b: *std.Build) void {
     external_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
     external_image_test.setName("live renderer external image residency");
     check.dependOn(&external_image_test.step);
+    const multi_image_test = b.addSystemCommand(&.{ "node", "tests/multi_image.mjs" });
+    multi_image_test.setCwd(b.path("."));
+    multi_image_test.addFileArg(live.getEmittedBin());
+    multi_image_test.addFileArg(text.path("testdata/primary.ttf"));
+    multi_image_test.addFileArg(text.path("testdata/fira-code-medium.otf"));
+    multi_image_test.addFileArg(b.path("fonts/SymbolsNerdFontMono-Regular.ttf"));
+    multi_image_test.setName("live renderer bounded multi image residency");
+    check.dependOn(&multi_image_test.step);
     const asset_contract_test = b.addSystemCommand(&.{ "node", "tests/asset_contract.mjs" });
     asset_contract_test.setCwd(b.path("."));
     asset_contract_test.setName("browser module asset contract");

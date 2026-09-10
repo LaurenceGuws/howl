@@ -12,7 +12,9 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v31';
+const CANARY_GENERATION = 'v32';
+const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
+const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
@@ -494,7 +496,7 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent) 
   let externalMs = 0;
   let externalReused = false;
   let wasmMs = 0;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_RENDER_ATTEMPTS; attempt += 1) {
     bytesAt(renderer.exports.memory, renderer.exports.rv_snapshot_ptr(), snapshot.length).set(snapshot);
     const wasmStarted = performance.now();
     const result = renderer.exports.rv_render(snapshot.length);
