@@ -147,6 +147,8 @@ pub const Service = struct {
     stream_closed: bool,
     child_exit: ?ChildExit,
     write_pending: bool,
+    /// Milliseconds until the next retained terminal-animation boundary.
+    animation_wait_ms: ?u32,
 };
 
 /// Constructs one PTY and VT owner from an explicit inherited environment.
@@ -471,7 +473,7 @@ const State = struct {
         if (consequence_policy == .headless) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
         collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
-            error.WriteQueueFull => return self.serviceResult(revision_before),
+            error.WriteQueueFull => return self.serviceResult(revision_before, timestamp_ns),
         };
         try self.processBuffered(timestamp_ns, consequence_policy);
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
@@ -491,7 +493,7 @@ const State = struct {
             .running => {},
             .exited => |value| self.child_exit = value,
         }
-        return self.serviceResult(revision_before);
+        return self.serviceResult(revision_before, timestamp_ns);
     }
 
     fn processBuffered(
@@ -563,12 +565,14 @@ const State = struct {
         std.debug.assert(self.terminal.consequenceHead() == null);
     }
 
-    fn serviceResult(self: *const State, revision_before: u64) Service {
+    fn serviceResult(self: *State, revision_before: u64, timestamp_ns: u64) Service {
+        const animation = self.terminal.serviceAnimations(timestamp_ns);
         return .{
             .changed = self.terminal.semanticSequence() != revision_before,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
             .write_pending = self.writes.count != 0,
+            .animation_wait_ms = animation.next_ms,
         };
     }
 };
@@ -683,6 +687,50 @@ test "headless session drains host consequences without an observer" {
     try std.testing.expectEqual(before.columns, after.columns);
     try std.testing.expect(state.terminal.consequenceHead() == null);
     try std.testing.expect(std.mem.indexOf(u8, state.terminal.replyBytes(), "default") != null);
+}
+
+test "session services terminal animation without PTY readiness" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "cat",
+        .rows = 3,
+        .columns = 8,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    try std.testing.expect((try state.terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1,q=2;/wAA/w==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try state.terminal.feed(
+        "\x1b_Ga=f,f=32,i=20,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try state.terminal.feed(
+        "\x1b_Ga=a,i=20,s=3,q=2\x1b\\",
+    )).stateChanged());
+
+    var initial_images = images(session, 0);
+    const initial = initial_images.image(0) orelse return error.MissingImage;
+    const image_id = initial.id;
+    const initial_generation = initial.generation;
+    const started_revision = revision(session);
+
+    const started = try service(session, false, false, 100 * std.time.ns_per_ms);
+    try std.testing.expect(!started.changed);
+    try std.testing.expectEqual(@as(?u32, 40), started.animation_wait_ms);
+    try std.testing.expectEqual(started_revision, revision(session));
+
+    const advanced = try service(session, false, false, 140 * std.time.ns_per_ms);
+    try std.testing.expect(advanced.changed);
+    try std.testing.expectEqual(@as(?u32, 50), advanced.animation_wait_ms);
+    try std.testing.expectEqual(started_revision + 1, revision(session));
+    var advanced_images = images(session, 0);
+    const current = advanced_images.image(0) orelse return error.MissingImage;
+    try std.testing.expect(current.generation > initial_generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
+    try std.testing.expect(image(session, image_id, initial_generation) == null);
+    try std.testing.expect(image(session, image_id, current.generation) != null);
 }
 
 test "retained host query falls back headlessly when external authority disappears" {

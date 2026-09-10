@@ -167,7 +167,7 @@ pub const Failure = enum {
 };
 
 /// Reports one monotonic animation service result.
-const AnimationTick = struct {
+pub const AnimationTick = struct {
     /// True when a currently displayed frame changed.
     changed: bool,
     /// True when frame or run-state mutation was accepted.
@@ -1284,7 +1284,7 @@ pub const Plane = struct {
     }
 
     /// Advances running Kitty animations against caller monotonic milliseconds.
-    fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
+    pub fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
         var changed = false;
         var semantic_changed = false;
         var next_ms: ?u32 = null;

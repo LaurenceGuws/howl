@@ -18,6 +18,21 @@ const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 
+fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32) i32 {
+    var result = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
+        lifecycle_poll_ms
+    else
+        timeout_ms;
+    if (animation_wait_ms) |wait_ms| {
+        const animation_timeout: i32 = @intCast(@min(
+            wait_ms,
+            @as(u32, @intCast(lifecycle_poll_ms)),
+        ));
+        result = @min(result, animation_timeout);
+    }
+    return result;
+}
+
 // File map:
 //   - listener and bounded client storage
 //   - one canonical Session endpoint and nonblocking service loop
@@ -134,6 +149,7 @@ const Server = struct {
     stream_closed: bool = false,
     child_exited: bool = false,
     pty_write_pending: bool = false,
+    animation_wait_ms: ?u32 = null,
 
     // -------------------------------------------------------------------------
     // Construction and lifecycle loop
@@ -196,10 +212,7 @@ const Server = struct {
             } else .{ .fd = -1, .events = 0, .revents = 0 };
         }
 
-        const poll_timeout = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
-            lifecycle_poll_ms
-        else
-            timeout_ms;
+        const poll_timeout = boundedPollTimeout(timeout_ms, self.animation_wait_ms);
         const ready_count = try posix.poll(&descriptors, poll_timeout);
         std.debug.assert(ready_count <= descriptors.len);
 
@@ -628,6 +641,7 @@ const Server = struct {
         const lifecycle_changed = self.stream_closed != next_stream_closed or
             self.child_exited != next_child_exited;
         self.pty_write_pending = result.write_pending;
+        self.animation_wait_ms = result.animation_wait_ms;
         self.stream_closed = next_stream_closed;
         self.child_exited = next_child_exited;
 
@@ -1778,6 +1792,15 @@ fn attach(peer: *TestPeer, server: *Server) !void {
 // Harness behavior and snapshot decoding
 // =============================================================================
 
+test "endpoint poll timeout follows the next animation boundary" {
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null));
+    try std.testing.expectEqual(@as(i32, 40), boundedPollTimeout(-1, 40));
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, 500));
+    try std.testing.expectEqual(@as(i32, 5), boundedPollTimeout(5, 40));
+    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, 1));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(0, 1));
+}
+
 test "interaction state exposes invisible input modes" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
@@ -1986,6 +2009,73 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     try peer.sendFrame(&server, .image_request, &request);
     try expectResult(&peer, &server, .image_request, .rejected);
     try std.testing.expectEqual(before_fetch, howl.revision(server.session));
+}
+
+test "idle Kitty animation releases observer with a new exact image generation" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-image-animation.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 8,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=9,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=9,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\\033\\\\\\033_Ga=a,i=9,s=3,q=2\\033\\\\'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    var attempts: usize = 0;
+    while (attempts < 1000) : (attempts += 1) {
+        try server.turn(1);
+        var current = howl.images(server.session, 0);
+        if (current.imageCount() == 1 and server.animation_wait_ms != null) break;
+    }
+    if (server.animation_wait_ms == null) return error.TestTimeout;
+    var before_images = howl.images(server.session, 0);
+    const before_image = before_images.image(0) orelse return error.TestTimeout;
+    const before_generation = before_image.generation;
+    const before_terminal_revision = howl.revision(server.session);
+    const before_observation_revision = server.observation_revision;
+
+    try sendObserve(&peer, &server, before_observation_revision);
+    const wait_ms = server.animation_wait_ms orelse return error.TestTimeout;
+    const forced_now = nowNs(server.io) +
+        (@as(u64, wait_ms) + 1) * std.time.ns_per_ms;
+    const serviced = try howl.service(server.session, false, false, forced_now);
+    try std.testing.expect(serviced.changed);
+    server.applyServiceResult(serviced);
+    try std.testing.expect(howl.revision(server.session) > before_terminal_revision);
+    try std.testing.expect(server.observation_revision > before_observation_revision);
+
+    var wire = try receiveWireSnapshot(&peer, &server);
+    defer wire.deinit();
+    try std.testing.expect(wire.begin.revision > before_observation_revision);
+    try std.testing.expectEqual(howl.revision(server.session), wire.begin.terminal_revision);
+    const graphics_header = try protocol.decodeSnapshotGraphicsHeader(
+        wire.graphics[0..protocol.graphics_v2.manifest_header_bytes],
+    );
+    try std.testing.expectEqual(@as(u16, 1), graphics_header.image_count);
+    const image = try protocol.decodeSnapshotImage(
+        wire.graphics[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes],
+    );
+    try std.testing.expect(image.generation > before_generation);
+    try std.testing.expect(howl.image(server.session, image.image_id, before_generation) == null);
+    const current = howl.image(server.session, image.image_id, image.generation) orelse
+        return error.TestTimeout;
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
 }
 
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {

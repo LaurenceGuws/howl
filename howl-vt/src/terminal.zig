@@ -5374,6 +5374,13 @@ pub const Terminal = struct {
     pub const FeedSummary = TerminalFeedSummary;
     /// Reports the consumed prefix and merged mutations from a service-bounded feed.
     pub const FeedProgress = TerminalFeedProgress;
+    /// Reports one caller-clocked animation service turn.
+    pub const AnimationService = struct {
+        /// True when a currently displayed image frame changed.
+        changed: bool,
+        /// Milliseconds until the next animation boundary, or null when idle.
+        next_ms: ?u32,
+    };
     /// Reports invalid zero dimensions or allocation failure during construction.
     pub const InitError = error{ InvalidDimensions, OutOfMemory };
     /// Reports invalid dimensions, bounded reply saturation, or allocation failure before resize mutation.
@@ -6743,6 +6750,19 @@ pub const Terminal = struct {
         };
     }
 
+    /// Advances retained Kitty animation against caller monotonic time.
+    ///
+    /// VT owns frame selection and semantic identity but owns no clock or
+    /// scheduler. The caller supplies monotonic nanoseconds and may use
+    /// `next_ms` to arrange its next service turn. A selected-frame or run-state
+    /// mutation advances the canonical terminal semantic sequence exactly once.
+    pub fn serviceAnimations(self: *Terminal, timestamp_ns: u64) AnimationService {
+        self.requireNoPreparedResize();
+        const tick = self.graphics.advanceAnimations(timestamp_ns / std.time.ns_per_ms);
+        if (tick.semantic_changed) advanceIdentity(&self.semantic_sequence);
+        return .{ .changed = tick.changed, .next_ms = tick.next_ms };
+    }
+
     /// Copies the coherent mode-directed caller interaction state.
     pub fn interactionState(self: *const Terminal) InteractionState {
         return .{
@@ -7627,6 +7647,49 @@ test "feedAt retains the monotonic timestamp of absolute cursor positioning" {
         @as(u64, 42_000_000),
         terminal.semanticView(0).cursor_movement_timestamp_ns,
     );
+}
+
+test "terminal services retained Kitty animation on caller monotonic time" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=20,C=1,q=2;/wAA/w==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=f,f=32,i=20,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\x1b\\",
+    )).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=a,i=20,s=3,q=2\x1b\\",
+    )).stateChanged());
+
+    const started_revision = terminal.semanticSequence();
+    const started = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!started.changed);
+    try std.testing.expectEqual(@as(?u32, 40), started.next_ms);
+    try std.testing.expectEqual(started_revision, terminal.semanticSequence());
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+
+    const second = terminal.serviceAnimations(140 * std.time.ns_per_ms);
+    try std.testing.expect(second.changed);
+    try std.testing.expectEqual(@as(?u32, 50), second.next_ms);
+    try std.testing.expectEqual(started_revision + 1, terminal.semanticSequence());
+    const second_image = terminal.images(0).image(0).?;
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, second_image.pixels);
+    const second_generation = second_image.generation;
+
+    const root = terminal.serviceAnimations(190 * std.time.ns_per_ms);
+    try std.testing.expect(root.changed);
+    try std.testing.expectEqual(@as(?u32, 40), root.next_ms);
+    try std.testing.expectEqual(started_revision + 2, terminal.semanticSequence());
+    const root_image = terminal.images(0).image(0).?;
+    try std.testing.expect(root_image.generation > second_generation);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, root_image.pixels);
 }
 
 test "cursor trail timestamp follows Kitty absolute-position boundaries" {
