@@ -248,6 +248,22 @@ pub const ResourceUpload = struct {
     pixels: Pixels,
 };
 
+/// Declares one source-local resource whose recovery bytes remain Host-owned.
+///
+/// Canvas retains only exact identity and layout metadata. A visible external
+/// resource may be referenced by commands only while the backend reports the
+/// matching generation, format, and extent through `Residency`.
+pub const ExternalResourceDeclaration = struct {
+    /// Identifies the exact source-local resource generation.
+    resource: ResourceRef,
+    /// Selects the externally supplied pixel representation.
+    format: ResourceFormat,
+    /// Reports the complete logical resource extent.
+    size: Size,
+    /// Counts bytes between adjacent externally supplied rows.
+    stride: usize,
+};
+
 /// Removes one exact producer-local resource generation.
 pub const ResourceRemoval = struct {
     /// Identifies the exact logical generation to remove.
@@ -277,6 +293,18 @@ pub const FrameResourceUpload = struct {
     /// Counts initialized bytes in caller-owned frame storage.
     pixel_count: usize,
     /// Counts bytes between adjacent copied rows.
+    stride: usize,
+};
+
+/// Names one visible Host-recoverable resource absent from backend residency.
+pub const FrameExternalResource = struct {
+    /// Identifies the exact qualified resource generation to recover.
+    resource: FrameResourceRef,
+    /// Selects the required pixel representation.
+    format: ResourceFormat,
+    /// Reports the complete resource extent.
+    size: Size,
+    /// Counts bytes between adjacent externally supplied rows.
     stride: usize,
 };
 
@@ -352,6 +380,11 @@ pub const ProducerUpdate = struct {
     revision: ProducerRevision,
     /// Borrows sparse resource creations and replacements.
     uploads: []const ResourceUpload,
+    /// Borrows sparse metadata-only source-local resource declarations.
+    ///
+    /// External resources retain no recovery pixels in Composer. Existing
+    /// callers which own bounded recovery bytes use `uploads` unchanged.
+    external_resources: []const ExternalResourceDeclaration = &.{},
     /// Borrows sparse exact-generation removals.
     removals: []const ResourceRemoval,
     /// Borrows the complete ordered cursor-free producer-local base command
@@ -472,6 +505,7 @@ pub const Composer = struct {
         InvalidSource,
         RetiredSource,
         InvalidResidency,
+        MissingExternalResource,
         InvalidIdentity,
         InvalidRevision,
         InvalidGeneration,
@@ -588,10 +622,16 @@ pub const Composer = struct {
     };
 
     const Resource = struct {
+        const Recovery = enum {
+            copied,
+            external,
+        };
+
         local: ResourceRef,
         format: ResourceFormat,
         size: Size,
         stride: usize,
+        recovery: Recovery,
         pixel_start: usize,
         pixel_count: usize,
     };
@@ -1217,6 +1257,62 @@ pub const Composer = struct {
         return self.frameWithCursor(residency, buffers, false);
     }
 
+    /// Lists visible metadata-only resources absent from exact backend residency.
+    ///
+    /// The query is read-only and performs complete preflight before changing
+    /// caller output. Hosts may fetch these exact generations, upload them to
+    /// the backend, update `Residency`, and retry `frame` without Canvas ever
+    /// owning the recovery bytes.
+    pub fn missingExternalResources(
+        self: *const Composer,
+        residency: []const Residency,
+        output: []FrameExternalResource,
+    ) Composer.Error![]const FrameExternalResource {
+        const residency_range = try byteRange(Residency, residency);
+        const output_range = try byteRange(FrameExternalResource, output);
+        try self.rejectInternalFrameAliases(&.{output_range});
+        if (overlaps(
+            residency_range.start,
+            residency_range.len,
+            output_range.start,
+            output_range.len,
+        )) return error.AliasedStorage;
+        try self.validateResidencies(residency);
+
+        var needed: usize = 0;
+        for (self.composition[0..self.composition_count]) |placement| {
+            const source = self.sources[try self.sourceIndex(placement.source)];
+            for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
+                if (resource.recovery != .external) continue;
+                if (!try self.resourceVisible(placement, source, resource.local))
+                    continue;
+                if (residencyMatches(residency, source.id, resource)) continue;
+                needed = std.math.add(usize, needed, 1) catch
+                    return error.ArithmeticOverflow;
+            }
+        }
+        if (needed > output.len) return error.ResourceLimit;
+
+        var used: usize = 0;
+        for (self.composition[0..self.composition_count]) |placement| {
+            const source = self.sources[self.sourceIndex(placement.source) catch unreachable];
+            for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
+                if (resource.recovery != .external) continue;
+                if (!(self.resourceVisible(placement, source, resource.local) catch unreachable))
+                    continue;
+                if (residencyMatches(residency, source.id, resource)) continue;
+                output[used] = .{
+                    .resource = qualifyResource(source.id, resource.local),
+                    .format = resource.format,
+                    .size = resource.size,
+                    .stride = resource.stride,
+                };
+                used += 1;
+            }
+        }
+        return output[0..used];
+    }
+
     fn frameWithCursor(
         self: *const Composer,
         residency: []const Residency,
@@ -1368,6 +1464,15 @@ pub const Composer = struct {
                                 plan.change_index,
                                 upload_index,
                             );
+                    } else if (findExternalResourceIndex(
+                        update.external_resources,
+                        resource.local.resource,
+                    )) |external_index| {
+                        self.resource_plan[self.resource_plan_count] =
+                            encodeExternalPlan(
+                                plan.change_index,
+                                external_index,
+                            );
                     } else {
                         self.resource_plan[self.resource_plan_count] =
                             encodeRetainedPlan(old_index);
@@ -1382,6 +1487,15 @@ pub const Composer = struct {
                     ) != null) continue;
                     self.resource_plan[self.resource_plan_count] =
                         encodeUploadPlan(plan.change_index, upload_index);
+                    self.resource_plan_count += 1;
+                }
+                for (update.external_resources, 0..) |external, external_index| {
+                    if (findResource(
+                        old_resources,
+                        external.resource.resource,
+                    ) != null) continue;
+                    self.resource_plan[self.resource_plan_count] =
+                        encodeExternalPlan(plan.change_index, external_index);
                     self.resource_plan_count += 1;
                 }
                 resource_start += plan.resource_count;
@@ -1760,7 +1874,7 @@ pub const Composer = struct {
         var compact_resource_count: usize = 0;
         var compact_pixel_count: usize = 0;
         for (self.resource_plan[0..self.resource_plan_count]) |*encoded| {
-            if (planIsUpload(encoded.*)) continue;
+            if (planIsReplacement(encoded.*)) continue;
             const resource = self.resources[decodeRetainedPlan(encoded.*)];
             std.mem.copyForwards(
                 u8,
@@ -1793,6 +1907,14 @@ pub const Composer = struct {
                 );
                 self.resources[resource_index] =
                     resourceFromUpload(upload, final_pixel_end);
+            } else if (planIsExternal(encoded)) {
+                const decoded = decodeExternalPlan(encoded);
+                const external =
+                    candidate.changes[decoded.change].update.external_resources[
+                        decoded.external
+                    ];
+                self.resources[resource_index] =
+                    resourceFromExternal(external, final_pixel_end);
             } else {
                 const resource = self.resources[decodeRetainedPlan(encoded)];
                 final_pixel_end -= resource.pixel_count;
@@ -1914,8 +2036,22 @@ pub const Composer = struct {
                 if (prior.resource.resource == upload.resource.resource)
                     return error.DuplicateResource;
             }
+            for (update.external_resources) |external| {
+                if (external.resource.resource == upload.resource.resource)
+                    return error.ConflictingResourceOperation;
+            }
             for (update.removals) |removal| {
                 if (removal.resource.resource == upload.resource.resource)
+                    return error.ConflictingResourceOperation;
+            }
+        }
+        for (update.external_resources, 0..) |external, index| {
+            for (update.external_resources[0..index]) |prior| {
+                if (prior.resource.resource == external.resource.resource)
+                    return error.DuplicateResource;
+            }
+            for (update.removals) |removal| {
+                if (removal.resource.resource == external.resource.resource)
                     return error.ConflictingResourceOperation;
             }
         }
@@ -1933,6 +2069,10 @@ pub const Composer = struct {
         for (old_resources) |resource| {
             const removal = findRemoval(update.removals, resource.local.resource);
             const replacement = findUpload(update.uploads, resource.local.resource);
+            const external_replacement = findExternalResource(
+                update.external_resources,
+                resource.local.resource,
+            );
             if (removal) |value| {
                 if (value.resource.generation != resource.local.generation)
                     return error.InvalidGeneration;
@@ -1943,6 +2083,13 @@ pub const Composer = struct {
                     @backingInt(resource.local.generation))
                     return error.InvalidGeneration;
                 try self.appendCandidateUpload(value);
+                continue;
+            }
+            if (external_replacement) |value| {
+                if (@backingInt(value.resource.generation) <=
+                    @backingInt(resource.local.generation))
+                    return error.InvalidGeneration;
+                try self.appendCandidateExternal(value);
                 continue;
             }
             try self.appendCandidateRetained(resource);
@@ -1961,6 +2108,16 @@ pub const Composer = struct {
             if (local <= old.local_high_water) return error.InvalidIdentity;
             high_water = @max(high_water, local);
             try self.appendCandidateUpload(upload);
+        }
+        for (update.external_resources) |external| {
+            if (findResource(old_resources, external.resource.resource) != null)
+                continue;
+            const local = external.resource.resource.identity() catch
+                return error.InvalidIdentity;
+            if (local == 0) return error.InvalidIdentity;
+            if (local <= old.local_high_water) return error.InvalidIdentity;
+            high_water = @max(high_water, local);
+            try self.appendCandidateExternal(external);
         }
 
         for (update.commands) |command| {
@@ -1986,6 +2143,11 @@ pub const Composer = struct {
                 continue;
             if (findUpload(update.uploads, resource.local.resource)) |upload| {
                 self.appendValidatedUpload(upload);
+            } else if (findExternalResource(
+                update.external_resources,
+                resource.local.resource,
+            )) |external| {
+                self.appendValidatedExternal(external);
             } else {
                 self.appendValidatedRetained(resource);
             }
@@ -1996,6 +2158,11 @@ pub const Composer = struct {
                 continue;
             self.appendValidatedUpload(upload);
         }
+        for (update.external_resources) |external| {
+            if (findResource(old_resources, external.resource.resource) != null)
+                continue;
+            self.appendValidatedExternal(external);
+        }
         @memcpy(
             self.candidate_commands[0..update.commands.len],
             update.commands,
@@ -2005,14 +2172,16 @@ pub const Composer = struct {
     }
 
     fn appendValidatedRetained(self: *Composer, resource: Resource) void {
-        const source = self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count];
         const start = self.candidate_pixel_count;
-        @memcpy(self.candidate_pixels[start..][0..source.len], source);
         var copied = resource;
         copied.pixel_start = start;
+        if (resource.recovery == .copied) {
+            const source = self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count];
+            @memcpy(self.candidate_pixels[start..][0..source.len], source);
+            self.candidate_pixel_count += source.len;
+        }
         self.candidate_resources[self.candidate_resource_count] = copied;
         self.candidate_resource_count += 1;
-        self.candidate_pixel_count += source.len;
     }
 
     fn appendValidatedUpload(self: *Composer, upload: ResourceUpload) void {
@@ -2029,11 +2198,28 @@ pub const Composer = struct {
                 .height = upload.pixels.height,
             },
             .stride = upload.pixels.stride,
+            .recovery = .copied,
             .pixel_start = start,
             .pixel_count = upload.pixels.bytes.len,
         };
         self.candidate_resource_count += 1;
         self.candidate_pixel_count += upload.pixels.bytes.len;
+    }
+
+    fn appendValidatedExternal(
+        self: *Composer,
+        external: ExternalResourceDeclaration,
+    ) void {
+        self.candidate_resources[self.candidate_resource_count] = .{
+            .local = external.resource,
+            .format = external.format,
+            .size = external.size,
+            .stride = external.stride,
+            .recovery = .external,
+            .pixel_start = self.candidate_pixel_count,
+            .pixel_count = 0,
+        };
+        self.candidate_resource_count += 1;
     }
 
     fn appendCandidateRetained(
@@ -2042,19 +2228,22 @@ pub const Composer = struct {
     ) Composer.Error!void {
         if (self.candidate_resource_count >= self.candidate_resources.len)
             return error.ResourceLimit;
-        if (resource.pixel_count > self.candidate_pixels.len -
-            @min(self.candidate_pixel_count, self.candidate_pixels.len))
-            return error.PixelLimit;
-        const source_pixels = self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count];
-        @memcpy(
-            self.candidate_pixels[self.candidate_pixel_count .. self.candidate_pixel_count + resource.pixel_count],
-            source_pixels,
-        );
+        if (resource.recovery == .copied) {
+            if (resource.pixel_count > self.candidate_pixels.len -
+                @min(self.candidate_pixel_count, self.candidate_pixels.len))
+                return error.PixelLimit;
+            const source_pixels = self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count];
+            @memcpy(
+                self.candidate_pixels[self.candidate_pixel_count .. self.candidate_pixel_count + resource.pixel_count],
+                source_pixels,
+            );
+        }
         var candidate = resource;
         candidate.pixel_start = self.candidate_pixel_count;
         self.candidate_resources[self.candidate_resource_count] = candidate;
         self.candidate_resource_count += 1;
-        self.candidate_pixel_count += resource.pixel_count;
+        if (resource.recovery == .copied)
+            self.candidate_pixel_count += resource.pixel_count;
     }
 
     fn appendCandidateUpload(
@@ -2078,11 +2267,30 @@ pub const Composer = struct {
                 .height = upload.pixels.height,
             },
             .stride = upload.pixels.stride,
+            .recovery = .copied,
             .pixel_start = self.candidate_pixel_count,
             .pixel_count = upload.pixels.bytes.len,
         };
         self.candidate_resource_count += 1;
         self.candidate_pixel_count += upload.pixels.bytes.len;
+    }
+
+    fn appendCandidateExternal(
+        self: *Composer,
+        external: ExternalResourceDeclaration,
+    ) Composer.Error!void {
+        if (self.candidate_resource_count >= self.candidate_resources.len)
+            return error.ResourceLimit;
+        self.candidate_resources[self.candidate_resource_count] = .{
+            .local = external.resource,
+            .format = external.format,
+            .size = external.size,
+            .stride = external.stride,
+            .recovery = .external,
+            .pixel_start = self.candidate_pixel_count,
+            .pixel_count = 0,
+        };
+        self.candidate_resource_count += 1;
     }
 
     fn validateCandidateCommand(
@@ -2275,6 +2483,10 @@ pub const Composer = struct {
         for (candidate.changes) |change| {
             const update_ranges = [_]ByteRange{
                 try byteRange(ResourceUpload, change.update.uploads),
+                try byteRange(
+                    ExternalResourceDeclaration,
+                    change.update.external_resources,
+                ),
                 try byteRange(ResourceRemoval, change.update.removals),
                 try byteRange(Input, change.update.commands),
             };
@@ -2344,6 +2556,11 @@ pub const Composer = struct {
             for (self.resources[source.resource_start .. source.resource_start + source.resource_count]) |resource| {
                 if (!try self.resourceVisible(placement, source, resource.local))
                     continue;
+                if (resource.recovery == .external) {
+                    if (!residencyMatches(residency, source.id, resource))
+                        return error.MissingExternalResource;
+                    continue;
+                }
                 if (!residencyMatches(residency, source.id, resource)) {
                     uploads_needed.* = std.math.add(usize, uploads_needed.*, 1) catch
                         return error.ArithmeticOverflow;
@@ -2400,6 +2617,8 @@ pub const Composer = struct {
                 if (!try self.resourceVisible(placement, source, resource.local) or
                     residencyMatches(residency, source.id, resource))
                     continue;
+                if (resource.recovery == .external)
+                    return error.MissingExternalResource;
                 const destination = buffers.pixels[pixel_count.* .. pixel_count.* + resource.pixel_count];
                 @memcpy(destination, self.pixels[resource.pixel_start .. resource.pixel_start + resource.pixel_count]);
                 buffers.uploads[upload_count.*] = .{
@@ -2639,6 +2858,11 @@ pub const Composer = struct {
             self.resources[source.resource_start .. source.resource_start + source.resource_count],
             residency.resource.resource,
         ) orelse return false;
+        if (resource.recovery == .external and
+            (residency.resource.generation != resource.local.generation or
+                residency.format != resource.format or
+                !std.meta.eql(residency.size, resource.size)))
+            return false;
         return try self.resourceVisible(
             self.composition[placement_index],
             source,
@@ -2783,6 +3007,16 @@ fn findUpload(
     return null;
 }
 
+fn findExternalResource(
+    resources: []const ExternalResourceDeclaration,
+    id: ResourceId,
+) ?ExternalResourceDeclaration {
+    for (resources) |resource| {
+        if (resource.resource.resource == id) return resource;
+    }
+    return null;
+}
+
 fn findRemoval(
     removals: []const ResourceRemoval,
     id: ResourceId,
@@ -2905,6 +3139,8 @@ fn validateSharedView(
 fn updateContainsShared(update: ProducerUpdate) bool {
     for (update.uploads) |upload|
         if (upload.resource.resource.isShared()) return true;
+    for (update.external_resources) |external|
+        if (external.resource.resource.isShared()) return true;
     for (update.removals) |removal|
         if (removal.resource.resource.isShared()) return true;
     for (update.commands) |command| switch (command) {
@@ -2918,6 +3154,8 @@ fn updateContainsShared(update: ProducerUpdate) bool {
 }
 
 const upload_plan_bit: u64 = @as(u64, 1) << 63;
+const external_plan_bit: u64 = @as(u64, 1) << 62;
+const replacement_plan_mask: u64 = upload_plan_bit | external_plan_bit;
 
 fn encodeRetainedPlan(index: usize) u64 {
     return @intCast(index);
@@ -2933,14 +3171,35 @@ fn encodeUploadPlan(change: usize, upload: usize) u64 {
         @as(u64, @intCast(upload));
 }
 
+fn encodeExternalPlan(change: usize, external: usize) u64 {
+    return external_plan_bit |
+        (@as(u64, @intCast(change)) << 32) |
+        @as(u64, @intCast(external));
+}
+
+fn planIsReplacement(value: u64) bool {
+    return value & replacement_plan_mask != 0;
+}
+
 fn planIsUpload(value: u64) bool {
     return value & upload_plan_bit != 0;
+}
+
+fn planIsExternal(value: u64) bool {
+    return value & external_plan_bit != 0 and !planIsUpload(value);
 }
 
 fn decodeUploadPlan(value: u64) struct { change: usize, upload: usize } {
     return .{
         .change = @intCast((value >> 32) & 0x7fff_ffff),
         .upload = @intCast(value & 0xffff_ffff),
+    };
+}
+
+fn decodeExternalPlan(value: u64) struct { change: usize, external: usize } {
+    return .{
+        .change = @intCast((value >> 32) & 0x3fff_ffff),
+        .external = @intCast(value & 0xffff_ffff),
     };
 }
 
@@ -2968,6 +3227,15 @@ fn findUploadIndex(
     return null;
 }
 
+fn findExternalResourceIndex(
+    resources: []const ExternalResourceDeclaration,
+    id: ResourceId,
+) ?usize {
+    for (resources, 0..) |resource, index|
+        if (resource.resource.resource == id) return index;
+    return null;
+}
+
 fn resourceFromUpload(
     upload: ResourceUpload,
     pixel_start: usize,
@@ -2980,8 +3248,24 @@ fn resourceFromUpload(
             .height = upload.pixels.height,
         },
         .stride = upload.pixels.stride,
+        .recovery = .copied,
         .pixel_start = pixel_start,
         .pixel_count = upload.pixels.bytes.len,
+    };
+}
+
+fn resourceFromExternal(
+    external: ExternalResourceDeclaration,
+    pixel_start: usize,
+) Composer.Resource {
+    return .{
+        .local = external.resource,
+        .format = external.format,
+        .size = external.size,
+        .stride = external.stride,
+        .recovery = .external,
+        .pixel_start = pixel_start,
+        .pixel_count = 0,
     };
 }
 
@@ -3092,6 +3376,7 @@ fn resourcesEqual(
         left.format == right.format and
         std.meta.eql(left.size, right.size) and
         left.stride == right.stride and
+        left.recovery == right.recovery and
         left.pixel_count == right.pixel_count;
 }
 
@@ -3413,6 +3698,31 @@ fn validateUpload(upload: ResourceUpload) ResourceValidationError!void {
     try validatePixels(upload.pixels, upload.format);
 }
 
+fn validateExternalResourceDeclaration(
+    external: ExternalResourceDeclaration,
+) ResourceValidationError!void {
+    try validateLocalRef(external.resource);
+    try validateExtent(external.size, null);
+    const bytes_per_pixel: usize = switch (external.format) {
+        .alpha8 => 1,
+        .rgba8 => 4,
+    };
+    const row_bytes = std.math.mul(
+        usize,
+        external.size.width,
+        bytes_per_pixel,
+    ) catch return error.ArithmeticOverflow;
+    if (external.stride < row_bytes) return error.InvalidPixels;
+    const preceding = std.math.mul(
+        usize,
+        external.size.height - 1,
+        external.stride,
+    ) catch return error.ArithmeticOverflow;
+    const required = std.math.add(usize, preceding, row_bytes) catch
+        return error.ArithmeticOverflow;
+    if (required == 0) return error.ExtentMismatch;
+}
+
 fn validateRemoval(removal: ResourceRemoval) ResourceValidationError!void {
     try validateLocalRef(removal.resource);
 }
@@ -3471,6 +3781,8 @@ fn validatePixels(pixels: Pixels, format: ResourceFormat) ResourceValidationErro
 fn validateProducerUpdate(update: ProducerUpdate) ResourceValidationError!void {
     if (@backingInt(update.revision) == 0) return error.InvalidRevision;
     for (update.uploads) |upload| try validateUpload(upload);
+    for (update.external_resources) |external|
+        try validateExternalResourceDeclaration(external);
     for (update.removals) |removal| try validateRemoval(removal);
     for (update.commands) |command| switch (command) {
         .solid => {},
@@ -3501,6 +3813,8 @@ fn validateCandidateProducerUpdate(
         try validateResourceRef(upload.resource);
         try validatePixels(upload.pixels, upload.format);
     }
+    for (update.external_resources) |external|
+        try validateExternalResourceDeclaration(external);
     for (update.removals) |removal|
         try validateResourceRef(removal.resource);
     for (update.commands) |command| switch (command) {

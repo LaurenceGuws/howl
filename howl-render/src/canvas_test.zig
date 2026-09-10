@@ -790,6 +790,326 @@ test "composer retains resources and derives partial and full recovery" {
     );
 }
 
+test "composer external resources fail closed until exact host residency" {
+    var composer = try canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 2,
+        .retained_commands = 2,
+        .retained_pixel_bytes = 1,
+        .composition_sources = 1,
+        .candidate_resources = 2,
+        .candidate_commands = 2,
+        .candidate_pixel_bytes = 1,
+    });
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const resource = try local(1, 2);
+    const external = canvas.ExternalResourceDeclaration{
+        .resource = resource,
+        .format = .rgba8,
+        .size = .{ .width = 2048, .height = 2048 },
+        .stride = 8192,
+    };
+    const draw = canvas.Input{ .rgba = .{
+        .destination = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .clip = .{ .x = 0, .y = 0, .width = 2, .height = 2 },
+        .resource = .{
+            .resource = resource,
+            .format = .rgba8,
+            .size = external.size,
+        },
+    } };
+    const visible = [_]canvas.Composer.Placement{placement(producer, 0)};
+    try composer.applyCandidate(.{
+        .changes = &.{.{ .source = producer, .update = .{
+            .revision = @fromBackingInt(1),
+            .uploads = &.{},
+            .external_resources = &.{external},
+            .removals = &.{},
+            .commands = &.{draw},
+        } }},
+        .composition = .{
+            .surface = .{ .width = 16, .height = 8 },
+            .sources = &visible,
+        },
+    });
+
+    var storage: FrameStorage = .{};
+    @memset(std.mem.asBytes(&storage), 0xa5);
+    const before = std.mem.asBytes(&storage).*;
+    try std.testing.expectError(
+        error.MissingExternalResource,
+        composer.frame(&.{}, storage.buffers()),
+    );
+    try std.testing.expectEqualSlices(u8, &before, std.mem.asBytes(&storage));
+
+    var missing_storage: [1]canvas.FrameExternalResource = undefined;
+    @memset(std.mem.asBytes(&missing_storage), 0x5a);
+    const missing_before = std.mem.asBytes(&missing_storage).*;
+    try std.testing.expectError(
+        error.ResourceLimit,
+        composer.missingExternalResources(&.{}, missing_storage[0..0]),
+    );
+    try std.testing.expectEqualSlices(
+        u8,
+        &missing_before,
+        std.mem.asBytes(&missing_storage),
+    );
+    const missing = try composer.missingExternalResources(&.{}, &missing_storage);
+    try std.testing.expectEqual(@as(usize, 1), missing.len);
+    try std.testing.expectEqual(producer, missing[0].resource.source);
+    try std.testing.expectEqualDeep(resource, canvas.ResourceRef{
+        .resource = missing[0].resource.resource,
+        .generation = missing[0].resource.generation,
+    });
+    try std.testing.expectEqual(.rgba8, missing[0].format);
+    try std.testing.expectEqualDeep(external.size, missing[0].size);
+    try std.testing.expectEqual(@as(usize, 8192), missing[0].stride);
+
+    const stale = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, try local(1, 1)),
+        .format = .rgba8,
+        .size = external.size,
+    };
+    try std.testing.expectError(
+        error.MissingExternalResource,
+        composer.frame(&.{stale}, storage.buffers()),
+    );
+    const stale_missing = try composer.missingExternalResources(
+        &.{stale},
+        &missing_storage,
+    );
+    try std.testing.expectEqual(@as(usize, 1), stale_missing.len);
+    try std.testing.expectEqual(
+        resource.generation,
+        stale_missing[0].resource.generation,
+    );
+
+    const wrong_extent = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, resource),
+        .format = .rgba8,
+        .size = .{ .width = 2048, .height = 2047 },
+    };
+    try std.testing.expectError(
+        error.MissingExternalResource,
+        composer.frame(&.{wrong_extent}, storage.buffers()),
+    );
+    const wrong_format = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, resource),
+        .format = .alpha8,
+        .size = external.size,
+    };
+    try std.testing.expectError(
+        error.MissingExternalResource,
+        composer.frame(&.{wrong_format}, storage.buffers()),
+    );
+
+    const resident = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, resource),
+        .format = .rgba8,
+        .size = external.size,
+    };
+    const complete = try composer.frame(&.{resident}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 0), complete.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), complete.removals.len);
+    try std.testing.expectEqual(@as(usize, 1), complete.commands.len);
+    try std.testing.expectEqual(@as(usize, 0), complete.pixels.len);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try composer.missingExternalResources(
+            &.{resident},
+            &missing_storage,
+        )).len,
+    );
+}
+
+test "external resource replacement removal clear and retirement stay transactional" {
+    var composer = try canvas.Composer.init(
+        std.testing.allocator,
+        composerLimits(),
+    );
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+    const first_ref = try local(1, 1);
+    const first = canvas.ExternalResourceDeclaration{
+        .resource = first_ref,
+        .format = .alpha8,
+        .size = .{ .width = 2, .height = 1 },
+        .stride = 2,
+    };
+    const first_draw = resourceInput(first_ref, 2);
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(1),
+        .uploads = &.{},
+        .external_resources = &.{first},
+        .removals = &.{},
+        .commands = &.{first_draw},
+    });
+    const visible = [_]canvas.Composer.Placement{placement(producer, 0)};
+    try composer.setComposition(.{
+        .surface = .{ .width = 16, .height = 8 },
+        .sources = &visible,
+    });
+    const first_residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, first_ref),
+        .format = .alpha8,
+        .size = first.size,
+    };
+    var storage: FrameStorage = .{};
+    const initial = try composer.frame(&.{first_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), initial.commands.len);
+
+    try std.testing.expectError(error.DuplicateResource, composer.apply(producer, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .external_resources = &.{ first, first },
+        .removals = &.{},
+        .commands = &.{first_draw},
+    }));
+    const bytes = [_]u8{ 0x11, 0x22 };
+    const conflicting_upload = canvas.ResourceUpload{
+        .resource = first_ref,
+        .format = .alpha8,
+        .pixels = .{
+            .bytes = &bytes,
+            .width = 2,
+            .height = 1,
+            .stride = 2,
+        },
+    };
+    try std.testing.expectError(
+        error.ConflictingResourceOperation,
+        composer.apply(producer, .{
+            .revision = @fromBackingInt(2),
+            .uploads = &.{conflicting_upload},
+            .external_resources = &.{first},
+            .removals = &.{},
+            .commands = &.{first_draw},
+        }),
+    );
+    try std.testing.expectError(error.InvalidGeneration, composer.apply(producer, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .external_resources = &.{first},
+        .removals = &.{},
+        .commands = &.{first_draw},
+    }));
+    const preserved = try composer.frame(&.{first_residency}, storage.buffers());
+    try std.testing.expectEqual(initial.revision, preserved.revision);
+
+    const second_ref = try local(1, 2);
+    const second = canvas.ExternalResourceDeclaration{
+        .resource = second_ref,
+        .format = .alpha8,
+        .size = .{ .width = 3, .height = 1 },
+        .stride = 3,
+    };
+    const second_draw = resourceInput(second_ref, 3);
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(2),
+        .uploads = &.{},
+        .external_resources = &.{second},
+        .removals = &.{},
+        .commands = &.{second_draw},
+    });
+    try std.testing.expectError(
+        error.MissingExternalResource,
+        composer.frame(&.{first_residency}, storage.buffers()),
+    );
+    const second_residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, second_ref),
+        .format = .alpha8,
+        .size = second.size,
+    };
+    const replaced = try composer.frame(&.{second_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 0), replaced.uploads.len);
+    try std.testing.expectEqual(@as(usize, 0), replaced.pixels.len);
+
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(3),
+        .uploads = &.{},
+        .removals = &.{canvas.ResourceRemoval{ .resource = second_ref }},
+        .commands = &.{},
+    });
+    const removed = try composer.frame(&.{second_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), removed.removals.len);
+    try std.testing.expectEqualDeep(second_residency.resource, removed.removals[0]);
+
+    const third_ref = try local(2, 1);
+    const third = canvas.ExternalResourceDeclaration{
+        .resource = third_ref,
+        .format = .alpha8,
+        .size = .{ .width = 1, .height = 1 },
+        .stride = 1,
+    };
+    const third_draw = resourceInput(third_ref, 1);
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(4),
+        .uploads = &.{},
+        .external_resources = &.{third},
+        .removals = &.{},
+        .commands = &.{third_draw},
+    });
+    const third_residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, third_ref),
+        .format = .alpha8,
+        .size = third.size,
+    };
+    const third_frame = try composer.frame(&.{third_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), third_frame.commands.len);
+
+    try composer.applyCandidate(.{
+        .changes = &.{},
+        .hidden_source_clears = &.{producer},
+        .composition = .{
+            .surface = .{ .width = 16, .height = 8 },
+            .sources = &.{},
+        },
+    });
+    const cleared = try composer.frame(&.{third_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), cleared.removals.len);
+    var missing: [1]canvas.FrameExternalResource = undefined;
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try composer.missingExternalResources(&.{}, &missing)).len,
+    );
+
+    const fourth_ref = try local(3, 1);
+    const fourth = canvas.ExternalResourceDeclaration{
+        .resource = fourth_ref,
+        .format = .alpha8,
+        .size = .{ .width = 1, .height = 1 },
+        .stride = 1,
+    };
+    const fourth_draw = resourceInput(fourth_ref, 1);
+    try composer.apply(producer, .{
+        .revision = @fromBackingInt(5),
+        .uploads = &.{},
+        .external_resources = &.{fourth},
+        .removals = &.{},
+        .commands = &.{fourth_draw},
+    });
+    try composer.setComposition(.{
+        .surface = .{ .width = 16, .height = 8 },
+        .sources = &visible,
+    });
+    const fourth_residency = canvas.Residency{
+        .resource = try canvas.FrameResourceRef.local(producer, fourth_ref),
+        .format = .alpha8,
+        .size = fourth.size,
+    };
+    const fourth_frame = try composer.frame(&.{fourth_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), fourth_frame.commands.len);
+    try composer.removeSource(producer);
+    const retired = try composer.frame(&.{fourth_residency}, storage.buffers());
+    try std.testing.expectEqual(@as(usize, 1), retired.removals.len);
+    try std.testing.expectEqualDeep(fourth_residency.resource, retired.removals[0]);
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        (try composer.missingExternalResources(&.{}, &missing)).len,
+    );
+}
+
 test "composer advances frames only for changed visible contributions" {
     var composer = try canvas.Composer.init(
         std.testing.allocator,
