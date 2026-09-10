@@ -5,8 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:howl_flutter/native_canvas.dart';
 import 'package:howl_flutter/native_canvas_surface.dart';
 import 'package:howl_flutter/native_host.dart';
+import 'package:howl_flutter/terminal_presentation.dart';
 
-Uint8List _oneFrameCanvas() {
+Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
   const global = NativeCanvasFrame.globalHeaderBytes;
   const frame = NativeCanvasFrame.frameHeaderBytes;
   const resource = NativeCanvasFrame.resourceRecordBytes;
@@ -20,8 +21,8 @@ Uint8List _oneFrameCanvas() {
   data.setUint16(6, global, Endian.little);
   data.setUint32(8, 1, Endian.little);
   data.setUint32(12, 1, Endian.little);
-  data.setUint16(16, 10, Endian.little);
-  data.setUint16(18, 20, Endian.little);
+  data.setUint16(16, surfaceWidth, Endian.little);
+  data.setUint16(18, surfaceHeight, Endian.little);
 
   var at = global;
   data.setUint32(at, recordBytes, Endian.little);
@@ -57,8 +58,8 @@ Uint8List _oneFrameCanvas() {
   data.setUint8(at, 0);
   data.setUint8(at + 1, 0xff);
   data.setUint32(at + 4, 0xff090b0e, Endian.little);
-  rect(at + 8, 0, 0, 10, 20);
-  rect(at + 20, 0, 0, 10, 20);
+  rect(at + 8, 0, 0, surfaceWidth, surfaceHeight);
+  rect(at + 20, 0, 0, surfaceWidth, surfaceHeight);
   at += NativeCanvasFrame.commandRecordBytes;
 
   data.setUint8(at, 1);
@@ -112,8 +113,18 @@ Uint8List _batchedAlphaCanvas() {
   return bytes;
 }
 
-Uint8List _hostPacket({bool semanticTruncated = false}) {
-  final canvas = _oneFrameCanvas();
+Uint8List _hostPacket({
+  bool semanticTruncated = false,
+  TerminalPresentation presentation = const TerminalPresentation(
+    fontPixels: 16,
+    cellWidth: 10,
+    lineHeight: 20,
+  ),
+}) {
+  final canvas = _oneFrameCanvas(
+    surfaceWidth: presentation.cellWidth,
+    surfaceHeight: presentation.lineHeight,
+  );
   final semantics = Uint8List.fromList('visible terminal'.codeUnits);
   final bytes = Uint8List(64 + canvas.length + semantics.length);
   final data = ByteData.sublistView(bytes);
@@ -161,7 +172,10 @@ void main() {
   });
 
   test('native host metadata wraps exactly one final Canvas frame', () {
-    final packet = parseNativeHostPacket(_hostPacket());
+    final packet = parseNativeHostPacket(
+      _hostPacket(),
+      TerminalZoomPreset.normal.presentation,
+    );
     expect(packet.metadata.revision, 7);
     expect(packet.metadata.terminalRevision, 11);
     expect(packet.metadata.historyCount, 23);
@@ -179,6 +193,7 @@ void main() {
     () {
       final packet = parseNativeHostPacket(
         _hostPacket(semanticTruncated: true),
+        TerminalZoomPreset.normal.presentation,
       );
       expect(packet.semanticText, 'visible terminal');
       expect(packet.semanticTruncated, isTrue);
@@ -212,19 +227,45 @@ void main() {
     );
     final badHost = _hostPacket()..[0] = 0;
     expect(
-      () => parseNativeHostPacket(badHost),
+      () => parseNativeHostPacket(
+        badHost,
+        TerminalZoomPreset.normal.presentation,
+      ),
       throwsA(isA<NativeHostException>()),
     );
     final badSemanticLayout = _hostPacket();
     ByteData.sublistView(badSemanticLayout).setUint32(60, 999, Endian.little);
     expect(
-      () => parseNativeHostPacket(badSemanticLayout),
+      () => parseNativeHostPacket(
+        badSemanticLayout,
+        TerminalZoomPreset.normal.presentation,
+      ),
       throwsA(isA<NativeHostException>()),
     );
     final badUtf8 = _hostPacket()..[badHost.length - 1] = 0xff;
     expect(
-      () => parseNativeHostPacket(badUtf8),
+      () => parseNativeHostPacket(
+        badUtf8,
+        TerminalZoomPreset.normal.presentation,
+      ),
       throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('native host validates the selected presentation lattice', () {
+    final small = TerminalZoomPreset.small.presentation;
+    final packet = parseNativeHostPacket(
+      _hostPacket(presentation: small),
+      small,
+    );
+    expect(packet.canvas.surfaceWidth, small.cellWidth);
+    expect(packet.canvas.surfaceHeight, small.lineHeight);
+    expect(
+      () => parseNativeHostPacket(
+        _hostPacket(presentation: small),
+        TerminalZoomPreset.normal.presentation,
+      ),
+      throwsA(isA<NativeHostException>()),
     );
   });
 }

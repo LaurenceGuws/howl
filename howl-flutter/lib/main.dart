@@ -270,7 +270,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           pendingObservation,
           generation,
         );
-        final packet = parseNativeHostPacket(bytes);
+        final packet = parseNativeHostPacket(bytes, presentation);
         revision = packet.metadata.revision;
         if (!mounted || _stopping || generation != _transportGeneration) break;
         final prepared = await prepareNativeCanvasFrame(
@@ -745,7 +745,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           historyOffset: _history.targetOffset,
           residency: encodeNativeHostResidency(_nativeHistoryLease),
         );
-        final packet = parseNativeHostPacket(bytes);
+        final packet = parseNativeHostPacket(bytes, _presentation);
         if (!mounted || _stopping || !_history.active) return;
         if (generation != _historyGeneration) continue;
         _history.acceptSnapshot(

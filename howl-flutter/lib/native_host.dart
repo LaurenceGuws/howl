@@ -75,7 +75,10 @@ final class NativeHostFrame {
   final bool semanticTruncated;
 }
 
-NativeHostFrame parseNativeHostPacket(Uint8List bytes) {
+NativeHostFrame parseNativeHostPacket(
+  Uint8List bytes,
+  TerminalPresentation expectedPresentation,
+) {
   if (bytes.length < _hostHeaderBytes + NativeCanvasFrame.globalHeaderBytes) {
     throw const NativeHostException('packet_truncated');
   }
@@ -128,8 +131,8 @@ NativeHostFrame parseNativeHostPacket(Uint8List bytes) {
     canvasOffset + canvasLength,
   );
   final frame = NativeCanvasFrame.parse(canvasBytes);
-  if (frame.surfaceWidth != metadata.columns * 10 ||
-      frame.surfaceHeight != metadata.rows * 20) {
+  if (frame.surfaceWidth != metadata.columns * expectedPresentation.cellWidth ||
+      frame.surfaceHeight != metadata.rows * expectedPresentation.lineHeight) {
     throw const NativeHostException('packet_canvas');
   }
   final semanticBytes = Uint8List.sublistView(bytes, semanticOffset);
