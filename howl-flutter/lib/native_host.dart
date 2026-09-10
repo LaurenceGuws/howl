@@ -12,8 +12,8 @@ import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
 
-const int nativeHostOutputBytes = 320 * 1024;
 const int nativeSelectionOutputBytes = 1024 * 1024;
+const int _nativeHostMaximumOutputBytes = 8 * 1024 * 1024;
 const int _hostHeaderBytes = 64;
 const int _residencyRecordBytes = 32;
 
@@ -440,6 +440,8 @@ typedef _CreateDart = ffi.Pointer<ffi.Void> Function(
 );
 typedef _DestroyNative = ffi.Void Function(ffi.Pointer<ffi.Void>);
 typedef _DestroyDart = void Function(ffi.Pointer<ffi.Void>);
+typedef _OutputMinimumBytesNative = ffi.Size Function();
+typedef _OutputMinimumBytesDart = int Function();
 typedef _ObserveNative = ffi.Int32 Function(
   ffi.Pointer<ffi.Void>,
   ffi.Uint64,
@@ -490,6 +492,17 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   final destroy = dylib.lookupFunction<_DestroyNative, _DestroyDart>(
     'howl_native_host_destroy',
   );
+  final outputMinimumBytes = dylib
+      .lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
+        'howl_native_host_output_minimum_bytes',
+      )();
+  if (outputMinimumBytes <
+          _hostHeaderBytes + NativeCanvasFrame.globalHeaderBytes ||
+      outputMinimumBytes > _nativeHostMaximumOutputBytes) {
+    ready.send('worker_output_bound');
+    commands.close();
+    return;
+  }
   final observe = dylib.lookupFunction<_ObserveNative, _ObserveDart>(
     'howl_native_host_observe',
   );
@@ -548,7 +561,7 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     return;
   }
 
-  final output = calloc<ffi.Uint8>(nativeHostOutputBytes);
+  final output = calloc<ffi.Uint8>(outputMinimumBytes);
   final outputLength = calloc<ffi.Size>();
   final residency = calloc<ffi.Uint8>(8 * _residencyRecordBytes);
   ready.send(commands.sendPort);
@@ -589,10 +602,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
         residencyBytes.isEmpty ? ffi.nullptr : residency,
         residencyBytes.length,
         output,
-        nativeHostOutputBytes,
+        outputMinimumBytes,
         outputLength,
       );
-      if (code != 0 || outputLength.value > nativeHostOutputBytes) {
+      if (code != 0 || outputLength.value > outputMinimumBytes) {
         responses.send(<Object?>[id, code == 0 ? 5 : code, null]);
         continue;
       }

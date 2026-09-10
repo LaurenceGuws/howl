@@ -12,11 +12,11 @@ const resource_record_bytes: usize = 48;
 const removal_record_bytes: usize = 24;
 const command_record_bytes: usize = 40;
 const maximum_frame_resources: usize = 8;
-const canvas_packet_budget: usize = 256 * 1024;
+const canvas_packet_budget: usize = 320 * 1024;
 const semantic_capacity: usize = 64 * 1024;
 const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
-const atlas_width: u16 = 128;
-const atlas_height: u16 = 128;
+const atlas_width: u16 = 192;
+const atlas_height: u16 = 192;
 const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height);
 // One call copies a complete frame into Flutter's fixed output packet. Reserve
 // every other bounded section first, then spend the exact remainder on whole
@@ -99,6 +99,10 @@ fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
 
 pub export fn howl_native_host_version() u32 {
     return 2;
+}
+
+pub export fn howl_native_host_output_minimum_bytes() usize {
+    return output_minimum_bytes;
 }
 
 pub export fn howl_native_host_create(
@@ -523,6 +527,12 @@ test "native host surface follows configured presentation lattice" {
         error.InvalidFrame,
         surfaceSize(1, std.math.maxInt(u16), .{ .width = 2, .height = 1 }),
     );
+}
+
+test "native host dense presentation budgets raster and commands together" {
+    try std.testing.expectEqual(@as(usize, 384 * 1024), output_minimum_bytes);
+    try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
+    try std.testing.expect(command_capacity >= 7_000);
 }
 
 fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
