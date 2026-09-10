@@ -10,7 +10,7 @@ var input: [32768]u8 = undefined;
 var packet: [p.header_bytes + p.maximum_payload_bytes]u8 = undefined;
 var used: usize = 0;
 var needed: usize = p.header_bytes;
-var transcript: [p.maximum_text_snapshot_bytes]u8 = undefined;
+var transcript: [p.maximum_observation_bytes]u8 = undefined;
 var transcript_len: usize = 0;
 var arena: [20 * 1024 * 1024]u8 = undefined;
 var projection: [65536]u8 = undefined;
@@ -34,8 +34,16 @@ const ControlOperation = enum { none, input, assign_resize, resize_claim, resize
 var control_operation: ControlOperation = .none;
 var pending_resize_rows: u16 = 0;
 var pending_resize_columns: u16 = 0;
+var image_id: u32 = 0;
+var image_generation: u64 = 0;
+var image_width: u32 = 0;
+var image_height: u32 = 0;
+var image_expected_bytes: usize = 0;
+var image_len: usize = 0;
+var image_started: bool = false;
 // 0 closed, 1 awaiting welcome, 2 attached, 3 observing, 4 snapshot ready,
-// 5 awaiting a control result, 6 control acknowledged, 99 terminal protocol error.
+// 5 awaiting a control result, 6 control acknowledged, 7 receiving one exact
+// image resource, 8 image ready for Host copy, 99 terminal protocol error.
 var phase: u32 = 0;
 
 export fn hw_input_ptr() usize {
@@ -64,6 +72,24 @@ export fn hw_snapshot_ptr() usize {
 }
 export fn hw_snapshot_len() usize {
     return transcript_len;
+}
+export fn hw_image_ptr() usize {
+    return @intFromPtr(&arena);
+}
+export fn hw_image_len() usize {
+    return image_len;
+}
+export fn hw_image_id() u32 {
+    return image_id;
+}
+export fn hw_image_generation() u64 {
+    return image_generation;
+}
+export fn hw_image_width() u32 {
+    return image_width;
+}
+export fn hw_image_height() u32 {
+    return image_height;
 }
 export fn hw_error_ptr() usize {
     return @intFromPtr(failure.ptr);
@@ -168,6 +194,13 @@ export fn hw_reset() u32 {
     control_operation = .none;
     pending_resize_rows = 0;
     pending_resize_columns = 0;
+    image_id = 0;
+    image_generation = 0;
+    image_width = 0;
+    image_height = 0;
+    image_expected_bytes = 0;
+    image_len = 0;
+    image_started = false;
     phase = 1;
     if (!queue(.hello, &.{})) return fail("HelloEncodingFailed");
     return 1;
@@ -183,6 +216,45 @@ export fn hw_observe(immediate: u32, requested_history_offset: u32) u32 {
     if (!queue(.observe, &payload)) return fail("ObserveEncodingFailed");
     transcript_len = 0;
     phase = 3;
+    return 1;
+}
+
+/// Requests one exact immutable RGBA8 terminal image generation.
+///
+/// The image body reuses this wire instance's decode arena after observation
+/// decoding; each browser connection owns an independent Wasm instance.
+export fn hw_request_image(requested_image_id: u32, requested_generation: u64) u32 {
+    if ((phase != 2 and phase != 4 and phase != 6 and phase != 8) or
+        requested_image_id == 0 or requested_generation == 0)
+        return 0;
+    var payload: [p.payload_bytes.image_request]u8 = undefined;
+    p.encodeImageRequest(&payload, .{
+        .image_id = requested_image_id,
+        .generation = requested_generation,
+    });
+    if (!queue(.image_request, &payload)) return fail("ImageRequestEncodingFailed");
+    image_id = requested_image_id;
+    image_generation = requested_generation;
+    image_width = 0;
+    image_height = 0;
+    image_expected_bytes = 0;
+    image_len = 0;
+    image_started = false;
+    phase = 7;
+    return 1;
+}
+
+/// Releases one copied image result and returns this connection to attached.
+export fn hw_release_image() u32 {
+    if (phase != 8) return 0;
+    image_id = 0;
+    image_generation = 0;
+    image_width = 0;
+    image_height = 0;
+    image_expected_bytes = 0;
+    image_len = 0;
+    image_started = false;
+    phase = 2;
     return 1;
 }
 
@@ -339,7 +411,8 @@ fn acceptFrame() u32 {
         },
         3 => {
             if ((transcript_len == 0 and header.kind != .snapshot_begin) or
-                (transcript_len != 0 and header.kind != .snapshot_data and header.kind != .snapshot_end))
+                (transcript_len != 0 and header.kind != .snapshot_data and
+                    header.kind != .snapshot_graphics and header.kind != .snapshot_end))
                 return fail("UnexpectedSnapshotFrame");
             if (needed > transcript.len - transcript_len) return fail("SnapshotTooLarge");
             @memcpy(transcript[transcript_len..][0..needed], packet[0..needed]);
@@ -385,6 +458,41 @@ fn acceptFrame() u32 {
                 .none => return fail("MissingControlOperation"),
             }
         },
+        7 => {
+            if (!image_started) {
+                if (header.kind == .result) {
+                    const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
+                    if (result.request_kind != .image_request or result.code == .ok)
+                        return fail("ImageResultMismatch");
+                    return fail("ImageRejected");
+                }
+                if (header.kind != .image_begin) return fail("ExpectedImageBegin");
+                const begin = p.decodeImageBegin(payload) catch |err| return fail(@errorName(err));
+                if (begin.image_id != image_id or begin.generation != image_generation or
+                    begin.byte_count > arena.len)
+                    return fail("ImageIdentityMismatch");
+                image_width = begin.width;
+                image_height = begin.height;
+                image_expected_bytes = begin.byte_count;
+                image_len = 0;
+                image_started = true;
+                return 1;
+            }
+            if (header.kind == .image_data) {
+                if (payload.len == 0 or payload.len > p.graphics_v2.data_chunk_bytes or
+                    payload.len > image_expected_bytes -| image_len)
+                    return fail("InvalidImageData");
+                @memcpy(arena[image_len..][0..payload.len], payload);
+                image_len += payload.len;
+                return 1;
+            }
+            if (header.kind != .image_end or image_len != image_expected_bytes)
+                return fail("ExpectedImageEnd");
+            const end = p.decodeImageEnd(payload) catch |err| return fail(@errorName(err));
+            if (end.image_id != image_id or end.generation != image_generation)
+                return fail("ImageIdentityMismatch");
+            phase = 8;
+        },
         else => return fail("UnsolicitedFrame"),
     }
     return 1;
@@ -419,7 +527,8 @@ export fn hw_feed(length: usize) u32 {
 
 export fn hw_finish() u32 {
     if (phase == 99) return 0;
-    if (used != 0 or phase == 1 or phase == 3 or phase == 5) return fail("TruncatedResponse");
+    if (used != 0 or phase == 1 or phase == 3 or phase == 5 or phase == 7)
+        return fail("TruncatedResponse");
     control_operation = .none;
     pending_resize_rows = 0;
     pending_resize_columns = 0;
