@@ -109,9 +109,328 @@ fn firstAlphaResource(commands: []const render.canvas.Input) ?render.canvas.Reso
     return null;
 }
 
+fn firstRgba(commands: []const render.canvas.Input) ?@FieldType(render.canvas.Input, "rgba") {
+    for (commands) |command| switch (command) {
+        .rgba => |value| return value,
+        else => {},
+    };
+    return null;
+}
+
 fn constructTerminalContent(allocator: std.mem.Allocator, font: *render.text.FontSet) !void {
     const content = try render.terminal.initContent(allocator, font, contentConfig(64));
     render.terminal.deinitContent(content);
+}
+
+test "terminal Canvas emits one Host-bound RGBA image across presentation lattices" {
+    var a = [_]u32{'A'};
+    var row0_cells = [_]client.rich.Cell{
+        cell(&a, 1, 0),
+        cell(&.{}, 1, 0),
+        cell(&.{}, 1, 0),
+        cell(&.{}, 1, 0),
+    };
+    var row1_cells = [_]client.rich.Cell{
+        cell(&.{}, 1, 0),
+        cell(&.{}, 1, 0),
+        cell(&.{}, 1, 0),
+        cell(&.{}, 1, 0),
+    };
+    var rows = [_]client.rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row0_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row1_cells },
+    };
+    var images = [_]client.view.Image{.{
+        .image_id = 7,
+        .generation = 9,
+        .width = 2,
+        .height = 2,
+    }};
+    var placements = [_]client.view.ImagePlacement{.{
+        .image_id = 7,
+        .generation = 3,
+        .row = 1,
+        .column = 2,
+        .source_x = 0,
+        .source_y = 0,
+        .source_width = 2,
+        .source_height = 2,
+        .cell_x = 0,
+        .cell_y = 0,
+        .pixel_width = 20,
+        .pixel_height = 20,
+        .z = 0,
+    }};
+    var source = sourceSnapshot(&rows, 4);
+    source.graphics = .{
+        .generation = 11,
+        .content_generation = 10,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
+        .images = &images,
+        .placements = &placements,
+    };
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const image_resource = render.canvas.ResourceRef{
+        .resource = try render.canvas.ResourceId.local(2),
+        .generation = @fromBackingInt(1),
+    };
+    const binding = render.terminal.ExternalImageBinding{
+        .image_id = 7,
+        .generation = 9,
+        .resource = image_resource,
+    };
+    const cases = [_]struct {
+        cell_size: render.canvas.Size,
+        destination: render.canvas.Rect,
+    }{
+        .{
+            .cell_size = .{ .width = 10, .height = 20 },
+            .destination = .{ .x = 20, .y = 20, .width = 20, .height = 20 },
+        },
+        .{
+            .cell_size = .{ .width = 8, .height = 15 },
+            .destination = .{ .x = 16, .y = 15, .width = 16, .height = 15 },
+        },
+        .{
+            .cell_size = .{ .width = 6, .height = 12 },
+            .destination = .{ .x = 12, .y = 12, .width = 12, .height = 12 },
+        },
+    };
+    for (cases, 0..) |case, case_index| {
+        var config = contentConfig(64);
+        config.cell_size = case.cell_size;
+        const content = try render.terminal.initContent(std.testing.allocator, font, config);
+        defer render.terminal.deinitContent(content);
+        const update = try render.terminal.takeContentUpdateWithImageBinding(
+            content,
+            view,
+            null,
+            binding,
+        );
+        try std.testing.expectEqual(@as(usize, 1), update.uploads.len);
+        try std.testing.expectEqual(@as(usize, 1), update.external_resources.len);
+        try std.testing.expectEqual(@as(usize, 0), update.removals.len);
+        try std.testing.expectEqualDeep(image_resource, update.external_resources[0].resource);
+        try std.testing.expectEqual(render.canvas.ResourceFormat.rgba8, update.external_resources[0].format);
+        try std.testing.expectEqualDeep(
+            render.canvas.Size{ .width = 2, .height = 2 },
+            update.external_resources[0].size,
+        );
+        try std.testing.expectEqual(@as(usize, 8), update.external_resources[0].stride);
+        const rgba = firstRgba(update.commands) orelse return error.MissingCanvasRgbaResource;
+        try std.testing.expectEqualDeep(case.destination, rgba.destination);
+        try std.testing.expectEqualDeep(
+            render.canvas.SourceRect{ .x = 0, .y = 0, .width = 2, .height = 2 },
+            rgba.resource.source.?,
+        );
+        try std.testing.expectEqualDeep(image_resource, rgba.resource.resource);
+        try std.testing.expectEqual(
+            @as(usize, 2),
+            render.terminal.contentUsage(content).resource_high_water,
+        );
+        switch (update.commands[update.commands.len - 1]) {
+            .rgba => {},
+            else => return error.ImageNotAboveText,
+        }
+
+        if (case_index == 0) {
+            var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+                .sources = 1,
+                .retained_resources = 4,
+                .retained_commands = 64,
+                .retained_pixel_bytes = 4096,
+                .composition_sources = 1,
+                .candidate_resources = 4,
+                .candidate_commands = 64,
+                .candidate_pixel_bytes = 4096,
+            });
+            defer composer.deinit();
+            const producer = try composer.registerSource();
+            try composer.apply(producer, update);
+            try composer.setComposition(.{
+                .surface = .{ .width = 40, .height = 40 },
+                .sources = &.{.{
+                    .source = producer,
+                    .origin = .{ .x = 0, .y = 0 },
+                    .clip = .{ .x = 0, .y = 0, .width = 40, .height = 40 },
+                }},
+            });
+            var frame_uploads: [4]render.canvas.FrameResourceUpload = undefined;
+            var frame_removals: [4]render.canvas.FrameResourceRef = undefined;
+            var frame_commands: [64]render.canvas.Command = undefined;
+            var frame_pixels: [4096]u8 = undefined;
+            const buffers = render.canvas.Composer.FrameBuffers{
+                .uploads = &frame_uploads,
+                .removals = &frame_removals,
+                .commands = &frame_commands,
+                .pixels = &frame_pixels,
+            };
+            try std.testing.expectError(
+                error.MissingExternalResource,
+                composer.frame(&.{}, buffers),
+            );
+            var missing_storage: [1]render.canvas.FrameExternalResource = undefined;
+            const missing = try composer.missingExternalResources(&.{}, &missing_storage);
+            try std.testing.expectEqual(@as(usize, 1), missing.len);
+            try std.testing.expectEqualDeep(image_resource, render.canvas.ResourceRef{
+                .resource = missing[0].resource.resource,
+                .generation = missing[0].resource.generation,
+            });
+            const resident = render.canvas.Residency{
+                .resource = try render.canvas.FrameResourceRef.local(producer, image_resource),
+                .format = .rgba8,
+                .size = .{ .width = 2, .height = 2 },
+            };
+            const frame = try composer.frame(&.{resident}, buffers);
+            try std.testing.expectEqual(@as(usize, 1), frame.uploads.len);
+            var saw_rgba = false;
+            for (frame.commands) |command| switch (command) {
+                .rgba => saw_rgba = true,
+                else => {},
+            };
+            try std.testing.expect(saw_rgba);
+        }
+
+        const stable = try render.terminal.takeContentUpdateWithImageBinding(
+            content,
+            view,
+            null,
+            binding,
+        );
+        try std.testing.expectEqual(@as(usize, 0), stable.uploads.len);
+        try std.testing.expectEqual(@as(usize, 0), stable.external_resources.len);
+        try std.testing.expect(firstRgba(stable.commands) != null);
+        const image_disabled = try render.terminal.takeContentUpdate(content, view, null);
+        try std.testing.expectEqual(@as(usize, 1), image_disabled.removals.len);
+        try std.testing.expectEqualDeep(image_resource, image_disabled.removals[0].resource);
+        try std.testing.expect(firstRgba(image_disabled.commands) == null);
+    }
+}
+
+test "terminal Canvas keeps image-first and later atlas identities monotonic" {
+    var empty_cells = [_]client.rich.Cell{cell(&.{}, 1, 0)};
+    var empty_rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &empty_cells,
+    }};
+    var images = [_]client.view.Image{.{
+        .image_id = 4,
+        .generation = 8,
+        .width = 1,
+        .height = 1,
+    }};
+    var placements = [_]client.view.ImagePlacement{.{
+        .image_id = 4,
+        .generation = 2,
+        .row = 0,
+        .column = 0,
+        .source_x = 0,
+        .source_y = 0,
+        .source_width = 1,
+        .source_height = 1,
+        .cell_x = 0,
+        .cell_y = 0,
+        .pixel_width = 10,
+        .pixel_height = 20,
+        .z = 0,
+    }};
+    var image_source = sourceSnapshot(&empty_rows, 1);
+    image_source.graphics = .{
+        .generation = 3,
+        .content_generation = 2,
+        .cell_pixel_width = 10,
+        .cell_pixel_height = 20,
+        .images = &images,
+        .placements = &placements,
+    };
+    const image_view = try client.view.project(std.testing.allocator, &image_source);
+    defer client.view.deinit(image_view);
+
+    var a = [_]u32{'A'};
+    var text_cells = [_]client.rich.Cell{cell(&a, 1, 0)};
+    var text_rows = [_]client.rich.Row{.{
+        .wrapped = false,
+        .line_geometry = 0,
+        .cells = &text_cells,
+    }};
+    const text_source = sourceSnapshot(&text_rows, 1);
+    const text_view = try client.view.project(std.testing.allocator, &text_source);
+    defer client.view.deinit(text_view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(
+        std.testing.allocator,
+        font,
+        contentConfig(16),
+    );
+    defer render.terminal.deinitContent(content);
+    var composer = try render.canvas.Composer.init(std.testing.allocator, .{
+        .sources = 1,
+        .retained_resources = 4,
+        .retained_commands = 16,
+        .retained_pixel_bytes = 4096,
+        .composition_sources = 1,
+        .candidate_resources = 4,
+        .candidate_commands = 16,
+        .candidate_pixel_bytes = 4096,
+    });
+    defer composer.deinit();
+    const producer = try composer.registerSource();
+
+    const image_one = render.canvas.ResourceRef{
+        .resource = try render.canvas.ResourceId.local(1),
+        .generation = @fromBackingInt(1),
+    };
+    const first = try render.terminal.takeContentUpdateWithImageBinding(
+        content,
+        image_view,
+        null,
+        .{ .image_id = 4, .generation = 8, .resource = image_one },
+    );
+    try std.testing.expectEqual(@as(usize, 0), first.uploads.len);
+    try std.testing.expectEqual(@as(usize, 1), first.external_resources.len);
+    try std.testing.expectEqual(@as(u64, 1), render.terminal.contentUsage(content).resource_high_water);
+    try composer.apply(producer, first);
+
+    const second = try render.terminal.takeContentUpdate(content, text_view, null);
+    try std.testing.expectEqual(@as(usize, 1), second.removals.len);
+    try std.testing.expectEqualDeep(image_one, second.removals[0].resource);
+    try std.testing.expectEqual(@as(usize, 1), second.uploads.len);
+    const atlas_resource = firstAlphaResource(second.commands) orelse
+        return error.MissingCanvasAlphaResource;
+    try std.testing.expectEqual(@as(u64, 2), try atlas_resource.resource.identity());
+    try std.testing.expectEqual(@as(u64, 2), render.terminal.contentUsage(content).resource_high_water);
+    try composer.apply(producer, second);
+
+    try std.testing.expectError(
+        error.InvalidImageBinding,
+        render.terminal.takeContentUpdateWithImageBinding(
+            content,
+            image_view,
+            null,
+            .{ .image_id = 4, .generation = 8, .resource = image_one },
+        ),
+    );
+    const image_three = render.canvas.ResourceRef{
+        .resource = try render.canvas.ResourceId.local(3),
+        .generation = @fromBackingInt(1),
+    };
+    const third = try render.terminal.takeContentUpdateWithImageBinding(
+        content,
+        image_view,
+        null,
+        .{ .image_id = 4, .generation = 8, .resource = image_three },
+    );
+    try std.testing.expectEqual(@as(usize, 1), third.external_resources.len);
+    try std.testing.expectEqualDeep(image_three, third.external_resources[0].resource);
+    try std.testing.expectEqual(@as(u64, 3), render.terminal.contentUsage(content).resource_high_water);
+    try composer.apply(producer, third);
 }
 
 test "terminal Canvas content reuses exact combining runs" {
@@ -714,6 +1033,7 @@ test "terminal Canvas content emits sparse atlas generations and Composer state"
             .atlas_entries = 1,
             .producer_revision = 3,
             .resource_generation = first_generation + 1,
+            .resource_high_water = 1,
         },
         render.terminal.contentUsage(content),
     );

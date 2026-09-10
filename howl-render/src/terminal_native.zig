@@ -111,6 +111,17 @@ pub const CursorContext = struct {
     lifecycle_revision: u64,
 };
 
+/// Binds one exact terminal image generation to a Host-managed Canvas resource.
+///
+/// Content never owns or fetches the RGBA bytes. The Host keeps this association
+/// so a later Canvas missing-resource result can be mapped back to the exact
+/// terminal `image_id + generation` fetch key.
+pub const ExternalImageBinding = struct {
+    image_id: u32,
+    generation: u64,
+    resource: canvas.ResourceRef,
+};
+
 /// Opaque bounded owner of terminal -> Canvas presentation state.
 ///
 /// Returned `canvas.ProducerUpdate` slices borrow this owner and must be applied
@@ -123,6 +134,7 @@ pub const ContentUsage = struct {
     atlas_entries: usize,
     producer_revision: u64,
     resource_generation: u64,
+    resource_high_water: u64,
 };
 
 pub const ContentInitError = std.mem.Allocator.Error || ShapeCacheInitError || AtlasError || error{
@@ -133,9 +145,13 @@ pub const ContentError = AtlasError || ShapeCacheError || error{
     InvalidView,
     InvalidColor,
     InvalidCursorContext,
+    InvalidImageBinding,
+    ImageLimit,
+    ImageLayerUnsupported,
     InvalidPresentationGeometry,
     CommandLimit,
     ProducerRevisionOverflow,
+    ResourceIdentityOverflow,
     ResourceGenerationOverflow,
 };
 
@@ -208,10 +224,26 @@ const ContentImpl = struct {
     raster: []u8,
     commands: []canvas.Input,
     uploads: [1]canvas.ResourceUpload = undefined,
+    external_resources: [1]canvas.ExternalResourceDeclaration = undefined,
+    removals: [1]canvas.ResourceRemoval = undefined,
     producer_revision: u64 = 0,
     resource_generation: u64 = 0,
+    resource_high_water: u64 = 0,
+    atlas_resource_id: ?canvas.ResourceId = null,
+    published_image: ?PublishedImage = null,
     published_atlas_generation: u64 = 0,
     published_atlas_entries: usize = 0,
+};
+
+const PublishedImage = struct {
+    image_id: u32,
+    generation: u64,
+    external: canvas.ExternalResourceDeclaration,
+};
+
+const ProjectedImage = struct {
+    published: PublishedImage,
+    command: canvas.Input,
 };
 
 const AtlasPack = struct {
@@ -452,6 +484,7 @@ pub fn contentUsage(content: *const Content) ContentUsage {
         .atlas_entries = atlasEntryCount(impl.atlas),
         .producer_revision = impl.producer_revision,
         .resource_generation = impl.resource_generation,
+        .resource_high_water = impl.resource_high_water,
     };
 }
 
@@ -467,6 +500,29 @@ pub fn takeContentUpdate(
     snapshot: *const View.Snapshot,
     cursor_context: ?CursorContext,
 ) ContentError!canvas.ProducerUpdate {
+    return takeContentUpdateInner(content, snapshot, cursor_context, null);
+}
+
+/// Projects one immutable terminal view plus one exact Host image binding.
+///
+/// This deliberately narrow first image lane accepts exactly one visible image
+/// and one placement, and only the already-reviewed nonnegative-z paint phase.
+/// RGBA bytes remain outside Content and Canvas recovery storage.
+pub fn takeContentUpdateWithImageBinding(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+    cursor_context: ?CursorContext,
+    image_binding: ExternalImageBinding,
+) ContentError!canvas.ProducerUpdate {
+    return takeContentUpdateInner(content, snapshot, cursor_context, image_binding);
+}
+
+fn takeContentUpdateInner(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+    cursor_context: ?CursorContext,
+    image_binding: ?ExternalImageBinding,
+) ContentError!canvas.ProducerUpdate {
     const impl = contentImpl(content);
     const surface = try contentSurfaceSize(View.begin(snapshot), impl.config.cell_size);
     const projection = try buildContentCommands(
@@ -481,6 +537,7 @@ pub fn takeContentUpdate(
         impl.shaped,
         impl.raster,
     );
+    var command_count = projection.command_count;
     const atlas = atlasView(impl.atlas);
     const atlas_entries = atlasEntryCount(impl.atlas);
     const atlas_changed = atlas.generation != impl.published_atlas_generation or
@@ -494,12 +551,71 @@ pub fn takeContentUpdate(
             return error.ResourceGenerationOverflow;
         next_resource_generation += 1;
     }
-    const resource = if (projection.has_raster)
-        contentResource(next_resource_generation)
+    var next_resource_high_water = impl.resource_high_water;
+    var next_atlas_resource_id = impl.atlas_resource_id;
+    if (publish_atlas and next_atlas_resource_id == null) {
+        if (next_resource_high_water >= canvas.ResourceId.max_identity)
+            return error.ResourceIdentityOverflow;
+        next_resource_high_water += 1;
+        next_atlas_resource_id = canvas.ResourceId.local(next_resource_high_water) catch
+            return error.ResourceIdentityOverflow;
+    }
+    const resource = if (projection.has_raster) contentResource(
+        next_atlas_resource_id orelse return error.InvalidPresentationGeometry,
+        next_resource_generation,
+    ) else null;
+    if (resource) |value|
+        bindContentResource(impl.commands[0..command_count], value);
+
+    const projected_image = if (image_binding) |binding|
+        try projectExternalImage(
+            snapshot,
+            binding,
+            surface,
+            impl.config.cell_size,
+        )
     else
         null;
-    if (resource) |value|
-        bindContentResource(impl.commands[0..projection.command_count], value);
+    var next_published_image = impl.published_image;
+    var external_count: usize = 0;
+    var removal_count: usize = 0;
+    if (projected_image) |image| {
+        const image_identity = try contentExternalIdentity(image.published.external.resource);
+        if (next_atlas_resource_id) |atlas_id| {
+            if (atlas_id == image.published.external.resource.resource)
+                return error.InvalidImageBinding;
+        }
+        if (impl.published_image) |published| {
+            if (published.external.resource.resource == image.published.external.resource.resource) {
+                if (!std.meta.eql(published, image.published) and
+                    @backingInt(image.published.external.resource.generation) <=
+                        @backingInt(published.external.resource.generation))
+                    return error.InvalidImageBinding;
+            } else {
+                if (image_identity <= next_resource_high_water)
+                    return error.InvalidImageBinding;
+                impl.removals[0] = .{ .resource = published.external.resource };
+                removal_count = 1;
+                next_resource_high_water = image_identity;
+            }
+        } else {
+            if (image_identity <= next_resource_high_water)
+                return error.InvalidImageBinding;
+            next_resource_high_water = image_identity;
+        }
+        if (impl.published_image == null or
+            !std.meta.eql(impl.published_image.?, image.published))
+        {
+            impl.external_resources[0] = image.published.external;
+            external_count = 1;
+        }
+        try appendContentInput(impl.commands, &command_count, image.command);
+        next_published_image = image.published;
+    } else if (impl.published_image) |published| {
+        impl.removals[0] = .{ .resource = published.external.resource };
+        removal_count = 1;
+        next_published_image = null;
+    }
 
     const cursor_binding = try contentCursorBinding(
         snapshot,
@@ -527,6 +643,9 @@ pub fn takeContentUpdate(
     } else &.{};
 
     impl.producer_revision = next_producer_revision;
+    impl.resource_high_water = next_resource_high_water;
+    impl.atlas_resource_id = next_atlas_resource_id;
+    impl.published_image = next_published_image;
     if (publish_atlas) {
         impl.resource_generation = next_resource_generation;
         impl.published_atlas_generation = atlas.generation;
@@ -535,8 +654,9 @@ pub fn takeContentUpdate(
     return .{
         .revision = @fromBackingInt(@intCast(next_producer_revision)),
         .uploads = uploads,
-        .removals = &.{},
-        .commands = impl.commands[0..projection.command_count],
+        .external_resources = impl.external_resources[0..external_count],
+        .removals = impl.removals[0..removal_count],
+        .commands = impl.commands[0..command_count],
         .cursor_binding = cursor_binding,
     };
 }
@@ -1205,7 +1325,7 @@ fn buildContentCommands(
         }
     }
 
-    const placeholder_resource = contentResource(1);
+    const placeholder_resource = placeholderContentResource();
     var has_raster = false;
     for (rows, 0..) |row, row_index| {
         const first = @as(usize, row.cell_offset);
@@ -1460,11 +1580,164 @@ fn bindContentResource(commands: []canvas.Input, resource: canvas.ResourceRef) v
     };
 }
 
-fn contentResource(generation: u64) canvas.ResourceRef {
-    std.debug.assert(generation != 0);
+fn placeholderContentResource() canvas.ResourceRef {
     return .{
         .resource = canvas.ResourceId.local(1) catch unreachable,
+        .generation = @fromBackingInt(1),
+    };
+}
+
+fn contentResource(resource: canvas.ResourceId, generation: u64) canvas.ResourceRef {
+    std.debug.assert(generation != 0);
+    return .{
+        .resource = resource,
         .generation = @fromBackingInt(@intCast(generation)),
+    };
+}
+
+fn contentExternalIdentity(resource: canvas.ResourceRef) ContentError!u64 {
+    if (resource.resource.isShared() or @backingInt(resource.generation) == 0)
+        return error.InvalidImageBinding;
+    return resource.resource.identity() catch error.InvalidImageBinding;
+}
+
+fn contentGraphicsScaleFloor(
+    value: u64,
+    numerator: u16,
+    denominator: u32,
+) ContentError!u64 {
+    if (denominator == 0) return error.InvalidPresentationGeometry;
+    const product = std.math.mul(u64, value, numerator) catch
+        return error.InvalidPresentationGeometry;
+    return product / denominator;
+}
+
+fn contentGraphicsScaleCeil(
+    value: u64,
+    numerator: u16,
+    denominator: u32,
+) ContentError!u64 {
+    if (denominator == 0) return error.InvalidPresentationGeometry;
+    const product = std.math.mul(u64, value, numerator) catch
+        return error.InvalidPresentationGeometry;
+    const rounded = std.math.add(u64, product, denominator - 1) catch
+        return error.InvalidPresentationGeometry;
+    return rounded / denominator;
+}
+
+fn projectExternalImage(
+    snapshot: *const View.Snapshot,
+    binding: ExternalImageBinding,
+    surface: canvas.Size,
+    cell_size: canvas.Size,
+) ContentError!ProjectedImage {
+    const graphics = View.graphics(snapshot);
+    if (graphics.images.len != 1 or graphics.placements.len != 1)
+        return error.ImageLimit;
+    const image = graphics.images[0];
+    const placement = graphics.placements[0];
+    if (binding.image_id != image.image_id or binding.generation != image.generation)
+        return error.InvalidImageBinding;
+    if (placement.image_id != image.image_id) return error.InvalidView;
+    if (placement.z < 0) return error.ImageLayerUnsupported;
+    if (graphics.cell_pixel_width == 0 or graphics.cell_pixel_height == 0)
+        return error.InvalidView;
+    const image_width = std.math.cast(u16, image.width) orelse
+        return error.InvalidPresentationGeometry;
+    const image_height = std.math.cast(u16, image.height) orelse
+        return error.InvalidPresentationGeometry;
+    const source_x = std.math.cast(u16, placement.source_x) orelse
+        return error.InvalidPresentationGeometry;
+    const source_y = std.math.cast(u16, placement.source_y) orelse
+        return error.InvalidPresentationGeometry;
+    const source_width = std.math.cast(u16, placement.source_width) orelse
+        return error.InvalidPresentationGeometry;
+    const source_height = std.math.cast(u16, placement.source_height) orelse
+        return error.InvalidPresentationGeometry;
+    const stride = std.math.mul(usize, @as(usize, image_width), 4) catch
+        return error.InvalidPresentationGeometry;
+
+    const canonical_x = std.math.add(
+        u64,
+        std.math.mul(
+            u64,
+            placement.column,
+            graphics.cell_pixel_width,
+        ) catch return error.InvalidPresentationGeometry,
+        placement.cell_x,
+    ) catch return error.InvalidPresentationGeometry;
+    const canonical_y = std.math.add(
+        u64,
+        std.math.mul(
+            u64,
+            placement.row,
+            graphics.cell_pixel_height,
+        ) catch return error.InvalidPresentationGeometry,
+        placement.cell_y,
+    ) catch return error.InvalidPresentationGeometry;
+    const canonical_right = std.math.add(u64, canonical_x, placement.pixel_width) catch
+        return error.InvalidPresentationGeometry;
+    const canonical_bottom = std.math.add(u64, canonical_y, placement.pixel_height) catch
+        return error.InvalidPresentationGeometry;
+    const left = try contentGraphicsScaleFloor(
+        canonical_x,
+        cell_size.width,
+        graphics.cell_pixel_width,
+    );
+    const top = try contentGraphicsScaleFloor(
+        canonical_y,
+        cell_size.height,
+        graphics.cell_pixel_height,
+    );
+    const right = try contentGraphicsScaleCeil(
+        canonical_right,
+        cell_size.width,
+        graphics.cell_pixel_width,
+    );
+    const bottom = try contentGraphicsScaleCeil(
+        canonical_bottom,
+        cell_size.height,
+        graphics.cell_pixel_height,
+    );
+    if (right <= left or bottom <= top)
+        return error.InvalidPresentationGeometry;
+
+    const external = canvas.ExternalResourceDeclaration{
+        .resource = binding.resource,
+        .format = .rgba8,
+        .size = .{ .width = image_width, .height = image_height },
+        .stride = stride,
+    };
+    return .{
+        .published = .{
+            .image_id = image.image_id,
+            .generation = image.generation,
+            .external = external,
+        },
+        .command = .{ .rgba = .{
+            .destination = .{
+                .x = std.math.cast(i32, left) orelse
+                    return error.InvalidPresentationGeometry,
+                .y = std.math.cast(i32, top) orelse
+                    return error.InvalidPresentationGeometry,
+                .width = std.math.cast(u16, right - left) orelse
+                    return error.InvalidPresentationGeometry,
+                .height = std.math.cast(u16, bottom - top) orelse
+                    return error.InvalidPresentationGeometry,
+            },
+            .clip = contentSurfaceRect(surface),
+            .resource = .{
+                .resource = binding.resource,
+                .format = .rgba8,
+                .size = external.size,
+                .source = .{
+                    .x = source_x,
+                    .y = source_y,
+                    .width = source_width,
+                    .height = source_height,
+                },
+            },
+        } },
     };
 }
 
