@@ -7782,6 +7782,103 @@ test "terminal animation service chooses earliest independent image boundary" {
     try std.testing.expectEqualSlices(u8, &.{ 0, 255, 0, 255 }, both_second.pixels);
 }
 
+test "terminal animation lifecycle preserves finite loading stop selection and gaps" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(1, 1);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=41,C=1,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=41,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\x1b\\" ++
+            "\x1b_Ga=a,i=41,s=3,v=2,q=2\x1b\\",
+    )).stateChanged());
+
+    const finite_revision = terminal.semanticSequence();
+    const finite_started = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!finite_started.changed);
+    try std.testing.expectEqual(@as(?u32, 40), finite_started.next_ms);
+    const finite_frame = terminal.serviceAnimations(140 * std.time.ns_per_ms);
+    try std.testing.expect(finite_frame.changed);
+    try std.testing.expectEqual(@as(?u32, 50), finite_frame.next_ms);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 255, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+    const finite_stopped = terminal.serviceAnimations(190 * std.time.ns_per_ms);
+    try std.testing.expect(!finite_stopped.changed);
+    try std.testing.expectEqual(@as(?u32, null), finite_stopped.next_ms);
+    try std.testing.expectEqual(finite_revision + 2, terminal.semanticSequence());
+    const stopped_generation = terminal.images(0).image(0).?.generation;
+    const idle = terminal.serviceAnimations(1000 * std.time.ns_per_ms);
+    try std.testing.expect(!idle.changed);
+    try std.testing.expectEqual(@as(?u32, null), idle.next_ms);
+    try std.testing.expectEqual(stopped_generation, terminal.images(0).image(0).?.generation);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=a,i=41,s=3,v=1,c=1,r=1,z=25,q=2\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+    try std.testing.expectEqual(
+        @as(?u32, 25),
+        terminal.serviceAnimations(2000 * std.time.ns_per_ms).next_ms,
+    );
+    const restarted_frame = terminal.serviceAnimations(2025 * std.time.ns_per_ms);
+    try std.testing.expect(restarted_frame.changed);
+    try std.testing.expectEqual(@as(?u32, 50), restarted_frame.next_ms);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 255, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=a,i=41,s=2,c=2,q=2\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqual(
+        @as(?u32, 50),
+        terminal.serviceAnimations(3000 * std.time.ns_per_ms).next_ms,
+    );
+    const loading_last = terminal.serviceAnimations(3050 * std.time.ns_per_ms);
+    try std.testing.expect(!loading_last.changed);
+    try std.testing.expectEqual(@as(?u32, null), loading_last.next_ms);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 255, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=a,i=41,s=1,q=2\x1b\\" ++
+            "\x1b_Ga=a,i=41,c=1,q=2\x1b\\" ++
+            "\x1b_Ga=a,i=41,r=2,z=70,q=2\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        terminal.images(0).image(0).?.pixels,
+    );
+    try std.testing.expectEqual(
+        @as(?u32, null),
+        terminal.serviceAnimations(4000 * std.time.ns_per_ms).next_ms,
+    );
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=a,i=41,s=3,v=1,q=2\x1b\\",
+    )).stateChanged());
+    try std.testing.expectEqual(
+        @as(?u32, 25),
+        terminal.serviceAnimations(5000 * std.time.ns_per_ms).next_ms,
+    );
+    const changed_gap = terminal.serviceAnimations(5025 * std.time.ns_per_ms);
+    try std.testing.expect(changed_gap.changed);
+    try std.testing.expectEqual(@as(?u32, 70), changed_gap.next_ms);
+}
+
 test "cursor trail timestamp follows Kitty absolute-position boundaries" {
     var terminal = try Terminal.init(std.testing.allocator, 4, 8);
     defer terminal.deinit();

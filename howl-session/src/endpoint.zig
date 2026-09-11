@@ -2078,6 +2078,95 @@ test "idle Kitty animation releases observer with a new exact image generation" 
     try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 128 }, current.pixels);
 }
 
+test "finite Kitty animation publishes final stop and clears endpoint deadline" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-image-animation-stop.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 8,
+            .history_rows = 8,
+            .shell = "/bin/sh",
+            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=10,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=10,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\\033\\\\\\033_Ga=a,i=10,s=3,v=2,q=2\\033\\\\'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    var attempts: usize = 0;
+    while (attempts < 1000) : (attempts += 1) {
+        try server.turn(1);
+        var current = howl.images(server.session, 0);
+        if (current.imageCount() == 1 and server.animation_wait_ms != null) break;
+    }
+    const first_wait = server.animation_wait_ms orelse return error.TestTimeout;
+    const first_now = nowNs(server.io) +
+        (@as(u64, first_wait) + 1) * std.time.ns_per_ms;
+    const first = try howl.service(server.session, false, false, first_now);
+    try std.testing.expect(first.changed);
+    server.applyServiceResult(first);
+    const second_wait = server.animation_wait_ms orelse return error.TestTimeout;
+    var first_images = howl.images(server.session, 0);
+    const first_image = first_images.image(0) orelse return error.TestTimeout;
+    const last_frame_generation = first_image.generation;
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, first_image.pixels);
+    const before_stop_observation = server.observation_revision;
+    const before_stop_terminal = howl.revision(server.session);
+
+    try sendObserve(&peer, &server, before_stop_observation);
+    const stop_now = first_now +
+        (@as(u64, second_wait) + 1) * std.time.ns_per_ms;
+    const stopped = try howl.service(server.session, false, false, stop_now);
+    try std.testing.expect(stopped.changed);
+    try std.testing.expectEqual(@as(?u32, null), stopped.animation_wait_ms);
+    server.applyServiceResult(stopped);
+    try std.testing.expect(server.animation_wait_ms == null);
+    try std.testing.expect(howl.revision(server.session) > before_stop_terminal);
+    try std.testing.expect(server.observation_revision > before_stop_observation);
+    var stopped_images = howl.images(server.session, 0);
+    const stopped_image = stopped_images.image(0) orelse return error.TestTimeout;
+    try std.testing.expectEqual(last_frame_generation, stopped_image.generation);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, stopped_image.pixels);
+
+    var wire = try receiveWireSnapshot(&peer, &server);
+    defer wire.deinit();
+    try std.testing.expect(wire.begin.revision > before_stop_observation);
+    try std.testing.expectEqual(howl.revision(server.session), wire.begin.terminal_revision);
+    const graphics_header = try protocol.decodeSnapshotGraphicsHeader(
+        wire.graphics[0..protocol.graphics_v2.manifest_header_bytes],
+    );
+    const wire_image = try protocol.decodeSnapshotImage(
+        wire.graphics[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes],
+    );
+    try std.testing.expectEqual(@as(u16, 1), graphics_header.image_count);
+    try std.testing.expectEqual(last_frame_generation, wire_image.generation);
+
+    const stopped_observation = server.observation_revision;
+    const stopped_terminal = howl.revision(server.session);
+    const idle = try howl.service(
+        server.session,
+        false,
+        false,
+        stop_now + std.time.ns_per_s,
+    );
+    try std.testing.expect(!idle.changed);
+    try std.testing.expectEqual(@as(?u32, null), idle.animation_wait_ms);
+    server.applyServiceResult(idle);
+    try std.testing.expectEqual(stopped_terminal, howl.revision(server.session));
+    try std.testing.expectEqual(stopped_observation, server.observation_revision);
+}
+
 fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
     var payload: [protocol.payload_bytes.observe]u8 = undefined;
     protocol.encodeObserve(&payload, .{ .after_revision = after_revision });
