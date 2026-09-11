@@ -1667,6 +1667,56 @@ test "terminal: Kitty C=1 display retains cursor for explicit placement" {
     try std.testing.expectEqual(@as(u16, 2), placement.col);
 }
 
+test "terminal: Kitty default placement advances cursor through VT ownership" {
+    var terminal = try Terminal.init(std.testing.allocator, 6, 10);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[2;3H")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=52,c=4,r=3,q=2;AQIDBA==\x1b\\",
+    )).stateChanged());
+    var view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 6), view.cursor_col);
+    const placement = terminal.images(0).placement(0).?;
+    try std.testing.expectEqual(@as(u16, 1), placement.row);
+    try std.testing.expectEqual(@as(u16, 2), placement.col);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=53,q=2;BQYHCA==\x1b\\" ++
+            "\x1b_Ga=p,i=53,c=2,r=2,q=2\x1b\\",
+    )).stateChanged());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 1), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_col);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=p,i=53,c=2,r=2,C=1,q=2\x1b\\",
+    )).stateChanged());
+    view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), view.cursor_col);
+}
+
+test "terminal: Kitty placement cursor advance scrolls history without detaching image" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+
+    try std.testing.expect((try terminal.feed("\x1b[3;2H")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=54,c=2,r=2,q=2;CQoLDA==\x1b\\",
+    )).stateChanged());
+    const view = terminal.semanticView(0);
+    try std.testing.expectEqual(@as(u16, 2), view.cursor_row);
+    try std.testing.expectEqual(@as(u16, 3), view.cursor_col);
+    try std.testing.expectEqual(@as(u32, 1), view.history_count);
+    const placement = terminal.images(0).placement(0).?;
+    try std.testing.expectEqual(@as(u16, 1), placement.row);
+    try std.testing.expectEqual(@as(u16, 1), placement.col);
+}
+
 test "terminal: Kitty deletion is silent and preserves lowercase image data" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

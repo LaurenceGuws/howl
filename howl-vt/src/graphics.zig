@@ -131,6 +131,12 @@ const Loading = struct {
     used: usize = 0,
 };
 
+/// Reports one Kitty placement-driven terminal cursor consequence.
+pub const CursorAdvance = struct {
+    cols: u16,
+    rows: u16,
+};
+
 /// Reports exact bounded Kitty graphics admission.
 const Result = struct {
     /// True when retained images or placements changed.
@@ -145,6 +151,8 @@ const Result = struct {
     response_frame: ?u16 = null,
     /// Null identifies success; otherwise supplies Kitty's stable short error.
     failure: ?Failure = null,
+    /// Moves the terminal cursor after one successful ordinary placement.
+    cursor_advance: ?CursorAdvance = null,
     /// Suppresses success or all responses according to `q`.
     quiet: u2 = 0,
 };
@@ -811,6 +819,10 @@ pub const Plane = struct {
             .changed = true,
             .response_id = loading.id,
             .response_number = nonzero(loading.image_number),
+            .cursor_advance = if (display and loading.compose_mode != 1) .{
+                .cols = planned_placement.?.cols,
+                .rows = planned_placement.?.rows,
+            } else null,
             .quiet = loading.quiet,
         };
     }
@@ -879,6 +891,10 @@ pub const Plane = struct {
             .changed = true,
             .response_id = retained.kitty_id,
             .response_number = retained.kitty_number,
+            .cursor_advance = if (command_value.compose_mode != 1) .{
+                .cols = planned.cols,
+                .rows = planned.rows,
+            } else null,
             .quiet = command_value.quiet,
         };
     }

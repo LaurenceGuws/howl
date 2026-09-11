@@ -4986,7 +4986,43 @@ fn applyKittyGraphicsPacket(terminal: *Terminal, packet: []const u8) GraphicsEve
         try terminal.reply_buffer.append("\x1b\\");
     }
 
-    return result.changed or (respond and !suppressed);
+    const cursor_changed = if (result.cursor_advance) |advance|
+        applyKittyGraphicsCursorAdvance(terminal, advance)
+    else
+        false;
+    return result.changed or cursor_changed or (respond and !suppressed);
+}
+
+fn applyKittyGraphicsCursorAdvance(
+    terminal: *Terminal,
+    advance: graphics_mod.CursorAdvance,
+) bool {
+    const screen = terminal.screen_state.active();
+    const bank = graphicsBank(terminal);
+    const cursor_before = screen.cursor;
+    const wrap_before = screen.wrap_pending;
+    var graphics_changed = false;
+
+    var remaining = advance.rows -| 1;
+    while (remaining != 0) : (remaining -= 1) {
+        const scrolls = screen.cursor.row == screen.scrollBottom();
+        const history_scroll = !terminal.screen_state.alt_active and screen.scroll_top == 0 and
+            screen.scrollBottom() == screen.rows - 1;
+        screen.lineFeed();
+        if (scrolls and !history_scroll) {
+            graphics_changed = terminal.graphics.scroll(
+                bank,
+                graphicsScreenOrigin(terminal) + screen.scroll_top,
+                graphicsScreenOrigin(terminal) + screen.scrollBottom(),
+                1,
+                true,
+            ) or graphics_changed;
+        }
+    }
+    const column_changed = advance.cols != 0 and
+        screen.moveCursor(.{ .cursor_forward = advance.cols });
+    return graphics_changed or column_changed or !std.meta.eql(cursor_before, screen.cursor) or
+        wrap_before != screen.wrap_pending;
 }
 
 test "discarded string controls stream without retaining payload bytes" {
