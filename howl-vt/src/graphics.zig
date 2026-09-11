@@ -26,6 +26,8 @@ const max_frames: usize = 256;
 pub const max_dimension: u32 = 4096;
 /// Bounds one encoded Kitty APC command chunk.
 pub const max_command_bytes: usize = 8192;
+/// Bounds one in-flight compressed direct payload above decoded image quota.
+const max_compressed_bytes: usize = max_image_bytes + 128 * 1024;
 
 /// Identifies the screen bank owning one placement.
 pub const Bank = enum { primary, alternate };
@@ -124,6 +126,8 @@ const Loading = struct {
     background_rgba: u32,
     z: i32,
     compose_mode: u2,
+    compression: u8,
+    expected_bytes: usize,
     width: u32,
     height: u32,
     quiet: u2,
@@ -189,6 +193,7 @@ const Command = struct {
     action: u8 = 't',
     medium: u8 = 'd',
     format: u8 = 32,
+    compression: u8 = 0,
     id: u32 = 0,
     image_number: u32 = 0,
     width: u32 = 0,
@@ -372,7 +377,24 @@ pub const Plane = struct {
             else
                 self.allocateKittyId() orelse
                     return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
-            const input = try self.allocator.alloc(u8, input_bytes);
+            if (command_value.compression != 0 and command_value.compression != 'z')
+                return .{
+                    .response_id = nonzero(command_value.id),
+                    .response_number = nonzero(command_value.image_number),
+                    .failure = .unsupported,
+                    .quiet = command_value.quiet,
+                };
+            const storage_bytes = if (command_value.compression == 'z')
+                compressedInputCapacity(input_bytes) orelse
+                    return .{
+                        .response_id = nonzero(command_value.id),
+                        .response_number = nonzero(command_value.image_number),
+                        .failure = .quota,
+                        .quiet = command_value.quiet,
+                    }
+            else
+                input_bytes;
+            const input = try self.allocator.alloc(u8, storage_bytes);
             self.loading = .{
                 .action = command_value.action,
                 .format = command_value.format,
@@ -390,6 +412,8 @@ pub const Plane = struct {
                 .background_rgba = 0,
                 .z = command_value.z,
                 .compose_mode = command_value.compose_mode,
+                .compression = command_value.compression,
+                .expected_bytes = input_bytes,
                 .width = command_value.width,
                 .height = command_value.height,
                 .quiet = command_value.quiet,
@@ -402,7 +426,7 @@ pub const Plane = struct {
                 self.cancel();
                 return self.transmit(command_value, bank, row, col, cell_width, cell_height);
             }
-            if (command_value.format != 32 or command_value.action != 't') {
+            if (command_value.format != 32 or command_value.action != 't' or command_value.compression != 0) {
                 self.cancel();
                 return .{ .failure = .invalid, .quiet = command_value.quiet };
             }
@@ -430,9 +454,16 @@ pub const Plane = struct {
         };
         loading.used += decoded_len;
         if (command_value.more) return .{ .quiet = loading.quiet };
-        if (loading.used != loading.bytes.len) {
-            const id = loading.id;
-            const quiet = loading.quiet;
+        if (loading.compression == 0) {
+            if (loading.used != loading.expected_bytes) {
+                const id = loading.id;
+                const quiet = loading.quiet;
+                self.cancel();
+                return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
+            }
+        } else if (!(try inflateLoading(self))) {
+            const id = self.loading.?.id;
+            const quiet = self.loading.?.quiet;
             self.cancel();
             return .{ .response_id = id, .failure = .invalid, .quiet = quiet };
         }
@@ -472,12 +503,19 @@ pub const Plane = struct {
             command_value.x > image_value.width - width or command_value.y > image_value.height - height or
             (command_value.format != 24 and command_value.format != 32))
             return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        if (command_value.compression != 0 and command_value.compression != 'z')
+            return .{ .response_id = image_value.kitty_id, .failure = .unsupported, .quiet = command_value.quiet };
         const channels: usize = if (command_value.format == 24) 3 else 4;
         const input_bytes = std.math.mul(usize, width, height) catch
             return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
         const byte_count = std.math.mul(usize, input_bytes, channels) catch
             return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet };
-        const input = try self.allocator.alloc(u8, byte_count);
+        const storage_bytes = if (command_value.compression == 'z')
+            compressedInputCapacity(byte_count) orelse
+                return .{ .response_id = image_value.kitty_id, .failure = .quota, .quiet = command_value.quiet }
+        else
+            byte_count;
+        const input = try self.allocator.alloc(u8, storage_bytes);
         self.loading = .{
             .action = 'f',
             .format = command_value.format,
@@ -495,6 +533,8 @@ pub const Plane = struct {
             .background_rgba = command_value.cell_y,
             .z = command_value.z,
             .compose_mode = compose_mode,
+            .compression = command_value.compression,
+            .expected_bytes = byte_count,
             .width = width,
             .height = height,
             .quiet = command_value.quiet,
@@ -507,6 +547,7 @@ pub const Plane = struct {
         continuation.image_number = 0;
         continuation.width = 0;
         continuation.height = 0;
+        continuation.compression = 0;
         return self.transmit(continuation, .primary, 0, 0, 1, 1);
     }
 
@@ -1843,6 +1884,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'I' => 1 << 19,
             'C' => 1 << 20,
             'N' => 1 << 21,
+            'o' => 1 << 22,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -1888,10 +1930,44 @@ fn parseCommand(bytes: []const u8) ?Command {
                 if (result.compose_mode > 1) return null;
             },
             'N' => result.usage_hints = std.fmt.parseInt(u32, value, 10) catch return null,
+            'o' => if (value.len == 1) {
+                result.compression = value[0];
+            } else return null,
             else => return null,
         }
     }
     return result;
+}
+
+fn compressedInputCapacity(raw_bytes: usize) ?usize {
+    const zlib_bound = std.math.add(usize, raw_bytes, raw_bytes >> 12) catch return null;
+    const with_small_blocks = std.math.add(usize, zlib_bound, raw_bytes >> 14) catch return null;
+    const with_large_blocks = std.math.add(usize, with_small_blocks, raw_bytes >> 25) catch return null;
+    const framed = std.math.add(usize, with_large_blocks, 13 + 64 * 1024) catch return null;
+    return @min(framed, max_compressed_bytes);
+}
+
+fn inflateLoading(self: *Plane) std.mem.Allocator.Error!bool {
+    const loading = &self.loading.?;
+    if (loading.compression != 'z' or loading.expected_bytes == 0 or loading.used == 0) return false;
+    const raw = try self.allocator.alloc(u8, loading.expected_bytes);
+    var adopted = false;
+    defer if (!adopted) self.allocator.free(raw);
+    const work = try self.allocator.alloc(u8, std.compress.flate.max_window_len);
+    defer self.allocator.free(work);
+    var output: std.Io.Writer = .fixed(raw);
+    var input: std.Io.Reader = .fixed(loading.bytes[0..loading.used]);
+    var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
+    const decoded_count = decompressor.reader.streamRemaining(&output) catch return false;
+    if (decoded_count != loading.expected_bytes or output.buffered().len != loading.expected_bytes or
+        input.seek != input.end)
+        return false;
+    self.allocator.free(loading.bytes);
+    loading.bytes = raw;
+    loading.used = loading.expected_bytes;
+    loading.compression = 0;
+    adopted = true;
+    return true;
 }
 
 fn ceilRatio(a: u32, b: u32, divisor: u32) ?u32 {
@@ -2032,6 +2108,146 @@ test "static plane admission is transactional across chunks replacement put and 
     try std.testing.expect((try plane.command("a=d,d=I,i=7", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "Kitty direct zlib transmission is exact bounded and shared by frames" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    try std.testing.expect(compressedInputCapacity(4).? >= 12);
+    try std.testing.expect(compressedInputCapacity(max_image_bytes).? <= max_compressed_bytes);
+
+    const one_shot = try plane.command(
+        "a=t,f=32,s=1,v=1,i=81,o=z,q=2;eJz7z8DwHwAE/wH/",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(one_shot.changed);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
+
+    const first_chunk = try plane.command(
+        "a=t,f=32,s=2,v=2,i=81,o=z,m=1,q=2;eJxjYGRiZmFlY+fg",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(!first_chunk.changed);
+    const second_chunk = try plane.command(
+        "m=0,q=2;5OLm4eXjBwACuAB5",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(second_chunk.changed);
+    try std.testing.expectEqual(@as(u32, 2), plane.image(0).?.width);
+    try std.testing.expectEqual(@as(u32, 2), plane.image(0).?.height);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 },
+        plane.image(0).?.pixels,
+    );
+
+    try std.testing.expect((try plane.command(
+        "a=t,f=24,s=2,v=1,i=82,o=z,q=2;eJxjZGJmYWUDAAA+ABY=",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 1, 2, 3, 255, 4, 5, 6, 255 },
+        plane.image(1).?.pixels,
+    );
+
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=83,q=2;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const compressed_frame = try plane.command(
+        "a=f,f=32,s=1,v=1,i=83,r=2,o=z,C=1,q=2;eJxjYPj/HwADAQH/",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(compressed_frame.changed);
+    try std.testing.expectEqual(@as(?u16, 2), compressed_frame.response_frame);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 255, 255 },
+        plane.frameByNumber(plane.image(2).?.id, 2).?.pixels,
+    );
+
+    const generation = plane.generation();
+    const image_count = plane.image_count;
+    const trailing = try plane.command(
+        "a=t,f=32,s=1,v=1,i=84,o=z,q=2;eJz7z8DwHwAE/wH/AA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, trailing.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(image_count, plane.image_count);
+
+    const truncated = try plane.command(
+        "a=t,f=32,s=1,v=1,i=84,o=z,q=2;eJz7z8DwHwAE/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, truncated.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+
+    const oversized = try plane.command(
+        "a=t,f=32,s=1,v=1,i=84,o=z,q=2;eJxLTEpOSQUABcgB8A==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, oversized.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+
+    const unknown = try plane.command(
+        "a=t,f=32,s=1,v=1,i=84,o=x,q=2;eJz7z8DwHwAE/wH/",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.unsupported, unknown.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
 }
 
 test "RGB conversion quota cancellation and bank cleanup preserve exact ownership" {

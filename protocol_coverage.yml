@@ -3826,7 +3826,7 @@ references:
             bounds: parser command and payload bounds,
             conditions: Howl routes dedicated bounded Kitty graphics streaming into its common image plane,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "PNG/zlib/file/shared-memory media plus parent and virtual placement remain; ordinary display/put placements now honor Kitty default cursor advance/scroll, C=1 no-move, and bounded N advisory hints.",
+              residual: "PNG/file/shared-memory media plus parent and virtual placement remain; direct RGB/RGBA accepts raw or o=z zlib-compressed payloads, and ordinary placements honor default cursor advance/scroll, C=1 no-move, and bounded N advisory hints.",
               source: howl-vt/src/terminal.zig, symbol: applyKittyGraphicsPacket,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
@@ -3981,7 +3981,7 @@ references:
           kitty.graphics.transmit_default: {raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; bounded N usage hints are advisory no-op metadata, and ordinary display placements honor default cursor advance/scroll or C=1 no-move. Non-direct media/compression and encoded image formats remain.",
+              residual: "Howl accepts bounded direct raw or o=z zlib-compressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; bounded N usage hints are advisory no-op metadata, and ordinary display placements honor default cursor advance/scroll or C=1 no-move. Non-direct media and encoded image formats remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
           kitty.graphics.transmit: {raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
@@ -3998,7 +3998,7 @@ references:
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,
-              residual: "Howl fully coalesces at most 256 direct raw RGB/RGBA animation frames inside the existing byte quotas. Direct frame loading supports partial x/y updates, c=base frames, r=existing/root edits with untouched-pixel preservation, zero/positive/gapless timing, Y RGBA background canvases, documented X=1 and current-Kitty C=1 overwrite spellings, and advisory N hints. Non-direct media/compression and encoded image formats remain.",
+              residual: "Howl fully coalesces at most 256 direct raw or o=z zlib-compressed RGB/RGBA animation frames inside the existing byte quotas. Direct frame loading supports partial x/y updates, c=base frames, r=existing/root edits with untouched-pixel preservation, zero/positive/gapless timing, Y RGBA background canvases, documented X=1 and current-Kitty C=1 overwrite spellings, and advisory N hints. Non-direct media and encoded image formats remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.finishFrame, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty frame loading preserves edits background bases and action-specific composition"}}}
           kitty.graphics.put: {raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
