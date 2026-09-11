@@ -11,7 +11,6 @@ import 'history_viewport.dart';
 import 'howl_endpoint.dart';
 import 'howl_input.dart';
 import 'launch_config.dart';
-import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'native_host.dart';
 import 'pointer_input.dart';
@@ -25,6 +24,8 @@ import 'terminal_semantics.dart';
 import 'touch_surface.dart';
 import 'transport_recovery.dart';
 import 'visible_viewport.dart';
+
+const int _nativeImageSnapshotSupersessionLimit = 8;
 
 Future<void> main(List<String> args) async {
   const compiledEndpoint = String.fromEnvironment('HOWL_ENDPOINT');
@@ -353,8 +354,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     required NativeCanvasLease? lease,
     int? transportGeneration,
   }) async {
-    final preloaded =
-        <NativeCanvasResourceKey, NativeCanvasPreloadedResource>{};
+    final preloaded = <(int, int), NativeCanvasPreloadedResource>{};
+    var supersessions = 0;
     try {
       while (true) {
         final future = observer.observe(
@@ -374,17 +375,30 @@ final class _HowlTerminalState extends State<HowlTerminal> {
             preloaded: preloaded.values.toList(growable: false),
           );
         }
+        if (observation is NativeHostImageSupersededObservation) {
+          disposeNativeCanvasPreloadedResources(preloaded.values);
+          preloaded.clear();
+          supersessions += 1;
+          if (supersessions > _nativeImageSnapshotSupersessionLimit) {
+            throw const NativeHostException('image_refill_supersession_limit');
+          }
+          continue;
+        }
         if (observation is! NativeHostImageRefillObservation) {
           throw const NativeHostException('observe_kind');
         }
         final decoded = await prepareNativeCanvasExternalUpload(
           observation.upload,
         );
-        final replaced = preloaded[decoded.resource.key];
+        final logical = (
+          decoded.resource.key.source,
+          decoded.resource.key.resource,
+        );
+        final replaced = preloaded[logical];
         if (replaced != null && replaced.image != decoded.image) {
           replaced.image.dispose();
         }
-        preloaded[decoded.resource.key] = decoded;
+        preloaded[logical] = decoded;
       }
     } catch (_) {
       disposeNativeCanvasPreloadedResources(preloaded.values);

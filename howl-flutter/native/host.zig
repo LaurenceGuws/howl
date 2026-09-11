@@ -117,7 +117,7 @@ fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
 }
 
 pub export fn howl_native_host_version() u32 {
-    return 3;
+    return 4;
 }
 
 /// Creates an independently owned duplicate of the Host session socket. The
@@ -182,7 +182,10 @@ pub export fn howl_native_host_fetch_image_refill(
         host.allocator,
         pending.binding.image_id,
         pending.binding.generation,
-    ) catch return 4;
+    ) catch |failure| {
+        if (failure == error.ServerRejected) host.pending_image = null;
+        return imageRefillFetchFailureCode(failure);
+    };
     defer fetched.deinit();
     if (fetched.width != pending.external.size.width or
         fetched.height != pending.external.size.height or
@@ -196,6 +199,14 @@ pub export fn howl_native_host_fetch_image_refill(
     ) catch return 4;
     output_len.* = required;
     return 0;
+}
+
+fn imageRefillFetchFailureCode(failure: client.images.Error) i32 {
+    // The Host only asks for exact ids/generations that came from one accepted
+    // immutable graphics snapshot. A normal endpoint rejection therefore means
+    // canonical graphics moved before this serial refill reached its resource.
+    // Every transport, framing, allocation, and payload failure remains hard.
+    return if (failure == error.ServerRejected) 5 else 4;
 }
 
 pub export fn howl_native_host_create(
@@ -816,6 +827,12 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expect(command_capacity >= 7_000);
     try std.testing.expectEqual(@as(usize, 7), maximum_terminal_images);
     try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
+}
+
+test "native host distinguishes superseded image generation from refill failure" {
+    try std.testing.expectEqual(@as(i32, 5), imageRefillFetchFailureCode(error.ServerRejected));
+    try std.testing.expectEqual(@as(i32, 4), imageRefillFetchFailureCode(error.UnexpectedFrame));
+    try std.testing.expectEqual(@as(i32, 4), imageRefillFetchFailureCode(error.ConnectionClosed));
 }
 
 test "native host plans seven image bindings with stable logical resources" {

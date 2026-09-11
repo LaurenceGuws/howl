@@ -325,6 +325,48 @@ void main() {
   });
 
   test(
+    'candidate residency replaces an older logical Canvas generation',
+    () async {
+      final previousUpload = parseNativeHostImageRefill(_imageRefillPacket());
+      final previousPreload = await prepareNativeCanvasExternalUpload(
+        previousUpload,
+      );
+      final previous = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <NativeCanvasPreloadedResource>[previousPreload],
+      );
+
+      final newerPacket = _imageRefillPacket();
+      final newerData = ByteData.sublistView(newerPacket);
+      newerData.setUint64(32, 12, Endian.little);
+      newerData.setUint64(56, 24, Endian.little);
+      final newer = await prepareNativeCanvasExternalUpload(
+        parseNativeHostImageRefill(newerPacket),
+      );
+      try {
+        final encoded = encodeNativeHostResidency(
+          previous.lease,
+          preloaded: <NativeCanvasPreloadedResource>[newer],
+        );
+        expect(encoded.length, 32);
+        final data = ByteData.sublistView(encoded);
+        expect(data.getUint64(0, Endian.little), 3);
+        expect(data.getUint64(8, Endian.little), 7);
+        expect(data.getUint64(16, Endian.little), 12);
+      } finally {
+        disposeNativeCanvasPreloadedResources(<NativeCanvasPreloadedResource>[
+          newer,
+        ]);
+        disposeNativeCanvasLease(previous.lease);
+        for (final image in previous.retired) {
+          image.dispose();
+        }
+      }
+    },
+  );
+
+  test(
     'abandoned Canvas candidate preserves previous lease ownership',
     () async {
       final previous = await prepareNativeCanvasFrame(

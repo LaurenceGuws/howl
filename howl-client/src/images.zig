@@ -54,7 +54,8 @@ fn receiveFrom(
         const result = try protocol.decodeResult(begin_frame.payload);
         if (result.request_kind != .image_request or result.code == .ok)
             return error.UnexpectedFrame;
-        return error.ServerRejected;
+        if (result.code == .rejected) return error.ServerRejected;
+        return error.UnexpectedFrame;
     }
     if (begin_frame.kind != .image_begin) return error.UnexpectedFrame;
     const begin = try protocol.decodeImageBegin(begin_frame.payload);
@@ -164,5 +165,13 @@ test "image resource receiver rejects stale and incomplete identities" {
     try std.testing.expectError(
         error.ServerRejected,
         receiveFrom(&server, std.testing.allocator, 7, 9),
+    );
+
+    protocol.encodeResult(&result, .{ .request_kind = .image_request, .code = .unsupported });
+    const unsupported = [_]TestFrame{.{ .kind = .result, .payload = &result }};
+    var incompatible = TestFrames{ .frames = &unsupported };
+    try std.testing.expectError(
+        error.UnexpectedFrame,
+        receiveFrom(&incompatible, std.testing.allocator, 7, 9),
     );
 }

@@ -93,6 +93,10 @@ final class NativeHostImageRefillObservation extends NativeHostObservation {
   final NativeCanvasExternalUpload upload;
 }
 
+final class NativeHostImageSupersededObservation extends NativeHostObservation {
+  const NativeHostImageSupersededObservation();
+}
+
 NativeHostFrame parseNativeHostPacket(
   Uint8List bytes,
   TerminalPresentation expectedPresentation,
@@ -227,17 +231,23 @@ Uint8List encodeNativeHostResidency(
   NativeCanvasLease? lease, {
   Iterable<NativeCanvasPreloadedResource> preloaded = const [],
 }) {
-  final resources = <NativeCanvasResourceKey, NativeCanvasResource>{};
+  final resources = <(int, int), NativeCanvasResource>{};
   for (final value in preloaded) {
-    resources[value.resource.key] = value.resource;
+    final logical = (value.resource.key.source, value.resource.key.resource);
+    final prior = resources[logical];
+    if (prior == null ||
+        value.resource.key.generation > prior.key.generation) {
+      resources[logical] = value.resource;
+    }
   }
   if (lease != null) {
     for (var index = 0; index < lease.frame.resourceCount; index++) {
       final resource = lease.frame.resource(index);
+      final logical = (resource.key.source, resource.key.resource);
       if (lease.images.containsKey(resource.key) &&
-          !resources.containsKey(resource.key) &&
+          !resources.containsKey(logical) &&
           resources.length < 8) {
-        resources[resource.key] = resource;
+        resources[logical] = resource;
       }
     }
   }
@@ -446,6 +456,10 @@ final class NativeHostObserver {
     if (id is! int || code is! int) return;
     final completer = _pending.remove(id);
     if (completer == null) return;
+    if (code == 8) {
+      completer.complete(const NativeHostImageSupersededObservation());
+      return;
+    }
     if (code != 0 && code != 6) {
       completer.completeError(NativeHostException('observe_$code'));
       return;
@@ -822,6 +836,10 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
             refillSize,
             refillLength,
           );
+          if (refillCode == 5) {
+            responses.send(<Object?>[id, 8, null]);
+            continue;
+          }
           if (refillCode != 0 || refillLength.value != refillSize) {
             responses.send(<Object?>[id, 7, null]);
             continue;
