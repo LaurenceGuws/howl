@@ -196,6 +196,9 @@ const Command = struct {
     cell_y: u32 = 0,
     z: i32 = 0,
     compose_mode: u2 = 0,
+    /// Advisory Kitty usage-hint bitmask. Howl intentionally owns no cache
+    /// policy here; accepting and ignoring hints is protocol-compliant.
+    usage_hints: u32 = 0,
     x: u32 = 0,
     y: u32 = 0,
     payload: []const u8 = "",
@@ -1792,6 +1795,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'z' => 1 << 18,
             'I' => 1 << 19,
             'C' => 1 << 20,
+            'N' => 1 << 21,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -1836,6 +1840,7 @@ fn parseCommand(bytes: []const u8) ?Command {
                 result.compose_mode = std.fmt.parseInt(u2, value, 10) catch return null;
                 if (result.compose_mode > 1) return null;
             },
+            'N' => result.usage_hints = std.fmt.parseInt(u32, value, 10) catch return null,
             else => return null,
         }
     }
@@ -2517,6 +2522,49 @@ test "Kitty animation requires a placement and nonzero total duration" {
         1,
     )).changed);
     try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200).next_ms);
+}
+
+test "Kitty usage hints are bounded advisory no-op metadata" {
+    const parsed = parseCommand("a=t,f=32,s=1,v=1,i=80,N=1,q=2;/wAA/w==") orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), parsed.usage_hints);
+    const future = parseCommand("a=t,f=32,s=1,v=1,i=80,N=4294967295,q=2;/wAA/w==") orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqual(std.math.maxInt(u32), future.usage_hints);
+    try std.testing.expect(parseCommand("a=t,f=32,s=1,v=1,i=80,N=4294967296,q=2;/wAA/w==") == null);
+    try std.testing.expect(parseCommand("a=t,f=32,s=1,v=1,i=80,N=1,N=1,q=2;/wAA/w==") == null);
+
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=80,N=1,C=1,q=2;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(u8, &.{ 255, 0, 0, 255 }, plane.image(0).?.pixels);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+
+    const frame = try plane.command(
+        "a=f,f=32,i=80,s=1,v=1,r=2,z=50,N=1,C=1,q=2;AAD//w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(frame.changed);
+    try std.testing.expect(!frame.visual_changed);
+    try std.testing.expectEqual(@as(?u16, 2), frame.response_frame);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0, 0, 255, 255 },
+        plane.frameByNumber(plane.image(0).?.id, 2).?.pixels,
+    );
 }
 
 // =============================================================================

@@ -3981,7 +3981,7 @@ references:
           kitty.graphics.transmit_default: {raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; C=1 no-move display is accepted while Kitty's default post-display cursor advance and resulting scroll remain.",
+              residual: "Howl accepts only bounded direct uncompressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; bounded N usage hints are accepted as advisory no-op metadata; C=1 no-move display is accepted while Kitty's default post-display cursor advance and resulting scroll remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
           kitty.graphics.transmit: {raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
@@ -3992,14 +3992,13 @@ references:
             effect: probe image transmission support then discard probe, relevance: graphics,
             howl: *howl_static_graphics_transmit}
           kitty.graphics.animate: {raw: "APC G a=a,Pm ST", effect: control image animation, relevance: graphics,
-            howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl owns bounded stopped/loading/running frame selection, gaps, loop counts, zero-gap skipping and monotonic advancement; Session schedules idle frame boundaries from VT's exact next wait, publishes each selected-frame generation, and publishes one final finite-stop semantic revision before clearing the deadline; transient-frame cache hints remain.",
+            howl: {support: full,
               source: howl-vt/src/graphics.zig, symbol: Plane.advanceAnimations, proof: {path: howl-session/src/endpoint.zig,
                 symbol: "finite Kitty animation publishes final stop and clears endpoint deadline"}}}
           kitty.graphics.frame: {raw: "APC G a=f,Pm ; Pb ST", effect: transmit animation frame,
             relevance: graphics, howl: {support: partial, disposition: deferred, owner: howl-vt,
               milestone: advanced_graphics,
-              residual: "Howl retains at most 256 full coalesced raw RGB/RGBA animation frames across one terminal inside the existing byte quotas, including root-frame replacement and replace/source-over patches; compressed/media frame transport, relative frame chains and transient hints remain.",
+              residual: "Howl retains at most 256 full coalesced raw RGB/RGBA animation frames across one terminal inside the existing byte quotas, including root-frame replacement and replace/source-over patches; compressed/media frame transport and remaining relative-frame semantics remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.finishFrame, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "Kitty frames compose transactionally and advance on monotonic gaps"}}}
           kitty.graphics.put: {raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
