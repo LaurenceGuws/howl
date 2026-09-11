@@ -91,7 +91,7 @@ const Image = struct {
     generation: u64,
     pixels: []u8,
     current_frame: u16 = 0,
-    root_gap_ms: u32 = 40,
+    root_gap_ms: u32 = 0,
     animation: AnimationState = .stopped,
     max_loops: u32 = 0,
     loops_remaining: u32 = 0,
@@ -121,6 +121,7 @@ const Loading = struct {
     rows: u32,
     cell_x: u32,
     cell_y: u32,
+    background_rgba: u32,
     z: i32,
     compose_mode: u2,
     width: u32,
@@ -378,6 +379,7 @@ pub const Plane = struct {
                 .rows = command_value.rows,
                 .cell_x = command_value.cell_x,
                 .cell_y = command_value.cell_y,
+                .background_rgba = 0,
                 .z = command_value.z,
                 .compose_mode = command_value.compose_mode,
                 .width = command_value.width,
@@ -446,6 +448,16 @@ pub const Plane = struct {
             self.kittyImageNumberIndex(command_value.image_number)) orelse
             return .{ .failure = .missing, .quiet = command_value.quiet };
         const image_value = self.images[image_index];
+        if (command_value.cell_x > 1)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const documented_compose_mode: u2 = @intCast(command_value.cell_x);
+        if (documented_compose_mode != 0 and command_value.compose_mode != 0 and
+            documented_compose_mode != command_value.compose_mode)
+            return .{ .response_id = image_value.kitty_id, .failure = .invalid, .quiet = command_value.quiet };
+        const compose_mode = if (documented_compose_mode != 0)
+            documented_compose_mode
+        else
+            command_value.compose_mode;
         const width = if (command_value.width == 0) image_value.width else command_value.width;
         const height = if (command_value.height == 0) image_value.height else command_value.height;
         if (width > image_value.width or height > image_value.height or
@@ -472,8 +484,9 @@ pub const Plane = struct {
             .rows = command_value.rows,
             .cell_x = 0,
             .cell_y = 0,
+            .background_rgba = command_value.cell_y,
             .z = command_value.z,
-            .compose_mode = command_value.compose_mode,
+            .compose_mode = compose_mode,
             .width = width,
             .height = height,
             .quiet = command_value.quiet,
@@ -505,6 +518,7 @@ pub const Plane = struct {
         const frame_number = @min(requested, next_number);
         const root = frame_number == 1;
         const existing = self.frameIndex(image_value.id, frame_number);
+        const editing_existing = root or existing != null;
         if (!root and existing == null and self.frame_count == max_frames)
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         const canvas_bytes = image_value.pixels.len;
@@ -518,15 +532,19 @@ pub const Plane = struct {
             return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
         const canvas = try self.allocator.alloc(u8, canvas_bytes);
         errdefer self.allocator.free(canvas);
-        const base = if (loading.columns == 0)
-            null
-        else if (loading.columns == 1)
+        const base: ?[]const u8 = if (root)
             image_value.pixels
+        else if (existing) |index|
+            self.frames[index].pixels
+        else if (loading.columns == 0)
+            null
         else
-            (self.frameByNumber(image_value.id, std.math.cast(u16, loading.columns) orelse
-                return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet }) orelse
-                return .{ .response_id = loading.id, .failure = .missing, .quiet = loading.quiet }).pixels;
-        if (base) |pixels| @memcpy(canvas, pixels) else @memset(canvas, 0);
+            self.framePixels(image_value, loading.columns) orelse
+                return .{ .response_id = loading.id, .failure = .missing, .quiet = loading.quiet };
+        if (base) |pixels|
+            @memcpy(canvas, pixels)
+        else
+            fillRgba(canvas, loading.background_rgba);
         composeRgba(
             canvas,
             image_value.width,
@@ -541,7 +559,20 @@ pub const Plane = struct {
             loading.source_y,
             loading.compose_mode != 1,
         );
-        const gap: u32 = if (loading.z > 0) @intCast(loading.z) else if (loading.z < 0) 0 else 40;
+        const prior_gap: u32 = if (root)
+            image_value.root_gap_ms
+        else if (existing) |index|
+            self.frames[index].gap_ms
+        else
+            40;
+        const gap: u32 = if (loading.z > 0)
+            @intCast(loading.z)
+        else if (loading.z < 0)
+            0
+        else if (editing_existing)
+            prior_gap
+        else
+            40;
         if (root) {
             self.storage_bytes -= self.images[image_index].pixels.len;
             self.allocator.free(self.images[image_index].pixels);
@@ -1865,6 +1896,18 @@ fn rectanglesOverlap(
         @max(source_y, destination_y) < @min(source_y, destination_y) + height;
 }
 
+fn fillRgba(canvas: []u8, rgba: u32) void {
+    std.debug.assert(canvas.len % 4 == 0);
+    const pixel = [4]u8{
+        @truncate(rgba >> 24),
+        @truncate(rgba >> 16),
+        @truncate(rgba >> 8),
+        @truncate(rgba),
+    };
+    var offset: usize = 0;
+    while (offset < canvas.len) : (offset += 4) @memcpy(canvas[offset..][0..4], &pixel);
+}
+
 fn composeRgba(
     canvas: []u8,
     canvas_width: u32,
@@ -2310,7 +2353,7 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     try std.testing.expect(!started.changed);
     try std.testing.expectEqual(@as(?u32, null), started.next_ms);
     try std.testing.expect((try plane.command(
-        "a=a,i=20,s=3",
+        "a=a,i=20,s=3,r=1,z=40",
         .primary,
         0,
         0,
@@ -2378,6 +2421,133 @@ test "Kitty frames compose transactionally and advance on monotonic gaps" {
     try std.testing.expect(plane.reset());
     try std.testing.expectEqual(@as(u16, 0), plane.frame_count);
     try std.testing.expectEqual(@as(usize, 0), plane.storage_bytes);
+}
+
+test "Kitty frame loading preserves edits background bases and action-specific composition" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=2,v=2,i=25,q=2;/wAA/wD/AP8AAP///////w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    const image_id = plane.image(0).?.id;
+    try std.testing.expectEqual(@as(u32, 0), plane.images[0].root_gap_ms);
+
+    // New extra frame: 40 ms default gap and exact full-frame bytes.
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=2,v=2,i=25,r=2,z=77,C=1,q=2;CgoK/xQUFP8eHh7/KCgo/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(u32, 77), plane.frameByNumber(image_id, 2).?.gap_ms);
+
+    // Partial edit of an existing frame preserves every untouched pixel and,
+    // with z=0, preserves the existing 77 ms gap.
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=25,r=2,x=1,y=1,X=1,q=2;yAEC/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{
+            10, 10, 10, 255, 20,  20, 20, 255,
+            30, 30, 30, 255, 200, 1,  2,  255,
+        },
+        plane.frameByNumber(image_id, 2).?.pixels,
+    );
+    try std.testing.expectEqual(@as(u32, 77), plane.frameByNumber(image_id, 2).?.gap_ms);
+
+    // Root edits are edits too: preserve untouched pixels and root's default
+    // zero gap when no z change is requested.
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=25,r=1,x=0,y=1,C=1,q=2;A8kE/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{
+            255, 0,   0, 255, 0,   255, 0,   255,
+            3,   201, 4, 255, 255, 255, 255, 255,
+        },
+        plane.image(0).?.pixels,
+    );
+    try std.testing.expectEqual(@as(u32, 0), plane.images[0].root_gap_ms);
+
+    // A new frame with no c=base starts from the exact Y RGBA canvas. Use the
+    // documented X=1 overwrite spelling to prove its action-specific alias.
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=25,r=3,x=1,y=0,X=1,Y=287454020,q=2;BQbK/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{
+            0x11, 0x22, 0x33, 0x44, 5,    6,    202,  255,
+            0x11, 0x22, 0x33, 0x44, 0x11, 0x22, 0x33, 0x44,
+        },
+        plane.frameByNumber(image_id, 3).?.pixels,
+    );
+    try std.testing.expectEqual(@as(u32, 40), plane.frameByNumber(image_id, 3).?.gap_ms);
+
+    // c=base wins over Y for a new frame, preserving the selected base frame
+    // outside the transmitted patch.
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=25,r=4,c=2,x=0,y=0,C=1,Y=4278190335,q=2;BQbK/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{
+            5,  6,  202, 255, 20,  20, 20, 255,
+            30, 30, 30,  255, 200, 1,  2,  255,
+        },
+        plane.frameByNumber(image_id, 4).?.pixels,
+    );
+
+    // Invalid documented compose modes remain transactional.
+    const generation = plane.generation();
+    const storage = plane.storage_bytes;
+    const invalid = try plane.command(
+        "a=f,f=32,s=1,v=1,i=25,r=2,X=2,q=2;BQbK/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expectEqual(Failure.invalid, invalid.failure.?);
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expectEqual(storage, plane.storage_bytes);
 }
 
 test "Kitty composition owns root and nonoverlapping same-frame edits" {
@@ -2504,7 +2674,7 @@ test "Kitty animation requires a placement and nonzero total duration" {
         1,
         1,
     )).changed);
-    try std.testing.expect((try plane.command("a=a,i=41,s=3,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    try std.testing.expect((try plane.command("a=a,i=41,s=3,r=1,z=40,q=2", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(100).next_ms);
     try std.testing.expect((try plane.command("a=p,i=41,q=2", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(?u32, 40), plane.advanceAnimations(100).next_ms);
@@ -2522,6 +2692,35 @@ test "Kitty animation requires a placement and nonzero total duration" {
         1,
     )).changed);
     try std.testing.expectEqual(@as(?u32, null), plane.advanceAnimations(200).next_ms);
+}
+
+test "Kitty root frame is gapless until its gap is explicitly configured" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=42,C=1,q=2;/wAA/w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=f,f=32,s=1,v=1,i=42,r=2,z=50,C=1,q=2;AAD//w==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(u32, 0), plane.images[0].root_gap_ms);
+    try std.testing.expect((try plane.command("a=a,i=42,s=3,q=2", .primary, 0, 0, 0, 1, 1)).changed);
+    const first = plane.advanceAnimations(100);
+    try std.testing.expect(first.changed);
+    try std.testing.expectEqual(@as(?u32, 50), first.next_ms);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, plane.image(0).?.pixels);
 }
 
 test "Kitty usage hints are bounded advisory no-op metadata" {

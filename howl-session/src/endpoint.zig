@@ -2029,7 +2029,7 @@ test "idle Kitty animation releases observer with a new exact image generation" 
             .columns = 8,
             .history_rows = 8,
             .shell = "/bin/sh",
-            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=9,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=9,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\\033\\\\\\033_Ga=a,i=9,s=3,q=2\\033\\\\'; sleep 30",
+            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=9,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=9,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\\033\\\\\\033_Ga=a,i=9,s=3,r=1,z=40,q=2\\033\\\\'; sleep 30",
         },
     );
     defer server.deinit();
@@ -2096,7 +2096,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
             .columns = 8,
             .history_rows = 8,
             .shell = "/bin/sh",
-            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=10,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=10,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\\033\\\\\\033_Ga=a,i=10,s=3,v=2,q=2\\033\\\\'; sleep 30",
+            .command = "printf '\\033_Ga=T,f=32,s=1,v=1,i=10,C=1,q=2;/wAA/w==\\033\\\\\\033_Ga=f,f=32,i=10,s=1,v=1,r=2,z=50,C=1,q=2;AAD//w==\\033\\\\\\033_Ga=a,i=10,s=3,v=2,r=1,z=40,q=2\\033\\\\'; sleep 30",
         },
     );
     defer server.deinit();

@@ -707,7 +707,7 @@ test "session services terminal animation without PTY readiness" {
         "\x1b_Ga=f,f=32,i=20,s=1,v=1,r=2,z=50,C=1,q=2;AAD/gA==\x1b\\",
     )).stateChanged());
     try std.testing.expect((try state.terminal.feed(
-        "\x1b_Ga=a,i=20,s=3,q=2\x1b\\",
+        "\x1b_Ga=a,i=20,s=3,r=1,z=40,q=2\x1b\\",
     )).stateChanged());
 
     var initial_images = images(session, 0);
