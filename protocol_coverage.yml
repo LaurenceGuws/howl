@@ -2912,10 +2912,10 @@ references:
                 test: terminal paste encoding is gated by DECSET 2004}}}
           kitty.mode.synchronized_output: {raw: "CSI ? 2026 h|l", effect: toggle synchronized output,
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
-              residual: Howl retains synchronized-update state without Kitty timeout policy.,
-              source: howl-vt/src/terminal.zig, symbol: Terminal.setDecMode, proof: {
-                path: howl-vt/test/unit/terminal_test.zig,
-                symbol: "synchronized update DCS shares exact bounded mode state"}}}
+              residual: Howl retains exact VT mode state and withholds observer publication with a one-second fail-open timeout; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
+              source: howl-session/src/endpoint.zig, symbol: terminalObservationReady, proof: {
+                path: howl-session/src/endpoint.zig,
+                symbol: "synchronized output timeout fails observer publication open"}}}
           kitty.mode.color_preference:
             raw: "CSI ? 2031 h|l"
             effect: toggle color-preference notifications
@@ -3749,9 +3749,10 @@ references:
             effect: synchronized update control
             conditions: Ps 1 starts and Ps 2 stops; Kitty also expires or stops pending mode on timeout and resize
             howl: {support: partial, disposition: excluded, rationale: *howl_mode_policy_difference,
-              source: howl-vt/src/terminal.zig, symbol: dcsProcess, proof: {
-              path: howl-vt/test/unit/terminal_test.zig,
-              test: synchronized update DCS shares exact bounded mode state}}
+              residual: Howl shares the exact DCS/CSI VT mode and uses a one-second observer-publication fail-open; Kitty pauses a captured screen for two seconds and also cancels pending mode on resize.,
+              source: howl-session/src/endpoint.zig, symbol: terminalObservationReady, proof: {
+              path: howl-session/src/endpoint.zig,
+              test: synchronized output withholds observer until coherent release}}
       parse_kitty_dcs:
         source: vt-parser.c
         line: 643

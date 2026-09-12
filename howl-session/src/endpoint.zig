@@ -17,6 +17,10 @@ const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payloa
 const client_send_buffer_bytes: c_int = 64 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
+// Match Foot's bounded application synchronized-update hold. Canonical VT
+// progress continues during the hold; only observer publication waits. A stuck
+// application fails open rather than freezing presentation indefinitely.
+const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 
 fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32) i32 {
     var result = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
@@ -150,6 +154,9 @@ const Server = struct {
     child_exited: bool = false,
     pty_write_pending: bool = false,
     animation_wait_ms: ?u32 = null,
+    synchronized_output_started_ns: ?u64 = null,
+    synchronized_output_timed_out: bool = false,
+    synchronized_output_pending: bool = false,
 
     // -------------------------------------------------------------------------
     // Construction and lifecycle loop
@@ -218,13 +225,14 @@ const Server = struct {
 
         const pty_events = descriptors[1].revents;
         const pty_present = descriptors[1].fd >= 0;
+        const service_now_ns = nowNs(self.io);
         const result = try howl.service(
             self.session,
             pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0,
             pty_present and pty_events & posix.POLL.OUT != 0,
-            nowNs(self.io),
+            service_now_ns,
         );
-        self.applyServiceResult(result);
+        self.applyServiceResult(result, service_now_ns);
 
         if (descriptors[0].revents & posix.POLL.IN != 0) try self.acceptClients();
 
@@ -464,8 +472,9 @@ const Server = struct {
             },
         };
         howl.input(self.session, event) catch return self.queueResult(client, .input, .rejected);
-        const serviced = try howl.service(self.session, false, true, nowNs(self.io));
-        self.applyServiceResult(serviced);
+        const service_now_ns = nowNs(self.io);
+        const serviced = try howl.service(self.session, false, true, service_now_ns);
+        self.applyServiceResult(serviced, service_now_ns);
         try self.queueResult(client, .input, .ok);
     }
 
@@ -635,7 +644,38 @@ const Server = struct {
         self.bumpObservation();
     }
 
-    fn applyServiceResult(self: *Server, result: howl.Service) void {
+    fn terminalObservationReady(
+        self: *Server,
+        terminal_changed: bool,
+        now_ns: u64,
+    ) bool {
+        if (!howl.synchronizedOutput(self.session)) {
+            const release_pending = self.synchronized_output_pending;
+            self.synchronized_output_started_ns = null;
+            self.synchronized_output_timed_out = false;
+            self.synchronized_output_pending = false;
+            return terminal_changed or release_pending;
+        }
+
+        if (self.synchronized_output_timed_out) return terminal_changed;
+
+        if (self.synchronized_output_started_ns == null)
+            self.synchronized_output_started_ns = now_ns;
+        const started_ns = self.synchronized_output_started_ns.?;
+        const elapsed_ns = now_ns -| started_ns;
+        if (elapsed_ns < synchronized_output_timeout_ns) {
+            self.synchronized_output_pending = self.synchronized_output_pending or terminal_changed;
+            return false;
+        }
+
+        self.synchronized_output_started_ns = null;
+        self.synchronized_output_timed_out = true;
+        const release_pending = self.synchronized_output_pending;
+        self.synchronized_output_pending = false;
+        return terminal_changed or release_pending;
+    }
+
+    fn applyServiceResult(self: *Server, result: howl.Service, now_ns: u64) void {
         const next_stream_closed = result.stream_closed;
         const next_child_exited = result.child_exit != null;
         const lifecycle_changed = self.stream_closed != next_stream_closed or
@@ -648,7 +688,8 @@ const Server = struct {
         const current_terminal_revision = howl.revision(self.session);
         const terminal_changed = current_terminal_revision != self.terminal_revision;
         if (terminal_changed) self.terminal_revision = current_terminal_revision;
-        if (terminal_changed or lifecycle_changed) self.bumpObservation();
+        if (self.terminalObservationReady(terminal_changed, now_ns) or lifecycle_changed)
+            self.bumpObservation();
     }
 
     fn bumpObservation(self: *Server) void {
@@ -1841,6 +1882,133 @@ test "interaction state exposes invisible input modes" {
     try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
 }
 
+test "synchronized output withholds observer until coherent release" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-synchronized-output.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "printf 'BASE'; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\033[?2026h\\033[2;1HMID'; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\033[2;1HFINAL\\033[?2026l'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var observer = try TestPeer.connect(std.testing.allocator, path);
+    defer observer.deinit();
+    var control = try TestPeer.connect(std.testing.allocator, path);
+    defer control.deinit();
+    try attach(&observer, &server);
+    try attach(&control, &server);
+
+    var baseline = try observeUntilContains(&observer, &server, 0, "BASE");
+    const baseline_revision = baseline.begin.revision;
+    baseline.deinit();
+    try sendObserve(&observer, &server, baseline_revision);
+
+    try sendInput(&control, &server, "x");
+    try expectResult(&control, &server, .input, .ok);
+    var attempts: usize = 0;
+    while (!howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(howl.synchronizedOutput(server.session));
+    try std.testing.expect(server.synchronized_output_pending);
+    try std.testing.expectEqual(baseline_revision, server.observation_revision);
+
+    try sendInput(&control, &server, "y");
+    try expectResult(&control, &server, .input, .ok);
+    attempts = 0;
+    while (howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(!howl.synchronizedOutput(server.session));
+    try std.testing.expect(server.observation_revision > baseline_revision);
+
+    var coherent = try receiveSnapshot(&observer, &server);
+    defer coherent.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, coherent.text, "FINAL") != null);
+    try std.testing.expect(std.mem.indexOf(u8, coherent.text, "MID") == null);
+}
+
+test "synchronized output timeout fails observer publication open" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-synchronized-output-timeout.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "stty -echo -icanon min 1 time 0; " ++
+                "printf 'BASE'; " ++
+                "dd bs=1 count=1 of=/dev/null 2>/dev/null; " ++
+                "printf '\\033[?2026h\\033[2;1HSTUCK'; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var observer = try TestPeer.connect(std.testing.allocator, path);
+    defer observer.deinit();
+    var control = try TestPeer.connect(std.testing.allocator, path);
+    defer control.deinit();
+    try attach(&observer, &server);
+    try attach(&control, &server);
+
+    var baseline = try observeUntilContains(&observer, &server, 0, "BASE");
+    const baseline_revision = baseline.begin.revision;
+    baseline.deinit();
+    try sendObserve(&observer, &server, baseline_revision);
+    try sendInput(&control, &server, "x");
+    try expectResult(&control, &server, .input, .ok);
+
+    var attempts: usize = 0;
+    while (!howl.synchronizedOutput(server.session) and attempts < 1000) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(howl.synchronizedOutput(server.session));
+    const started_ns = server.synchronized_output_started_ns orelse return error.TestTimeout;
+    try std.testing.expect(server.synchronized_output_pending);
+    try std.testing.expectEqual(baseline_revision, server.observation_revision);
+
+    const idle: howl.Service = .{
+        .changed = false,
+        .stream_closed = server.stream_closed,
+        .child_exit = null,
+        .write_pending = server.pty_write_pending,
+        .animation_wait_ms = server.animation_wait_ms,
+    };
+    server.applyServiceResult(idle, started_ns + synchronized_output_timeout_ns);
+    try std.testing.expect(server.synchronized_output_timed_out);
+    try std.testing.expect(!server.synchronized_output_pending);
+    try std.testing.expect(server.observation_revision > baseline_revision);
+
+    try server.materializeObservers();
+    var released = try receiveSnapshot(&observer, &server);
+    defer released.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, released.text, "STUCK") != null);
+}
+
 test "selected text extracts stable history range without mutating canonical terminal" {
     var path_buffer: [108]u8 = undefined;
     const path = try std.fmt.bufPrint(
@@ -2056,7 +2224,7 @@ test "idle Kitty animation releases observer with a new exact image generation" 
         (@as(u64, wait_ms) + 1) * std.time.ns_per_ms;
     const serviced = try howl.service(server.session, false, false, forced_now);
     try std.testing.expect(serviced.changed);
-    server.applyServiceResult(serviced);
+    server.applyServiceResult(serviced, forced_now);
     try std.testing.expect(howl.revision(server.session) > before_terminal_revision);
     try std.testing.expect(server.observation_revision > before_observation_revision);
 
@@ -2115,7 +2283,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
         (@as(u64, first_wait) + 1) * std.time.ns_per_ms;
     const first = try howl.service(server.session, false, false, first_now);
     try std.testing.expect(first.changed);
-    server.applyServiceResult(first);
+    server.applyServiceResult(first, first_now);
     const second_wait = server.animation_wait_ms orelse return error.TestTimeout;
     var first_images = howl.images(server.session, 0);
     const first_image = first_images.image(0) orelse return error.TestTimeout;
@@ -2130,7 +2298,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     const stopped = try howl.service(server.session, false, false, stop_now);
     try std.testing.expect(stopped.changed);
     try std.testing.expectEqual(@as(?u32, null), stopped.animation_wait_ms);
-    server.applyServiceResult(stopped);
+    server.applyServiceResult(stopped, stop_now);
     try std.testing.expect(server.animation_wait_ms == null);
     try std.testing.expect(howl.revision(server.session) > before_stop_terminal);
     try std.testing.expect(server.observation_revision > before_stop_observation);
@@ -2162,7 +2330,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     );
     try std.testing.expect(!idle.changed);
     try std.testing.expectEqual(@as(?u32, null), idle.animation_wait_ms);
-    server.applyServiceResult(idle);
+    server.applyServiceResult(idle, stop_now + std.time.ns_per_s);
     try std.testing.expectEqual(stopped_terminal, howl.revision(server.session));
     try std.testing.expectEqual(stopped_observation, server.observation_revision);
 }

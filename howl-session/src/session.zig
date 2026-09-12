@@ -181,6 +181,14 @@ pub fn revision(session: *const Session) u64 {
     return stateConst(session).terminal.semanticSequence();
 }
 
+/// Reports whether the canonical VT is inside DEC synchronized-output mode.
+///
+/// Session callers may use this only to decide when an immutable presentation
+/// cut becomes observable. Canonical PTY/VT progress never waits on observers.
+pub fn synchronizedOutput(session: *const Session) bool {
+    return stateConst(session).terminal.synchronizedOutput();
+}
+
 /// Copies coherent history, geometry, and cursor facts for one requested viewport.
 pub fn status(session: *const Session, history_offset: u32) Status {
     const terminal_view = stateConst(session).terminal.semanticView(history_offset);
