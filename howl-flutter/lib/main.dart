@@ -652,8 +652,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    final modifiers = howlModifierBits();
     final keyName = howlNamedKey(event.physicalKey);
-    if (keyName == null) return KeyEventResult.ignored;
+    final unicodeScalar = keyName == null
+        ? howlControlUnicodeScalar(event.logicalKey, modifiers)
+        : null;
+    if (keyName == null && unicodeScalar == null) {
+      return KeyEventResult.ignored;
+    }
     _returnToLiveForInput();
     final action = switch (event) {
       KeyDownEvent() => HowlInput.keyPress,
@@ -661,8 +667,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       KeyUpEvent() => HowlInput.keyRelease,
       _ => HowlInput.keyPress,
     };
-    final modifiers = howlModifierBits();
-    _sendNamedKey(keyName: keyName, action: action, modifiers: modifiers);
+    if (keyName != null) {
+      _sendNamedKey(keyName: keyName, action: action, modifiers: modifiers);
+    } else {
+      _sendUnicodeKey(
+        scalar: unicodeScalar!,
+        action: action,
+        modifiers: modifiers,
+      );
+    }
     return KeyEventResult.handled;
   }
 
@@ -1303,6 +1316,24 @@ final howlNamedKeys = <PhysicalKeyboardKey, int>{
 };
 
 int? howlNamedKey(PhysicalKeyboardKey key) => howlNamedKeys[key];
+
+/// Projects a printable physical Ctrl chord into Howl's Unicode-key vocabulary.
+///
+/// Unmodified printable keys deliberately stay on Flutter's text/IME path. Ctrl
+/// chords do not produce a text commit on desktop, so they need this key-event
+/// seam to preserve terminal shortcuts such as Ctrl-F, Ctrl-R and Ctrl-C.
+int? howlControlUnicodeScalar(LogicalKeyboardKey key, int modifiers) {
+  if (modifiers & HowlInput.modifierControl == 0) return null;
+  final runes = key.keyLabel.runes.toList(growable: false);
+  if (runes.length != 1) return null;
+  var scalar = runes.single;
+  if (scalar >= 0x41 && scalar <= 0x5a) {
+    final shifted = modifiers & (1 << 0) != 0;
+    final capsLocked = modifiers & (1 << 6) != 0;
+    if (!(shifted ^ capsLocked)) scalar += 0x20;
+  }
+  return scalar;
+}
 
 int howlModifierBits() {
   final keyboard = HardwareKeyboard.instance;
