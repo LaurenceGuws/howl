@@ -15,9 +15,7 @@ const maximum_frame_resources: usize = 8;
 const image_refill_header_bytes: usize = 64;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
-const canvas_packet_budget: usize = 320 * 1024;
 const semantic_capacity: usize = 64 * 1024;
-const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
 const atlas_width: u16 = 192;
 const atlas_height: u16 = 192;
 const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height);
@@ -27,10 +25,16 @@ const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height)
 const maximum_non_command_packet_bytes: usize = host_header_bytes + global_header_bytes +
     frame_header_bytes + maximum_frame_resources * resource_record_bytes +
     maximum_frame_resources * removal_record_bytes + pixel_capacity;
-const command_capacity: usize = (canvas_packet_budget - maximum_non_command_packet_bytes) /
-    command_record_bytes;
-const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity *
-    command_record_bytes;
+// Flutter admits at most 128x256 terminal cells. Keep enough room for one
+// Canvas command per cell, every canonical graphics placement, and additional
+// presentation detail without making ordinary dense TUIs depend on sparsity.
+const maximum_flutter_rows: usize = 128;
+const maximum_flutter_columns: usize = 256;
+const maximum_flutter_cells: usize = maximum_flutter_rows * maximum_flutter_columns;
+const command_capacity: usize = 40 * 1024;
+const canvas_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
+const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
+const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
 comptime {
@@ -822,9 +826,14 @@ test "native host surface follows configured presentation lattice" {
 }
 
 test "native host dense presentation budgets raster and commands together" {
-    try std.testing.expectEqual(@as(usize, 384 * 1024), output_minimum_bytes);
     try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
-    try std.testing.expect(command_capacity >= 7_000);
+    try std.testing.expectEqual(@as(usize, 40 * 1024), command_capacity);
+    try std.testing.expect(command_capacity >= maximum_flutter_cells + client.view.maximum_image_placements + 1);
+    try std.testing.expectEqual(
+        maximum_non_command_packet_bytes + command_capacity * command_record_bytes + semantic_capacity,
+        output_minimum_bytes,
+    );
+    try std.testing.expect(output_minimum_bytes < 2 * 1024 * 1024);
     try std.testing.expectEqual(@as(usize, 7), maximum_terminal_images);
     try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
 }
