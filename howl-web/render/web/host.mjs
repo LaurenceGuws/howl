@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v35';
+const CANARY_GENERATION = 'v36';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -99,6 +99,9 @@ let resizeTimer = null;
 let requestedGeometry = null;
 let reconnectTask = null;
 let lifecycleGeneration = 0;
+let interactionStateCache = null;
+let interactionStateCachedAt = 0;
+const interactionStateFreshMs = 120;
 
 const errorText = exports => decoder.decode(new Uint8Array(
   exports.memory.buffer, exports.hw_error_ptr?.() ?? exports.rv_error_ptr(),
@@ -314,6 +317,20 @@ class WireConnection {
       input.row, input.column, 1, input.pixelX, input.pixelY,
     ), `mouse ${input.kind}/${input.button} at ${input.row},${input.column}`, 'mouse');
   }
+  async interactionState() {
+    await this.operation(
+      () => this.exports.hw_request_interaction_state(),
+      'interaction state',
+      'interaction',
+    );
+    return {
+      terminalRevision:this.exports.hw_interaction_terminal_revision(),
+      alternateScroll:this.exports.hw_interaction_alternate_scroll() === 1,
+      mouseTracking:Number(this.exports.hw_interaction_mouse_tracking()),
+      mouseProtocol:Number(this.exports.hw_interaction_mouse_protocol()),
+      pointerMode:Number(this.exports.hw_interaction_pointer_mode()),
+    };
+  }
   async resize(rows, columns, {claim = false} = {}) {
     const begin = claim ? this.exports.hw_send_resize : this.exports.hw_send_resize_owned;
     await this.operation(() => begin(rows, columns), `${claim ? 'claim+resize' : 'resize'} ${rows}x${columns}`, 'resize');
@@ -352,6 +369,8 @@ async function ensureControl() {
   control = await WireConnection.connect('control');
   resizePolicy.reset();
   focusState = null;
+  interactionStateCache = null;
+  interactionStateCachedAt = 0;
   return control;
 }
 
@@ -364,6 +383,19 @@ async function ensureImageConnection() {
 
 function queueControl(run, kind = 'control') {
   return controlQueue.operation(async () => run(await ensureControl()), kind);
+}
+
+async function currentInteractionState() {
+  const now = performance.now();
+  if (interactionStateCache && now - interactionStateCachedAt <= interactionStateFreshMs)
+    return interactionStateCache;
+  const state = await controlQueue.operation(
+    async () => (await ensureControl()).interactionState(),
+    'interaction',
+  );
+  interactionStateCache = state;
+  interactionStateCachedAt = performance.now();
+  return state;
 }
 
 function utf8Chunks(value, maximum = 4096) {
@@ -866,10 +898,14 @@ function processEditor(composing) {
   dispatchStaged(actions);
 }
 
-function focusKeyboard() {
-  returnToLive();
+function focusKeyboardPreservingHistory() {
   keyboard.focus({preventScroll:true});
   if (!compositionActive) resetEditor();
+}
+
+function focusKeyboard() {
+  returnToLive();
+  focusKeyboardPreservingHistory();
 }
 
 keyboard.addEventListener('compositionstart', () => { compositionActive = true; telemetry.record('composition_start'); });
@@ -935,11 +971,11 @@ function currentPointerGeometry() {
 }
 
 function handleTerminalPointer(event) {
+  if (history.active) return false;
   const inputs = terminalPointer.translate(event, {
     geometry:currentPointerGeometry(), modifiers:modifierBits(event),
   });
   if (inputs.length === 0) return false;
-  returnToLive();
   for (const input of inputs) {
     if (input.kind === MouseKind.move) pointerMoveScheduler.push(input);
     else {
@@ -951,7 +987,7 @@ function handleTerminalPointer(event) {
 }
 
 terminal.addEventListener('pointerdown', event => {
-  focusKeyboard();
+  focusKeyboardPreservingHistory();
   if (!handleTerminalPointer(event)) return;
   try { terminal.setPointerCapture(event.pointerId); } catch {}
   event.preventDefault();
@@ -965,30 +1001,70 @@ terminal.addEventListener('pointercancel', event => {
   handleTerminalPointer(event);
   try { terminal.releasePointerCapture(event.pointerId); } catch {}
 });
-terminal.addEventListener('wheel', event => {
-  if (!lastFrame?.cell || !latestLiveHistory || latestLiveHistory.alternateScreen || latestLiveHistory.historyCount === 0) return;
-  event.preventDefault();
+function scrollHistoryWheel({deltaY, deltaMode}) {
+  if (!lastFrame?.cell || !latestLiveHistory || latestLiveHistory.alternateScreen || latestLiveHistory.historyCount === 0)
+    return false;
   if (historyWheelTimer == null) history.beginGesture();
   else clearTimeout(historyWheelTimer);
   historyWheelTimer = setTimeout(() => { history.endGesture(); historyWheelTimer = null; }, 160);
   const rowHeight = lastFrame.cell[1];
-  let deltaY = event.deltaY;
-  if (event.deltaMode === WheelEvent.DOM_DELTA_LINE) deltaY *= rowHeight;
-  else if (event.deltaMode === WheelEvent.DOM_DELTA_PAGE) deltaY *= Math.max(rowHeight, terminal.clientHeight);
+  let pixels = deltaY;
+  if (deltaMode === WheelEvent.DOM_DELTA_LINE) pixels *= rowHeight;
+  else if (deltaMode === WheelEvent.DOM_DELTA_PAGE) pixels *= Math.max(rowHeight, terminal.clientHeight);
   if (!history.scroll({
-    deltaY, rowHeight,
+    deltaY:pixels, rowHeight,
     historyCount:latestLiveHistory.historyCount,
     historyRowBase:latestLiveHistory.historyRowBase,
     alternateScreen:latestLiveHistory.alternateScreen,
-  })) return;
+  })) return false;
   historyGeneration += 1;
   if (history.active) {
+    terminalPointer.clear();
+    pointerMoveScheduler.clear();
     scheduleHistorySnapshot();
     updateFacts();
   } else {
     leaveHistory();
   }
-}, {passive:false});
+  return true;
+}
+
+async function routeTerminalWheel(event) {
+  if (!lastFrame?.cell || !latestLiveHistory || !Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+  event.preventDefault();
+  const wheel = terminalPointer.wheel(event, {
+    geometry:currentPointerGeometry(), modifiers:modifierBits(event),
+  });
+  const local = {deltaY:event.deltaY, deltaMode:event.deltaMode};
+  if (history.active) {
+    scrollHistoryWheel(local);
+    return;
+  }
+  let interaction;
+  try {
+    interaction = await currentInteractionState();
+  } catch (error) {
+    fail(error);
+    return;
+  }
+  if (history.active) {
+    scrollHistoryWheel(local);
+    return;
+  }
+  if (interaction.mouseTracking !== 0) {
+    if (wheel != null) queueControl(connection => connection.mouse(wheel), 'mouse_wheel');
+    return;
+  }
+  if (latestLiveHistory.alternateScreen) {
+    if (interaction.alternateScroll) {
+      queueKeyCycle({named:event.deltaY < 0 ? NamedKey.ArrowUp : NamedKey.ArrowDown});
+    }
+    return;
+  }
+  scrollHistoryWheel(local);
+}
+
+terminal.addEventListener('wheel', event => { void routeTerminalWheel(event); }, {passive:false});
 async function cyclePresentationZoom() {
   if (presentationChanging || !renderAssets) return;
   const nextIndex = (presentationIndex + 1) % presentationPixels.length;

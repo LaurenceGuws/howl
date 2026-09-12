@@ -13,6 +13,7 @@ import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
+const int nativeInteractionStateBytes = 20;
 const int _nativeHostMaximumOutputBytes = 8 * 1024 * 1024;
 const int _nativeHostImageRefillHeaderBytes = 64;
 const int _nativeHostMaximumImageBytes = 16 * 1024 * 1024;
@@ -63,6 +64,49 @@ final class NativeHostMetadata {
   final bool leaderPresent;
   final bool youAreLeader;
   final bool cursorVisible;
+}
+
+final class NativeInteractionState {
+  const NativeInteractionState({
+    required this.terminalRevision,
+    required this.alternateScroll,
+    required this.mouseTracking,
+    required this.mouseProtocol,
+    required this.pointerMode,
+  });
+
+  final int terminalRevision;
+  final bool alternateScroll;
+  final int mouseTracking;
+  final int mouseProtocol;
+  final int pointerMode;
+
+  bool get mouseTrackingEnabled => mouseTracking != 0;
+}
+
+NativeInteractionState parseNativeInteractionState(Uint8List bytes) {
+  if (bytes.length != nativeInteractionStateBytes) {
+    throw const NativeHostException('interaction_state_size');
+  }
+  final data = ByteData.sublistView(bytes);
+  final flags = data.getUint32(8, Endian.big);
+  final mouseTracking = data.getUint8(12);
+  final mouseProtocol = data.getUint8(13);
+  final pointerMode = data.getUint8(18);
+  if ((flags & ~0x1fff) != 0 ||
+      mouseTracking > 4 ||
+      mouseProtocol > 4 ||
+      pointerMode > 3 ||
+      data.getUint8(19) != 0) {
+    throw const NativeHostException('interaction_state_layout');
+  }
+  return NativeInteractionState(
+    terminalRevision: data.getUint64(0, Endian.big),
+    alternateScroll: (flags & (1 << 10)) != 0,
+    mouseTracking: mouseTracking,
+    mouseProtocol: mouseProtocol,
+    pointerMode: pointerMode,
+  );
 }
 
 final class NativeHostFrame {
@@ -989,6 +1033,16 @@ final class NativeHostControl {
   Future<void> signal(int value) =>
       _requestVoid(<Object?>[_NativeControlOperation.signal, value]);
 
+  Future<NativeInteractionState> interactionState() async {
+    final response = await _request(<Object?>[
+      _NativeControlOperation.interactionState,
+    ]);
+    if (response is! TransferableTypedData) {
+      throw const NativeHostException('control_interaction_state_response');
+    }
+    return parseNativeInteractionState(response.materialize().asUint8List());
+  }
+
   Future<void> mouse({
     required int kind,
     required int button,
@@ -1101,6 +1155,7 @@ enum _NativeControlOperation {
   resize,
   signal,
   mouse,
+  interactionState,
   textExtract,
   close,
 }
@@ -1157,6 +1212,10 @@ typedef _ControlMouseDart =
       int,
       int,
     );
+typedef _ControlInteractionStateNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, ffi.Size);
+typedef _ControlInteractionStateDart =
+    int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<ffi.Uint8>, int);
 typedef _ControlTextExtractNative =
     ffi.Int32 Function(
       ffi.Pointer<ffi.Void>,
@@ -1222,6 +1281,10 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   final mouse = dylib.lookupFunction<_ControlMouseNative, _ControlMouseDart>(
     'howl_native_control_mouse',
   );
+  final interactionState = dylib.lookupFunction<
+    _ControlInteractionStateNative,
+    _ControlInteractionStateDart
+  >('howl_native_control_interaction_state');
   final textExtract = dylib
       .lookupFunction<_ControlTextExtractNative, _ControlTextExtractDart>(
         'howl_native_control_text_extract',
@@ -1239,6 +1302,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
   }
   final selectionOutput = calloc<ffi.Uint8>(nativeSelectionOutputBytes);
   final selectionLength = calloc<ffi.Size>();
+  final interactionOutput = calloc<ffi.Uint8>(nativeInteractionStateBytes);
   ready.send(commands.sendPort);
 
   int textAction(_ControlTextDart function, String value) {
@@ -1309,6 +1373,19 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
               pixelY ?? 0,
             );
           }
+        case _NativeControlOperation.interactionState:
+          code = interactionState(
+            control,
+            interactionOutput,
+            nativeInteractionStateBytes,
+          );
+          if (code == 0) {
+            response = TransferableTypedData.fromList(<Uint8List>[
+              Uint8List.fromList(
+                interactionOutput.asTypedList(nativeInteractionStateBytes),
+              ),
+            ]);
+          }
         case _NativeControlOperation.textExtract:
           selectionLength.value = 0;
           code = textExtract(
@@ -1340,6 +1417,7 @@ Future<void> _nativeControlWorker(List<Object?> init) async {
     destroy(control);
     calloc.free(selectionOutput);
     calloc.free(selectionLength);
+    calloc.free(interactionOutput);
     commands.close();
   }
 }

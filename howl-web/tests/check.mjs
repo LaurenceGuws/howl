@@ -8,7 +8,9 @@ assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
   'hw_text_ptr', 'hw_text_len', 'hw_text_truncated', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
   'hw_image_ptr', 'hw_image_len', 'hw_image_id', 'hw_image_generation', 'hw_image_width', 'hw_image_height',
-  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_maximum_rows', 'hw_maximum_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
+  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_maximum_rows', 'hw_maximum_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready',
+  'hw_interaction_terminal_revision', 'hw_interaction_alternate_scroll', 'hw_interaction_mouse_tracking', 'hw_interaction_mouse_protocol', 'hw_interaction_pointer_mode',
+  'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste', 'hw_request_interaction_state',
   'hw_request_image', 'hw_release_image',
   'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_mouse', 'hw_send_resize', 'hw_send_resize_owned',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
@@ -118,6 +120,19 @@ assert.equal(feed(ok(7)), 1);
 assert.equal(w.hw_send_mouse(0, 0, 0, 0, 0, 0, 0, 0, 0), 0);
 assert.equal(w.hw_send_mouse(1, 1, 0, 8, 0, 0, 0, 0, 0), 0);
 assert.equal(w.hw_send_mouse(1, 1, 0, 1, 0, 0, 0, 1, 0), 0);
+
+assert.equal(w.hw_request_interaction_state(), 1);
+assert.equal(output()[5], 12);
+assert.equal(output().length, 12);
+const interactionVector = Buffer.from('48574c53040d000000000014010203040506070800001ffd0403ff7f12340300', 'hex');
+assert.equal(feed(interactionVector), 1);
+assert.equal(w.hw_phase(), 6);
+assert.equal(w.hw_control_ready(), 1);
+assert.equal(w.hw_interaction_terminal_revision(), 0x0102030405060708n);
+assert.equal(w.hw_interaction_alternate_scroll(), 1);
+assert.equal(w.hw_interaction_mouse_tracking(), 4);
+assert.equal(w.hw_interaction_mouse_protocol(), 3);
+assert.equal(w.hw_interaction_pointer_mode(), 3);
 
 assert.equal(w.hw_send_resize(20, 80), 1);
 assert.equal(output()[5], 8); assert.equal(output().subarray(12).readBigUInt64BE(), 42n);

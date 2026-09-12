@@ -60,7 +60,11 @@ It checks committed UTF-8, Enter, Backspace, Delete, Unicode physical key input,
 
 On touch-first Android, the terminal reserves finger gestures for client-local
 history and text-input focus rather than pretending a finger is a terminal
-mouse. Mouse/stylus devices continue through canonical semantic mouse input. A
+mouse. Mouse/stylus devices continue through canonical semantic mouse input.
+Desktop wheel routing reads Session's canonical interaction state: an active
+history viewport stays local, mouse-aware applications receive semantic wheel
+reports, DEC alternate-scroll becomes cursor-key input, and ordinary shell wheel
+input navigates scrollback. Hover/click never eject an active history viewport. A
 compact strip above the software keyboard exposes one-shot Ctrl/Alt latches plus
 Esc, Tab, arrow keys, keyboard restore, the current raster-size cycle, Copy and
 Paste; a latched modifier applies to the next special key or single committed

@@ -303,6 +303,44 @@ Uint8List _externalRgbaCanvas() {
 }
 
 void main() {
+  test('interaction state parser exposes canonical mouse routing modes', () {
+    final bytes = Uint8List.fromList(<int>[
+      0x01,
+      0x02,
+      0x03,
+      0x04,
+      0x05,
+      0x06,
+      0x07,
+      0x08,
+      0x00,
+      0x00,
+      0x1f,
+      0xfd,
+      0x04,
+      0x03,
+      0xff,
+      0x7f,
+      0x12,
+      0x34,
+      0x03,
+      0x00,
+    ]);
+    final state = parseNativeInteractionState(bytes);
+    expect(state.terminalRevision, 0x0102030405060708);
+    expect(state.alternateScroll, isTrue);
+    expect(state.mouseTracking, 4);
+    expect(state.mouseTrackingEnabled, isTrue);
+    expect(state.mouseProtocol, 3);
+    expect(state.pointerMode, 3);
+
+    final bad = Uint8List.fromList(bytes)..[19] = 1;
+    expect(
+      () => parseNativeInteractionState(bad),
+      throwsA(isA<NativeHostException>()),
+    );
+  });
+
   test('alpha atlas applies the per-glyph foreground color', () async {
     final bytes = _oneFrameCanvas();
     final data = ByteData.sublistView(bytes);

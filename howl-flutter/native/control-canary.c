@@ -12,6 +12,7 @@ typedef int32_t (*unicode_fn)(void *, uint32_t, uint8_t, uint8_t);
 typedef int32_t (*focus_fn)(void *, uint8_t);
 typedef int32_t (*resize_fn)(void *, uint16_t, uint16_t);
 typedef int32_t (*mouse_fn)(void *, uint8_t, uint8_t, uint8_t, uint8_t, int32_t, uint16_t, uint8_t, uint32_t, uint32_t);
+typedef int32_t (*interaction_fn)(void *, uint8_t *, size_t);
 
 static void *symbol(void *lib, const char *name) {
     void *value = dlsym(lib, name);
@@ -52,6 +53,7 @@ int main(int argc, char **argv) {
     focus_fn focus = (focus_fn)symbol(lib, "howl_native_control_focus");
     resize_fn resize = (resize_fn)symbol(lib, "howl_native_control_resize");
     mouse_fn mouse = (mouse_fn)symbol(lib, "howl_native_control_mouse");
+    interaction_fn interaction = (interaction_fn)symbol(lib, "howl_native_control_interaction_state");
 
     const uint8_t *endpoint = (const uint8_t *)argv[2];
     void *control = create(endpoint, strlen(argv[2]));
@@ -83,6 +85,13 @@ int main(int argc, char **argv) {
 
     send_ascii(paste, control, "paste", "echo HOWL_CANARY_PASTE");
     require_ok("enter_paste", named(control, 1, 1, 0));
+
+    uint8_t interaction_state[20] = {0};
+    require_ok("interaction_state", interaction(control, interaction_state, sizeof(interaction_state)));
+    if (interaction_state[12] != 0 || interaction_state[13] != 0) {
+        fprintf(stderr, "unexpected shell mouse mode tracking=%u protocol=%u\n", interaction_state[12], interaction_state[13]);
+        return 5;
+    }
 
     // Mouse tracking is deliberately off in the shell fixture. Canonical VT must
     // suppress this semantic move rather than the host inventing escape bytes.

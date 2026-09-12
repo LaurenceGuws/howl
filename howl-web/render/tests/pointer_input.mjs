@@ -14,6 +14,12 @@ assert.equal(move[0].kind,3); assert.equal(move[0].buttonsDown,4); assert.equal(
 const release = adapter.translate({type:'pointerup',pointerId:7,pointerType:'mouse',clientX:900,clientY:900,buttons:0}, {geometry,modifiers:0});
 assert.equal(release[0].kind,2); assert.equal(release[0].button,3); assert.equal(release[0].row,11); assert.equal(release[0].column,41);
 assert.deepEqual(adapter.translate({type:'pointerdown',pointerId:8,pointerType:'touch',clientX:302.5,clientY:155,buttons:1},{geometry}), []);
+const wheelUp = adapter.wheel({clientX:302.5, clientY:155, deltaY:-53}, {geometry, modifiers:4});
+assert.deepEqual(wheelUp, {kind:4,button:4,buttonsDown:0,modifiers:4,row:10,column:40,pixelX:405,pixelY:210});
+const wheelDown = adapter.wheel({clientX:302.5, clientY:155, deltaY:53}, {geometry, modifiers:0});
+assert.equal(wheelDown.kind,4); assert.equal(wheelDown.button,5);
+assert.equal(adapter.wheel({clientX:99, clientY:155, deltaY:-53}, {geometry}), null);
+assert.equal(adapter.wheel({clientX:302.5, clientY:155, deltaY:0}, {geometry}), null);
 
 const sent = []; let releaseFirst;
 const firstGate = new Promise(resolve => { releaseFirst = resolve; });
@@ -23,4 +29,4 @@ assert.equal(scheduler.running,true); releaseFirst();
 while (scheduler.running) await new Promise(resolve=>setTimeout(resolve,0));
 assert.deepEqual(sent,[{n:1},{n:3}]);
 
-console.log(JSON.stringify({status:'pass',scaledGeometry:true,mouseButtons:true,touchLocal:true,latestMoveWins:true}));
+console.log(JSON.stringify({status:'pass',scaledGeometry:true,mouseButtons:true,wheel:true,touchLocal:true,latestMoveWins:true}));

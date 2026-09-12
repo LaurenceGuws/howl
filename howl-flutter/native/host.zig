@@ -431,6 +431,20 @@ pub export fn howl_native_control_signal(raw: ?*ControlHandle, signal_value: u8)
     return 0;
 }
 
+pub export fn howl_native_control_interaction_state(
+    raw: ?*ControlHandle,
+    output_ptr: [*]u8,
+    output_capacity: usize,
+) i32 {
+    const control = controlFromRaw(raw) orelse return 1;
+    if (output_capacity < protocol.payload_bytes.interaction_state_snapshot) return 3;
+    const state = client.state.get(&control.connection) catch return 2;
+    var encoded: [protocol.payload_bytes.interaction_state_snapshot]u8 = undefined;
+    protocol.encodeInteractionStateSnapshot(&encoded, state);
+    @memcpy(output_ptr[0..encoded.len], &encoded);
+    return 0;
+}
+
 pub export fn howl_native_control_mouse(
     raw: ?*ControlHandle,
     kind_value: u8,

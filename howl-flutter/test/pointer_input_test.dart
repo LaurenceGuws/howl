@@ -137,46 +137,53 @@ void main() {
     expect(inputs.map((input) => input.buttonsDown), <int>[1, 5]);
   });
 
-  test('touch, wheel signals, and unsupported side buttons stay local', () {
-    final adapter = TerminalPointerAdapter();
-    expect(
-      adapter.translate(
-        const PointerDownEvent(
-          pointer: 1,
-          kind: PointerDeviceKind.touch,
-          position: Offset(500, 300),
+  test(
+    'touch and unsupported side buttons stay local while wheel is explicit',
+    () {
+      final adapter = TerminalPointerAdapter();
+      expect(
+        adapter.translate(
+          const PointerDownEvent(
+            pointer: 1,
+            kind: PointerDeviceKind.touch,
+            position: Offset(500, 300),
+          ),
+          geometry: geometry,
+          modifiers: 0,
         ),
-        geometry: geometry,
-        modifiers: 0,
-      ),
-      isEmpty,
-    );
-    expect(
-      adapter.translate(
-        const PointerScrollEvent(
-          kind: PointerDeviceKind.mouse,
-          position: Offset(500, 300),
-          scrollDelta: Offset(0, 10),
+        isEmpty,
+      );
+      const wheelEvent = PointerScrollEvent(
+        kind: PointerDeviceKind.mouse,
+        position: Offset(500, 300),
+        scrollDelta: Offset(0, -10),
+      );
+      expect(
+        adapter.translate(wheelEvent, geometry: geometry, modifiers: 0),
+        isEmpty,
+      );
+      final wheel = adapter.wheel(wheelEvent, geometry: geometry, modifiers: 4);
+      expect(wheel?.kind, HowlInput.mouseWheel);
+      expect(wheel?.button, HowlInput.mouseWheelUp);
+      expect(wheel?.buttonsDown, 0);
+      expect(wheel?.modifiers, 4);
+      expect(wheel?.row, 10);
+      expect(wheel?.column, 40);
+      expect(
+        adapter.translate(
+          const PointerDownEvent(
+            pointer: 3,
+            kind: PointerDeviceKind.mouse,
+            position: Offset(500, 300),
+            buttons: kBackMouseButton,
+          ),
+          geometry: geometry,
+          modifiers: 0,
         ),
-        geometry: geometry,
-        modifiers: 0,
-      ),
-      isEmpty,
-    );
-    expect(
-      adapter.translate(
-        const PointerDownEvent(
-          pointer: 3,
-          kind: PointerDeviceKind.mouse,
-          position: Offset(500, 300),
-          buttons: kBackMouseButton,
-        ),
-        geometry: geometry,
-        modifiers: 0,
-      ),
-      isEmpty,
-    );
-  });
+        isEmpty,
+      );
+    },
+  );
 
   test('cancel releases every represented button at last valid location', () {
     final adapter = TerminalPointerAdapter();

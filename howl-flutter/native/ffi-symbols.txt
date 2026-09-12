@@ -21,4 +21,5 @@ howl_native_control_focus
 howl_native_control_resize
 howl_native_control_signal
 howl_native_control_mouse
+howl_native_control_interaction_state
 howl_native_control_text_extract

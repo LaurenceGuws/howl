@@ -24,6 +24,7 @@ export class TerminalPointerGeometry {
 
 export class TerminalPointerAdapter {
   constructor() { this.states = new Map(); }
+  clear() { this.states.clear(); }
 
   translate(event, {geometry, modifiers = 0}) {
     if (!supportedPointerType(event.pointerType) || !geometry) return [];
@@ -48,6 +49,19 @@ export class TerminalPointerAdapter {
     if (event.type === 'pointerup') return releaseTransitions(before, current, location, modifiers);
     if (event.type === 'pointermove') return mapped == null ? [] : [mouseInput(MouseKind.move, MouseButton.none, current, location, modifiers)];
     return [];
+  }
+
+  wheel(event, {geometry, modifiers = 0}) {
+    if (!geometry || !Number.isFinite(event.deltaY) || event.deltaY === 0) return null;
+    const location = geometry.locate(event);
+    if (location == null) return null;
+    return mouseInput(
+      MouseKind.wheel,
+      event.deltaY < 0 ? MouseButton.wheelUp : MouseButton.wheelDown,
+      0,
+      location,
+      modifiers,
+    );
   }
 }
 

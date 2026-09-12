@@ -59,9 +59,12 @@ back into canonical cell and logical-pixel coordinates, with out-of-bounds or
 non-integral terminal geometry refused rather than guessed. Press/release
 transitions remain ordered control barriers; high-rate pointer moves are
 latest-wins with at most one move on the wire and one newer move retained
-client-locally. Wheel input remains client-local history behavior for now. The
-Wasm owner serializes the frozen semantic mouse grammar; terminal SGR/X10/etc.
-encoding remains solely in the canonical VT.
+client-locally. Desktop wheel routing asks the canonical interaction-state
+endpoint rather than inferring application modes: active client-local history
+wins first, terminal mouse tracking receives semantic wheel input, DEC alternate
+scroll becomes cursor-key input, and an ordinary shell enters local scrollback.
+The Wasm owner serializes the frozen semantic mouse grammar; terminal
+SGR/X10/etc. encoding remains solely in the canonical VT.
 
 The live browser shell also carries a bounded client-local telemetry flight recorder
 for mobile canary diagnosis. It retains at most 768 metadata events and records
@@ -72,12 +75,13 @@ message fields, never uploads telemetry, and exposes only a collapsed Telemetry
 panel with compact-summary, full-log and Clear controls. The compact path emits
 `howl.web-telemetry-summary/v1` JSON for physical canary diagnosis.
 
-Web scrollback now reuses Flutter's client-local absolute-anchor model. Wheel input
-changes only the requested `history_offset`; a lazy history observer asks the
+Web scrollback now reuses Flutter's client-local absolute-anchor model. Shell wheel
+input changes only the requested `history_offset`; a lazy history observer asks the
 canonical session for retained rows while the live observer continues advancing at
 offset zero. New PTY output moves the requested offset to preserve the same absolute
-top row, returning to live closes the history observer, and any real input first
-leaves history. One page therefore uses at most three WebSockets: live observer,
+top row. Keyboard/text input deliberately returns to live, while mouse hover/click
+never discards an active history viewport. Returning to live closes the history
+observer. One page therefore uses at most three WebSockets: live observer,
 control, and transient history observer. The gateway admits six globally so a Safari page and
 its newly launched standalone PWA may overlap during handoff; a seventh is refused.
 

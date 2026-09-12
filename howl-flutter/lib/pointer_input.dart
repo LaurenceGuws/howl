@@ -56,6 +56,8 @@ final class TerminalPointerGeometry {
 final class TerminalPointerAdapter {
   final Map<int, _PointerState> _states = <int, _PointerState>{};
 
+  void clear() => _states.clear();
+
   List<HowlMouseInput> translate(
     PointerEvent event, {
     required TerminalPointerGeometry geometry,
@@ -123,6 +125,30 @@ final class TerminalPointerAdapter {
       ];
     }
     return const <HowlMouseInput>[];
+  }
+
+  HowlMouseInput? wheel(
+    PointerScrollEvent event, {
+    required TerminalPointerGeometry geometry,
+    required int modifiers,
+  }) {
+    if (event.kind != PointerDeviceKind.mouse || event.scrollDelta.dy == 0) {
+      return null;
+    }
+    final location = geometry.locate(event.localPosition);
+    if (location == null) return null;
+    return HowlMouseInput(
+      kind: HowlInput.mouseWheel,
+      button: event.scrollDelta.dy < 0
+          ? HowlInput.mouseWheelUp
+          : HowlInput.mouseWheelDown,
+      modifiers: modifiers,
+      buttonsDown: 0,
+      row: location.row,
+      column: location.column,
+      pixelX: location.pixelX,
+      pixelY: location.pixelY,
+    );
   }
 
   List<HowlMouseInput> _pressTransitions(

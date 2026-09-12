@@ -125,6 +125,9 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool _historyRequestRunning = false;
   bool _historyRequestPending = false;
   int _historyGeneration = 0;
+  Timer? _historyWheelTimer;
+  NativeInteractionState? _interactionStateCache;
+  DateTime? _interactionStateCachedAt;
   int _proposedRows = 0;
   int _proposedColumns = 0;
   int? _presentationMaximumRows;
@@ -271,6 +274,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
       _nativeControl = control;
+      _interactionStateCache = null;
+      _interactionStateCachedAt = null;
       _transportFault = Completer<Object>();
       final restoreIme = _restoreImeAfterPresentationRestart;
       if (_focusNode.hasFocus && _selection == null) {
@@ -437,6 +442,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     final control = _nativeControl;
     _nativeObserver = null;
     _nativeControl = null;
+    _interactionStateCache = null;
+    _interactionStateCachedAt = null;
     _transportFault = null;
     if (observer != null) unawaited(observer.close().catchError((_) {}));
     if (control != null) unawaited(control.close().catchError((_) {}));
@@ -486,6 +493,53 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     });
     _controlTail = _controlTail.catchError((Object _) {});
     return _controlTail;
+  }
+
+  Future<T?> _queueControlResult<T>(
+    Future<T> Function(NativeHostControl) action,
+  ) {
+    if (_stopping) return Future<T?>.value();
+    final control = _nativeControl;
+    if (control == null) return Future<T?>.value();
+    final generation = _transportGeneration;
+    final task = _controlTail.then<T?>((_) async {
+      if (_stopping ||
+          generation != _transportGeneration ||
+          !identical(control, _nativeControl)) {
+        return null;
+      }
+      try {
+        return await action(control);
+      } catch (error) {
+        if (retriableTransportFailure(error, attached: true)) {
+          _signalTransportFault(error, generation);
+        } else {
+          _reportFailure(error);
+        }
+        rethrow;
+      }
+    });
+    _controlTail = task.then<void>((_) {}).catchError((Object _) {});
+    return task;
+  }
+
+  Future<NativeInteractionState?> _currentInteractionState() async {
+    final cached = _interactionStateCache;
+    final cachedAt = _interactionStateCachedAt;
+    final now = DateTime.now();
+    if (cached != null &&
+        cachedAt != null &&
+        now.difference(cachedAt) <= const Duration(milliseconds: 120)) {
+      return cached;
+    }
+    final state = await _queueControlResult(
+      (control) => control.interactionState(),
+    );
+    if (state != null) {
+      _interactionStateCache = state;
+      _interactionStateCachedAt = DateTime.now();
+    }
+    return state;
   }
 
   void _sendCommittedText(String text) {
@@ -757,6 +811,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   void _onPointerDown(PointerDownEvent event, Size viewport) {
     if (event.kind == PointerDeviceKind.touch) return;
     _activateTextInput();
+    if (_history.active) return;
     _sendPointer(event, viewport);
   }
 
@@ -771,10 +826,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _onPointerUp(PointerUpEvent event, Size viewport) {
+    if (_history.active) return;
     _sendPointer(event, viewport);
   }
 
   void _onPointerCancel(PointerCancelEvent event, Size viewport) {
+    if (_history.active) return;
     _sendPointer(event, viewport);
   }
 
@@ -795,14 +852,100 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       modifiers: howlModifierBits(),
     );
     if (events.isEmpty) return;
-    _returnToLiveForInput();
     for (final input in events) {
       _sendMouse(input);
     }
   }
 
+  void _onPointerSignal(PointerSignalEvent event, Size viewport) {
+    if (event is! PointerScrollEvent ||
+        event.kind != PointerDeviceKind.mouse ||
+        event.scrollDelta.dy == 0) {
+      return;
+    }
+    unawaited(_routePointerScroll(event, viewport));
+  }
+
+  bool _scrollHistoryWheel(double deltaY) {
+    final metadata = _nativeLiveMetadata;
+    if (metadata == null ||
+        metadata.alternateScreen ||
+        metadata.historyCount == 0) {
+      return false;
+    }
+    if (_historyWheelTimer == null) _history.beginDrag();
+    _historyWheelTimer?.cancel();
+    _historyWheelTimer = Timer(const Duration(milliseconds: 160), () {
+      _historyWheelTimer = null;
+      _history.endDrag();
+    });
+    final changed = _history.drag(
+      deltaY: deltaY,
+      rowHeight: _lineHeight,
+      historyCount: metadata.historyCount,
+      historyRowBase: metadata.historyRowBase,
+      alternateScreen: metadata.alternateScreen,
+    );
+    if (!changed) return false;
+    _historyGeneration += 1;
+    if (_history.active) {
+      _pointerInput.clear();
+      _scheduleHistorySnapshot();
+    } else {
+      _leaveHistory();
+    }
+    return true;
+  }
+
+  Future<void> _routePointerScroll(
+    PointerScrollEvent event,
+    Size viewport,
+  ) async {
+    if (_history.active) {
+      _scrollHistoryWheel(event.scrollDelta.dy);
+      return;
+    }
+    final metadata = _nativeLiveMetadata;
+    if (metadata == null) return;
+    final wheel = _pointerInput.wheel(
+      event,
+      geometry: TerminalPointerGeometry(
+        viewport: viewport,
+        rows: metadata.rows,
+        columns: metadata.columns,
+        cellWidth: _cellWidth,
+        rowHeight: _lineHeight,
+      ),
+      modifiers: howlModifierBits(),
+    );
+    final state = await _currentInteractionState();
+    if (!mounted || _stopping || state == null) return;
+    if (_history.active) {
+      _scrollHistoryWheel(event.scrollDelta.dy);
+      return;
+    }
+    if (state.mouseTrackingEnabled) {
+      if (wheel != null) _sendMouse(wheel);
+      return;
+    }
+    final currentMetadata = _nativeLiveMetadata;
+    if (currentMetadata == null) return;
+    if (currentMetadata.alternateScreen) {
+      if (state.alternateScroll) {
+        _sendNamedKeyCycle(
+          event.scrollDelta.dy < 0
+              ? HowlInput.namedArrowUp
+              : HowlInput.namedArrowDown,
+        );
+      }
+      return;
+    }
+    _scrollHistoryWheel(event.scrollDelta.dy);
+  }
+
   void _beginHistoryDrag(DragStartDetails _) {
     if (_selection != null) return;
+    _pointerInput.clear();
     _history.beginDrag();
   }
 
@@ -1039,6 +1182,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _leaveHistory() {
+    _historyWheelTimer?.cancel();
+    _historyWheelTimer = null;
     _history.reset();
     _historyGeneration += 1;
     _historyRequestPending = false;
@@ -1185,6 +1330,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void dispose() {
     _stopping = true;
+    _historyWheelTimer?.cancel();
+    _historyWheelTimer = null;
     _textInput.detach();
     _focusNode.dispose();
     final nativeObserver = _nativeObserver;
@@ -1287,6 +1434,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                                 _onPointerUp(event, constraints.biggest),
                             onPointerCancel: (event) =>
                                 _onPointerCancel(event, constraints.biggest),
+                            onPointerSignal: (event) =>
+                                _onPointerSignal(event, constraints.biggest),
                             child: Focus(
                               focusNode: _focusNode,
                               autofocus: true,
