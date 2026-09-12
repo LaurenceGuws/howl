@@ -111,12 +111,22 @@ remains the sole owner which destroys the native Host. This prevents idle
 presentation restarts from accumulating stale session clients without closing
 the same fd from two owners.
 
+Live presentation is latest-frame paced like the maintained Web client. Flutter
+requests the next canonical observation only after the previous frame reaches
+`endOfFrame`; Session then materializes the newest eligible revision. Short PTY
+redraw bursts therefore collapse before native rich decode and Canvas projection
+instead of building presentation backlog. Continuous animation still renders at
+the available display cadence because a newer canonical revision remains ready.
+
 Android accessibility is projected from the same immutable `howl-client.view`
 used by the native renderer; Flutter does not OCR its Canvas or maintain a
-second terminal model. The private native host currently reserves a 320 KiB
-Canvas envelope with a 192x192 alpha atlas and carries at most 64 KiB of
-visible UTF-8 semantic text beside it. Dart asks the version-locked native host
-for the exact required output-buffer size rather than mirroring that bound.
+second terminal model. The private native host reserves one bounded ~5 MiB
+worst-case Canvas/semantic packet for the shared maintained-client command
+envelope. Its alpha atlas scales with physical raster density from 192x192 at
+1x through 768x768 at the 4x ceiling; one reusable 32 MiB observation arena owns
+rich-snapshot decode and immutable-view projection scratch. Dart asks the
+version-locked native host for the exact required output-buffer size rather than
+mirroring that bound.
 Interior blanks and visual row boundaries are
 preserved, trailing blank cells/rows are trimmed, wide-cell continuations are
 not duplicated, and SGR-concealed cells project as blanks. If that semantic

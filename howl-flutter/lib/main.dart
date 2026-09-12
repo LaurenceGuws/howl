@@ -243,7 +243,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         presentation: nativePresentation,
-        armNextLiveObservation: true,
       );
       if (presentationChanged()) throw const _PresentationRestart();
       _presentationMaximumRows = observer.maximumRows;
@@ -281,15 +280,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _restoreImeAfterPresentationRestart = null;
       }
       var revision = 0;
-      var pendingObservation = _observeNativeFrame(
-        observer: observer,
-        afterRevision: revision,
-        historyOffset: 0,
-        lease: _nativeLiveLease,
-        transportGeneration: generation,
-      );
       while (!_stopping && generation == _transportGeneration) {
-        final observed = await pendingObservation;
+        // Match Web's latest-frame policy: only ask Session for the next live
+        // observation after the previous frame reached the display boundary.
+        // Session materializes the newest eligible canonical revision, so PTY
+        // bursts collapse before native rich decode / Canvas projection.
+        final observed = await _observeNativeFrame(
+          observer: observer,
+          afterRevision: revision,
+          historyOffset: 0,
+          lease: _nativeLiveLease,
+          transportGeneration: generation,
+        );
         if (presentationChanged()) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           throw const _PresentationRestart();
@@ -343,13 +345,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         } else {
           setState(() {});
         }
-        pendingObservation = _observeNativeFrame(
-          observer: observer,
-          afterRevision: revision,
-          historyOffset: 0,
-          lease: _nativeLiveLease,
-          transportGeneration: generation,
-        );
         await WidgetsBinding.instance.endOfFrame;
         for (final image in prepared.retired) {
           image.dispose();
