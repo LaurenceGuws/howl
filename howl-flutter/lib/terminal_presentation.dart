@@ -15,6 +15,24 @@ final class TerminalPresentation {
   final int fontPixels;
   final int cellWidth;
   final int lineHeight;
+
+  TerminalPresentation rasterized(int scale) {
+    if (scale < 1 || scale > maximumTerminalRasterScale) {
+      throw RangeError.range(scale, 1, maximumTerminalRasterScale, 'scale');
+    }
+    return TerminalPresentation(
+      fontPixels: fontPixels * scale,
+      cellWidth: cellWidth * scale,
+      lineHeight: lineHeight * scale,
+    );
+  }
+}
+
+const int maximumTerminalRasterScale = 4;
+
+int terminalRasterScale(double devicePixelRatio) {
+  if (!devicePixelRatio.isFinite || devicePixelRatio <= 0) return 1;
+  return devicePixelRatio.ceil().clamp(1, maximumTerminalRasterScale);
 }
 
 extension TerminalZoomPresetPresentation on TerminalZoomPreset {

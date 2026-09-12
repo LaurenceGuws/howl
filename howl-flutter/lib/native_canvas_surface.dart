@@ -52,7 +52,7 @@ final class _AtlasSegment extends _PaintSegment {
       // the per-sprite foreground RGB; srcIn would keep the atlas RGB white.
       ui.BlendMode.modulate,
       null,
-      ui.Paint(),
+      ui.Paint()..filterQuality = ui.FilterQuality.medium,
     );
   }
 }
@@ -529,16 +529,26 @@ final class NativeCanvasPainter extends CustomPainter {
       logicalSize: ui.Size(logicalWidth, logicalHeight),
     );
     if (fit == null) return;
+    final surfaceWidth = lease.frame.surfaceWidth.toDouble();
+    final surfaceHeight = lease.frame.surfaceHeight.toDouble();
+    if (surfaceWidth <= 0 || surfaceHeight <= 0) return;
     canvas.save();
     canvas.translate(fit.rect.left, fit.rect.top);
-    canvas.scale(fit.scale);
+    canvas.scale(
+      fit.scale * logicalWidth / surfaceWidth,
+      fit.scale * logicalHeight / surfaceHeight,
+    );
     lease.plan.paint(canvas, lease.images);
     canvas.restore();
   }
 
   @override
   bool shouldRepaint(covariant NativeCanvasPainter oldDelegate) =>
-      oldDelegate.lease.frame.revision != lease.frame.revision;
+      oldDelegate.lease.frame.revision != lease.frame.revision ||
+      oldDelegate.lease.frame.surfaceWidth != lease.frame.surfaceWidth ||
+      oldDelegate.lease.frame.surfaceHeight != lease.frame.surfaceHeight ||
+      oldDelegate.logicalWidth != logicalWidth ||
+      oldDelegate.logicalHeight != logicalHeight;
 }
 
 ui.Rect _destination(NativeCanvasFrame frame, int index) => ui.Rect.fromLTWH(

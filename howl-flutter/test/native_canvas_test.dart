@@ -83,6 +83,33 @@ Uint8List _oneFrameCanvas({int surfaceWidth = 10, int surfaceHeight = 20}) {
   return bytes;
 }
 
+Uint8List _scaledOneFrameCanvas(int scale) {
+  final bytes = _oneFrameCanvas(
+    surfaceWidth: 10 * scale,
+    surfaceHeight: 20 * scale,
+  );
+  final data = ByteData.sublistView(bytes);
+  var at =
+      NativeCanvasFrame.globalHeaderBytes +
+      NativeCanvasFrame.frameHeaderBytes +
+      NativeCanvasFrame.resourceRecordBytes;
+
+  void rect(int offset, int x, int y, int width, int height) {
+    data.setInt32(offset, x, Endian.little);
+    data.setInt32(offset + 4, y, Endian.little);
+    data.setUint16(offset + 8, width, Endian.little);
+    data.setUint16(offset + 10, height, Endian.little);
+  }
+
+  at += NativeCanvasFrame.commandRecordBytes;
+  rect(at + 8, 2 * scale, 3 * scale, scale, scale);
+  rect(at + 20, 2 * scale, 3 * scale, scale, scale);
+  at += NativeCanvasFrame.commandRecordBytes;
+  rect(at + 8, 4 * scale, 5 * scale, scale, scale);
+  rect(at + 20, 4 * scale, 5 * scale, scale, scale);
+  return bytes;
+}
+
 Uint8List _batchedAlphaCanvas() {
   final bytes = _oneFrameCanvas();
   final data = ByteData.sublistView(bytes);
@@ -287,6 +314,50 @@ void main() {
       }
     }
   });
+
+  test(
+    'HiDPI Canvas maps dense native raster back to logical terminal cells',
+    () async {
+      final bytes = _scaledOneFrameCanvas(2);
+      final data = ByteData.sublistView(bytes);
+      final alphaCommand =
+          NativeCanvasFrame.globalHeaderBytes +
+          NativeCanvasFrame.frameHeaderBytes +
+          NativeCanvasFrame.resourceRecordBytes +
+          NativeCanvasFrame.commandRecordBytes;
+      data.setUint32(alphaCommand + 4, 0xff0000ff, Endian.little);
+
+      final update = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(bytes),
+      );
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      NativeCanvasPainter(
+        lease: update.lease,
+        logicalWidth: 10,
+        logicalHeight: 20,
+      ).paint(canvas, const ui.Size(10, 20));
+      final image = await recorder.endRecording().toImage(10, 20);
+      try {
+        final raw = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        expect(raw, isNotNull);
+        final offset = (3 * 10 + 2) * 4;
+        expect(raw!.buffer.asUint8List(raw.offsetInBytes + offset, 4), <int>[
+          255,
+          0,
+          0,
+          255,
+        ]);
+      } finally {
+        image.dispose();
+        disposeNativeCanvasLease(update.lease);
+        for (final retired in update.retired) {
+          retired.dispose();
+        }
+      }
+    },
+  );
 
   test('one-frame Canvas packet preserves resource and batch order', () {
     final frame = NativeCanvasFrame.parse(_oneFrameCanvas());

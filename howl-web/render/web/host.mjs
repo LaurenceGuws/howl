@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v33';
+const CANARY_GENERATION = 'v34';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');

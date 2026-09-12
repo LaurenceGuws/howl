@@ -19,4 +19,27 @@ void main() {
     expect(TerminalZoomPreset.small.next, TerminalZoomPreset.compact);
     expect(TerminalZoomPreset.compact.next, TerminalZoomPreset.normal);
   });
+
+  test('raster density supersamples physical presentation without changing presets', () {
+    expect(terminalRasterScale(0), 1);
+    expect(terminalRasterScale(double.nan), 1);
+    expect(terminalRasterScale(1.0), 1);
+    expect(terminalRasterScale(1.7), 2);
+    expect(terminalRasterScale(2.5), 3);
+    expect(terminalRasterScale(4.8), 4);
+
+    final compact = TerminalZoomPreset.compact.presentation.rasterized(2);
+    expect(compact.fontPixels, 18);
+    expect(compact.cellWidth, 12);
+    expect(compact.lineHeight, 24);
+
+    final normal = TerminalZoomPreset.normal.presentation.rasterized(3);
+    expect(normal.fontPixels, 48);
+    expect(normal.cellWidth, 30);
+    expect(normal.lineHeight, 60);
+    expect(
+      () => TerminalZoomPreset.normal.presentation.rasterized(5),
+      throwsRangeError,
+    );
+  });
 }

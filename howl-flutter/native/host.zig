@@ -17,9 +17,10 @@ const image_refill_header_bytes: usize = 64;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
-const atlas_width: u16 = 192;
-const atlas_height: u16 = 192;
-const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height);
+const atlas_base_extent: u16 = 192;
+const maximum_raster_scale: u16 = 4;
+const maximum_atlas_extent: u16 = atlas_base_extent * maximum_raster_scale;
+const pixel_capacity: usize = @as(usize, maximum_atlas_extent) * @as(usize, maximum_atlas_extent);
 // One call copies a complete frame into Flutter's fixed output packet. Reserve
 // every other bounded section first, then spend the exact remainder on whole
 // command records so an admitted frame is always serializable by construction.
@@ -97,7 +98,25 @@ const Host = struct {
     armed_live_after_revision: ?u64 = null,
 };
 
-fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
+fn maintainedRasterScale(font_pixels: u16, cell_width: u16, cell_height: u16) ?u16 {
+    const bases = [_]struct { font: u16, cell: u16, line: u16 }{
+        .{ .font = 9, .cell = 6, .line = 12 },
+        .{ .font = 12, .cell = 8, .line = 15 },
+        .{ .font = 16, .cell = 10, .line = 20 },
+    };
+    var scale: u16 = 1;
+    while (scale <= maximum_raster_scale) : (scale += 1) {
+        for (bases) |base| {
+            if (font_pixels == base.font * scale and
+                cell_width == base.cell * scale and
+                cell_height == base.line * scale) return scale;
+        }
+    }
+    return null;
+}
+
+fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.ContentConfig {
+    const raster_bytes = @as(usize, atlas_extent) * @as(usize, atlas_extent);
     return .{
         .cell_size = .{ .width = cell_width, .height = cell_height },
         .box_drawing = .{
@@ -110,9 +129,9 @@ fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
             .glyph_capacity = 512,
             .max_sequence_scalars = 16,
         },
-        .atlas = .{ .width = atlas_width, .height = atlas_height, .entry_capacity = 256 },
+        .atlas = .{ .width = atlas_extent, .height = atlas_extent, .entry_capacity = 256 },
         .shaped_capacity = 32,
-        .raster_bytes = pixel_capacity,
+        .raster_bytes = raster_bytes,
         .command_capacity = command_capacity,
     };
 }
@@ -236,6 +255,13 @@ pub export fn howl_native_host_create(
     if (endpoint_len == 0 or primary_len == 0 or
         font_pixels == 0 or cell_width == 0 or cell_height == 0)
         return null;
+    const raster_scale = maintainedRasterScale(font_pixels, cell_width, cell_height) orelse return null;
+    const atlas_extent = std.math.mul(u16, atlas_base_extent, raster_scale) catch return null;
+    const atlas_pixel_capacity = std.math.mul(
+        usize,
+        @as(usize, atlas_extent),
+        @as(usize, atlas_extent),
+    ) catch return null;
     const allocator = std.heap.c_allocator;
     var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch return null;
     errdefer connection.deinit();
@@ -261,18 +287,18 @@ pub export fn howl_native_host_create(
     const content = terminal.initContent(
         allocator,
         fonts,
-        contentConfig(cell_width, cell_height),
+        contentConfig(cell_width, cell_height, atlas_extent),
     ) catch return null;
     errdefer terminal.deinitContent(content);
     var composer = canvas.Composer.init(allocator, .{
         .sources = 1,
         .retained_resources = maximum_frame_resources,
         .retained_commands = command_capacity,
-        .retained_pixel_bytes = pixel_capacity,
+        .retained_pixel_bytes = atlas_pixel_capacity,
         .composition_sources = 1,
         .candidate_resources = maximum_frame_resources,
         .candidate_commands = command_capacity,
-        .candidate_pixel_bytes = pixel_capacity,
+        .candidate_pixel_bytes = atlas_pixel_capacity,
     }) catch return null;
     errdefer composer.deinit();
     const source = composer.registerSource() catch return null;
@@ -833,7 +859,12 @@ test "native host surface follows configured presentation lattice" {
 }
 
 test "native host dense presentation budgets raster and commands together" {
-    try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
+    try std.testing.expectEqual(@as(usize, 768 * 768), pixel_capacity);
+    try std.testing.expectEqual(@as(?u16, 1), maintainedRasterScale(16, 10, 20));
+    try std.testing.expectEqual(@as(?u16, 2), maintainedRasterScale(18, 12, 24));
+    try std.testing.expectEqual(@as(?u16, 3), maintainedRasterScale(36, 24, 45));
+    try std.testing.expectEqual(@as(?u16, 4), maintainedRasterScale(64, 40, 80));
+    try std.testing.expectEqual(@as(?u16, null), maintainedRasterScale(17, 10, 20));
     try std.testing.expectEqual(presentation.maximum_canvas_commands, command_capacity);
     try std.testing.expect(command_capacity >= presentation.maximum_cells + client.view.maximum_image_placements + 1);
     try std.testing.expectEqual(@as(u32, presentation.maximum_rows), howl_native_host_maximum_rows());
@@ -842,7 +873,7 @@ test "native host dense presentation budgets raster and commands together" {
         maximum_non_command_packet_bytes + command_capacity * command_record_bytes + semantic_capacity,
         output_minimum_bytes,
     );
-    try std.testing.expect(output_minimum_bytes < 2 * 1024 * 1024);
+    try std.testing.expect(output_minimum_bytes < 8 * 1024 * 1024);
     try std.testing.expectEqual(@as(usize, 7), maximum_terminal_images);
     try std.testing.expectEqual(maximum_frame_resources, maximum_terminal_images + 1);
 }

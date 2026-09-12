@@ -129,6 +129,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int _proposedColumns = 0;
   int? _presentationMaximumRows;
   int? _presentationMaximumColumns;
+  int _nativeRasterScale = 1;
+  int? _scheduledRasterScale;
   int? _pendingResizeRows;
   int? _pendingResizeColumns;
   bool _resizeDrainRunning = false;
@@ -225,28 +227,35 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     NativeHostControl? control;
     final zoomPreset = _zoomPreset;
     final presentation = zoomPreset.presentation;
+    final rasterScale = terminalRasterScale(View.of(context).devicePixelRatio);
+    final nativePresentation = presentation.rasterized(rasterScale);
+    bool presentationChanged() =>
+        zoomPreset != _zoomPreset ||
+        rasterScale != terminalRasterScale(View.of(context).devicePixelRatio);
     try {
       control = await NativeHostControl.create(
         endpoint: widget.endpoint.toString(),
       );
-      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+      if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       markAttached();
 
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
-        presentation: presentation,
+        presentation: nativePresentation,
         armNextLiveObservation: true,
       );
-      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+      if (presentationChanged()) throw const _PresentationRestart();
       _presentationMaximumRows = observer.maximumRows;
       _presentationMaximumColumns = observer.maximumColumns;
+      _nativeRasterScale = rasterScale;
+      _scheduledRasterScale = null;
 
       if (widget.geometryLeader) {
         if (_terminalViewportSize == null) {
           await WidgetsBinding.instance.endOfFrame;
         }
-        if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+        if (presentationChanged()) throw const _PresentationRestart();
         final viewport = _terminalViewportSize;
         final geometry = viewport == null
             ? null
@@ -257,7 +266,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           _proposedColumns = geometry.columns;
         }
       }
-      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+      if (presentationChanged()) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
       _nativeControl = control;
@@ -281,7 +290,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       );
       while (!_stopping && generation == _transportGeneration) {
         final observed = await pendingObservation;
-        if (zoomPreset != _zoomPreset) {
+        if (presentationChanged()) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           throw const _PresentationRestart();
         }
@@ -291,7 +300,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
         final NativeHostFrame packet;
         try {
-          packet = parseNativeHostPacket(observed.bytes, presentation);
+          packet = parseNativeHostPacket(observed.bytes, nativePresentation);
         } catch (_) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           rethrow;
@@ -302,7 +311,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           preloaded: observed.preloaded,
         );
         revision = packet.metadata.revision;
-        if (zoomPreset != _zoomPreset) {
+        if (presentationChanged()) {
           disposeNativeCanvasLeaseCandidate(prepared);
           throw const _PresentationRestart();
         }
@@ -831,9 +840,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         final generation = _historyGeneration;
         var observer = _nativeHistoryObserver;
         if (observer == null) {
+          final nativePresentation = _presentation.rasterized(
+            _nativeRasterScale,
+          );
           observer = await NativeHostObserver.createPlatform(
             endpoint: widget.endpoint.toString(),
-            presentation: _presentation,
+            presentation: nativePresentation,
           );
           if (!mounted || _stopping || !_history.active) {
             unawaited(observer.close());
@@ -857,7 +869,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         }
         final NativeHostFrame packet;
         try {
-          packet = parseNativeHostPacket(observed.bytes, _presentation);
+          packet = parseNativeHostPacket(
+            observed.bytes,
+            _presentation.rasterized(_nativeRasterScale),
+          );
         } catch (_) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           rethrow;
@@ -1034,6 +1049,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
 
   void _changeZoom(TerminalZoomPreset preset) {
     if (_stopping || preset == _zoomPreset) return;
+    _scheduledRasterScale = null;
     _restoreImeAfterPresentationRestart =
         MediaQuery.viewInsetsOf(context).bottom > 0;
     _leaveHistory();
@@ -1069,8 +1085,47 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _sendFocus(focused);
   }
 
+  void _scheduleRasterPresentationRestart(int rasterScale) {
+    if (_scheduledRasterScale == rasterScale) return;
+    _scheduledRasterScale = rasterScale;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _stopping || _scheduledRasterScale != rasterScale) return;
+      _scheduledRasterScale = null;
+      final currentScale = terminalRasterScale(
+        View.of(context).devicePixelRatio,
+      );
+      if (currentScale != rasterScale || currentScale == _nativeRasterScale) {
+        return;
+      }
+      _restoreImeAfterPresentationRestart =
+          MediaQuery.viewInsetsOf(context).bottom > 0;
+      _leaveHistory();
+      setState(() {
+        _selection = null;
+        _nativeLiveMetadata = null;
+        _nativeLiveSemanticText = '';
+        _nativeLiveSemanticTruncated = false;
+        _proposedRows = 0;
+        _proposedColumns = 0;
+        _pendingResizeRows = null;
+        _pendingResizeColumns = null;
+        _failure = null;
+        _reconnecting = false;
+      });
+      final fault = _transportFault;
+      if (fault != null && !fault.isCompleted) {
+        fault.complete(const _PresentationRestart());
+      }
+    });
+  }
+
   void _proposeGeometry(Size size) {
     _terminalViewportSize = size;
+    final rasterScale = terminalRasterScale(View.of(context).devicePixelRatio);
+    if (_nativeObserver != null && rasterScale != _nativeRasterScale) {
+      _scheduleRasterPresentationRestart(rasterScale);
+      return;
+    }
     if (!widget.geometryLeader || !_hasControl) return;
     final geometry = _geometryFor(size, _presentation);
     if (geometry == null) return;
