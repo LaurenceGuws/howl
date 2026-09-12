@@ -79,8 +79,8 @@ pub fn build(b: *std.Build) void {
     const live = b.addExecutable(.{ .name = "howl-live-render", .root_module = live_root });
     live.entry = .disabled;
     live.export_memory = true;
-    live.initial_memory = 128 * 1024 * 1024;
-    live.max_memory = 192 * 1024 * 1024;
+    live.initial_memory = 192 * 1024 * 1024;
+    live.max_memory = 256 * 1024 * 1024;
     live.wasi_exec_model = .reactor;
 
     // The accepted check compiles both the synthetic proof and the live renderer.

@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v32';
+const CANARY_GENERATION = 'v33';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -1105,8 +1105,13 @@ function scheduleViewportResize() {
     const width = Math.floor(main.clientWidth);
     const top = Math.max(0, terminal.getBoundingClientRect().top);
     const toolbarHeight = Math.ceil(toolbar.getBoundingClientRect().height);
-    const columns = clamp(Math.floor(width / cellWidth), 20, 256);
-    const rows = clamp(Math.floor(Math.max(cellHeight * 2, viewportHeight - top - toolbarHeight - 28) / cellHeight), 2, 128);
+    const maximumColumns = control.exports.hw_maximum_columns();
+    const maximumRows = control.exports.hw_maximum_rows();
+    const columns = clamp(Math.floor(width / cellWidth), 20, maximumColumns);
+    const rows = clamp(
+      Math.floor(Math.max(cellHeight * 2, viewportHeight - top - toolbarHeight - 28) / cellHeight),
+      2, maximumRows,
+    );
     const currentColumns = Math.floor(lastFrame.surface[0] / cellWidth);
     const currentRows = Math.floor(lastFrame.surface[1] / cellHeight);
     if ((rows === currentRows && columns === currentColumns) ||

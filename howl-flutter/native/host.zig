@@ -4,6 +4,7 @@ const protocol = @import("howl_session").protocol;
 const text = @import("howl_text");
 const canvas = @import("canvas");
 const terminal = @import("terminal");
+const presentation = @import("presentation");
 
 const host_header_bytes: usize = 64;
 const global_header_bytes: usize = 32;
@@ -25,13 +26,9 @@ const pixel_capacity: usize = @as(usize, atlas_width) * @as(usize, atlas_height)
 const maximum_non_command_packet_bytes: usize = host_header_bytes + global_header_bytes +
     frame_header_bytes + maximum_frame_resources * resource_record_bytes +
     maximum_frame_resources * removal_record_bytes + pixel_capacity;
-// Flutter admits at most 128x256 terminal cells. Keep enough room for one
-// Canvas command per cell, every canonical graphics placement, and additional
-// presentation detail without making ordinary dense TUIs depend on sparsity.
-const maximum_flutter_rows: usize = 128;
-const maximum_flutter_columns: usize = 256;
-const maximum_flutter_cells: usize = maximum_flutter_rows * maximum_flutter_columns;
-const command_capacity: usize = 40 * 1024;
+// Maintained native and Web clients share one renderer-owned geometry and
+// command envelope. The private Host packet remains separately byte-bounded.
+const command_capacity: usize = presentation.maximum_canvas_commands;
 const canvas_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
@@ -122,6 +119,16 @@ fn contentConfig(cell_width: u16, cell_height: u16) terminal.ContentConfig {
 
 pub export fn howl_native_host_version() u32 {
     return 4;
+}
+
+/// Reports the shared maintained-client row envelope.
+pub export fn howl_native_host_maximum_rows() u32 {
+    return presentation.maximum_rows;
+}
+
+/// Reports the shared maintained-client column envelope.
+pub export fn howl_native_host_maximum_columns() u32 {
+    return presentation.maximum_columns;
 }
 
 /// Creates an independently owned duplicate of the Host session socket. The
@@ -827,8 +834,10 @@ test "native host surface follows configured presentation lattice" {
 
 test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(usize, 192 * 192), pixel_capacity);
-    try std.testing.expectEqual(@as(usize, 40 * 1024), command_capacity);
-    try std.testing.expect(command_capacity >= maximum_flutter_cells + client.view.maximum_image_placements + 1);
+    try std.testing.expectEqual(presentation.maximum_canvas_commands, command_capacity);
+    try std.testing.expect(command_capacity >= presentation.maximum_cells + client.view.maximum_image_placements + 1);
+    try std.testing.expectEqual(@as(u32, presentation.maximum_rows), howl_native_host_maximum_rows());
+    try std.testing.expectEqual(@as(u32, presentation.maximum_columns), howl_native_host_maximum_columns());
     try std.testing.expectEqual(
         maximum_non_command_packet_bytes + command_capacity * command_record_bytes + semantic_capacity,
         output_minimum_bytes,

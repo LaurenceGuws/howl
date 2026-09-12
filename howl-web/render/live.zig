@@ -12,7 +12,7 @@ fn trapPanic(_: []const u8, _: ?usize) noreturn {
     @trap();
 }
 
-const command_capacity = 16 * 1024;
+const command_capacity = render.presentation.maximum_canvas_commands;
 const atlas_bytes = 1024 * 1024;
 const maximum_terminal_images: usize = render.terminal.maximum_external_images;
 const residency_capacity = maximum_terminal_images + 1;
@@ -26,9 +26,9 @@ var font_input: [8 * 1024 * 1024]u8 = undefined;
 var fallback_font_input: [2 * 1024 * 1024]u8 = undefined;
 var symbol_font_input: [3 * 1024 * 1024]u8 = undefined;
 var snapshot_input: [p.maximum_observation_bytes]u8 = undefined;
-var persistent_heap: [24 * 1024 * 1024]u8 = undefined;
+var persistent_heap: [64 * 1024 * 1024]u8 = undefined;
 var transient_heap: [20 * 1024 * 1024]u8 = undefined;
-var metadata: [2 * 1024 * 1024]u8 = undefined;
+var metadata: [32 * 1024 * 1024]u8 = undefined;
 var metadata_used: usize = 0;
 var pixels: [atlas_bytes]u8 = undefined;
 var pixels_used: usize = 0;

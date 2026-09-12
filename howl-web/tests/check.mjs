@@ -8,7 +8,7 @@ assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
   'hw_text_ptr', 'hw_text_len', 'hw_text_truncated', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
   'hw_image_ptr', 'hw_image_len', 'hw_image_id', 'hw_image_generation', 'hw_image_width', 'hw_image_height',
-  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
+  'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_maximum_rows', 'hw_maximum_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready', 'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste',
   'hw_request_image', 'hw_release_image',
   'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_mouse', 'hw_send_resize', 'hw_send_resize_owned',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
@@ -16,6 +16,8 @@ assert.deepEqual(WebAssembly.Module.exports(module).map(x => x.name).sort(), exp
 const w = (await WebAssembly.instantiate(module)).exports;
 assert.equal(w.memory.buffer.byteLength, 32 * 1024 * 1024);
 assert.throws(() => w.memory.grow(1), RangeError);
+assert.equal(w.hw_maximum_rows(), 192);
+assert.equal(w.hw_maximum_columns(), 512);
 assert.equal(w.hw_canvas_check(), 0);
 assert.equal(w.hw_text_truncated(), 0);
 assert.equal(w.hw_leader_present(), 0);

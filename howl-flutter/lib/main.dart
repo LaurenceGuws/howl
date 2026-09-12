@@ -127,6 +127,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   int _historyGeneration = 0;
   int _proposedRows = 0;
   int _proposedColumns = 0;
+  int? _presentationMaximumRows;
+  int? _presentationMaximumColumns;
   int? _pendingResizeRows;
   int? _pendingResizeColumns;
   bool _resizeDrainRunning = false;
@@ -231,6 +233,15 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (!mounted || _stopping || generation != _transportGeneration) return;
       markAttached();
 
+      observer = await NativeHostObserver.createPlatform(
+        endpoint: widget.endpoint.toString(),
+        presentation: presentation,
+        armNextLiveObservation: true,
+      );
+      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
+      _presentationMaximumRows = observer.maximumRows;
+      _presentationMaximumColumns = observer.maximumColumns;
+
       if (widget.geometryLeader) {
         if (_terminalViewportSize == null) {
           await WidgetsBinding.instance.endOfFrame;
@@ -246,13 +257,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           _proposedColumns = geometry.columns;
         }
       }
-      if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
-
-      observer = await NativeHostObserver.createPlatform(
-        endpoint: widget.endpoint.toString(),
-        presentation: presentation,
-        armNextLiveObservation: true,
-      );
       if (zoomPreset != _zoomPreset) throw const _PresentationRestart();
       if (!mounted || _stopping || generation != _transportGeneration) return;
       _nativeObserver = observer;
@@ -1090,14 +1094,17 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         size.height <= 0) {
       return null;
     }
+    final maximumRows = _presentationMaximumRows;
+    final maximumColumns = _presentationMaximumColumns;
+    if (maximumRows == null || maximumColumns == null) return null;
     return (
       rows: (size.height / presentation.lineHeight)
           .floor()
-          .clamp(1, HowlInput.maximumRows)
+          .clamp(1, maximumRows)
           .toInt(),
       columns: (size.width / presentation.cellWidth)
           .floor()
-          .clamp(1, HowlInput.maximumColumns)
+          .clamp(1, maximumColumns)
           .toInt(),
     );
   }

@@ -1,4 +1,6 @@
 howl_native_host_version
+howl_native_host_maximum_rows
+howl_native_host_maximum_columns
 howl_native_host_cancellation_create
 howl_native_host_cancellation_cancel
 howl_native_host_cancellation_destroy

@@ -46,6 +46,7 @@ pub fn build(b: *std.Build) void {
     text.link_libc = true;
     text.addImport("native_c", native_c);
 
+    const presentation = localModule(b, target, optimize, repo, "howl-render/src/presentation.zig");
     const validation = localModule(b, target, optimize, repo, "howl-render/src/canvas_validation.zig");
     const canvas = localModule(b, target, optimize, repo, "howl-render/src/canvas.zig");
     canvas.addImport("canvas_validation", validation);
@@ -69,6 +70,7 @@ pub fn build(b: *std.Build) void {
     root.addImport("howl_text", text);
     root.addImport("canvas", canvas);
     root.addImport("terminal", terminal);
+    root.addImport("presentation", presentation);
 
     const object = b.addObject(.{
         .name = "howl_flutter_native_host",

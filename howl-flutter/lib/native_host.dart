@@ -306,6 +306,8 @@ final class NativeHostObserver {
     this._cancellation,
     this._cancelCancellation,
     this._destroyCancellation,
+    this.maximumRows,
+    this.maximumColumns,
   ) {
     _responses.listen(_onResponse);
   }
@@ -316,6 +318,8 @@ final class NativeHostObserver {
   final ffi.Pointer<ffi.Void> _cancellation;
   final _CancellationCancelDart _cancelCancellation;
   final _CancellationDestroyDart _destroyCancellation;
+  final int maximumRows;
+  final int maximumColumns;
   final Map<int, Completer<NativeHostObservation>> _pending =
       <int, Completer<NativeHostObservation>>{};
   int _nextId = 1;
@@ -384,10 +388,14 @@ final class NativeHostObserver {
       exitCode: 'worker_isolate_exit',
     );
     if (first is! List<Object?> ||
-        first.length != 2 ||
+        first.length != 4 ||
         first[0] is! SendPort ||
         first[1] is! int ||
-        (first[1]! as int) == 0) {
+        first[2] is! int ||
+        first[3] is! int ||
+        (first[1]! as int) == 0 ||
+        (first[2]! as int) <= 0 ||
+        (first[3]! as int) <= 0) {
       isolate.kill(priority: Isolate.immediate);
       responses.close();
       throw NativeHostException(first is String ? first : 'worker_start');
@@ -400,6 +408,8 @@ final class NativeHostObserver {
       cancellation,
       cancelCancellation,
       destroyCancellation,
+      first[2]! as int,
+      first[3]! as int,
     );
   }
 
@@ -657,6 +667,8 @@ typedef _ObserveDart =
 typedef _SetLiveObservePipelineNative =
     ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint8);
 typedef _SetLiveObservePipelineDart = int Function(ffi.Pointer<ffi.Void>, int);
+typedef _PresentationBoundNative = ffi.Uint32 Function();
+typedef _PresentationBoundDart = int Function();
 
 ffi.DynamicLibrary _nativeHostLibrary() =>
     Platform.isIOS
@@ -687,6 +699,22 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
     _CancellationCreateNative,
     _CancellationCreateDart
   >('howl_native_host_cancellation_create');
+  final maximumRows = dylib.lookupFunction<
+    _PresentationBoundNative,
+    _PresentationBoundDart
+  >('howl_native_host_maximum_rows')();
+  final maximumColumns = dylib.lookupFunction<
+    _PresentationBoundNative,
+    _PresentationBoundDart
+  >('howl_native_host_maximum_columns')();
+  if (maximumRows <= 0 ||
+      maximumRows > 0xffff ||
+      maximumColumns <= 0 ||
+      maximumColumns > 0xffff) {
+    ready.send('worker_geometry_bound');
+    commands.close();
+    return;
+  }
   final outputMinimumBytes =
       dylib.lookupFunction<_OutputMinimumBytesNative, _OutputMinimumBytesDart>(
         'howl_native_host_output_minimum_bytes',
@@ -779,7 +807,12 @@ Future<void> _nativeHostWorker(List<Object?> init) async {
   }
   // Ownership of this independently allocated duplicate-socket handle moves to
   // the creating isolate. The worker remains the sole owner of `host` itself.
-  ready.send(<Object?>[commands.sendPort, cancellation.address]);
+  ready.send(<Object?>[
+    commands.sendPort,
+    cancellation.address,
+    maximumRows,
+    maximumColumns,
+  ]);
 
   try {
     await for (final message in commands) {

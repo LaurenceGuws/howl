@@ -32,8 +32,6 @@ abstract final class HowlInput {
   static const modifierAlt = 1 << 1;
   static const modifierControl = 1 << 2;
 
-  static const maximumRows = 128;
-  static const maximumColumns = 256;
   // One outer InputKind byte shares the frozen 64 KiB request payload ceiling.
   static const maximumPasteBytes = 64 * 1024 - 1;
 }

@@ -3,7 +3,9 @@ const std = @import("std");
 const p = @import("howl_session").protocol;
 const client = @import("howl_client");
 const rich = client.rich;
-const canvas = @import("howl_render").canvas;
+const render = @import("howl_render");
+const canvas = render.canvas;
+const presentation = render.presentation;
 
 // A deliberately coarse canary budget, not the final terminal-renderer budget.
 var input: [32768]u8 = undefined;
@@ -114,6 +116,12 @@ export fn hw_rows() u32 {
 }
 export fn hw_columns() u32 {
     return columns;
+}
+export fn hw_maximum_rows() u32 {
+    return presentation.maximum_rows;
+}
+export fn hw_maximum_columns() u32 {
+    return presentation.maximum_columns;
 }
 export fn hw_history_offset() u32 {
     return history_offset;

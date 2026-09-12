@@ -38,6 +38,13 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const presentation = b.createModule(.{
+        .root_source_file = b.path("src/presentation.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    module.addImport("presentation", presentation);
+    test_module.addImport("presentation", presentation);
     const canvas_validation = b.createModule(.{
         .root_source_file = b.path("src/canvas_validation.zig"),
         .target = target,
