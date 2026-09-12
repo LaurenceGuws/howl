@@ -17,6 +17,10 @@ const image_refill_header_bytes: usize = 64;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
+// Reuse one bounded decode/projection arena for every observation so dense live
+// frames do not churn the process-global malloc arenas. Web uses the same
+// reset-per-frame ownership model around this shared rich/view pipeline.
+const observation_scratch_bytes: usize = 32 * 1024 * 1024;
 const atlas_base_extent: u16 = 192;
 const maximum_raster_scale: u16 = 4;
 const maximum_atlas_extent: u16 = atlas_base_extent * maximum_raster_scale;
@@ -96,6 +100,7 @@ const Host = struct {
     pending_image: ?PendingImage = null,
     live_observe_pipeline: bool = false,
     armed_live_after_revision: ?u64 = null,
+    observation_scratch: []u8,
 };
 
 fn maintainedRasterScale(font_pixels: u16, cell_width: u16, cell_height: u16) ?u16 {
@@ -302,6 +307,8 @@ pub export fn howl_native_host_create(
     }) catch return null;
     errdefer composer.deinit();
     const source = composer.registerSource() catch return null;
+    const observation_scratch = allocator.alloc(u8, observation_scratch_bytes) catch return null;
+    errdefer allocator.free(observation_scratch);
     const host = allocator.create(Host) catch return null;
     host.* = .{
         .allocator = allocator,
@@ -311,6 +318,7 @@ pub export fn howl_native_host_create(
         .content = content,
         .composer = composer,
         .source = source,
+        .observation_scratch = observation_scratch,
     };
     return @ptrCast(host);
 }
@@ -492,11 +500,13 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     const raw_host = raw orelse return;
     const host: *Host = @ptrCast(@alignCast(raw_host));
     const allocator = host.allocator;
+    const observation_scratch = host.observation_scratch;
     host.composer.deinit();
     terminal.deinitContent(host.content);
     host.fonts.deinit();
     host.connection.deinit();
     host.* = undefined;
+    allocator.free(observation_scratch);
     allocator.destroy(host);
 }
 
@@ -555,19 +565,20 @@ pub export fn howl_native_host_observe(
 
 fn receiveRich(
     host: *Host,
+    allocator: std.mem.Allocator,
     after_revision: u64,
     history_offset: u32,
 ) !client.rich.Snapshot {
     if (host.armed_live_after_revision) |armed_after| {
         if (!host.live_observe_pipeline or history_offset != 0 or after_revision != armed_after)
             return error.InvalidHost;
-        const snapshot = try client.rich.receive(&host.connection, host.allocator);
+        const snapshot = try client.rich.receive(&host.connection, allocator);
         host.armed_live_after_revision = null;
         return snapshot;
     }
     return client.rich.request(
         &host.connection,
-        host.allocator,
+        allocator,
         after_revision,
         history_offset,
     );
@@ -582,11 +593,13 @@ fn observe(
 ) !usize {
     if (output.len < output_minimum_bytes) return error.BufferTooSmall;
     const residency = try decodeResidencies(host, residency_bytes);
+    var scratch = std.heap.FixedBufferAllocator.init(host.observation_scratch);
+    const frame_allocator = scratch.allocator();
 
-    var rich = try receiveRich(host, after_revision, history_offset);
+    var rich = try receiveRich(host, frame_allocator, after_revision, history_offset);
     defer rich.deinit();
     const begin = rich.begin;
-    const view = try client.view.project(host.allocator, &rich);
+    const view = try client.view.project(frame_allocator, &rich);
     defer client.view.deinit(view);
 
     const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
@@ -860,6 +873,8 @@ test "native host surface follows configured presentation lattice" {
 
 test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(usize, 768 * 768), pixel_capacity);
+    try std.testing.expectEqual(@as(usize, 32 * 1024 * 1024), observation_scratch_bytes);
+    try std.testing.expect(observation_scratch_bytes >= protocol.maximum_text_snapshot_bytes * 8);
     try std.testing.expectEqual(@as(?u16, 1), maintainedRasterScale(16, 10, 20));
     try std.testing.expectEqual(@as(?u16, 2), maintainedRasterScale(18, 12, 24));
     try std.testing.expectEqual(@as(?u16, 3), maintainedRasterScale(36, 24, 45));
