@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const host = fs.readFileSync('web/host.mjs', 'utf8');
+const index = fs.readFileSync('web/index.html', 'utf8');
 const serviceWorker = fs.readFileSync('web/sw.js', 'utf8');
 const renderBuild = fs.readFileSync('build.zig', 'utf8');
 const gateway = fs.readFileSync('../gateway/src/main.zig', 'utf8');
@@ -18,6 +19,11 @@ for (const module of modules) {
   assert(renderBuild.includes(module), `${module} is imported by the browser host but absent from the render install graph`);
   assert(gateway.includes(`.target = "${route}"`), `${module} is imported by the browser host but absent from the gateway allowlist`);
 }
+
+assert(index.includes('id="zoom-button"'), 'browser shell must expose the native presentation zoom control');
+assert(index.includes('>16px</button>'), 'browser presentation zoom must boot at the normal 16px preset');
+assert(host.includes('const presentationPixels = [16, 12, 9];'), 'browser presentation presets drifted from maintained native presets');
+assert(host.includes("telemetry.record('presentation_zoom'"), 'browser presentation zoom must remain observable in telemetry');
 
 for (const asset of ['nerd-font.bin', 'nerd-font-license.txt']) {
   const route = `/${asset}`;

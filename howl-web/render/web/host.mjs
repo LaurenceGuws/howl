@@ -12,7 +12,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v34';
+const CANARY_GENERATION = 'v35';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -22,6 +22,7 @@ const terminal = document.querySelector('#terminal');
 const toolbar = document.querySelector('#toolbar');
 const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
+const zoomButton = document.querySelector('#zoom-button');
 const leaderButton = document.querySelector('#leader-button');
 const copyButton = document.querySelector('#copy-button');
 const pasteButton = document.querySelector('#paste-button');
@@ -41,6 +42,10 @@ const alphaScratchContext = alphaScratch.getContext('2d');
 const alphaSpritePixelBudget = 1024 * 1024;
 const stager = new TerminalInputStager();
 const modifiedKeys = new Map();
+const presentationPixels = [16, 12, 9];
+let presentationIndex = 0;
+let presentationChanging = false;
+let renderAssets = null;
 context.imageSmoothingEnabled = false;
 
 let wireModule;
@@ -63,7 +68,7 @@ let lastInput = '';
 const telemetry = new Telemetry({capacity:768});
 const liveFrameScheduler = new LatestFrameScheduler({
   schedule:callback => scheduleDisplay(callback, {onWinner:source => telemetry.record('frame_tick', {source})}),
-  draw:frame => history.active
+  draw:frame => history.active || presentationChanging
     ? null
     : renderSnapshotBytes(
       frame.snapshot,
@@ -106,6 +111,7 @@ const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 function telemetryContext() {
   return {
     generation: CANARY_GENERATION,
+    presentation_pixels:presentationPixels[presentationIndex],
     display_mode: matchMedia('(display-mode: standalone)').matches ? 'standalone' : 'browser',
     visibility: document.visibilityState,
     focused: document.hasFocus(),
@@ -136,6 +142,31 @@ async function fetchBytes(path) {
   return new Uint8Array(await response.arrayBuffer());
 }
 
+function initializeRendererPresentation(target, fontPixels) {
+  if (!renderAssets) throw new Error('renderer assets are not loaded');
+  const {font, fallbackFont, nerdFont} = renderAssets;
+  if (font.length > target.exports.rv_font_capacity()) throw new Error('font exceeds renderer input bound');
+  if (fallbackFont.length > target.exports.rv_fallback_font_capacity()) throw new Error('fallback font exceeds renderer input bound');
+  if (nerdFont.length > target.exports.rv_symbol_font_capacity()) throw new Error('Nerd symbol font exceeds renderer input bound');
+  bytesAt(target.exports.memory, target.exports.rv_font_ptr(), font.length).set(font);
+  bytesAt(target.exports.memory, target.exports.rv_fallback_font_ptr(), fallbackFont.length).set(fallbackFont);
+  bytesAt(target.exports.memory, target.exports.rv_symbol_font_ptr(), nerdFont.length).set(nerdFont);
+  if (target.exports.rv_init(font.length, fallbackFont.length, nerdFont.length, fontPixels) !== 1)
+    throw new Error(errorText(target.exports) || 'renderer init failed');
+}
+
+async function instantiateRenderer(fontPixels) {
+  if (!renderAssets) throw new Error('renderer assets are not loaded');
+  const {module, byteLength} = renderAssets;
+  const runtime = createTextRuntime({output:()=>{}});
+  const instance = await WebAssembly.instantiate(module, runtime.imports);
+  runtime.bind(instance.exports.memory);
+  instance.exports._initialize?.();
+  const candidate = {exports:instance.exports, runtime, bytes:byteLength};
+  initializeRendererPresentation(candidate, fontPixels);
+  return candidate;
+}
+
 async function load() {
   const [wireBytes, renderBytes, font, fallbackFont, nerdFont] = await Promise.all([
     fetchBytes('/wire.wasm'), fetchBytes('render.wasm'), fetchBytes('font.bin'), fetchBytes('fallback-font.bin'), fetchBytes('nerd-font.bin'),
@@ -144,18 +175,8 @@ async function load() {
   if (WebAssembly.Module.imports(wireModule).length !== 0) throw new Error('wire module gained host imports');
   const renderModule = await WebAssembly.compile(renderBytes);
   assertTextImports(renderModule);
-  const runtime = createTextRuntime({output:()=>{}});
-  const instance = await WebAssembly.instantiate(renderModule, runtime.imports);
-  runtime.bind(instance.exports.memory);
-  instance.exports._initialize?.();
-  renderer = {exports: instance.exports, runtime, bytes: renderBytes.length};
-  if (font.length > renderer.exports.rv_font_capacity()) throw new Error('font exceeds renderer input bound');
-  if (fallbackFont.length > renderer.exports.rv_fallback_font_capacity()) throw new Error('fallback font exceeds renderer input bound');
-  if (nerdFont.length > renderer.exports.rv_symbol_font_capacity()) throw new Error('Nerd symbol font exceeds renderer input bound');
-  bytesAt(renderer.exports.memory, renderer.exports.rv_font_ptr(), font.length).set(font);
-  bytesAt(renderer.exports.memory, renderer.exports.rv_fallback_font_ptr(), fallbackFont.length).set(fallbackFont);
-  bytesAt(renderer.exports.memory, renderer.exports.rv_symbol_font_ptr(), nerdFont.length).set(nerdFont);
-  if (renderer.exports.rv_init(font.length, fallbackFont.length, nerdFont.length) !== 1) throw new Error(errorText(renderer.exports) || 'renderer init failed');
+  renderAssets = {module:renderModule, byteLength:renderBytes.length, font, fallbackFont, nerdFont};
+  renderer = await instantiateRenderer(presentationPixels[presentationIndex]);
   observer = await WireConnection.connect('observer');
   control = await WireConnection.connect('control');
   resetEditor();
@@ -576,7 +597,7 @@ function handleLiveSnapshot(connection) {
   latestLiveClientId = connection.clientId ?? connection.exports.hw_identity();
   latestLiveHistory = historyMetadata(connection.exports);
   if (!history.active) {
-    liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
+    if (!presentationChanging) liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
     return;
   }
   history.followLive(latestLiveHistory);
@@ -968,7 +989,52 @@ terminal.addEventListener('wheel', event => {
     leaveHistory();
   }
 }, {passive:false});
+async function cyclePresentationZoom() {
+  if (presentationChanging || !renderAssets) return;
+  const nextIndex = (presentationIndex + 1) % presentationPixels.length;
+  const nextPixels = presentationPixels[nextIndex];
+  presentationChanging = true;
+  zoomButton.disabled = true;
+  liveFrameScheduler.reset();
+  try {
+    await renderTail.catch(() => {});
+    const previousPixels = presentationPixels[presentationIndex];
+    if (renderer.exports.rv_reset() !== 1) throw new Error('renderer reset failed');
+    try {
+      initializeRendererPresentation(renderer, nextPixels);
+    } catch (error) {
+      renderer.exports.rv_reset();
+      initializeRendererPresentation(renderer, previousPixels);
+      throw error;
+    }
+    resources.clear();
+    alphaScratch.width = 1;
+    alphaScratch.height = 1;
+    lastFrame = null;
+    lastRenderTelemetryAt = null;
+    requestedGeometry = null;
+    presentationIndex = nextIndex;
+    zoomButton.textContent = `${nextPixels}px`;
+    telemetry.record('presentation_zoom', {pixels:nextPixels});
+    presentationChanging = false;
+    if (history.active) {
+      historyGeneration += 1;
+      scheduleHistorySnapshot();
+    } else {
+      renderLatestLive();
+    }
+  } catch (error) {
+    presentationChanging = false;
+    renderLatestLive();
+    fail(error);
+  } finally {
+    zoomButton.disabled = false;
+    focusKeyboard();
+  }
+}
+
 keyboardButton.addEventListener('click', focusKeyboard);
+zoomButton.addEventListener('click', () => { void cyclePresentationZoom(); });
 leaderButton.addEventListener('click', () => {
   if (!lastFrame?.cell || !control || control.closed) return;
   const [cellWidth, cellHeight] = lastFrame.cell;
@@ -1180,6 +1246,7 @@ window.visualViewport?.addEventListener('scroll', () => recordViewport('viewport
 function updateFacts() {
   factsNode.textContent = JSON.stringify({
     generation: CANARY_GENERATION,
+    presentation_pixels:presentationPixels[presentationIndex],
     observer_client: observer?.clientId ? String(observer.clientId) : null,
     previous_observer_client: previousObserverId,
     history_observer_client: historyObserver?.clientId ? String(historyObserver.clientId) : null,

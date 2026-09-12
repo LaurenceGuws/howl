@@ -188,9 +188,18 @@ presentation coalescing.
 The live Web font set keeps Fira Code as the terminal metrics/primary face,
 loads the tracked Noto Sans fixture as the first ordered fallback, then uses the
 unmodified Nerd Fonts 3.4.0 symbols-only face for terminal PUA/icon coverage.
+Web presentation now owns the same normal/small/compact raster choices as the
+Flutter client: 16 px, 12 px and 9 px. The toolbar zoom control recreates only
+the private Wasm renderer at the selected native font lattice; it does not
+reconnect Session or control transport. Geometry authority remains a separate
+`Lead` action. Keep browser/page zoom at 100% for terminal quality: shrinking an
+18 px (or any other) rasterized Canvas through browser/CSS scaling visibly
+softens the glyph alpha mask. When Web leads at 9 px, the Fira Code metrics are
+6x12 pixels per cell, allowing a 157-column terminal to occupy 942 CSS/device
+pixels on the 1x Dell without bitmap resampling.
 The symbols face adds about 2.5 MB to the cached PWA shell but does not change
-cell metrics; the physical Note10 v27/v28 A/B kept the same 11x23 cell and
-32x51 geometry while replacing prompt tofu with the canonical Nerd glyphs. The
+cell metrics; the earlier physical Note10 v27/v28 18 px A/B kept the same 11x23
+cell and 32x51 geometry while replacing prompt tofu with the canonical Nerd glyphs. The
 renderer grew by only one 64 KiB Wasm memory page in that run. Provenance,
 checksum and the complete redistribution license are tracked under
 `render/fonts/` and the license is linked from the Web shell. `howl-render`

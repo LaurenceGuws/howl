@@ -162,8 +162,8 @@ fn fail(message: []const u8) u32 {
     return 0;
 }
 
-export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_length: usize) u32 {
-    if (composer_ready or font_length == 0 or font_length > font_input.len or
+export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_length: usize, font_pixels: u32) u32 {
+    if (composer_ready or font_pixels < 6 or font_pixels > 64 or font_length == 0 or font_length > font_input.len or
         fallback_font_length == 0 or fallback_font_length > fallback_font_input.len or
         symbol_font_length == 0 or symbol_font_length > symbol_font_input.len) return 0;
     persistent.reset();
@@ -187,7 +187,7 @@ export fn rv_init(font_length: usize, fallback_font_length: usize, symbol_font_l
     const new_fonts = text.FontSet.initMemory(allocator, .{
         .primary = font_input[0..font_length],
         .fallbacks = &fallback_sources,
-        .size = .{ .pixels = 18 },
+        .size = .{ .pixels = @intCast(font_pixels) },
     }) catch |err| return fail(@errorName(err));
     errdefer new_fonts.deinit();
     @memset(font_input[0..font_length], 0xa5);

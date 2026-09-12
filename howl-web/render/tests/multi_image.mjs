@@ -27,7 +27,7 @@ for (const [path, pointer, capacity] of [
 const primary = await readFile(primaryPath);
 const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
-assert.equal(w.rv_init(primary.length, fallback.length, symbol.length), 1, errorText());
+assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
 
 function parseFrames(bytes) {
   const frames = [];

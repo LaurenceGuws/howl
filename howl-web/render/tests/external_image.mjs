@@ -27,7 +27,7 @@ for (const [path, pointer, capacity] of [
 const primary = await readFile(primaryPath);
 const fallback = await readFile(fallbackPath);
 const symbol = await readFile(symbolPath);
-assert.equal(w.rv_init(primary.length, fallback.length, symbol.length), 1, errorText());
+assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 18), 1, errorText());
 
 const corpus = JSON.parse(await readFile('../../howl-session/protocol/v4-vectors.json', 'utf8'));
 const test = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
@@ -99,6 +99,22 @@ assert.equal(w.rv_missing_external(), 0);
 assert.equal(w.rv_render_count(), 2n);
 assert.equal(w.rv_ack(), 1);
 
+// Presentation zoom reuses one Wasm instance: reset retained renderer state,
+// restore caller-owned font bytes, and initialize a different native lattice.
+assert.equal(w.rv_reset(), 1);
+for (const [path, pointer, capacity] of [
+  [primaryPath, w.rv_font_ptr(), w.rv_font_capacity()],
+  [fallbackPath, w.rv_fallback_font_ptr(), w.rv_fallback_font_capacity()],
+  [symbolPath, w.rv_symbol_font_ptr(), w.rv_symbol_font_capacity()],
+]) {
+  const font = await readFile(path);
+  assert.ok(font.length > 0 && font.length <= capacity);
+  bytesAt(pointer, font.length).set(font);
+}
+assert.equal(w.rv_init(primary.length, fallback.length, symbol.length, 9), 1, errorText());
+assert.equal(w.rv_ready(), 1);
+assert.equal(w.rv_render_count(), 0n);
+
 console.log(JSON.stringify({
   status:'pass',
   externalKey,
@@ -108,4 +124,5 @@ console.log(JSON.stringify({
   firstBlocked:true,
   zeroExternalUpload:true,
   retainedResidency:true,
+  presentationReinit:true,
 }));
