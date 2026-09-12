@@ -304,6 +304,7 @@ fn staticAsset(target: []const u8) ?StaticAsset {
         .{ .target = "/input.mjs", .asset = .{ .relative_path = "input.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/pointer_input.mjs", .asset = .{ .relative_path = "pointer_input.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/history.mjs", .asset = .{ .relative_path = "history.mjs", .content_type = "text/javascript; charset=utf-8" } },
+        .{ .target = "/selection.mjs", .asset = .{ .relative_path = "selection.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/control_queue.mjs", .asset = .{ .relative_path = "control_queue.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/telemetry.mjs", .asset = .{ .relative_path = "telemetry.mjs", .content_type = "text/javascript; charset=utf-8" } },
         .{ .target = "/frame_scheduler.mjs", .asset = .{ .relative_path = "frame_scheduler.mjs", .content_type = "text/javascript; charset=utf-8" } },

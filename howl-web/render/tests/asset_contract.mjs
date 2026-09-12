@@ -21,6 +21,7 @@ for (const module of modules) {
 }
 
 assert(index.includes('id="zoom-button"'), 'browser shell must expose the native presentation zoom control');
+assert(index.includes('id="selection-overlay"'), 'browser shell must expose the client-local selection overlay');
 assert(index.includes('>16px</button>'), 'browser presentation zoom must boot at the normal 16px preset');
 assert(host.includes('const presentationPixels = [16, 12, 9];'), 'browser presentation presets drifted from maintained native presets');
 assert(host.includes("telemetry.record('presentation_zoom'"), 'browser presentation zoom must remain observable in telemetry');

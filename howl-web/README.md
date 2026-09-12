@@ -65,6 +65,11 @@ wins first, terminal mouse tracking receives semantic wheel input, DEC alternate
 scroll becomes cursor-key input, and an ordinary shell enters local scrollback.
 The Wasm owner serializes the frozen semantic mouse grammar; terminal
 SGR/X10/etc. encoding remains solely in the canonical VT.
+Desktop primary drag follows the same canonical mode split: with mouse tracking
+off it creates a client-local absolute-row selection, while mouse-aware applications
+keep their semantic drag stream. Shift+drag is the explicit local-selection override.
+The highlight is presentation-only; Copy requests canonical UTF-8 through Session's
+existing text-extract contract rather than reconstructing text from Canvas pixels.
 
 The live browser shell also carries a bounded client-local telemetry flight recorder
 for mobile canary diagnosis. It retains at most 768 metadata events and records

@@ -7,10 +7,10 @@ const module = await WebAssembly.compile(bytes);
 assert.deepEqual(WebAssembly.Module.imports(module), []);
 const expected = ['memory', 'hw_input_ptr', 'hw_input_capacity', 'hw_output_ptr', 'hw_output_len',
   'hw_text_ptr', 'hw_text_len', 'hw_text_truncated', 'hw_snapshot_ptr', 'hw_snapshot_len', 'hw_error_ptr', 'hw_error_len', 'hw_phase', 'hw_identity',
-  'hw_image_ptr', 'hw_image_len', 'hw_image_id', 'hw_image_generation', 'hw_image_width', 'hw_image_height',
+  'hw_image_ptr', 'hw_image_len', 'hw_image_id', 'hw_image_generation', 'hw_image_width', 'hw_image_height', 'hw_selection_ptr', 'hw_selection_len',
   'hw_revision', 'hw_terminal_revision', 'hw_rows', 'hw_columns', 'hw_maximum_rows', 'hw_maximum_columns', 'hw_history_offset', 'hw_history_count', 'hw_history_row_base', 'hw_alternate_screen', 'hw_leader_present', 'hw_last_result_code', 'hw_control_ready',
   'hw_interaction_terminal_revision', 'hw_interaction_alternate_scroll', 'hw_interaction_mouse_tracking', 'hw_interaction_mouse_protocol', 'hw_interaction_pointer_mode',
-  'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste', 'hw_request_interaction_state',
+  'hw_reset', 'hw_observe', 'hw_send_text', 'hw_send_paste', 'hw_request_interaction_state', 'hw_request_text_extract',
   'hw_request_image', 'hw_release_image',
   'hw_send_named_key', 'hw_send_unicode_key', 'hw_send_focus', 'hw_send_mouse', 'hw_send_resize', 'hw_send_resize_owned',
   'hw_feed', 'hw_finish', 'hw_canvas_check'].sort();
@@ -134,6 +134,23 @@ assert.equal(w.hw_interaction_mouse_tracking(), 4);
 assert.equal(w.hw_interaction_mouse_protocol(), 3);
 assert.equal(w.hw_interaction_pointer_mode(), 3);
 
+assert.equal(w.hw_request_text_extract(-3, 4, 7, 8, 80, 0), 1);
+assert.equal(output()[5], 21);
+payload = output().subarray(12);
+assert.equal(payload.readInt32BE(0), -3); assert.equal(payload.readUInt16BE(4), 4);
+assert.equal(payload.readInt32BE(6), 7); assert.equal(payload.readUInt16BE(10), 8);
+assert.equal(payload.readUInt16BE(12), 80); assert.equal(payload[14], 0); assert.equal(payload[15], 0);
+const selectedText = Buffer.from('alpha λ', 'utf8');
+assert.equal(feed(frame(22, selectedText)), 1); assert.equal(w.hw_phase(), 6);
+assert.equal(w.hw_last_result_code(), 0); assert.equal(w.hw_selection_len(), selectedText.length);
+assert.deepEqual(Buffer.from(w.memory.buffer, w.hw_selection_ptr(), w.hw_selection_len()), selectedText);
+assert.equal(w.hw_request_text_extract(1, 2, 3, 4, 80, 1), 1);
+assert.equal(feed(result(21, 5)), 1); assert.equal(w.hw_phase(), 6);
+assert.equal(w.hw_last_result_code(), 5); assert.equal(w.hw_selection_len(), 0);
+assert.equal(w.hw_request_text_extract(0, 0x10000, 0, 0, 80, 0), 0);
+assert.equal(w.hw_request_text_extract(0, 0, 0, 0, 0, 0), 0);
+assert.equal(w.hw_request_text_extract(0, 0, 0, 0, 80, 2), 0);
+
 assert.equal(w.hw_send_resize(20, 80), 1);
 assert.equal(output()[5], 8); assert.equal(output().subarray(12).readBigUInt64BE(), 42n);
 assert.equal(w.hw_control_ready(), 0);
@@ -226,5 +243,5 @@ assert.equal(w.hw_snapshot_len(), graphicsSnapshot.length);
 assert.equal(w.hw_rows(), 1);
 assert.equal(w.hw_columns(), 1);
 console.log(JSON.stringify({status:'pass', wasmBytes:bytes.length, memoryBytes:w.memory.buffer.byteLength,
-  imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, semanticMouse:true, resizeFollowup:true,
+  imports:0, welcomeSplits:21, byteDelivery:true, rejectedInvalidFrames:true, semanticControls:true, semanticMouse:true, textExtract:true, resizeFollowup:true,
   imageFetch:true, graphicsSnapshot:true, canvasComposer:true}));

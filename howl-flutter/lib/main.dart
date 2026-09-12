@@ -6,6 +6,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'desktop_selection.dart';
 import 'platform_input.dart';
 import 'history_viewport.dart';
 import 'howl_endpoint.dart';
@@ -143,6 +144,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool? _restoreImeAfterPresentationRestart;
   Size? _terminalViewportSize;
   TerminalSelectionRange? _selection;
+  final DesktopSelectionController _desktopSelection =
+      DesktopSelectionController();
+  bool _selectionUsesTouchChrome = false;
+  int? _pointerDecisionPointer;
   Future<void> _controlTail = Future<void>.value();
 
   @override
@@ -652,7 +657,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       if (text.isEmpty) return;
       await Clipboard.setData(ClipboardData(text: text));
       if (mounted && identical(_selection, selection)) {
-        setState(() => _selection = null);
+        setState(() {
+          _selection = null;
+          _selectionUsesTouchChrome = false;
+          _desktopSelection.clear();
+        });
       }
     } catch (_) {
       // A stale/evicted selection or unavailable clipboard is presentation
@@ -808,31 +817,159 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _activateTextInput();
   }
 
+  NativeHostMetadata? get _displayedMetadata =>
+      _history.active ? _nativeHistoryMetadata : _nativeLiveMetadata;
+
   void _onPointerDown(PointerDownEvent event, Size viewport) {
     if (event.kind == PointerDeviceKind.touch) return;
-    _activateTextInput();
-    if (_history.active) return;
-    _sendPointer(event, viewport);
+    if (!_focusNode.hasFocus) _focusNode.requestFocus();
+
+    final primary = event.buttons & kPrimaryMouseButton != 0;
+    if (!primary) {
+      if (_history.active || _selection != null) return;
+      _activateTextInput();
+      _sendPointer(event, viewport);
+      return;
+    }
+
+    if (_history.active || HardwareKeyboard.instance.isShiftPressed) {
+      _beginMouseSelection(event, viewport);
+      return;
+    }
+
+    _pointerDecisionPointer = event.pointer;
+    unawaited(_routePrimaryPointerDown(event, viewport));
+  }
+
+  Future<void> _routePrimaryPointerDown(
+    PointerDownEvent event,
+    Size viewport,
+  ) async {
+    final state = await _currentInteractionState();
+    if (!mounted ||
+        _stopping ||
+        _pointerDecisionPointer != event.pointer ||
+        state == null) {
+      return;
+    }
+    _pointerDecisionPointer = null;
+    if (state.mouseTrackingEnabled) {
+      _activateTextInput();
+      _sendPointer(event, viewport);
+    } else {
+      _beginMouseSelection(event, viewport);
+    }
+  }
+
+  TerminalSelectionPoint? _mouseSelectionPoint(
+    Offset position,
+    Size viewportSize, {
+    bool clamped = false,
+  }) {
+    final metadata = _displayedMetadata;
+    if (metadata == null) return null;
+    final geometry = TerminalSelectionGeometry(
+      viewportSize: viewportSize,
+      rows: metadata.rows,
+      columns: metadata.columns,
+      cellWidth: _cellWidth,
+      rowHeight: _lineHeight,
+    );
+    final cell = clamped
+        ? geometry.clampedCellAt(position)
+        : geometry.cellAt(position);
+    if (cell == null) return null;
+    return _selectionViewport(metadata).pointAt(cell.row, cell.column);
+  }
+
+  void _beginMouseSelection(PointerDownEvent event, Size viewportSize) {
+    final metadata = _displayedMetadata;
+    final point = _mouseSelectionPoint(event.localPosition, viewportSize);
+    if (metadata == null || point == null || _stopping) return;
+    _textInput.detach();
+    _pointerInput.clear();
+    final range = _desktopSelection.start(
+      pointer: event.pointer,
+      point: point,
+      columns: metadata.columns,
+      alternateScreen: metadata.alternateScreen,
+    );
+    setState(() {
+      _selectionUsesTouchChrome = false;
+      _selection = range;
+    });
   }
 
   void _onPointerMove(PointerMoveEvent event, Size viewport) {
-    if (_history.active) return;
+    if (_desktopSelection.pointer == event.pointer) {
+      _updateMouseSelection(event.localPosition, viewport, event.pointer);
+      return;
+    }
+    if (_pointerDecisionPointer == event.pointer ||
+        _history.active ||
+        _selection != null) {
+      return;
+    }
     _sendPointer(event, viewport);
   }
 
   void _onPointerHover(PointerHoverEvent event, Size viewport) {
-    if (_history.active) return;
+    if (_history.active || _selection != null) return;
     _sendPointer(event, viewport);
   }
 
   void _onPointerUp(PointerUpEvent event, Size viewport) {
-    if (_history.active) return;
+    if (_desktopSelection.pointer == event.pointer) {
+      _updateMouseSelection(event.localPosition, viewport, event.pointer);
+      _finishMouseSelection(event.pointer);
+      return;
+    }
+    if (_pointerDecisionPointer == event.pointer) {
+      _pointerDecisionPointer = null;
+      return;
+    }
+    if (_history.active || _selection != null) return;
     _sendPointer(event, viewport);
   }
 
   void _onPointerCancel(PointerCancelEvent event, Size viewport) {
-    if (_history.active) return;
+    if (_desktopSelection.pointer == event.pointer) {
+      _clearMouseSelection();
+      return;
+    }
+    if (_pointerDecisionPointer == event.pointer) {
+      _pointerDecisionPointer = null;
+      return;
+    }
+    if (_history.active || _selection != null) return;
     _sendPointer(event, viewport);
+  }
+
+  void _updateMouseSelection(Offset position, Size viewportSize, int pointer) {
+    final point = _mouseSelectionPoint(position, viewportSize, clamped: true);
+    if (point == null) return;
+    final next = _desktopSelection.update(pointer, point);
+    if (next == null || identical(next, _selection)) return;
+    setState(() => _selection = next);
+  }
+
+  void _finishMouseSelection(int pointer) {
+    final result = _desktopSelection.finish(pointer);
+    setState(() {
+      _selection = result.keep ? result.range : null;
+      if (!result.keep) _selectionUsesTouchChrome = false;
+    });
+    if (!result.keep) _activateTextInput();
+  }
+
+  void _clearMouseSelection() {
+    if (_selection == null && !_desktopSelection.active) return;
+    _desktopSelection.clear();
+    setState(() {
+      _selection = null;
+      _selectionUsesTouchChrome = false;
+    });
+    _activateTextInput();
   }
 
   void _sendPointer(PointerEvent event, Size viewport) {
@@ -1090,7 +1227,14 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   }
 
   void _returnToLiveForInput() {
-    if (_selection != null) setState(() => _selection = null);
+    _pointerDecisionPointer = null;
+    if (_selection != null || _desktopSelection.active) {
+      setState(() {
+        _selection = null;
+        _selectionUsesTouchChrome = false;
+        _desktopSelection.clear();
+      });
+    }
     if (_history.active) _leaveHistory();
   }
 
@@ -1110,12 +1254,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (_selectionViewport(metadata).validity(selection) !=
         TerminalSelectionValidity.valid) {
       _selection = null;
+      _selectionUsesTouchChrome = false;
+      _desktopSelection.clear();
     }
   }
 
   void _onTerminalTap() {
     if (_selection != null) {
-      setState(() => _selection = null);
+      setState(() {
+        _selection = null;
+        _selectionUsesTouchChrome = false;
+        _desktopSelection.clear();
+      });
       return;
     }
     _activateTextInput();
@@ -1141,6 +1291,8 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (point == null) return;
     _textInput.detach();
     setState(() {
+      _selectionUsesTouchChrome = true;
+      _desktopSelection.clear();
       _selection = TerminalSelectionRange(
         anchor: point,
         focus: point,
@@ -1460,25 +1612,26 @@ final class _HowlTerminalState extends State<HowlTerminal> {
                             ),
                           ),
                         ),
-                      if (_selection case final selection?)
-                        Positioned.fill(
-                          child: TerminalSelectionChrome(
-                            viewport: _selectionViewport(nativeMetadata!),
-                            range: selection,
-                            geometry: TerminalSelectionGeometry(
-                              viewportSize: constraints.biggest,
-                              rows: nativeMetadata.rows,
-                              columns: nativeMetadata.columns,
-                              cellWidth: _cellWidth,
-                              rowHeight: _lineHeight,
+                      if (_selectionUsesTouchChrome)
+                        if (_selection case final selection?)
+                          Positioned.fill(
+                            child: TerminalSelectionChrome(
+                              viewport: _selectionViewport(nativeMetadata!),
+                              range: selection,
+                              geometry: TerminalSelectionGeometry(
+                                viewportSize: constraints.biggest,
+                                rows: nativeMetadata.rows,
+                                columns: nativeMetadata.columns,
+                                cellWidth: _cellWidth,
+                                rowHeight: _lineHeight,
+                              ),
+                              onStartChanged: _changeSelectionStart,
+                              onEndChanged: _changeSelectionEnd,
+                              onAutoScrollRows: _autoScrollSelection,
+                              onCopy: _copyVisibleText,
+                              onPaste: _pasteClipboard,
                             ),
-                            onStartChanged: _changeSelectionStart,
-                            onEndChanged: _changeSelectionEnd,
-                            onAutoScrollRows: _autoScrollSelection,
-                            onCopy: _copyVisibleText,
-                            onPaste: _pasteClipboard,
                           ),
-                        ),
                     ],
                   ),
                 );

@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {DesktopSelectionController, TerminalSelectionRange, TerminalSelectionViewport} from '../web/selection.mjs';
+
+const live = new TerminalSelectionViewport({historyOffset:0,historyCount:30,historyRowBase:100,rows:10,columns:20,alternateScreen:false});
+assert.deepEqual(live.pointAt(0, 3), {row:130,column:3});
+assert.deepEqual(live.pointAt(9, 19), {row:139,column:19});
+const range = new TerminalSelectionRange({anchor:{row:132,column:5},focus:{row:134,column:2},columns:20,alternateScreen:false});
+assert.equal(live.validity(range), 'valid');
+assert.deepEqual(range.spanFor(live, 2), {row:2,startColumn:5,endColumn:19});
+assert.deepEqual(range.spanFor(live, 3), {row:3,startColumn:0,endColumn:19});
+assert.deepEqual(range.spanFor(live, 4), {row:4,startColumn:0,endColumn:2});
+assert.equal(range.spanFor(live, 1), null);
+const history = new TerminalSelectionViewport({historyOffset:8,historyCount:38,historyRowBase:100,rows:10,columns:20,alternateScreen:false});
+assert.deepEqual(history.pointAt(0, 0), {row:130,column:0});
+assert.equal(history.validity(range), 'valid');
+const reversed = new TerminalSelectionRange({anchor:{row:134,column:2},focus:{row:132,column:5},columns:20,alternateScreen:false});
+assert.deepEqual(reversed.ordered, range.ordered);
+const rotated = new TerminalSelectionViewport({historyOffset:8,historyCount:38,historyRowBase:133,rows:10,columns:20,alternateScreen:false});
+assert.equal(rotated.validity(range), 'evicted');
+const alternate = new TerminalSelectionViewport({historyOffset:0,historyCount:0,historyRowBase:0,rows:5,columns:20,alternateScreen:true});
+assert.deepEqual(alternate.pointAt(2,4), {row:2,column:4});
+assert.equal(alternate.validity(new TerminalSelectionRange({anchor:{row:1,column:0},focus:{row:3,column:2},columns:20,alternateScreen:true})), 'valid');
+console.log(JSON.stringify({status:'pass', absoluteRows:true, spans:true, reversal:true, eviction:true, alternate:true}));
+
+const controller = new DesktopSelectionController();
+controller.start({pointer:7,point:{row:10,column:2},columns:20,alternateScreen:false});
+assert.equal(controller.finish(7).keep, false);
+assert.equal(controller.range, null);
+controller.start({pointer:9,point:{row:10,column:2},columns:20,alternateScreen:true});
+assert.equal(controller.update(8,{row:11,column:3}), null);
+assert.deepEqual(controller.update(9,{row:11,column:3}).focus,{row:11,column:3});
+assert.equal(controller.finish(9).keep, true);
+assert.deepEqual(controller.range.focus,{row:11,column:3});
+controller.clear();
+assert.equal(controller.range, null);

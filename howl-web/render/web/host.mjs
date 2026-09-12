@@ -5,6 +5,7 @@ import {
 } from './input.mjs';
 import {TerminalPointerAdapter, TerminalPointerGeometry, LatestPointerMoveScheduler} from './pointer_input.mjs';
 import {HistoryViewport} from './history.mjs';
+import {DesktopSelectionController, TerminalSelectionOverlay, TerminalSelectionViewport} from './selection.mjs';
 import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
@@ -12,13 +13,16 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v36';
+const CANARY_GENERATION = 'v37';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
 const status = document.querySelector('#status');
 const factsNode = document.querySelector('#facts');
 const terminal = document.querySelector('#terminal');
+const selectionOverlay = document.querySelector('#selection-overlay');
+const desktopSelection = new DesktopSelectionController();
+const selectionOverlayView = new TerminalSelectionOverlay({element:selectionOverlay, terminal});
 const toolbar = document.querySelector('#toolbar');
 const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
@@ -59,6 +63,8 @@ let lastFrame = null;
 let latestLiveSnapshot = null;
 let latestLiveClientId = null;
 let latestLiveHistory = null;
+let displayedHistory = null;
+let pointerDecisionPointer = null;
 const history = new HistoryViewport();
 let historyGeneration = 0;
 let historyRequestRunning = false;
@@ -76,6 +82,7 @@ const liveFrameScheduler = new LatestFrameScheduler({
       'live',
       () => !history.active && latestLiveSnapshot === frame.snapshot &&
         String(observer?.clientId ?? '') === String(frame.clientId),
+      frame.history,
     ),
   onError:fail,
 });
@@ -331,6 +338,22 @@ class WireConnection {
       pointerMode:Number(this.exports.hw_interaction_pointer_mode()),
     };
   }
+  async textExtract(range) {
+    const {start, end} = range.ordered;
+    await this.operation(
+      () => this.exports.hw_request_text_extract(
+        start.row, start.column, end.row, end.column,
+        range.columns, range.alternateScreen ? 1 : 0,
+      ),
+      'selection extract',
+      'selection',
+    );
+    const code = Number(this.exports.hw_last_result_code());
+    if (code !== 0) throw new Error(`selection extract result ${code}`);
+    const length = Number(this.exports.hw_selection_len());
+    const value = decoder.decode(bytesAt(this.exports.memory, this.exports.hw_selection_ptr(), length));
+    return {value, length};
+  }
   async resize(rows, columns, {claim = false} = {}) {
     const begin = claim ? this.exports.hw_send_resize : this.exports.hw_send_resize_owned;
     await this.operation(() => begin(rows, columns), `${claim ? 'claim+resize' : 'resize'} ${rows}x${columns}`, 'resize');
@@ -534,13 +557,13 @@ async function ensureExternalResource(missing) {
   return {bytes:image.pixels.length, ms, reused:false};
 }
 
-function renderSnapshotBytes(snapshot, clientId, mode, stillCurrent = () => true) {
-  const run = renderTail.then(() => renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent));
+function renderSnapshotBytes(snapshot, clientId, mode, stillCurrent = () => true, displayHistory = null) {
+  const run = renderTail.then(() => renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, displayHistory));
   renderTail = run.catch(() => {});
   return run;
 }
 
-async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent) {
+async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent, displayHistory) {
   if (!stillCurrent()) return;
   const renderStarted = performance.now();
   const renderGap = lastRenderTelemetryAt == null ? null : renderStarted - lastRenderTelemetryAt;
@@ -589,6 +612,9 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent) 
     if (renderer.exports.rv_ack() !== 1) throw new Error(errorText(renderer.exports) || 'renderer frame acknowledgment failed');
     const ackFinished = performance.now();
     lastFrame = {...metadata, observer:String(clientId), mode};
+    displayedHistory = displayHistory;
+    validateSelection();
+    renderSelectionOverlay();
     if (requestedGeometry && metadata.surface[0] === requestedGeometry.columns * metadata.cell[0] &&
         metadata.surface[1] === requestedGeometry.rows * metadata.cell[1]) requestedGeometry = null;
     status.textContent = mode === 'history'
@@ -621,7 +647,9 @@ async function renderSnapshotBytesInner(snapshot, clientId, mode, stillCurrent) 
 }
 
 function renderLatestLive() {
-  if (latestLiveSnapshot) liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
+  if (latestLiveSnapshot) liveFrameScheduler.push({
+    snapshot:latestLiveSnapshot, clientId:latestLiveClientId, history:latestLiveHistory,
+  });
 }
 
 function handleLiveSnapshot(connection) {
@@ -629,7 +657,9 @@ function handleLiveSnapshot(connection) {
   latestLiveClientId = connection.clientId ?? connection.exports.hw_identity();
   latestLiveHistory = historyMetadata(connection.exports);
   if (!history.active) {
-    if (!presentationChanging) liveFrameScheduler.push({snapshot:latestLiveSnapshot, clientId:latestLiveClientId});
+    if (!presentationChanging) liveFrameScheduler.push({
+      snapshot:latestLiveSnapshot, clientId:latestLiveClientId, history:latestLiveHistory,
+    });
     return;
   }
   history.followLive(latestLiveHistory);
@@ -666,7 +696,8 @@ async function drainHistorySnapshots() {
       connection.observe(true, history.targetOffset);
       await connection.waitForPhase(4);
       if (!history.active || generation !== historyGeneration) continue;
-      history.acceptSnapshot(historyMetadata(connection.exports));
+      const acceptedHistory = historyMetadata(connection.exports);
+      history.acceptSnapshot(acceptedHistory);
       if (!history.active) {
         leaveHistory();
         continue;
@@ -676,6 +707,7 @@ async function drainHistorySnapshots() {
         connection.clientId ?? connection.exports.hw_identity(),
         'history',
         () => history.active && generation === historyGeneration,
+        acceptedHistory,
       );
     }
   } catch (error) {
@@ -701,7 +733,8 @@ function leaveHistory() {
 }
 
 function returnToLive() {
-  if (!history.active) return false;
+  const selectionChanged = clearSelection();
+  if (!history.active) return selectionChanged;
   leaveHistory();
   return true;
 }
@@ -970,8 +1003,101 @@ function currentPointerGeometry() {
   });
 }
 
+function currentSelectionViewport() {
+  if (!displayedHistory || !lastFrame?.cell || !lastFrame?.surface) return null;
+  const [cellWidth, cellHeight] = lastFrame.cell;
+  if (!cellWidth || !cellHeight || lastFrame.surface[0] % cellWidth !== 0 || lastFrame.surface[1] % cellHeight !== 0)
+    return null;
+  return new TerminalSelectionViewport({
+    historyOffset:displayedHistory.historyOffset,
+    historyCount:displayedHistory.historyCount,
+    historyRowBase:displayedHistory.historyRowBase,
+    rows:lastFrame.surface[1] / cellHeight,
+    columns:lastFrame.surface[0] / cellWidth,
+    alternateScreen:displayedHistory.alternateScreen,
+  });
+}
+
+function selectionPointForEvent(event, {clamped = false} = {}) {
+  const geometry = currentPointerGeometry();
+  const viewport = currentSelectionViewport();
+  if (!geometry || !viewport) return null;
+  let clientX = event.clientX, clientY = event.clientY;
+  if (clamped) {
+    const rect = terminal.getBoundingClientRect();
+    const left = rect.left + terminal.clientLeft;
+    const top = rect.top + terminal.clientTop;
+    const epsilon = 0.001;
+    clientX = clamp(clientX, left, left + terminal.clientWidth - epsilon);
+    clientY = clamp(clientY, top, top + terminal.clientHeight - epsilon);
+  }
+  const cell = geometry.locate({clientX, clientY});
+  if (!cell) return null;
+  const point = viewport.pointAt(cell.row, cell.column);
+  return point ? {point, viewport} : null;
+}
+
+function clearSelection() {
+  const changed = desktopSelection.range != null || desktopSelection.active || pointerDecisionPointer != null;
+  desktopSelection.clear();
+  pointerDecisionPointer = null;
+  selectionOverlayView.clear();
+  if (changed) updateFacts();
+  return changed;
+}
+
+function validateSelection() {
+  const range = desktopSelection.range;
+  if (!range) return;
+  const viewport = currentSelectionViewport();
+  if (!viewport || viewport.validity(range) !== 'valid') clearSelection();
+}
+
+function renderSelectionOverlay() {
+  selectionOverlayView.render(desktopSelection.range, currentSelectionViewport());
+}
+
+function startLocalSelection(event) {
+  const located = selectionPointForEvent(event);
+  if (!located) return false;
+  terminalPointer.clear();
+  pointerMoveScheduler.clear();
+  desktopSelection.start({
+    pointer:event.pointerId,
+    point:located.point,
+    columns:located.viewport.columns,
+    alternateScreen:located.viewport.alternateScreen,
+  });
+  terminal.focus({preventScroll:true});
+  renderSelectionOverlay();
+  updateFacts();
+  return true;
+}
+
+function updateLocalSelection(event) {
+  if (desktopSelection.pointer !== event.pointerId) return false;
+  const located = selectionPointForEvent(event, {clamped:true});
+  const current = desktopSelection.range;
+  if (!located || !current || located.viewport.validity(current) !== 'valid') return false;
+  const next = desktopSelection.update(event.pointerId, located.point);
+  if (!next) return false;
+  renderSelectionOverlay();
+  updateFacts();
+  return true;
+}
+
+function finishLocalSelection(event) {
+  if (desktopSelection.pointer !== event.pointerId) return false;
+  updateLocalSelection(event);
+  const result = desktopSelection.finish(event.pointerId);
+  if (!result.keep) selectionOverlayView.clear();
+  else renderSelectionOverlay();
+  updateFacts();
+  return true;
+}
+
 function handleTerminalPointer(event) {
-  if (history.active) return false;
+  if (history.active || desktopSelection.range != null) return false;
   const inputs = terminalPointer.translate(event, {
     geometry:currentPointerGeometry(), modifiers:modifierBits(event),
   });
@@ -986,19 +1112,56 @@ function handleTerminalPointer(event) {
   return true;
 }
 
+async function routePrimaryPointerDown(event) {
+  const pointerId = event.pointerId;
+  if (history.active || event.shiftKey) {
+    startLocalSelection(event);
+    return;
+  }
+  pointerDecisionPointer = pointerId;
+  try {
+    const interaction = await currentInteractionState();
+    if (pointerDecisionPointer !== pointerId) return;
+    pointerDecisionPointer = null;
+    if (interaction.mouseTracking !== 0) handleTerminalPointer(event);
+    else startLocalSelection(event);
+  } catch (error) {
+    if (pointerDecisionPointer === pointerId) pointerDecisionPointer = null;
+    fail(error);
+  }
+}
+
 terminal.addEventListener('pointerdown', event => {
-  focusKeyboardPreservingHistory();
-  if (!handleTerminalPointer(event)) return;
+  if (event.pointerType === 'touch') return;
+  const primary = (event.buttons & 1) !== 0;
   try { terminal.setPointerCapture(event.pointerId); } catch {}
-  event.preventDefault();
-});
-terminal.addEventListener('pointermove', event => { handleTerminalPointer(event); });
-terminal.addEventListener('pointerup', event => {
+  if (primary) {
+    event.preventDefault();
+    void routePrimaryPointerDown(event);
+    return;
+  }
+  focusKeyboardPreservingHistory();
   if (handleTerminalPointer(event)) event.preventDefault();
+});
+terminal.addEventListener('pointermove', event => {
+  if (desktopSelection.pointer === event.pointerId) {
+    updateLocalSelection(event);
+    event.preventDefault();
+    return;
+  }
+  if (pointerDecisionPointer === event.pointerId) return;
+  handleTerminalPointer(event);
+});
+terminal.addEventListener('pointerup', event => {
+  if (finishLocalSelection(event)) event.preventDefault();
+  else if (pointerDecisionPointer === event.pointerId) pointerDecisionPointer = null;
+  else if (handleTerminalPointer(event)) event.preventDefault();
   try { terminal.releasePointerCapture(event.pointerId); } catch {}
 });
 terminal.addEventListener('pointercancel', event => {
-  handleTerminalPointer(event);
+  if (desktopSelection.pointer === event.pointerId) clearSelection();
+  else if (pointerDecisionPointer === event.pointerId) pointerDecisionPointer = null;
+  else handleTerminalPointer(event);
   try { terminal.releasePointerCapture(event.pointerId); } catch {}
 });
 function scrollHistoryWheel({deltaY, deltaMode}) {
@@ -1139,6 +1302,15 @@ leaderButton.addEventListener('click', () => {
 });
 copyButton.addEventListener('click', async () => {
   try {
+    if (desktopSelection.range) {
+      const selected = desktopSelection.range;
+      const extracted = await queueControl(connection => connection.textExtract(selected), 'selection');
+      if (!extracted?.value) throw new Error('selected terminal text is empty');
+      await navigator.clipboard.writeText(extracted.value);
+      clearSelection();
+      status.textContent = `Selection copied (${extracted.length} bytes)`;
+      return;
+    }
     const connection = history.active ? historyObserver : observer;
     if (!connection) throw new Error('displayed terminal text is not ready');
     const wire = connection.exports;
@@ -1150,7 +1322,7 @@ copyButton.addEventListener('click', async () => {
   } catch (error) {
     status.textContent = `COPY UNAVAILABLE: ${error.message}`;
   } finally {
-    focusKeyboard();
+    focusKeyboardPreservingHistory();
   }
 });
 pasteButton.addEventListener('click', async () => {
@@ -1315,9 +1487,15 @@ function scheduleViewportResize() {
       .catch(error => { requestedGeometry = null; fail(error); });
   }, 120);
 }
-window.addEventListener('resize', () => { recordViewport('viewport_resize', 'window'); scheduleViewportResize(); });
-window.visualViewport?.addEventListener('resize', () => { recordViewport('viewport_resize', 'visual'); scheduleViewportResize(); });
-window.visualViewport?.addEventListener('scroll', () => recordViewport('viewport_scroll', 'visual'));
+window.addEventListener('resize', () => {
+  recordViewport('viewport_resize', 'window'); scheduleViewportResize(); renderSelectionOverlay();
+});
+window.visualViewport?.addEventListener('resize', () => {
+  recordViewport('viewport_resize', 'visual'); scheduleViewportResize(); renderSelectionOverlay();
+});
+window.visualViewport?.addEventListener('scroll', () => {
+  recordViewport('viewport_scroll', 'visual'); renderSelectionOverlay();
+});
 
 function updateFacts() {
   factsNode.textContent = JSON.stringify({
@@ -1347,6 +1525,9 @@ function updateFacts() {
     modifier_latch: modifierLatch,
     focus_state: focusState,
     requested_geometry: requestedGeometry,
+    selection: desktopSelection.range
+      ? {anchor:desktopSelection.range.anchor, focus:desktopSelection.range.focus}
+      : null,
     last_control: lastInput || null,
     render_count: renderer ? String(renderer.exports.rv_render_count()) : '0',
     renderer_memory_bytes: renderer?.exports.memory.buffer.byteLength ?? null,
@@ -1409,6 +1590,8 @@ async function reconnectAll({manual = false} = {}) {
   telemetry.record('reconnect_start', {observer_open:connectionOpen(observer), control_open:connectionOpen(control)});
   reconnectTask = (async () => {
     liveFrameScheduler.reset();
+    clearSelection();
+    displayedHistory = null;
     history.reset();
     historyGeneration += 1;
     historyRequestPending = false;

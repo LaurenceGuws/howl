@@ -61,7 +61,11 @@ It checks committed UTF-8, Enter, Backspace, Delete, Unicode physical key input,
 On touch-first Android, the terminal reserves finger gestures for client-local
 history and text-input focus rather than pretending a finger is a terminal
 mouse. Mouse/stylus devices continue through canonical semantic mouse input.
-Desktop wheel routing reads Session's canonical interaction state: an active
+Desktop primary drag becomes client-local absolute-row selection when canonical
+mouse tracking is off; mouse-aware applications keep their semantic drag stream,
+and Shift+drag explicitly forces local selection. Selected UTF-8 still comes from
+Session's canonical text-extract contract. Desktop wheel routing reads Session's
+canonical interaction state: an active
 history viewport stays local, mouse-aware applications receive semantic wheel
 reports, DEC alternate-scroll becomes cursor-key input, and ordinary shell wheel
 input navigates scrollback. Hover/click never eject an active history viewport. A

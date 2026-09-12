@@ -48,10 +48,11 @@ var image_height: u32 = 0;
 var image_expected_bytes: usize = 0;
 var image_len: usize = 0;
 var image_started: bool = false;
+var selection_len: usize = 0;
 // 0 closed, 1 awaiting welcome, 2 attached, 3 observing, 4 snapshot ready,
 // 5 awaiting a control result, 6 control acknowledged, 7 receiving one exact
 // image resource, 8 image ready for Host copy, 9 awaiting interaction state,
-// 99 terminal protocol error.
+// 10 awaiting selected text, 99 terminal protocol error.
 var phase: u32 = 0;
 
 export fn hw_input_ptr() usize {
@@ -98,6 +99,12 @@ export fn hw_image_width() u32 {
 }
 export fn hw_image_height() u32 {
     return image_height;
+}
+export fn hw_selection_ptr() usize {
+    return @intFromPtr(&arena);
+}
+export fn hw_selection_len() usize {
+    return selection_len;
 }
 export fn hw_error_ptr() usize {
     return @intFromPtr(failure.ptr);
@@ -235,6 +242,7 @@ export fn hw_reset() u32 {
     image_expected_bytes = 0;
     image_len = 0;
     image_started = false;
+    selection_len = 0;
     phase = 1;
     if (!queue(.hello, &.{})) return fail("HelloEncodingFailed");
     return 1;
@@ -346,6 +354,32 @@ export fn hw_request_interaction_state() u32 {
     if (!controlReady()) return 0;
     if (!queue(.interaction_state, &.{})) return fail("InteractionStateEncodingFailed");
     phase = 9;
+    return 1;
+}
+
+export fn hw_request_text_extract(
+    start_row: i32,
+    start_column: u32,
+    end_row: i32,
+    end_column: u32,
+    selection_columns: u32,
+    alternate_screen_value: u32,
+) u32 {
+    if (!controlReady() or start_column > std.math.maxInt(u16) or
+        end_column > std.math.maxInt(u16) or selection_columns == 0 or
+        selection_columns > std.math.maxInt(u16) or alternate_screen_value > 1)
+        return 0;
+    var payload: [p.payload_bytes.text_extract]u8 = undefined;
+    p.encodeTextExtract(&payload, .{
+        .start = .{ .row = start_row, .column = @intCast(start_column) },
+        .end = .{ .row = end_row, .column = @intCast(end_column) },
+        .columns = @intCast(selection_columns),
+        .alternate_screen = alternate_screen_value == 1,
+    });
+    if (!queue(.text_extract, &payload)) return fail("TextExtractEncodingFailed");
+    selection_len = 0;
+    last_result_code = std.math.maxInt(u32);
+    phase = 10;
     return 1;
 }
 
@@ -510,6 +544,24 @@ fn acceptFrame() u32 {
             interaction_pointer_mode = state.pointer_mode;
             phase = 6;
         },
+        10 => {
+            if (header.kind == .result) {
+                const result = p.decodeResult(payload) catch |err| return fail(@errorName(err));
+                if (result.request_kind != .text_extract or result.code == .ok)
+                    return fail("TextExtractResultMismatch");
+                last_result_code = @backingInt(result.code);
+                selection_len = 0;
+                phase = 6;
+            } else {
+                if (header.kind != .text_extract_data or payload.len > arena.len or
+                    !std.unicode.utf8ValidateSlice(payload))
+                    return fail("InvalidTextExtractData");
+                @memcpy(arena[0..payload.len], payload);
+                selection_len = payload.len;
+                last_result_code = @backingInt(p.ResultCode.ok);
+                phase = 6;
+            }
+        },
         7 => {
             if (!image_started) {
                 if (header.kind == .result) {
@@ -579,7 +631,7 @@ export fn hw_feed(length: usize) u32 {
 
 export fn hw_finish() u32 {
     if (phase == 99) return 0;
-    if (used != 0 or phase == 1 or phase == 3 or phase == 5 or phase == 7 or phase == 9)
+    if (used != 0 or phase == 1 or phase == 3 or phase == 5 or phase == 7 or phase == 9 or phase == 10)
         return fail("TruncatedResponse");
     control_operation = .none;
     pending_resize_rows = 0;
