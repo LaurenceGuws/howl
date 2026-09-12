@@ -64,7 +64,10 @@ mouse. Mouse/stylus devices continue through canonical semantic mouse input.
 Desktop primary drag becomes client-local absolute-row selection when canonical
 mouse tracking is off; mouse-aware applications keep their semantic drag stream,
 and Shift+drag explicitly forces local selection. Selected UTF-8 still comes from
-Session's canonical text-extract contract. Desktop wheel routing reads Session's
+Session's canonical text-extract contract. Selection paint follows the copied
+text shape rather than filling intermediate rows to the terminal edge: hard row
+breaks add one newline cell, empty selected rows are one cell, and soft wraps do
+not invent a newline. Desktop wheel routing reads Session's
 canonical interaction state: an active
 history viewport stays local, mouse-aware applications receive semantic wheel
 reports, DEC alternate-scroll becomes cursor-key input, and ordinary shell wheel

@@ -56,6 +56,45 @@ void main() {
     expect(range.spanFor(live, 2)?.endColumn, 5);
   });
 
+  test('text-shaped spans trim row tails and paint hard newlines', () {
+    const viewport = TerminalSelectionViewport(
+      historyOffset: 0,
+      historyCount: 0,
+      historyRowBase: 0,
+      rows: 4,
+      columns: 8,
+      alternateScreen: false,
+      selectionRows: <TerminalSelectionRowShape>[
+        TerminalSelectionRowShape(contentEndExclusive: 4, wrapped: false),
+        TerminalSelectionRowShape(contentEndExclusive: 0, wrapped: false),
+        TerminalSelectionRowShape(contentEndExclusive: 8, wrapped: true),
+        TerminalSelectionRowShape(contentEndExclusive: 3, wrapped: false),
+      ],
+    );
+    const range = TerminalSelectionRange(
+      anchor: TerminalSelectionPoint(row: 0, column: 2),
+      focus: TerminalSelectionPoint(row: 3, column: 6),
+      columns: 8,
+      alternateScreen: false,
+    );
+    expect(range.spanFor(viewport, 0)?.startColumn, 2);
+    expect(range.spanFor(viewport, 0)?.endColumn, 4); // text + newline cell
+    expect(range.spanFor(viewport, 1)?.startColumn, 0);
+    expect(range.spanFor(viewport, 1)?.endColumn, 0); // empty-line newline
+    expect(range.spanFor(viewport, 2)?.endColumn, 7); // soft wrap: no newline
+    expect(range.spanFor(viewport, 3)?.endColumn, 2); // final row: text only
+
+    const tailStart = TerminalSelectionRange(
+      anchor: TerminalSelectionPoint(row: 0, column: 7),
+      focus: TerminalSelectionPoint(row: 1, column: 3),
+      columns: 8,
+      alternateScreen: false,
+    );
+    expect(tailStart.spanFor(viewport, 0)?.startColumn, 4);
+    expect(tailStart.spanFor(viewport, 0)?.endColumn, 4);
+    expect(tailStart.spanFor(viewport, 1), isNull);
+  });
+
   test('eviction bank and columns invalidate instead of retargeting', () {
     const range = TerminalSelectionRange(
       anchor: TerminalSelectionPoint(row: 100, column: 0),

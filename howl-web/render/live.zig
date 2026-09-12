@@ -319,7 +319,7 @@ fn renderSnapshot(bytes: []const u8) !RenderResult {
     };
     pixels_used = frame.pixels.len;
     try collectPendingResidency(frame.commands);
-    try writeFrame(frame, begin.revision, begin.terminal_revision, next_render);
+    try writeFrame(frame, view, begin.revision, begin.terminal_revision, next_render);
     rendered = next_render;
     pending_ack = true;
     return .frame;
@@ -503,12 +503,28 @@ fn collectPendingResidency(commands: []const canvas.Command) error{ResidencyLimi
     }
 }
 
-fn writeFrame(frame: canvas.Composer.Frame, observation_revision: u64, terminal_revision: u64, render_revision: u64) !void {
+fn writeFrame(
+    frame: canvas.Composer.Frame,
+    snapshot: *const client.view.Snapshot,
+    observation_revision: u64,
+    terminal_revision: u64,
+    render_revision: u64,
+) !void {
     var writer = std.Io.Writer.fixed(&metadata);
     try writer.print(
-        "{{\"schema\":\"howl.web-frame/v1\",\"render\":{d},\"observation\":{d},\"terminal\":{d},\"surface\":[{d},{d}],\"cell\":[{d},{d}],\"uploads\":[",
+        "{{\"schema\":\"howl.web-frame/v2\",\"render\":{d},\"observation\":{d},\"terminal\":{d},\"surface\":[{d},{d}],\"cell\":[{d},{d}],\"selection_rows\":[",
         .{ render_revision, observation_revision, terminal_revision, surface.width, surface.height, cell_size.width, cell_size.height },
     );
+    const begin = client.view.begin(snapshot);
+    for (0..begin.rows) |row| {
+        if (row != 0) try writer.writeByte(',');
+        const shape = client.selection.rowShape(snapshot, @intCast(row)) orelse
+            return error.InvalidSnapshot;
+        const encoded_shape = shape.content_end_exclusive |
+            (if (shape.wrapped) @as(u16, 1) << 15 else 0);
+        try writer.print("{d}", .{encoded_shape});
+    }
+    try writer.writeAll("],\"uploads\":[");
     for (frame.uploads, 0..) |upload, index| {
         if (index != 0) try writer.writeByte(',');
         try writer.print(

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {DesktopSelectionController, TerminalSelectionRange, TerminalSelectionViewport, routeDesktopPrimaryPointer, routeDesktopWheel} from '../web/selection.mjs';
+import {DesktopSelectionController, TerminalSelectionRange, TerminalSelectionViewport, routeDesktopPrimaryPointer, routeDesktopWheel, snappedSelectionRect} from '../web/selection.mjs';
 
 const live = new TerminalSelectionViewport({historyOffset:0,historyCount:30,historyRowBase:100,rows:10,columns:20,alternateScreen:false});
 assert.deepEqual(live.pointAt(0, 3), {row:130,column:3});
@@ -20,7 +20,24 @@ assert.equal(rotated.validity(range), 'evicted');
 const alternate = new TerminalSelectionViewport({historyOffset:0,historyCount:0,historyRowBase:0,rows:5,columns:20,alternateScreen:true});
 assert.deepEqual(alternate.pointAt(2,4), {row:2,column:4});
 assert.equal(alternate.validity(new TerminalSelectionRange({anchor:{row:1,column:0},focus:{row:3,column:2},columns:20,alternateScreen:true})), 'valid');
-console.log(JSON.stringify({status:'pass', absoluteRows:true, spans:true, reversal:true, eviction:true, alternate:true}));
+
+const shaped = new TerminalSelectionViewport({
+  historyOffset:0,historyCount:0,historyRowBase:0,rows:4,columns:8,alternateScreen:false,
+  selectionRows:[4, 0, 0x8008, 3],
+});
+const shapedRange = new TerminalSelectionRange({anchor:{row:0,column:2},focus:{row:3,column:6},columns:8,alternateScreen:false});
+assert.deepEqual(shapedRange.spanFor(shaped, 0), {row:0,startColumn:2,endColumn:4});
+assert.deepEqual(shapedRange.spanFor(shaped, 1), {row:1,startColumn:0,endColumn:0});
+assert.deepEqual(shapedRange.spanFor(shaped, 2), {row:2,startColumn:0,endColumn:7});
+assert.deepEqual(shapedRange.spanFor(shaped, 3), {row:3,startColumn:0,endColumn:2});
+const tailRange = new TerminalSelectionRange({anchor:{row:0,column:7},focus:{row:1,column:3},columns:8,alternateScreen:false});
+assert.deepEqual(tailRange.spanFor(shaped, 0), {row:0,startColumn:4,endColumn:4});
+assert.equal(tailRange.spanFor(shaped, 1), null);
+
+const firstRect = snappedSelectionRect({left:10,top:70,cellWidth:5.885,rowHeight:11.773,row:20,startColumn:0,endColumn:7,dpr:1.25});
+const secondRect = snappedSelectionRect({left:10,top:70,cellWidth:5.885,rowHeight:11.773,row:21,startColumn:0,endColumn:7,dpr:1.25});
+assert.equal(firstRect.top + firstRect.height, secondRect.top);
+console.log(JSON.stringify({status:'pass', absoluteRows:true, spans:true, textShaped:true, pixelSnapped:true, reversal:true, eviction:true, alternate:true}));
 
 const controller = new DesktopSelectionController();
 controller.start({pointer:7,point:{row:10,column:2},columns:20,alternateScreen:false});

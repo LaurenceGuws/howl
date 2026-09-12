@@ -1271,6 +1271,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         rows: metadata.rows,
         columns: metadata.columns,
         alternateScreen: metadata.alternateScreen,
+        selectionRows: metadata.selectionRows,
       );
 
   void _validateSelection(NativeHostMetadata metadata) {

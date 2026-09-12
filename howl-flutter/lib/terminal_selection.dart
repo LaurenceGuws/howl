@@ -34,6 +34,16 @@ final class TerminalSelectionSpan {
   final int endColumn;
 }
 
+final class TerminalSelectionRowShape {
+  const TerminalSelectionRowShape({
+    required this.contentEndExclusive,
+    required this.wrapped,
+  });
+
+  final int contentEndExclusive;
+  final bool wrapped;
+}
+
 /// Presentation copy of the canonical snapshot coordinates needed to place a
 /// client-local selection. Selected UTF-8 is still extracted by the session.
 final class TerminalSelectionViewport {
@@ -44,6 +54,7 @@ final class TerminalSelectionViewport {
     required this.rows,
     required this.columns,
     required this.alternateScreen,
+    this.selectionRows = const <TerminalSelectionRowShape>[],
   });
 
   final int historyOffset;
@@ -52,6 +63,12 @@ final class TerminalSelectionViewport {
   final int rows;
   final int columns;
   final bool alternateScreen;
+  final List<TerminalSelectionRowShape> selectionRows;
+
+  TerminalSelectionRowShape? selectionRow(int viewportRow) =>
+      viewportRow >= 0 && viewportRow < selectionRows.length
+      ? selectionRows[viewportRow]
+      : null;
 
   TerminalSelectionPoint? pointAt(int viewportRow, int column) {
     if (viewportRow < 0 ||
@@ -161,10 +178,38 @@ final class TerminalSelectionRange {
     final bounds = ordered;
     final row = rowPoint.row;
     if (row < bounds.start.row || row > bounds.end.row) return null;
+    final startColumn = row == bounds.start.row ? bounds.start.column : 0;
+    final endColumn = row == bounds.end.row ? bounds.end.column : columns - 1;
+    final shape = viewport.selectionRow(viewportRow);
+    if (shape == null) {
+      return TerminalSelectionSpan(
+        row: viewportRow,
+        startColumn: startColumn,
+        endColumn: endColumn,
+      );
+    }
+    final contentEnd = shape.contentEndExclusive.clamp(0, columns);
+    final isFinalRow = row == bounds.end.row;
+    if (isFinalRow || shape.wrapped) {
+      if (contentEnd == 0) return null;
+      final visualEnd = math.min(endColumn, contentEnd - 1);
+      if (visualEnd < startColumn) return null;
+      return TerminalSelectionSpan(
+        row: viewportRow,
+        startColumn: startColumn,
+        endColumn: visualEnd,
+      );
+    }
+
+    // Crossing a hard row boundary selects its newline even when the drag
+    // begins in the visually blank tail. Paint that newline as one cell after
+    // the row's actual text; an empty row therefore becomes one selected cell.
+    final newlineColumn = math.min(contentEnd, columns - 1);
+    final visualStart = startColumn < contentEnd ? startColumn : newlineColumn;
     return TerminalSelectionSpan(
       row: viewportRow,
-      startColumn: row == bounds.start.row ? bounds.start.column : 0,
-      endColumn: row == bounds.end.row ? bounds.end.column : columns - 1,
+      startColumn: visualStart,
+      endColumn: newlineColumn,
     );
   }
 

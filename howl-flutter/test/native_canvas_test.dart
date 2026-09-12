@@ -180,10 +180,13 @@ Uint8List _hostPacket({
     surfaceHeight: presentation.lineHeight,
   );
   final semantics = Uint8List.fromList('visible terminal'.codeUnits);
-  final bytes = Uint8List(64 + canvas.length + semantics.length);
+  const selectionRows = <int>[1];
+  final bytes = Uint8List(
+    64 + canvas.length + selectionRows.length * 2 + semantics.length,
+  );
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x4e, 0x48, 0x31]);
-  data.setUint16(4, 2, Endian.little);
+  data.setUint16(4, 3, Endian.little);
   data.setUint16(6, 64, Endian.little);
   data.setUint32(8, bytes.length, Endian.little);
   data.setUint32(12, 64, Endian.little);
@@ -204,7 +207,12 @@ Uint8List _hostPacket({
   data.setUint16(58, 0, Endian.little);
   data.setUint32(60, semantics.length, Endian.little);
   bytes.setAll(64, canvas);
-  bytes.setAll(64 + canvas.length, semantics);
+  var at = 64 + canvas.length;
+  for (final row in selectionRows) {
+    data.setUint16(at, row, Endian.little);
+    at += 2;
+  }
+  bytes.setAll(at, semantics);
   return bytes;
 }
 
@@ -458,6 +466,9 @@ void main() {
     expect(packet.metadata.rows, 1);
     expect(packet.metadata.columns, 1);
     expect(packet.metadata.cursorVisible, isTrue);
+    expect(packet.metadata.selectionRows, hasLength(1));
+    expect(packet.metadata.selectionRows.single.contentEndExclusive, 1);
+    expect(packet.metadata.selectionRows.single.wrapped, isFalse);
     expect(packet.canvas.commandCount, 3);
     expect(packet.semanticText, 'visible terminal');
     expect(packet.semanticTruncated, isFalse);

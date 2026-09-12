@@ -17,6 +17,7 @@ const image_refill_header_bytes: usize = 64;
 const maximum_image_refill_bytes: usize = image_refill_header_bytes +
     protocol.graphics_v2.maximum_image_bytes;
 const semantic_capacity: usize = 64 * 1024;
+const selection_rows_capacity: usize = presentation.maximum_rows * @sizeOf(u16);
 // Reuse one bounded decode/projection arena for every observation so dense live
 // frames do not churn the process-global malloc arenas. Web uses the same
 // reset-per-frame ownership model around this shared rich/view pipeline.
@@ -35,7 +36,7 @@ const maximum_non_command_packet_bytes: usize = host_header_bytes + global_heade
 // command envelope. The private Host packet remains separately byte-bounded.
 const command_capacity: usize = presentation.maximum_canvas_commands;
 const canvas_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
-const output_minimum_bytes: usize = canvas_packet_budget + semantic_capacity;
+const output_minimum_bytes: usize = canvas_packet_budget + selection_rows_capacity + semantic_capacity;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const maximum_terminal_images: usize = terminal.maximum_external_images;
 
@@ -48,8 +49,8 @@ comptime {
         @compileError("native host frame bounds exceed its minimum output packet");
     if (canvas_packet_budget - maximum_packet_bytes >= command_record_bytes)
         @compileError("native host command capacity does not consume the available packet budget");
-    if (output_minimum_bytes - canvas_packet_budget != semantic_capacity)
-        @compileError("native host semantic allowance drifted from its packet budget");
+    if (output_minimum_bytes - canvas_packet_budget != selection_rows_capacity + semantic_capacity)
+        @compileError("native host selection/semantic allowance drifted from its packet budget");
     if (maximum_terminal_images + 1 > maximum_frame_resources)
         @compileError("native image bound leaves no room for the terminal glyph atlas");
 }
@@ -656,10 +657,19 @@ fn observe(
     try writeFrame(&writer, frame, 1);
     const hcr_end = writer.offset;
     const hcr_len = hcr_end - hcr_start;
-    if (hcr_end > canvas_packet_budget or hcr_end + semantic_capacity > output.len)
+    if (hcr_end > canvas_packet_budget) return error.BufferTooSmall;
+    for (0..begin.rows) |row| {
+        const shape = client.selection.rowShape(view, @intCast(row)) orelse
+            return error.InvalidFrame;
+        const encoded_shape = shape.content_end_exclusive |
+            (if (shape.wrapped) @as(u16, 1) << 15 else 0);
+        try writer.writeU16(encoded_shape);
+    }
+    const semantic_start = writer.offset;
+    if (semantic_start + semantic_capacity > output.len)
         return error.BufferTooSmall;
-    const semantic = client.view.writeVisibleText(view, output[hcr_end .. hcr_end + semantic_capacity]);
-    writer.offset = hcr_end + semantic.bytes_written;
+    const semantic = client.view.writeVisibleText(view, output[semantic_start .. semantic_start + semantic_capacity]);
+    writer.offset = semantic_start + semantic.bytes_written;
     const total = writer.offset;
     if (total > std.math.maxInt(u32) or hcr_len > std.math.maxInt(u32) or
         semantic.bytes_written > std.math.maxInt(u32))
@@ -899,7 +909,8 @@ test "native host dense presentation budgets raster and commands together" {
     try std.testing.expectEqual(@as(u32, presentation.maximum_rows), howl_native_host_maximum_rows());
     try std.testing.expectEqual(@as(u32, presentation.maximum_columns), howl_native_host_maximum_columns());
     try std.testing.expectEqual(
-        maximum_non_command_packet_bytes + command_capacity * command_record_bytes + semantic_capacity,
+        maximum_non_command_packet_bytes + command_capacity * command_record_bytes +
+            selection_rows_capacity + semantic_capacity,
         output_minimum_bytes,
     );
     try std.testing.expect(output_minimum_bytes < 8 * 1024 * 1024);
@@ -1099,7 +1110,7 @@ test "native host image refill packet carries exact Canvas and terminal identity
 fn writeHostHeader(writer: *Writer, begin: client.view.Begin) !void {
     const magic = try writer.need(4);
     @memcpy(magic, "HNH1");
-    try writer.writeU16(2);
+    try writer.writeU16(3);
     try writer.writeU16(host_header_bytes);
     try writer.writeU32(0); // total bytes, patched after serialization
     try writer.writeU32(host_header_bytes);

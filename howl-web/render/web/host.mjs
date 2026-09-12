@@ -13,7 +13,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v38';
+const CANARY_GENERATION = 'v39';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -1023,6 +1023,7 @@ function currentSelectionViewport() {
     rows:lastFrame.surface[1] / cellHeight,
     columns:lastFrame.surface[0] / cellWidth,
     alternateScreen:displayedHistory.alternateScreen,
+    selectionRows:Array.isArray(lastFrame.selection_rows) ? lastFrame.selection_rows : [],
   });
 }
 

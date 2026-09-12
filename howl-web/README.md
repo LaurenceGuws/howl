@@ -68,8 +68,13 @@ SGR/X10/etc. encoding remains solely in the canonical VT.
 Desktop primary drag follows the same canonical mode split: with mouse tracking
 off it creates a client-local absolute-row selection, while mouse-aware applications
 keep their semantic drag stream. Shift+drag is the explicit local-selection override.
-The highlight is presentation-only; Copy requests canonical UTF-8 through Session's
-existing text-extract contract rather than reconstructing text from Canvas pixels.
+The highlight is presentation-only and text-shaped: each row stops after its
+actual terminal content, hard row breaks paint one extra newline cell (so an
+empty selected line is one cell), and soft wraps do not invent a newline. Copy
+still requests canonical UTF-8 through Session's existing text-extract contract
+rather than reconstructing text from Canvas pixels. DOM overlay boundaries are
+snapped to shared device-pixel edges so CSS scaling cannot open seams between
+adjacent selected rows.
 
 The live browser shell also carries a bounded client-local telemetry flight recorder
 for mobile canary diagnosis. It retains at most 768 metadata events and records

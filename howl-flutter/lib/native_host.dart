@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'native_canvas.dart';
 import 'native_canvas_surface.dart';
 import 'terminal_presentation.dart';
+import 'terminal_selection.dart';
 
 const int nativeSelectionOutputBytes = 1024 * 1024;
 const int nativeInteractionStateBytes = 20;
@@ -47,6 +48,7 @@ final class NativeHostMetadata {
     required this.leaderPresent,
     required this.youAreLeader,
     required this.cursorVisible,
+    required this.selectionRows,
   });
 
   final int revision;
@@ -64,6 +66,7 @@ final class NativeHostMetadata {
   final bool leaderPresent;
   final bool youAreLeader;
   final bool cursorVisible;
+  final List<TerminalSelectionRowShape> selectionRows;
 }
 
 final class NativeInteractionState {
@@ -155,7 +158,7 @@ NativeHostFrame parseNativeHostPacket(
     throw const NativeHostException('packet_magic');
   }
   final data = ByteData.sublistView(bytes);
-  if (data.getUint16(4, Endian.little) != 2 ||
+  if (data.getUint16(4, Endian.little) != 3 ||
       data.getUint16(6, Endian.little) != _hostHeaderBytes) {
     throw const NativeHostException('packet_version');
   }
@@ -163,7 +166,10 @@ NativeHostFrame parseNativeHostPacket(
   final canvasOffset = data.getUint32(12, Endian.little);
   final canvasLength = data.getUint32(16, Endian.little);
   final semanticLength = data.getUint32(60, Endian.little);
-  final semanticOffset = canvasOffset + canvasLength;
+  final rows = data.getUint16(52, Endian.little);
+  final selectionRowsOffset = canvasOffset + canvasLength;
+  final selectionRowsLength = rows * 2;
+  final semanticOffset = selectionRowsOffset + selectionRowsLength;
   if (total != bytes.length ||
       canvasOffset != _hostHeaderBytes ||
       semanticOffset > bytes.length ||
@@ -171,14 +177,30 @@ NativeHostFrame parseNativeHostPacket(
     throw const NativeHostException('packet_layout');
   }
   final flags = data.getUint32(20, Endian.little);
+  final columns = data.getUint16(54, Endian.little);
+  final selectionRows = List<TerminalSelectionRowShape>.generate(
+    rows,
+    (row) {
+      final encoded = data.getUint16(selectionRowsOffset + row * 2, Endian.little);
+      final contentEndExclusive = encoded & 0x7fff;
+      if (contentEndExclusive > columns) {
+        throw const NativeHostException('packet_selection_rows');
+      }
+      return TerminalSelectionRowShape(
+        contentEndExclusive: contentEndExclusive,
+        wrapped: encoded & 0x8000 != 0,
+      );
+    },
+    growable: false,
+  );
   final metadata = NativeHostMetadata(
     revision: data.getUint64(24, Endian.little),
     terminalRevision: data.getUint64(32, Endian.little),
     historyOffset: data.getUint32(40, Endian.little),
     historyCount: data.getUint32(44, Endian.little),
     historyRowBase: data.getUint32(48, Endian.little),
-    rows: data.getUint16(52, Endian.little),
-    columns: data.getUint16(54, Endian.little),
+    rows: rows,
+    columns: columns,
     cursorRow: data.getUint16(56, Endian.little),
     cursorColumn: data.getUint16(58, Endian.little),
     alternateScreen: flags & (1 << 0) != 0,
@@ -187,6 +209,7 @@ NativeHostFrame parseNativeHostPacket(
     leaderPresent: flags & (1 << 3) != 0,
     youAreLeader: flags & (1 << 4) != 0,
     cursorVisible: flags & (1 << 5) != 0,
+    selectionRows: selectionRows,
   );
   if (metadata.revision == 0 || metadata.rows == 0 || metadata.columns == 0) {
     throw const NativeHostException('packet_metadata');

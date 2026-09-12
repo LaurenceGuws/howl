@@ -1,6 +1,13 @@
 export class TerminalSelectionViewport {
-  constructor({historyOffset, historyCount, historyRowBase, rows, columns, alternateScreen}) {
-    Object.assign(this, {historyOffset, historyCount, historyRowBase, rows, columns, alternateScreen});
+  constructor({historyOffset, historyCount, historyRowBase, rows, columns, alternateScreen, selectionRows = []}) {
+    Object.assign(this, {historyOffset, historyCount, historyRowBase, rows, columns, alternateScreen, selectionRows});
+  }
+
+  selectionRow(viewportRow) {
+    if (viewportRow < 0 || viewportRow >= this.selectionRows.length) return null;
+    const packed = this.selectionRows[viewportRow];
+    if (!Number.isInteger(packed) || packed < 0 || packed > 0xffff) return null;
+    return {contentEndExclusive:packed & 0x7fff, wrapped:(packed & 0x8000) !== 0};
   }
 
   pointAt(viewportRow, column) {
@@ -40,11 +47,20 @@ export class TerminalSelectionRange {
     if (!rowPoint) return null;
     const {start, end} = this.ordered;
     if (rowPoint.row < start.row || rowPoint.row > end.row) return null;
-    return {
-      row:viewportRow,
-      startColumn:rowPoint.row === start.row ? start.column : 0,
-      endColumn:rowPoint.row === end.row ? end.column : this.columns - 1,
-    };
+    const startColumn = rowPoint.row === start.row ? start.column : 0;
+    const endColumn = rowPoint.row === end.row ? end.column : this.columns - 1;
+    const shape = viewport.selectionRow(viewportRow);
+    if (!shape) return {row:viewportRow, startColumn, endColumn};
+    const contentEnd = Math.max(0, Math.min(this.columns, shape.contentEndExclusive));
+    const finalRow = rowPoint.row === end.row;
+    if (finalRow || shape.wrapped) {
+      if (contentEnd === 0) return null;
+      const visualEnd = Math.min(endColumn, contentEnd - 1);
+      return visualEnd < startColumn ? null : {row:viewportRow, startColumn, endColumn:visualEnd};
+    }
+    const newlineColumn = Math.min(contentEnd, this.columns - 1);
+    const visualStart = startColumn < contentEnd ? startColumn : newlineColumn;
+    return {row:viewportRow, startColumn:visualStart, endColumn:newlineColumn};
   }
 }
 
@@ -106,20 +122,35 @@ export class TerminalSelectionOverlay {
     const top = rect.top + this.terminal.clientTop;
     const cellWidth = this.terminal.clientWidth / viewport.columns;
     const rowHeight = this.terminal.clientHeight / viewport.rows;
+    const dpr = globalThis.devicePixelRatio ?? 1;
     const fragment = document.createDocumentFragment();
     for (let row = 0; row < viewport.rows; row += 1) {
       const span = range.spanFor(viewport, row);
       if (!span) continue;
+      const rect = snappedSelectionRect({
+        left, top, cellWidth, rowHeight, row,
+        startColumn:span.startColumn, endColumn:span.endColumn, dpr,
+      });
       const node = document.createElement('div');
       node.className = 'selection-span';
-      node.style.left = `${left + span.startColumn * cellWidth}px`;
-      node.style.top = `${top + row * rowHeight}px`;
-      node.style.width = `${(span.endColumn - span.startColumn + 1) * cellWidth}px`;
-      node.style.height = `${rowHeight}px`;
+      node.style.left = `${rect.left}px`;
+      node.style.top = `${rect.top}px`;
+      node.style.width = `${rect.width}px`;
+      node.style.height = `${rect.height}px`;
       fragment.append(node);
     }
     this.element.append(fragment);
   }
+}
+
+export function snappedSelectionRect({left, top, cellWidth, rowHeight, row, startColumn, endColumn, dpr = 1}) {
+  const scale = Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
+  const snap = value => Math.round(value * scale) / scale;
+  const x0 = snap(left + startColumn * cellWidth);
+  const x1 = snap(left + (endColumn + 1) * cellWidth);
+  const y0 = snap(top + row * rowHeight);
+  const y1 = snap(top + (row + 1) * rowHeight);
+  return {left:x0, top:y0, width:Math.max(0, x1 - x0), height:Math.max(0, y1 - y0)};
 }
 
 function samePoint(left, right) { return left.row === right.row && left.column === right.column; }

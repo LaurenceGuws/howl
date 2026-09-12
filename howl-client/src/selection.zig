@@ -28,6 +28,15 @@ pub const Span = struct {
     end_column: u16,
 };
 
+/// Per-row presentation facts needed to paint terminal selection like copied
+/// text instead of like a rectangular block. `content_end_exclusive` trims the
+/// untouched/trailing blank tail while `wrapped` distinguishes a soft wrap from
+/// a real row break. The range itself remains canonical stable cell identity.
+pub const RowShape = struct {
+    content_end_exclusive: u16,
+    wrapped: bool,
+};
+
 pub const Range = struct {
     anchor: Point,
     focus: Point,
@@ -144,6 +153,29 @@ pub fn visualSpan(snapshot: *const view.Snapshot, range: Range, viewport_row: u1
         @as(u32, span.end_column) + @as(u32, @max(cell.width, 1)) - 1,
     );
     return .{ .start_column = span.start_column, .end_column = @intCast(expanded) };
+}
+
+/// Returns the text-shaped extent for one displayed row. Trailing ordinary
+/// spaces are deliberately trimmed to match multi-row canonical text copy.
+/// Wide lead cells retain their complete horizontal cell width.
+pub fn rowShape(snapshot: *const view.Snapshot, viewport_row: u16) ?RowShape {
+    const begin = view.begin(snapshot);
+    if (viewport_row >= begin.rows) return null;
+    const row = view.rows(snapshot)[viewport_row];
+    const row_cells = view.cells(snapshot)[row.cell_offset .. row.cell_offset + row.cell_count];
+    const row_scalars = view.scalars(snapshot);
+    var scan = row_cells.len;
+    while (scan > 0) {
+        scan -= 1;
+        const cell = row_cells[scan];
+        if (cell.x != 0 or cell.y != 0 or cell.scalar_count == 0) continue;
+        const first = row_scalars[cell.scalar_offset];
+        if (first == ' ') continue;
+        const width = @max(cell.width, 1);
+        const end = @min(@as(usize, begin.columns), scan + width);
+        return .{ .content_end_exclusive = @intCast(end), .wrapped = row.wrapped };
+    }
+    return .{ .content_end_exclusive = 0, .wrapped = row.wrapped };
 }
 
 /// Requests canonical UTF-8 for one client-local range. The returned allocation belongs to `allocator`.
@@ -341,6 +373,42 @@ test "word selection crosses soft wrap and visual span covers a wide grapheme" {
 
     const wide = (try word(snapshot, 1, 2)).?;
     try std.testing.expectEqual(@as(?Span, .{ .start_column = 2, .end_column = 3 }), visualSpan(snapshot, wide, 1));
+}
+
+test "row shape trims blank tail and preserves wide text plus wrap identity" {
+    var cells0 = [_]rich.Cell{
+        testCell(&.{'A'}, 1), testCell(&.{'B'}, 1), testCell(&.{0x754c}, 2),
+        testCell(&.{}, 2),    testCell(&.{' '}, 1), testCell(&.{}, 1),
+    };
+    cells0[3].x = 1;
+    var cells1 = [_]rich.Cell{
+        testCell(&.{}, 1), testCell(&.{}, 1), testCell(&.{}, 1),
+        testCell(&.{}, 1), testCell(&.{}, 1), testCell(&.{}, 1),
+    };
+    var source_rows = [_]rich.Row{
+        .{ .wrapped = true, .line_geometry = 0, .cells = &cells0 },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &cells1 },
+    };
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    const source = rich.Snapshot{
+        .allocator = std.testing.allocator,
+        .begin = testBeginForRows(2, 6),
+        .presentation = testPresentation(palette),
+        .rows = &source_rows,
+        .hyperlinks = &.{},
+    };
+    const snapshot = try view.project(std.testing.allocator, &source);
+    defer view.deinit(snapshot);
+
+    try std.testing.expectEqual(
+        @as(?RowShape, .{ .content_end_exclusive = 4, .wrapped = true }),
+        rowShape(snapshot, 0),
+    );
+    try std.testing.expectEqual(
+        @as(?RowShape, .{ .content_end_exclusive = 0, .wrapped = false }),
+        rowShape(snapshot, 1),
+    );
+    try std.testing.expect(rowShape(snapshot, 2) == null);
 }
 
 fn testCell(scalars: []const u32, width: u8) rich.Cell {
