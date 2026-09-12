@@ -151,6 +151,8 @@ protocol; it is not an embedder failure.
 - `src/replies.zig` owns bounded retained reply bytes and framing.
 - `src/properties.zig` owns retained terminal metadata and presentation
   properties.
+- `src/color_control.zig` owns xterm, Kitty, and accepted iTerm color-control
+  grammar, bounded color replies, and cursor-color action projection.
 - `src/consequences.zig` owns bounded globally ordered semantic occurrences.
 - `src/terminal.zig` owns terminal composition, parser-to-domain narrowing,
   protocol routing and serialization, extraction, two-bank resize, and reset.

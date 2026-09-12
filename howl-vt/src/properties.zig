@@ -301,11 +301,12 @@ fn buildDefaultPalette() [256]Rgb {
     @setEvalBranchQuota(4096);
     var palette: [256]Rgb = undefined;
     var idx: u16 = 0;
-    while (idx < 256) : (idx += 1) palette[idx] = paletteColor(@intCast(idx));
+    while (idx < 256) : (idx += 1) palette[idx] = defaultPaletteColor(@intCast(idx));
     return palette;
 }
 
-fn paletteColor(idx: u8) Rgb {
+/// Returns the canonical default xterm palette entry.
+pub fn defaultPaletteColor(idx: u8) Rgb {
     if (idx < 16) return paletteAnsi16Color(idx);
     if (idx < 232) {
         const n = idx - 16;
