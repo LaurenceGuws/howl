@@ -140,6 +140,33 @@ Uint8List _batchedAlphaCanvas() {
   return bytes;
 }
 
+Uint8List _coalescedSolidCanvas() {
+  final bytes = _oneFrameCanvas();
+  final data = ByteData.sublistView(bytes);
+  var at =
+      NativeCanvasFrame.globalHeaderBytes +
+      NativeCanvasFrame.frameHeaderBytes +
+      NativeCanvasFrame.resourceRecordBytes;
+
+  void rect(int offset, int x, int y, int width, int height) {
+    data.setInt32(offset, x, Endian.little);
+    data.setInt32(offset + 4, y, Endian.little);
+    data.setUint16(offset + 8, width, Endian.little);
+    data.setUint16(offset + 10, height, Endian.little);
+  }
+
+  at += NativeCanvasFrame.commandRecordBytes;
+  data.setUint8(at, 0);
+  data.setUint8(at + 1, 0xff);
+  data.setUint32(at + 4, 0xffff0000, Endian.little);
+  rect(at + 8, 0, 0, 1, 1);
+  at += NativeCanvasFrame.commandRecordBytes;
+  data.setUint8(at, 0);
+  data.setUint32(at + 4, 0xffff0000, Endian.little);
+  rect(at + 8, 1, 0, 1, 1);
+  return bytes;
+}
+
 Uint8List _hostPacket({
   bool semanticTruncated = false,
   TerminalPresentation presentation = const TerminalPresentation(
@@ -373,6 +400,12 @@ void main() {
     final frame = NativeCanvasFrame.parse(_batchedAlphaCanvas());
     final plan = buildNativeCanvasPlan(frame);
     expect(plan.segmentCountForTesting, 1);
+  });
+
+  test('adjacent same-color solids coalesce horizontally', () {
+    final frame = NativeCanvasFrame.parse(_coalescedSolidCanvas());
+    final plan = buildNativeCanvasPlan(frame);
+    expect(plan.segmentCountForTesting, 2);
   });
 
   test('native host metadata wraps exactly one final Canvas frame', () {

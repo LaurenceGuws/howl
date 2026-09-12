@@ -138,13 +138,28 @@ NativeCanvasPlan buildNativeCanvasPlan(NativeCanvasFrame frame) {
   while (index < frame.commandCount) {
     final tag = frame.commandTag(index);
     if (tag == 0) {
-      segments.add(
-        _SolidSegment(
-          _destination(frame, index),
-          _rgbaBitsToColor(frame.commandColorRgba(index)),
-        ),
-      );
-      index += 1;
+      final colorBits = frame.commandColorRgba(index);
+      var destination = _destination(frame, index);
+      var end = index + 1;
+      while (end < frame.commandCount &&
+          frame.commandTag(end) == 0 &&
+          frame.commandColorRgba(end) == colorBits) {
+        final next = _destination(frame, end);
+        if (destination.top != next.top ||
+            destination.bottom != next.bottom ||
+            destination.right != next.left) {
+          break;
+        }
+        destination = ui.Rect.fromLTRB(
+          destination.left,
+          destination.top,
+          next.right,
+          destination.bottom,
+        );
+        end += 1;
+      }
+      segments.add(_SolidSegment(destination, _rgbaBitsToColor(colorBits)));
+      index = end;
       continue;
     }
 
