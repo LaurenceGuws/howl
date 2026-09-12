@@ -62,3 +62,50 @@ final class DesktopSelectionController {
     _moved = false;
   }
 }
+
+enum DesktopPrimaryPointerRoute {
+  localSelection,
+  terminalMouse,
+  interactionState,
+}
+
+enum DesktopWheelRoute {
+  history,
+  terminalMouse,
+  alternateScroll,
+  ignore,
+  interactionState,
+}
+
+DesktopPrimaryPointerRoute routeDesktopPrimaryPointer({
+  required bool historyActive,
+  required bool forceSelection,
+  required bool? mouseTrackingEnabled,
+}) {
+  if (historyActive || forceSelection) {
+    return DesktopPrimaryPointerRoute.localSelection;
+  }
+  if (mouseTrackingEnabled == null) {
+    return DesktopPrimaryPointerRoute.interactionState;
+  }
+  return mouseTrackingEnabled
+      ? DesktopPrimaryPointerRoute.terminalMouse
+      : DesktopPrimaryPointerRoute.localSelection;
+}
+
+DesktopWheelRoute routeDesktopWheel({
+  required bool historyActive,
+  required bool? mouseTrackingEnabled,
+  required bool alternateScreen,
+  required bool? alternateScroll,
+}) {
+  if (historyActive) return DesktopWheelRoute.history;
+  if (mouseTrackingEnabled == null || alternateScroll == null) {
+    return DesktopWheelRoute.interactionState;
+  }
+  if (mouseTrackingEnabled) return DesktopWheelRoute.terminalMouse;
+  if (!alternateScreen) return DesktopWheelRoute.history;
+  return alternateScroll
+      ? DesktopWheelRoute.alternateScroll
+      : DesktopWheelRoute.ignore;
+}

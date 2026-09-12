@@ -45,11 +45,12 @@ experimental:
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-
     maintained WebAssembly visual canary alongside Flutter; zero-import bounded
-    wire state with semantic text/paste/key/focus/resize control, target-built
-    real text/shared terminal rendering, exact external-image refill/residency,
-    Session-owned animation consumption with no browser frame clock, a
-    loopback-only protocol-blind Zig WebSocket gateway with fail-closed
-    admission, an offline-capable PWA shell, and an Access-protected Home
-    tunnel edge; Chromium is the primary fast acceptance lane while
-    Safari/Home-Screen is the WebKit/PWA platform canary; outside the root core
-    gate
+    wire state with semantic text/paste/key/focus/resize/mouse control, native
+    presentation-size UX, client-local anchored history and desktop selection
+    backed by canonical text extraction, target-built real text/shared terminal
+    rendering, exact external-image refill/residency, Session-owned animation
+    consumption with no browser frame clock, a loopback-only protocol-blind Zig
+    WebSocket gateway with fail-closed admission, an offline-capable PWA shell,
+    and an Access-protected Home tunnel edge; Chromium is the primary fast
+    acceptance lane while Safari/Home-Screen is the WebKit/PWA platform canary;
+    outside the root core gate

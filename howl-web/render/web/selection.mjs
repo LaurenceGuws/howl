@@ -123,3 +123,17 @@ export class TerminalSelectionOverlay {
 }
 
 function samePoint(left, right) { return left.row === right.row && left.column === right.column; }
+
+export function routeDesktopPrimaryPointer({historyActive, forceSelection, mouseTrackingEnabled}) {
+  if (historyActive || forceSelection) return 'local_selection';
+  if (mouseTrackingEnabled == null) return 'interaction_state';
+  return mouseTrackingEnabled ? 'terminal_mouse' : 'local_selection';
+}
+
+export function routeDesktopWheel({historyActive, mouseTrackingEnabled, alternateScreen, alternateScroll}) {
+  if (historyActive) return 'history';
+  if (mouseTrackingEnabled == null || alternateScroll == null) return 'interaction_state';
+  if (mouseTrackingEnabled) return 'terminal_mouse';
+  if (!alternateScreen) return 'history';
+  return alternateScroll ? 'alternate_scroll' : 'ignore';
+}

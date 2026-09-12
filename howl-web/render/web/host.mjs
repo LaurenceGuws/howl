@@ -5,7 +5,7 @@ import {
 } from './input.mjs';
 import {TerminalPointerAdapter, TerminalPointerGeometry, LatestPointerMoveScheduler} from './pointer_input.mjs';
 import {HistoryViewport} from './history.mjs';
-import {DesktopSelectionController, TerminalSelectionOverlay, TerminalSelectionViewport} from './selection.mjs';
+import {DesktopSelectionController, TerminalSelectionOverlay, TerminalSelectionViewport, routeDesktopPrimaryPointer, routeDesktopWheel} from './selection.mjs';
 import {ControlQueue} from './control_queue.mjs';
 import {Telemetry, startEventLoopProbe} from './telemetry.mjs';
 import {LatestFrameScheduler} from './frame_scheduler.mjs';
@@ -13,7 +13,7 @@ import {scheduleDisplay} from './display_schedule.mjs';
 import {ResizePolicy} from './resize_policy.mjs';
 import {LifecycleRecoveryPolicy, reconnectAllowed, updateAndPromoteServiceWorker} from './lifecycle_policy.mjs';
 
-const CANARY_GENERATION = 'v37';
+const CANARY_GENERATION = 'v38';
 const MAX_EXTERNAL_IMAGE_RESOURCES = 7;
 const MAX_RENDER_ATTEMPTS = MAX_EXTERNAL_IMAGE_RESOURCES + 1;
 const main = document.querySelector('main');
@@ -1114,7 +1114,12 @@ function handleTerminalPointer(event) {
 
 async function routePrimaryPointerDown(event) {
   const pointerId = event.pointerId;
-  if (history.active || event.shiftKey) {
+  let route = routeDesktopPrimaryPointer({
+    historyActive:history.active,
+    forceSelection:event.shiftKey,
+    mouseTrackingEnabled:null,
+  });
+  if (route === 'local_selection') {
     startLocalSelection(event);
     return;
   }
@@ -1123,8 +1128,14 @@ async function routePrimaryPointerDown(event) {
     const interaction = await currentInteractionState();
     if (pointerDecisionPointer !== pointerId) return;
     pointerDecisionPointer = null;
-    if (interaction.mouseTracking !== 0) handleTerminalPointer(event);
-    else startLocalSelection(event);
+    route = routeDesktopPrimaryPointer({
+      historyActive:history.active,
+      forceSelection:event.shiftKey,
+      mouseTrackingEnabled:interaction.mouseTracking !== 0,
+    });
+    if (route === 'local_selection') startLocalSelection(event);
+    else if (route === 'terminal_mouse') handleTerminalPointer(event);
+    else throw new Error('resolved primary pointer route requested interaction state');
   } catch (error) {
     if (pointerDecisionPointer === pointerId) pointerDecisionPointer = null;
     fail(error);
@@ -1195,14 +1206,21 @@ function scrollHistoryWheel({deltaY, deltaMode}) {
 async function routeTerminalWheel(event) {
   if (!lastFrame?.cell || !latestLiveHistory || !Number.isFinite(event.deltaY) || event.deltaY === 0) return;
   event.preventDefault();
-  const wheel = terminalPointer.wheel(event, {
-    geometry:currentPointerGeometry(), modifiers:modifierBits(event),
-  });
   const local = {deltaY:event.deltaY, deltaMode:event.deltaMode};
-  if (history.active) {
+  let route = routeDesktopWheel({
+    historyActive:history.active,
+    mouseTrackingEnabled:null,
+    alternateScreen:latestLiveHistory.alternateScreen,
+    alternateScroll:null,
+  });
+  if (route === 'history') {
     scrollHistoryWheel(local);
     return;
   }
+
+  const wheel = terminalPointer.wheel(event, {
+    geometry:currentPointerGeometry(), modifiers:modifierBits(event),
+  });
   let interaction;
   try {
     interaction = await currentInteractionState();
@@ -1210,23 +1228,21 @@ async function routeTerminalWheel(event) {
     fail(error);
     return;
   }
-  if (history.active) {
-    scrollHistoryWheel(local);
-    return;
-  }
-  if (interaction.mouseTracking !== 0) {
+  route = routeDesktopWheel({
+    historyActive:history.active,
+    mouseTrackingEnabled:interaction.mouseTracking !== 0,
+    alternateScreen:latestLiveHistory.alternateScreen,
+    alternateScroll:interaction.alternateScroll,
+  });
+  if (route === 'history') scrollHistoryWheel(local);
+  else if (route === 'terminal_mouse') {
     if (wheel != null) queueControl(connection => connection.mouse(wheel), 'mouse_wheel');
-    return;
+  } else if (route === 'alternate_scroll') {
+    queueKeyCycle({named:event.deltaY < 0 ? NamedKey.ArrowUp : NamedKey.ArrowDown});
+  } else if (route !== 'ignore') {
+    fail(new Error('resolved wheel route requested interaction state'));
   }
-  if (latestLiveHistory.alternateScreen) {
-    if (interaction.alternateScroll) {
-      queueKeyCycle({named:event.deltaY < 0 ? NamedKey.ArrowUp : NamedKey.ArrowDown});
-    }
-    return;
-  }
-  scrollHistoryWheel(local);
 }
-
 terminal.addEventListener('wheel', event => { void routeTerminalWheel(event); }, {passive:false});
 async function cyclePresentationZoom() {
   if (presentationChanging || !renderAssets) return;

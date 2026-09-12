@@ -832,7 +832,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       return;
     }
 
-    if (_history.active || HardwareKeyboard.instance.isShiftPressed) {
+    final route = routeDesktopPrimaryPointer(
+      historyActive: _history.active,
+      forceSelection: HardwareKeyboard.instance.isShiftPressed,
+      mouseTrackingEnabled: null,
+    );
+    if (route == DesktopPrimaryPointerRoute.localSelection) {
       _beginMouseSelection(event, viewport);
       return;
     }
@@ -853,11 +858,21 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       return;
     }
     _pointerDecisionPointer = null;
-    if (state.mouseTrackingEnabled) {
-      _activateTextInput();
-      _sendPointer(event, viewport);
-    } else {
-      _beginMouseSelection(event, viewport);
+    final route = routeDesktopPrimaryPointer(
+      historyActive: _history.active,
+      forceSelection: HardwareKeyboard.instance.isShiftPressed,
+      mouseTrackingEnabled: state.mouseTrackingEnabled,
+    );
+    switch (route) {
+      case DesktopPrimaryPointerRoute.localSelection:
+        _beginMouseSelection(event, viewport);
+      case DesktopPrimaryPointerRoute.terminalMouse:
+        _activateTextInput();
+        _sendPointer(event, viewport);
+      case DesktopPrimaryPointerRoute.interactionState:
+        throw StateError(
+          'resolved primary pointer route requested interaction state',
+        );
     }
   }
 
@@ -1038,12 +1053,19 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     PointerScrollEvent event,
     Size viewport,
   ) async {
-    if (_history.active) {
+    final metadata = _nativeLiveMetadata;
+    if (metadata == null) return;
+    var route = routeDesktopWheel(
+      historyActive: _history.active,
+      mouseTrackingEnabled: null,
+      alternateScreen: metadata.alternateScreen,
+      alternateScroll: null,
+    );
+    if (route == DesktopWheelRoute.history) {
       _scrollHistoryWheel(event.scrollDelta.dy);
       return;
     }
-    final metadata = _nativeLiveMetadata;
-    if (metadata == null) return;
+
     final wheel = _pointerInput.wheel(
       event,
       geometry: TerminalPointerGeometry(
@@ -1057,27 +1079,30 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     );
     final state = await _currentInteractionState();
     if (!mounted || _stopping || state == null) return;
-    if (_history.active) {
-      _scrollHistoryWheel(event.scrollDelta.dy);
-      return;
-    }
-    if (state.mouseTrackingEnabled) {
-      if (wheel != null) _sendMouse(wheel);
-      return;
-    }
     final currentMetadata = _nativeLiveMetadata;
     if (currentMetadata == null) return;
-    if (currentMetadata.alternateScreen) {
-      if (state.alternateScroll) {
+    route = routeDesktopWheel(
+      historyActive: _history.active,
+      mouseTrackingEnabled: state.mouseTrackingEnabled,
+      alternateScreen: currentMetadata.alternateScreen,
+      alternateScroll: state.alternateScroll,
+    );
+    switch (route) {
+      case DesktopWheelRoute.history:
+        _scrollHistoryWheel(event.scrollDelta.dy);
+      case DesktopWheelRoute.terminalMouse:
+        if (wheel != null) _sendMouse(wheel);
+      case DesktopWheelRoute.alternateScroll:
         _sendNamedKeyCycle(
           event.scrollDelta.dy < 0
               ? HowlInput.namedArrowUp
               : HowlInput.namedArrowDown,
         );
-      }
-      return;
+      case DesktopWheelRoute.ignore:
+        return;
+      case DesktopWheelRoute.interactionState:
+        throw StateError('resolved wheel route requested interaction state');
     }
-    _scrollHistoryWheel(event.scrollDelta.dy);
   }
 
   void _beginHistoryDrag(DragStartDetails _) {

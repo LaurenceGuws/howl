@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {DesktopSelectionController, TerminalSelectionRange, TerminalSelectionViewport} from '../web/selection.mjs';
+import {DesktopSelectionController, TerminalSelectionRange, TerminalSelectionViewport, routeDesktopPrimaryPointer, routeDesktopWheel} from '../web/selection.mjs';
 
 const live = new TerminalSelectionViewport({historyOffset:0,historyCount:30,historyRowBase:100,rows:10,columns:20,alternateScreen:false});
 assert.deepEqual(live.pointAt(0, 3), {row:130,column:3});
@@ -33,3 +33,15 @@ assert.equal(controller.finish(9).keep, true);
 assert.deepEqual(controller.range.focus,{row:11,column:3});
 controller.clear();
 assert.equal(controller.range, null);
+
+assert.equal(routeDesktopPrimaryPointer({historyActive:true,forceSelection:false,mouseTrackingEnabled:true}), 'local_selection');
+assert.equal(routeDesktopPrimaryPointer({historyActive:false,forceSelection:true,mouseTrackingEnabled:true}), 'local_selection');
+assert.equal(routeDesktopPrimaryPointer({historyActive:false,forceSelection:false,mouseTrackingEnabled:null}), 'interaction_state');
+assert.equal(routeDesktopPrimaryPointer({historyActive:false,forceSelection:false,mouseTrackingEnabled:true}), 'terminal_mouse');
+assert.equal(routeDesktopPrimaryPointer({historyActive:false,forceSelection:false,mouseTrackingEnabled:false}), 'local_selection');
+assert.equal(routeDesktopWheel({historyActive:true,mouseTrackingEnabled:true,alternateScreen:true,alternateScroll:true}), 'history');
+assert.equal(routeDesktopWheel({historyActive:false,mouseTrackingEnabled:null,alternateScreen:false,alternateScroll:null}), 'interaction_state');
+assert.equal(routeDesktopWheel({historyActive:false,mouseTrackingEnabled:true,alternateScreen:true,alternateScroll:false}), 'terminal_mouse');
+assert.equal(routeDesktopWheel({historyActive:false,mouseTrackingEnabled:false,alternateScreen:false,alternateScroll:false}), 'history');
+assert.equal(routeDesktopWheel({historyActive:false,mouseTrackingEnabled:false,alternateScreen:true,alternateScroll:true}), 'alternate_scroll');
+assert.equal(routeDesktopWheel({historyActive:false,mouseTrackingEnabled:false,alternateScreen:true,alternateScroll:false}), 'ignore');

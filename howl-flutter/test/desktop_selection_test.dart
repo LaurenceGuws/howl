@@ -46,4 +46,109 @@ void main() {
     expect(controller.range, isNull);
     expect(controller.active, isFalse);
   });
+
+  group('desktop pointer routing', () {
+    test('primary drag gives local history and Shift precedence', () {
+      expect(
+        routeDesktopPrimaryPointer(
+          historyActive: true,
+          forceSelection: false,
+          mouseTrackingEnabled: true,
+        ),
+        DesktopPrimaryPointerRoute.localSelection,
+      );
+      expect(
+        routeDesktopPrimaryPointer(
+          historyActive: false,
+          forceSelection: true,
+          mouseTrackingEnabled: true,
+        ),
+        DesktopPrimaryPointerRoute.localSelection,
+      );
+      expect(
+        routeDesktopPrimaryPointer(
+          historyActive: false,
+          forceSelection: false,
+          mouseTrackingEnabled: null,
+        ),
+        DesktopPrimaryPointerRoute.interactionState,
+      );
+      expect(
+        routeDesktopPrimaryPointer(
+          historyActive: false,
+          forceSelection: false,
+          mouseTrackingEnabled: true,
+        ),
+        DesktopPrimaryPointerRoute.terminalMouse,
+      );
+      expect(
+        routeDesktopPrimaryPointer(
+          historyActive: false,
+          forceSelection: false,
+          mouseTrackingEnabled: false,
+        ),
+        DesktopPrimaryPointerRoute.localSelection,
+      );
+    });
+
+    test(
+      'wheel routing follows canonical mouse and alternate-scroll state',
+      () {
+        expect(
+          routeDesktopWheel(
+            historyActive: true,
+            mouseTrackingEnabled: true,
+            alternateScreen: true,
+            alternateScroll: true,
+          ),
+          DesktopWheelRoute.history,
+        );
+        expect(
+          routeDesktopWheel(
+            historyActive: false,
+            mouseTrackingEnabled: null,
+            alternateScreen: false,
+            alternateScroll: null,
+          ),
+          DesktopWheelRoute.interactionState,
+        );
+        expect(
+          routeDesktopWheel(
+            historyActive: false,
+            mouseTrackingEnabled: true,
+            alternateScreen: true,
+            alternateScroll: false,
+          ),
+          DesktopWheelRoute.terminalMouse,
+        );
+        expect(
+          routeDesktopWheel(
+            historyActive: false,
+            mouseTrackingEnabled: false,
+            alternateScreen: false,
+            alternateScroll: false,
+          ),
+          DesktopWheelRoute.history,
+        );
+        expect(
+          routeDesktopWheel(
+            historyActive: false,
+            mouseTrackingEnabled: false,
+            alternateScreen: true,
+            alternateScroll: true,
+          ),
+          DesktopWheelRoute.alternateScroll,
+        );
+        expect(
+          routeDesktopWheel(
+            historyActive: false,
+            mouseTrackingEnabled: false,
+            alternateScreen: true,
+            alternateScroll: false,
+          ),
+          DesktopWheelRoute.ignore,
+        );
+      },
+    );
+  });
 }
