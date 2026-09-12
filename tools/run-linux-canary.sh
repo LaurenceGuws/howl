@@ -35,7 +35,7 @@ if [[ "$mode" != web ]]; then
     echo 'FLUTTER must name Flutter 3.47.2' >&2
     exit 2
   fi
-  flutter_version=$($flutter --version | sed -n '1s/^Flutter \([^ ]*\).*/\1/p')
+  flutter_version=$($flutter --version | awk '$1 == "Flutter" { print $2; exit }')
   if [[ "$flutter_version" != 3.47.2 ]]; then
     echo "Flutter 3.47.2 required; found ${flutter_version:-unknown} at $flutter" >&2
     exit 2
