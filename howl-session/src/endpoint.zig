@@ -21,8 +21,50 @@ const lifecycle_poll_ms: i32 = 100;
 // progress continues during the hold; only observer publication waits. A stuck
 // application fails open rather than freezing presentation indefinitely.
 const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
+// Unbracketed terminal apps often emit one logical screen update as a dense
+// cluster of tiny PTY writes. Wait briefly for that microburst to go quiet so
+// observers see the completed cut rather than arbitrary read boundaries.
+const burst_publication_quiet_ns: u64 = std.time.ns_per_ms;
+const burst_publication_max_ns: u64 = 8 * std.time.ns_per_ms;
 
-fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32) i32 {
+const BurstPublicationGate = struct {
+    started_ns: ?u64 = null,
+    last_change_ns: ?u64 = null,
+
+    fn note(self: *BurstPublicationGate, now_ns: u64) void {
+        if (self.started_ns == null) self.started_ns = now_ns;
+        self.last_change_ns = now_ns;
+    }
+
+    fn reset(self: *BurstPublicationGate) void {
+        self.started_ns = null;
+        self.last_change_ns = null;
+    }
+
+    fn ready(self: *BurstPublicationGate, now_ns: u64) bool {
+        const started_ns = self.started_ns orelse return false;
+        const last_change_ns = self.last_change_ns orelse return false;
+        if (now_ns -| last_change_ns < burst_publication_quiet_ns and
+            now_ns -| started_ns < burst_publication_max_ns)
+            return false;
+        self.reset();
+        return true;
+    }
+
+    fn waitMs(self: *const BurstPublicationGate, now_ns: u64) ?u32 {
+        const started_ns = self.started_ns orelse return null;
+        const last_change_ns = self.last_change_ns orelse return null;
+        const quiet_remaining = burst_publication_quiet_ns -| (now_ns -| last_change_ns);
+        const max_remaining = burst_publication_max_ns -| (now_ns -| started_ns);
+        const remaining = @min(quiet_remaining, max_remaining);
+        if (remaining == 0) return 0;
+        return @intCast((remaining + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
+    }
+};
+
+const TerminalPublication = enum { none, burst, immediate };
+
+fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32, publication_wait_ms: ?u32) i32 {
     var result = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
         lifecycle_poll_ms
     else
@@ -33,6 +75,13 @@ fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32) i32 {
             @as(u32, @intCast(lifecycle_poll_ms)),
         ));
         result = @min(result, animation_timeout);
+    }
+    if (publication_wait_ms) |wait_ms| {
+        const publication_timeout: i32 = @intCast(@min(
+            wait_ms,
+            @as(u32, @intCast(lifecycle_poll_ms)),
+        ));
+        result = @min(result, publication_timeout);
     }
     return result;
 }
@@ -157,6 +206,7 @@ const Server = struct {
     synchronized_output_started_ns: ?u64 = null,
     synchronized_output_timed_out: bool = false,
     synchronized_output_pending: bool = false,
+    burst_publication: BurstPublicationGate = .{},
 
     // -------------------------------------------------------------------------
     // Construction and lifecycle loop
@@ -219,20 +269,26 @@ const Server = struct {
             } else .{ .fd = -1, .events = 0, .revents = 0 };
         }
 
-        const poll_timeout = boundedPollTimeout(timeout_ms, self.animation_wait_ms);
+        const poll_now_ns = nowNs(self.io);
+        const poll_timeout = boundedPollTimeout(
+            timeout_ms,
+            self.animation_wait_ms,
+            self.burst_publication.waitMs(poll_now_ns),
+        );
         const ready_count = try posix.poll(&descriptors, poll_timeout);
         std.debug.assert(ready_count <= descriptors.len);
 
         const pty_events = descriptors[1].revents;
         const pty_present = descriptors[1].fd >= 0;
+        const pty_read_ready = pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0;
         const service_now_ns = nowNs(self.io);
         const result = try howl.service(
             self.session,
-            pty_present and pty_events & (posix.POLL.IN | posix.POLL.HUP) != 0,
+            pty_read_ready,
             pty_present and pty_events & posix.POLL.OUT != 0,
             service_now_ns,
         );
-        self.applyServiceResult(result, service_now_ns);
+        self.applyServiceResult(result, service_now_ns, pty_read_ready);
 
         if (descriptors[0].revents & posix.POLL.IN != 0) try self.acceptClients();
 
@@ -474,7 +530,7 @@ const Server = struct {
         howl.input(self.session, event) catch return self.queueResult(client, .input, .rejected);
         const service_now_ns = nowNs(self.io);
         const serviced = try howl.service(self.session, false, true, service_now_ns);
-        self.applyServiceResult(serviced, service_now_ns);
+        self.applyServiceResult(serviced, service_now_ns, false);
         try self.queueResult(client, .input, .ok);
     }
 
@@ -594,7 +650,10 @@ const Server = struct {
             return self.queueResult(client, .assign_leader, .malformed);
         if (request.client_id != protocol.no_client and !self.hasClient(request.client_id))
             return self.queueResult(client, .assign_leader, .no_such_client);
-        if (self.authority.assign(request.client_id)) self.bumpObservation();
+        if (self.authority.assign(request.client_id)) {
+            self.burst_publication.reset();
+            self.bumpObservation();
+        }
         try self.queueResult(client, .assign_leader, .ok);
     }
 
@@ -634,30 +693,38 @@ const Server = struct {
         const id = client.id;
         client.deinit(self.allocator);
         self.clients[index] = null;
-        if (self.authority.disconnected(id)) self.bumpObservation();
+        if (self.authority.disconnected(id)) {
+            self.burst_publication.reset();
+            self.bumpObservation();
+        }
     }
 
     fn refreshObservation(self: *Server) void {
         const current = howl.revision(self.session);
         if (current == self.terminal_revision) return;
         self.terminal_revision = current;
+        self.burst_publication.reset();
         self.bumpObservation();
     }
 
-    fn terminalObservationReady(
+    fn terminalPublication(
         self: *Server,
         terminal_changed: bool,
+        burst_eligible: bool,
         now_ns: u64,
-    ) bool {
+    ) TerminalPublication {
         if (!howl.synchronizedOutput(self.session)) {
             const release_pending = self.synchronized_output_pending;
             self.synchronized_output_started_ns = null;
             self.synchronized_output_timed_out = false;
             self.synchronized_output_pending = false;
-            return terminal_changed or release_pending;
+            if (release_pending) return .immediate;
+            if (!terminal_changed) return .none;
+            return if (burst_eligible) .burst else .immediate;
         }
 
-        if (self.synchronized_output_timed_out) return terminal_changed;
+        if (self.synchronized_output_timed_out)
+            return if (terminal_changed) .immediate else .none;
 
         if (self.synchronized_output_started_ns == null)
             self.synchronized_output_started_ns = now_ns;
@@ -665,17 +732,17 @@ const Server = struct {
         const elapsed_ns = now_ns -| started_ns;
         if (elapsed_ns < synchronized_output_timeout_ns) {
             self.synchronized_output_pending = self.synchronized_output_pending or terminal_changed;
-            return false;
+            return .none;
         }
 
         self.synchronized_output_started_ns = null;
         self.synchronized_output_timed_out = true;
         const release_pending = self.synchronized_output_pending;
         self.synchronized_output_pending = false;
-        return terminal_changed or release_pending;
+        return if (terminal_changed or release_pending) .immediate else .none;
     }
 
-    fn applyServiceResult(self: *Server, result: howl.Service, now_ns: u64) void {
+    fn applyServiceResult(self: *Server, result: howl.Service, now_ns: u64, burst_eligible: bool) void {
         const next_stream_closed = result.stream_closed;
         const next_child_exited = result.child_exit != null;
         const lifecycle_changed = self.stream_closed != next_stream_closed or
@@ -688,8 +755,24 @@ const Server = struct {
         const current_terminal_revision = howl.revision(self.session);
         const terminal_changed = current_terminal_revision != self.terminal_revision;
         if (terminal_changed) self.terminal_revision = current_terminal_revision;
-        if (self.terminalObservationReady(terminal_changed, now_ns) or lifecycle_changed)
-            self.bumpObservation();
+
+        var publish = false;
+        switch (self.terminalPublication(terminal_changed, burst_eligible, now_ns)) {
+            .none => {},
+            .burst => self.burst_publication.note(now_ns),
+            .immediate => {
+                self.burst_publication.reset();
+                publish = true;
+            },
+        }
+        if (howl.synchronizedOutput(self.session) and !self.synchronized_output_timed_out)
+            self.burst_publication.reset();
+        if (!publish and self.burst_publication.ready(now_ns)) publish = true;
+        if (lifecycle_changed) {
+            self.burst_publication.reset();
+            publish = true;
+        }
+        if (publish) self.bumpObservation();
     }
 
     fn bumpObservation(self: *Server) void {
@@ -1833,13 +1916,36 @@ fn attach(peer: *TestPeer, server: *Server) !void {
 // Harness behavior and snapshot decoding
 // =============================================================================
 
-test "endpoint poll timeout follows the next animation boundary" {
-    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null));
-    try std.testing.expectEqual(@as(i32, 40), boundedPollTimeout(-1, 40));
-    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, 500));
-    try std.testing.expectEqual(@as(i32, 5), boundedPollTimeout(5, 40));
-    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, 1));
-    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(0, 1));
+test "endpoint poll timeout follows animation and publication boundaries" {
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, null, null));
+    try std.testing.expectEqual(@as(i32, 40), boundedPollTimeout(-1, 40, null));
+    try std.testing.expectEqual(@as(i32, 100), boundedPollTimeout(-1, 500, null));
+    try std.testing.expectEqual(@as(i32, 5), boundedPollTimeout(5, 40, null));
+    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, 1, null));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(0, 1, null));
+    try std.testing.expectEqual(@as(i32, 1), boundedPollTimeout(-1, null, 1));
+    try std.testing.expectEqual(@as(i32, 3), boundedPollTimeout(-1, 40, 3));
+    try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(5, null, 0));
+}
+
+test "burst publication waits for quiet and has a hard ceiling" {
+    var gate = BurstPublicationGate{};
+    const start: u64 = 10 * std.time.ns_per_ms;
+    gate.note(start);
+    try std.testing.expect(!gate.ready(start));
+    try std.testing.expectEqual(@as(?u32, 1), gate.waitMs(start));
+    try std.testing.expect(!gate.ready(start + burst_publication_quiet_ns - 1));
+    try std.testing.expect(gate.ready(start + burst_publication_quiet_ns));
+    try std.testing.expectEqual(@as(?u32, null), gate.waitMs(start + burst_publication_quiet_ns));
+
+    gate.note(start);
+    gate.note(start + 7 * std.time.ns_per_ms);
+    try std.testing.expect(!gate.ready(start + 7 * std.time.ns_per_ms));
+    try std.testing.expectEqual(@as(?u32, 1), gate.waitMs(start + 7 * std.time.ns_per_ms));
+    gate.note(start + burst_publication_max_ns - 1);
+    try std.testing.expect(gate.ready(start + burst_publication_max_ns));
+    try std.testing.expectEqual(@as(?u64, null), gate.started_ns);
+    try std.testing.expectEqual(@as(?u64, null), gate.last_change_ns);
 }
 
 test "interaction state exposes invisible input modes" {
@@ -1917,8 +2023,12 @@ test "synchronized output withholds observer until coherent release" {
     try attach(&control, &server);
 
     var baseline = try observeUntilContains(&observer, &server, 0, "BASE");
-    const baseline_revision = baseline.begin.revision;
     baseline.deinit();
+    var settle_attempts: usize = 0;
+    while (server.burst_publication.started_ns != null and settle_attempts < 1000) : (settle_attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(?u64, null), server.burst_publication.started_ns);
+    const baseline_revision = server.observation_revision;
     try sendObserve(&observer, &server, baseline_revision);
 
     try sendInput(&control, &server, "x");
@@ -1977,8 +2087,12 @@ test "synchronized output timeout fails observer publication open" {
     try attach(&control, &server);
 
     var baseline = try observeUntilContains(&observer, &server, 0, "BASE");
-    const baseline_revision = baseline.begin.revision;
     baseline.deinit();
+    var settle_attempts: usize = 0;
+    while (server.burst_publication.started_ns != null and settle_attempts < 1000) : (settle_attempts += 1)
+        try server.turn(1);
+    try std.testing.expectEqual(@as(?u64, null), server.burst_publication.started_ns);
+    const baseline_revision = server.observation_revision;
     try sendObserve(&observer, &server, baseline_revision);
     try sendInput(&control, &server, "x");
     try expectResult(&control, &server, .input, .ok);
@@ -1998,7 +2112,7 @@ test "synchronized output timeout fails observer publication open" {
         .write_pending = server.pty_write_pending,
         .animation_wait_ms = server.animation_wait_ms,
     };
-    server.applyServiceResult(idle, started_ns + synchronized_output_timeout_ns);
+    server.applyServiceResult(idle, started_ns + synchronized_output_timeout_ns, false);
     try std.testing.expect(server.synchronized_output_timed_out);
     try std.testing.expect(!server.synchronized_output_pending);
     try std.testing.expect(server.observation_revision > baseline_revision);
@@ -2224,7 +2338,7 @@ test "idle Kitty animation releases observer with a new exact image generation" 
         (@as(u64, wait_ms) + 1) * std.time.ns_per_ms;
     const serviced = try howl.service(server.session, false, false, forced_now);
     try std.testing.expect(serviced.changed);
-    server.applyServiceResult(serviced, forced_now);
+    server.applyServiceResult(serviced, forced_now, false);
     try std.testing.expect(howl.revision(server.session) > before_terminal_revision);
     try std.testing.expect(server.observation_revision > before_observation_revision);
 
@@ -2283,7 +2397,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
         (@as(u64, first_wait) + 1) * std.time.ns_per_ms;
     const first = try howl.service(server.session, false, false, first_now);
     try std.testing.expect(first.changed);
-    server.applyServiceResult(first, first_now);
+    server.applyServiceResult(first, first_now, false);
     const second_wait = server.animation_wait_ms orelse return error.TestTimeout;
     var first_images = howl.images(server.session, 0);
     const first_image = first_images.image(0) orelse return error.TestTimeout;
@@ -2298,7 +2412,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     const stopped = try howl.service(server.session, false, false, stop_now);
     try std.testing.expect(stopped.changed);
     try std.testing.expectEqual(@as(?u32, null), stopped.animation_wait_ms);
-    server.applyServiceResult(stopped, stop_now);
+    server.applyServiceResult(stopped, stop_now, false);
     try std.testing.expect(server.animation_wait_ms == null);
     try std.testing.expect(howl.revision(server.session) > before_stop_terminal);
     try std.testing.expect(server.observation_revision > before_stop_observation);
@@ -2330,7 +2444,7 @@ test "finite Kitty animation publishes final stop and clears endpoint deadline" 
     );
     try std.testing.expect(!idle.changed);
     try std.testing.expectEqual(@as(?u32, null), idle.animation_wait_ms);
-    server.applyServiceResult(idle, stop_now + std.time.ns_per_s);
+    server.applyServiceResult(idle, stop_now + std.time.ns_per_s, false);
     try std.testing.expectEqual(stopped_terminal, howl.revision(server.session));
     try std.testing.expectEqual(stopped_observation, server.observation_revision);
 }
