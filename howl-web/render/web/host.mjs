@@ -44,6 +44,14 @@ const context = terminal.getContext('2d', {alpha: false});
 const alphaScratch = document.createElement('canvas');
 const alphaScratchContext = alphaScratch.getContext('2d');
 const alphaSpritePixelBudget = 1024 * 1024;
+const glyphCoverageLut = Uint8Array.from({length:256}, (_, value) => {
+  const linear = value / 255;
+  const encoded = linear <= 0.0031308
+    ? linear * 12.92
+    : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
+  const corrected = encoded * 255;
+  return Math.round(value + (corrected - value) * 0.5);
+});
 const stager = new TerminalInputStager();
 const modifiedKeys = new Map();
 const presentationPixels = [16, 12, 9];
@@ -755,7 +763,7 @@ function createResource(upload, framePixels) {
       const a = bytes[y * upload.stride + x];
       const p = (y * width + x) * 4;
       data.data[p] = data.data[p + 1] = data.data[p + 2] = 255;
-      data.data[p + 3] = a;
+      data.data[p + 3] = glyphCoverageLut[a];
     }
   } else if (upload.f === 1) {
     for (let y = 0; y < height; y += 1) {
