@@ -1398,12 +1398,28 @@ pub const Plane = struct {
 
     /// Advances running Kitty animations against caller monotonic milliseconds.
     pub fn advanceAnimations(self: *Plane, now_ms: u64) AnimationTick {
+        const virtual_visible: [max_images]bool = @splat(false);
+        return self.advanceAnimationsWithVisibility(now_ms, &virtual_visible);
+    }
+
+    /// Advances animations while accepting caller-projected virtual visibility.
+    ///
+    /// `virtual_visible` is dense-image-indexed. Graphics still owns frame
+    /// selection and ordinary placement visibility; Terminal supplies only the
+    /// read-only U+10EEEE projection fact that the plane cannot derive from
+    /// screen cells itself.
+    pub fn advanceAnimationsWithVisibility(
+        self: *Plane,
+        now_ms: u64,
+        virtual_visible: *const [max_images]bool,
+    ) AnimationTick {
         var changed = false;
         var semantic_changed = false;
         var next_ms: ?u32 = null;
-        for (self.images[0..self.image_count]) |*image_value| {
+        for (self.images[0..self.image_count], 0..) |*image_value, image_index| {
+            const visible = self.hasPhysicalPlacement(image_value.id) or virtual_visible[image_index];
             if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0 or
-                !self.hasPhysicalPlacement(image_value.id) or self.animationDuration(image_value.*) == 0)
+                !visible or self.animationDuration(image_value.*) == 0)
                 continue;
             if (image_value.frame_started_ms == null) image_value.frame_started_ms = now_ms;
             const gap = self.currentGap(image_value.*);
@@ -1825,6 +1841,23 @@ pub const Plane = struct {
     fn hasPhysicalPlacement(self: *const Plane, image_id: u32) bool {
         for (self.placements[0..self.placement_count]) |value|
             if (value.image_id == image_id and !value.virtual) return true;
+        return false;
+    }
+
+    /// Reports whether one running image needs caller-projected virtual visibility.
+    pub fn needsVirtualAnimationVisibility(self: *const Plane, bank: Bank) bool {
+        for (self.placements[0..self.placement_count]) |placement_value| {
+            if (!placement_value.virtual or placement_value.bank != bank or
+                self.hasPhysicalPlacement(placement_value.image_id))
+                continue;
+            for (self.images[0..self.image_count]) |image_value| {
+                if (image_value.id != placement_value.image_id) continue;
+                if (image_value.animation != .stopped and self.frameCount(image_value.id) != 0 and
+                    self.animationDuration(image_value) != 0)
+                    return true;
+                break;
+            }
+        }
         return false;
     }
 

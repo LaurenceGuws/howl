@@ -5937,6 +5937,32 @@ pub const Terminal = struct {
             }
         };
 
+        fn collectVirtualVisibility(
+            self: *const Images,
+            output: *[maximum_images]bool,
+        ) void {
+            @memset(output, false);
+            const room = maximum_image_placements -| self.plane.placement_count;
+            if (room == 0) return;
+            var projected_count: usize = 0;
+            var row: u16 = 0;
+            while (row < self.view.rows) : (row += 1) {
+                var scanner = PlaceholderRunScanner.init(self, row);
+                while (scanner.next()) |run| {
+                    const projected = self.projectVirtualRun(run) orelse continue;
+                    if (projected_count == room) return;
+                    projected_count += 1;
+                    var image_index: usize = 0;
+                    while (image_index < self.plane.image_count) : (image_index += 1) {
+                        const image_value = self.plane.image(image_index) orelse continue;
+                        if (image_value.id != projected.image_id) continue;
+                        output[image_index] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
         fn projectVirtualRun(self: *const Images, run: PlaceholderRun) ?ImagePlacement {
             if (self.cell_pixel_width == 0 or self.cell_pixel_height == 0) return null;
             const prototype = self.plane.virtualPrototype(self.bank, run.image_id, run.placement_id) orelse return null;
@@ -7051,7 +7077,16 @@ pub const Terminal = struct {
     /// mutation advances the canonical terminal semantic sequence exactly once.
     pub fn serviceAnimations(self: *Terminal, timestamp_ns: u64) AnimationService {
         self.requireNoPreparedResize();
-        const tick = self.graphics.advanceAnimations(timestamp_ns / std.time.ns_per_ms);
+        var virtual_visible: [maximum_images]bool = @splat(false);
+        const bank = graphicsBank(self);
+        if (self.graphics.needsVirtualAnimationVisibility(bank)) {
+            var observed_images = self.images(0);
+            observed_images.collectVirtualVisibility(&virtual_visible);
+        }
+        const tick = self.graphics.advanceAnimationsWithVisibility(
+            timestamp_ns / std.time.ns_per_ms,
+            &virtual_visible,
+        );
         if (tick.semantic_changed) advanceIdentity(&self.semantic_sequence);
         return .{ .changed = tick.changed, .next_ms = tick.next_ms };
     }
@@ -7939,6 +7974,70 @@ test "feedAt retains the monotonic timestamp of absolute cursor positioning" {
     try std.testing.expectEqual(
         @as(u64, 42_000_000),
         terminal.semanticView(0).cursor_movement_timestamp_ns,
+    );
+}
+
+test "terminal services Kitty animation through visible Unicode placeholders" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=1,v=1,i=56,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=56,r=1,z=40,C=1,q=2;/wAA/w==\x1b\\" ++
+            "\x1b_Ga=f,f=32,i=56,r=2,z=50,C=1,q=2;AAD//w==\x1b\\" ++
+            "\x1b_Ga=p,i=56,c=1,r=1,U=1,q=2\x1b\\" ++
+            "\x1b_Ga=a,i=56,s=3,q=2\x1b\\",
+    )).stateChanged());
+    var images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
+    try std.testing.expectEqual(
+        @as(?u32, null),
+        terminal.serviceAnimations(100 * std.time.ns_per_ms).next_ms,
+    );
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;1H\x1b[38;5;56m" ++
+            "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85" ++
+            "\x1b[0m",
+    )).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+    try std.testing.expect(images.placement(1) != null);
+
+    const started = terminal.serviceAnimations(100 * std.time.ns_per_ms);
+    try std.testing.expect(!started.changed);
+    try std.testing.expectEqual(@as(?u32, 40), started.next_ms);
+    const second = terminal.serviceAnimations(140 * std.time.ns_per_ms);
+    try std.testing.expect(second.changed);
+    try std.testing.expectEqual(@as(?u32, 50), second.next_ms);
+    const blue = terminal.images(0).image(0) orelse return error.MissingImage;
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 255, 255 }, blue.pixels);
+    const blue_generation = blue.generation;
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[2K")).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
+    const hidden = terminal.serviceAnimations(190 * std.time.ns_per_ms);
+    try std.testing.expect(!hidden.changed);
+    try std.testing.expectEqual(@as(?u32, null), hidden.next_ms);
+    try std.testing.expectEqual(blue_generation, terminal.images(0).image(0).?.generation);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b[1;1H\x1b[38;5;56m" ++
+            "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85" ++
+            "\x1b[0m",
+    )).stateChanged());
+    const resumed = terminal.serviceAnimations(190 * std.time.ns_per_ms);
+    try std.testing.expect(resumed.changed);
+    try std.testing.expectEqual(@as(?u32, 40), resumed.next_ms);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255 },
+        terminal.images(0).image(0).?.pixels,
     );
 }
 
