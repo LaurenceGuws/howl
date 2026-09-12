@@ -5,6 +5,7 @@ const std = @import("std");
 // Core parser, state, and protocol owners.
 const parser_mod = @import("parser.zig");
 const graphics_mod = @import("graphics.zig");
+const kitty_placeholders = @import("kitty_placeholders.zig");
 const sixel = @import("sixel.zig");
 const replies = @import("replies.zig");
 const properties = @import("properties.zig");
@@ -5745,8 +5746,10 @@ pub const Terminal = struct {
     pub const Images = struct {
         plane: *const graphics_mod.Plane,
         bank: graphics_mod.Bank,
+        view: SemanticView,
         visible_row_start: u64,
         rows: u16,
+        semantic_generation: u64,
         generation: u64,
         content_generation: u64,
         cell_pixel_width: u32,
@@ -5762,31 +5765,282 @@ pub const Terminal = struct {
             return self.plane.image(index);
         }
 
-        /// Returns the dense retained placement count.
+        /// Returns the bounded retained/projection placement index space.
         pub fn placementCount(self: *const Images) usize {
-            return self.plane.placement_count;
+            const room = maximum_image_placements -| self.plane.placement_count;
+            return self.plane.placement_count + @min(self.virtualRunCount(), room);
         }
 
-        /// Copies one placement visible in the current bank and terminal view.
+        /// Copies one physical or Unicode-placeholder placement visible in the current view.
         pub fn placement(self: *const Images, index: usize) ?ImagePlacement {
-            const value = self.plane.placement(index) orelse return null;
-            if (value.bank != self.bank or value.row < self.visible_row_start or
-                value.row >= self.visible_row_start + self.rows)
-                return null;
+            if (index < self.plane.placement_count) {
+                const value = self.plane.placement(index) orelse return null;
+                if (value.virtual or value.bank != self.bank or value.row < self.visible_row_start or
+                    value.row >= self.visible_row_start + self.rows)
+                    return null;
+                return .{
+                    .image_id = value.image_id,
+                    .generation = value.generation,
+                    .row = @intCast(value.row - self.visible_row_start),
+                    .col = value.col,
+                    .source_x = value.source_x,
+                    .source_y = value.source_y,
+                    .source_width = value.source_width,
+                    .source_height = value.source_height,
+                    .cell_x = value.cell_x,
+                    .cell_y = value.cell_y,
+                    .pixel_width = value.pixel_width,
+                    .pixel_height = value.pixel_height,
+                    .z = value.z,
+                };
+            }
+            return self.virtualRun(index - self.plane.placement_count);
+        }
+
+        const Placeholder = struct {
+            image_low: u32 = 0,
+            placement_id: u32 = 0,
+            image_high_one_based: u16 = 0,
+            image_row_one_based: u16 = 0,
+            image_col_one_based: u16 = 0,
+        };
+
+        fn placeholderColorId(color: Color) u32 {
+            return switch (color.colorKind()) {
+                .default => 0,
+                .indexed => color.colorValue() & 0xff,
+                .rgb => color.colorValue() & 0xffffff,
+            };
+        }
+
+        fn placeholderAt(self: *const Images, row: u16, col: u16) ?Placeholder {
+            var scalars: [24]u21 = undefined;
+            const values = self.view.cellScalarsAt(row, col, &scalars);
+            if (values.len == 0 or values[0] != kitty_placeholders.placeholder) return null;
+            const cell = self.view.cellInfoAt(row, col);
             return .{
-                .image_id = value.image_id,
-                .generation = value.generation,
-                .row = @intCast(value.row - self.visible_row_start),
-                .col = value.col,
-                .source_x = value.source_x,
-                .source_y = value.source_y,
-                .source_width = value.source_width,
-                .source_height = value.source_height,
-                .cell_x = value.cell_x,
-                .cell_y = value.cell_y,
-                .pixel_width = value.pixel_width,
-                .pixel_height = value.pixel_height,
-                .z = value.z,
+                .image_low = placeholderColorId(cell.attrs.fg),
+                .placement_id = placeholderColorId(cell.attrs.underline_color),
+                .image_row_one_based = if (values.len > 1) kitty_placeholders.oneBased(values[1]) else 0,
+                .image_col_one_based = if (values.len > 2) kitty_placeholders.oneBased(values[2]) else 0,
+                .image_high_one_based = if (values.len > 3) kitty_placeholders.oneBased(values[3]) else 0,
+            };
+        }
+
+        fn virtualRunCount(self: *const Images) usize {
+            var count: usize = 0;
+            var row: u16 = 0;
+            while (row < self.view.rows) : (row += 1) {
+                var scanner = PlaceholderRunScanner.init(self, row);
+                while (scanner.next()) |run| {
+                    if (self.projectVirtualRun(run) != null) count += 1;
+                    if (count >= maximum_image_placements) return count;
+                }
+            }
+            return count;
+        }
+
+        fn virtualRun(self: *const Images, requested_index: usize) ?ImagePlacement {
+            var current: usize = 0;
+            var row: u16 = 0;
+            while (row < self.view.rows) : (row += 1) {
+                var scanner = PlaceholderRunScanner.init(self, row);
+                while (scanner.next()) |run| {
+                    const projected = self.projectVirtualRun(run) orelse continue;
+                    if (current == requested_index) return projected;
+                    current += 1;
+                }
+            }
+            return null;
+        }
+
+        const PlaceholderRun = struct {
+            screen_row: u16,
+            screen_col: u16,
+            image_id: u32,
+            placement_id: u32,
+            image_row: u16,
+            image_col: u16,
+            columns: u16,
+        };
+
+        const PlaceholderRunScanner = struct {
+            images: *const Images,
+            row: u16,
+            col: u16 = 0,
+            run_start: u16 = 0,
+            run_length: u16 = 0,
+            previous: Placeholder = .{},
+
+            fn init(owner: *const Images, row: u16) PlaceholderRunScanner {
+                return .{ .images = owner, .row = row };
+            }
+
+            fn next(self: *PlaceholderRunScanner) ?PlaceholderRun {
+                while (self.col <= self.images.view.cols) {
+                    const at_end = self.col == self.images.view.cols;
+                    const current = if (!at_end) self.images.placeholderAt(self.row, self.col) else null;
+                    var value = current orelse Placeholder{};
+                    const continues = self.run_length != 0 and current != null and
+                        value.image_low == self.previous.image_low and
+                        value.placement_id == self.previous.placement_id and
+                        (value.image_row_one_based == 0 or value.image_row_one_based == self.previous.image_row_one_based) and
+                        (value.image_col_one_based == 0 or value.image_col_one_based == self.previous.image_col_one_based + 1) and
+                        (value.image_high_one_based == 0 or value.image_high_one_based == self.previous.image_high_one_based);
+                    if (continues) {
+                        self.run_length += 1;
+                        value.image_row_one_based = @max(self.previous.image_row_one_based, 1);
+                        value.image_col_one_based = self.previous.image_col_one_based + 1;
+                        value.image_high_one_based = @max(self.previous.image_high_one_based, 1);
+                        self.previous = value;
+                        self.col += 1;
+                        continue;
+                    }
+                    if (self.run_length != 0) {
+                        const completed = self.completedRun();
+                        self.run_length = 0;
+                        if (current != null) self.startRun(value);
+                        if (!at_end) self.col += 1 else self.col += 1;
+                        return completed;
+                    }
+                    if (current != null) self.startRun(value);
+                    self.col += 1;
+                }
+                return null;
+            }
+
+            fn startRun(self: *PlaceholderRunScanner, placeholder_value: Placeholder) void {
+                var value = placeholder_value;
+                self.run_start = self.col;
+                self.run_length = 1;
+                if (value.image_col_one_based == 0) value.image_col_one_based = 1;
+                if (value.image_row_one_based == 0) value.image_row_one_based = 1;
+                if (value.image_high_one_based == 0) value.image_high_one_based = 1;
+                self.previous = value;
+            }
+
+            fn completedRun(self: *const PlaceholderRunScanner) ?PlaceholderRun {
+                if (self.previous.image_high_one_based == 0 or self.previous.image_high_one_based > 256 or
+                    self.previous.image_col_one_based < self.run_length or self.previous.image_row_one_based == 0)
+                    return null;
+                const image_id = self.previous.image_low |
+                    (@as(u32, self.previous.image_high_one_based - 1) << 24);
+                return .{
+                    .screen_row = self.row,
+                    .screen_col = self.run_start,
+                    .image_id = image_id,
+                    .placement_id = self.previous.placement_id,
+                    .image_row = self.previous.image_row_one_based - 1,
+                    .image_col = self.previous.image_col_one_based - self.run_length,
+                    .columns = self.run_length,
+                };
+            }
+        };
+
+        fn projectVirtualRun(self: *const Images, run: PlaceholderRun) ?ImagePlacement {
+            if (self.cell_pixel_width == 0 or self.cell_pixel_height == 0) return null;
+            const prototype = self.plane.virtualPrototype(self.bank, run.image_id, run.placement_id) orelse return null;
+            if (prototype.cols == 0 or prototype.rows == 0 or prototype.image_width == 0 or prototype.image_height == 0)
+                return null;
+
+            const box_width = @as(f64, @floatFromInt(@as(u64, prototype.cols) * self.cell_pixel_width));
+            const box_height = @as(f64, @floatFromInt(@as(u64, prototype.rows) * self.cell_pixel_height));
+            const image_width = @as(f64, @floatFromInt(prototype.image_width));
+            const image_height = @as(f64, @floatFromInt(prototype.image_height));
+            var scale: f64 = undefined;
+            var x_offset: f64 = 0;
+            var y_offset: f64 = 0;
+            if (image_width * box_height > image_height * box_width) {
+                scale = box_width / image_width;
+                y_offset = (box_height - image_height * scale) / 2.0;
+            } else {
+                scale = box_height / image_height;
+                x_offset = (box_width - image_width * scale) / 2.0;
+            }
+            if (!(scale > 0)) return null;
+
+            var source_x = (@as(f64, @floatFromInt(@as(u64, run.image_col) * self.cell_pixel_width)) - x_offset) / scale;
+            var source_y = (@as(f64, @floatFromInt(@as(u64, run.image_row) * self.cell_pixel_height)) - y_offset) / scale;
+            var source_width = @as(f64, @floatFromInt(@as(u64, run.columns) * self.cell_pixel_width)) / scale;
+            var source_height = @as(f64, @floatFromInt(self.cell_pixel_height)) / scale;
+            var screen_col = run.screen_col;
+            var screen_row = run.screen_row;
+            var columns = run.columns;
+            var rows: u16 = 1;
+            var cell_x: u32 = 0;
+            var cell_y: u32 = 0;
+
+            if (source_x < 0) {
+                source_width += source_x;
+                const offset_pixels: u32 = @intFromFloat(-source_x * scale);
+                source_x = 0;
+                const col_offset: u16 = @intCast(offset_pixels / self.cell_pixel_width);
+                cell_x = offset_pixels % self.cell_pixel_width;
+                screen_col +|= col_offset;
+                if (columns <= col_offset) return null;
+                columns -= col_offset;
+            }
+            if (source_y < 0) {
+                source_height += source_y;
+                const offset_pixels: u32 = @intFromFloat(-source_y * scale);
+                source_y = 0;
+                const row_offset: u16 = @intCast(offset_pixels / self.cell_pixel_height);
+                cell_y = offset_pixels % self.cell_pixel_height;
+                screen_row +|= row_offset;
+                if (rows <= row_offset) return null;
+                rows -= row_offset;
+            }
+            if (source_x >= image_width or source_y >= image_height or source_width <= 0 or source_height <= 0) return null;
+            if (source_x + source_width > image_width) {
+                const redundant = source_x + source_width - image_width;
+                const redundant_cols: u16 = @intCast(@as(u32, @intFromFloat(redundant * scale)) / self.cell_pixel_width);
+                if (columns <= redundant_cols) return null;
+                source_width -= @as(f64, @floatFromInt(@as(u64, redundant_cols) * self.cell_pixel_width)) / scale;
+                columns -= redundant_cols;
+            }
+            if (source_y + source_height > image_height) {
+                const redundant = source_y + source_height - image_height;
+                const redundant_rows: u16 = @intCast(@as(u32, @intFromFloat(redundant * scale)) / self.cell_pixel_height);
+                if (rows <= redundant_rows) return null;
+                source_height -= @as(f64, @floatFromInt(@as(u64, redundant_rows) * self.cell_pixel_height)) / scale;
+                rows -= redundant_rows;
+            }
+
+            source_width = @min(source_width, image_width - source_x);
+            source_height = @min(source_height, image_height - source_y);
+            if (source_width <= 0 or source_height <= 0) return null;
+            const sx: u32 = @intFromFloat(@max(source_x, 0));
+            const sy: u32 = @intFromFloat(@max(source_y, 0));
+            var sw: u32 = @intFromFloat(@max(source_width, 0));
+            var sh: u32 = @intFromFloat(@max(source_height, 0));
+            if (sx >= prototype.image_width or sy >= prototype.image_height) return null;
+            sw = @min(sw, prototype.image_width - sx);
+            sh = @min(sh, prototype.image_height - sy);
+            if (sw == 0 or sh == 0) return null;
+            const projected_width: u32 = @intFromFloat(source_width * scale);
+            const projected_height: u32 = @intFromFloat(source_height * scale);
+            if (projected_width == 0 or projected_height == 0) return null;
+
+            return .{
+                .image_id = prototype.image_id,
+                .generation = self.semantic_generation,
+                .row = screen_row,
+                .col = screen_col,
+                .source_x = sx,
+                .source_y = sy,
+                .source_width = sw,
+                .source_height = sh,
+                .cell_x = cell_x,
+                .cell_y = cell_y,
+                .pixel_width = @min(
+                    projected_width,
+                    @as(u32, columns) * self.cell_pixel_width -| cell_x,
+                ),
+                .pixel_height = @min(
+                    projected_height,
+                    @as(u32, rows) * self.cell_pixel_height -| cell_y,
+                ),
+                .z = -1,
             };
         }
     };
@@ -6771,14 +7025,17 @@ pub const Terminal = struct {
     pub fn images(self: *const Terminal, history_offset: u32) Images {
         const view = visibleView(&self.screen_state, history_offset);
         const cell = self.cellPixelSize();
+        const bank: graphics_mod.Bank = if (view.is_alternate_screen) .alternate else .primary;
         return .{
             .plane = &self.graphics,
-            .bank = if (view.is_alternate_screen) .alternate else .primary,
+            .bank = bank,
+            .view = view,
             .visible_row_start = if (view.is_alternate_screen)
                 view.start
             else
                 @as(u64, view.history_row_base) + view.start,
             .rows = view.rows,
+            .semantic_generation = self.semantic_sequence,
             .generation = self.graphics.generation(),
             .content_generation = self.graphics.imageGeneration(),
             .cell_pixel_width = if (cell) |value| value.width else 0,

@@ -82,6 +82,8 @@ const Placement = struct {
     rows: u16,
     /// Counts occupied physical terminal columns at placement time.
     cols: u16,
+    /// Retains an invisible Kitty Unicode-placeholder prototype.
+    virtual: bool = false,
 };
 
 const Image = struct {
@@ -126,6 +128,7 @@ const Loading = struct {
     background_rgba: u32,
     z: i32,
     compose_mode: u2,
+    unicode_placement: bool,
     compression: u8,
     expected_bytes: usize,
     width: u32,
@@ -210,6 +213,7 @@ const Command = struct {
     cell_y: u32 = 0,
     z: i32 = 0,
     compose_mode: u2 = 0,
+    unicode_placement: bool = false,
     /// Advisory Kitty usage-hint bitmask. Howl intentionally owns no cache
     /// policy here; accepting and ignoring hints is protocol-compliant.
     usage_hints: u32 = 0,
@@ -412,6 +416,7 @@ pub const Plane = struct {
                 .background_rgba = 0,
                 .z = command_value.z,
                 .compose_mode = command_value.compose_mode,
+                .unicode_placement = command_value.unicode_placement,
                 .compression = command_value.compression,
                 .expected_bytes = input_bytes,
                 .width = command_value.width,
@@ -533,6 +538,7 @@ pub const Plane = struct {
             .background_rgba = command_value.cell_y,
             .z = command_value.z,
             .compose_mode = compose_mode,
+            .unicode_placement = false,
             .compression = command_value.compression,
             .expected_bytes = byte_count,
             .width = width,
@@ -799,6 +805,13 @@ pub const Plane = struct {
             ) orelse return .{ .response_id = loading.id, .failure = .invalid, .quiet = loading.quiet }
         else
             null;
+        if (planned_placement) |*placement_value| {
+            placement_value.virtual = loading.unicode_placement;
+            if (placement_value.virtual) {
+                placement_value.row = 0;
+                placement_value.col = 0;
+            }
+        }
         const rgba = try self.allocator.alloc(u8, rgba_len);
         errdefer self.allocator.free(rgba);
         if (loading.format == 32) {
@@ -860,7 +873,7 @@ pub const Plane = struct {
             .changed = true,
             .response_id = loading.id,
             .response_number = nonzero(loading.image_number),
-            .cursor_advance = if (display and loading.compose_mode != 1) .{
+            .cursor_advance = if (display and !loading.unicode_placement and loading.compose_mode != 1) .{
                 .cols = planned_placement.?.cols,
                 .rows = planned_placement.?.rows,
             } else null,
@@ -916,6 +929,11 @@ pub const Plane = struct {
             command_value.z,
             1,
         ) orelse return .{ .response_id = command_value.id, .failure = .invalid, .quiet = command_value.quiet };
+        planned.virtual = command_value.unicode_placement;
+        if (planned.virtual) {
+            planned.row = 0;
+            planned.col = 0;
+        }
         if (self.placement_count == max_placements)
             if (self.placementIndex(retained.id, command_value.placement_id) == null)
                 return .{ .response_id = command_value.id, .failure = .quota, .quiet = command_value.quiet };
@@ -932,7 +950,7 @@ pub const Plane = struct {
             .changed = true,
             .response_id = retained.kitty_id,
             .response_number = retained.kitty_number,
-            .cursor_advance = if (command_value.compose_mode != 1) .{
+            .cursor_advance = if (!command_value.unicode_placement and command_value.compose_mode != 1) .{
                 .cols = planned.cols,
                 .rows = planned.rows,
             } else null,
@@ -967,6 +985,10 @@ pub const Plane = struct {
         var placement_index: usize = 0;
         while (placement_index < self.placement_count) {
             const placement_value = self.placements[placement_index];
+            if (placement_value.virtual and normalized != 'i' and normalized != 'n' and normalized != 'r') {
+                placement_index += 1;
+                continue;
+            }
             if (normalized == 'n' and placement_value.image_id != numbered_image_id) {
                 placement_index += 1;
                 continue;
@@ -1241,7 +1263,7 @@ pub const Plane = struct {
             const retained = self.placements[index];
             const retained_bottom = retained.row + retained.rows - 1;
             const retained_right = @as(u32, retained.col) + retained.cols - 1;
-            if (retained.bank != bank or retained.row > bottom or retained_bottom < top or
+            if (retained.virtual or retained.bank != bank or retained.row > bottom or retained_bottom < top or
                 retained.col > right or retained_right < left)
             {
                 index += 1;
@@ -1268,7 +1290,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = &self.placements[index];
-            if (retained.bank != bank or retained.row < top or retained.row > bottom) {
+            if (retained.virtual or retained.bank != bank or retained.row < top or retained.row > bottom) {
                 index += 1;
                 continue;
             }
@@ -1309,7 +1331,7 @@ pub const Plane = struct {
         var index: usize = 0;
         while (index < self.placement_count) {
             const retained = &self.placements[index];
-            if (retained.bank != bank or retained.row != row or
+            if (retained.virtual or retained.bank != bank or retained.row != row or
                 retained.col < left or retained.col > right)
             {
                 index += 1;
@@ -1381,7 +1403,7 @@ pub const Plane = struct {
         var next_ms: ?u32 = null;
         for (self.images[0..self.image_count]) |*image_value| {
             if (image_value.animation == .stopped or self.frameCount(image_value.id) == 0 or
-                !self.hasPlacement(image_value.id) or self.animationDuration(image_value.*) == 0)
+                !self.hasPhysicalPlacement(image_value.id) or self.animationDuration(image_value.*) == 0)
                 continue;
             if (image_value.frame_started_ms == null) image_value.frame_started_ms = now_ms;
             const gap = self.currentGap(image_value.*);
@@ -1800,6 +1822,57 @@ pub const Plane = struct {
         return false;
     }
 
+    fn hasPhysicalPlacement(self: *const Plane, image_id: u32) bool {
+        for (self.placements[0..self.placement_count]) |value|
+            if (value.image_id == image_id and !value.virtual) return true;
+        return false;
+    }
+
+    /// Copies one invisible Kitty Unicode-placeholder prototype and its image geometry.
+    pub const VirtualPrototype = struct {
+        image_id: u32,
+        image_width: u32,
+        image_height: u32,
+        image_generation: u64,
+        placement_generation: u64,
+        cols: u16,
+        rows: u16,
+    };
+
+    /// Finds one invisible Kitty Unicode-placeholder prototype by client image/placement id.
+    pub fn virtualPrototype(
+        self: *const Plane,
+        bank: Bank,
+        kitty_image_id: u32,
+        kitty_placement_id: u32,
+    ) ?VirtualPrototype {
+        const image_index = self.kittyImageIndex(kitty_image_id) orelse return null;
+        const image_value = self.images[image_index];
+        for (self.placements[0..self.placement_count]) |placement_value| {
+            if (!placement_value.virtual or placement_value.bank != bank or
+                placement_value.image_id != image_value.id)
+                continue;
+            if (kitty_placement_id != 0 and placement_value.kitty_id != kitty_placement_id) continue;
+            return .{
+                .image_id = image_value.id,
+                .image_width = image_value.width,
+                .image_height = image_value.height,
+                .image_generation = image_value.generation,
+                .placement_generation = placement_value.generation,
+                .cols = placement_value.cols,
+                .rows = placement_value.rows,
+            };
+        }
+        return null;
+    }
+
+    /// Reports whether one screen bank retains any invisible Unicode-placeholder prototype.
+    pub fn hasVirtualPlacement(self: *const Plane, bank: Bank) bool {
+        for (self.placements[0..self.placement_count]) |placement_value|
+            if (placement_value.virtual and placement_value.bank == bank) return true;
+        return false;
+    }
+
     fn kittyImageIndex(self: *const Plane, id: u32) ?usize {
         for (self.images[0..self.image_count], 0..) |retained, index|
             if (retained.kitty_id == id) return index;
@@ -1885,6 +1958,7 @@ fn parseCommand(bytes: []const u8) ?Command {
             'C' => 1 << 20,
             'N' => 1 << 21,
             'o' => 1 << 22,
+            'U' => 1 << 23,
             else => return null,
         };
         if (seen & bit != 0) return null;
@@ -1933,6 +2007,11 @@ fn parseCommand(bytes: []const u8) ?Command {
             'o' => if (value.len == 1) {
                 result.compression = value[0];
             } else return null,
+            'U' => {
+                const placement = std.fmt.parseInt(u8, value, 10) catch return null;
+                if (placement > 1) return null;
+                result.unicode_placement = placement == 1;
+            },
             else => return null,
         }
     }
@@ -2296,6 +2375,44 @@ test "new transmission cancels an incomplete stream without retained mutation" {
     );
     try std.testing.expect(replacement.changed);
     try std.testing.expectEqual(@as(u32, 1), plane.image(0).?.id);
+}
+
+test "Kitty virtual placements stay invisible and use image selectors for lifetime" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    const virtual = try plane.command(
+        "a=T,f=32,s=2,v=1,i=42,p=22,c=2,r=1,U=1,q=2;AQAA/wIAAP8=",
+        .primary,
+        10,
+        12,
+        3,
+        10,
+        20,
+    );
+    try std.testing.expect(virtual.changed);
+    try std.testing.expect(virtual.cursor_advance == null);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expect(plane.placement(0).?.virtual);
+    const prototype = plane.virtualPrototype(.primary, 42, 22) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), prototype.image_id);
+    try std.testing.expectEqual(@as(u16, 2), prototype.cols);
+    try std.testing.expectEqual(@as(u16, 1), prototype.rows);
+    try std.testing.expect(plane.virtualPrototype(.primary, 42, 0) != null);
+    try std.testing.expect(plane.virtualPrototype(.primary, 42, 23) == null);
+    try std.testing.expect(plane.hasVirtualPlacement(.primary));
+
+    const generation = plane.generation();
+    try std.testing.expect(!plane.scroll(.primary, 10, 20, 1, true));
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expect(!plane.erase(.primary, 10, 20, 0, 20));
+    try std.testing.expectEqual(generation, plane.generation());
+    try std.testing.expect(!(try plane.command("a=d,d=a", .primary, 10, 12, 3, 10, 20)).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+
+    try std.testing.expect((try plane.command("a=d,d=i,i=42,p=22", .primary, 10, 0, 0, 10, 20)).changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
 }
 
 test "static delete selectors preserve placement and image ownership distinctions" {

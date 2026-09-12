@@ -3826,7 +3826,7 @@ references:
             bounds: parser command and payload bounds,
             conditions: Howl routes dedicated bounded Kitty graphics streaming into its common image plane,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "PNG/file/shared-memory media plus parent and virtual placement remain; direct RGB/RGBA accepts raw or o=z zlib-compressed payloads, and ordinary placements honor default cursor advance/scroll, C=1 no-move, and bounded N advisory hints.",
+              residual: "PNG/file/shared-memory media plus relative-parent placement remain. U=1 virtual prototypes and U+10EEEE placeholders project from canonical cell colors/diacritics through the ordinary graphics manifest; fractional virtual source crops are quantized to graphics_v2 integers and virtual-only animation remains deferred. Direct RGB/RGBA accepts raw or o=z zlib payloads.",
               source: howl-vt/src/terminal.zig, symbol: applyKittyGraphicsPacket,
               proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
                 symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
@@ -4003,13 +4003,13 @@ references:
                 symbol: "Kitty frame loading preserves edits background bases and action-specific composition"}}}
           kitty.graphics.put: {raw: "APC G a=p,Pm ST", effect: place stored image, relevance: graphics,
             howl: {support: partial, disposition: deferred, owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl supports cursor-relative placement by image id or latest image number with exact nonzero placement-id replacement, source crop, destination cell sizing, cell-pixel offsets, signed text layering and default cursor advance/scroll with C=1 suppression; parent and virtual placement remain.",
-              source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
-                symbol: "Kitty crop destination offsets and layer preflight before placement mutation"}}}
+              residual: "Howl supports ordinary placements plus U=1 Unicode-placeholder prototypes. U+10EEEE projection decodes indexed/RGB image ids, underline placement ids, row/column/high-byte diacritics and inheritance across history/reflow; prototypes are invisible and do not move the cursor. Relative parents, virtual-only animation and fractional source crops beyond integer graphics_v2 remain.",
+              source: howl-vt/src/terminal.zig, symbol: Terminal.Images, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
+                symbol: "terminal: Kitty Unicode placeholders project invisible virtual placements"}}}
           kitty.graphics.delete: {raw: "APC G a=d,d=selector,Pm ST", effect: delete image placements or data,
             relevance: graphics, howl: &howl_static_graphics_delete {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl implements silent lower/uppercase placement/data deletion for all, image-id or latest image-number with optional placement id, id-range, point, point-plus-z, row, column, z-layer, cursor and animation-frame selectors; cell/virtual-parent deletion policy remains.",
+              residual: "Howl implements silent lower/uppercase placement/data deletion for all ordinary selectors. Unicode placeholder cell images follow canonical text lifetime automatically; invisible virtual prototypes ignore screen-location/all-visible selectors and obey image-id/number/range selectors. Relative-parent deletion policy remains.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/src/graphics.zig,
                 symbol: "static delete selectors preserve placement and image ownership distinctions"}}}
           kitty.graphics.compose: {raw: "APC G a=c,Pm ST", effect: compose animation frames, relevance: graphics,

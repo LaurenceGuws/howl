@@ -1717,6 +1717,100 @@ test "terminal: Kitty placement cursor advance scrolls history without detaching
     try std.testing.expectEqual(@as(u16, 1), placement.col);
 }
 
+test "terminal: Kitty Unicode placeholders project invisible virtual placements" {
+    var terminal = try Terminal.initWithHistory(std.testing.allocator, 3, 8, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+
+    const prototype = try terminal.feed(
+        "\x1b_Ga=T,f=32,s=2,v=1,i=42,c=2,r=1,U=1,q=2;AQAA/wIAAP8=\x1b\\",
+    );
+    try std.testing.expect(prototype.stateChanged());
+    var images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(@as(u16, 0), terminal.semanticView(0).cursor_col);
+
+    // Image id 42 is encoded in indexed foreground color. The first cell
+    // explicitly names row/column zero; the second omits its column diacritic,
+    // inheriting the next column from the previous placeholder in the run.
+    try std.testing.expect((try terminal.feed(
+        "\x1b[38;5;42m" ++
+            "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85" ++
+            "\xf4\x8e\xbb\xae\xcc\x85" ++
+            "\x1b[0m",
+    )).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 2), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
+    const placed = images.placement(1) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 1), placed.image_id);
+    try std.testing.expectEqual(@as(u16, 0), placed.row);
+    try std.testing.expectEqual(@as(u16, 0), placed.col);
+    try std.testing.expectEqual(@as(u32, 0), placed.source_x);
+    try std.testing.expectEqual(@as(u32, 0), placed.source_y);
+    try std.testing.expectEqual(@as(u32, 2), placed.source_width);
+    try std.testing.expectEqual(@as(u32, 1), placed.source_height);
+    try std.testing.expectEqual(@as(u32, 20), placed.pixel_width);
+    try std.testing.expectEqual(@as(u32, 5), placed.cell_y);
+    try std.testing.expectEqual(@as(u32, 10), placed.pixel_height);
+    try std.testing.expectEqual(@as(i32, -1), placed.z);
+
+    // Erasing the text removes the projected cell image without mutating the
+    // retained virtual prototype or decoded image.
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[2K")).stateChanged());
+    images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    try std.testing.expect(images.placement(0) == null);
+}
+
+test "terminal: Kitty Unicode placeholders select placement id and high image byte" {
+    var terminal = try Terminal.init(std.testing.allocator, 2, 8);
+    defer terminal.deinit();
+    try terminal.setCellPixelSize(10, 20);
+
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=t,f=32,s=2,v=1,i=42,q=2;AQAA/wIAAP8=\x1b\\" ++
+            "\x1b_Ga=p,i=42,p=1,c=2,r=1,U=1,q=2\x1b\\" ++
+            "\x1b_Ga=p,i=42,p=22,c=1,r=1,U=1,q=2\x1b\\",
+    )).stateChanged());
+    // Underline indexed color 22 selects the 1x1-box virtual prototype rather
+    // than the first/default 2x1 prototype.
+    try std.testing.expect((try terminal.feed(
+        "\x1b[38;5;42;58;5;22m" ++
+            "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85" ++
+            "\x1b[0m",
+    )).stateChanged());
+    var images = terminal.images(0);
+    const selected = images.placement(2) orelse return error.TestUnexpectedResult;
+    try std.testing.expectEqual(@as(u32, 2), selected.source_width);
+    try std.testing.expect(selected.cell_y >= 7);
+    try std.testing.expectEqual(@as(u32, 10), selected.pixel_width);
+
+    try std.testing.expect((try terminal.feed("\x1b[1;1H\x1b[2K")).stateChanged());
+    try std.testing.expect((try terminal.feed(
+        "\x1b_Ga=T,f=32,s=1,v=1,i=704643115,c=1,r=1,U=1,C=1,q=2;CQoLDA==\x1b\\" ++
+            "\x1b[38;2;0;0;43m" ++
+            "\xf4\x8e\xbb\xae\xcc\x85\xcc\x85\xd6\x9c" ++
+            "\x1b[0m",
+    )).stateChanged());
+    images = terminal.images(0);
+    var found_high = false;
+    var index: usize = 0;
+    while (index < images.placementCount()) : (index += 1) {
+        const placement = images.placement(index) orelse continue;
+        if (placement.image_id == 2) {
+            found_high = true;
+            try std.testing.expectEqual(@as(u16, 0), placement.row);
+            try std.testing.expectEqual(@as(u16, 0), placement.col);
+        }
+    }
+    try std.testing.expect(found_high);
+}
+
 test "terminal: Kitty deletion is silent and preserves lowercase image data" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

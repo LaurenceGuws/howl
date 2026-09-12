@@ -1578,6 +1578,46 @@ test "terminal Canvas content emits sparse atlas generations and Composer state"
     );
 }
 
+test "terminal Canvas suppresses Kitty Unicode placeholder glyphs only" {
+    var placeholder_scalars = [_]u32{ 0x10eeee, 0x0305, 0x0305 };
+    var ordinary_scalars = [_]u32{'A'};
+    var cells = [_]client.rich.Cell{
+        cell(&placeholder_scalars, 1, 0),
+        cell(&ordinary_scalars, 1, 0),
+    };
+    cells[0].background = .{ .kind = .rgb, .value = 0x112233 };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    const source = sourceSnapshot(&rows, 2);
+    const view = try client.view.project(std.testing.allocator, &source);
+    defer client.view.deinit(view);
+    const font = try contentFont();
+    defer font.deinit();
+    const content = try render.terminal.initContent(std.testing.allocator, font, contentConfig(32));
+    defer render.terminal.deinitContent(content);
+    const update = try render.terminal.takeContentUpdate(content, view, null);
+
+    var alpha_count: usize = 0;
+    var placeholder_background = false;
+    for (update.commands) |command| switch (command) {
+        .alpha_mask => |value| {
+            alpha_count += 1;
+            try std.testing.expect(value.destination.x >= 10);
+        },
+        .solid => |value| {
+            if (value.rect.x == 0 and value.rect.width == 10 and
+                std.meta.eql(value.color, render.canvas.Color{
+                    .r = 0x11,
+                    .g = 0x22,
+                    .b = 0x33,
+                    .a = 255,
+                })) placeholder_background = true;
+        },
+        else => {},
+    };
+    try std.testing.expectEqual(@as(usize, 1), alpha_count);
+    try std.testing.expect(placeholder_background);
+}
+
 test "terminal Canvas content resolves style color decoration and invisibility once" {
     var a = [_]u32{'A'};
     var b = [_]u32{'B'};

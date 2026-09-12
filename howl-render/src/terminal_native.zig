@@ -126,6 +126,8 @@ pub const ExternalImageBinding = struct {
 /// hosts. Native Canvas retains eight resources total and may spend one on the
 /// glyph atlas, leaving seven exact terminal image resources.
 pub const maximum_external_images: usize = 7;
+/// Kitty private-use scalar whose cell content is graphics metadata, not a text glyph.
+const kitty_image_placeholder: u32 = 0x10eeee;
 
 /// Opaque bounded owner of terminal -> Canvas presentation state.
 ///
@@ -1414,6 +1416,7 @@ fn buildContentCommands(
                 return error.InvalidView;
             if (scalar_end > scalars.len) return error.InvalidView;
             const sequence = scalars[scalar_first..scalar_end];
+            if (sequence[0] == kitty_image_placeholder) continue;
             const colors = try contentCellColors(cell, presentation);
 
             var run: text.Run = undefined;

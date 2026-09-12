@@ -156,6 +156,8 @@ protocol; it is not an embedder failure.
   protocol routing and serialization, extraction, two-bank resize, and reset.
 - `src/graphics.zig` owns bounded terminal images, animation frames, and
   cell-relative placements.
+- `src/kitty_placeholders.zig` owns Kitty U+10EEEE placeholder identity and the
+  canonical row/column diacritic mapping used by terminal graphics projection.
 - `src/sixel.zig` decodes bounded Sixel payloads into caller-owned pixels.
 
 The remaining large `terminal.zig` owner is current source shape, not a promise
