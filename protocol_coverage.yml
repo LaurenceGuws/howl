@@ -3982,9 +3982,9 @@ references:
           kitty.graphics.transmit_default: {raw: "APC G [a=]Pm ; Pb ST", effect: transmit image data,
             relevance: graphics, howl: &howl_static_graphics_transmit {support: partial, disposition: deferred,
               owner: howl-vt, milestone: advanced_graphics,
-              residual: "Howl accepts bounded direct raw or o=z zlib-compressed RGB/RGBA payloads with dimensions and either an explicit image id or image number with generated stable id; bounded N usage hints are advisory no-op metadata, and ordinary display placements honor default cursor advance/scroll or C=1 no-move. Non-direct media and encoded image formats remain.",
+              residual: "Howl accepts bounded direct raw or o=z zlib-compressed RGB/RGBA payloads with dimensions using Kitty's anonymous id-zero form, an explicit image id, or an image number with generated stable id; bounded N usage hints are advisory no-op metadata, and ordinary display placements honor default cursor advance/scroll or C=1 no-move. Non-direct media and encoded image formats remain.",
               source: howl-vt/src/graphics.zig, symbol: Plane.command, proof: {path: howl-vt/test/unit/terminal_end_to_end_test.zig,
-                symbol: "terminal: fragmented Kitty static graphics retains display and query is probe only"}}}
+                symbol: "terminal: Yazi-style anonymous Kitty preview is quiet stationary and deletable"}}}
           kitty.graphics.transmit: {raw: "APC G a=t,Pm ; Pb ST", effect: transmit image data, relevance: graphics,
             howl: *howl_static_graphics_transmit}
           kitty.graphics.transmit_display: {raw: "APC G a=T,Pm ; Pb ST", effect: transmit and display image,

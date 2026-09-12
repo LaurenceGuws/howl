@@ -1596,6 +1596,37 @@ test "terminal: fragmented Kitty static graphics retains display and query is pr
     try std.testing.expectEqualStrings("\x1b_Gi=9;OK\x1b\\", terminal.replyBytes());
 }
 
+test "terminal: Yazi-style anonymous Kitty preview is quiet stationary and deletable" {
+    var terminal = try Terminal.init(std.testing.allocator, 3, 8);
+    defer terminal.deinit();
+
+    const cursor_row_before = terminal.semanticView(0).cursor_row;
+    const cursor_col_before = terminal.semanticView(0).cursor_col;
+    try std.testing.expect(
+        !(try terminal.feed("\x1b_Gq=2,a=T,z=-1,C=1,f=24,s=2,v=1,m=1;/wAA\x1b\\")).stateChanged(),
+    );
+    try std.testing.expect(
+        (try terminal.feed("\x1b_Gm=0;AP8A\x1b\\")).stateChanged(),
+    );
+    const images = terminal.images(0);
+    try std.testing.expectEqual(@as(usize, 1), images.imageCount());
+    try std.testing.expectEqual(@as(usize, 1), images.placementCount());
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255, 0, 255, 0, 255 },
+        images.image(0).?.pixels,
+    );
+    try std.testing.expectEqual(@as(i32, -1), images.placement(0).?.z);
+    try std.testing.expectEqual(cursor_row_before, terminal.semanticView(0).cursor_row);
+    try std.testing.expectEqual(cursor_col_before, terminal.semanticView(0).cursor_col);
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+
+    try std.testing.expect((try terminal.feed("\x1b_Gq=2,a=d,d=A\x1b\\")).stateChanged());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).imageCount());
+    try std.testing.expectEqual(@as(usize, 0), terminal.images(0).placementCount());
+    try std.testing.expectEqualStrings("", terminal.replyBytes());
+}
+
 test "terminal: canceled Kitty continuation releases transfer without retained mutation" {
     var terminal = try Terminal.init(std.testing.allocator, 2, 4);
     defer terminal.deinit();

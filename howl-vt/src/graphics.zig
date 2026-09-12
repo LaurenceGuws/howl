@@ -114,6 +114,10 @@ const Frame = struct {
 const Loading = struct {
     action: u8,
     format: u8,
+    /// True when the application omitted both Kitty image id and image number.
+    /// Kitty calls this protocol-visible image id zero. The Plane still owns a
+    /// separate nonzero internal Image.id for storage/resource identity.
+    anonymous: bool,
     id: u32,
     image_number: u32,
     placement_id: u32,
@@ -336,8 +340,7 @@ pub const Plane = struct {
         cell_height: u32,
     ) std.mem.Allocator.Error!Result {
         if (self.loading == null) {
-            if ((command_value.id == 0 and command_value.image_number == 0) or
-                (command_value.id != 0 and command_value.image_number != 0) or
+            if ((command_value.id != 0 and command_value.image_number != 0) or
                 command_value.width == 0 or command_value.height == 0 or
                 command_value.width > max_dimension or command_value.height > max_dimension or
                 (command_value.format != 24 and command_value.format != 32))
@@ -376,8 +379,11 @@ pub const Plane = struct {
                     .failure = .quota,
                     .quiet = command_value.quiet,
                 };
+            const anonymous = command_value.id == 0 and command_value.image_number == 0;
             const kitty_id = if (command_value.id != 0)
                 command_value.id
+            else if (anonymous)
+                0
             else
                 self.allocateKittyId() orelse
                     return .{ .response_number = command_value.image_number, .failure = .quota, .quiet = command_value.quiet };
@@ -402,6 +408,7 @@ pub const Plane = struct {
             self.loading = .{
                 .action = command_value.action,
                 .format = command_value.format,
+                .anonymous = anonymous,
                 .id = kitty_id,
                 .image_number = command_value.image_number,
                 .placement_id = command_value.placement_id,
@@ -524,6 +531,7 @@ pub const Plane = struct {
         self.loading = .{
             .action = 'f',
             .format = command_value.format,
+            .anonymous = false,
             .id = image_value.kitty_id.?,
             .image_number = image_value.kitty_number orelse 0,
             .placement_id = 0,
@@ -761,8 +769,8 @@ pub const Plane = struct {
         if (loading.action == 'f') return try self.finishFrame(loading);
         const rgba_len = @as(usize, loading.width) * loading.height * 4;
         if (loading.action == 'q')
-            return .{ .response_id = loading.id, .quiet = loading.quiet };
-        const prior_index = if (loading.image_number != 0)
+            return .{ .response_id = if (loading.anonymous) null else loading.id, .quiet = loading.quiet };
+        const prior_index = if (loading.anonymous or loading.image_number != 0)
             null
         else
             self.kittyImageIndex(loading.id);
@@ -871,7 +879,7 @@ pub const Plane = struct {
         }
         return .{
             .changed = true,
-            .response_id = loading.id,
+            .response_id = if (loading.anonymous) null else loading.id,
             .response_number = nonzero(loading.image_number),
             .cursor_advance = if (display and !loading.unicode_placement and loading.compose_mode != 1) .{
                 .cols = planned_placement.?.cols,
@@ -2220,6 +2228,64 @@ test "static plane admission is transactional across chunks replacement put and 
     try std.testing.expect((try plane.command("a=d,d=I,i=7", .primary, 0, 0, 0, 1, 1)).changed);
     try std.testing.expectEqual(@as(u16, 0), plane.image_count);
     try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+}
+
+test "Kitty anonymous transmit-display retains distinct id-zero images" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    // Yazi's KgpOld preview path intentionally omits both i= and I=. Kitty
+    // defines that as protocol image id zero; C=1 keeps the terminal cursor
+    // stationary while z=-1 places the preview behind text.
+    const first = try plane.command(
+        "q=2,a=T,z=-1,C=1,f=24,s=2,v=1,m=1;/wAA",
+        .alternate,
+        0,
+        3,
+        4,
+        10,
+        20,
+    );
+    try std.testing.expect(!first.changed);
+    try std.testing.expect(first.cursor_advance == null);
+    const completed = try plane.command("m=0;AP8A", .alternate, 0, 3, 4, 10, 20);
+    try std.testing.expect(completed.changed);
+    try std.testing.expect(completed.cursor_advance == null);
+    try std.testing.expect(completed.response_id == null);
+    try std.testing.expectEqual(@as(u2, 2), completed.quiet);
+    try std.testing.expectEqual(@as(u16, 1), plane.image_count);
+    try std.testing.expectEqual(@as(?u32, 0), plane.images[0].kitty_id);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 255, 0, 0, 255, 0, 255, 0, 255 },
+        plane.images[0].pixels,
+    );
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(@as(i32, -1), plane.placements[0].z);
+
+    // A second anonymous image is distinct. Protocol id zero is not a
+    // replacement key; the Plane's private Image.id owns storage identity.
+    const second = try plane.command(
+        "q=2,a=T,z=-1,C=1,f=24,s=1,v=1;AQID",
+        .alternate,
+        0,
+        8,
+        5,
+        10,
+        20,
+    );
+    try std.testing.expect(second.changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 2), plane.placement_count);
+    try std.testing.expect(plane.images[0].id != plane.images[1].id);
+    try std.testing.expectEqual(@as(?u32, 0), plane.images[1].kitty_id);
+
+    // Yazi clears previews with uppercase A, which removes the visible
+    // placements and their now-unreferenced Kitty-owned image data.
+    const deleted = try plane.command("q=2,a=d,d=A", .alternate, 0, 0, 0, 10, 20);
+    try std.testing.expect(deleted.changed);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(@as(u16, 0), plane.image_count);
 }
 
 test "Kitty direct zlib transmission is exact bounded and shared by frames" {
