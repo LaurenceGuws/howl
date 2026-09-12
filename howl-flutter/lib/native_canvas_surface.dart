@@ -47,8 +47,10 @@ final class _AtlasSegment extends _PaintSegment {
       transforms,
       rects,
       colors,
-      // Per-sprite foreground is the source; atlas coverage is the mask.
-      ui.BlendMode.srcIn,
+      // drawRawAtlas blends the atlas image with each sprite color in image-first
+      // order. Modulation preserves the white alpha-mask coverage while applying
+      // the per-sprite foreground RGB; srcIn would keep the atlas RGB white.
+      ui.BlendMode.modulate,
       null,
       ui.Paint(),
     );

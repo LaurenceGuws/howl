@@ -249,6 +249,45 @@ Uint8List _externalRgbaCanvas() {
 }
 
 void main() {
+  test('alpha atlas applies the per-glyph foreground color', () async {
+    final bytes = _oneFrameCanvas();
+    final data = ByteData.sublistView(bytes);
+    final alphaCommand =
+        NativeCanvasFrame.globalHeaderBytes +
+        NativeCanvasFrame.frameHeaderBytes +
+        NativeCanvasFrame.resourceRecordBytes +
+        NativeCanvasFrame.commandRecordBytes;
+    // Canvas wire colors are little-endian RGBA bytes. Opaque red therefore
+    // appears as 0xff0000ff when read as one u32.
+    data.setUint32(alphaCommand + 4, 0xff0000ff, Endian.little);
+
+    final update = await prepareNativeCanvasFrame(
+      null,
+      NativeCanvasFrame.parse(bytes),
+    );
+    final recorder = ui.PictureRecorder();
+    final canvas = ui.Canvas(recorder);
+    update.lease.plan.paint(canvas, update.lease.images);
+    final image = await recorder.endRecording().toImage(10, 20);
+    try {
+      final raw = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+      expect(raw, isNotNull);
+      final offset = (3 * 10 + 2) * 4;
+      expect(raw!.buffer.asUint8List(raw.offsetInBytes + offset, 4), <int>[
+        255,
+        0,
+        0,
+        255,
+      ]);
+    } finally {
+      image.dispose();
+      disposeNativeCanvasLease(update.lease);
+      for (final retired in update.retired) {
+        retired.dispose();
+      }
+    }
+  });
+
   test('one-frame Canvas packet preserves resource and batch order', () {
     final frame = NativeCanvasFrame.parse(_oneFrameCanvas());
     expect(frame.surfaceWidth, 10);
