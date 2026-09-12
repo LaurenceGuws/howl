@@ -22,6 +22,7 @@ const terminal = document.querySelector('#terminal');
 const toolbar = document.querySelector('#toolbar');
 const keyboard = document.querySelector('#keyboard');
 const keyboardButton = document.querySelector('#keyboard-button');
+const leaderButton = document.querySelector('#leader-button');
 const copyButton = document.querySelector('#copy-button');
 const pasteButton = document.querySelector('#paste-button');
 const reconnect = document.querySelector('#reconnect');
@@ -968,6 +969,32 @@ terminal.addEventListener('wheel', event => {
   }
 }, {passive:false});
 keyboardButton.addEventListener('click', focusKeyboard);
+leaderButton.addEventListener('click', () => {
+  if (!lastFrame?.cell || !control || control.closed) return;
+  const [cellWidth, cellHeight] = lastFrame.cell;
+  if (!cellWidth || !cellHeight) return;
+  const viewportHeight = Math.floor(window.visualViewport?.height ?? window.innerHeight);
+  const width = Math.floor(main.clientWidth);
+  const top = Math.max(0, terminal.getBoundingClientRect().top);
+  const toolbarHeight = Math.ceil(toolbar.getBoundingClientRect().height);
+  const rows = clamp(
+    Math.floor(Math.max(cellHeight * 2, viewportHeight - top - toolbarHeight - 28) / cellHeight),
+    2,
+    control.exports.hw_maximum_rows(),
+  );
+  const columns = clamp(Math.floor(width / cellWidth), 20, control.exports.hw_maximum_columns());
+  const controlId = control.clientId == null ? null : String(control.clientId);
+  queueControl(connection => connection.resize(rows, columns, {claim:true}), 'resize')
+    .then(code => {
+      if (code !== 0) throw new Error(`leader claim result ${code}`);
+      resizePolicy.accepted(controlId);
+      requestedGeometry = {rows, columns};
+      telemetry.record('resize_leader_acquired', {control:controlId, explicit:true});
+      updateFacts();
+    })
+    .catch(fail)
+    .finally(focusKeyboard);
+});
 copyButton.addEventListener('click', async () => {
   try {
     const connection = history.active ? historyObserver : observer;

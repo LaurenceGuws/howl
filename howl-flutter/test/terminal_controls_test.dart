@@ -13,6 +13,7 @@ void main() {
       var keyboards = 0;
       var copies = 0;
       var pastes = 0;
+      var leads = 0;
       final zooms = <TerminalZoomPreset>[];
       await tester.pumpWidget(
         MaterialApp(
@@ -20,9 +21,11 @@ void main() {
             body: TerminalControlStrip(
               modifierLatch: HowlInput.modifierControl | HowlInput.modifierAlt,
               zoomPreset: TerminalZoomPreset.normal,
+              geometryLeader: false,
               onModifier: modifiers.add,
               onKey: keys.add,
               onZoom: zooms.add,
+              onLead: () => leads += 1,
               onKeyboard: () => keyboards += 1,
               onCopy: () => copies += 1,
               onPaste: () => pastes += 1,
@@ -42,6 +45,7 @@ void main() {
         '→',
         'Kbd',
         '16px',
+        'Lead',
         'Copy',
         'Paste',
       ]) {
@@ -53,6 +57,7 @@ void main() {
       await tester.tap(find.text('→'));
       await tester.tap(find.text('Kbd'));
       await tester.tap(find.text('16px'));
+      await tester.tap(find.text('Lead'));
       await tester.tap(find.text('Copy'));
       await tester.tap(find.text('Paste'));
       expect(modifiers, <int>[
@@ -62,6 +67,7 @@ void main() {
       expect(keys, <int>[HowlInput.namedEscape, HowlInput.namedArrowRight]);
       expect(keyboards, 1);
       expect(zooms, <TerminalZoomPreset>[TerminalZoomPreset.small]);
+      expect(leads, 1);
       expect(copies, 1);
       expect(pastes, 1);
       expect(HowlInput.maximumPasteBytes, 65535);

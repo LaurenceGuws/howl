@@ -11,9 +11,11 @@ final class TerminalControlStrip extends StatelessWidget {
     super.key,
     required this.modifierLatch,
     required this.zoomPreset,
+    required this.geometryLeader,
     required this.onModifier,
     required this.onKey,
     required this.onZoom,
+    required this.onLead,
     required this.onKeyboard,
     required this.onCopy,
     required this.onPaste,
@@ -21,9 +23,11 @@ final class TerminalControlStrip extends StatelessWidget {
 
   final int modifierLatch;
   final TerminalZoomPreset zoomPreset;
+  final bool geometryLeader;
   final ValueChanged<int> onModifier;
   final ValueChanged<int> onKey;
   final ValueChanged<TerminalZoomPreset> onZoom;
+  final VoidCallback onLead;
   final VoidCallback onKeyboard;
   final VoidCallback onCopy;
   final VoidCallback onPaste;
@@ -48,6 +52,7 @@ final class TerminalControlStrip extends StatelessWidget {
             '${zoomPreset.presentation.fontPixels}px',
             () => onZoom(zoomPreset.next),
           ),
+          _action('Lead', onLead, latched: geometryLeader),
           _action('Copy', onCopy),
           _action('Paste', onPaste),
         ],
@@ -67,9 +72,14 @@ final class TerminalControlStrip extends StatelessWidget {
     child: _TerminalControlButton(label: label, onTap: () => onKey(keyName)),
   );
 
-  Widget _action(String label, VoidCallback action) => Expanded(
-    child: _TerminalControlButton(label: label, onTap: action),
-  );
+  Widget _action(String label, VoidCallback action, {bool? latched}) =>
+      Expanded(
+        child: _TerminalControlButton(
+          label: label,
+          latched: latched,
+          onTap: action,
+        ),
+      );
 }
 
 final class _TerminalControlButton extends StatelessWidget {

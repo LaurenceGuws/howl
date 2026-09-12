@@ -136,6 +136,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   bool _resizeDrainRunning = false;
   int _modifierLatch = 0;
   TerminalZoomPreset _zoomPreset = TerminalZoomPreset.normal;
+  late bool _geometryLeader;
   bool? _restoreImeAfterPresentationRestart;
   Size? _terminalViewportSize;
   TerminalSelectionRange? _selection;
@@ -144,6 +145,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
   @override
   void initState() {
     super.initState();
+    _geometryLeader = widget.geometryLeader;
     _textInput = TerminalTextInputClient(
       inputType: _platformInput.inputType,
       onCommit: (text) {
@@ -250,7 +252,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _nativeRasterScale = rasterScale;
       _scheduledRasterScale = null;
 
-      if (widget.geometryLeader) {
+      if (_geometryLeader) {
         if (_terminalViewportSize == null) {
           await WidgetsBinding.instance.endOfFrame;
         }
@@ -657,6 +659,27 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     if (_resizeDrainRunning || !_hasControl || _stopping) return;
     _resizeDrainRunning = true;
     unawaited(_drainResize());
+  }
+
+  void _takeGeometryLeadership() {
+    if (_stopping || !_hasControl) return;
+    final viewport = _terminalViewportSize;
+    if (viewport == null) return;
+    final geometry = _geometryFor(viewport, _presentation);
+    if (geometry == null) return;
+    final rows = geometry.rows;
+    final columns = geometry.columns;
+    unawaited(
+      _queueControl((control) async {
+        await control.resize(rows, columns);
+        if (!mounted || _stopping) return;
+        setState(() {
+          _geometryLeader = true;
+          _proposedRows = rows;
+          _proposedColumns = columns;
+        });
+      }),
+    );
   }
 
   Future<void> _drainResize() async {
@@ -1121,7 +1144,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _scheduleRasterPresentationRestart(rasterScale);
       return;
     }
-    if (!widget.geometryLeader || !_hasControl) return;
+    if (!_geometryLeader || !_hasControl) return;
     final geometry = _geometryFor(size, _presentation);
     if (geometry == null) return;
     final rows = geometry.rows;
@@ -1316,9 +1339,11 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           TerminalControlStrip(
             modifierLatch: _modifierLatch,
             zoomPreset: _zoomPreset,
+            geometryLeader: _geometryLeader,
             onModifier: _toggleModifier,
             onKey: _sendToolbarKey,
             onZoom: _changeZoom,
+            onLead: _takeGeometryLeadership,
             onKeyboard: _showSoftKeyboard,
             onCopy: _copyVisibleText,
             onPaste: _pasteClipboard,
