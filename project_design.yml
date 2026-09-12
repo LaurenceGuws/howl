@@ -33,6 +33,8 @@ ownership:
   - attaching a client never changes canonical terminal geometry
   - slow, hidden, disconnected, or absent clients never throttle the PTY or VT
   - renderer and platform policy stay outside VT and session
+  - VT owns retained image/frame/animation semantics; Session owns monotonic service/wake scheduling; clients and renderers do not run terminal animation clocks
+  - canonical graphics/resource identity crosses the Session boundary, while Canvas/backend residency stays presentation-local
 
 workspace:
   local_root_gate: [howl-vt, howl-session, howl-pty, howl-text]

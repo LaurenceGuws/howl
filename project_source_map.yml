@@ -13,10 +13,43 @@ accepted:
   tools/json_logger.zig: reusable bounded JSONL evidence writer
 
 experimental:
-  howl-client: reusable UI-agnostic native session client engine: portable local connection/framing, interaction state, canonical semantic actions including mouse, one lossless rich text_v1 decoder, compact semantic snapshots, and an explicit-lifetime one-allocation coarse semantic view
-  howl-cli: native human/agent session client under active proof; compact semantic observation plus canonical input/control, not shell execution or remote transport
-  howl-render: backend-neutral rendering experiments consuming howl-text and howl-client.view; terminal Content emits complete Canvas ProducerUpdate state through private caller-bounded shape/atlas caches, using howl-text for ordinary shaping/rasterization and the Kitty-derived generated terminal-glyph rasterizer for supported box/block/Braille/Powerline families; Composer-derived Canvas frames are the Android/iOS-pressure-proven semantic presentation seam; no stable mobile ABI is accepted
-  howl-flutter: maintained native visual canary for the Howl client: platform input/viewport/history/selection/native-size UX plus an app-private version-locked native observer/control binding and batched final-Canvas backend; its native TCP/client path deliberately coexists with the WebSocket/Wasm browser canary so both pressure the same canonical session semantics; Android live path accepted, Linux bundled host proven, iOS native-host semantics pressure-proven; iOS owns no PTY/userland; not part of the core gate
+  howl-client: >-
+    reusable UI-agnostic native session client engine: portable local
+    connection/framing, interaction state, canonical semantic actions including
+    mouse, one lossless rich text_v1 decoder, compact semantic snapshots, and
+    an explicit-lifetime one-allocation coarse semantic view
+  howl-cli: >-
+    native human/agent session client under active proof; compact semantic
+    observation plus canonical input/control, not shell execution or remote
+    transport
+  howl-render: >-
+    backend-neutral rendering experiments consuming howl-text and
+    howl-client.view; terminal Content emits complete Canvas ProducerUpdate
+    state through private caller-bounded shape/atlas caches plus exact
+    Host-recoverable terminal-image resources, using howl-text for ordinary
+    shaping/rasterization and the Kitty-derived generated terminal-glyph
+    rasterizer for supported box/block/Braille/Powerline families;
+    Composer-derived Canvas frames are the native/Web pressure-proven semantic
+    presentation seam; no stable mobile ABI is accepted
+  howl-flutter: >-
+    maintained native visual canary for the Howl client: platform
+    input/viewport/history/selection/native-size UX plus an app-private
+    version-locked native observer/control binding, exact external-image
+    refill/residency, out-of-band observer cancellation, and batched
+    final-Canvas backend; its native TCP/client path deliberately coexists with
+    the WebSocket/Wasm browser canary so both pressure the same canonical
+    session semantics and consume Session-owned animation; Android physical
+    path accepted, Linux bundled host proven, iOS native-host semantics
+    pressure-proven; iOS owns no PTY/userland; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
-  howl-web: maintained WebAssembly visual canary alongside Flutter; zero-import bounded wire state with semantic text/paste/key/focus/resize control, target-built real text/shared terminal rendering, a loopback-only protocol-blind Zig WebSocket gateway with fail-closed admission, an offline-capable PWA shell, and an Access-protected Home tunnel edge; Chromium is the primary fast acceptance lane while Safari/Home-Screen is the WebKit/PWA platform canary; outside the root core gate
+  howl-web: >-
+    maintained WebAssembly visual canary alongside Flutter; zero-import bounded
+    wire state with semantic text/paste/key/focus/resize control, target-built
+    real text/shared terminal rendering, exact external-image refill/residency,
+    Session-owned animation consumption with no browser frame clock, a
+    loopback-only protocol-blind Zig WebSocket gateway with fail-closed
+    admission, an offline-capable PWA shell, and an Access-protected Home
+    tunnel edge; Chromium is the primary fast acceptance lane while
+    Safari/Home-Screen is the WebKit/PWA platform canary; outside the root core
+    gate

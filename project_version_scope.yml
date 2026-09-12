@@ -2,8 +2,8 @@ schema: 1
 version: 0.1.6-dev
 
 objective: >-
-  Keep one observer-independent canonical PTY/VT session while promoting native
-  text shaping and rasterization as a tracked in-repository module boundary.
+  Keep one observer-independent canonical PTY/VT session while pressure-proving
+  shared text and graphics presentation across native and browser canaries.
 
 accepted:
   vt: bounded caller-neutral terminal semantics, history, graphics, replies, input encoding, consequences, Unicode 17 occupancy, and grapheme ownership
@@ -17,6 +17,8 @@ invariants:
   - attaching an observer never changes canonical geometry
   - text shaping and rasterization expose no renderer, window, session, or client authority
   - renderer and platform code are not core dependencies
+  - VT owns terminal animation state and Session owns its monotonic wake schedule; clients/renderers own no parallel terminal animation clock
+  - canonical graphics identity/resource generations cross Session; Canvas/backend residency does not
   - projected history plus the visible screen are the complete future-reflow cell authority; evicted rows never return
   - exact bounds, errors, rollback, cleanup, and ownership remain explicit
 
