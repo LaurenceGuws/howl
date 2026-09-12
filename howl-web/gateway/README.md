@@ -32,10 +32,11 @@ image resources are resident, and may use a fourth only while canonical history
 is active. Six therefore still permits a normal two-page/Safari-to-standalone
 handoff with image resources, while history during such a handoff remains an
 explicit bounded capacity edge rather than silently growing transport. One
-message is at most 64 KiB, one connection may send
-at most 1 MiB and receive at most 8 MiB, and upstream reads are emitted as at
-most 16 KiB binary WebSocket messages. Text and fragmented browser messages fail
-closed. Ordinary HTTP concurrency is bounded to eight connections.
+message is at most 64 KiB and upstream reads are emitted as at most 16 KiB
+binary WebSocket messages. Long-lived terminal streams have no cumulative byte
+quota: memory/backpressure safety comes from those per-message/fixed-chunk
+bounds plus bounded connection admission. Text and fragmented browser messages
+fail closed. Ordinary HTTP concurrency is bounded to eight connections.
 
 Static serving is an exact route table only. There is no filesystem path derived
 from a request target, redirect, proxy route, directory listing, or fallback SPA
@@ -50,9 +51,9 @@ zig build install -Doptimize=ReleaseSafe
 
 `test` includes a Python-standard-library black-box proof. Denied Host, Origin,
 Access and malformed WebSocket requests are verified to make zero upstream
-connections. A fully admitted binary connection echoes opaque bytes through a
-fake loopback upstream, text is rejected, six simultaneous WebSockets are admitted,
-and a seventh is refused.
+connections. A fully admitted binary connection echoes more than 9 MiB over one long-lived
+connection through a fake loopback upstream, text is rejected, six simultaneous
+WebSockets are admitted, and a seventh is refused.
 
 The executable is:
 

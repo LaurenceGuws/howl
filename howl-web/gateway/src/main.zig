@@ -7,8 +7,6 @@ const max_websockets: u8 = 6;
 const max_http_header_bytes: usize = 32 * 1024;
 const max_static_bytes: usize = 4 * 1024 * 1024;
 const max_ws_message_bytes: usize = 64 * 1024;
-const max_upload_lifetime_bytes: usize = 1024 * 1024;
-const max_download_lifetime_bytes: usize = 8 * 1024 * 1024;
 const upstream_chunk_bytes: usize = 16 * 1024;
 const max_host_bytes: usize = 255;
 const max_origin_bytes: usize = 512;
@@ -39,8 +37,6 @@ const ProxyEnd = enum {
     browser_closed,
     upstream_closed,
     browser_invalid,
-    upload_limit,
-    download_limit,
     io_failure,
 };
 
@@ -262,7 +258,6 @@ fn handleWebSocket(
 }
 
 fn browserToUpstream(ws: *std.http.Server.WebSocket, upstream: *Io.Writer) ProxyEnd {
-    var transferred: usize = 0;
     while (true) {
         const message = ws.readSmallMessage() catch |failure| return switch (failure) {
             error.ConnectionClose, error.EndOfStream => .browser_closed,
@@ -270,22 +265,17 @@ fn browserToUpstream(ws: *std.http.Server.WebSocket, upstream: *Io.Writer) Proxy
             error.ReadFailed => .io_failure,
         };
         if (message.opcode != .binary or message.data.len > max_ws_message_bytes) return .browser_invalid;
-        if (message.data.len > max_upload_lifetime_bytes - transferred) return .upload_limit;
-        transferred += message.data.len;
         upstream.writeAll(message.data) catch return .io_failure;
         upstream.flush() catch return .io_failure;
     }
 }
 
 fn upstreamToBrowser(io: Io, upstream: *Io.net.Stream, ws: *std.http.Server.WebSocket) ProxyEnd {
-    var transferred: usize = 0;
     var chunk: [upstream_chunk_bytes]u8 = undefined;
     while (true) {
         var buffers: [1][]u8 = .{&chunk};
         const count = upstream.read(io, &buffers) catch return .io_failure;
         if (count == 0) return .upstream_closed;
-        if (count > max_download_lifetime_bytes - transferred) return .download_limit;
-        transferred += count;
         ws.writeMessage(chunk[0..count], .binary) catch return .io_failure;
     }
 }

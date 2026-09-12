@@ -102,10 +102,16 @@ def ws_open(port: int, host: str, origin: str | None, access: bool, key: str = K
 
 
 def send_masked(sock: socket.socket, opcode: int, payload: bytes) -> None:
-    assert len(payload) < 126
+    size = len(payload)
+    if size < 126:
+        length = bytes([0x80 | size])
+    elif size <= 0xffff:
+        length = bytes([0x80 | 126]) + struct.pack('!H', size)
+    else:
+        length = bytes([0x80 | 127]) + struct.pack('!Q', size)
     mask = b'\x11\x22\x33\x44'
     masked = bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
-    sock.sendall(bytes([0x80 | opcode, 0x80 | len(payload)]) + mask + masked)
+    sock.sendall(bytes([0x80 | opcode]) + length + mask + masked)
 
 
 def recv_frame(sock: socket.socket) -> tuple[int, bytes]:
@@ -122,6 +128,17 @@ def recv_frame(sock: socket.socket) -> tuple[int, bytes]:
         body += sock.recv(size - len(body))
     return opcode, body
 
+
+
+
+def recv_binary_bytes(sock: socket.socket, size: int) -> bytes:
+    body = bytearray()
+    while len(body) < size:
+        opcode, chunk = recv_frame(sock)
+        assert opcode == 2
+        body += chunk
+    assert len(body) == size
+    return bytes(body)
 
 def wait_ready(port: int) -> None:
     deadline = time.monotonic() + 4
@@ -195,6 +212,16 @@ def main() -> None:
             send_masked(one, 2, b'opaque-howl-bytes')
             assert recv_frame(one) == (2, b'opaque-howl-bytes')
 
+            # A terminal WebSocket is a long-lived stream. Memory safety comes
+            # from per-message bounds, fixed-size upstream chunks, and bounded
+            # connection admission, not from a cumulative lifetime byte quota.
+            stream_chunk = bytes(range(256)) * 128  # 32 KiB, under the 64 KiB message bound.
+            stream_total = 0
+            while stream_total <= 9 * 1024 * 1024:
+                send_masked(one, 2, stream_chunk)
+                assert recv_binary_bytes(one, len(stream_chunk)) == stream_chunk
+                stream_total += len(stream_chunk)
+
             peers = []
             for _ in range(5):
                 peer, status, _ = ws_open(listen, host, origin, True)
@@ -213,7 +240,7 @@ def main() -> None:
             for peer in peers: peer.close()
             print(json.dumps({
                 'status':'pass', 'access_before_upstream':True, 'host_origin_exact':True,
-                'binary_bridge':True, 'text_rejected':True, 'websocket_capacity':6,
+                'binary_bridge':True, 'streaming_bridge_bytes':stream_total, 'text_rejected':True, 'websocket_capacity':6,
                 'static_csp':True, 'upstream_accepts':echo.accepted,
             }))
         finally:
