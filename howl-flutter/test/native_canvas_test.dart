@@ -393,6 +393,43 @@ void main() {
     },
   );
 
+  test(
+    'presentation restart retains previous external residency until unwind',
+    () async {
+      final preload = await prepareNativeCanvasExternalUpload(
+        parseNativeHostImageRefill(_imageRefillPacket()),
+      );
+      final previous = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <NativeCanvasPreloadedResource>[preload],
+      );
+      try {
+        await expectLater(
+          prepareNativeCanvasFrame(
+            null,
+            NativeCanvasFrame.parse(_externalRgbaCanvas()),
+          ),
+          throwsA(isA<StateError>()),
+        );
+        final inFlight = await prepareNativeCanvasFrame(
+          previous.lease,
+          NativeCanvasFrame.parse(_externalRgbaCanvas()),
+        );
+        expect(
+          inFlight.lease.images.values.single,
+          same(previous.lease.images.values.single),
+        );
+        disposeNativeCanvasLeaseCandidate(inFlight);
+      } finally {
+        disposeNativeCanvasLease(previous.lease);
+        for (final image in previous.retired) {
+          image.dispose();
+        }
+      }
+    },
+  );
+
   test('native host external refill rejects stale packet layout', () {
     final badStride = _imageRefillPacket();
     ByteData.sublistView(badStride).setUint32(52, 4, Endian.little);

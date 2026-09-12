@@ -184,12 +184,18 @@ final class _HowlTerminalState extends State<HowlTerminal> {
         _dropTransport(generation);
         if (error is _PresentationRestart) {
           _transportRecovery.succeeded();
+          final oldLive = _nativeLiveLease;
           _proposedRows = 0;
           _proposedColumns = 0;
           setState(() {
+            _nativeLiveLease = null;
+            _nativeLiveMetadata = null;
+            _nativeLiveSemanticText = '';
+            _nativeLiveSemanticTruncated = false;
             _failure = null;
             _reconnecting = false;
           });
+          if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
           continue;
         }
         if (!retriableTransportFailure(error, attached: attached)) {
@@ -271,6 +277,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       );
       while (!_stopping && generation == _transportGeneration) {
         final observed = await pendingObservation;
+        if (zoomPreset != _zoomPreset) {
+          disposeNativeCanvasPreloadedResources(observed.preloaded);
+          throw const _PresentationRestart();
+        }
         if (!mounted || _stopping || generation != _transportGeneration) {
           disposeNativeCanvasPreloadedResources(observed.preloaded);
           break;
@@ -288,6 +298,10 @@ final class _HowlTerminalState extends State<HowlTerminal> {
           preloaded: observed.preloaded,
         );
         revision = packet.metadata.revision;
+        if (zoomPreset != _zoomPreset) {
+          disposeNativeCanvasLeaseCandidate(prepared);
+          throw const _PresentationRestart();
+        }
         if (!mounted || _stopping || generation != _transportGeneration) {
           disposeNativeCanvasLeaseCandidate(prepared);
           break;
@@ -1019,11 +1033,12 @@ final class _HowlTerminalState extends State<HowlTerminal> {
     _restoreImeAfterPresentationRestart =
         MediaQuery.viewInsetsOf(context).bottom > 0;
     _leaveHistory();
-    final oldLive = _nativeLiveLease;
     setState(() {
       _zoomPreset = preset;
       _selection = null;
-      _nativeLiveLease = null;
+      // The old observer may already be preparing a frame that references this
+      // residency. Hide its metadata immediately, but retain the lease until the
+      // old presentation lifetime has unwound.
       _nativeLiveMetadata = null;
       _nativeLiveSemanticText = '';
       _nativeLiveSemanticTruncated = false;
@@ -1034,7 +1049,6 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       _failure = null;
       _reconnecting = false;
     });
-    if (oldLive != null) unawaited(_disposeLeaseAfterFrame(oldLive));
     final fault = _transportFault;
     if (fault != null && !fault.isCompleted) {
       fault.complete(const _PresentationRestart());
