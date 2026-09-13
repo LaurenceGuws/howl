@@ -1349,6 +1349,9 @@ fn buildContentCommands(
         if (end > cells.len or count != begin.columns) return error.InvalidView;
         const line_columns = try contentLineColumnCount(begin.columns, row.line_geometry);
         for (cells[first..][0..line_columns], 0..) |cell, column| {
+            const reversed = (cell.style_bits & content_style_reverse != 0) !=
+                presentation.reverse_screen;
+            if (!reversed and cell.background.kind == .default) continue;
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
             if (!std.meta.eql(colors.background, default_background))
