@@ -295,7 +295,7 @@ fn runFallible(
     var changed: [2]bool = .{ true, scene_count == 2 };
     var retained_draw_count: u64 = 0;
     var generic_draw_count_total: u64 = 0;
-    var duet_armed = false;
+    var observations_armed = false;
     var next_ready_start: usize = 0;
 
     var cancellations: [2]client.Cancellation = undefined;
@@ -506,65 +506,54 @@ fn runFallible(
         slot_index = (slot_index + 1) % shared.slot_count;
         for (0..scene_count) |scene_index| changed[scene_index] = false;
 
-        if (scene_count == 1) {
-            const next = scenes[0].?.prepare(session_revisions[0]) catch |failure| {
-                if (boundary.shouldStop()) break;
-                return failure;
-            };
-            if (next.width != prepared[0].width or next.height != prepared[0].height)
-                return error.GeometryChanged;
-            session_revisions[0] = next.session_revision;
-            prepared[0] = next;
-            changed[0] = true;
-        } else {
-            if (!duet_armed) {
-                for (0..scene_count) |scene_index|
-                    try scenes[scene_index].?.arm(session_revisions[scene_index]);
-                duet_armed = true;
-            }
-            const ready = waitDuetReady(
-                boundary,
-                &scenes,
-                scene_count,
-                next_ready_start,
-            ) catch |failure| {
-                if (boundary.shouldStop()) break;
-                return failure;
-            };
-            switch (ready) {
-                .scene => |ready_index| {
-                    next_ready_start = (ready_index + 1) % scene_count;
-                    const next = scenes[ready_index].?.receivePrepared() catch |failure| {
-                        if (boundary.shouldStop()) break;
-                        return failure;
-                    };
-                    if (next.width != prepared[ready_index].width or
-                        next.height != prepared[ready_index].height)
-                        return error.GeometryChanged;
-                    session_revisions[ready_index] = next.session_revision;
-                    prepared[ready_index] = next;
-                    changed[ready_index] = true;
-                    try scenes[ready_index].?.arm(session_revisions[ready_index]);
-                },
-                .command => |host_command| {
-                    try applyDuetGeometryCommand(
-                        host_command,
-                        &mux,
-                        &geometry_controls,
-                        &geometry_owned,
-                        &scenes,
-                        scene_count,
-                        &prepared,
-                        &session_revisions,
-                        &changed,
-                        workspace_rows,
-                        workspace_cols,
-                        cell_size.width,
-                        cell_size.height,
-                        &projected_layout,
-                    );
-                },
-            }
+        if (!observations_armed) {
+            for (0..scene_count) |scene_index|
+                try scenes[scene_index].?.arm(session_revisions[scene_index]);
+            observations_armed = true;
+        }
+        const ready = waitDuetReady(
+            boundary,
+            &scenes,
+            scene_count,
+            next_ready_start,
+        ) catch |failure| {
+            if (boundary.shouldStop()) break;
+            return failure;
+        };
+        switch (ready) {
+            .scene => |ready_index| {
+                next_ready_start = (ready_index + 1) % scene_count;
+                const next = scenes[ready_index].?.receivePrepared() catch |failure| {
+                    if (boundary.shouldStop()) break;
+                    return failure;
+                };
+                if (next.width != prepared[ready_index].width or
+                    next.height != prepared[ready_index].height)
+                    return error.GeometryChanged;
+                session_revisions[ready_index] = next.session_revision;
+                prepared[ready_index] = next;
+                changed[ready_index] = true;
+                try scenes[ready_index].?.arm(session_revisions[ready_index]);
+            },
+            .command => |host_command| {
+                if (scene_count != 2) return error.HostCommandUnsupported;
+                try applyDuetGeometryCommand(
+                    host_command,
+                    &mux,
+                    &geometry_controls,
+                    &geometry_owned,
+                    &scenes,
+                    scene_count,
+                    &prepared,
+                    &session_revisions,
+                    &changed,
+                    workspace_rows,
+                    workspace_cols,
+                    cell_size.width,
+                    cell_size.height,
+                    &projected_layout,
+                );
+            },
         }
     }
     if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) return error.DeviceIdle;
