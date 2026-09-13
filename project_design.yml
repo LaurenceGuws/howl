@@ -21,6 +21,7 @@ experimental:
   - howl-client
   - howl-cli
   - howl-render
+  - howl-host
   - howl-vk
   - howl-wayland
   - howl-flutter

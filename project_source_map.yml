@@ -41,6 +41,12 @@ experimental:
     session semantics and consume Session-owned animation; Android physical
     path accepted, Linux bundled host proven, iOS native-host semantics
     pressure-proven; iOS owns no PTY/userland; not part of the core gate
+  howl-host: >-
+    native Linux Vulkan performance canary: concrete Wayland window and
+    explicit-sync DMA-BUF presentation, plus a deliberately small host-local
+    bounded tab/split topology that prevents single-terminal architecture from
+    becoming implicit product policy; Session attachment and terminal drawing
+    are the next runtime steps; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

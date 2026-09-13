@@ -1,0 +1,112 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const headers = b.addWriteFiles();
+    const renderer_header = headers.add("renderer-native.h",
+        \\#ifdef _FORTIFY_SOURCE
+        \\#undef _FORTIFY_SOURCE
+        \\#endif
+        \\#define _FORTIFY_SOURCE 0
+        \\#include <xf86drm.h>
+        \\#include <fcntl.h>
+        \\#include <unistd.h>
+        \\#include <errno.h>
+        \\#include <poll.h>
+        \\#include <time.h>
+        \\#include <sys/stat.h>
+        \\#include <sys/sysmacros.h>
+    );
+    const host_header = headers.add("host-native.h",
+        \\#ifdef _FORTIFY_SOURCE
+        \\#undef _FORTIFY_SOURCE
+        \\#endif
+        \\#define _FORTIFY_SOURCE 0
+        \\#include <sys/eventfd.h>
+        \\#include <sys/mman.h>
+        \\#include <unistd.h>
+        \\#include <errno.h>
+        \\#include <poll.h>
+    );
+    const renderer_translate = b.addTranslateC(.{
+        .root_source_file = renderer_header,
+        .target = target,
+        .optimize = optimize,
+    });
+    renderer_translate.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
+    const host_translate = b.addTranslateC(.{
+        .root_source_file = host_header,
+        .target = target,
+        .optimize = optimize,
+    });
+    const host_c = host_translate.createModule();
+
+    const vk = b.dependency("howl_vk", .{ .target = target, .optimize = optimize });
+    const wayland = b.dependency("howl_wayland", .{ .target = target, .optimize = optimize });
+
+    const root = b.createModule(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    root.addImport("howl_vk", vk.module("howl_vk"));
+    root.addImport("howl_wayland", wayland.module("howl_wayland"));
+    root.addImport("renderer_c", renderer_translate.createModule());
+    root.addImport("host_c", host_c);
+    root.addIncludePath(.{ .cwd_relative = "/usr/include/libdrm" });
+    root.linkSystemLibrary("vulkan", .{});
+    root.linkSystemLibrary("drm", .{});
+
+    const executable = b.addExecutable(.{
+        .name = "howl-host",
+        .root_module = root,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    b.installArtifact(executable);
+
+    const check = b.step("check", "Compile the native Vulkan performance host");
+    check.dependOn(&executable.step);
+    const run = b.addRunArtifact(executable);
+    b.step("run", "Run the native Vulkan performance host").dependOn(&run.step);
+
+    const shared = b.createModule(.{
+        .root_source_file = b.path("src/shared.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    shared.addImport("host_c", host_c);
+    const test_module = b.createModule(.{
+        .root_source_file = b.path("test/test.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    test_module.addImport("shared", shared);
+    test_module.addImport("host_c", host_c);
+    const tests = b.addTest(.{
+        .name = "howl-host-runtime",
+        .root_module = test_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    const layout_tests = b.addTest(.{
+        .name = "howl-host-layout",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/layout.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&layout_tests.step);
+
+    const test_step = b.step("test", "Run native host runtime ownership proofs");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
+    test_step.dependOn(&b.addRunArtifact(layout_tests).step);
+    b.default_step = check;
+}
