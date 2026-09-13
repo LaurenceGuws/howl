@@ -3389,6 +3389,12 @@ fn frameCommandAt(
     placement: Composer.Placement,
     input: Input,
 ) Composer.Error!?Command {
+    if (placement.origin.x == 0 and placement.origin.y == 0 and
+        placement.clip.x == 0 and placement.clip.y == 0 and
+        placement.clip.width == surface.width and placement.clip.height == surface.height)
+    {
+        return identityFrameCommandAt(surface, placement.source, input);
+    }
     const translated_clip = try translated(placement.clip, .{ .x = 0, .y = 0 });
     return switch (input) {
         .solid => |value| solid: {
@@ -3433,6 +3439,49 @@ fn frameCommandAt(
                 .clip = visible,
                 .resource = qualifyView(placement.source, value.resource),
             } };
+        },
+    };
+}
+
+fn identityFrameCommandAt(
+    surface: Size,
+    source: SourceId,
+    input: Input,
+) Composer.Error!?Command {
+    return switch (input) {
+        .solid => |value| solid: {
+            const visible = clipped(value.rect, value.clip, surface) catch |err|
+                return mapCanvasGeometry(err);
+            break :solid if (visible) |rect|
+                .{ .solid = .{ .rect = rect, .color = value.color } }
+            else
+                null;
+        },
+        .alpha_mask => |value| alpha: {
+            const visible = clipped(value.destination, value.clip, surface) catch |err|
+                return mapCanvasGeometry(err);
+            break :alpha if (visible) |clip|
+                .{ .alpha_mask = .{
+                    .destination = value.destination,
+                    .clip = clip,
+                    .resource = qualifyView(source, value.resource),
+                    .color = value.color,
+                    .cursor_component = value.cursor_component,
+                } }
+            else
+                null;
+        },
+        .rgba => |value| rgba: {
+            const visible = clipped(value.destination, value.clip, surface) catch |err|
+                return mapCanvasGeometry(err);
+            break :rgba if (visible) |clip|
+                .{ .rgba = .{
+                    .destination = value.destination,
+                    .clip = clip,
+                    .resource = qualifyView(source, value.resource),
+                } }
+            else
+                null;
         },
     };
 }
