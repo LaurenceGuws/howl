@@ -4980,6 +4980,8 @@ pub const Terminal = struct {
     pub const Image = graphics_mod.ImageView;
     /// Bounds one decoded RGBA image retained by the canonical terminal.
     pub const maximum_image_bytes = graphics_mod.max_image_bytes;
+    /// Bounds total decoded graphics storage retained by one terminal.
+    pub const maximum_image_storage_bytes = graphics_mod.max_storage_bytes;
     /// Bounds either decoded image dimension.
     pub const maximum_image_dimension = graphics_mod.max_dimension;
     /// Bounds retained image identities.

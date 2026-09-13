@@ -13,7 +13,7 @@ const std = @import("std");
 // =============================================================================
 
 /// Bounds decoded image bytes retained by one terminal.
-const max_storage_bytes: usize = 64 * 1024 * 1024;
+pub const max_storage_bytes: usize = 64 * 1024 * 1024;
 /// Bounds one decoded RGBA image.
 pub const max_image_bytes: usize = 16 * 1024 * 1024;
 /// Bounds retained image identities.
@@ -285,7 +285,9 @@ pub const Plane = struct {
 
     /// Applies one complete `_G` APC body after the leading `G`.
     ///
-    /// Allocation and quota failures preserve all retained images and placements.
+    /// Allocation and rejected commands preserve all retained images and placements.
+    /// Successful Kitty image admission may reclaim older retained image data
+    /// when needed to stay inside the fixed graphics storage quota.
     pub fn command(
         self: *Plane,
         bytes: []const u8,
@@ -774,14 +776,7 @@ pub const Plane = struct {
             null
         else
             self.kittyImageIndex(loading.id);
-        const prior_bytes = if (prior_index) |index|
-            self.images[index].pixels.len + self.frameBytes(self.images[index].id)
-        else
-            0;
-        if (rgba_len > max_storage_bytes - (self.storage_bytes - prior_bytes))
-            return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
-        if (prior_index == null and self.image_count == max_images)
-            return .{ .response_id = loading.id, .failure = .quota, .quiet = loading.quiet };
+        const protected_image_id = if (prior_index) |index| self.images[index].id else null;
         const display = loading.action == 'T';
         const replaced_placement = if (display and prior_index != null)
             self.placementIndex(self.images[prior_index.?].id, loading.placement_id)
@@ -835,10 +830,19 @@ pub const Plane = struct {
                 rgba[destination + 3] = 255;
             }
         }
+        self.reclaimForKittyAdmission(rgba_len, protected_image_id);
+        const admitted_prior_index = if (protected_image_id) |image_id|
+            self.imageIndex(image_id) orelse unreachable
+        else
+            null;
+        const admitted_replaced_placement = if (display and protected_image_id != null)
+            self.placementIndex(protected_image_id.?, loading.placement_id)
+        else
+            null;
         self.advance();
         const content_generation = self.next_generation;
         self.content_generation = content_generation;
-        if (prior_index) |index| {
+        if (admitted_prior_index) |index| {
             const image_id = self.images[index].id;
             self.removeFrames(image_id);
             self.storage_bytes -= self.images[index].pixels.len;
@@ -867,10 +871,10 @@ pub const Plane = struct {
         }
         self.storage_bytes += rgba.len;
         if (display) {
-            const image_id = self.images[prior_index orelse self.image_count - 1].id;
+            const image_id = self.images[admitted_prior_index orelse self.image_count - 1].id;
             planned_placement.?.image_id = image_id;
             planned_placement.?.generation = content_generation;
-            if (replaced_placement) |index| {
+            if (admitted_replaced_placement) |index| {
                 self.placements[index] = planned_placement.?;
             } else {
                 self.placements[self.placement_count] = planned_placement.?;
@@ -1725,6 +1729,52 @@ pub const Plane = struct {
     // Retained storage, indexes, and identities
     // -------------------------------------------------------------------------
 
+    /// Reclaims the oldest retained images needed for one successful Kitty
+    /// image admission. Images without placements are always preferred, as
+    /// required by the Kitty graphics storage-quota contract. A same-id
+    /// replacement protects its existing internal image until the replacement
+    /// bytes are ready to take ownership.
+    fn reclaimForKittyAdmission(
+        self: *Plane,
+        incoming_bytes: usize,
+        protected_image_id: ?u32,
+    ) void {
+        std.debug.assert(incoming_bytes <= max_image_bytes);
+        const replacement_bytes = if (protected_image_id) |image_id|
+            if (self.imageIndex(image_id)) |index|
+                self.images[index].pixels.len + self.frameBytes(image_id)
+            else
+                0
+        else
+            0;
+        const needs_slot = protected_image_id == null;
+
+        while (self.storage_bytes - replacement_bytes > max_storage_bytes - incoming_bytes or
+            (needs_slot and self.image_count == max_images))
+        {
+            const candidate = self.oldestEvictionCandidate(protected_image_id, true) orelse
+                self.oldestEvictionCandidate(protected_image_id, false) orelse unreachable;
+            const image_id = self.images[candidate].id;
+            self.removePlacements(image_id);
+            self.removeImage(candidate);
+        }
+    }
+
+    fn oldestEvictionCandidate(
+        self: *const Plane,
+        protected_image_id: ?u32,
+        require_unplaced: bool,
+    ) ?usize {
+        var oldest: ?usize = null;
+        for (self.images[0..self.image_count], 0..) |image_value, index| {
+            if (protected_image_id != null and image_value.id == protected_image_id.?) continue;
+            if (require_unplaced and self.hasPlacement(image_value.id)) continue;
+            if (oldest == null or image_value.generation < self.images[oldest.?].generation)
+                oldest = index;
+        }
+        return oldest;
+    }
+
     fn removePlacements(self: *Plane, image_id: u32) void {
         var index: usize = 0;
         while (index < self.placement_count) {
@@ -1917,6 +1967,12 @@ pub const Plane = struct {
     fn kittyImageIndex(self: *const Plane, id: u32) ?usize {
         for (self.images[0..self.image_count], 0..) |retained, index|
             if (retained.kitty_id == id) return index;
+        return null;
+    }
+
+    fn imageIndex(self: *const Plane, id: u32) ?usize {
+        for (self.images[0..self.image_count], 0..) |retained, index|
+            if (retained.id == id) return index;
         return null;
     }
 
@@ -2447,6 +2503,82 @@ test "RGB conversion quota cancellation and bank cleanup preserve exact ownershi
     const rejected = try plane.command("a=t,f=32,s=4096,v=4096,i=2;", .primary, 0, 0, 0, 1, 1);
     try std.testing.expectEqual(Failure.quota, rejected.failure.?);
     try std.testing.expectEqual(before, plane.generation());
+}
+
+test "Kitty quota admission evicts oldest unplaced image before visible data" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
+        .primary,
+        0,
+        1,
+        1,
+        1,
+        1,
+    )).changed);
+    try std.testing.expect((try plane.command(
+        "a=t,f=32,s=1,v=1,i=2;BQYHCA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(u16, 2), plane.image_count);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+
+    // Synthesize storage pressure without allocating a 64 MiB test fixture.
+    plane.storage_bytes = max_storage_bytes;
+    const admitted = try plane.command(
+        "a=t,f=32,s=1,v=1,i=3;CQoLDA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(admitted.changed);
+    try std.testing.expect(plane.kittyImageIndex(1) != null);
+    try std.testing.expect(plane.kittyImageIndex(2) == null);
+    try std.testing.expect(plane.kittyImageIndex(3) != null);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+    try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
+}
+
+test "Kitty quota admission reclaims oldest placed image as fallback" {
+    var plane = Plane.init(std.testing.allocator);
+    defer plane.deinit();
+
+    try std.testing.expect((try plane.command(
+        "a=T,f=32,s=1,v=1,i=1;AQIDBA==",
+        .primary,
+        0,
+        1,
+        1,
+        1,
+        1,
+    )).changed);
+    try std.testing.expectEqual(@as(u16, 1), plane.placement_count);
+
+    plane.storage_bytes = max_storage_bytes;
+    const admitted = try plane.command(
+        "a=t,f=32,s=1,v=1,i=2;BQYHCA==",
+        .primary,
+        0,
+        0,
+        0,
+        1,
+        1,
+    );
+    try std.testing.expect(admitted.changed);
+    try std.testing.expect(plane.kittyImageIndex(1) == null);
+    try std.testing.expect(plane.kittyImageIndex(2) != null);
+    try std.testing.expectEqual(@as(u16, 0), plane.placement_count);
+    try std.testing.expectEqual(max_storage_bytes, plane.storage_bytes);
 }
 
 test "new transmission cancels an incomplete stream without retained mutation" {

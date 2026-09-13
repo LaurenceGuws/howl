@@ -62,6 +62,8 @@ pub const maximum_hyperlink_uri_bytes = vt.Terminal.maximum_hyperlink_uri_bytes;
 pub const maximum_hyperlinks = vt.Terminal.maximum_hyperlinks;
 /// Bounds one decoded RGBA image retained by the canonical terminal.
 pub const maximum_image_bytes = vt.Terminal.maximum_image_bytes;
+/// Bounds total decoded graphics storage retained by one canonical terminal.
+pub const maximum_image_storage_bytes = vt.Terminal.maximum_image_storage_bytes;
 /// Bounds either decoded image dimension.
 pub const maximum_image_dimension = vt.Terminal.maximum_image_dimension;
 /// Bounds retained terminal image identities.

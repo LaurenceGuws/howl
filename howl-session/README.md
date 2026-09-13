@@ -394,8 +394,12 @@ column must lie inside `snapshot_begin` geometry. Every descriptor must be
 referenced by at least one visible placement.
 
 Pixels are demand-driven. A client sends one 12-byte `image_request` containing
-image id followed by content generation. The endpoint returns `result/rejected`
-if that exact generation is no longer retained. Otherwise it returns:
+image id followed by content generation. For each client, the endpoint retains
+the exact visible image generations named by that client's most recently
+delivered snapshot until it delivers that client a newer snapshot. A request is
+therefore valid even if the canonical VT has already advanced past that image;
+`result/rejected` means the generation belongs to neither current canonical
+state nor that client's latest delivered snapshot. A successful request returns:
 
 1. `image_begin`, 24 bytes: id, generation, width, height, and exact RGBA8 byte
    count;

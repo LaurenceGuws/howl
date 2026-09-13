@@ -26,6 +26,12 @@ const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 // observers see the completed cut rather than arbitrary read boundaries.
 const burst_publication_quiet_ns: u64 = 2 * std.time.ns_per_ms;
 const burst_publication_max_ns: u64 = 8 * std.time.ns_per_ms;
+// Snapshot graphics resources are fetched in a second request after their
+// manifest is observed. One client therefore retains exactly the resources
+// named by its most recently delivered snapshot until that client advances to
+// another snapshot. Control-only clients retain no image bytes.
+const snapshot_image_bytes: usize = howl.maximum_image_storage_bytes;
+const snapshot_image_entries: usize = howl.maximum_images;
 
 const BurstPublicationGate = struct {
     started_ns: ?u64 = null,
@@ -130,6 +136,68 @@ const Listener = struct {
     }
 };
 
+const CachedImage = struct {
+    id: u32,
+    generation: u64,
+    width: u32,
+    height: u32,
+    pixels: []u8,
+};
+
+const ImageResourceCache = struct {
+    entries: std.ArrayList(CachedImage) = .empty,
+    bytes: usize = 0,
+
+    fn deinit(self: *ImageResourceCache, allocator: std.mem.Allocator) void {
+        for (self.entries.items) |entry| allocator.free(entry.pixels);
+        self.entries.deinit(allocator);
+        self.* = .{};
+    }
+
+    fn find(self: *const ImageResourceCache, id: u32, generation: u64) ?howl.Image {
+        for (self.entries.items) |entry| {
+            if (entry.id != id or entry.generation != generation) continue;
+            return .{
+                .id = entry.id,
+                .generation = entry.generation,
+                .width = entry.width,
+                .height = entry.height,
+                .pixels = entry.pixels,
+            };
+        }
+        return null;
+    }
+
+    fn captureVisible(
+        allocator: std.mem.Allocator,
+        images: *const howl.Images,
+    ) !ImageResourceCache {
+        var result: ImageResourceCache = .{};
+        errdefer result.deinit(allocator);
+        var index: usize = 0;
+        while (index < images.imageCount()) : (index += 1) {
+            const image = images.image(index) orelse return error.InvalidSnapshot;
+            if (!imageVisible(images, image.id)) continue;
+            if (image.pixels.len > howl.maximum_image_bytes or
+                result.entries.items.len >= snapshot_image_entries or
+                result.bytes > snapshot_image_bytes - image.pixels.len)
+                return error.InvalidSnapshot;
+
+            const pixels = try allocator.dupe(u8, image.pixels);
+            errdefer allocator.free(pixels);
+            try result.entries.append(allocator, .{
+                .id = image.id,
+                .generation = image.generation,
+                .width = image.width,
+                .height = image.height,
+                .pixels = pixels,
+            });
+            result.bytes += pixels.len;
+        }
+        return result;
+    }
+};
+
 comptime {
     if (howl.maximum_cell_scalars != protocol.text_v1.maximum_cell_scalars)
         @compileError("text_v1 scalar bound must match canonical VT grapheme bound");
@@ -160,6 +228,7 @@ const Client = struct {
     output: std.ArrayList(u8) = .empty,
     output_offset: usize = 0,
     observe: ?protocol.Observe = null,
+    snapshot_images: ImageResourceCache = .{},
 
     fn outputPending(self: *const Client) bool {
         return self.output_offset < self.output.items.len;
@@ -174,6 +243,7 @@ const Client = struct {
     fn deinit(self: *Client, allocator: std.mem.Allocator) void {
         closeFd(self.fd);
         self.output.deinit(allocator);
+        self.snapshot_images.deinit(allocator);
         self.* = undefined;
     }
 };
@@ -599,6 +669,7 @@ const Server = struct {
         const request = protocol.decodeImageRequest(payload) catch
             return self.queueResult(client, .image_request, .malformed);
         const image = howl.image(self.session, request.image_id, request.generation) orelse
+            client.snapshot_images.find(request.image_id, request.generation) orelse
             return self.queueResult(client, .image_request, .rejected);
         const expected = std.math.mul(u64, image.width, image.height) catch
             return self.queueResult(client, .image_request, .rejected);
@@ -988,6 +1059,8 @@ const Server = struct {
             protocol.header_bytes + protocol.payload_bytes.snapshot_end;
         if (total_bound > protocol.maximum_observation_bytes) return error.SnapshotTooLarge;
 
+        var snapshot_images = try ImageResourceCache.captureVisible(self.allocator, &graphics);
+        errdefer snapshot_images.deinit(self.allocator);
         client.resetOutput(self.allocator);
         errdefer client.resetOutput(self.allocator);
         try client.output.ensureTotalCapacity(self.allocator, total_bound);
@@ -1028,6 +1101,8 @@ const Server = struct {
         try self.appendFrame(&client.output, .snapshot_end, &end_payload);
         std.debug.assert(client.output.items.len == total_bound);
         client.output_offset = 0;
+        client.snapshot_images.deinit(self.allocator);
+        client.snapshot_images = snapshot_images;
     }
 
     fn appendSnapshotData(
@@ -2201,7 +2276,10 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
             .columns = 8,
             .history_rows = 8,
             .shell = "/bin/sh",
-            .command = "printf '\\033_Ga=T,f=32,s=2,v=2,i=9,c=2,r=1,q=2;AQIDBAUGBwgJCgsMDQ4PEA==\\033\\\\'; sleep 30",
+            .command = "printf '\\033_Ga=T,f=32,s=2,v=2,i=9,c=2,r=1,q=2;AQIDBAUGBwgJCgsMDQ4PEA==\\033\\\\'; " ++
+                "read trigger; " ++
+                "printf '\\033_Ga=T,f=32,s=2,v=2,i=9,c=2,r=1,q=2;ERITFBUWFxgZGhscHR4fIA==\\033\\\\'; " ++
+                "sleep 30",
         },
     );
     defer server.deinit();
@@ -2255,6 +2333,18 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     try std.testing.expectEqual(@as(u32, 20), placement.pixel_width);
     try std.testing.expectEqual(@as(u32, 20), placement.pixel_height);
 
+    // Advance the canonical terminal to a replacement image after the first
+    // snapshot has already advertised its exact generation, but do not deliver
+    // another snapshot to this client yet. The old image is intentionally gone
+    // from VT storage; this client must still be able to finish the resource
+    // transaction promised by its last delivered snapshot.
+    try sendInput(&peer, &server, "go\n");
+    try expectResult(&peer, &server, .input, .ok);
+    attempts = 0;
+    while (attempts < 64 and howl.image(server.session, image.image_id, image.generation) != null) : (attempts += 1)
+        try server.turn(1);
+    try std.testing.expect(howl.image(server.session, image.image_id, image.generation) == null);
+
     const before_fetch = howl.revision(server.session);
     var request: [protocol.payload_bytes.image_request]u8 = undefined;
     protocol.encodeImageRequest(&request, .{
@@ -2284,9 +2374,30 @@ test "snapshot graphics manifest names exact fetchable Kitty RGBA generation" {
     try std.testing.expectEqual(begin.generation, end.generation);
     try std.testing.expectEqual(before_fetch, howl.revision(server.session));
 
+    // Deliver the replacement snapshot. That advances this client beyond the
+    // old manifest, so the previous generation is no longer promised.
+    try sendObserve(&peer, &server, captured.begin.revision);
+    var replacement = try receiveWireSnapshot(&peer, &server);
+    defer replacement.deinit();
+    const replacement_header = try protocol.decodeSnapshotGraphicsHeader(
+        replacement.graphics[0..protocol.graphics_v2.manifest_header_bytes],
+    );
+    try std.testing.expectEqual(@as(u16, 1), replacement_header.image_count);
+    const replacement_image = try protocol.decodeSnapshotImage(
+        replacement.graphics[protocol.graphics_v2.manifest_header_bytes..][0..protocol.graphics_v2.image_bytes],
+    );
+    try std.testing.expectEqual(image.image_id, replacement_image.image_id);
+    try std.testing.expect(replacement_image.generation != image.generation);
     protocol.encodeImageRequest(&request, .{
         .image_id = image.image_id,
-        .generation = image.generation + 1,
+        .generation = image.generation,
+    });
+    try peer.sendFrame(&server, .image_request, &request);
+    try expectResult(&peer, &server, .image_request, .rejected);
+
+    protocol.encodeImageRequest(&request, .{
+        .image_id = image.image_id,
+        .generation = std.math.maxInt(u64),
     });
     try peer.sendFrame(&server, .image_request, &request);
     try expectResult(&peer, &server, .image_request, .rejected);
