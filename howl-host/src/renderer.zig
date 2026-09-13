@@ -68,6 +68,7 @@ const FastDraw = struct {
 const DuetReady = union(enum) {
     scene: usize,
     command: shared.HostCommand,
+    window_size: shared.WindowSize,
 };
 
 const GenericDraw = struct {
@@ -77,7 +78,8 @@ const GenericDraw = struct {
     alpha_pixels: []const u8,
     image_pixels: []const u8,
     residency: *surface.ResidencyStore,
-    changed: bool,
+    stage: bool,
+    residency_changed: bool,
 };
 
 const Slot = struct {
@@ -103,6 +105,24 @@ const OfferedFds = struct {
     dma: i32 = -1,
     acquire: i32 = -1,
     timeline: i32 = -1,
+};
+
+const RenderRing = struct {
+    revision: u64,
+    width: u16,
+    height: u16,
+    slots: [shared.slot_count]Slot = @splat(.{}),
+    slot_index: usize = 0,
+    previous_slot: ?usize = null,
+
+    fn deinit(self: *RenderRing, device: vk.VkDevice, drm_fd: i32) void {
+        var index = self.slots.len;
+        while (index != 0) {
+            index -= 1;
+            self.slots[index].deinit(device, drm_fd);
+        }
+        self.* = undefined;
+    }
 };
 
 /// Runs the sole Vulkan/DRM owner until the bounded ring completes or fails.
@@ -207,10 +227,10 @@ fn runFallible(
         &session_revisions,
         &projected_layout,
     );
-    const surface_width = geometry.surface_width;
-    const surface_height = geometry.surface_height;
-    const workspace_rows = geometry.grid_rows;
-    const workspace_cols = geometry.grid_cols;
+    var surface_width = geometry.surface_width;
+    var surface_height = geometry.surface_height;
+    var workspace_rows = geometry.grid_rows;
+    var workspace_cols = geometry.grid_cols;
     const cell_size = scenes[0].?.cellSize();
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
@@ -308,29 +328,25 @@ fn runFallible(
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
     defer destroySyncobj(drm_fd, acquire_handle);
-    var slots = [_]Slot{ .{}, .{}, .{} };
-    defer {
-        var index = slots.len;
-        while (index > 0) {
-            index -= 1;
-            slots[index].deinit(device, drm_fd);
-        }
-    }
-    var offers: [shared.slot_count]shared.SlotOffer = undefined;
-    var offered_fds = [_]OfferedFds{ .{}, .{}, .{} };
-    errdefer for (&offered_fds) |*fds| {
-        if (fds.dma >= 0) closeDescriptor(fds.dma);
-        if (fds.acquire >= 0) closeDescriptor(fds.acquire);
-        if (fds.timeline >= 0) closeDescriptor(fds.timeline);
-    };
-    for (&slots, 0..) |*slot, index| {
-        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, surface_width, surface_height, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index]);
-        if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &offered_fds[index].acquire) != 0) return error.Syncobj;
-        offers[index].acquire_timeline_fd = offered_fds[index].acquire;
-    }
-    try boundary.publishOffers(offers);
-    for (&offered_fds) |*fds| fds.* = .{};
-    try waitWindowRing(boundary);
+    var ring = try createRenderRing(
+        boundary,
+        &graphics,
+        device,
+        memory_properties,
+        feedback.modifier,
+        dedicated_only,
+        plane_count,
+        surface_width,
+        surface_height,
+        get_memory_fd.?,
+        get_modifier.?,
+        drm_fd,
+        acquire_handle,
+        1,
+    );
+    defer ring.deinit(device, drm_fd);
+    var retiring_ring: ?RenderRing = null;
+    defer if (retiring_ring) |*value| value.deinit(device, drm_fd);
 
     var pool_info = std.mem.zeroes(vk.VkCommandPoolCreateInfo);
     pool_info.sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -354,9 +370,8 @@ fn runFallible(
     queue_active = true;
     var present_revision: u64 = 0;
     var acquire_point: u64 = 0;
-    var slot_index: usize = 0;
-    var previous_slot: ?usize = null;
     var changed: [2]bool = .{ true, scene_count == 2 };
+    var surface_restage = false;
     var retained_draw_count: u64 = 0;
     var generic_draw_count_total: u64 = 0;
     var observation_armed: [2]bool = @splat(false);
@@ -380,7 +395,7 @@ fn runFallible(
     while (!boundary.shouldStop()) {
         var wait_semaphore: ?vk.VkSemaphore = null;
         defer if (wait_semaphore) |value| vk.vkDestroySemaphore(device, value, null);
-        const slot = &slots[slot_index];
+        const slot = &ring.slots[ring.slot_index];
         if (slot.external) {
             try waitTimeline(drm_fd, slot.release_handle, slot.release_point);
             wait_semaphore = try importRelease(
@@ -478,7 +493,8 @@ fn runFallible(
                             .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
                             .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
                             .residency = &scenes[scene_index].?.residency,
-                            .changed = changed[scene_index],
+                            .stage = changed[scene_index] or surface_restage,
+                            .residency_changed = changed[scene_index],
                         };
                         generic_draw_count += 1;
                     },
@@ -523,7 +539,8 @@ fn runFallible(
                                 .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
                                 .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
                                 .residency = &scenes[scene_index].?.overlay_residency,
-                                .changed = changed[scene_index],
+                                .stage = changed[scene_index] or surface_restage,
+                                .residency_changed = changed[scene_index],
                             };
                             generic_draw_count += 1;
                         }
@@ -534,7 +551,7 @@ fn runFallible(
         const fast_draws = fast_draw_storage[0..fast_draw_count];
         const generic_draws = generic_draw_storage[0..generic_draw_count];
         errdefer for (fast_draws) |draw| if (draw.changed) draw.gpu.discard();
-        errdefer for (generic_draws) |draw| if (draw.changed) draw.residency.discard();
+        errdefer for (generic_draws) |draw| if (draw.residency_changed) draw.residency.discard();
         try render(
             &graphics,
             plan,
@@ -561,21 +578,34 @@ fn runFallible(
             vk.vkDestroySemaphore(device, value, null);
             wait_semaphore = null;
         }
+        surface_restage = false;
         try boundary.publishCompletion(.{
+            .ring_revision = ring.revision,
             .revision = present_revision,
-            .slot = @intCast(slot_index),
+            .slot = @intCast(ring.slot_index),
             .acquire_point = acquire_point,
             .release_point = slot.release_point,
         });
 
+        // The first commit from a replacement ring lets KWin release every
+        // buffer from its predecessor. Retire that whole generation before
+        // reusing ordinary per-ring slot pacing.
+        if (retiring_ring) |*retiring| {
+            try waitRenderRingReleased(retiring, drm_fd);
+            const retiring_revision = retiring.revision;
+            retiring.deinit(device, drm_fd);
+            retiring_ring = null;
+            try boundary.publishRingRetired(retiring_revision);
+        }
+
         // Publishing the next slot lets KWin retire the previous one. Waiting
         // here bounds presentation backlog without pacing canonical Session
         // progress: Session continues independently while this observer waits.
-        if (previous_slot) |prior| {
-            try waitTimeline(drm_fd, slots[prior].release_handle, slots[prior].release_point);
+        if (ring.previous_slot) |prior| {
+            try waitTimeline(drm_fd, ring.slots[prior].release_handle, ring.slots[prior].release_point);
         }
-        previous_slot = slot_index;
-        slot_index = (slot_index + 1) % shared.slot_count;
+        ring.previous_slot = ring.slot_index;
+        ring.slot_index = (ring.slot_index + 1) % shared.slot_count;
         for (0..scene_count) |scene_index| changed[scene_index] = false;
 
         var active_grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
@@ -783,6 +813,45 @@ fn runFallible(
                         );
                     }
                 },
+            },
+            .window_size => |requested| {
+                if (requested.width == surface_width and requested.height == surface_height) continue;
+                const target_cols: u16 = @max(2, requested.width / cell_size.width);
+                const target_rows: u16 = @max(1, requested.height / cell_size.height);
+                if (target_cols != workspace_cols or target_rows != workspace_rows) {
+                    const resized = try applyWindowGeometry(
+                        &mux,
+                        &scene_panes,
+                        &geometry_controls,
+                        &geometry_owned,
+                        &scenes,
+                        scene_count,
+                        &prepared,
+                        &session_revisions,
+                        &changed,
+                        &observation_armed,
+                        workspace_rows,
+                        workspace_cols,
+                        target_rows,
+                        target_cols,
+                    );
+                    if (!resized) continue;
+                    workspace_rows = target_rows;
+                    workspace_cols = target_cols;
+                }
+                if (retiring_ring != null) return error.RingRetirementPending;
+                const next_revision = std.math.add(u64, ring.revision, 1) catch return error.RevisionOverflow;
+                var replacement = try createRenderRing(
+                    boundary, &graphics, device, memory_properties, feedback.modifier,
+                    dedicated_only, plane_count, requested.width, requested.height,
+                    get_memory_fd.?, get_modifier.?, drm_fd, acquire_handle, next_revision,
+                );
+                retiring_ring = ring;
+                ring = replacement;
+                replacement = undefined;
+                surface_width = requested.width;
+                surface_height = requested.height;
+                surface_restage = true;
             },
         }
     }
@@ -1398,6 +1467,134 @@ fn removeCreatedTab(
     try boundary.publishPaneRetired();
 }
 
+fn settleSceneGeometry(
+    scene: *terminal_scene.Scene,
+    target_rows: u16,
+    target_cols: u16,
+    keep_prepared: bool,
+    prepared: *terminal_scene.Prepared,
+    session_revision: *u64,
+    changed: *bool,
+    observation_armed: *bool,
+) !void {
+    if (!observation_armed.*) {
+        try scene.arm(session_revision.*);
+        observation_armed.* = true;
+    }
+    var attempts: u8 = 0;
+    while (attempts < 8) : (attempts += 1) {
+        const next = try scene.receivePrepared();
+        observation_armed.* = false;
+        session_revision.* = next.session_revision;
+        if (next.rows == target_rows and next.cols == target_cols) {
+            prepared.* = next;
+            if (keep_prepared) {
+                changed.* = true;
+                try scene.arm(session_revision.*);
+                observation_armed.* = true;
+            } else {
+                scene.discardPrepared(next);
+                changed.* = false;
+            }
+            return;
+        }
+        scene.discardPrepared(next);
+        try scene.arm(session_revision.*);
+        observation_armed.* = true;
+    }
+    return error.GeometryObservationTimeout;
+}
+
+fn applyWindowGeometry(
+    mux: *const host_layout.Mux,
+    scene_panes: *const [2]?host_layout.PaneId,
+    controls: *[2]?client.Connection,
+    geometry_owned: *[2]bool,
+    scenes: *[2]?terminal_scene.Scene,
+    scene_count: usize,
+    prepared: *[2]terminal_scene.Prepared,
+    session_revisions: *[2]u64,
+    changed: *[2]bool,
+    observation_armed: *[2]bool,
+    old_rows: u16,
+    old_cols: u16,
+    target_rows: u16,
+    target_cols: u16,
+) !bool {
+    if (scene_count == 0 or scene_count > scenes.len or target_rows == 0 or target_cols < 2)
+        return error.DuetGeometry;
+    const target_surface = host_layout.Surface{ .width = target_cols, .height = target_rows };
+    const old_surface = host_layout.Surface{ .width = old_cols, .height = old_rows };
+    var old_scene_rows: [2]u16 = undefined;
+    var old_scene_cols: [2]u16 = undefined;
+    var target_scene_rows: [2]u16 = undefined;
+    var target_scene_cols: [2]u16 = undefined;
+    var applied: [2]bool = @splat(false);
+    for (0..scene_count) |index| {
+        const pane = scene_panes[index] orelse return error.SceneTopologyMismatch;
+        const target = try mux.paneRect(target_surface, pane);
+        old_scene_rows[index] = prepared[index].rows;
+        old_scene_cols[index] = prepared[index].cols;
+        target_scene_rows[index] = @intCast(target.height);
+        target_scene_cols[index] = @intCast(target.width);
+        if (old_scene_rows[index] == target_scene_rows[index] and
+            old_scene_cols[index] == target_scene_cols[index]) continue;
+        requestCanonicalGeometry(
+            &controls[index].?,
+            &geometry_owned[index],
+            prepared[index],
+            target_scene_rows[index],
+            target_scene_cols[index],
+        ) catch |failure| {
+            rollbackInitialGeometry(
+                controls, applied, old_scene_rows, old_scene_cols, index,
+            ) catch return error.ResizeTransactionFailed;
+            if (failure == error.ServerRejected or failure == error.ResizeAuthorityUnavailable) {
+                var old_active_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+                const old_active = try mux.activeLayout(old_surface, &old_active_storage);
+                for (0..index) |rollback_index| {
+                    if (!applied[rollback_index]) continue;
+                    try settleSceneGeometry(
+                        &scenes[rollback_index].?,
+                        old_scene_rows[rollback_index],
+                        old_scene_cols[rollback_index],
+                        sceneIsVisible(scene_panes, scene_count, old_active, rollback_index),
+                        &prepared[rollback_index],
+                        &session_revisions[rollback_index],
+                        &changed[rollback_index],
+                        &observation_armed[rollback_index],
+                    );
+                }
+                return false;
+            }
+            return failure;
+        };
+        applied[index] = true;
+    }
+
+    var target_active_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const target_active = try mux.activeLayout(target_surface, &target_active_storage);
+    for (0..scene_count) |index| {
+        if (!applied[index]) continue;
+        settleSceneGeometry(
+            &scenes[index].?,
+            target_scene_rows[index],
+            target_scene_cols[index],
+            sceneIsVisible(scene_panes, scene_count, target_active, index),
+            &prepared[index],
+            &session_revisions[index],
+            &changed[index],
+            &observation_armed[index],
+        ) catch |failure| {
+            rollbackInitialGeometry(
+                controls, applied, old_scene_rows, old_scene_cols, scene_count,
+            ) catch return error.ResizeTransactionFailed;
+            return failure;
+        };
+    }
+    return true;
+}
+
 fn applyDuetGeometryCommand(
     command: shared.HostCommand,
     mux: *host_layout.Mux,
@@ -1648,6 +1845,7 @@ fn waitDuetReady(
         if (control_events & c.POLLIN != 0) {
             try boundary.drainControlWake();
             if (boundary.takeHostCommand()) |command| return .{ .command = command };
+            if (boundary.takeWindowSize()) |size| return .{ .window_size = size };
         }
         for (0..scene_count) |offset| {
             const index = (start + offset) % scene_count;
@@ -1662,7 +1860,7 @@ fn watchStop(
     cancellations: *CancellationRegistry,
     done: *std.atomic.Value(bool),
 ) void {
-    var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
+    var descriptor = c.pollfd{ .fd = boundary.stopFd(), .events = c.POLLIN, .revents = 0 };
     while (!done.load(.acquire)) {
         descriptor.revents = 0;
         const ready = c.poll(&descriptor, 1, 100);
@@ -1676,7 +1874,7 @@ fn watchStop(
             cancellations.cancelAll(boundary);
             return;
         }
-        boundary.drainRenderWake() catch {
+        boundary.drainStopWake() catch {
             boundary.requestStop(.render);
             return;
         };
@@ -1693,10 +1891,10 @@ fn waitFeedback(boundary: *shared.Boundary) !shared.Feedback {
     return error.FeedbackTimeout;
 }
 
-fn waitWindowRing(boundary: *shared.Boundary) !void {
+fn waitWindowRing(boundary: *shared.Boundary, ring_revision: u64) !void {
     var wakes: u8 = 0;
     while (wakes < 8) : (wakes += 1) {
-        if (boundary.isWindowRingReady()) return;
+        if (boundary.isWindowRingReady(ring_revision)) return;
         if (boundary.shouldStop()) return error.Stopping;
         try waitRenderWake(boundary);
     }
@@ -1844,6 +2042,48 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     return error.Modifier;
 }
 
+fn createRenderRing(
+    boundary: *shared.Boundary,
+    graphics: *const surface.Context,
+    device: vk.VkDevice,
+    memory_properties: vk.VkPhysicalDeviceMemoryProperties,
+    modifier: u64,
+    dedicated_only: bool,
+    plane_count: u8,
+    width: u16,
+    height: u16,
+    get_memory_fd: vk.PFN_vkGetMemoryFdKHR,
+    get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT,
+    drm_fd: i32,
+    acquire_handle: u32,
+    revision: u64,
+) !RenderRing {
+    if (revision == 0 or width == 0 or height == 0) return error.InvalidRing;
+    var result = RenderRing{ .revision = revision, .width = width, .height = height };
+    errdefer result.deinit(device, drm_fd);
+    var offers: [shared.slot_count]shared.SlotOffer = undefined;
+    var offered_fds = [_]OfferedFds{ .{}, .{}, .{} };
+    errdefer for (&offered_fds) |*fds| {
+        if (fds.dma >= 0) closeDescriptor(fds.dma);
+        if (fds.acquire >= 0) closeDescriptor(fds.acquire);
+        if (fds.timeline >= 0) closeDescriptor(fds.timeline);
+    };
+    for (&result.slots, 0..) |*slot, index| {
+        try constructSlot(
+            slot, graphics, device, memory_properties, modifier, dedicated_only, plane_count,
+            width, height, get_memory_fd, get_modifier, drm_fd, &offers[index], &offered_fds[index],
+        );
+        offers[index].ring_revision = revision;
+        if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &offered_fds[index].acquire) != 0)
+            return error.Syncobj;
+        offers[index].acquire_timeline_fd = offered_fds[index].acquire;
+    }
+    try boundary.publishOffers(offers);
+    for (&offered_fds) |*fds| fds.* = .{};
+    try waitWindowRing(boundary, revision);
+    return result;
+}
+
 fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, width: u16, height: u16, get_memory_fd: vk.PFN_vkGetMemoryFdKHR, get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds) !void {
     var selected_modifier = modifier;
     var modifier_list = std.mem.zeroes(vk.VkImageDrmFormatModifierListCreateInfoEXT);
@@ -1911,7 +2151,7 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     if (get_memory_fd.?(device, &fd_info, &offered_fds.dma) != vk.VK_SUCCESS or offered_fds.dma < 0) return error.DmaBuf;
     if (c.drmSyncobjCreate(drm_fd, 0, &slot.release_handle) != 0) return error.Syncobj;
     if (c.drmSyncobjHandleToFD(drm_fd, slot.release_handle, &offered_fds.timeline) != 0) return error.Syncobj;
-    offer.* = .{ .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .width = width, .height = height, .plane_count = plane_count, .planes = slot.planes };
+    offer.* = .{ .ring_revision = 0, .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .width = width, .height = height, .plane_count = plane_count, .planes = slot.planes };
 }
 
 fn render(
@@ -1937,7 +2177,7 @@ fn render(
     height: u16,
 ) !void {
     try graphics.stage(plan, alpha_pixels, image_pixels, width, height);
-    for (generic_draws) |draw| if (draw.changed) try draw.context.stagePlaced(
+    for (generic_draws) |draw| if (draw.stage) try draw.context.stagePlaced(
         draw.plan,
         draw.alpha_pixels,
         draw.image_pixels,
@@ -1964,7 +2204,7 @@ fn render(
     const recording = try graphics.recordPrelude(command, target, plan);
     var auxiliary_recordings: [2]surface.Recording = undefined;
     var auxiliary_recorded: [2]bool = @splat(false);
-    for (generic_draws, 0..) |draw, draw_index| if (draw.changed) {
+    for (generic_draws, 0..) |draw, draw_index| if (draw.stage) {
         auxiliary_recordings[draw_index] = try draw.context.recordAuxiliaryPrelude(
             command,
             target,
@@ -2025,11 +2265,13 @@ fn render(
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(completed_recording);
     for (fast_draws) |draw| if (draw.changed) try draw.gpu.complete();
-    for (generic_draws, 0..) |draw, draw_index| if (draw.changed) {
-        std.debug.assert(auxiliary_recorded[draw_index]);
-        draw.context.complete(auxiliary_recordings[draw_index]);
-        try draw.residency.complete();
-    };
+    for (generic_draws, 0..) |draw, draw_index| {
+        if (draw.stage) {
+            std.debug.assert(auxiliary_recorded[draw_index]);
+            draw.context.complete(auxiliary_recordings[draw_index]);
+        }
+        if (draw.residency_changed) try draw.residency.complete();
+    }
     if (residency_commit) |value| try value.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
@@ -2062,6 +2304,13 @@ fn importRelease(device: vk.VkDevice, drm_fd: i32, release_handle: u32, point: u
     if (import_fd.?(device, &import_info) != vk.VK_SUCCESS) return error.Semaphore;
     owned = false;
     return semaphore;
+}
+
+fn waitRenderRingReleased(ring: *const RenderRing, drm_fd: i32) !void {
+    for (ring.slots) |slot| {
+        if (!slot.external or slot.release_point == 0) continue;
+        try waitTimeline(drm_fd, slot.release_handle, slot.release_point);
+    }
 }
 
 fn waitTimeline(drm_fd: i32, handle: u32, point: u64) !void {

@@ -45,6 +45,30 @@ fn installFormatTable(state: *State, fd: i32, size: u32) !void {
     retiring.deinit();
 }
 
+const WindowRing = struct {
+    revision: u64 = 0,
+    buffers: [shared.slot_count]?*c.wl_buffer = .{ null, null, null },
+    acquire_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    width: u16 = 0,
+    height: u16 = 0,
+
+    fn live(self: *const WindowRing) bool {
+        return self.revision != 0;
+    }
+
+    fn deinit(self: *WindowRing) void {
+        var index = shared.slot_count;
+        while (index > 0) {
+            index -= 1;
+            if (self.buffers[index]) |value| c.wl_buffer_destroy(value);
+            if (self.timelines[index]) |value| c.wp_linux_drm_syncobj_timeline_v1_destroy(value);
+            if (self.acquire_timelines[index]) |value| c.wp_linux_drm_syncobj_timeline_v1_destroy(value);
+        }
+        self.* = .{};
+    }
+};
+
 const State = struct {
     boundary: *shared.Boundary,
     compositor: ?*c.wl_compositor = null,
@@ -71,13 +95,11 @@ const State = struct {
     format_table: FeedbackMapping = .{},
     formats: [format_limit]struct { fourcc: u32, modifier: u64, device: u64 } = undefined,
     format_count: u16 = 0,
-    buffers: [shared.slot_count]?*c.wl_buffer = .{ null, null, null },
-    acquire_timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
-    timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
+    active_ring: WindowRing = .{},
+    pending_ring: WindowRing = .{},
+    retired_ring: WindowRing = .{},
     frame_callback: ?*c.wl_callback = null,
     presented: u64 = 0,
-    buffer_width: u16 = 0,
-    buffer_height: u16 = 0,
     xkb_context: ?wayland.xkb.Context = null,
     xkb_keymap: ?wayland.xkb.Keymap = null,
     xkb_state: ?wayland.xkb.State = null,
@@ -92,13 +114,9 @@ const State = struct {
         if (self.seat) |value| c.wl_seat_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
-        var index = shared.slot_count;
-        while (index > 0) {
-            index -= 1;
-            if (self.buffers[index]) |value| c.wl_buffer_destroy(value);
-            if (self.timelines[index]) |value| c.wp_linux_drm_syncobj_timeline_v1_destroy(value);
-            if (self.acquire_timelines[index]) |value| c.wp_linux_drm_syncobj_timeline_v1_destroy(value);
-        }
+        self.pending_ring.deinit();
+        self.retired_ring.deinit();
+        self.active_ring.deinit();
         if (self.toplevel) |value| c.xdg_toplevel_destroy(value);
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
         if (self.surface) |value| c.wl_surface_destroy(value);
@@ -150,17 +168,20 @@ fn runFallible(boundary: *shared.Boundary) !void {
     c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan canary");
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
-    c.xdg_surface_ack_configure(state.xdg_surface.?, state.configure_serial);
     state.sync_surface = c.wp_linux_drm_syncobj_manager_v1_get_surface(state.syncobj.?, state.surface.?) orelse return error.ExplicitSync;
 
     const display_fd = c.wl_display_get_fd(display);
     if (display_fd < 0) return error.Dispatch;
     while (!boundary.shouldStop()) {
-        if (!boundary.isWindowRingReady()) {
-            if (boundary.takeOffers()) |offers| {
-                try constructRing(&state, offers);
-                boundary.markWindowRingReady();
-            }
+        if (boundary.takeRingRetired()) |revision| {
+            if (!state.retired_ring.live() or state.retired_ring.revision != revision)
+                return error.InvalidRingRetirement;
+            state.retired_ring.deinit();
+        }
+        if (boundary.takeOffers()) |offers| {
+            if (state.pending_ring.live()) return error.RingPending;
+            state.pending_ring = try constructRing(&state, offers);
+            boundary.markWindowRingReady(state.pending_ring.revision);
         }
         if (state.frame_callback == null) {
             if (boundary.takeCompletion()) |completion| try present(&state, completion);
@@ -184,19 +205,23 @@ fn runFallible(boundary: *shared.Boundary) !void {
     }
 }
 
-fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOffer) !void {
+fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOffer) !WindowRing {
     var offers = initial_offers;
     defer for (&offers) |*offer| {
         if (offer.dma_fd >= 0) closeDescriptor(offer.dma_fd);
         if (offer.acquire_timeline_fd >= 0) closeDescriptor(offer.acquire_timeline_fd);
         if (offer.release_timeline_fd >= 0) closeDescriptor(offer.release_timeline_fd);
     };
+    const revision = offers[0].ring_revision;
     const width = offers[0].width;
     const height = offers[0].height;
-    if (width == 0 or height == 0) return error.InvalidPlane;
+    if (revision == 0 or width == 0 or height == 0) return error.InvalidPlane;
+    var ring = WindowRing{ .revision = revision, .width = width, .height = height };
+    errdefer ring.deinit();
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
-        if (offer.width != width or offer.height != height) return error.InvalidPlane;
+        if (offer.ring_revision != revision or offer.width != width or offer.height != height)
+            return error.InvalidPlane;
         if (offer.plane_count == 0 or offer.plane_count > shared.plane_limit) return error.InvalidPlane;
         const params = c.zwp_linux_dmabuf_v1_create_params(state.dmabuf.?) orelse return error.Buffer;
         defer c.zwp_linux_buffer_params_v1_destroy(params);
@@ -205,9 +230,9 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
             const modifier = state.boundary.readFeedback().?.modifier;
             c.zwp_linux_buffer_params_v1_add(params, offer.dma_fd, @intCast(plane), layout.offset, layout.stride, @intCast(modifier >> 32), @intCast(modifier & 0xffff_ffff));
         }
-        state.buffers[slot] = c.zwp_linux_buffer_params_v1_create_immed(params, width, height, state.boundary.readFeedback().?.fourcc, 0) orelse return error.Buffer;
-        state.acquire_timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.acquire_timeline_fd) orelse return error.ExplicitSync;
-        state.timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.release_timeline_fd) orelse return error.ExplicitSync;
+        ring.buffers[slot] = c.zwp_linux_buffer_params_v1_create_immed(params, width, height, state.boundary.readFeedback().?.fourcc, 0) orelse return error.Buffer;
+        ring.acquire_timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.acquire_timeline_fd) orelse return error.ExplicitSync;
+        ring.timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.release_timeline_fd) orelse return error.ExplicitSync;
         closeDescriptor(offer.dma_fd);
         offer.dma_fd = -1;
         closeDescriptor(offer.acquire_timeline_fd);
@@ -215,22 +240,36 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
         closeDescriptor(offer.release_timeline_fd);
         offer.release_timeline_fd = -1;
     }
-    state.buffer_width = width;
-    state.buffer_height = height;
+    return ring;
 }
 
 fn present(state: *State, completion: shared.Completion) !void {
-    if (completion.slot >= shared.slot_count or completion.revision <= state.presented) return error.InvalidCompletion;
+    if (completion.ring_revision == 0 or completion.slot >= shared.slot_count or
+        completion.revision <= state.presented) return error.InvalidCompletion;
     if (state.frame_callback != null) return error.PresentationPaced;
+    const promote = state.pending_ring.live() and
+        state.pending_ring.revision == completion.ring_revision;
+    const ring: *WindowRing = if (promote)
+        &state.pending_ring
+    else if (state.active_ring.live() and state.active_ring.revision == completion.ring_revision)
+        &state.active_ring
+    else
+        return error.InvalidCompletion;
     const slot: usize = completion.slot;
-    c.wp_linux_drm_syncobj_surface_v1_set_acquire_point(state.sync_surface.?, state.acquire_timelines[slot].?, 0, @intCast(completion.acquire_point));
-    c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, state.timelines[slot].?, 0, @intCast(completion.release_point));
+    c.wp_linux_drm_syncobj_surface_v1_set_acquire_point(state.sync_surface.?, ring.acquire_timelines[slot].?, 0, @intCast(completion.acquire_point));
+    c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, ring.timelines[slot].?, 0, @intCast(completion.release_point));
     state.frame_callback = c.wl_surface_frame(state.surface.?) orelse return error.Frame;
     if (c.wl_callback_add_listener(state.frame_callback.?, &frame_listener, state) != 0) return error.Listener;
-    c.wl_surface_attach(state.surface.?, state.buffers[slot].?, 0, 0);
-    c.wl_surface_damage_buffer(state.surface.?, 0, 0, state.buffer_width, state.buffer_height);
+    c.wl_surface_attach(state.surface.?, ring.buffers[slot].?, 0, 0);
+    c.wl_surface_damage_buffer(state.surface.?, 0, 0, ring.width, ring.height);
     c.wl_surface_commit(state.surface.?);
     state.presented = completion.revision;
+    if (promote) {
+        if (state.retired_ring.live()) return error.RingRetirementPending;
+        state.retired_ring = state.active_ring;
+        state.active_ring = state.pending_ring;
+        state.pending_ring = .{};
+    }
 }
 
 fn selectFeedback(state: *const State) ?shared.Feedback {
@@ -420,15 +459,22 @@ fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
 const xdg_listener = c.xdg_wm_base_listener{ .ping = ping };
 fn surfaceConfigure(data: ?*anyopaque, _: ?*c.xdg_surface, serial: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
+    c.xdg_surface_ack_configure(state.xdg_surface.?, serial);
     state.configured = true;
     state.configure_serial = serial;
 }
 const xdg_surface_listener = c.xdg_surface_listener{ .configure = surfaceConfigure };
 fn topConfigure(data: ?*anyopaque, _: ?*c.xdg_toplevel, width: i32, height: i32, _: ?*c.wl_array) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (width < 0 or height < 0) {
+    if (width < 0 or height < 0 or width > std.math.maxInt(u16) or height > std.math.maxInt(u16)) {
         state.boundary.requestStop(.window);
         return;
+    }
+    if (width != 0 and height != 0) {
+        state.boundary.publishWindowSize(.{
+            .width = @intCast(width),
+            .height = @intCast(height),
+        }) catch state.boundary.requestStop(.window);
     }
     state.toplevel_configured = true;
 }

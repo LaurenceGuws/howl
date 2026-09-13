@@ -384,6 +384,25 @@ pub const Mux = struct {
         return self.tabs[self.active_index].project(surface, output);
     }
 
+    /// Projects one stable pane in whichever retained tab owns it.
+    pub fn paneRect(
+        self: *const Mux,
+        surface: Surface,
+        pane: PaneId,
+    ) error{ StalePane, InvalidSurface, GeometryLimit }!Rect {
+        var storage: [max_panes_per_tab]Placement = undefined;
+        for (self.tabs[0..self.tab_count]) |tab| {
+            if (tab.findPane(pane) == null) continue;
+            const placed = tab.project(surface, &storage) catch |failure| switch (failure) {
+                error.InsufficientOutput => unreachable,
+                else => |err| return err,
+            };
+            for (placed) |value| if (value.pane == pane) return value.rect;
+            unreachable;
+        }
+        return error.StalePane;
+    }
+
     fn tabIndex(self: *const Mux, id: TabId) ?u8 {
         for (self.tabs[0..self.tab_count], 0..) |tab, index| {
             if (tab.id == id) return @intCast(index);
@@ -449,6 +468,17 @@ test "tabs own independent trees and stable identities" {
     try std.testing.expectEqual(@as(u8, 4), mux.paneCount());
     try std.testing.expect(try mux.switchTab(first_tab));
     try std.testing.expectEqual(first_split, mux.focusedPane());
+}
+
+test "pane rect projects inactive tab geometry from stable identity" {
+    var mux = Mux.init();
+    const first = mux.focusedPane();
+    const created = try mux.createTab();
+    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 },
+        try mux.paneRect(.{ .width = 91, .height = 37 }, first));
+    try std.testing.expectEqual(Rect{ .x = 0, .y = 0, .width = 91, .height = 37 },
+        try mux.paneRect(.{ .width = 91, .height = 37 }, created.pane));
+    try std.testing.expectError(error.StalePane, mux.paneRect(.{ .width = 91, .height = 37 }, paneId(999)));
 }
 
 test "next tab follows retained order and wraps" {

@@ -40,6 +40,8 @@ pub const PaneEndpoint = struct {
     }
 };
 
+pub const WindowSize = struct { width: u16, height: u16 };
+
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
@@ -69,6 +71,8 @@ pub const Feedback = struct {
 /// Render to Window. Boundary owns every descriptor after successful publish;
 /// `takeOffers` transfers all three descriptors to Window.
 pub const SlotOffer = struct {
+    /// Nonzero presentation-ring identity shared by all offers in one ring.
+    ring_revision: u64,
     /// Exported DMA-BUF descriptor.
     dma_fd: i32,
     /// Duplicated acquire-timeline syncobj descriptor.
@@ -87,6 +91,8 @@ pub const SlotOffer = struct {
 
 /// Copies one completed Render revision for compositor presentation.
 pub const Completion = struct {
+    /// Nonzero presentation-ring identity owning `slot`.
+    ring_revision: u64,
     /// Nonzero globally increasing render revision.
     revision: u64,
     /// Slot identity within the fixed ring.
@@ -119,7 +125,8 @@ pub const Boundary = struct {
     feedback: ?Feedback = null,
     offers: [slot_count]?SlotOffer = .{ null, null, null },
     offer_count: u8 = 0,
-    window_ring_ready: bool = false,
+    window_ring_ready_revision: u64 = 0,
+    ring_retired: ?u64 = null,
     completions: [slot_count]Completion = undefined,
     completion_head: u8 = 0,
     completion_count: u8 = 0,
@@ -132,6 +139,7 @@ pub const Boundary = struct {
     pane_endpoint: ?PaneEndpoint = null,
     pane_retired_pending: bool = false,
     tab_switched_pending: bool = false,
+    window_size: ?WindowSize = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -141,6 +149,7 @@ pub const Boundary = struct {
     window_fd: i32,
     input_fd: i32,
     control_fd: i32,
+    stop_fd: i32,
 
     /// Creates the three owner-specific nonblocking eventfds.
     /// On failure, no descriptor remains owned by the caller.
@@ -156,12 +165,16 @@ pub const Boundary = struct {
         errdefer closeDescriptor(input_fd);
         const control_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (control_fd < 0) return error.Signal;
+        errdefer closeDescriptor(control_fd);
+        const stop_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (stop_fd < 0) return error.Signal;
         return .{
             .io = io,
             .render_fd = render_fd,
             .window_fd = window_fd,
             .input_fd = input_fd,
             .control_fd = control_fd,
+            .stop_fd = stop_fd,
         };
     }
 
@@ -175,6 +188,7 @@ pub const Boundary = struct {
                 offer.* = null;
             }
         }
+        closeDescriptor(self.stop_fd);
         closeDescriptor(self.control_fd);
         closeDescriptor(self.input_fd);
         closeDescriptor(self.window_fd);
@@ -215,6 +229,16 @@ pub const Boundary = struct {
     /// Drains all pending Input wakes without blocking.
     pub fn drainInputWake(self: *Boundary) error{Signal}!void {
         try drain(self.input_fd);
+    }
+
+    /// Borrows the monotonic stop-watcher eventfd until `deinit`.
+    pub fn stopFd(self: *const Boundary) i32 {
+        return self.stop_fd;
+    }
+
+    /// Drains the monotonic stop-watcher eventfd.
+    pub fn drainStopWake(self: *Boundary) error{Signal}!void {
+        try drain(self.stop_fd);
     }
 
     /// Borrows the Input-to-Render host-control eventfd until `deinit`.
@@ -258,6 +282,28 @@ pub const Boundary = struct {
         const more = self.host_command_count != 0;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
+        return result;
+    }
+
+    /// Replaces the latest compositor-requested logical surface size and wakes Render.
+    pub fn publishWindowSize(self: *Boundary, size: WindowSize) error{ Stopping, InvalidWindowSize }!void {
+        if (size.width == 0 or size.height == 0) return error.InvalidWindowSize;
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.window_size = size;
+        self.mutex.unlock(self.io);
+        signal(self.control_fd);
+    }
+
+    /// Transfers the latest coalesced compositor-requested logical surface size.
+    pub fn takeWindowSize(self: *Boundary) ?WindowSize {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.window_size orelse return null;
+        self.window_size = null;
         return result;
     }
 
@@ -396,8 +442,10 @@ pub const Boundary = struct {
     /// Boundary. Invalid facts, an unconsumed ring, or shutdown leave Boundary
     /// unchanged and every supplied descriptor owned by Render.
     pub fn publishOffers(self: *Boundary, offers: [slot_count]SlotOffer) error{ Stopping, OffersPending, InvalidOffer }!void {
+        const revision = offers[0].ring_revision;
+        if (revision == 0) return error.InvalidOffer;
         for (offers) |offer| {
-            if (offer.dma_fd < 0 or
+            if (offer.ring_revision != revision or offer.dma_fd < 0 or
                 offer.acquire_timeline_fd < 0 or
                 offer.release_timeline_fd < 0 or
                 offer.width == 0 or offer.height == 0 or
@@ -436,19 +484,46 @@ pub const Boundary = struct {
         return result;
     }
 
-    /// Publishes completed Window wrapper construction and wakes Render.
-    pub fn markWindowRingReady(self: *Boundary) void {
+    /// Publishes completed Window wrapper construction for one exact ring.
+    pub fn markWindowRingReady(self: *Boundary, ring_revision: u64) void {
+        std.debug.assert(ring_revision != 0);
         self.mutex.lockUncancelable(self.io);
-        self.window_ring_ready = true;
+        self.window_ring_ready_revision = ring_revision;
         self.mutex.unlock(self.io);
         signal(self.render_fd);
     }
 
-    /// Copies whether Window completed every slot wrapper.
-    pub fn isWindowRingReady(self: *Boundary) bool {
+    /// Reports whether Window completed every wrapper for one exact ring.
+    pub fn isWindowRingReady(self: *Boundary, ring_revision: u64) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return self.window_ring_ready;
+        return ring_revision != 0 and self.window_ring_ready_revision == ring_revision;
+    }
+
+    /// Publishes that Render has observed completion of every use of one retired ring.
+    pub fn publishRingRetired(self: *Boundary, ring_revision: u64) error{ Stopping, RingRetiredPending, InvalidRevision }!void {
+        if (ring_revision == 0) return error.InvalidRevision;
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.ring_retired != null) {
+            self.mutex.unlock(self.io);
+            return error.RingRetiredPending;
+        }
+        self.ring_retired = ring_revision;
+        self.mutex.unlock(self.io);
+        signal(self.window_fd);
+    }
+
+    /// Transfers one exact retired-ring identity to Window.
+    pub fn takeRingRetired(self: *Boundary) ?u64 {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.ring_retired orelse return null;
+        self.ring_retired = null;
+        return result;
     }
 
     /// Appends one ordered completion and wakes Window transactionally.
@@ -458,7 +533,7 @@ pub const Boundary = struct {
             self.mutex.unlock(self.io);
             return error.Stopping;
         }
-        if (completion.revision == 0 or completion.slot >= slot_count) {
+        if (completion.ring_revision == 0 or completion.revision == 0 or completion.slot >= slot_count) {
             self.mutex.unlock(self.io);
             return error.InvalidRevision;
         }
@@ -497,6 +572,7 @@ pub const Boundary = struct {
         self.stop_requested = true;
         if (self.failure == null) self.failure = failure;
         self.mutex.unlock(self.io);
+        signal(self.stop_fd);
         signal(self.window_fd);
         signal(self.render_fd);
         signal(self.input_fd);

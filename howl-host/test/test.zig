@@ -70,6 +70,7 @@ test "Boundary cleanup closes every retained offered descriptor" {
         .{ .offset = 0, .stride = 256 },
     };
     var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+        .ring_revision = 1,
         .dma_fd = -1,
         .acquire_timeline_fd = -1,
         .release_timeline_fd = -1,
@@ -93,13 +94,42 @@ test "Boundary cleanup closes every retained offered descriptor" {
     }
 }
 
+test "ring readiness and retirement preserve exact generation identity" {
+    var value = try boundary();
+    defer value.deinit();
+    value.markWindowRingReady(7);
+    try expectReadable(value.renderFd());
+    try value.drainRenderWake();
+    try std.testing.expect(value.isWindowRingReady(7));
+    try std.testing.expect(!value.isWindowRingReady(6));
+
+    try value.publishRingRetired(7);
+    try expectReadable(value.windowFd());
+    try value.drainWindowWake();
+    try std.testing.expectEqual(@as(u64, 7), value.takeRingRetired().?);
+    try std.testing.expect(value.takeRingRetired() == null);
+    try std.testing.expectError(error.InvalidRevision, value.publishRingRetired(0));
+}
+
+test "window size is latest-wins and wakes only Render control" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishWindowSize(.{ .width = 1001, .height = 501 });
+    try value.publishWindowSize(.{ .width = 1203, .height = 607 });
+    try expectReadable(value.controlFd());
+    try value.drainControlWake();
+    try std.testing.expectEqual(shared.WindowSize{ .width = 1203, .height = 607 }, value.takeWindowSize().?);
+    try std.testing.expect(value.takeWindowSize() == null);
+    try std.testing.expectError(error.InvalidWindowSize, value.publishWindowSize(.{ .width = 0, .height = 1 }));
+}
+
 test "completion queue is bounded ordered and never acknowledges Render" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishCompletion(.{ .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
-    try value.publishCompletion(.{ .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
-    try value.publishCompletion(.{ .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 });
-    try std.testing.expectError(error.CompletionLimit, value.publishCompletion(.{ .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 }));
+    try value.publishCompletion(.{ .ring_revision = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
+    try value.publishCompletion(.{ .ring_revision = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
+    try value.publishCompletion(.{ .ring_revision = 1, .revision = 3, .slot = 2, .acquire_point = 3, .release_point = 1 });
+    try std.testing.expectError(error.CompletionLimit, value.publishCompletion(.{ .ring_revision = 1, .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 }));
     try std.testing.expectEqual(@as(u64, 1), value.takeCompletion().?.revision);
     try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
     try std.testing.expectEqual(@as(u64, 3), value.takeCompletion().?.revision);
@@ -109,9 +139,9 @@ test "completion queue is bounded ordered and never acknowledges Render" {
 test "invalid and stale revisions preserve queued completion" {
     var value = try boundary();
     defer value.deinit();
-    try value.publishCompletion(.{ .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
-    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .revision = 2, .slot = 2, .acquire_point = 3, .release_point = 1 }));
-    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .revision = 3, .slot = 3, .acquire_point = 4, .release_point = 1 }));
+    try value.publishCompletion(.{ .ring_revision = 1, .revision = 2, .slot = 1, .acquire_point = 2, .release_point = 1 });
+    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .ring_revision = 1, .revision = 2, .slot = 2, .acquire_point = 3, .release_point = 1 }));
+    try std.testing.expectError(error.InvalidRevision, value.publishCompletion(.{ .ring_revision = 1, .revision = 3, .slot = 3, .acquire_point = 4, .release_point = 1 }));
     try std.testing.expectEqual(@as(u64, 2), value.takeCompletion().?.revision);
 }
 
@@ -136,7 +166,7 @@ test "directional wakes follow fact ownership" {
     try value.publishFeedback(.{ .device = 1, .fourcc = 2, .modifier = 3 });
     try expectReadable(value.renderFd());
     try value.drainRenderWake();
-    try value.publishCompletion(.{ .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
+    try value.publishCompletion(.{ .ring_revision = 1, .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
     try expectReadable(value.windowFd());
     try value.drainWindowWake();
     try value.publishInput(.{ .focus = true });
@@ -182,6 +212,7 @@ fn realOffers() ![shared.slot_count]shared.SlotOffer {
         .{ .offset = 0, .stride = 256 },
     };
     var offers: [shared.slot_count]shared.SlotOffer = @splat(.{
+        .ring_revision = 1,
         .dma_fd = -1,
         .acquire_timeline_fd = -1,
         .release_timeline_fd = -1,
