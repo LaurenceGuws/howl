@@ -4,6 +4,7 @@ const std = @import("std");
 const input_owner = @import("input_owner.zig");
 const layout = @import("layout.zig");
 const renderer = @import("renderer.zig");
+const session_process = @import("session_process.zig");
 const shared = @import("shared.zig");
 const window = @import("window.zig");
 
@@ -17,19 +18,45 @@ const MainError = std.Thread.SpawnError || error{
 /// first construction or owner failure after reverse cleanup.
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
-    if (argv.len != 3 and argv.len != 4) {
+    if (argv.len < 2 or argv.len > 4) {
         std.debug.print(
-            "usage: howl-host ENDPOINT [ENDPOINT_RIGHT] FONT\n",
+            "usage: howl-host FONT | ENDPOINT FONT | ENDPOINT_LEFT ENDPOINT_RIGHT FONT\n",
             .{},
         );
         return error.InvalidArguments;
     }
-    const endpoint = std.mem.span(argv[1]);
+    var owned_session: ?session_process.SessionProcess = null;
+    defer if (owned_session) |*session| session.deinit();
+
+    const owned_mode = argv.len == 2;
+    if (owned_mode) {
+        const runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR") orelse
+            return error.MissingRuntimeDirectory;
+        const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
+        owned_session = try session_process.SessionProcess.launchSibling(
+            init.gpa,
+            init.io,
+            runtime_dir,
+            shell,
+            24,
+            80,
+            1,
+        );
+    }
+    const endpoint: []const u8 = if (owned_session) |*session|
+        session.endpoint
+    else
+        std.mem.span(argv[1]);
     const endpoint_right: ?[]const u8 = if (argv.len == 4)
         std.mem.span(argv[2])
     else
         null;
-    const font_path = std.mem.span(argv[if (argv.len == 4) 3 else 2]);
+    const font_path = std.mem.span(argv[switch (argv.len) {
+        2 => 1,
+        3 => 2,
+        4 => 3,
+        else => unreachable,
+    }]);
     var mux = layout.Mux.init();
     if (endpoint_right != null) {
         const right_pane = try mux.splitFocused(.horizontal);
