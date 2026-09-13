@@ -475,6 +475,10 @@ pub const Gpu = struct {
         self.* = undefined;
     }
 
+    pub fn geometryMatches(self: *const Gpu, frame: Prepared) bool {
+        return frame.rows == self.limits.rows and frame.cols == self.limits.cols;
+    }
+
     pub fn prepare(self: *Gpu, frame: Prepared) !void {
         if (self.pending or frame.rows != self.limits.rows or frame.cols != self.limits.cols)
             return error.InvalidGeometry;

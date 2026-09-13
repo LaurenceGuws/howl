@@ -340,24 +340,6 @@ pub const Scene = struct {
         }
     }
 
-    /// Claims geometry only when no peer currently owns it, then resizes the
-    /// canonical Session. Reclaiming our own existing authority is harmless;
-    /// stealing another live client's authority is intentionally refused.
-    pub fn resizeCanonical(self: *Scene, current: Prepared, rows: u16, cols: u16) !void {
-        if (rows == 0 or cols == 0) return error.InvalidGeometry;
-        if (current.rows == rows and current.cols == cols) return;
-        if (current.leader_present and !current.you_are_leader)
-            return error.ResizeAuthorityUnavailable;
-        try client.actions.resize(&self.connection, rows, cols);
-    }
-
-    /// Restores geometry after this Scene has successfully claimed resize
-    /// authority earlier in the same Host transaction.
-    pub fn rollbackCanonical(self: *Scene, rows: u16, cols: u16) !void {
-        if (rows == 0 or cols == 0) return error.InvalidGeometry;
-        try client.actions.resize(&self.connection, rows, cols);
-    }
-
     pub fn cellSize(self: *const Scene) canvas.Size {
         return self.cell_size;
     }

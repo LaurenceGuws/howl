@@ -13,6 +13,8 @@ const layout = @import("layout.zig");
 const shared = @import("shared.zig");
 
 const focus_toggle_keysym: u32 = 0xffc3; // F6
+const grow_pane_keysym: u32 = 0xffc4; // F7
+const shrink_pane_keysym: u32 = 0xffc5; // F8
 
 pub const Command = union(enum) {
     ignored,
@@ -91,6 +93,7 @@ fn runFallible(
                     }
                 },
                 .key => |key| {
+                    const host_resize = if (connection_count == 2) hostResizeCommand(key) else null;
                     if (connection_count == 2 and isFocusToggle(key)) {
                         if (key.state == .pressed) {
                             const previous = focusedConnectionIndex(
@@ -106,6 +109,17 @@ fn runFallible(
                                 try deliverFocus(&connections[previous].?, false);
                                 try deliverFocus(&connections[next].?, true);
                             }
+                        }
+                    } else if (host_resize) |kind| {
+                        if (key.state == .pressed) {
+                            const active = focusedConnectionIndex(
+                                &mux,
+                                pane_ids[0..connection_count],
+                            ) orelse return error.InputTopologyMismatch;
+                            try boundary.publishHostCommand(.{
+                                .kind = kind,
+                                .pane = @intCast(active),
+                            });
                         }
                     } else {
                         const active = focusedConnectionIndex(
@@ -140,6 +154,14 @@ fn connectionIndexForPane(pane_ids: []const layout.PaneId, pane: layout.PaneId) 
 
 fn isFocusToggle(key: wayland.input.Key) bool {
     return @backingInt(key.keysym) == focus_toggle_keysym;
+}
+
+fn hostResizeCommand(key: wayland.input.Key) ?shared.HostCommandKind {
+    return switch (@backingInt(key.keysym)) {
+        grow_pane_keysym => .grow_focused,
+        shrink_pane_keysym => .shrink_focused,
+        else => null,
+    };
 }
 
 fn deliverKey(connection: *client.Connection, key: wayland.input.Key) !void {
@@ -286,6 +308,18 @@ test "F6 is the exact host focus toggle key" {
     try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .pressed, "", .{})));
     try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .released, "", .{})));
     try std.testing.expect(!isFocusToggle(makeKey(0xffc2, .pressed, "", .{})));
+}
+
+test "F7 and F8 are exact host divider commands" {
+    try std.testing.expectEqual(
+        shared.HostCommandKind.grow_focused,
+        hostResizeCommand(makeKey(grow_pane_keysym, .pressed, "", .{})).?,
+    );
+    try std.testing.expectEqual(
+        shared.HostCommandKind.shrink_focused,
+        hostResizeCommand(makeKey(shrink_pane_keysym, .released, "", .{})).?,
+    );
+    try std.testing.expect(hostResizeCommand(makeKey(focus_toggle_keysym, .pressed, "", .{})) == null);
 }
 
 test "plain printable key commits text only on press and repeat" {

@@ -44,6 +44,8 @@ const Split = struct {
     axis: SplitAxis,
     first: u8,
     second: u8,
+    /// Signed cell bias from the deterministic half split.
+    delta: i32 = 0,
 };
 
 const Node = union(enum) {
@@ -149,6 +151,40 @@ const Tab = struct {
         }
     }
 
+    fn nodeRect(self: *const Tab, target: u8, surface: Surface) ?Rect {
+        return self.findNodeRect(
+            self.root,
+            target,
+            .{ .x = 0, .y = 0, .width = surface.width, .height = surface.height },
+        );
+    }
+
+    fn findNodeRect(self: *const Tab, node_index: u8, target: u8, rect: Rect) ?Rect {
+        if (node_index == target) return rect;
+        return switch (self.nodes[node_index]) {
+            .free, .pane => null,
+            .split => |split| found: {
+                const extent = splitExtent(split, rect) catch break :found null;
+                var first = rect;
+                var second = rect;
+                switch (split.axis) {
+                    .horizontal => {
+                        first.width = extent;
+                        second.x += extent;
+                        second.width -= extent;
+                    },
+                    .vertical => {
+                        first.height = extent;
+                        second.y += extent;
+                        second.height -= extent;
+                    },
+                }
+                break :found self.findNodeRect(split.first, target, first) orelse
+                    self.findNodeRect(split.second, target, second);
+            },
+        };
+    }
+
     fn project(
         self: *const Tab,
         surface: Surface,
@@ -183,20 +219,19 @@ const Tab = struct {
                 count.* += 1;
             },
             .split => |split| {
+                const extent = try splitExtent(split, rect);
                 var first = rect;
                 var second = rect;
                 switch (split.axis) {
                     .horizontal => {
-                        if (rect.width < 2) return error.GeometryLimit;
-                        first.width = rect.width / 2;
-                        second.x += first.width;
-                        second.width -= first.width;
+                        first.width = extent;
+                        second.x += extent;
+                        second.width -= extent;
                     },
                     .vertical => {
-                        if (rect.height < 2) return error.GeometryLimit;
-                        first.height = rect.height / 2;
-                        second.y += first.height;
-                        second.height -= first.height;
+                        first.height = extent;
+                        second.y += extent;
+                        second.height -= extent;
                     },
                 }
                 try self.projectNode(split.first, first, output, count);
@@ -312,6 +347,27 @@ pub const Mux = struct {
         unreachable;
     }
 
+    /// Grows (positive cells) or shrinks (negative cells) the focused pane
+    /// against its immediate sibling. Saturation at one cell is a no-op.
+    pub fn resizeFocused(self: *Mux, surface: Surface, cells: i32) error{InvalidSurface}!bool {
+        if (surface.width == 0 or surface.height == 0) return error.InvalidSurface;
+        if (cells == 0) return false;
+        const tab = &self.tabs[self.active_index];
+        const leaf = tab.findPane(tab.focused) orelse unreachable;
+        const parent = tab.findParent(leaf) orelse return false;
+        const parent_rect = tab.nodeRect(parent, surface) orelse return error.InvalidSurface;
+        const split = &tab.nodes[parent].split;
+        const current = splitExtent(split.*, parent_rect) catch return error.InvalidSurface;
+        const total = if (split.axis == .horizontal) parent_rect.width else parent_rect.height;
+        const signed_change: i64 = if (split.first == leaf) cells else -@as(i64, cells);
+        const proposed = @as(i64, current) + signed_change;
+        const target: u32 = @intCast(std.math.clamp(proposed, 1, @as(i64, total) - 1));
+        if (target == current) return false;
+        const base = total / 2;
+        split.delta = @intCast(@as(i64, target) - @as(i64, base));
+        return true;
+    }
+
     pub fn activeLayout(
         self: *const Mux,
         surface: Surface,
@@ -327,6 +383,17 @@ pub const Mux = struct {
         return null;
     }
 };
+
+fn splitExtent(split: Split, rect: Rect) error{GeometryLimit}!u32 {
+    const total = switch (split.axis) {
+        .horizontal => rect.width,
+        .vertical => rect.height,
+    };
+    if (total < 2) return error.GeometryLimit;
+    const base = total / 2;
+    const adjusted = @as(i64, base) + split.delta;
+    return @intCast(std.math.clamp(adjusted, 1, @as(i64, total) - 1));
+}
 
 fn tabId(value: u32) TabId {
     return @fromBackingInt(@intCast(value));
@@ -415,6 +482,24 @@ test "tab and pane bounds fail without consuming identities" {
         try std.testing.expect(@backingInt(created.tab) != 0);
     }
     try std.testing.expectError(error.TabLimit, mux.createTab());
+}
+
+test "focused pane grow and shrink own exact split extent" {
+    var mux = Mux.init();
+    const right = try mux.splitFocused(.horizontal);
+    try std.testing.expectEqual(right, mux.focusedPane());
+    var output: [max_panes_per_tab]Placement = undefined;
+    var placed = try mux.activeLayout(.{ .width = 94, .height = 39 }, &output);
+    try std.testing.expectEqual(@as(u32, 47), placed[0].rect.width);
+    try std.testing.expectEqual(@as(u32, 47), placed[1].rect.width);
+    try std.testing.expect(try mux.resizeFocused(.{ .width = 94, .height = 39 }, 1));
+    placed = try mux.activeLayout(.{ .width = 94, .height = 39 }, &output);
+    try std.testing.expectEqual(@as(u32, 46), placed[0].rect.width);
+    try std.testing.expectEqual(@as(u32, 48), placed[1].rect.width);
+    try std.testing.expect(try mux.resizeFocused(.{ .width = 94, .height = 39 }, -2));
+    placed = try mux.activeLayout(.{ .width = 94, .height = 39 }, &output);
+    try std.testing.expectEqual(@as(u32, 48), placed[0].rect.width);
+    try std.testing.expectEqual(@as(u32, 46), placed[1].rect.width);
 }
 
 test "projection failure never mutates topology" {

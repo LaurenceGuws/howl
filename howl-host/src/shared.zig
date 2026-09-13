@@ -8,6 +8,18 @@ const wayland = @import("howl_wayland");
 pub const slot_count: usize = 3;
 /// Bounds copied keyboard/focus occurrences awaiting Session delivery.
 pub const input_capacity: usize = 128;
+/// Bounds host-local control requests awaiting Render ownership.
+pub const host_command_capacity: usize = 16;
+
+pub const HostCommandKind = enum {
+    grow_focused,
+    shrink_focused,
+};
+
+pub const HostCommand = struct {
+    kind: HostCommandKind,
+    pane: u8,
+};
 
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
@@ -95,6 +107,9 @@ pub const Boundary = struct {
     inputs: [input_capacity]InputEvent = undefined,
     input_head: u16 = 0,
     input_count: u16 = 0,
+    host_commands: [host_command_capacity]HostCommand = undefined,
+    host_command_head: u8 = 0,
+    host_command_count: u8 = 0,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -103,6 +118,7 @@ pub const Boundary = struct {
     render_fd: i32,
     window_fd: i32,
     input_fd: i32,
+    control_fd: i32,
 
     /// Creates the three owner-specific nonblocking eventfds.
     /// On failure, no descriptor remains owned by the caller.
@@ -115,7 +131,16 @@ pub const Boundary = struct {
         errdefer closeDescriptor(window_fd);
         const input_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (input_fd < 0) return error.Signal;
-        return .{ .io = io, .render_fd = render_fd, .window_fd = window_fd, .input_fd = input_fd };
+        errdefer closeDescriptor(input_fd);
+        const control_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (control_fd < 0) return error.Signal;
+        return .{
+            .io = io,
+            .render_fd = render_fd,
+            .window_fd = window_fd,
+            .input_fd = input_fd,
+            .control_fd = control_fd,
+        };
     }
 
     /// Closes retained offers and eventfds after every owner joins.
@@ -128,6 +153,7 @@ pub const Boundary = struct {
                 offer.* = null;
             }
         }
+        closeDescriptor(self.control_fd);
         closeDescriptor(self.input_fd);
         closeDescriptor(self.window_fd);
         closeDescriptor(self.render_fd);
@@ -162,6 +188,50 @@ pub const Boundary = struct {
     /// Drains all pending Input wakes without blocking.
     pub fn drainInputWake(self: *Boundary) error{Signal}!void {
         try drain(self.input_fd);
+    }
+
+    /// Borrows the Input-to-Render host-control eventfd until `deinit`.
+    pub fn controlFd(self: *const Boundary) i32 {
+        return self.control_fd;
+    }
+
+    /// Drains all pending host-control wakes without blocking.
+    pub fn drainControlWake(self: *Boundary) error{Signal}!void {
+        try drain(self.control_fd);
+    }
+
+    /// Appends one bounded host-local command for Render.
+    pub fn publishHostCommand(self: *Boundary, command: HostCommand) error{ Stopping, HostCommandLimit }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.host_command_count == host_command_capacity) {
+            self.mutex.unlock(self.io);
+            return error.HostCommandLimit;
+        }
+        const tail = (@as(usize, self.host_command_head) + self.host_command_count) % host_command_capacity;
+        self.host_commands[tail] = command;
+        self.host_command_count += 1;
+        self.mutex.unlock(self.io);
+        signal(self.control_fd);
+    }
+
+    /// Removes and copies the oldest pending host-local Render command.
+    pub fn takeHostCommand(self: *Boundary) ?HostCommand {
+        self.mutex.lockUncancelable(self.io);
+        if (self.host_command_count == 0) {
+            self.mutex.unlock(self.io);
+            return null;
+        }
+        const result = self.host_commands[self.host_command_head];
+        self.host_command_head = @intCast((@as(usize, self.host_command_head) + 1) % host_command_capacity);
+        self.host_command_count -= 1;
+        const more = self.host_command_count != 0;
+        self.mutex.unlock(self.io);
+        if (more) signal(self.control_fd);
+        return result;
     }
 
     /// Appends one exact copied keyboard/focus occurrence for Input.
@@ -320,6 +390,7 @@ pub const Boundary = struct {
         signal(self.window_fd);
         signal(self.render_fd);
         signal(self.input_fd);
+        signal(self.control_fd);
     }
 
     /// Copies the monotonic stop fact.

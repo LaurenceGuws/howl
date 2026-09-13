@@ -99,7 +99,13 @@ pub fn resize(connection: *client.Connection, rows: u16, columns: u16) Error!voi
     protocol.encodeAssignLeader(&leader_payload, .{ .client_id = connection.client_id });
     try connection.send(.assign_leader, &leader_payload);
     try expectOk(connection, .assign_leader);
+    try resizeOwned(connection, rows, columns);
+}
 
+/// Resizes only while this exact connection already owns geometry authority.
+/// Unlike `resize`, this never assigns or steals leadership first.
+pub fn resizeOwned(connection: *client.Connection, rows: u16, columns: u16) Error!void {
+    if (rows == 0 or columns == 0) return error.InvalidResize;
     var resize_payload: [protocol.payload_bytes.resize]u8 = undefined;
     protocol.encodeResize(&resize_payload, .{ .rows = rows, .columns = columns });
     try connection.send(.resize, &resize_payload);
