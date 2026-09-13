@@ -72,6 +72,8 @@ const State = struct {
     timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
     frame_callback: ?*c.wl_callback = null,
     presented: u64 = 0,
+    buffer_width: u16 = 0,
+    buffer_height: u16 = 0,
 
     fn deinit(self: *State) void {
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
@@ -128,7 +130,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     if (c.xdg_surface_add_listener(state.xdg_surface.?, &xdg_surface_listener, &state) != 0) return error.Listener;
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
     if (c.xdg_toplevel_add_listener(state.toplevel.?, &toplevel_listener, &state) != 0) return error.Listener;
-    c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan ring");
+    c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan canary");
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
     c.xdg_surface_ack_configure(state.xdg_surface.?, state.configure_serial);
@@ -172,8 +174,12 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
         if (offer.acquire_timeline_fd >= 0) closeDescriptor(offer.acquire_timeline_fd);
         if (offer.release_timeline_fd >= 0) closeDescriptor(offer.release_timeline_fd);
     };
+    const width = offers[0].width;
+    const height = offers[0].height;
+    if (width == 0 or height == 0) return error.InvalidPlane;
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
+        if (offer.width != width or offer.height != height) return error.InvalidPlane;
         if (offer.plane_count == 0 or offer.plane_count > shared.plane_limit) return error.InvalidPlane;
         const params = c.zwp_linux_dmabuf_v1_create_params(state.dmabuf.?) orelse return error.Buffer;
         defer c.zwp_linux_buffer_params_v1_destroy(params);
@@ -182,7 +188,7 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
             const modifier = state.boundary.readFeedback().?.modifier;
             c.zwp_linux_buffer_params_v1_add(params, offer.dma_fd, @intCast(plane), layout.offset, layout.stride, @intCast(modifier >> 32), @intCast(modifier & 0xffff_ffff));
         }
-        state.buffers[slot] = c.zwp_linux_buffer_params_v1_create_immed(params, 64, 64, state.boundary.readFeedback().?.fourcc, 0) orelse return error.Buffer;
+        state.buffers[slot] = c.zwp_linux_buffer_params_v1_create_immed(params, width, height, state.boundary.readFeedback().?.fourcc, 0) orelse return error.Buffer;
         state.acquire_timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.acquire_timeline_fd) orelse return error.ExplicitSync;
         state.timelines[slot] = c.wp_linux_drm_syncobj_manager_v1_import_timeline(state.syncobj.?, offer.release_timeline_fd) orelse return error.ExplicitSync;
         closeDescriptor(offer.dma_fd);
@@ -192,6 +198,8 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
         closeDescriptor(offer.release_timeline_fd);
         offer.release_timeline_fd = -1;
     }
+    state.buffer_width = width;
+    state.buffer_height = height;
 }
 
 fn present(state: *State, completion: shared.Completion) !void {
@@ -203,7 +211,7 @@ fn present(state: *State, completion: shared.Completion) !void {
     state.frame_callback = c.wl_surface_frame(state.surface.?) orelse return error.Frame;
     if (c.wl_callback_add_listener(state.frame_callback.?, &frame_listener, state) != 0) return error.Listener;
     c.wl_surface_attach(state.surface.?, state.buffers[slot].?, 0, 0);
-    c.wl_surface_damage_buffer(state.surface.?, 0, 0, 64, 64);
+    c.wl_surface_damage_buffer(state.surface.?, 0, 0, state.buffer_width, state.buffer_height);
     c.wl_surface_commit(state.surface.?);
     state.presented = completion.revision;
     std.debug.print("Window commit revision={d} slot={d} acquire={d} release={d}\n", .{ completion.revision, completion.slot, completion.acquire_point, completion.release_point });

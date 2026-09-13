@@ -36,6 +36,10 @@ pub const SlotOffer = struct {
     acquire_timeline_fd: i32,
     /// Duplicated per-slot release-timeline syncobj descriptor.
     release_timeline_fd: i32,
+    /// Pixel width of the exported image.
+    width: u16,
+    /// Pixel height of the exported image.
+    height: u16,
     /// Number of initialized entries in `planes`.
     plane_count: u8,
     /// Fixed storage containing the initialized plane prefix.
@@ -158,6 +162,7 @@ pub const Boundary = struct {
             if (offer.dma_fd < 0 or
                 offer.acquire_timeline_fd < 0 or
                 offer.release_timeline_fd < 0 or
+                offer.width == 0 or offer.height == 0 or
                 offer.plane_count == 0 or
                 offer.plane_count > plane_limit)
             {

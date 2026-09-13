@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("renderer_c");
 const shared = @import("shared.zig");
+const terminal_scene = @import("terminal_scene.zig");
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const surface = howl_vk.surface;
@@ -35,16 +36,34 @@ const OfferedFds = struct {
 
 /// Runs the sole Vulkan/DRM owner until the bounded ring completes or fails.
 /// All operational failures are recorded as the first Render runtime failure.
-pub fn run(boundary: *shared.Boundary) void {
-    runFallible(boundary) catch |failure| {
+pub fn run(
+    boundary: *shared.Boundary,
+    allocator: std.mem.Allocator,
+    endpoint: []const u8,
+    font_path: []const u8,
+) void {
+    runFallible(boundary, allocator, endpoint, font_path) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
     boundary.markStopped(.render);
 }
 
-fn runFallible(boundary: *shared.Boundary) !void {
+fn runFallible(
+    boundary: *shared.Boundary,
+    allocator: std.mem.Allocator,
+    endpoint: []const u8,
+    font_path: []const u8,
+) !void {
     const feedback = try waitFeedback(boundary);
+    var scene = try terminal_scene.Scene.init(allocator, endpoint, font_path);
+    defer scene.deinit();
+    const terminal_frame = try scene.prepare();
+    std.debug.print("Session frame revision={d} surface={d}x{d}\n", .{
+        terminal_frame.revision,
+        terminal_frame.width,
+        terminal_frame.height,
+    });
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
     var application = std.mem.zeroes(vk.VkApplicationInfo);
@@ -120,12 +139,6 @@ fn runFallible(boundary: *shared.Boundary) !void {
     var gpu_bytes: u64 = 0;
     var graphics = try surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
-    const alpha_pixels = try std.heap.page_allocator.alloc(u8, surface.atlas_bytes);
-    defer std.heap.page_allocator.free(alpha_pixels);
-    @memset(alpha_pixels, 0);
-    const image_pixels = try std.heap.page_allocator.alloc(u8, surface.image_atlas_bytes);
-    defer std.heap.page_allocator.free(image_pixels);
-    @memset(image_pixels, 0);
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -146,7 +159,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
         if (fds.timeline >= 0) closeDescriptor(fds.timeline);
     };
     for (&slots, 0..) |*slot, index| {
-        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index]);
+        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, terminal_frame.width, terminal_frame.height, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index]);
         if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &offered_fds[index].acquire) != 0) return error.Syncobj;
         offers[index].acquire_timeline_fd = offered_fds[index].acquire;
     }
@@ -173,20 +186,53 @@ fn runFallible(boundary: *shared.Boundary) !void {
         if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) @panic("Render failed to quiesce Vulkan during cleanup");
     };
 
-    const colors = [_][4]f32{
-        .{ 0.08, 0.16, 0.24, 1 },
-        .{ 0.12, 0.48, 0.20, 1 },
-        .{ 0.52, 0.16, 0.56, 1 },
-    };
     for (&slots, 0..) |*slot, index| {
         queue_active = true;
-        try render(&graphics, alpha_pixels, image_pixels, device, queue, family, command, slot, colors[index], null, get_semaphore_fd.?, drm_fd, acquire_handle, index + 1);
+        try render(
+            &graphics,
+            terminal_frame.plan,
+            scene.builder.alpha_pixels,
+            scene.builder.rgba_pixels,
+            device,
+            queue,
+            family,
+            command,
+            slot,
+            .{ 0, 0, 0, 1 },
+            if (index == 0) &scene.residency else null,
+            null,
+            get_semaphore_fd.?,
+            drm_fd,
+            acquire_handle,
+            index + 1,
+            terminal_frame.width,
+            terminal_frame.height,
+        );
         try boundary.publishCompletion(.{ .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
     }
     try waitTimeline(drm_fd, slots[0].release_handle, 1);
     const reuse_wait = try importRelease(device, drm_fd, slots[0].release_handle, 1, import_semaphore_fd.?);
     defer vk.vkDestroySemaphore(device, reuse_wait, null);
-    try render(&graphics, alpha_pixels, image_pixels, device, queue, family, command, &slots[0], .{ 0.72, 0.16, 0.08, 1 }, reuse_wait, get_semaphore_fd.?, drm_fd, acquire_handle, 4);
+    try render(
+        &graphics,
+        terminal_frame.plan,
+        scene.builder.alpha_pixels,
+        scene.builder.rgba_pixels,
+        device,
+        queue,
+        family,
+        command,
+        &slots[0],
+        .{ 0, 0, 0, 1 },
+        null,
+        reuse_wait,
+        get_semaphore_fd.?,
+        drm_fd,
+        acquire_handle,
+        4,
+        terminal_frame.width,
+        terminal_frame.height,
+    );
     try boundary.publishCompletion(.{ .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 });
     try waitTimeline(drm_fd, slots[0].release_handle, 2);
     try waitTimeline(drm_fd, slots[1].release_handle, 1);
@@ -358,7 +404,7 @@ fn modifierPlaneCount(physical: vk.VkPhysicalDevice, modifier: u64) !u8 {
     return error.Modifier;
 }
 
-fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, get_memory_fd: vk.PFN_vkGetMemoryFdKHR, get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds) !void {
+fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDevice, memory_properties: vk.VkPhysicalDeviceMemoryProperties, modifier: u64, dedicated_only: bool, plane_count: u8, width: u16, height: u16, get_memory_fd: vk.PFN_vkGetMemoryFdKHR, get_modifier: vk.PFN_vkGetImageDrmFormatModifierPropertiesEXT, drm_fd: i32, offer: *shared.SlotOffer, offered_fds: *OfferedFds) !void {
     var selected_modifier = modifier;
     var modifier_list = std.mem.zeroes(vk.VkImageDrmFormatModifierListCreateInfoEXT);
     modifier_list.sType = vk.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT;
@@ -373,7 +419,7 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     info.pNext = @ptrCast(&external);
     info.imageType = vk.VK_IMAGE_TYPE_2D;
     info.format = vk.VK_FORMAT_R8G8B8A8_UNORM;
-    info.extent = .{ .width = 64, .height = 64, .depth = 1 };
+    info.extent = .{ .width = width, .height = height, .depth = 1 };
     info.mipLevels = 1;
     info.arrayLayers = 1;
     info.samples = vk.VK_SAMPLE_COUNT_1_BIT;
@@ -405,7 +451,7 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     allocation.memoryTypeIndex = memory_type orelse return error.Memory;
     if (vk.vkAllocateMemory(device, &allocation, null, &slot.memory) != vk.VK_SUCCESS) return error.Memory;
     if (vk.vkBindImageMemory(device, slot.image, slot.memory, 0) != vk.VK_SUCCESS) return error.Memory;
-    slot.attachment = try graphics.createAttachment(device, slot.image, 64, 64);
+    slot.attachment = try graphics.createAttachment(device, slot.image, width, height);
     var actual = std.mem.zeroes(vk.VkImageDrmFormatModifierPropertiesEXT);
     actual.sType = vk.VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_PROPERTIES_EXT;
     if (get_modifier.?(device, slot.image, &actual) != vk.VK_SUCCESS or actual.drmFormatModifier != modifier) return error.Modifier;
@@ -425,11 +471,12 @@ fn constructSlot(slot: *Slot, graphics: *const surface.Context, device: vk.VkDev
     if (get_memory_fd.?(device, &fd_info, &offered_fds.dma) != vk.VK_SUCCESS or offered_fds.dma < 0) return error.DmaBuf;
     if (c.drmSyncobjCreate(drm_fd, 0, &slot.release_handle) != 0) return error.Syncobj;
     if (c.drmSyncobjHandleToFD(drm_fd, slot.release_handle, &offered_fds.timeline) != 0) return error.Syncobj;
-    offer.* = .{ .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .plane_count = plane_count, .planes = slot.planes };
+    offer.* = .{ .dma_fd = offered_fds.dma, .acquire_timeline_fd = -1, .release_timeline_fd = offered_fds.timeline, .width = width, .height = height, .plane_count = plane_count, .planes = slot.planes };
 }
 
 fn render(
     graphics: *surface.Context,
+    plan: surface.Plan,
     alpha_pixels: []const u8,
     image_pixels: []const u8,
     device: vk.VkDevice,
@@ -437,33 +484,17 @@ fn render(
     family: u32,
     command: vk.VkCommandBuffer,
     slot: *Slot,
-    color: [4]f32,
+    clear_color: [4]f32,
+    residency_commit: ?*surface.ResidencyStore,
     wait_semaphore: ?vk.VkSemaphore,
     get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR,
     drm_fd: i32,
     acquire_handle: u32,
     acquire_point: u64,
+    width: u16,
+    height: u16,
 ) !void {
-    const vertices = [_]surface.Vertex{
-        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = color },
-        .{ .position = .{ 64, 0 }, .uv = .{ 0, 0 }, .color = color },
-        .{ .position = .{ 64, 64 }, .uv = .{ 0, 0 }, .color = color },
-        .{ .position = .{ 0, 64 }, .uv = .{ 0, 0 }, .color = color },
-    };
-    const indices = [_]u32{ 0, 1, 2, 2, 3, 0 };
-    const draws = [_]surface.Command{.{
-        .kind = .solid,
-        .first_index = 0,
-        .index_count = indices.len,
-        .clip = .{ .x = 0, .y = 0, .width = 64, .height = 64 },
-    }};
-    const plan = surface.Plan{
-        .vertices = &vertices,
-        .indices = &indices,
-        .commands = &draws,
-        .atlas_changed = false,
-    };
-    try graphics.stage(plan, alpha_pixels, image_pixels, 64, 64);
+    try graphics.stage(plan, alpha_pixels, image_pixels, width, height);
 
     if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
@@ -472,16 +503,16 @@ fn render(
     const target = surface.FrameTarget{
         .image = slot.image,
         .attachment = slot.attachment,
-        .attachment_width = 64,
-        .attachment_height = 64,
-        .coordinate_width = 64,
-        .coordinate_height = 64,
+        .attachment_width = width,
+        .attachment_height = height,
+        .coordinate_width = width,
+        .coordinate_height = height,
         .source_queue_family = if (slot.external) vk.VK_QUEUE_FAMILY_EXTERNAL else vk.VK_QUEUE_FAMILY_IGNORED,
         .graphics_queue_family = family,
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
     const recording = try graphics.recordPrelude(command, target, plan);
-    graphics.beginPass(command, target, color);
+    graphics.beginPass(command, target, clear_color);
     graphics.recordGenericDraws(command, target, plan);
     const completed_recording = graphics.endPass(command, target, recording);
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
@@ -522,6 +553,7 @@ fn render(
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(completed_recording);
+    if (residency_commit) |value| try value.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
     slot.external = true;

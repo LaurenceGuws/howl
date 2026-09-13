@@ -6,6 +6,9 @@
     .dependencies = .{
         .howl_vk = .{ .path = "../howl-vk" },
         .howl_wayland = .{ .path = "../howl-wayland" },
+        .howl_client = .{ .path = "../howl-client" },
+        .howl_render = .{ .path = "../howl-render" },
+        .howl_text = .{ .path = "../howl-text" },
     },
     .paths = .{ "build.zig", "build.zig.zon", "src", "test" },
 }

@@ -73,6 +73,8 @@ test "Boundary cleanup closes every retained offered descriptor" {
         .dma_fd = -1,
         .acquire_timeline_fd = -1,
         .release_timeline_fd = -1,
+        .width = 64,
+        .height = 64,
         .plane_count = 1,
         .planes = planes,
     });
@@ -161,6 +163,8 @@ fn realOffers() ![shared.slot_count]shared.SlotOffer {
         .dma_fd = -1,
         .acquire_timeline_fd = -1,
         .release_timeline_fd = -1,
+        .width = 64,
+        .height = 64,
         .plane_count = 1,
         .planes = planes,
     });
