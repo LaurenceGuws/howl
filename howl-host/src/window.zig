@@ -231,7 +231,6 @@ fn present(state: *State, completion: shared.Completion) !void {
     c.wl_surface_damage_buffer(state.surface.?, 0, 0, state.buffer_width, state.buffer_height);
     c.wl_surface_commit(state.surface.?);
     state.presented = completion.revision;
-    std.debug.print("Window commit revision={d} slot={d} acquire={d} release={d}\n", .{ completion.revision, completion.slot, completion.acquire_point, completion.release_point });
 }
 
 fn selectFeedback(state: *const State) ?shared.Feedback {
@@ -452,7 +451,6 @@ fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) 
     const state: *State = @ptrCast(@alignCast(data.?));
     if (callback) |value| c.wl_callback_destroy(value);
     state.frame_callback = null;
-    std.debug.print("Window frame revision={d}\n", .{state.presented});
 }
 const frame_listener = c.wl_callback_listener{ .done = frameDone };
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {

@@ -61,12 +61,6 @@ fn runFallible(
     var scene = try terminal_scene.Scene.init(allocator, endpoint, font_path);
     defer scene.deinit();
     const terminal_frame = try scene.prepare(0);
-    std.debug.print("Prepared initial Session revision={d} Canvas frame={d} surface={d}x{d}\n", .{
-        terminal_frame.session_revision,
-        terminal_frame.revision,
-        terminal_frame.width,
-        terminal_frame.height,
-    });
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
     var application = std.mem.zeroes(vk.VkApplicationInfo);
@@ -253,13 +247,6 @@ fn runFallible(
             .slot = @intCast(slot_index),
             .acquire_point = acquire_point,
             .release_point = slot.release_point,
-        });
-        std.debug.print("Published Session revision={d} Canvas frame={d} present={d} slot={d} release={d}\n", .{
-            prepared.session_revision,
-            prepared.revision,
-            present_revision,
-            slot_index,
-            slot.release_point,
         });
 
         // Publishing the next slot lets KWin retire the previous one. Waiting
