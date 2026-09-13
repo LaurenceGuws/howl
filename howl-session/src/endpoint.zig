@@ -231,6 +231,7 @@ const Client = struct {
     output: std.ArrayList(u8) = .empty,
     output_offset: usize = 0,
     observe: ?protocol.Observe = null,
+    observe_raw: bool = false,
     snapshot_images: ImageResourceCache = .{},
 
     fn outputPending(self: *const Client) bool {
@@ -543,16 +544,17 @@ const Server = struct {
         }
 
         switch (kind) {
-            .observe => {
+            .observe, .observe_raw => {
                 const request = protocol.decodeObserve(payload) catch {
-                    try self.queueResult(client, .observe, .malformed);
+                    try self.queueResult(client, kind, .malformed);
                     return;
                 };
                 if (request.after_revision > self.observation_revision) {
-                    try self.queueResult(client, .observe, .malformed);
+                    try self.queueResult(client, kind, .malformed);
                     return;
                 }
                 client.observe = request;
+                client.observe_raw = kind == .observe_raw;
             },
             .input => try self.handleInput(client, payload),
             .assign_leader => try self.handleAssignLeader(client, payload),
@@ -889,13 +891,16 @@ const Server = struct {
             const request = client.observe orelse continue;
             if (client.outputPending()) continue;
             if (request.after_revision != 0 and request.after_revision >= self.observation_revision) continue;
-            self.queueSnapshot(client, request.history_offset) catch |err| {
+            const raw = client.observe_raw;
+            self.queueSnapshot(client, request.history_offset, raw) catch |err| {
                 if (err != error.SnapshotTooLarge) return err;
                 client.observe = null;
-                try self.queueResult(client, .observe, .rejected);
+                client.observe_raw = false;
+                try self.queueResult(client, if (raw) .observe_raw else .observe, .rejected);
                 continue;
             };
             client.observe = null;
+            client.observe_raw = false;
         }
     }
 
@@ -903,11 +908,21 @@ const Server = struct {
     // Rich text snapshot construction
     // -------------------------------------------------------------------------
 
-    fn queueSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
-        return self.queueTextSnapshot(client, history_offset);
+    fn queueSnapshot(
+        self: *Server,
+        client: *Client,
+        history_offset: u32,
+        raw: bool,
+    ) !void {
+        return self.queueTextSnapshot(client, history_offset, raw);
     }
 
-    fn queueTextSnapshot(self: *Server, client: *Client, history_offset: u32) !void {
+    fn queueTextSnapshot(
+        self: *Server,
+        client: *Client,
+        history_offset: u32,
+        raw: bool,
+    ) !void {
         const status = howl.status(self.session, history_offset);
         var graphics = howl.images(self.session, status.history_offset);
         const graphics_counts = try countSnapshotGraphics(&graphics);
@@ -1000,26 +1015,30 @@ const Server = struct {
             body_bytes > std.math.maxInt(u32))
             return error.SnapshotTooLarge;
 
-        // Reinitialize compression state in retained storage. The writer buffer,
-        // DEFLATE work window, and compressor allocation survive between cuts.
-        self.snapshot_compressed.writer.end = 0;
-        try self.snapshot_compressed.ensureTotalCapacity(64);
-        self.snapshot_compressor.* = try std.compress.flate.Compress.init(
-            &self.snapshot_compressed.writer,
-            self.snapshot_flate_work,
-            .zlib,
-            .fastest,
-        );
-        try self.snapshot_compressor.writer.writeAll(body.items);
-        try self.snapshot_compressor.finish();
-        const compressed = self.snapshot_compressed.written();
-
-        const encoded_bytes = std.math.add(
-            usize,
-            protocol.text_v1.compressed_header_bytes,
-            compressed.len,
-        ) catch return error.SnapshotTooLarge;
-        if (encoded_bytes > protocol.maximum_text_snapshot_bytes)
+        var compressed: []const u8 = &.{};
+        var encoded_bytes = body_bytes;
+        if (!raw) {
+            // Reinitialize compression state in retained storage. The writer
+            // buffer, DEFLATE work window, and compressor allocation survive
+            // between compressed cuts.
+            self.snapshot_compressed.writer.end = 0;
+            try self.snapshot_compressed.ensureTotalCapacity(64);
+            self.snapshot_compressor.* = try std.compress.flate.Compress.init(
+                &self.snapshot_compressed.writer,
+                self.snapshot_flate_work,
+                .zlib,
+                .fastest,
+            );
+            try self.snapshot_compressor.writer.writeAll(body.items);
+            try self.snapshot_compressor.finish();
+            compressed = self.snapshot_compressed.written();
+            encoded_bytes = std.math.add(
+                usize,
+                protocol.text_v1.compressed_header_bytes,
+                compressed.len,
+            ) catch return error.SnapshotTooLarge;
+        }
+        if (encoded_bytes == 0 or encoded_bytes > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
         const data_frames = std.math.divCeil(
             usize,
@@ -1060,9 +1079,13 @@ const Server = struct {
         });
         try self.appendFrame(&client.output, .snapshot_begin, &begin_payload);
 
-        var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
-        encodeU32(&raw_len, @intCast(body_bytes));
-        try self.appendSnapshotData(&client.output, &raw_len, compressed);
+        if (raw) {
+            try self.appendSnapshotRawData(&client.output, body.items);
+        } else {
+            var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
+            encodeU32(&raw_len, @intCast(body_bytes));
+            try self.appendSnapshotData(&client.output, &raw_len, compressed);
+        }
 
         const graphics_payload = try self.allocator.alloc(u8, graphics_counts.payload_bytes);
         defer self.allocator.free(graphics_payload);
@@ -1112,6 +1135,28 @@ const Server = struct {
             );
             prefix_offset += prefix_count;
             compressed_offset += compressed_count;
+        }
+    }
+
+    fn appendSnapshotRawData(
+        self: *Server,
+        output: *std.ArrayList(u8),
+        body: []const u8,
+    ) !void {
+        if (body.len == 0 or body.len > protocol.maximum_text_snapshot_bytes)
+            return error.SnapshotTooLarge;
+        var offset: usize = 0;
+        while (offset < body.len) {
+            const count = @min(
+                body.len - offset,
+                @as(usize, protocol.maximum_payload_bytes),
+            );
+            try self.appendFrame(
+                output,
+                .snapshot_raw_data,
+                body[offset .. offset + count],
+            );
+            offset += count;
         }
     }
 
@@ -1882,6 +1927,7 @@ const TestWireSnapshot = struct {
     begin: protocol.SnapshotBegin,
     body: []u8,
     graphics: []u8,
+    raw: bool = false,
 
     fn deinit(self: *TestWireSnapshot) void {
         self.allocator.free(self.body);
@@ -2034,6 +2080,40 @@ test "interaction state exposes invisible input modes" {
     const state = try protocol.decodeInteractionStateSnapshot(frame.payload);
     try std.testing.expect(state.bracketed_paste);
     try std.testing.expectEqual(howl.revision(server.session), state.terminal_revision);
+}
+
+test "raw observer returns the same bounded text_v1 body without DEFLATE" {
+    var path_buffer: [108]u8 = undefined;
+    const path = try std.fmt.bufPrint(
+        &path_buffer,
+        "/tmp/howl-session-{d}-raw-observe.sock",
+        .{linux.getpid()},
+    );
+    unlinkPath(path);
+    var server = try Server.init(
+        std.testing.allocator,
+        std.testing.io,
+        std.testing.environ,
+        .{ .unix = path },
+        .{
+            .rows = 4,
+            .columns = 20,
+            .history_rows = 16,
+            .shell = "/bin/sh",
+            .command = "printf RAW; sleep 30",
+        },
+    );
+    defer server.deinit();
+    var peer = try TestPeer.connect(std.testing.allocator, path);
+    defer peer.deinit();
+    try attach(&peer, &server);
+
+    try sendRawObserve(&peer, &server, 0);
+    var wire = try receiveWireSnapshot(&peer, &server);
+    defer wire.deinit();
+    try std.testing.expect(wire.raw);
+    try std.testing.expect(wire.body.len != 0);
+    try std.testing.expectEqual(server.observation_revision, wire.begin.revision);
 }
 
 test "synchronized output withholds observer until coherent release" {
@@ -2539,12 +2619,16 @@ fn sendObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
     try peer.sendFrame(server, .observe, &payload);
 }
 
-/// Receives and inflates the one current snapshot wire.
+fn sendRawObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void {
+    var payload: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&payload, .{ .after_revision = after_revision });
+    try peer.sendFrame(server, .observe_raw, &payload);
+}
+
+/// Receives one current compressed or raw snapshot wire.
 ///
-/// Keep transport validation here so every semantic endpoint test consumes the
-/// same decompressed `text_v1` record body. Adding a second test decoder would
-/// make it too easy for compatibility behavior to survive after production has
-/// one wire.
+/// Keep both framing-v5 transport lanes validated here so every semantic
+/// endpoint test consumes the same raw `text_v1` record body.
 fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     var begin_frame = try awaitFrame(peer, server);
     defer begin_frame.deinit();
@@ -2553,14 +2637,18 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
 
     var encoded: std.ArrayList(u8) = .empty;
     defer encoded.deinit(peer.allocator);
+    var raw: ?bool = null;
     var graphics: ?[]u8 = null;
     errdefer if (graphics) |value| peer.allocator.free(value);
     while (true) {
         var frame = try awaitFrame(peer, server);
         defer frame.deinit();
         switch (frame.kind) {
-            .snapshot_data => {
+            .snapshot_data, .snapshot_raw_data => {
                 if (graphics != null) return error.MalformedTestSnapshot;
+                const is_raw = frame.kind == .snapshot_raw_data;
+                if (raw != null and raw.? != is_raw) return error.MalformedTestSnapshot;
+                raw = is_raw;
                 if (encoded.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                     return error.MalformedTestSnapshot;
                 try encoded.appendSlice(peer.allocator, frame.payload);
@@ -2580,27 +2668,35 @@ fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
         }
     }
 
-    if (encoded.items.len <= protocol.text_v1.compressed_header_bytes)
-        return error.MalformedTestSnapshot;
-    const raw_len = readU32(encoded.items[0..protocol.text_v1.compressed_header_bytes]);
-    if (raw_len == 0 or raw_len > protocol.maximum_text_snapshot_bytes)
-        return error.MalformedTestSnapshot;
-    const body = try peer.allocator.alloc(u8, raw_len);
-    errdefer peer.allocator.free(body);
-    var output: std.Io.Writer = .fixed(body);
-    var input: std.Io.Reader = .fixed(encoded.items[protocol.text_v1.compressed_header_bytes..]);
-    const work = try peer.allocator.alloc(u8, std.compress.flate.max_window_len);
-    defer peer.allocator.free(work);
-    var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
-    const decoded_count = decompressor.reader.streamRemaining(&output) catch
-        return error.MalformedTestSnapshot;
-    if (decoded_count != raw_len or output.buffered().len != raw_len or input.seek != input.end)
-        return error.MalformedTestSnapshot;
+    const is_raw = raw orelse return error.MalformedTestSnapshot;
+    const body = if (is_raw) blk: {
+        if (encoded.items.len == 0) return error.MalformedTestSnapshot;
+        break :blk try peer.allocator.dupe(u8, encoded.items);
+    } else blk: {
+        if (encoded.items.len <= protocol.text_v1.compressed_header_bytes)
+            return error.MalformedTestSnapshot;
+        const raw_len = readU32(encoded.items[0..protocol.text_v1.compressed_header_bytes]);
+        if (raw_len == 0 or raw_len > protocol.maximum_text_snapshot_bytes)
+            return error.MalformedTestSnapshot;
+        const decoded = try peer.allocator.alloc(u8, raw_len);
+        errdefer peer.allocator.free(decoded);
+        var output: std.Io.Writer = .fixed(decoded);
+        var input: std.Io.Reader = .fixed(encoded.items[protocol.text_v1.compressed_header_bytes..]);
+        const work = try peer.allocator.alloc(u8, std.compress.flate.max_window_len);
+        defer peer.allocator.free(work);
+        var decompressor: std.compress.flate.Decompress = .init(&input, .zlib, work);
+        const decoded_count = decompressor.reader.streamRemaining(&output) catch
+            return error.MalformedTestSnapshot;
+        if (decoded_count != raw_len or output.buffered().len != raw_len or input.seek != input.end)
+            return error.MalformedTestSnapshot;
+        break :blk decoded;
+    };
     return .{
         .allocator = peer.allocator,
         .begin = begin,
         .body = body,
         .graphics = graphics.?,
+        .raw = is_raw,
     };
 }
 

@@ -1,7 +1,8 @@
 //! Small transport-neutral contract for attaching to one shared Howl session.
 //!
-//! The wire is request-driven. A client has at most one outstanding `observe`
-//! request. The endpoint answers with one coherent snapshot at a single
+//! The wire is request-driven. A client has at most one outstanding observation
+//! request (`observe` or `observe_raw`). The endpoint answers with one coherent
+//! snapshot at a single
 //! revision, then the client asks again from that revision. This deliberately
 //! avoids a server-side stream queue per observer: slow clients may see a newer
 //! snapshot later, but they never pace PTY or VT progress.
@@ -9,7 +10,7 @@
 //! An endpoint must copy/materialize the requested snapshot before it emits
 //! `snapshot_begin`. PTY/VT work may continue while those copied bytes drain to
 //! the client. `snapshot_end.revision` closes that exact cut; the client's next
-//! `observe.after_revision` starts after it. Revision zero always requests an
+//! observation `after_revision` starts after it. Revision zero always requests an
 //! immediate snapshot, which also gives history scrolling a non-waiting path.
 
 const std = @import("std");
@@ -32,7 +33,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 4;
+pub const framing_version: u8 = 5;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -78,6 +79,10 @@ pub const Kind = enum(u8) {
     image_begin = 25,
     image_data = 26,
     image_end = 27,
+    /// Requests the same rich observation with raw text_v1 record bytes.
+    observe_raw = 28,
+    /// Carries raw bounded text_v1 record bytes for one `observe_raw` response.
+    snapshot_raw_data = 29,
 };
 
 /// One fixed framing header. Multi-byte integers are big-endian on the wire.
@@ -849,9 +854,10 @@ pub const maximum_snapshot_data_frames: usize = std.math.divCeil(
     @as(usize, maximum_payload_bytes),
 ) catch unreachable;
 
-/// Hard upper bound for one complete v4 observation response.
+/// Hard upper bound for one complete v5 observation response.
 ///
-/// This includes the bounded `text_v1` transport body, all possible data-frame
+/// This includes the bounded `text_v1` transport body, all possible compressed
+/// or raw data-frame
 /// headers, one complete `graphics_v2` manifest, and the begin/end envelopes.
 /// Demand-fetched RGBA image resources are separate transactions and do not
 /// consume this budget.

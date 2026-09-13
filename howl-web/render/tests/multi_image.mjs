@@ -34,7 +34,7 @@ function parseFrames(bytes) {
   let offset = 0;
   while (offset < bytes.length) {
     assert.equal(bytes.toString('ascii', offset, offset + 4), 'HWLS');
-    assert.equal(bytes[offset + 4], 4);
+    assert.equal(bytes[offset + 4], 5);
     assert.equal(bytes[offset + 6], 0);
     assert.equal(bytes[offset + 7], 0);
     const kind = bytes[offset + 5];
@@ -51,7 +51,7 @@ function parseFrames(bytes) {
 function encodeFrame(kind, payload) {
   const result = Buffer.alloc(12 + payload.length);
   result.write('HWLS', 0, 4, 'ascii');
-  result[4] = 4;
+  result[4] = 5;
   result[5] = kind;
   result.writeUInt32BE(payload.length, 8);
   payload.copy(result, 12);
@@ -120,7 +120,7 @@ function encodeGraphics() {
   return result;
 }
 
-const corpus = JSON.parse(await readFile('../../howl-session/protocol/v4-vectors.json', 'utf8'));
+const corpus = JSON.parse(await readFile('../../howl-session/protocol/v5-vectors.json', 'utf8'));
 const frozen = corpus.cases.find(value => value.id === 'snapshot_graphics_manifest');
 assert.ok(frozen?.hex);
 const originalFrames = parseFrames(Buffer.from(frozen.hex, 'hex'));

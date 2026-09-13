@@ -122,6 +122,21 @@ pub fn sendRequest(
     try connection.send(.observe, &payload);
 }
 
+/// Sends one raw rich observation request. Framing v5 keeps this lane distinct
+/// from ordinary compressed `observe`; text_v1 record bytes are unchanged.
+pub fn sendRawRequest(
+    connection: *client.Connection,
+    after_revision: u64,
+    history_offset: u32,
+) client.Error!void {
+    var payload: [protocol.payload_bytes.observe]u8 = undefined;
+    protocol.encodeObserve(&payload, .{
+        .after_revision = after_revision,
+        .history_offset = history_offset,
+    });
+    try connection.send(.observe_raw, &payload);
+}
+
 pub fn request(
     connection: *client.Connection,
     allocator: std.mem.Allocator,
@@ -132,7 +147,19 @@ pub fn request(
     return receive(connection, allocator);
 }
 
-/// Receives one rich snapshot after the caller has already sent `observe`.
+/// Requests one raw text_v1 observation. Snapshot ownership is identical to
+/// `request`; only the transport envelope skips DEFLATE.
+pub fn requestRaw(
+    connection: *client.Connection,
+    allocator: std.mem.Allocator,
+    after_revision: u64,
+    history_offset: u32,
+) Error!Snapshot {
+    try sendRawRequest(connection, after_revision, history_offset);
+    return receive(connection, allocator);
+}
+
+/// Receives one rich snapshot after the caller has sent `observe` or `observe_raw`.
 pub fn receive(connection: *client.Connection, allocator: std.mem.Allocator) Error!Snapshot {
     return receiveFrom(connection, allocator);
 }
@@ -204,8 +231,10 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
     var presentation_seen = false;
     var row_count: u16 = 0;
     var phase: DecodePhase = .presentation;
-    var compressed_body: std.ArrayList(u8) = .empty;
-    defer compressed_body.deinit(allocator);
+    var text_body: std.ArrayList(u8) = .empty;
+    defer text_body.deinit(allocator);
+    const BodyEncoding = enum { none, compressed, raw };
+    var body_encoding: BodyEncoding = .none;
     var graphics: ?Graphics = null;
     errdefer if (graphics) |*value| value.deinit(allocator);
 
@@ -214,11 +243,18 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
         defer frame.deinit();
         try accountFrame(&total_bytes, frame.payload.len);
         switch (frame.kind) {
-            .snapshot_data => {
+            .snapshot_data, .snapshot_raw_data => {
                 if (graphics != null) return error.InvalidSnapshot;
-                if (compressed_body.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
+                const encoding: BodyEncoding = if (frame.kind == .snapshot_data)
+                    .compressed
+                else
+                    .raw;
+                if (body_encoding != .none and body_encoding != encoding)
+                    return error.InvalidSnapshot;
+                body_encoding = encoding;
+                if (text_body.items.len + frame.payload.len > protocol.maximum_text_snapshot_bytes)
                     return error.SnapshotTooLarge;
-                try compressed_body.appendSlice(allocator, frame.payload);
+                try text_body.appendSlice(allocator, frame.payload);
             },
             .snapshot_graphics => {
                 if (graphics != null) return error.InvalidSnapshot;
@@ -228,20 +264,37 @@ fn receiveFrom(connection: anytype, allocator: std.mem.Allocator) Error!Snapshot
                 if (graphics == null) return error.InvalidSnapshot;
                 const end = try protocol.decodeSnapshotEnd(frame.payload);
                 if (end.revision != begin.revision) return error.InvalidSnapshot;
-                try decodeTextBody(
-                    allocator,
-                    begin,
-                    compressed_body.items,
-                    rows,
-                    &initialized_rows,
-                    &hyperlinks,
-                    &referenced,
-                    &resolved,
-                    &presentation,
-                    &presentation_seen,
-                    &row_count,
-                    &phase,
-                );
+                switch (body_encoding) {
+                    .compressed => try decodeTextBody(
+                        allocator,
+                        begin,
+                        text_body.items,
+                        rows,
+                        &initialized_rows,
+                        &hyperlinks,
+                        &referenced,
+                        &resolved,
+                        &presentation,
+                        &presentation_seen,
+                        &row_count,
+                        &phase,
+                    ),
+                    .raw => try decodeRawTextBody(
+                        allocator,
+                        begin,
+                        text_body.items,
+                        rows,
+                        &initialized_rows,
+                        &hyperlinks,
+                        &referenced,
+                        &resolved,
+                        &presentation,
+                        &presentation_seen,
+                        &row_count,
+                        &phase,
+                    ),
+                    .none => return error.InvalidSnapshot,
+                }
                 if (!presentation_seen or row_count != begin.rows) return error.InvalidSnapshot;
                 for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
                     return error.InvalidSnapshot;
@@ -492,7 +545,68 @@ fn decodeTextBody(
     const decoded_count = decompressor.reader.streamRemaining(&output) catch return error.InvalidSnapshot;
     if (decoded_count != uncompressed_len or output.buffered().len != uncompressed_len or input.seek != input.end)
         return error.InvalidSnapshot;
+    return decodeTextRecords(
+        allocator,
+        begin,
+        decoded,
+        rows,
+        initialized_rows,
+        hyperlinks,
+        referenced,
+        resolved,
+        presentation,
+        presentation_seen,
+        row_count,
+        phase,
+    );
+}
 
+fn decodeRawTextBody(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    decoded: []const u8,
+    rows: []Row,
+    initialized_rows: *usize,
+    hyperlinks: *std.ArrayList(Hyperlink),
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    presentation: *Presentation,
+    presentation_seen: *bool,
+    row_count: *u16,
+    phase: *DecodePhase,
+) Error!void {
+    if (decoded.len == 0 or decoded.len > protocol.maximum_text_snapshot_bytes)
+        return error.SnapshotTooLarge;
+    return decodeTextRecords(
+        allocator,
+        begin,
+        decoded,
+        rows,
+        initialized_rows,
+        hyperlinks,
+        referenced,
+        resolved,
+        presentation,
+        presentation_seen,
+        row_count,
+        phase,
+    );
+}
+
+fn decodeTextRecords(
+    allocator: std.mem.Allocator,
+    begin: protocol.SnapshotBegin,
+    decoded: []const u8,
+    rows: []Row,
+    initialized_rows: *usize,
+    hyperlinks: *std.ArrayList(Hyperlink),
+    referenced: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    resolved: *[protocol.text_v1.maximum_hyperlinks + 1]bool,
+    presentation: *Presentation,
+    presentation_seen: *bool,
+    row_count: *u16,
+    phase: *DecodePhase,
+) Error!void {
     var offset: usize = 0;
     while (offset < decoded.len) {
         if (decoded.len - offset < protocol.text_v1.record_header_bytes) return error.InvalidSnapshot;
@@ -988,7 +1102,7 @@ test "deflated rich body rejects corrupt and oversized streams" {
     ));
 }
 
-fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
+fn testFramedSnapshot(allocator: std.mem.Allocator, raw: bool) ![]u8 {
     const begin: protocol.SnapshotBegin = .{
         .revision = 3,
         .terminal_revision = 9,
@@ -1013,11 +1127,12 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
         .kind = .presentation,
         .payload_len = protocol.text_v1.presentation_bytes,
     });
-    const compressed = try testDeflateBody(allocator, &body);
-    defer allocator.free(compressed);
+    const compressed = if (raw) &.{} else try testDeflateBody(allocator, &body);
+    defer if (!raw) allocator.free(compressed);
+    const text_bytes: []const u8 = if (raw) &body else compressed;
     const graphics_bytes = protocol.graphics_v2.manifest_header_bytes;
     const length = 4 * protocol.header_bytes + protocol.payload_bytes.snapshot_begin +
-        compressed.len + graphics_bytes + protocol.payload_bytes.snapshot_end;
+        text_bytes.len + graphics_bytes + protocol.payload_bytes.snapshot_end;
     const frames = try allocator.alloc(u8, length);
     errdefer allocator.free(frames);
     var at: usize = 0;
@@ -1029,12 +1144,12 @@ fn testFramedSnapshot(allocator: std.mem.Allocator) ![]u8 {
     protocol.encodeSnapshotBegin(frames[at..][0..protocol.payload_bytes.snapshot_begin], begin);
     at += protocol.payload_bytes.snapshot_begin;
     try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
-        .kind = .snapshot_data,
-        .payload_len = @intCast(compressed.len),
+        .kind = if (raw) .snapshot_raw_data else .snapshot_data,
+        .payload_len = @intCast(text_bytes.len),
     });
     at += protocol.header_bytes;
-    @memcpy(frames[at..][0..compressed.len], compressed);
-    at += compressed.len;
+    @memcpy(frames[at..][0..text_bytes.len], text_bytes);
+    at += text_bytes.len;
     try protocol.encodeHeader(frames[at..][0..protocol.header_bytes], .{
         .kind = .snapshot_graphics,
         .payload_len = graphics_bytes,
@@ -1071,14 +1186,20 @@ fn testDecodeOwned(allocator: std.mem.Allocator, bytes: []const u8) !void {
 }
 
 test "buffered frames share decoder and clean up at every allocation failure" {
-    const frames = try testFramedSnapshot(std.testing.allocator);
+    const frames = try testFramedSnapshot(std.testing.allocator, false);
     defer std.testing.allocator.free(frames);
     try testDecodeOwned(std.testing.allocator, frames);
     try std.testing.checkAllAllocationFailures(std.testing.allocator, testDecodeOwned, .{frames});
 }
 
+test "buffered frames decode raw text_v1 snapshot lane" {
+    const frames = try testFramedSnapshot(std.testing.allocator, true);
+    defer std.testing.allocator.free(frames);
+    try testDecodeOwned(std.testing.allocator, frames);
+}
+
 test "buffered frames reject truncation trailing data and mismatched revision" {
-    const frames = try testFramedSnapshot(std.testing.allocator);
+    const frames = try testFramedSnapshot(std.testing.allocator, false);
     defer std.testing.allocator.free(frames);
     for (0..frames.len) |length| {
         try std.testing.expectError(error.InvalidSnapshot, decodeFrames(std.testing.allocator, frames[0..length]));

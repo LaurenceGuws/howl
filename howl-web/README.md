@@ -180,7 +180,7 @@ matches the native Flutter resource-lifetime contract.
 Terminal images use the same lease without entering the renderer's recovery
 pixels. The live renderer admits at most seven visible terminal image resources
 plus the glyph atlas and retains the protocol's bounded placement set. A
-complete v4 graphics snapshot may cause it to report one exact missing external
+complete v5 graphics snapshot may cause it to report one exact missing external
 Canvas resource plus its canonical terminal `image_id + generation`. The
 browser lazily opens one dedicated third Howl wire connection, demand-fetches
 that exact RGBA8 generation into the wire instance's bounded scratch, creates

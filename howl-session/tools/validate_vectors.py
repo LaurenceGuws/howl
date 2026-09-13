@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v3 wire-vector decoder and validator.
+"""Independent Howl session v5 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 4
+FRAMING_VERSION = 5
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -51,6 +51,8 @@ KINDS = {
     25: "image_begin",
     26: "image_data",
     27: "image_end",
+    28: "observe_raw",
+    29: "snapshot_raw_data",
 }
 
 INPUT_KINDS = {1: "bytes", 2: "paste", 3: "key", 4: "mouse", 5: "focus"}
@@ -522,6 +524,7 @@ def new_snapshot(begin: dict) -> dict:
     return {
         "begin": begin,
         "encoded_body": bytearray(),
+        "body_encoding": None,
         "presentation": None,
         "text_rows": [],
         "hyperlinks": [],
@@ -576,17 +579,23 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
     begin = snapshot["begin"]
     require(end["revision"] == begin["revision"], "snapshot_revision")
     encoded = bytes(snapshot["encoded_body"])
-    require(len(encoded) > 4, "snapshot_compressed_size")
-    raw_len = u32(encoded[0:4])
-    require(0 < raw_len <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
-    inflater = zlib.decompressobj()
-    try:
-        body = inflater.decompress(encoded[4:], raw_len + 1)
-        body += inflater.flush()
-    except zlib.error:
-        reject("snapshot_compression")
-    require(inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail, "snapshot_compression")
-    require(len(body) == raw_len, "snapshot_raw_size")
+    encoding = snapshot["body_encoding"]
+    require(encoding is not None, "snapshot_data_missing")
+    if encoding == "raw":
+        require(0 < len(encoded) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
+        body = encoded
+    else:
+        require(len(encoded) > 4, "snapshot_compressed_size")
+        raw_len = u32(encoded[0:4])
+        require(0 < raw_len <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_raw_limit")
+        inflater = zlib.decompressobj()
+        try:
+            body = inflater.decompress(encoded[4:], raw_len + 1)
+            body += inflater.flush()
+        except zlib.error:
+            reject("snapshot_compression")
+        require(inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail, "snapshot_compression")
+        require(len(body) == raw_len, "snapshot_raw_size")
     decode_text_records(body, snapshot)
     require(snapshot["presentation"] is not None, "text_presentation_missing")
     require(len(snapshot["text_rows"]) == begin["rows"], "text_row_count")
@@ -739,7 +748,7 @@ def decode_fixed_payload(kind: int, payload: bytes) -> dict:
         return decode_hello(payload)
     if kind == 2:
         return decode_welcome(payload)
-    if kind == 3:
+    if kind == 3 or kind == 28:
         return decode_observe(payload)
     if kind == 4:
         return decode_snapshot_begin(payload)
@@ -797,10 +806,13 @@ def decode_stream(data: bytes) -> dict:
             require(snapshot is None and image_resource is None, "snapshot_nested")
             decoded = decode_snapshot_begin(payload)
             snapshot = new_snapshot(decoded)
-        elif kind == 5:
+        elif kind == 5 or kind == 29:
             require(snapshot is not None, "snapshot_data_without_begin")
             require(snapshot["graphics"] is None, "snapshot_graphics_order")
-            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_compressed_limit")
+            encoding = "compressed" if kind == 5 else "raw"
+            require(snapshot["body_encoding"] is None or snapshot["body_encoding"] == encoding, "snapshot_data_encoding")
+            snapshot["body_encoding"] = encoding
+            require(len(snapshot["encoded_body"]) + len(payload) <= MAXIMUM_TEXT_SNAPSHOT_BYTES, "snapshot_text_limit")
             snapshot["encoded_body"].extend(payload)
             decoded = {"bytes": len(payload)}
         elif kind == 23:
@@ -879,7 +891,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v4/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v5/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -892,7 +904,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v4-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v5-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

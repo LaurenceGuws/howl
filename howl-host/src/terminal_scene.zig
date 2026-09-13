@@ -208,7 +208,7 @@ pub const Scene = struct {
     }
 
     pub fn prepare(self: *Scene, after_revision: u64) !Prepared {
-        var rich = try client.rich.request(&self.connection, self.allocator, after_revision, 0);
+        var rich = try client.rich.requestRaw(&self.connection, self.allocator, after_revision, 0);
         defer rich.deinit();
         const begin = rich.begin;
         const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch

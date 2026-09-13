@@ -8,11 +8,11 @@ established Unix stream path or an IPv4 loopback TCP listener selected with
 reachability, authentication and routing remain outside Howl; the existing
 `howl-session-bridge` is a protocol-blind SSH/stdio adapter for the Unix path.
 
-This document is the client contract for framing version 4. All multi-byte
+This document is the client contract for framing version 5. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v4-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v5-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -24,7 +24,7 @@ payload bytes. There are no transport delimiters between frames.
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
 | 0 | 4 | ASCII `HWLS` |
-| 4 | 1 | framing version, currently `4` |
+| 4 | 1 | framing version, currently `5` |
 | 5 | 1 | frame kind |
 | 6 | 2 | reserved, zero |
 | 8 | 4 | payload length |
@@ -33,7 +33,7 @@ One frame payload is at most 1 MiB. The node-local endpoint accepts at most
 64 KiB in one **client request** payload. A client must therefore keep every
 outbound frame payload at or below 65,536 bytes even though response frames may
 be larger. The encoded and decoded `text_v1` body is bounded to 4 MiB. A complete
-v4 observation additionally carries one graphics manifest of at most 58,396
+v5 observation additionally carries one graphics manifest of at most 58,396
 bytes plus bounded frame headers; exact image pixels use separate resource
 transactions.
 
@@ -68,6 +68,8 @@ Frame kinds are:
 | 25 | `image_begin` | endpoint → client |
 | 26 | `image_data` | endpoint → client |
 | 27 | `image_end` | endpoint → client |
+| 28 | `observe_raw` | client → endpoint |
+| 29 | `snapshot_raw_data` | endpoint → client |
 
 Invalid magic, framing version, reserved header bits, frame kind, or a declared
 payload above 1 MiB is a framing failure. The endpoint closes a connection on a
@@ -130,11 +132,12 @@ Bits 13..31 are reserved and must be zero.
 
 ## Observation model
 
-Observation is request-driven. A client has at most one outstanding `observe`.
-There is no server-side stream queue per observer, so a slow observer never
-paces the PTY or canonical VT.
+Observation is request-driven. A client has at most one outstanding observation
+request, either ordinary `observe` or `observe_raw`. There is no server-side
+stream queue per observer, so a slow observer never paces the PTY or canonical
+VT.
 
-`observe` has a 12-byte payload:
+`observe` and `observe_raw` use the same 12-byte payload:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -152,13 +155,20 @@ snapshot reports the effective history offset actually used.
 Each observation is:
 
 1. one `snapshot_begin`;
-2. one or more `snapshot_data` transport chunks;
+2. one or more text transport chunks: `snapshot_data` for `observe`, or
+   `snapshot_raw_data` for `observe_raw`;
 3. one `snapshot_graphics` manifest;
 4. one `snapshot_end` with the same observation revision.
 
-The endpoint materializes the coherent snapshot before emitting
-`snapshot_begin`. PTY/VT progress may continue while those already-copied bytes
-drain to the observer.
+A single snapshot never mixes compressed and raw text chunks. The endpoint
+materializes the coherent snapshot before emitting `snapshot_begin`. PTY/VT
+progress may continue while those already-copied bytes drain to the observer.
+
+`observe` is the ordinary transport and keeps the bounded zlib/DEFLATE envelope.
+`observe_raw` is an explicit framing-v5 lane for clients that prefer lower CPU
+cost over compressed transport bytes. It changes only the text transport
+envelope; snapshot semantics, history selection, graphics manifests, revisions,
+and `text_v1` records are identical. There is still no feature negotiation.
 
 ### `snapshot_begin`
 
@@ -202,11 +212,12 @@ Flag byte bits are:
 
 `text_v1` remains the frozen renderer-neutral terminal-text representation.
 There are no font file names, glyph ids, GPU objects, Flutter types, or
-window-system concepts on this wire. Framing v3 adds terminal graphics beside
-it rather than changing its record grammar.
+window-system concepts on this wire. Framing v4 added terminal graphics beside
+it rather than changing its record grammar. Framing v5 adds a raw transport
+lane without changing the `text_v1` record grammar.
 
-The `snapshot_data` payloads are transport chunks only. Concatenate them in
-order. The resulting bytes are:
+For ordinary `observe`, the `snapshot_data` payloads are transport chunks only.
+Concatenate them in order. The resulting bytes are:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -215,12 +226,17 @@ order. The resulting bytes are:
 
 The declared uncompressed body is bounded to 4 MiB before allocation. The zlib
 stream must finish exactly, with no trailing or unconsumed bytes, and inflate to
-exactly the declared length. Every snapshot is independently decompressible; no
-previous client revision is needed to recover or validate it. Compression is
-part of `text_v1`, not an optional or negotiated alternative.
+exactly the declared length. Every compressed snapshot is independently
+decompressible; no previous client revision is needed to recover or validate it.
 
-After inflation, the body is a concatenation of self-delimiting records. The
-eight-byte record header is:
+For `observe_raw`, concatenate the `snapshot_raw_data` payloads in order. Those
+bytes are the complete bounded `text_v1` record body directly, with no four-byte
+length prefix and no zlib stream. An empty or larger-than-4-MiB raw body is
+invalid. Compression is therefore a framing-v5 transport choice, not part of
+the semantic `text_v1` grammar.
+
+After inflation or direct raw assembly, the body is a concatenation of
+self-delimiting records. The eight-byte record header is:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
@@ -228,8 +244,8 @@ eight-byte record header is:
 | 1 | 3 | reserved, zero |
 | 4 | 4 | record payload length |
 
-Records may cross `snapshot_data` transport-chunk boundaries because those
-boundaries have no semantic meaning. Record order is strict: exactly one
+Records may cross `snapshot_data` or `snapshot_raw_data` transport-chunk
+boundaries because those boundaries have no semantic meaning. Record order is strict: exactly one
 presentation record, exactly `snapshot_begin.rows` row records, then zero or
 more hyperlink resolver records. Every nonzero hyperlink id referenced by a row
 must resolve exactly once before `snapshot_end`.
@@ -338,8 +354,8 @@ body. The canonical VT may retain one decoded RGBA image up to 16 MiB, so
 copying image bytes into every observation could not be complete within the
 snapshot bound and would retransmit unchanged content unnecessarily.
 
-Every v4 observation therefore includes exactly one `snapshot_graphics` frame
-after the final `snapshot_data` chunk and before `snapshot_end`. Its payload is
+Every v5 observation therefore includes exactly one `snapshot_graphics` frame
+after the final text-data chunk and before `snapshot_end`. Its payload is
 one 28-byte header, zero or more 20-byte image descriptors, then zero or more
 52-byte visible placements. The complete manifest always fits in one ordinary
 response frame.
@@ -606,7 +622,7 @@ The minimal client implementation order is:
 
 1. stream-safe 12-byte frame reader/writer and frame-version validation;
 2. empty `hello`, `welcome`, and connection-local client identity;
-3. request-driven `observe`, bounded zlib inflate, and `text_v1` record decoding;
+3. request-driven `observe` (or explicit `observe_raw`) and `text_v1` record decoding;
 4. semantic key/mouse/focus plus paste/raw-byte input;
 5. explicit resize leadership, history offsets, and interaction-state queries as needed.
 
@@ -614,7 +630,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v4-vectors.json
+python3 tools/validate_vectors.py protocol/v5-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime
