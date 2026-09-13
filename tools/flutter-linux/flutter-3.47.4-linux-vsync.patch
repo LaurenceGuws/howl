@@ -1,0 +1,631 @@
+diff --git a/engine/src/flutter/shell/platform/linux/fl_display_monitor.cc b/engine/src/flutter/shell/platform/linux/fl_display_monitor.cc
+index bea40b2cbd1..76ad84651c0 100644
+--- a/engine/src/flutter/shell/platform/linux/fl_display_monitor.cc
++++ b/engine/src/flutter/shell/platform/linux/fl_display_monitor.cc
+@@ -23,6 +23,15 @@ struct _FlDisplayMonitor {
+ 
+ G_DEFINE_TYPE(FlDisplayMonitor, fl_display_monitor, G_TYPE_OBJECT)
+ 
++// Get the refresh rate of a GDK monitor in Hz, or 0 if unknown.
++static gdouble get_monitor_refresh_rate(GdkMonitor* monitor) {
++  if (monitor == nullptr) {
++    return 0.0;
++  }
++  // GDK reports the refresh rate in millihertz.
++  return gdk_monitor_get_refresh_rate(monitor) / 1000.0;
++}
++
+ // Send the current monitor state to the engine.
+ static void notify_display_update(FlDisplayMonitor* self) {
+   g_autoptr(FlEngine) engine = FL_ENGINE(g_weak_ref_get(&self->engine));
+@@ -52,7 +61,7 @@ static void notify_display_update(FlDisplayMonitor* self) {
+     display->struct_size = sizeof(FlutterEngineDisplay);
+     display->display_id = display_id;
+     display->single_display = false;
+-    display->refresh_rate = gdk_monitor_get_refresh_rate(monitor) / 1000.0;
++    display->refresh_rate = get_monitor_refresh_rate(monitor);
+     display->width = geometry.width;
+     display->height = geometry.height;
+     display->device_pixel_ratio = gdk_monitor_get_scale_factor(monitor);
+@@ -118,3 +127,33 @@ FlutterEngineDisplayId fl_display_monitor_get_display_id(FlDisplayMonitor* self,
+   return GPOINTER_TO_INT(
+       g_hash_table_lookup(self->display_ids_by_monitor, monitor));
+ }
++
++gdouble fl_display_monitor_get_refresh_rate(FlDisplayMonitor* self,
++                                            FlutterEngineDisplayId display_id) {
++  g_return_val_if_fail(FL_IS_DISPLAY_MONITOR(self), 0.0);
++
++  GHashTableIter iter;
++  g_hash_table_iter_init(&iter, self->display_ids_by_monitor);
++  gpointer key, value;
++  while (g_hash_table_iter_next(&iter, &key, &value)) {
++    if (static_cast<FlutterEngineDisplayId>(GPOINTER_TO_INT(value)) ==
++        display_id) {
++      return get_monitor_refresh_rate(GDK_MONITOR(key));
++    }
++  }
++
++  return 0.0;
++}
++
++gdouble fl_display_monitor_get_max_refresh_rate(FlDisplayMonitor* self) {
++  g_return_val_if_fail(FL_IS_DISPLAY_MONITOR(self), 0.0);
++
++  gdouble max_refresh_rate = 0.0;
++  int n_monitors = gdk_display_get_n_monitors(self->display);
++  for (int i = 0; i < n_monitors; i++) {
++    GdkMonitor* monitor = gdk_display_get_monitor(self->display, i);
++    max_refresh_rate = MAX(max_refresh_rate, get_monitor_refresh_rate(monitor));
++  }
++
++  return max_refresh_rate;
++}
+diff --git a/engine/src/flutter/shell/platform/linux/fl_display_monitor.h b/engine/src/flutter/shell/platform/linux/fl_display_monitor.h
+index 5660a9671c8..31d9d9fe394 100644
+--- a/engine/src/flutter/shell/platform/linux/fl_display_monitor.h
++++ b/engine/src/flutter/shell/platform/linux/fl_display_monitor.h
+@@ -51,6 +51,28 @@ FlutterEngineDisplayId fl_display_monitor_get_display_id(
+     FlDisplayMonitor* monitor,
+     GdkMonitor* gdk_monitor);
+ 
++/**
++ * fl_display_monitor_get_refresh_rate:
++ * @monitor: an #FlDisplayMonitor.
++ * @display_id: ID Flutter is using for a display.
++ *
++ * Get the refresh rate of the display with the given ID.
++ *
++ * Returns: refresh rate in Hz or 0 if unknown.
++ */
++gdouble fl_display_monitor_get_refresh_rate(FlDisplayMonitor* monitor,
++                                            FlutterEngineDisplayId display_id);
++
++/**
++ * fl_display_monitor_get_max_refresh_rate:
++ * @monitor: an #FlDisplayMonitor.
++ *
++ * Get the highest refresh rate of all the displays currently connected.
++ *
++ * Returns: refresh rate in Hz or 0 if unknown.
++ */
++gdouble fl_display_monitor_get_max_refresh_rate(FlDisplayMonitor* monitor);
++
+ G_END_DECLS
+ 
+ #endif  // FLUTTER_SHELL_PLATFORM_LINUX_FL_DISPLAY_MONITOR_H_
+diff --git a/engine/src/flutter/shell/platform/linux/fl_display_monitor_test.cc b/engine/src/flutter/shell/platform/linux/fl_display_monitor_test.cc
+index 29ae22b009c..1f53c6b6600 100644
+--- a/engine/src/flutter/shell/platform/linux/fl_display_monitor_test.cc
++++ b/engine/src/flutter/shell/platform/linux/fl_display_monitor_test.cc
+@@ -7,6 +7,7 @@
+ #include "flutter/shell/platform/linux/fl_engine_private.h"
+ 
+ #include "flutter/shell/platform/linux/testing/linux_test.h"
++#include "flutter/shell/platform/linux/testing/mock_gtk.h"
+ #include "gtest/gtest.h"
+ 
+ class FlDisplayMonitorTest : public flutter::testing::LinuxTest {};
+@@ -32,3 +33,30 @@ TEST_F(FlDisplayMonitorTest, Test) {
+   fl_display_monitor_start(monitor);
+   EXPECT_TRUE(called);
+ }
++
++TEST_F(FlDisplayMonitorTest, RefreshRate) {
++  ::testing::NiceMock<flutter::testing::MockGtk> mock_gtk;
++  EXPECT_CALL(mock_gtk, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillRepeatedly(::testing::Return(144000));
++
++  StartEngine();
++
++  g_autoptr(FlDisplayMonitor) monitor =
++      fl_display_monitor_new(engine, gdk_display_get_default());
++  fl_display_monitor_start(monitor);
++
++  EXPECT_DOUBLE_EQ(fl_display_monitor_get_refresh_rate(monitor, 1), 144.0);
++  EXPECT_DOUBLE_EQ(fl_display_monitor_get_max_refresh_rate(monitor), 144.0);
++}
++
++TEST_F(FlDisplayMonitorTest, RefreshRateUnknownDisplay) {
++  StartEngine();
++
++  g_autoptr(FlDisplayMonitor) monitor =
++      fl_display_monitor_new(engine, gdk_display_get_default());
++  fl_display_monitor_start(monitor);
++
++  EXPECT_DOUBLE_EQ(fl_display_monitor_get_refresh_rate(monitor, 0), 0.0);
++  EXPECT_DOUBLE_EQ(fl_display_monitor_get_refresh_rate(monitor, 99), 0.0);
++  EXPECT_DOUBLE_EQ(fl_display_monitor_get_max_refresh_rate(monitor), 60.0);
++}
+diff --git a/engine/src/flutter/shell/platform/linux/fl_engine.cc b/engine/src/flutter/shell/platform/linux/fl_engine.cc
+index f88d08cb05f..101071fa61a 100644
+--- a/engine/src/flutter/shell/platform/linux/fl_engine.cc
++++ b/engine/src/flutter/shell/platform/linux/fl_engine.cc
+@@ -35,6 +35,11 @@ static constexpr size_t kPlatformTaskRunnerIdentifier = 1;
+ static constexpr int32_t kMousePointerDeviceId = 0;
+ static constexpr int32_t kPointerPanZoomDeviceId = 1;
+ 
++// Refresh rate assumed when the displays in use are unknown.
++static constexpr double kDefaultRefreshRate = 60.0;
++
++static constexpr uint64_t kNanosecondsPerSecond = 1000000000;
++
+ struct _FlEngine {
+   GObject parent_instance;
+ 
+@@ -103,6 +108,26 @@ struct _FlEngine {
+   // engine threads and GTK.
+   GMutex renderables_mutex;
+ 
++  // Displays each view was last reported on, used to determine the refresh
++  // rate to drive the engine at. Only accessed from the GTK thread.
++  GHashTable* display_ids_by_view_id;
++
++  // Mutex to protect access to frame_interval_nanos which is written by GTK
++  // and read by the vsync callback (which may be on the UI thread).
++  GMutex vsync_mutex;
++
++  // Time between frames on the display(s) views are on, in nanoseconds.
++  uint64_t frame_interval_nanos;
++
++  // Time the engine started, used as the phase for vsync ticks.
++  uint64_t vsync_phase_nanos;
++
++  // Previous vsync interval and target. When a view moves between displays
++  // with different refresh rates, the new clock grid can otherwise snap to a
++  // time before the frame interval already reported to Flutter has finished.
++  uint64_t last_vsync_interval_nanos;
++  uint64_t last_vsync_target_time_nanos;
++
+   // Function to call when a platform message is received.
+   FlEnginePlatformMessageHandler platform_message_handler;
+   gpointer platform_message_handler_data;
+@@ -171,6 +196,79 @@ static void parse_locale(const gchar* locale,
+   }
+ }
+ 
++// Round the given time up to the next tick of a clock with the given phase and
++// interval.
++static uint64_t snap_to_next_tick(uint64_t value,
++                                  uint64_t phase,
++                                  uint64_t interval) {
++  if (value <= phase) {
++    return phase;
++  }
++  uint64_t remainder = (value - phase) % interval;
++  if (remainder == 0) {
++    return value;
++  }
++  return value + (interval - remainder);
++}
++
++// Update the interval the engine produces frames at from the displays views are
++// currently on. If the displays are unknown the fastest connected display is
++// used so any view is rendered smoothly.
++static void update_frame_interval(FlEngine* self) {
++  double refresh_rate = 0.0;
++  if (self->display_monitor != nullptr) {
++    GHashTableIter iter;
++    g_hash_table_iter_init(&iter, self->display_ids_by_view_id);
++    gpointer value;
++    while (g_hash_table_iter_next(&iter, nullptr, &value)) {
++      FlutterEngineDisplayId display_id = GPOINTER_TO_INT(value);
++      refresh_rate = MAX(refresh_rate, fl_display_monitor_get_refresh_rate(
++                                           self->display_monitor, display_id));
++    }
++    if (refresh_rate <= 0.0) {
++      refresh_rate =
++          fl_display_monitor_get_max_refresh_rate(self->display_monitor);
++    }
++  }
++  if (refresh_rate <= 0.0) {
++    refresh_rate = kDefaultRefreshRate;
++  }
++
++  g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->vsync_mutex);
++  self->frame_interval_nanos = kNanosecondsPerSecond / refresh_rate;
++}
++
++// Called by the engine when it wants to be told when the next frame should
++// start. This may be called on any thread. GTK does not expose a vsync signal
++// for windows that are not being drawn, so the next tick of a clock at the
++// display refresh rate is used instead.
++static void fl_engine_vsync_cb(void* user_data, intptr_t baton) {
++  FlEngine* self = FL_ENGINE(user_data);
++
++  uint64_t current_time = self->embedder_api.GetCurrentTime();
++  uint64_t frame_start_time;
++  uint64_t frame_target_time;
++  {
++    g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->vsync_mutex);
++    uint64_t frame_interval = self->frame_interval_nanos;
++    frame_start_time =
++        snap_to_next_tick(current_time, self->vsync_phase_nanos, frame_interval);
++    if (self->last_vsync_interval_nanos != 0 &&
++        self->last_vsync_interval_nanos != frame_interval &&
++        frame_start_time < self->last_vsync_target_time_nanos) {
++      frame_start_time = self->last_vsync_target_time_nanos;
++    }
++    frame_target_time = frame_start_time + frame_interval;
++    self->last_vsync_interval_nanos = frame_interval;
++    self->last_vsync_target_time_nanos = frame_target_time;
++  }
++
++  if (self->embedder_api.OnVsync(self->engine, baton, frame_start_time,
++                                 frame_target_time) != kSuccess) {
++    g_warning("Failed to notify vsync to Flutter engine");
++  }
++}
++
+ /// Stores a weak reference to the renderable with the given ID.
+ static void set_renderable(FlEngine* self,
+                            int64_t view_id,
+@@ -196,8 +294,13 @@ static FlRenderable* get_renderable(FlEngine* self, int64_t view_id) {
+ 
+ /// Remove a renderable that no longer exists.
+ static void remove_renderable(FlEngine* self, int64_t view_id) {
+-  g_autoptr(GMutexLocker) locker = g_mutex_locker_new(&self->renderables_mutex);
+-  g_hash_table_remove(self->renderables_by_view_id, GINT_TO_POINTER(view_id));
++  {
++    g_autoptr(GMutexLocker) locker =
++        g_mutex_locker_new(&self->renderables_mutex);
++    g_hash_table_remove(self->renderables_by_view_id, GINT_TO_POINTER(view_id));
++  }
++  g_hash_table_remove(self->display_ids_by_view_id, GINT_TO_POINTER(view_id));
++  update_frame_interval(self);
+ }
+ 
+ static void view_added_cb(const FlutterAddViewResult* result) {
+@@ -626,6 +729,8 @@ static void fl_engine_dispose(GObject* object) {
+     g_clear_pointer(&self->renderables_by_view_id, g_hash_table_unref);
+   }
+   g_mutex_clear(&self->renderables_mutex);
++  g_clear_pointer(&self->display_ids_by_view_id, g_hash_table_unref);
++  g_mutex_clear(&self->vsync_mutex);
+ 
+   if (self->platform_message_handler_destroy_notify) {
+     self->platform_message_handler_destroy_notify(
+@@ -681,6 +786,11 @@ static void fl_engine_init(FlEngine* self) {
+         free(ref);
+       });
+ 
++  self->display_ids_by_view_id =
++      g_hash_table_new(g_direct_hash, g_direct_equal);
++  g_mutex_init(&self->vsync_mutex);
++  self->frame_interval_nanos = kNanosecondsPerSecond / kDefaultRefreshRate;
++
+   self->texture_registrar = fl_texture_registrar_new(self);
+ }
+ 
+@@ -870,6 +980,7 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
+       reinterpret_cast<const char* const*>(command_line_args->pdata);
+   args.platform_message_callback = fl_engine_platform_message_cb;
+   args.update_semantics_callback2 = fl_engine_update_semantics_cb;
++  args.vsync_callback = fl_engine_vsync_cb;
+   args.custom_task_runners = &custom_task_runners;
+   args.shutdown_dart_vm_when_done = true;
+   args.on_pre_engine_restart_callback = fl_engine_on_pre_engine_restart_cb;
+@@ -902,6 +1013,8 @@ gboolean fl_engine_start(FlEngine* self, GError** error) {
+     args.aot_data = self->aot_data;
+   }
+ 
++  self->vsync_phase_nanos = self->embedder_api.GetCurrentTime();
++
+   FlutterEngineResult result = self->embedder_api.Initialize(
+       FLUTTER_ENGINE_VERSION, &config, &args, self, &self->engine);
+   if (result != kSuccess) {
+@@ -952,6 +1065,8 @@ void fl_engine_notify_display_update(FlEngine* self,
+   if (result != kSuccess) {
+     g_warning("Failed to notify display update to Flutter engine: %d", result);
+   }
++
++  update_frame_interval(self);
+ }
+ 
+ void fl_engine_set_implicit_view(FlEngine* self, FlRenderable* renderable) {
+@@ -1190,6 +1305,10 @@ void fl_engine_send_window_metrics_event(FlEngine* self,
+                                          double pixel_ratio) {
+   g_return_if_fail(FL_IS_ENGINE(self));
+ 
++  g_hash_table_insert(self->display_ids_by_view_id, GINT_TO_POINTER(view_id),
++                      GINT_TO_POINTER(display_id));
++  update_frame_interval(self);
++
+   if (self->engine == nullptr) {
+     return;
+   }
+diff --git a/engine/src/flutter/shell/platform/linux/fl_engine_test.cc b/engine/src/flutter/shell/platform/linux/fl_engine_test.cc
+index dd2528e2482..7d43c0fb286 100644
+--- a/engine/src/flutter/shell/platform/linux/fl_engine_test.cc
++++ b/engine/src/flutter/shell/platform/linux/fl_engine_test.cc
+@@ -6,11 +6,14 @@
+ #include "flutter/shell/platform/linux/testing/linux_test.h"
+ #include "gtest/gtest.h"
+ 
++#include <functional>
++
+ #include "flutter/shell/platform/embedder/test_utils/proc_table_replacement.h"
+ #include "flutter/shell/platform/linux/fl_engine_private.h"
+ #include "flutter/shell/platform/linux/public/flutter_linux/fl_engine.h"
+ #include "flutter/shell/platform/linux/public/flutter_linux/fl_json_message_codec.h"
+ #include "flutter/shell/platform/linux/public/flutter_linux/fl_string_codec.h"
++#include "flutter/shell/platform/linux/testing/mock_gtk.h"
+ #include "flutter/shell/platform/linux/testing/mock_renderable.h"
+ 
+ // MOCK_ENGINE_PROC is leaky by design
+@@ -70,6 +73,197 @@ TEST_F(FlEngineTest, NotifyDisplayUpdate) {
+   EXPECT_TRUE(called);
+ }
+ 
++// Starts the engine, capturing the vsync callback it registers, and mocks the
++// clock so vsync times are deterministic. The engine is started at the time
++// currently in *current_time_nanos, which becomes the vsync phase.
++static VsyncCallback start_engine_with_vsync(
++    FlEngine* engine,
++    uint64_t* current_time_nanos,
++    std::function<void(uint64_t, uint64_t)> on_vsync) {
++  static VsyncCallback callback;
++  callback = nullptr;
++  fl_engine_get_embedder_api(engine)->Initialize = MOCK_ENGINE_PROC(
++      Initialize, ([](size_t version, const FlutterRendererConfig* config,
++                      const FlutterProjectArgs* args, void* user_data,
++                      FLUTTER_API_SYMBOL(FlutterEngine) * engine_out) {
++        callback = args->vsync_callback;
++        return kSuccess;
++      }));
++  fl_engine_get_embedder_api(engine)->RunInitialized =
++      MOCK_ENGINE_PROC(RunInitialized, ([](auto engine) { return kSuccess; }));
++  fl_engine_get_embedder_api(engine)->GetCurrentTime = MOCK_ENGINE_PROC(
++      GetCurrentTime, ([current_time_nanos]() { return *current_time_nanos; }));
++  fl_engine_get_embedder_api(engine)->OnVsync = MOCK_ENGINE_PROC(
++      OnVsync,
++      ([on_vsync](auto engine, intptr_t baton, uint64_t frame_start_time_nanos,
++                  uint64_t frame_target_time_nanos) {
++        EXPECT_EQ(baton, 42);
++        on_vsync(frame_start_time_nanos, frame_target_time_nanos);
++        return kSuccess;
++      }));
++
++  EXPECT_TRUE(fl_engine_start(engine, nullptr));
++  EXPECT_NE(callback, nullptr);
++  return callback;
++}
++
++// Checks vsync events are generated at the display refresh rate.
++TEST_F(FlEngineTest, Vsync) {
++  constexpr uint64_t kFrameInterval = 1000000000 / 60;
++
++  uint64_t current_time = 0;
++  uint64_t frame_start_time = 0, frame_target_time = 0;
++  int vsync_count = 0;
++  VsyncCallback vsync_callback = start_engine_with_vsync(
++      engine, &current_time, [&](uint64_t start_time, uint64_t target_time) {
++        vsync_count++;
++        frame_start_time = start_time;
++        frame_target_time = target_time;
++      });
++
++  // Part way through the first frame - snaps to the next tick.
++  current_time = 10000000;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(vsync_count, 1);
++  EXPECT_EQ(frame_start_time, kFrameInterval);
++  EXPECT_EQ(frame_target_time, 2 * kFrameInterval);
++
++  // Exactly on a tick - the frame can start now.
++  current_time = 3 * kFrameInterval;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(vsync_count, 2);
++  EXPECT_EQ(frame_start_time, 3 * kFrameInterval);
++  EXPECT_EQ(frame_target_time, 4 * kFrameInterval);
++}
++
++// Checks a vsync request from before the first tick snaps to that tick rather
++// than skipping past it.
++TEST_F(FlEngineTest, VsyncBeforePhase) {
++  constexpr uint64_t kFrameInterval = 1000000000 / 60;
++  constexpr uint64_t kStartTime = 5000000;
++
++  uint64_t current_time = kStartTime;
++  uint64_t frame_start_time = 0, frame_target_time = 0;
++  VsyncCallback vsync_callback = start_engine_with_vsync(
++      engine, &current_time, [&](uint64_t start_time, uint64_t target_time) {
++        frame_start_time = start_time;
++        frame_target_time = target_time;
++      });
++
++  // The clock reads earlier than the phase - the first tick is the phase.
++  current_time = 1000000;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_start_time, kStartTime);
++  EXPECT_EQ(frame_target_time, kStartTime + kFrameInterval);
++
++  // Exactly on the phase - the frame can start now.
++  current_time = kStartTime;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_start_time, kStartTime);
++  EXPECT_EQ(frame_target_time, kStartTime + kFrameInterval);
++
++  // Just after the phase - snaps to the next tick after it.
++  current_time = kStartTime + 1;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_start_time, kStartTime + kFrameInterval);
++  EXPECT_EQ(frame_target_time, kStartTime + 2 * kFrameInterval);
++}
++
++// Checks vsync events follow the refresh rate of a high refresh rate display.
++TEST_F(FlEngineTest, VsyncHighRefreshRate) {
++  ::testing::NiceMock<flutter::testing::MockGtk> mock_gtk;
++  EXPECT_CALL(mock_gtk, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillRepeatedly(::testing::Return(144000));
++  constexpr uint64_t kFrameInterval = 1000000000 / 144;
++
++  uint64_t current_time = 0;
++  uint64_t frame_start_time = 0, frame_target_time = 0;
++  int vsync_count = 0;
++  VsyncCallback vsync_callback = start_engine_with_vsync(
++      engine, &current_time, [&](uint64_t start_time, uint64_t target_time) {
++        vsync_count++;
++        frame_start_time = start_time;
++        frame_target_time = target_time;
++      });
++
++  current_time = 10000000;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(vsync_count, 1);
++  EXPECT_EQ(frame_start_time, 2 * kFrameInterval);
++  EXPECT_EQ(frame_target_time, 3 * kFrameInterval);
++  EXPECT_LT(frame_target_time - frame_start_time, 7000000u);
++}
++
++// Checks the vsync rate follows the display a view is on.
++TEST_F(FlEngineTest, VsyncFollowsViewDisplay) {
++  ::testing::NiceMock<flutter::testing::MockGtk> mock_gtk;
++  constexpr uint64_t kFrameInterval60 = 1000000000 / 60;
++  constexpr uint64_t kFrameInterval144 = 1000000000 / 144;
++
++  uint64_t current_time = 0;
++  uint64_t frame_start_time = 0, frame_target_time = 0;
++  VsyncCallback vsync_callback = start_engine_with_vsync(
++      engine, &current_time, [&](uint64_t start_time, uint64_t target_time) {
++        frame_start_time = start_time;
++        frame_target_time = target_time;
++      });
++
++  // The (single, mocked) display switches to 144Hz after the engine started,
++  // so the recorded display rate is still 60Hz until the engine is told about
++  // a view on that display.
++  ON_CALL(mock_gtk, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillByDefault(::testing::Return(144000));
++
++  // A view on an unknown display uses the fastest display.
++  fl_engine_send_window_metrics_event(engine, 0, 1, 100, 100, 100, 100, 1.0);
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_target_time - frame_start_time, kFrameInterval144);
++
++  // A view on display 1.
++  fl_engine_send_window_metrics_event(engine, 1, 1, 100, 100, 100, 100, 1.0);
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_target_time - frame_start_time, kFrameInterval144);
++
++  ON_CALL(mock_gtk, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillByDefault(::testing::Return(60000));
++  fl_engine_send_window_metrics_event(engine, 1, 1, 100, 100, 100, 100, 1.0);
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_target_time - frame_start_time, kFrameInterval60);
++}
++
++// Checks increasing the refresh rate does not report a frame time before the
++// frame interval already handed to Flutter has completed.
++TEST_F(FlEngineTest, VsyncRefreshRateTransitionIsMonotonic) {
++  ::testing::NiceMock<flutter::testing::MockGtk> mock_gtk;
++  constexpr uint64_t kFrameInterval60 = 1000000000 / 60;
++  constexpr uint64_t kFrameInterval240 = 1000000000 / 240;
++
++  uint64_t current_time = 0;
++  uint64_t frame_start_time = 0, frame_target_time = 0;
++  VsyncCallback vsync_callback = start_engine_with_vsync(
++      engine, &current_time, [&](uint64_t start_time, uint64_t target_time) {
++        frame_start_time = start_time;
++        frame_target_time = target_time;
++      });
++
++  // Produce a 60Hz frame whose target is still in the future.
++  current_time = 10000000;
++  vsync_callback(engine, 42);
++  EXPECT_EQ(frame_start_time, kFrameInterval60);
++  const uint64_t previous_target = frame_target_time;
++
++  // Move to a 240Hz display before that 60Hz frame has completed. The new
++  // cadence starts at the previous target instead of snapping backwards onto
++  // the denser 240Hz clock grid.
++  ON_CALL(mock_gtk, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillByDefault(::testing::Return(240000));
++  fl_engine_send_window_metrics_event(engine, 1, 1, 100, 100, 100, 100, 1.0);
++  current_time = 20000000;
++  vsync_callback(engine, 42);
++  EXPECT_GE(frame_start_time, previous_target);
++  EXPECT_EQ(frame_target_time - frame_start_time, kFrameInterval240);
++}
++
+ // Checks sending window metrics events works.
+ TEST_F(FlEngineTest, WindowMetrics) {
+   StartEngine();
+diff --git a/engine/src/flutter/shell/platform/linux/testing/mock_engine.cc b/engine/src/flutter/shell/platform/linux/testing/mock_engine.cc
+index c414ff14a26..a3edc1ca813 100644
+--- a/engine/src/flutter/shell/platform/linux/testing/mock_engine.cc
++++ b/engine/src/flutter/shell/platform/linux/testing/mock_engine.cc
+@@ -9,6 +9,8 @@
+ //
+ // Over time existing tests should be migrated and this file should be removed.
+ 
++#include <glib.h>
++
+ #include <cstring>
+ #include <unordered_map>
+ #include <utility>
+@@ -188,6 +190,19 @@ FlutterEngineResult FlutterEngineAddView(FLUTTER_API_SYMBOL(FlutterEngine)
+   return kSuccess;
+ }
+ 
++FlutterEngineResult FlutterEngineOnVsync(FLUTTER_API_SYMBOL(FlutterEngine)
++                                             engine,
++                                         intptr_t baton,
++                                         uint64_t frame_start_time_nanos,
++                                         uint64_t frame_target_time_nanos) {
++  return kSuccess;
++}
++
++uint64_t FlutterEngineGetCurrentTime() {
++  // Match the engine, which uses the monotonic clock in nanoseconds.
++  return g_get_monotonic_time() * 1000;
++}
++
+ FlutterEngineResult FlutterEngineRemoveView(FLUTTER_API_SYMBOL(FlutterEngine)
+                                                 engine,
+                                             const FlutterRemoveViewInfo* info) {
+@@ -236,5 +251,7 @@ FlutterEngineResult FlutterEngineGetProcAddresses(
+   table->NotifyDisplayUpdate = &FlutterEngineNotifyDisplayUpdate;
+   table->AddView = &FlutterEngineAddView;
+   table->RemoveView = &FlutterEngineRemoveView;
++  table->OnVsync = &FlutterEngineOnVsync;
++  table->GetCurrentTime = &FlutterEngineGetCurrentTime;
+   return kSuccess;
+ }
+diff --git a/engine/src/flutter/shell/platform/linux/testing/mock_gtk.cc b/engine/src/flutter/shell/platform/linux/testing/mock_gtk.cc
+index 0a980796976..dde7c4a9698 100644
+--- a/engine/src/flutter/shell/platform/linux/testing/mock_gtk.cc
++++ b/engine/src/flutter/shell/platform/linux/testing/mock_gtk.cc
+@@ -39,6 +39,8 @@ MockGtk::MockGtk() {
+       .WillByDefault(::testing::Return(100));
+   ON_CALL(*this, gdk_window_get_height(::testing::_))
+       .WillByDefault(::testing::Return(100));
++  ON_CALL(*this, gdk_monitor_get_refresh_rate(::testing::_))
++      .WillByDefault(::testing::Return(60000));
+ }
+ 
+ MockGtk::~MockGtk() {
+@@ -129,7 +131,10 @@ void gdk_monitor_get_geometry(GdkMonitor* monitor, GdkRectangle* geometry) {
+ 
+ int gdk_monitor_get_refresh_rate(GdkMonitor* monitor) {
+   check_thread();
+-  return 60000;
++  if (mock == nullptr) {
++    return 60000;
++  }
++  return mock->gdk_monitor_get_refresh_rate(monitor);
+ }
+ 
+ int gdk_monitor_get_scale_factor(GdkMonitor* monitor) {
+diff --git a/engine/src/flutter/shell/platform/linux/testing/mock_gtk.h b/engine/src/flutter/shell/platform/linux/testing/mock_gtk.h
+index 17b2876164a..b4f1647ff96 100644
+--- a/engine/src/flutter/shell/platform/linux/testing/mock_gtk.h
++++ b/engine/src/flutter/shell/platform/linux/testing/mock_gtk.h
+@@ -25,6 +25,7 @@ class MockGtk {
+   MOCK_METHOD(GdkWindowState, gdk_window_get_state, (GdkWindow * window));
+   MOCK_METHOD(int, gdk_window_get_width, (GdkWindow * window));
+   MOCK_METHOD(int, gdk_window_get_height, (GdkWindow * window));
++  MOCK_METHOD(int, gdk_monitor_get_refresh_rate, (GdkMonitor * monitor));
+   MOCK_METHOD(void, gtk_window_new, (GtkWindow * window, GtkWindowType type));
+   MOCK_METHOD(void,
+               gtk_window_set_default_size,
