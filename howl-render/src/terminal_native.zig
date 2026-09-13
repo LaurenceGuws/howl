@@ -193,6 +193,17 @@ const ShapeEntry = struct {
     face_index: u8,
 };
 
+const printable_ascii_first: u32 = 0x20;
+const printable_ascii_last: u32 = 0x7e;
+const printable_ascii_count: usize = printable_ascii_last - printable_ascii_first + 1;
+
+fn printableAsciiIndex(sequence: []const u32) ?usize {
+    if (sequence.len != 1) return null;
+    const scalar = sequence[0];
+    if (scalar < printable_ascii_first or scalar > printable_ascii_last) return null;
+    return @intCast(scalar - printable_ascii_first);
+}
+
 const ShapeCacheImpl = struct {
     allocator: std.mem.Allocator,
     fonts: *text.FontSet,
@@ -201,6 +212,7 @@ const ShapeCacheImpl = struct {
     scalars: []u32,
     glyphs: []text.Glyph,
     max_sequence_scalars: u32,
+    ascii_entries: [printable_ascii_count]?usize = @splat(null),
     entry_count: usize = 0,
     scalar_count: usize = 0,
     glyph_count: usize = 0,
@@ -212,6 +224,7 @@ const AtlasImpl = struct {
     entries: []AtlasEntry,
     pixels: []u8,
     config: AtlasConfig,
+    ascii_entries: [printable_ascii_count]?usize = @splat(null),
     entry_count: usize = 0,
     next_x: usize = 0,
     shelf_y: usize = 0,
@@ -328,6 +341,7 @@ fn resetShapeCache(cache: *ShapeCache) void {
     impl.entry_count = 0;
     impl.scalar_count = 0;
     impl.glyph_count = 0;
+    impl.ascii_entries = @splat(null);
 }
 
 fn shapeCacheUsage(cache: *const ShapeCache) ShapeCacheUsage {
@@ -389,6 +403,7 @@ fn resetAtlas(atlas: *Atlas) AtlasError!void {
     if (impl.generation == std.math.maxInt(u64)) return error.GenerationOverflow;
     impl.generation += 1;
     impl.entry_count = 0;
+    impl.ascii_entries = @splat(null);
     impl.next_x = 0;
     impl.shelf_y = 0;
     impl.shelf_height = 0;
@@ -1418,6 +1433,7 @@ fn buildContentCommands(
             if (scalar_end > scalars.len) return error.InvalidView;
             const sequence = scalars[scalar_first..scalar_end];
             if (sequence[0] == kitty_image_placeholder) continue;
+            const ascii_index = printableAsciiIndex(sequence);
             const colors = try contentCellColors(cell, presentation);
 
             var run: text.Run = undefined;
@@ -1572,6 +1588,7 @@ fn buildContentCommands(
                     run.face_index,
                     shaped.id,
                     raster_scratch,
+                    if (!contextual and run.glyphs.len == 1) ascii_index else null,
                 );
                 if (raster.width != 0 and raster.height != 0) {
                     has_raster = true;
@@ -2025,6 +2042,15 @@ fn shapeContextualPrimary(
     );
 }
 
+fn shapeEntryRun(impl: *const ShapeCacheImpl, entry_index: usize) text.Run {
+    std.debug.assert(entry_index < impl.entry_count);
+    const entry = impl.entries[entry_index];
+    return .{
+        .face_index = entry.face_index,
+        .glyphs = impl.glyphs[entry.glyph_offset .. entry.glyph_offset + entry.glyph_count],
+    };
+}
+
 fn resolveShape(
     cache: *ShapeCache,
     sequence: []const u32,
@@ -2034,18 +2060,25 @@ fn resolveShape(
     const impl = shapeCacheImpl(cache);
     if (sequence.len == 0 or sequence.len > @as(usize, impl.max_sequence_scalars))
         return error.ShapeSequenceLimit;
+    const ascii_index = printableAsciiIndex(sequence);
+    if (ascii_index) |index| {
+        if (impl.ascii_entries[index]) |entry_index| {
+            const entry = impl.entries[entry_index];
+            std.debug.assert(entry.scalar_count == 1);
+            std.debug.assert(impl.scalars[entry.scalar_offset] == sequence[0]);
+            return shapeEntryRun(impl, entry_index);
+        }
+    }
     const hash = std.hash.Wyhash.hash(
         0x9e3779b97f4a7c15,
         std.mem.sliceAsBytes(sequence),
     );
-    for (impl.entries[0..impl.entry_count]) |entry| {
+    for (impl.entries[0..impl.entry_count], 0..) |entry, entry_index| {
         if (entry.hash != hash or entry.scalar_count != sequence.len) continue;
         const retained = impl.scalars[entry.scalar_offset .. entry.scalar_offset + entry.scalar_count];
         if (!std.mem.eql(u32, retained, sequence)) continue;
-        return .{
-            .face_index = entry.face_index,
-            .glyphs = impl.glyphs[entry.glyph_offset .. entry.glyph_offset + entry.glyph_count],
-        };
+        if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+        return shapeEntryRun(impl, entry_index);
     }
 
     if (impl.entry_count == impl.entries.len) return error.ShapeEntryFull;
@@ -2077,7 +2110,8 @@ fn resolveShape(
     @memcpy(impl.glyphs[glyph_offset .. glyph_offset + shaped.glyphs.len], shaped.glyphs);
     impl.scalar_count += sequence.len;
     impl.glyph_count += shaped.glyphs.len;
-    impl.entries[impl.entry_count] = .{
+    const entry_index = impl.entry_count;
+    impl.entries[entry_index] = .{
         .hash = hash,
         .scalar_offset = scalar_offset,
         .scalar_count = sequence.len,
@@ -2086,10 +2120,8 @@ fn resolveShape(
         .face_index = shaped.face_index,
     };
     impl.entry_count += 1;
-    return .{
-        .face_index = shaped.face_index,
-        .glyphs = impl.glyphs[glyph_offset .. glyph_offset + shaped.glyphs.len],
-    };
+    if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+    return shapeEntryRun(impl, entry_index);
 }
 
 fn resolveFontAtlas(
@@ -2097,10 +2129,22 @@ fn resolveFontAtlas(
     face_index: u8,
     glyph_id: u32,
     raster_scratch: []u8,
+    ascii_index: ?usize,
 ) AtlasError!AtlasRaster {
     const impl = atlasImpl(atlas);
     const key = AtlasKey{ .font = .{ .face_index = face_index, .glyph_id = glyph_id } };
-    if (findAtlas(impl, key)) |entry| return atlasRaster(entry);
+    if (ascii_index) |index| {
+        if (impl.ascii_entries[index]) |entry_index| {
+            std.debug.assert(entry_index < impl.entry_count);
+            const entry = impl.entries[entry_index];
+            std.debug.assert(std.meta.eql(entry.key, key));
+            return atlasRaster(entry);
+        }
+    }
+    if (findAtlasIndex(impl, key)) |entry_index| {
+        if (ascii_index) |index| impl.ascii_entries[index] = entry_index;
+        return atlasRaster(impl.entries[entry_index]);
+    }
 
     var raster_allocator = std.heap.FixedBufferAllocator.init(raster_scratch);
     var raster = try impl.fonts.rasterize(
@@ -2115,7 +2159,7 @@ fn resolveFontAtlas(
         @as(usize, raster.height),
     ) catch return error.RasterExtentMismatch;
     if (expected != raster.pixels.len) return error.RasterExtentMismatch;
-    return cacheAtlas(
+    const result = try cacheAtlas(
         impl,
         key,
         raster.width,
@@ -2124,6 +2168,11 @@ fn resolveFontAtlas(
         raster.top,
         raster.pixels,
     );
+    if (ascii_index) |index| {
+        std.debug.assert(impl.entry_count != 0);
+        impl.ascii_entries[index] = impl.entry_count - 1;
+    }
+    return result;
 }
 
 fn resolveGeneratedAtlas(
@@ -2193,10 +2242,15 @@ fn resolveGeneratedAtlas(
     return cacheAtlas(impl, key, width, height, 0, 0, pixels);
 }
 
-fn findAtlas(impl: *const AtlasImpl, key: AtlasKey) ?AtlasEntry {
-    for (impl.entries[0..impl.entry_count]) |entry|
-        if (std.meta.eql(entry.key, key)) return entry;
+fn findAtlasIndex(impl: *const AtlasImpl, key: AtlasKey) ?usize {
+    for (impl.entries[0..impl.entry_count], 0..) |entry, index|
+        if (std.meta.eql(entry.key, key)) return index;
     return null;
+}
+
+fn findAtlas(impl: *const AtlasImpl, key: AtlasKey) ?AtlasEntry {
+    const index = findAtlasIndex(impl, key) orelse return null;
+    return impl.entries[index];
 }
 
 fn cacheAtlas(
