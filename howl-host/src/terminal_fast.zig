@@ -430,7 +430,19 @@ pub const Gpu = struct {
         errdefer font.deinit();
         try font.initPhysical(device, properties, gpu_bytes, gpu_limit);
         errdefer font.deinitPhysical(device, gpu_bytes);
-        var resources = try backend.Resources.init(device, properties, render_pass, gpu_bytes, gpu_limit);
+        const staging_payload = try backend.physicalPayloadBytes(limits);
+        var resources = try backend.Resources.init(
+            device,
+            properties,
+            render_pass,
+            .{
+                .descriptor_panes = 1,
+                .instance_bytes = staging_payload.instances,
+                .row_bytes = staging_payload.row_map,
+            },
+            gpu_bytes,
+            gpu_limit,
+        );
         errdefer resources.deinit(device, gpu_bytes);
         var pane = try resources.createPane(device, properties, limits, &font, gpu_bytes, gpu_limit);
         errdefer pane.deinit(device, resources.descriptor_pool, gpu_bytes);

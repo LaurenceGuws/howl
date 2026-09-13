@@ -13,15 +13,15 @@ pub const maximum_cells: usize = 65_536;
 const maximum_panes: usize = 64;
 const maximum_instance_staging_bytes: usize = maximum_panes * maximum_cells * @sizeOf(Instance);
 const maximum_row_staging_bytes: usize = maximum_panes * 128 * @sizeOf(u32);
-const row_staging_offset: usize = maximum_instance_staging_bytes;
-const batch_staging_bytes: usize = row_staging_offset + maximum_row_staging_bytes;
+const maximum_row_staging_offset: usize = maximum_instance_staging_bytes;
+const maximum_batch_staging_bytes: usize = maximum_row_staging_offset + maximum_row_staging_bytes;
 const terminal_vertex_shader align(4) = @embedFile("shaders/terminal.vert.spv").*;
 const terminal_fragment_shader align(4) = @embedFile("shaders/terminal.frag.spv").*;
 
 /// Maximum stable glyph slots exposed by the retained backend atlas.
 pub const glyph_slots: usize = 95 * 4;
-/// Exact shared mapped-staging byte capacity consumed by Host batch proofs.
-pub const staging_byte_limit: usize = batch_staging_bytes;
+/// Maximum reviewed shared mapped-staging byte capacity. Runtime owners may allocate less.
+pub const staging_byte_limit: usize = maximum_batch_staging_bytes;
 /// Number of stable atlas columns used by mechanical slot placement.
 pub const glyph_atlas_columns: u16 = 20;
 pub const glyph_atlas_rows: u16 = 19;
@@ -239,6 +239,23 @@ pub const StagingOffsets = struct {
     rows: usize,
 };
 
+/// Bounds one shared mapped terminal staging allocation at construction.
+/// Aggregate byte capacities are exact Host policy, bounded by the backend's
+/// reviewed maximum. `descriptor_panes` bounds descriptor ownership only; byte
+/// capacities remain explicit aggregate facts. Row staging follows instances.
+pub const StagingCapacity = struct {
+    descriptor_panes: u16,
+    instance_bytes: usize,
+    row_bytes: usize,
+};
+
+const StagingLayout = struct {
+    descriptor_panes: u16,
+    instance_bytes: usize,
+    row_offset: usize,
+    total_bytes: usize,
+};
+
 /// Borrows compatible Vulkan handles for sparse terminal commands.
 ///
 /// The caller owns creation, barriers, render-pass compatibility, submission,
@@ -261,6 +278,12 @@ pub const CommandBindings = struct {
     layout: vk.VkPipelineLayout,
     /// Binds persistent instances, row map, and glyph atlas.
     descriptor: vk.VkDescriptorSet,
+    /// Bounds the instance prefix of the shared staging allocation.
+    instance_staging_capacity: usize = maximum_instance_staging_bytes,
+    /// Identifies the exact byte origin of row-map staging.
+    row_staging_offset: usize = maximum_row_staging_offset,
+    /// Bounds the complete shared staging allocation.
+    staging_capacity: usize = maximum_batch_staging_bytes,
 };
 
 /// Names the exact terminal-only resources written into one pane descriptor.
@@ -320,6 +343,34 @@ pub fn physicalPayloadBytes(limits: Limits) Error!struct {
     return .{
         .instances = std.math.mul(usize, cells, @sizeOf(Instance)) catch return error.InvalidLimits,
         .row_map = std.math.mul(usize, limits.rows, @sizeOf(u32)) catch return error.InvalidLimits,
+    };
+}
+
+/// Returns exact aggregate mapped staging bytes after validating one Host
+/// capacity claim. The row partition immediately follows the instance prefix.
+pub fn stagingBytes(capacity: StagingCapacity) Error!usize {
+    return (try stagingLayout(capacity)).total_bytes;
+}
+
+fn stagingLayout(capacity: StagingCapacity) Error!StagingLayout {
+    if (capacity.descriptor_panes == 0 or capacity.descriptor_panes > maximum_panes or
+        capacity.instance_bytes == 0 or capacity.row_bytes == 0 or
+        capacity.instance_bytes > maximum_instance_staging_bytes or
+        capacity.row_bytes > maximum_row_staging_bytes or
+        capacity.instance_bytes % @alignOf(Instance) != 0 or
+        capacity.row_bytes % @alignOf(u32) != 0)
+        return error.InvalidLimits;
+    const total = std.math.add(
+        usize,
+        capacity.instance_bytes,
+        capacity.row_bytes,
+    ) catch return error.InvalidLimits;
+    if (total > maximum_batch_staging_bytes) return error.InvalidLimits;
+    return .{
+        .descriptor_panes = capacity.descriptor_panes,
+        .instance_bytes = capacity.instance_bytes,
+        .row_offset = capacity.instance_bytes,
+        .total_bytes = total,
     };
 }
 
@@ -1095,6 +1146,9 @@ pub const Resources = struct {
     staging_buffer: vk.VkBuffer = null,
     staging_memory: vk.VkDeviceMemory = null,
     mapped: ?[*]u8 = null,
+    instance_staging_capacity: usize = maximum_instance_staging_bytes,
+    row_staging_offset: usize = maximum_row_staging_offset,
+    staging_capacity: usize = maximum_batch_staging_bytes,
     owned_bytes: u64 = 0,
 
     /// Creates all shared terminal physical ownership transactionally.
@@ -1102,11 +1156,18 @@ pub const Resources = struct {
         device: vk.VkDevice,
         properties: vk.VkPhysicalDeviceMemoryProperties,
         render_pass: vk.VkRenderPass,
+        staging: StagingCapacity,
         gpu_bytes: *u64,
         limit: u64,
     ) Error!Resources {
         if (device == null or render_pass == null) return error.InvalidIdentity;
-        var result = Resources{ .render_pass = render_pass };
+        const layout = try stagingLayout(staging);
+        var result = Resources{
+            .render_pass = render_pass,
+            .instance_staging_capacity = layout.instance_bytes,
+            .row_staging_offset = layout.row_offset,
+            .staging_capacity = layout.total_bytes,
+        };
         errdefer result.deinit(device, gpu_bytes);
         const descriptor_bindings = [_]vk.VkDescriptorSetLayoutBinding{
             .{
@@ -1146,13 +1207,14 @@ pub const Resources = struct {
         };
         if (vk.vkCreatePipelineLayout(device, &pipeline_layout_info, null, &result.pipeline_layout) != vk.VK_SUCCESS)
             return error.Pipeline;
+        const descriptor_sets: u32 = @as(u32, layout.descriptor_panes) * 2;
         const pool_sizes = [_]vk.VkDescriptorPoolSize{
-            .{ .type = vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = maximum_panes * 4 },
-            .{ .type = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = maximum_panes * 2 },
+            .{ .type = vk.VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = descriptor_sets * 2 },
+            .{ .type = vk.VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = descriptor_sets },
         };
         var pool_info = vk.VkDescriptorPoolCreateInfo{
             .flags = vk.VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
-            .maxSets = maximum_panes * 2,
+            .maxSets = descriptor_sets,
             .poolSizeCount = pool_sizes.len,
             .pPoolSizes = &pool_sizes,
         };
@@ -1296,11 +1358,11 @@ pub const Resources = struct {
         const mapped = self.mapped orelse return error.StagingMap;
         const instance_end = std.math.add(usize, offsets.instances, instance_bytes) catch
             return error.InvalidGeometry;
-        const row_start = std.math.add(usize, row_staging_offset, offsets.rows) catch
+        const row_start = std.math.add(usize, self.row_staging_offset, offsets.rows) catch
             return error.InvalidGeometry;
         const row_end = std.math.add(usize, row_start, row_bytes) catch
             return error.InvalidGeometry;
-        if (instance_end > row_staging_offset or row_end > batch_staging_bytes)
+        if (instance_end > self.instance_staging_capacity or row_end > self.staging_capacity)
             return error.InvalidGeometry;
         return .{
             .instances = mapped[offsets.instances..instance_end],
@@ -1328,6 +1390,9 @@ pub const Resources = struct {
             .pipeline = self.pipeline,
             .layout = self.pipeline_layout,
             .descriptor = facts.descriptor,
+            .instance_staging_capacity = self.instance_staging_capacity,
+            .row_staging_offset = self.row_staging_offset,
+            .staging_capacity = self.staging_capacity,
         };
     }
 
@@ -1351,7 +1416,7 @@ pub const Resources = struct {
     ) Error!void {
         var info = vk.VkBufferCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = batch_staging_bytes,
+            .size = self.staging_capacity,
             .usage = vk.VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
             .sharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
         };
@@ -1663,12 +1728,12 @@ pub const Store = struct {
             offsets.instances,
             candidate.instance_staging_bytes,
         ) catch return error.InvalidGeometry;
-        if (instance_end > row_staging_offset)
+        if (instance_end > bindings.instance_staging_capacity)
             return error.InvalidGeometry;
         const row_bytes = std.mem.sliceAsBytes(candidate.row_map);
         const row_source_origin = std.math.add(
             usize,
-            row_staging_offset,
+            bindings.row_staging_offset,
             offsets.rows,
         ) catch return error.InvalidGeometry;
         const row_source_end = std.math.add(
@@ -1676,7 +1741,7 @@ pub const Store = struct {
             row_source_origin,
             row_bytes.len,
         ) catch return error.InvalidGeometry;
-        if (row_source_end > batch_staging_bytes)
+        if (row_source_end > bindings.staging_capacity)
             return error.InvalidGeometry;
         for (candidate.instance_copies) |source| {
             const source_offset = std.math.add(
@@ -2060,6 +2125,14 @@ fn validateBindingHandles(bindings: CommandBindings) Error!void {
         bindings.row_storage == null or bindings.glyph_atlas == null or
         bindings.pipeline == null or
         bindings.layout == null or bindings.descriptor == null)
+        return error.InvalidIdentity;
+    if (bindings.instance_staging_capacity == 0 or
+        bindings.instance_staging_capacity > maximum_instance_staging_bytes or
+        bindings.row_staging_offset != bindings.instance_staging_capacity or
+        bindings.staging_capacity <= bindings.row_staging_offset or
+        bindings.staging_capacity > maximum_batch_staging_bytes or
+        bindings.instance_staging_capacity % @alignOf(Instance) != 0 or
+        (bindings.staging_capacity - bindings.row_staging_offset) % @alignOf(u32) != 0)
         return error.InvalidIdentity;
 }
 
@@ -3192,12 +3265,24 @@ test "allocation and Vulkan command layouts are exact" {
     try std.testing.expectEqual(@as(usize, 160), @sizeOf(FontGpu));
     try std.testing.expectEqual(@as(usize, 128), @sizeOf(PaneResources));
     try std.testing.expectEqual(@as(usize, 8), @alignOf(PaneResources));
-    try std.testing.expectEqual(@as(usize, 80), @sizeOf(Resources));
+    try std.testing.expectEqual(@as(usize, 104), @sizeOf(Resources));
     try std.testing.expectEqual(@as(usize, 68), @sizeOf(Draw));
     try std.testing.expectEqual(@as(usize, 88), @sizeOf(PushConstants));
     try std.testing.expectEqual(
         @as(usize, 67_141_632),
         staging_byte_limit,
+    );
+    try std.testing.expectEqual(
+        @as(usize, 72),
+        try stagingBytes(.{ .descriptor_panes = 1, .instance_bytes = 64, .row_bytes = 8 }),
+    );
+    try std.testing.expectError(
+        error.InvalidLimits,
+        stagingBytes(.{ .descriptor_panes = 0, .instance_bytes = 64, .row_bytes = 8 }),
+    );
+    try std.testing.expectError(
+        error.InvalidLimits,
+        stagingBytes(.{ .descriptor_panes = 1, .instance_bytes = 63, .row_bytes = 8 }),
     );
     const copy_command: *const fn (
         vk.VkCommandBuffer,
@@ -3453,13 +3538,21 @@ test "T022 row transfer records the absolute shared staging partition" {
     }, &.{});
     try std.testing.expectEqual(@as(usize, 8), std.mem.sliceAsBytes(prepared.row_map).len);
 
-    const staging = try std.testing.allocator.alloc(u8, batch_staging_bytes);
+    const compact_instance_bytes: usize = 2048;
+    const compact_row_bytes: usize = 32;
+    const compact_total = compact_instance_bytes + compact_row_bytes;
+    const staging = try std.testing.allocator.alloc(u8, compact_total);
     defer std.testing.allocator.free(staging);
     @memset(staging, 0xa5);
-    var resources = Resources{ .mapped = staging.ptr };
+    var resources = Resources{
+        .mapped = staging.ptr,
+        .instance_staging_capacity = compact_instance_bytes,
+        .row_staging_offset = compact_instance_bytes,
+        .staging_capacity = compact_total,
+    };
     const offsets = StagingOffsets{ .instances = 1024, .rows = 12 };
     try resources.stagePane(&store, offsets);
-    const absolute_row = row_staging_offset + offsets.rows;
+    const absolute_row = compact_instance_bytes + offsets.rows;
     try std.testing.expectEqualSlices(
         u8,
         std.mem.sliceAsBytes(prepared.row_map),
@@ -3472,7 +3565,10 @@ test "T022 row transfer records the absolute shared staging partition" {
         staging[offsets.rows .. offsets.rows + 8],
     );
 
-    const bindings = testCommandBindings();
+    var bindings = testCommandBindings();
+    bindings.instance_staging_capacity = compact_instance_bytes;
+    bindings.row_staging_offset = compact_instance_bytes;
+    bindings.staging_capacity = compact_total;
     var receipt = BufferTransferProof{};
     var recorder = BufferCommandRecorder{ .proof = &receipt };
     try store.recordTransfersWithRecorder(bindings, offsets, &recorder);
@@ -3491,7 +3587,7 @@ test "T022 row transfer records the absolute shared staging partition" {
         error.InvalidGeometry,
         store.recordTransfersWithRecorder(
             bindings,
-            .{ .instances = offsets.instances, .rows = maximum_row_staging_bytes },
+            .{ .instances = offsets.instances, .rows = compact_row_bytes },
             &rejected_recorder,
         ),
     );
