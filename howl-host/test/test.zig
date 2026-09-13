@@ -76,6 +76,8 @@ test "Boundary cleanup closes every retained offered descriptor" {
         .release_timeline_fd = -1,
         .width = 64,
         .height = 64,
+        .logical_width = 64,
+        .logical_height = 64,
         .plane_count = 1,
         .planes = planes,
     });
@@ -109,6 +111,31 @@ test "ring readiness and retirement preserve exact generation identity" {
     try std.testing.expectEqual(@as(u64, 7), value.takeRingRetired().?);
     try std.testing.expect(value.takeRingRetired() == null);
     try std.testing.expectError(error.InvalidRevision, value.publishRingRetired(0));
+}
+
+test "control wake persists until size and scale facts are both consumed" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishWindowSize(.{ .width = 901, .height = 477 });
+    try value.publishDisplayScale(.{ .scale_120 = 204 });
+    try expectReadable(value.controlFd());
+    try value.drainControlWake();
+    try std.testing.expectEqual(shared.WindowSize{ .width = 901, .height = 477 }, value.takeWindowSize().?);
+    try expectReadable(value.controlFd());
+    try value.drainControlWake();
+    try std.testing.expectEqual(@as(u32, 204), value.takeDisplayScale().?.scale_120);
+}
+
+test "display scale is latest-wins and rejects invalid protocol units" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishDisplayScale(.{ .scale_120 = 120 });
+    try value.publishDisplayScale(.{ .scale_120 = 204 });
+    try expectReadable(value.renderFd());
+    try value.drainRenderWake();
+    try std.testing.expectEqual(@as(u32, 204), value.takeDisplayScale().?.scale_120);
+    try std.testing.expect(value.takeDisplayScale() == null);
+    try std.testing.expectError(error.InvalidDisplayScale, value.publishDisplayScale(.{ .scale_120 = 0 }));
 }
 
 test "window size is latest-wins and wakes only Render control" {
@@ -218,6 +245,8 @@ fn realOffers() ![shared.slot_count]shared.SlotOffer {
         .release_timeline_fd = -1,
         .width = 64,
         .height = 64,
+        .logical_width = 64,
+        .logical_height = 64,
         .plane_count = 1,
         .planes = planes,
     });

@@ -42,6 +42,11 @@ pub const PaneEndpoint = struct {
 
 pub const WindowSize = struct { width: u16, height: u16 };
 
+pub const DisplayScale = struct {
+    /// Fractional-scale protocol units where 120 means 1x.
+    scale_120: u32,
+};
+
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
@@ -83,6 +88,10 @@ pub const SlotOffer = struct {
     width: u16,
     /// Pixel height of the exported image.
     height: u16,
+    /// Logical surface destination width for viewporter presentation.
+    logical_width: u16,
+    /// Logical surface destination height for viewporter presentation.
+    logical_height: u16,
     /// Number of initialized entries in `planes`.
     plane_count: u8,
     /// Fixed storage containing the initialized plane prefix.
@@ -140,6 +149,7 @@ pub const Boundary = struct {
     pane_retired_pending: bool = false,
     tab_switched_pending: bool = false,
     window_size: ?WindowSize = null,
+    display_scale: ?DisplayScale = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -279,7 +289,7 @@ pub const Boundary = struct {
         const result = self.host_commands[self.host_command_head];
         self.host_command_head = @intCast((@as(usize, self.host_command_head) + 1) % host_command_capacity);
         self.host_command_count -= 1;
-        const more = self.host_command_count != 0;
+        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
@@ -301,9 +311,44 @@ pub const Boundary = struct {
     /// Transfers the latest coalesced compositor-requested logical surface size.
     pub fn takeWindowSize(self: *Boundary) ?WindowSize {
         self.mutex.lockUncancelable(self.io);
-        defer self.mutex.unlock(self.io);
-        const result = self.window_size orelse return null;
+        const result = self.window_size orelse {
+            self.mutex.unlock(self.io);
+            return null;
+        };
         self.window_size = null;
+        const more = self.host_command_count != 0 or self.display_scale != null;
+        self.mutex.unlock(self.io);
+        if (more) signal(self.control_fd);
+        return result;
+    }
+
+    /// Replaces the compositor preferred fractional scale and wakes Render.
+    pub fn publishDisplayScale(self: *Boundary, scale: DisplayScale) error{ Stopping, InvalidDisplayScale }!void {
+        if (scale.scale_120 == 0 or scale.scale_120 > 8 * 120) return error.InvalidDisplayScale;
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.display_scale = scale;
+        self.mutex.unlock(self.io);
+        // Render may still be in construction waiting for the first scale. The
+        // control wake carries later monitor transitions once the live loop owns it.
+        signal(self.render_fd);
+        signal(self.control_fd);
+    }
+
+    /// Transfers the latest coalesced compositor preferred scale.
+    pub fn takeDisplayScale(self: *Boundary) ?DisplayScale {
+        self.mutex.lockUncancelable(self.io);
+        const result = self.display_scale orelse {
+            self.mutex.unlock(self.io);
+            return null;
+        };
+        self.display_scale = null;
+        const more = self.host_command_count != 0 or self.window_size != null;
+        self.mutex.unlock(self.io);
+        if (more) signal(self.control_fd);
         return result;
     }
 
@@ -449,6 +494,7 @@ pub const Boundary = struct {
                 offer.acquire_timeline_fd < 0 or
                 offer.release_timeline_fd < 0 or
                 offer.width == 0 or offer.height == 0 or
+                offer.logical_width == 0 or offer.logical_height == 0 or
                 offer.plane_count == 0 or
                 offer.plane_count > plane_limit)
             {

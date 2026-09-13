@@ -51,6 +51,21 @@ pub const Prepared = struct {
     },
 };
 
+pub fn measureCellSize(
+    allocator: std.mem.Allocator,
+    font_path: []const u8,
+    font_pixels: u16,
+) !canvas.Size {
+    if (font_pixels == 0) return error.InvalidFontPixels;
+    const fonts = try text.FontSet.init(allocator, .{
+        .primary = font_path,
+        .size = .{ .pixels = font_pixels },
+    });
+    defer fonts.deinit();
+    const metrics = fonts.metrics();
+    return .{ .width = metrics.advance_width, .height = metrics.line_height };
+}
+
 pub const Scene = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
@@ -78,12 +93,14 @@ pub const Scene = struct {
         allocator: std.mem.Allocator,
         endpoint: []const u8,
         font_path: []const u8,
+        font_pixels: u16,
     ) !Scene {
+        if (font_pixels == 0) return error.InvalidFontPixels;
         var connection = try client.Connection.connect(allocator, endpoint);
         errdefer connection.deinit();
         const fonts = try text.FontSet.init(allocator, .{
             .primary = font_path,
-            .size = .{ .pixels = 16 },
+            .size = .{ .pixels = font_pixels },
         });
         errdefer fonts.deinit();
         const metrics = fonts.metrics();

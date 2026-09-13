@@ -14,6 +14,7 @@ howl-host/src/window.zig|anyopaque|fn keyboardModifiers(data: ?*anyopaque, keybo
 howl-host/src/window.zig|anyopaque|fn keyboardRepeat(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn mainDevice(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1, device: ?*c.wl_array) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
+howl-host/src/window.zig|anyopaque|fn preferredScale(data: ?*anyopaque, scale: ?*c.wp_fractional_scale_v1, value: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn seatName(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.c) void {
 howl-host/src/window.zig|anyopaque|fn surfaceConfigure(data: ?*anyopaque, _: ?*c.xdg_surface, serial: u32) callconv(.c) void {

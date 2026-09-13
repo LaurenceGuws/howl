@@ -52,6 +52,8 @@ const WindowRing = struct {
     timelines: [shared.slot_count]?*c.wp_linux_drm_syncobj_timeline_v1 = .{ null, null, null },
     width: u16 = 0,
     height: u16 = 0,
+    logical_width: u16 = 0,
+    logical_height: u16 = 0,
 
     fn live(self: *const WindowRing) bool {
         return self.revision != 0;
@@ -75,16 +77,24 @@ const State = struct {
     xdg: ?*c.xdg_wm_base = null,
     dmabuf: ?*c.zwp_linux_dmabuf_v1 = null,
     syncobj: ?*c.wp_linux_drm_syncobj_manager_v1 = null,
+    fractional_manager: ?*c.wp_fractional_scale_manager_v1 = null,
+    viewporter: ?*c.wp_viewporter = null,
     seat: ?*c.wl_seat = null,
     keyboard: ?*c.wl_keyboard = null,
     surface: ?*c.wl_surface = null,
     xdg_surface: ?*c.xdg_surface = null,
     toplevel: ?*c.xdg_toplevel = null,
     sync_surface: ?*c.wp_linux_drm_syncobj_surface_v1 = null,
+    fractional_scale: ?*c.wp_fractional_scale_v1 = null,
+    viewport: ?*c.wp_viewport = null,
+    preferred_scale_120: u32 = 120,
+    preferred_scale_seen: bool = false,
     compositor_name: u32 = 0,
     xdg_name: u32 = 0,
     dmabuf_name: u32 = 0,
     syncobj_name: u32 = 0,
+    fractional_manager_name: u32 = 0,
+    viewporter_name: u32 = 0,
     seat_name: u32 = 0,
     configured: bool = false,
     configure_serial: u32 = 0,
@@ -114,6 +124,8 @@ const State = struct {
         if (self.seat) |value| c.wl_seat_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
+        if (self.viewport) |value| c.wp_viewport_destroy(value);
+        if (self.fractional_scale) |value| c.wp_fractional_scale_v1_destroy(value);
         self.pending_ring.deinit();
         self.retired_ring.deinit();
         self.active_ring.deinit();
@@ -121,6 +133,8 @@ const State = struct {
         if (self.xdg_surface) |value| c.xdg_surface_destroy(value);
         if (self.surface) |value| c.wl_surface_destroy(value);
         if (self.syncobj) |value| c.wp_linux_drm_syncobj_manager_v1_destroy(value);
+        if (self.fractional_manager) |value| c.wp_fractional_scale_manager_v1_destroy(value);
+        if (self.viewporter) |value| c.wp_viewporter_destroy(value);
         if (self.dmabuf) |value| c.zwp_linux_dmabuf_v1_destroy(value);
         if (self.xdg) |value| c.xdg_wm_base_destroy(value);
         if (self.compositor) |value| c.wl_compositor_destroy(value);
@@ -161,6 +175,16 @@ fn runFallible(boundary: *shared.Boundary) !void {
     try boundary.publishFeedback(selected);
 
     state.surface = c.wl_compositor_create_surface(state.compositor.?) orelse return error.Surface;
+    if ((state.fractional_manager == null) != (state.viewporter == null)) return error.RequiredGlobal;
+    if (state.fractional_manager != null) {
+        state.fractional_scale = c.wp_fractional_scale_manager_v1_get_fractional_scale(
+            state.fractional_manager.?, state.surface.?,
+        ) orelse return error.FractionalScale;
+        if (c.wp_fractional_scale_v1_add_listener(state.fractional_scale.?, &fractional_scale_listener, &state) != 0)
+            return error.Listener;
+        state.viewport = c.wp_viewporter_get_viewport(state.viewporter.?, state.surface.?) orelse
+            return error.Viewport;
+    }
     state.xdg_surface = c.xdg_wm_base_get_xdg_surface(state.xdg.?, state.surface.?) orelse return error.Surface;
     if (c.xdg_surface_add_listener(state.xdg_surface.?, &xdg_surface_listener, &state) != 0) return error.Listener;
     state.toplevel = c.xdg_surface_get_toplevel(state.xdg_surface.?) orelse return error.Surface;
@@ -168,6 +192,7 @@ fn runFallible(boundary: *shared.Boundary) !void {
     c.xdg_toplevel_set_title(state.toplevel.?, "Howl Vulkan canary");
     c.wl_surface_commit(state.surface.?);
     if (c.wl_display_roundtrip(display) < 0 or !state.configured or !state.toplevel_configured) return error.Configure;
+    if (!state.preferred_scale_seen) try boundary.publishDisplayScale(.{ .scale_120 = 120 });
     state.sync_surface = c.wp_linux_drm_syncobj_manager_v1_get_surface(state.syncobj.?, state.surface.?) orelse return error.ExplicitSync;
 
     const display_fd = c.wl_display_get_fd(display);
@@ -215,12 +240,19 @@ fn constructRing(state: *State, initial_offers: [shared.slot_count]shared.SlotOf
     const revision = offers[0].ring_revision;
     const width = offers[0].width;
     const height = offers[0].height;
-    if (revision == 0 or width == 0 or height == 0) return error.InvalidPlane;
-    var ring = WindowRing{ .revision = revision, .width = width, .height = height };
+    const logical_width = offers[0].logical_width;
+    const logical_height = offers[0].logical_height;
+    if (revision == 0 or width == 0 or height == 0 or logical_width == 0 or logical_height == 0)
+        return error.InvalidPlane;
+    var ring = WindowRing{
+        .revision = revision, .width = width, .height = height,
+        .logical_width = logical_width, .logical_height = logical_height,
+    };
     errdefer ring.deinit();
     for (0..offers.len) |slot| {
         const offer = &offers[slot];
-        if (offer.ring_revision != revision or offer.width != width or offer.height != height)
+        if (offer.ring_revision != revision or offer.width != width or offer.height != height or
+            offer.logical_width != logical_width or offer.logical_height != logical_height)
             return error.InvalidPlane;
         if (offer.plane_count == 0 or offer.plane_count > shared.plane_limit) return error.InvalidPlane;
         const params = c.zwp_linux_dmabuf_v1_create_params(state.dmabuf.?) orelse return error.Buffer;
@@ -260,6 +292,8 @@ fn present(state: *State, completion: shared.Completion) !void {
     c.wp_linux_drm_syncobj_surface_v1_set_release_point(state.sync_surface.?, ring.timelines[slot].?, 0, @intCast(completion.release_point));
     state.frame_callback = c.wl_surface_frame(state.surface.?) orelse return error.Frame;
     if (c.wl_callback_add_listener(state.frame_callback.?, &frame_listener, state) != 0) return error.Listener;
+    if (state.viewport) |viewport|
+        c.wp_viewport_set_destination(viewport, ring.logical_width, ring.logical_height);
     c.wl_surface_attach(state.surface.?, ring.buffers[slot].?, 0, 0);
     c.wl_surface_damage_buffer(state.surface.?, 0, 0, ring.width, ring.height);
     c.wl_surface_commit(state.surface.?);
@@ -300,6 +334,14 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
         state.syncobj = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_linux_drm_syncobj_manager_v1_interface, 1));
         state.syncobj_name = name;
     }
+    if (std.mem.eql(u8, value, "wp_fractional_scale_manager_v1")) {
+        state.fractional_manager = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_fractional_scale_manager_v1_interface, 1));
+        state.fractional_manager_name = name;
+    }
+    if (std.mem.eql(u8, value, "wp_viewporter")) {
+        state.viewporter = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_viewporter_interface, 1));
+        state.viewporter_name = name;
+    }
     if (std.mem.eql(u8, value, "wl_seat")) {
         state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 10)));
         state.seat_name = name;
@@ -307,7 +349,9 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
 }
 fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name or name == state.seat_name) state.boundary.requestStop(.window);
+    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or
+        name == state.syncobj_name or name == state.fractional_manager_name or
+        name == state.viewporter_name or name == state.seat_name) state.boundary.requestStop(.window);
 }
 const registry_listener = c.wl_registry_listener{ .global = globalAdd, .global_remove = globalRemove };
 
@@ -450,6 +494,19 @@ const keyboard_listener = c.wl_keyboard_listener{
     .modifiers = keyboardModifiers,
     .repeat_info = keyboardRepeat,
 };
+
+fn preferredScale(data: ?*anyopaque, scale: ?*c.wp_fractional_scale_v1, value: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (scale != state.fractional_scale or value == 0) {
+        state.boundary.requestStop(.window);
+        return;
+    }
+    state.preferred_scale_120 = value;
+    state.preferred_scale_seen = true;
+    state.boundary.publishDisplayScale(.{ .scale_120 = value }) catch
+        state.boundary.requestStop(.window);
+}
+const fractional_scale_listener = c.wp_fractional_scale_v1_listener{ .preferred_scale = preferredScale };
 
 fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
