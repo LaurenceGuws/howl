@@ -55,6 +55,9 @@ pub const Row = struct {
     wrapped: bool,
     line_geometry: u8,
     cells: []Cell,
+    /// One decoded-row scalar bank. Hand-built rows may leave this empty and
+    /// retain independently owned cell scalar slices.
+    scalar_storage: []u32 = &.{},
 };
 
 pub const Hyperlink = struct {
@@ -87,7 +90,11 @@ pub const Snapshot = struct {
 
     pub fn deinit(self: *Snapshot) void {
         for (self.rows) |row| {
-            for (row.cells) |cell| if (cell.scalars.len != 0) self.allocator.free(cell.scalars);
+            if (row.scalar_storage.len != 0) {
+                self.allocator.free(row.scalar_storage);
+            } else {
+                for (row.cells) |cell| if (cell.scalars.len != 0) self.allocator.free(cell.scalars);
+            }
             self.allocator.free(row.cells);
         }
         self.allocator.free(self.rows);
@@ -572,8 +579,23 @@ fn decodeRow(
         return error.InvalidSnapshot;
     const cells = try allocator.alloc(Cell, begin.columns);
     errdefer allocator.free(cells);
-    var initialized: usize = 0;
-    errdefer for (cells[0..initialized]) |cell| if (cell.scalars.len != 0) allocator.free(cell.scalars);
+    const fixed_cells_bytes = std.math.mul(
+        usize,
+        begin.columns,
+        protocol.text_v1.cell_header_bytes,
+    ) catch return error.InvalidSnapshot;
+    const fixed_payload_bytes = std.math.add(
+        usize,
+        protocol.text_v1.row_header_bytes,
+        fixed_cells_bytes,
+    ) catch return error.InvalidSnapshot;
+    if (payload.len < fixed_payload_bytes) return error.InvalidSnapshot;
+    const scalar_bytes_total = payload.len - fixed_payload_bytes;
+    if (scalar_bytes_total % @sizeOf(u32) != 0) return error.InvalidSnapshot;
+    const scalar_count_total = scalar_bytes_total / @sizeOf(u32);
+    const scalar_storage = try allocator.alloc(u32, scalar_count_total);
+    errdefer allocator.free(scalar_storage);
+    var scalar_used: usize = 0;
 
     var offset: usize = protocol.text_v1.row_header_bytes;
     var column: u16 = 0;
@@ -599,18 +621,14 @@ fn decodeRow(
         const scalar_bytes = @as(usize, scalar_count) * 4;
         if (payload.len - offset < scalar_bytes) return error.InvalidSnapshot;
         if ((encoded[3] != 0 or encoded[4] != 0) and scalar_count != 0) return error.InvalidSnapshot;
-        const scalars: []const u32 = if (scalar_count == 0)
-            &.{}
-        else blk: {
-            const values = try allocator.alloc(u32, scalar_count);
-            errdefer allocator.free(values);
-            for (values, 0..) |*value, index| {
-                value.* = readU32(payload[offset + index * 4 ..][0..4]);
-                if (value.* > 0x10ffff or value.* >= 0xd800 and value.* <= 0xdfff)
-                    return error.InvalidSnapshot;
-            }
-            break :blk values;
-        };
+        if (scalar_count > scalar_storage.len - scalar_used) return error.InvalidSnapshot;
+        const scalars = scalar_storage[scalar_used .. scalar_used + scalar_count];
+        for (scalars, 0..) |*value, index| {
+            value.* = readU32(payload[offset + index * 4 ..][0..4]);
+            if (value.* > 0x10ffff or value.* >= 0xd800 and value.* <= 0xdfff)
+                return error.InvalidSnapshot;
+        }
+        scalar_used += scalar_count;
         cells[column] = .{
             .scalars = scalars,
             .width = encoded[1],
@@ -632,14 +650,14 @@ fn decodeRow(
             .underline_color = underline_color,
             .link_id = link_id,
         };
-        initialized += 1;
         offset += scalar_bytes;
     }
-    if (offset != payload.len) return error.InvalidSnapshot;
+    if (offset != payload.len or scalar_used != scalar_storage.len) return error.InvalidSnapshot;
     return .{
         .wrapped = payload[0] == 1,
         .line_geometry = payload[1],
         .cells = cells,
+        .scalar_storage = scalar_storage,
     };
 }
 
@@ -702,9 +720,13 @@ fn readU64(bytes: []const u8) u64 {
     return value;
 }
 
-fn deinitRows(allocator: std.mem.Allocator, rows: []Row) void {
+fn deinitRows(allocator: std.mem.Allocator, rows: []const Row) void {
     for (rows) |row| {
-        for (row.cells) |cell| if (cell.scalars.len != 0) allocator.free(cell.scalars);
+        if (row.scalar_storage.len != 0) {
+            allocator.free(row.scalar_storage);
+        } else {
+            for (row.cells) |cell| if (cell.scalars.len != 0) allocator.free(cell.scalars);
+        }
         allocator.free(row.cells);
     }
 }
@@ -772,10 +794,7 @@ test "rich row preserves typed style color and grapheme state" {
 
     var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
     const row = try decodeRow(std.testing.allocator, begin, &payload, &referenced);
-    defer {
-        for (row.cells) |decoded| if (decoded.scalars.len != 0) std.testing.allocator.free(decoded.scalars);
-        std.testing.allocator.free(row.cells);
-    }
+    defer deinitRows(std.testing.allocator, &.{row});
     const decoded = row.cells[0];
     try std.testing.expect(row.wrapped);
     try std.testing.expectEqual(@as(u8, 2), row.line_geometry);
