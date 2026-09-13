@@ -72,6 +72,12 @@ pub const Connection = struct {
         self.* = undefined;
     }
 
+    /// Borrows the ordered stream descriptor for readiness polling only.
+    /// Callers must not read, write, close, or change flags through this handle.
+    pub fn readinessFd(self: *const Connection) posix.fd_t {
+        return self.fd;
+    }
+
     /// Creates an independently owned duplicate which may wake a currently
     /// blocked receive from another thread without releasing this connection.
     pub fn cancellation(self: *const Connection) error{ SocketDuplicateFailed, SocketOptionFailed }!Cancellation {

@@ -68,6 +68,7 @@ pub const Scene = struct {
     builder: vk_surface.FrameBuilder,
     residency: vk_surface.ResidencyStore,
     overlay_residency: vk_surface.ResidencyStore,
+    observation_pending: bool = false,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -207,8 +208,23 @@ pub const Scene = struct {
         return self.connection.cancellation();
     }
 
-    pub fn prepare(self: *Scene, after_revision: u64) !Prepared {
-        var rich = try client.rich.requestRaw(&self.connection, self.allocator, after_revision, 0);
+    /// Arms one raw long-poll observation without receiving it yet.
+    pub fn arm(self: *Scene, after_revision: u64) !void {
+        if (self.observation_pending) return error.ObservationPending;
+        try client.rich.sendRawRequest(&self.connection, after_revision, 0);
+        self.observation_pending = true;
+    }
+
+    /// Borrows this Scene's socket only for readiness polling.
+    pub fn readinessFd(self: *const Scene) std.posix.fd_t {
+        return self.connection.readinessFd();
+    }
+
+    /// Receives and projects exactly one previously armed raw observation.
+    pub fn receivePrepared(self: *Scene) !Prepared {
+        if (!self.observation_pending) return error.ObservationNotPending;
+        var rich = try client.rich.receive(&self.connection, self.allocator);
+        self.observation_pending = false;
         defer rich.deinit();
         const begin = rich.begin;
         const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch
@@ -300,6 +316,12 @@ pub const Scene = struct {
             .session_revision = begin.revision,
             .mode = .{ .generic = .{ .plan = plan } },
         };
+    }
+
+    /// Arms and receives one raw observation synchronously.
+    pub fn prepare(self: *Scene, after_revision: u64) !Prepared {
+        try self.arm(after_revision);
+        return self.receivePrepared();
     }
 
     pub fn complete(self: *Scene) !void {

@@ -17,26 +17,46 @@ const MainError = std.Thread.SpawnError || error{
 /// first construction or owner failure after reverse cleanup.
 pub fn main(init: std.process.Init) !void {
     const argv = init.minimal.args.vector;
-    if (argv.len != 3) {
-        std.debug.print("usage: howl-host ENDPOINT FONT\n", .{});
+    if (argv.len != 3 and argv.len != 4) {
+        std.debug.print(
+            "usage: howl-host ENDPOINT [ENDPOINT_RIGHT] FONT\n",
+            .{},
+        );
         return error.InvalidArguments;
     }
     const endpoint = std.mem.span(argv[1]);
-    const font_path = std.mem.span(argv[2]);
+    const endpoint_right: ?[]const u8 = if (argv.len == 4)
+        std.mem.span(argv[2])
+    else
+        null;
+    const font_path = std.mem.span(argv[if (argv.len == 4) 3 else 2]);
     var mux = layout.Mux.init();
-    std.debug.assert(mux.tabCount() == 1 and mux.paneCount() == 1);
+    if (endpoint_right != null) {
+        const right_pane = try mux.splitFocused(.horizontal);
+        std.debug.assert(mux.focusedPane() == right_pane);
+    }
+    const expected_panes: u8 = if (endpoint_right != null) 2 else 1;
+    std.debug.assert(mux.tabCount() == 1 and mux.paneCount() == expected_panes);
     var threaded = std.Io.Threaded.init(std.heap.page_allocator, .{});
     defer threaded.deinit();
     var boundary = try shared.Boundary.init(threaded.io());
     defer boundary.deinit();
 
     const window_thread = try std.Thread.spawn(.{}, window.run, .{&boundary});
-    const input_thread = std.Thread.spawn(.{}, input_owner.run, .{ &boundary, std.heap.c_allocator, endpoint }) catch |failure| {
+    const input_endpoint = endpoint_right orelse endpoint;
+    const input_thread = std.Thread.spawn(.{}, input_owner.run, .{ &boundary, std.heap.c_allocator, input_endpoint }) catch |failure| {
         boundary.requestStop(.input);
         window_thread.join();
         return failure;
     };
-    const render_thread = std.Thread.spawn(.{}, renderer.run, .{ &boundary, std.heap.c_allocator, endpoint, font_path }) catch |failure| {
+    const render_thread = std.Thread.spawn(.{}, renderer.run, .{
+        &boundary,
+        std.heap.c_allocator,
+        endpoint,
+        endpoint_right,
+        font_path,
+        mux,
+    }) catch |failure| {
         boundary.requestStop(.render);
         input_thread.join();
         window_thread.join();

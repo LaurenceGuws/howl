@@ -48,6 +48,13 @@ const CachedGlyph = union(enum) {
     overlay: OverlayGlyph,
 };
 
+pub const Placement = struct {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+};
+
 pub const Prepared = struct {
     rows: u16,
     cols: u16,
@@ -513,17 +520,20 @@ pub const Gpu = struct {
         self: *Gpu,
         command: vk.VkCommandBuffer,
         frame: Prepared,
+        placement: Placement,
         physical_width: u32,
         physical_height: u32,
     ) !void {
-        if (!self.pending) return error.NoCandidate;
+        if (placement.x < 0 or placement.y < 0 or
+            placement.width != frame.width or placement.height != frame.height)
+            return error.InvalidGeometry;
         var draw = try self.store.currentDraw();
-        draw.origin_x = 0;
-        draw.origin_y = 0;
-        draw.clip_x = 0;
-        draw.clip_y = 0;
-        draw.clip_width = frame.width;
-        draw.clip_height = frame.height;
+        draw.origin_x = placement.x;
+        draw.origin_y = placement.y;
+        draw.clip_x = placement.x;
+        draw.clip_y = placement.y;
+        draw.clip_width = placement.width;
+        draw.clip_height = placement.height;
         draw.cell_width = frame.metrics.advance_width;
         draw.cell_height = frame.metrics.line_height;
         draw.baseline = frame.metrics.baseline;

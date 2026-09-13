@@ -3,6 +3,7 @@
 const std = @import("std");
 const c = @import("renderer_c");
 const client = @import("howl_client");
+const host_layout = @import("layout.zig");
 const shared = @import("shared.zig");
 const terminal_scene = @import("terminal_scene.zig");
 const terminal_fast = @import("terminal_fast.zig");
@@ -16,6 +17,13 @@ const empty_plan = surface.Plan{
     .indices = &.{},
     .commands = &.{},
     .atlas_changed = false,
+};
+
+const FastDraw = struct {
+    gpu: *terminal_fast.Gpu,
+    frame: terminal_fast.Prepared,
+    placement: terminal_fast.Placement,
+    changed: bool,
 };
 
 const Slot = struct {
@@ -49,9 +57,11 @@ pub fn run(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
     endpoint: []const u8,
+    endpoint_right: ?[]const u8,
     font_path: []const u8,
+    mux: host_layout.Mux,
 ) void {
-    runFallible(boundary, allocator, endpoint, font_path) catch |failure| {
+    runFallible(boundary, allocator, endpoint, endpoint_right, font_path, mux) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
@@ -62,12 +72,51 @@ fn runFallible(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
     endpoint: []const u8,
+    endpoint_right: ?[]const u8,
     font_path: []const u8,
+    mux: host_layout.Mux,
 ) !void {
     const feedback = try waitFeedback(boundary);
-    var scene = try terminal_scene.Scene.init(allocator, endpoint, font_path);
-    defer scene.deinit();
-    const terminal_frame = try scene.prepare(0);
+    const scene_count: usize = if (endpoint_right != null) 2 else 1;
+    var scenes: [2]?terminal_scene.Scene = .{ null, null };
+    var initialized_scene_count: usize = 0;
+    defer {
+        var scene_index = initialized_scene_count;
+        while (scene_index != 0) {
+            scene_index -= 1;
+            scenes[scene_index].?.deinit();
+        }
+    }
+    scenes[0] = try terminal_scene.Scene.init(allocator, endpoint, font_path);
+    initialized_scene_count = 1;
+    if (endpoint_right) |right| {
+        scenes[1] = try terminal_scene.Scene.init(allocator, right, font_path);
+        initialized_scene_count = 2;
+    }
+    var prepared: [2]terminal_scene.Prepared = undefined;
+    var session_revisions: [2]u64 = @splat(0);
+    for (0..scene_count) |scene_index| {
+        prepared[scene_index] = try scenes[scene_index].?.prepare(0);
+        session_revisions[scene_index] = prepared[scene_index].session_revision;
+    }
+    var surface_width = prepared[0].width;
+    const surface_height = prepared[0].height;
+    if (scene_count == 2) {
+        if (prepared[1].height != surface_height) return error.DuetGeometry;
+        surface_width = std.math.add(u16, surface_width, prepared[1].width) catch
+            return error.DuetGeometry;
+    }
+    var projected_layout: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const placements = try mux.activeLayout(
+        .{ .width = surface_width, .height = surface_height },
+        &projected_layout,
+    );
+    if (placements.len != scene_count) return error.DuetGeometry;
+    for (placements, 0..) |placement, scene_index| {
+        if (placement.rect.width != prepared[scene_index].width or
+            placement.rect.height != prepared[scene_index].height)
+            return error.DuetGeometry;
+    }
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
     var application = std.mem.zeroes(vk.VkApplicationInfo);
@@ -143,8 +192,14 @@ fn runFallible(
     var gpu_bytes: u64 = 0;
     var graphics = try surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
-    var fast_gpu: ?terminal_fast.Gpu = null;
-    defer if (fast_gpu) |*value| value.deinit(device, &gpu_bytes);
+    var fast_gpus: [2]?terminal_fast.Gpu = .{ null, null };
+    defer {
+        var gpu_index = scene_count;
+        while (gpu_index != 0) {
+            gpu_index -= 1;
+            if (fast_gpus[gpu_index]) |*value| value.deinit(device, &gpu_bytes);
+        }
+    }
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -165,7 +220,7 @@ fn runFallible(
         if (fds.timeline >= 0) closeDescriptor(fds.timeline);
     };
     for (&slots, 0..) |*slot, index| {
-        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, terminal_frame.width, terminal_frame.height, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index]);
+        try constructSlot(slot, &graphics, device, memory_properties, feedback.modifier, dedicated_only, plane_count, surface_width, surface_height, get_memory_fd.?, get_modifier.?, drm_fd, &offers[index], &offered_fds[index]);
         if (c.drmSyncobjHandleToFD(drm_fd, acquire_handle, &offered_fds[index].acquire) != 0) return error.Syncobj;
         offers[index].acquire_timeline_fd = offered_fds[index].acquire;
     }
@@ -195,17 +250,33 @@ fn runFallible(
     queue_active = true;
     var present_revision: u64 = 0;
     var acquire_point: u64 = 0;
-    var session_revision = terminal_frame.session_revision;
     var slot_index: usize = 0;
     var previous_slot: ?usize = null;
-    var prepared = terminal_frame;
+    var changed: [2]bool = .{ true, scene_count == 2 };
     var fast_presents: u64 = 0;
     var generic_presents: u64 = 0;
+    var duet_armed = false;
+    var next_ready_start: usize = 0;
 
-    var cancellation = try scene.cancellation();
-    defer cancellation.deinit();
+    var cancellations: [2]client.Cancellation = undefined;
+    var cancellation_count: usize = 0;
+    defer {
+        var cancellation_index = cancellation_count;
+        while (cancellation_index != 0) {
+            cancellation_index -= 1;
+            cancellations[cancellation_index].deinit();
+        }
+    }
+    for (0..scene_count) |scene_index| {
+        cancellations[scene_index] = try scenes[scene_index].?.cancellation();
+        cancellation_count += 1;
+    }
     var watcher_done = std.atomic.Value(bool).init(false);
-    const watcher = try std.Thread.spawn(.{}, watchStop, .{ boundary, &cancellation, &watcher_done });
+    const watcher = try std.Thread.spawn(.{}, watchStop, .{
+        boundary,
+        cancellations[0..scene_count],
+        &watcher_done,
+    });
     defer {
         watcher_done.store(true, .release);
         watcher.join();
@@ -232,17 +303,52 @@ fn runFallible(
         var plan = empty_plan;
         var clear_color = [4]f32{ 0, 0, 0, 1 };
         var residency_commit: ?*surface.ResidencyStore = null;
-        var fast_frame: ?terminal_fast.Prepared = null;
-        switch (prepared.mode) {
-            .generic => |generic| {
-                generic_presents += 1;
-                plan = generic.plan;
-                residency_commit = &scene.residency;
-            },
-            .fast => |frame| {
-                fast_presents += 1;
-                if (fast_gpu == null)
-                    fast_gpu = try terminal_fast.Gpu.init(
+        var fast_draw_storage: [2]FastDraw = undefined;
+        var fast_draw_count: usize = 0;
+        if (scene_count == 1) {
+            switch (prepared[0].mode) {
+                .generic => |generic| {
+                    generic_presents += 1;
+                    plan = generic.plan;
+                    residency_commit = &scenes[0].?.residency;
+                },
+                .fast => |frame| {
+                    fast_presents += 1;
+                    if (fast_gpus[0] == null)
+                        fast_gpus[0] = try terminal_fast.Gpu.init(
+                            allocator,
+                            device,
+                            memory_properties,
+                            graphics.render_pass,
+                            &gpu_bytes,
+                            gpu_memory_limit,
+                            frame.terminal,
+                        );
+                    if (changed[0]) try fast_gpus[0].?.prepare(frame.terminal);
+                    fast_draw_storage[0] = .{
+                        .gpu = &fast_gpus[0].?,
+                        .frame = frame.terminal,
+                        .placement = fastPlacement(placements[0]),
+                        .changed = changed[0],
+                    };
+                    fast_draw_count = 1;
+                    clear_color = frame.terminal.clear_color;
+                    plan = frame.plan;
+                    if (frame.overlay_pending) residency_commit = &scenes[0].?.overlay_residency;
+                },
+            }
+        } else {
+            fast_presents += 1;
+            for (0..scene_count) |scene_index| {
+                const frame = switch (prepared[scene_index].mode) {
+                    .fast => |value| value,
+                    .generic => return error.DuetFastPathRequired,
+                };
+                if (frame.overlay_pending or frame.plan.commands.len != 0 or
+                    frame.plan.vertices.len != 0 or frame.plan.indices.len != 0)
+                    return error.DuetFastPathRequired;
+                if (fast_gpus[scene_index] == null)
+                    fast_gpus[scene_index] = try terminal_fast.Gpu.init(
                         allocator,
                         device,
                         memory_properties,
@@ -251,19 +357,24 @@ fn runFallible(
                         gpu_memory_limit,
                         frame.terminal,
                     );
-                try fast_gpu.?.prepare(frame.terminal);
-                fast_frame = frame.terminal;
-                clear_color = frame.terminal.clear_color;
-                plan = frame.plan;
-                if (frame.overlay_pending) residency_commit = &scene.overlay_residency;
-            },
+                if (changed[scene_index])
+                    try fast_gpus[scene_index].?.prepare(frame.terminal);
+                fast_draw_storage[scene_index] = .{
+                    .gpu = &fast_gpus[scene_index].?,
+                    .frame = frame.terminal,
+                    .placement = fastPlacement(placements[scene_index]),
+                    .changed = changed[scene_index],
+                };
+            }
+            fast_draw_count = scene_count;
         }
-        errdefer if (fast_frame != null and fast_gpu != null) fast_gpu.?.discard();
+        const fast_draws = fast_draw_storage[0..fast_draw_count];
+        errdefer for (fast_draws) |draw| if (draw.changed) draw.gpu.discard();
         try render(
             &graphics,
             plan,
-            scene.builder.alpha_pixels,
-            scene.builder.rgba_pixels,
+            scenes[0].?.builder.alpha_pixels,
+            scenes[0].?.builder.rgba_pixels,
             device,
             queue,
             family,
@@ -271,15 +382,14 @@ fn runFallible(
             slot,
             clear_color,
             residency_commit,
-            if (fast_frame != null) &fast_gpu.? else null,
-            fast_frame,
+            fast_draws,
             wait_semaphore,
             get_semaphore_fd.?,
             drm_fd,
             acquire_handle,
             acquire_point,
-            prepared.width,
-            prepared.height,
+            surface_width,
+            surface_height,
         );
         if (wait_semaphore) |value| {
             vk.vkDestroySemaphore(device, value, null);
@@ -300,28 +410,105 @@ fn runFallible(
         }
         previous_slot = slot_index;
         slot_index = (slot_index + 1) % shared.slot_count;
+        for (0..scene_count) |scene_index| changed[scene_index] = false;
 
-        const next = scene.prepare(session_revision) catch |failure| {
-            if (boundary.shouldStop()) break;
-            return failure;
-        };
-        if (next.width != terminal_frame.width or next.height != terminal_frame.height)
-            return error.GeometryChanged;
-        session_revision = next.session_revision;
-        prepared = next;
+        if (scene_count == 1) {
+            const next = scenes[0].?.prepare(session_revisions[0]) catch |failure| {
+                if (boundary.shouldStop()) break;
+                return failure;
+            };
+            if (next.width != prepared[0].width or next.height != prepared[0].height)
+                return error.GeometryChanged;
+            session_revisions[0] = next.session_revision;
+            prepared[0] = next;
+            changed[0] = true;
+        } else {
+            if (!duet_armed) {
+                for (0..scene_count) |scene_index|
+                    try scenes[scene_index].?.arm(session_revisions[scene_index]);
+                duet_armed = true;
+            }
+            const ready_index = waitSceneReady(
+                boundary,
+                &scenes,
+                scene_count,
+                next_ready_start,
+            ) catch |failure| {
+                if (boundary.shouldStop()) break;
+                return failure;
+            };
+            next_ready_start = (ready_index + 1) % scene_count;
+            const next = scenes[ready_index].?.receivePrepared() catch |failure| {
+                if (boundary.shouldStop()) break;
+                return failure;
+            };
+            if (next.width != prepared[ready_index].width or
+                next.height != prepared[ready_index].height)
+                return error.GeometryChanged;
+            session_revisions[ready_index] = next.session_revision;
+            prepared[ready_index] = next;
+            changed[ready_index] = true;
+            try scenes[ready_index].?.arm(session_revisions[ready_index]);
+        }
     }
     if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) return error.DeviceIdle;
     queue_active = false;
     try waitWindowStopped(boundary);
     std.debug.print(
-        "Render live loop retired at present={d} session={d} fast={d} generic={d}\n",
-        .{ present_revision, session_revision, fast_presents, generic_presents },
+        "Render live loop retired at present={d} sessions={d}/{d} fast={d} generic={d}\n",
+        .{
+            present_revision,
+            session_revisions[0],
+            if (scene_count == 2) session_revisions[1] else 0,
+            fast_presents,
+            generic_presents,
+        },
     );
+}
+
+fn fastPlacement(value: host_layout.Placement) terminal_fast.Placement {
+    return .{
+        .x = @intCast(value.rect.x),
+        .y = @intCast(value.rect.y),
+        .width = value.rect.width,
+        .height = value.rect.height,
+    };
+}
+
+fn waitSceneReady(
+    boundary: *shared.Boundary,
+    scenes: *[2]?terminal_scene.Scene,
+    scene_count: usize,
+    start: usize,
+) !usize {
+    if (scene_count == 0 or scene_count > scenes.len or start >= scene_count)
+        return error.DuetGeometry;
+    var descriptors: [2]c.pollfd = undefined;
+    for (0..scene_count) |index| descriptors[index] = .{
+        .fd = scenes[index].?.readinessFd(),
+        .events = c.POLLIN,
+        .revents = 0,
+    };
+    while (true) {
+        const ready = c.poll(&descriptors, scene_count, -1);
+        if (ready < 0) {
+            if (std.c.errno(ready) == .INTR) continue;
+            return error.ScenePoll;
+        }
+        if (boundary.shouldStop()) return error.Stopping;
+        if (ready == 0) continue;
+        for (0..scene_count) |offset| {
+            const index = (start + offset) % scene_count;
+            if (descriptors[index].revents & (c.POLLIN | c.POLLERR | c.POLLHUP | c.POLLNVAL) != 0)
+                return index;
+        }
+        return error.ScenePoll;
+    }
 }
 
 fn watchStop(
     boundary: *shared.Boundary,
-    cancellation: *const client.Cancellation,
+    cancellations: []const client.Cancellation,
     done: *std.atomic.Value(bool),
 ) void {
     var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
@@ -335,7 +522,8 @@ fn watchStop(
             return;
         }
         if (boundary.shouldStop()) {
-            cancellation.cancel() catch boundary.requestStop(.render);
+            for (cancellations) |cancellation|
+                cancellation.cancel() catch boundary.requestStop(.render);
             return;
         }
         boundary.drainRenderWake() catch {
@@ -588,8 +776,7 @@ fn render(
     slot: *Slot,
     clear_color: [4]f32,
     residency_commit: ?*surface.ResidencyStore,
-    fast_gpu: ?*terminal_fast.Gpu,
-    fast_frame: ?terminal_fast.Prepared,
+    fast_draws: []const FastDraw,
     wait_semaphore: ?vk.VkSemaphore,
     get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR,
     drm_fd: i32,
@@ -616,10 +803,15 @@ fn render(
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
     const recording = try graphics.recordPrelude(command, target, plan);
-    if (fast_gpu) |value| try value.recordTransfers(command);
+    for (fast_draws) |draw| if (draw.changed) try draw.gpu.recordTransfers(command);
     graphics.beginPass(command, target, clear_color);
-    if (fast_gpu) |value|
-        try value.recordDraw(command, fast_frame orelse return error.FastFrameMissing, width, height);
+    for (fast_draws) |draw| try draw.gpu.recordDraw(
+        command,
+        draw.frame,
+        draw.placement,
+        width,
+        height,
+    );
     graphics.recordGenericDraws(command, target, plan);
     const completed_recording = graphics.endPass(command, target, recording);
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
@@ -660,7 +852,7 @@ fn render(
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(completed_recording);
-    if (fast_gpu) |value| try value.complete();
+    for (fast_draws) |draw| if (draw.changed) try draw.gpu.complete();
     if (residency_commit) |value| try value.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
