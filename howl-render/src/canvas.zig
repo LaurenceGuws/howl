@@ -948,9 +948,13 @@ pub const Composer = struct {
                     command,
                 );
             }
-            visible_changed = !try self.visibleContributionEqual(old, placement);
-            if (!visible_changed and self.focused_source == source)
-                visible_changed = !cursorBindingsEqual(old.cursor_binding, update.cursor_binding);
+            if (self.focused_source == source and
+                !cursorBindingsEqual(old.cursor_binding, update.cursor_binding))
+            {
+                visible_changed = true;
+            } else {
+                visible_changed = !try self.visibleContributionEqual(old, placement);
+            }
         }
         if (visible_changed and self.frame_revision == std.math.maxInt(u64))
             return error.RevisionExhausted;
