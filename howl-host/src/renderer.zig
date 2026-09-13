@@ -5,11 +5,18 @@ const c = @import("renderer_c");
 const client = @import("howl_client");
 const shared = @import("shared.zig");
 const terminal_scene = @import("terminal_scene.zig");
+const terminal_fast = @import("terminal_fast.zig");
 const howl_vk = @import("howl_vk");
 const vk = howl_vk.abi;
 const surface = howl_vk.surface;
 
 const gpu_memory_limit: u64 = 512 * 1024 * 1024;
+const empty_plan = surface.Plan{
+    .vertices = &.{},
+    .indices = &.{},
+    .commands = &.{},
+    .atlas_changed = false,
+};
 
 const Slot = struct {
     image: vk.VkImage = null,
@@ -136,6 +143,8 @@ fn runFallible(
     var gpu_bytes: u64 = 0;
     var graphics = try surface.Context.init(device, memory_properties, &gpu_bytes, gpu_memory_limit);
     defer graphics.deinit(device, &gpu_bytes);
+    var fast_gpu: ?terminal_fast.Gpu = null;
+    defer if (fast_gpu) |*value| value.deinit(device, &gpu_bytes);
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -190,6 +199,8 @@ fn runFallible(
     var slot_index: usize = 0;
     var previous_slot: ?usize = null;
     var prepared = terminal_frame;
+    var fast_presents: u64 = 0;
+    var generic_presents: u64 = 0;
 
     var cancellation = try scene.cancellation();
     defer cancellation.deinit();
@@ -218,9 +229,39 @@ fn runFallible(
         acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
         present_revision = std.math.add(u64, present_revision, 1) catch return error.RevisionOverflow;
         slot.release_point = std.math.add(u64, slot.release_point, 1) catch return error.RevisionOverflow;
+        var plan = empty_plan;
+        var clear_color = [4]f32{ 0, 0, 0, 1 };
+        var residency_commit: ?*surface.ResidencyStore = null;
+        var fast_frame: ?terminal_fast.Prepared = null;
+        switch (prepared.mode) {
+            .generic => |generic| {
+                generic_presents += 1;
+                plan = generic.plan;
+                residency_commit = &scene.residency;
+            },
+            .fast => |frame| {
+                fast_presents += 1;
+                if (fast_gpu == null)
+                    fast_gpu = try terminal_fast.Gpu.init(
+                        allocator,
+                        device,
+                        memory_properties,
+                        graphics.render_pass,
+                        &gpu_bytes,
+                        gpu_memory_limit,
+                        frame.terminal,
+                    );
+                try fast_gpu.?.prepare(frame.terminal);
+                fast_frame = frame.terminal;
+                clear_color = frame.terminal.clear_color;
+                plan = frame.plan;
+                if (frame.overlay_pending) residency_commit = &scene.overlay_residency;
+            },
+        }
+        errdefer if (fast_frame != null and fast_gpu != null) fast_gpu.?.discard();
         try render(
             &graphics,
-            prepared.plan,
+            plan,
             scene.builder.alpha_pixels,
             scene.builder.rgba_pixels,
             device,
@@ -228,8 +269,10 @@ fn runFallible(
             family,
             command,
             slot,
-            .{ 0, 0, 0, 1 },
-            &scene.residency,
+            clear_color,
+            residency_commit,
+            if (fast_frame != null) &fast_gpu.? else null,
+            fast_frame,
             wait_semaphore,
             get_semaphore_fd.?,
             drm_fd,
@@ -270,7 +313,10 @@ fn runFallible(
     if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) return error.DeviceIdle;
     queue_active = false;
     try waitWindowStopped(boundary);
-    std.debug.print("Render live loop retired at present={d} session={d}\n", .{ present_revision, session_revision });
+    std.debug.print(
+        "Render live loop retired at present={d} session={d} fast={d} generic={d}\n",
+        .{ present_revision, session_revision, fast_presents, generic_presents },
+    );
 }
 
 fn watchStop(
@@ -542,6 +588,8 @@ fn render(
     slot: *Slot,
     clear_color: [4]f32,
     residency_commit: ?*surface.ResidencyStore,
+    fast_gpu: ?*terminal_fast.Gpu,
+    fast_frame: ?terminal_fast.Prepared,
     wait_semaphore: ?vk.VkSemaphore,
     get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR,
     drm_fd: i32,
@@ -568,7 +616,10 @@ fn render(
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
     const recording = try graphics.recordPrelude(command, target, plan);
+    if (fast_gpu) |value| try value.recordTransfers(command);
     graphics.beginPass(command, target, clear_color);
+    if (fast_gpu) |value|
+        try value.recordDraw(command, fast_frame orelse return error.FastFrameMissing, width, height);
     graphics.recordGenericDraws(command, target, plan);
     const completed_recording = graphics.endPass(command, target, recording);
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
@@ -609,6 +660,7 @@ fn render(
     var handles = [_]u32{temporary};
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(completed_recording);
+    if (fast_gpu) |value| try value.complete();
     if (residency_commit) |value| try value.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);

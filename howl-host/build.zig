@@ -165,9 +165,35 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&input_tests.step);
 
+    const fast_test_module = b.createModule(.{
+        .root_source_file = b.path("src/terminal_fast.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    fast_test_module.addImport("howl_client", client);
+    fast_test_module.addImport("howl_text", text);
+    fast_test_module.addImport("howl_vk", vk.module("howl_vk"));
+    const fast_test_fonts = b.addOptions();
+    fast_test_fonts.addOption(
+        []const u8,
+        "primary_font",
+        b.root.joinString(b.allocator, "../howl-text/testdata/primary.ttf") catch @panic("OOM"),
+    );
+    fast_test_module.addImport("test_fonts", fast_test_fonts.createModule());
+    fast_test_module.linkSystemLibrary("vulkan", .{});
+    const fast_tests = b.addTest(.{
+        .name = "howl-host-terminal-fast",
+        .root_module = fast_test_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&fast_tests.step);
+
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(layout_tests).step);
     test_step.dependOn(&b.addRunArtifact(input_tests).step);
+    test_step.dependOn(&b.addRunArtifact(fast_tests).step);
     b.default_step = check;
 }

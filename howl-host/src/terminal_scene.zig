@@ -9,27 +9,49 @@ const client = @import("howl_client");
 const canvas = @import("canvas");
 const presentation = @import("presentation");
 const terminal = @import("terminal");
+const terminal_fast = @import("terminal_fast.zig");
 const text = @import("howl_text");
 const vk_surface = @import("howl_vk").surface;
 
 const resource_limit: usize = terminal.maximum_external_images + 1;
+const overlay_resource_limit: usize = terminal_fast.overlay_resource_limit;
 const atlas_extent: u16 = 512;
 const atlas_pixel_bytes: usize = @as(usize, atlas_extent) * atlas_extent;
 const command_capacity: usize = presentation.maximum_canvas_commands;
 const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 
+pub const GenericPrepared = struct {
+    plan: vk_surface.Plan,
+};
+
+pub const FastPrepared = struct {
+    terminal: terminal_fast.Prepared,
+    plan: vk_surface.Plan,
+    overlay_pending: bool,
+};
+
+const empty_plan = vk_surface.Plan{
+    .vertices = &.{},
+    .indices = &.{},
+    .commands = &.{},
+    .atlas_changed = false,
+};
+
 pub const Prepared = struct {
     width: u16,
     height: u16,
     session_revision: u64,
-    revision: u64,
-    plan: vk_surface.Plan,
+    mode: union(enum) {
+        generic: GenericPrepared,
+        fast: FastPrepared,
+    },
 };
 
 pub const Scene = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
     fonts: *text.FontSet,
+    fast: terminal_fast.Adapter,
     content: *terminal.Content,
     composer: canvas.Composer,
     source: canvas.SourceId,
@@ -45,6 +67,7 @@ pub const Scene = struct {
     canvas_residencies: []canvas.Residency,
     builder: vk_surface.FrameBuilder,
     residency: vk_surface.ResidencyStore,
+    overlay_residency: vk_surface.ResidencyStore,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -59,6 +82,8 @@ pub const Scene = struct {
         });
         errdefer fonts.deinit();
         const metrics = fonts.metrics();
+        var fast = try terminal_fast.Adapter.init(allocator, fonts);
+        errdefer fast.deinit();
         const cell_size = canvas.Size{
             .width = metrics.advance_width,
             .height = metrics.line_height,
@@ -127,11 +152,17 @@ pub const Scene = struct {
             .pixel_bytes = surface_pixel_bytes,
         });
         errdefer residency.deinit();
+        var overlay_residency = try vk_surface.ResidencyStore.init(allocator, .{
+            .resources = overlay_resource_limit,
+            .pixel_bytes = vk_surface.atlas_bytes,
+        });
+        errdefer overlay_residency.deinit();
 
         return .{
             .allocator = allocator,
             .connection = connection,
             .fonts = fonts,
+            .fast = fast,
             .content = content,
             .composer = composer,
             .source = source,
@@ -147,10 +178,12 @@ pub const Scene = struct {
             .canvas_residencies = canvas_residencies,
             .builder = builder,
             .residency = residency,
+            .overlay_residency = overlay_residency,
         };
     }
 
     pub fn deinit(self: *Scene) void {
+        self.overlay_residency.deinit();
         self.residency.deinit();
         self.builder.deinit();
         self.allocator.free(self.canvas_residencies);
@@ -164,6 +197,7 @@ pub const Scene = struct {
         self.allocator.free(self.frame_uploads);
         self.composer.deinit();
         terminal.deinitContent(self.content);
+        self.fast.deinit();
         self.fonts.deinit();
         self.connection.deinit();
         self.* = undefined;
@@ -176,17 +210,37 @@ pub const Scene = struct {
     pub fn prepare(self: *Scene, after_revision: u64) !Prepared {
         var rich = try client.rich.request(&self.connection, self.allocator, after_revision, 0);
         defer rich.deinit();
-        const view = try client.view.project(self.allocator, &rich);
-        defer client.view.deinit(view);
-        if (client.view.graphics(view).images.len != 0)
-            return error.GraphicsRefillNotImplemented;
-
-        const begin = client.view.begin(view);
+        const begin = rich.begin;
         const width = std.math.mul(u16, begin.columns, self.cell_size.width) catch
             return error.InvalidGeometry;
         const height = std.math.mul(u16, begin.rows, self.cell_size.height) catch
             return error.InvalidGeometry;
         if (width == 0 or height == 0) return error.InvalidGeometry;
+        if (try self.fast.prepare(&rich, width, height)) |fast| {
+            var plan = empty_plan;
+            var overlay_pending = false;
+            if (fast.overlay_frame.commands.len != 0) {
+                try self.overlay_residency.stage(fast.overlay_frame);
+                errdefer self.overlay_residency.discard();
+                plan = try self.builder.build(&self.overlay_residency, fast.overlay_frame);
+                overlay_pending = true;
+            }
+            return .{
+                .width = width,
+                .height = height,
+                .session_revision = begin.revision,
+                .mode = .{ .fast = .{
+                    .terminal = fast,
+                    .plan = plan,
+                    .overlay_pending = overlay_pending,
+                } },
+            };
+        }
+
+        const view = try client.view.project(self.allocator, &rich);
+        defer client.view.deinit(view);
+        if (client.view.graphics(view).images.len != 0)
+            return error.GraphicsRefillNotImplemented;
         const placement = canvas.Composer.Placement{
             .source = self.source,
             .origin = .{ .x = 0, .y = 0 },
@@ -244,8 +298,7 @@ pub const Scene = struct {
             .width = width,
             .height = height,
             .session_revision = begin.revision,
-            .revision = generic.revision,
-            .plan = plan,
+            .mode = .{ .generic = .{ .plan = plan } },
         };
     }
 

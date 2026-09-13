@@ -9,7 +9,7 @@
 
 const std = @import("std");
 const vk = @import("abi.zig");
-const maximum_cells: usize = 65_536;
+pub const maximum_cells: usize = 65_536;
 const maximum_panes: usize = 64;
 const maximum_instance_staging_bytes: usize = maximum_panes * maximum_cells * @sizeOf(Instance);
 const maximum_row_staging_bytes: usize = maximum_panes * 128 * @sizeOf(u32);
