@@ -125,8 +125,9 @@ test "stop is monotonic and preserves the first runtime failure" {
     try std.testing.expectError(error.Stopping, value.publishFeedback(.{ .device = 1, .fourcc = 1, .modifier = 1 }));
     value.markStopped(.window);
     value.markStopped(.render);
+    value.markStopped(.input);
     const stopped = value.stopped();
-    try std.testing.expect(stopped.window and stopped.render);
+    try std.testing.expect(stopped.window and stopped.render and stopped.input);
 }
 
 test "directional wakes follow fact ownership" {
@@ -138,6 +139,27 @@ test "directional wakes follow fact ownership" {
     try value.publishCompletion(.{ .revision = 1, .slot = 0, .acquire_point = 1, .release_point = 1 });
     try expectReadable(value.windowFd());
     try value.drainWindowWake();
+    try value.publishInput(.{ .focus = true });
+    try expectReadable(value.inputFd());
+    try value.drainInputWake();
+    try std.testing.expect(value.takeInput().?.focus);
+}
+
+test "input queue is ordered bounded and stop rejects admission" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishInput(.{ .focus = true });
+    try value.publishInput(.{ .focus = false });
+    try std.testing.expect(value.takeInput().?.focus);
+    try std.testing.expect(!value.takeInput().?.focus);
+    try std.testing.expect(value.takeInput() == null);
+    for (0..shared.input_capacity) |index| {
+        try value.publishInput(.{ .focus = index % 2 == 0 });
+    }
+    try std.testing.expectError(error.InputLimit, value.publishInput(.{ .focus = true }));
+    for (0..shared.input_capacity) |_| try std.testing.expect(value.takeInput() != null);
+    value.requestStop(null);
+    try std.testing.expectError(error.Stopping, value.publishInput(.{ .focus = true }));
 }
 
 fn expectReadable(descriptor: i32) !void {

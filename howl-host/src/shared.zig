@@ -1,10 +1,18 @@
-//! Owns the bounded copied facts exchanged by Window and Render.
+//! Owns bounded copied facts exchanged by Window, Input, and Render.
 
 const std = @import("std");
 const c = @import("host_c");
+const wayland = @import("howl_wayland");
 
 /// Fixes the number of independently reusable GPU image slots.
 pub const slot_count: usize = 3;
+/// Bounds copied keyboard/focus occurrences awaiting Session delivery.
+pub const input_capacity: usize = 128;
+
+pub const InputEvent = union(enum) {
+    key: wayland.input.Key,
+    focus: bool,
+};
 /// Bounds the DRM memory-plane facts copied for one slot.
 pub const plane_limit: usize = 4;
 
@@ -62,12 +70,14 @@ pub const Completion = struct {
 pub const Failure = enum {
     window,
     render,
+    input,
 };
 
 /// Identifies one runtime owner for retirement facts.
 pub const Owner = enum {
     window,
     render,
+    input,
 };
 
 /// Owns copied cross-thread facts, descriptor transfer, directional eventfds,
@@ -82,14 +92,19 @@ pub const Boundary = struct {
     completions: [slot_count]Completion = undefined,
     completion_head: u8 = 0,
     completion_count: u8 = 0,
+    inputs: [input_capacity]InputEvent = undefined,
+    input_head: u16 = 0,
+    input_count: u16 = 0,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
+    input_stopped: bool = false,
     failure: ?Failure = null,
     render_fd: i32,
     window_fd: i32,
+    input_fd: i32,
 
-    /// Creates both directional nonblocking eventfds.
+    /// Creates the three owner-specific nonblocking eventfds.
     /// On failure, no descriptor remains owned by the caller.
     pub fn init(io: std.Io) error{Signal}!Boundary {
         const render_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
@@ -97,10 +112,13 @@ pub const Boundary = struct {
         errdefer closeDescriptor(render_fd);
         const window_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
         if (window_fd < 0) return error.Signal;
-        return .{ .io = io, .render_fd = render_fd, .window_fd = window_fd };
+        errdefer closeDescriptor(window_fd);
+        const input_fd = c.eventfd(0, c.EFD_CLOEXEC | c.EFD_NONBLOCK);
+        if (input_fd < 0) return error.Signal;
+        return .{ .io = io, .render_fd = render_fd, .window_fd = window_fd, .input_fd = input_fd };
     }
 
-    /// Closes retained offers and both eventfds after Window and Render join.
+    /// Closes retained offers and eventfds after every owner joins.
     pub fn deinit(self: *Boundary) void {
         for (&self.offers) |*offer| {
             if (offer.*) |owned| {
@@ -110,6 +128,7 @@ pub const Boundary = struct {
                 offer.* = null;
             }
         }
+        closeDescriptor(self.input_fd);
         closeDescriptor(self.window_fd);
         closeDescriptor(self.render_fd);
         self.* = undefined;
@@ -133,6 +152,45 @@ pub const Boundary = struct {
     /// Drains all pending Window wakes without blocking.
     pub fn drainWindowWake(self: *Boundary) error{Signal}!void {
         try drain(self.window_fd);
+    }
+
+    /// Borrows the Window-to-Input eventfd until `deinit`.
+    pub fn inputFd(self: *const Boundary) i32 {
+        return self.input_fd;
+    }
+
+    /// Drains all pending Input wakes without blocking.
+    pub fn drainInputWake(self: *Boundary) error{Signal}!void {
+        try drain(self.input_fd);
+    }
+
+    /// Appends one exact copied keyboard/focus occurrence for Input.
+    pub fn publishInput(self: *Boundary, event: InputEvent) error{ Stopping, InputLimit }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.input_count == input_capacity) {
+            self.mutex.unlock(self.io);
+            return error.InputLimit;
+        }
+        const tail = (@as(usize, self.input_head) + self.input_count) % input_capacity;
+        self.inputs[tail] = event;
+        self.input_count += 1;
+        self.mutex.unlock(self.io);
+        signal(self.input_fd);
+    }
+
+    /// Removes and copies the oldest pending keyboard/focus occurrence.
+    pub fn takeInput(self: *Boundary) ?InputEvent {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.input_count == 0) return null;
+        const result = self.inputs[self.input_head];
+        self.input_head = @intCast((@as(usize, self.input_head) + 1) % input_capacity);
+        self.input_count -= 1;
+        return result;
     }
 
     /// Replaces the copied feedback fact and wakes Render.
@@ -253,7 +311,7 @@ pub const Boundary = struct {
         return result;
     }
 
-    /// Makes stop monotonic, preserves the first failure, and wakes both owners.
+    /// Makes stop monotonic, preserves the first failure, and wakes every owner.
     pub fn requestStop(self: *Boundary, failure: ?Failure) void {
         self.mutex.lockUncancelable(self.io);
         self.stop_requested = true;
@@ -261,6 +319,7 @@ pub const Boundary = struct {
         self.mutex.unlock(self.io);
         signal(self.window_fd);
         signal(self.render_fd);
+        signal(self.input_fd);
     }
 
     /// Copies the monotonic stop fact.
@@ -276,16 +335,21 @@ pub const Boundary = struct {
         switch (owner) {
             .window => self.window_stopped = true,
             .render => self.render_stopped = true,
+            .input => self.input_stopped = true,
         }
         self.mutex.unlock(self.io);
-        signal(if (owner == .window) self.render_fd else self.window_fd);
+        signal(switch (owner) {
+            .window => self.render_fd,
+            .render => self.window_fd,
+            .input => self.window_fd,
+        });
     }
 
-    /// Copies both final owner-retirement facts.
-    pub fn stopped(self: *Boundary) struct { window: bool, render: bool } {
+    /// Copies all final owner-retirement facts.
+    pub fn stopped(self: *Boundary) struct { window: bool, render: bool, input: bool } {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return .{ .window = self.window_stopped, .render = self.render_stopped };
+        return .{ .window = self.window_stopped, .render = self.render_stopped, .input = self.input_stopped };
     }
 };
 

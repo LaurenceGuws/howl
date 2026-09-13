@@ -1,7 +1,8 @@
 //! Owns Wayland discovery, dispatch, DMA-BUF wrappers, and presentation.
 
 const std = @import("std");
-const c = @import("howl_wayland").c;
+const wayland = @import("howl_wayland");
+const c = wayland.c;
 const posix = @import("host_c");
 const shared = @import("shared.zig");
 
@@ -50,6 +51,8 @@ const State = struct {
     xdg: ?*c.xdg_wm_base = null,
     dmabuf: ?*c.zwp_linux_dmabuf_v1 = null,
     syncobj: ?*c.wp_linux_drm_syncobj_manager_v1 = null,
+    seat: ?*c.wl_seat = null,
+    keyboard: ?*c.wl_keyboard = null,
     surface: ?*c.wl_surface = null,
     xdg_surface: ?*c.xdg_surface = null,
     toplevel: ?*c.xdg_toplevel = null,
@@ -58,6 +61,7 @@ const State = struct {
     xdg_name: u32 = 0,
     dmabuf_name: u32 = 0,
     syncobj_name: u32 = 0,
+    seat_name: u32 = 0,
     configured: bool = false,
     configure_serial: u32 = 0,
     toplevel_configured: bool = false,
@@ -74,8 +78,18 @@ const State = struct {
     presented: u64 = 0,
     buffer_width: u16 = 0,
     buffer_height: u16 = 0,
+    xkb_context: ?wayland.xkb.Context = null,
+    xkb_keymap: ?wayland.xkb.Keymap = null,
+    xkb_state: ?wayland.xkb.State = null,
+    keyboard_modifiers: wayland.input.Modifiers = .{ .serial = 0, .depressed = 0, .latched = 0, .locked = 0, .group = 0 },
+    keyboard_semantic_modifiers: wayland.input.SemanticModifiers = .{},
 
     fn deinit(self: *State) void {
+        if (self.xkb_state) |*value| value.deinit();
+        if (self.xkb_keymap) |*value| value.deinit();
+        if (self.xkb_context) |*value| value.deinit();
+        if (self.keyboard) |value| c.wl_keyboard_destroy(value);
+        if (self.seat) |value| c.wl_seat_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
         if (self.sync_surface) |value| c.wp_linux_drm_syncobj_surface_v1_destroy(value);
         var index = shared.slot_count;
@@ -108,6 +122,7 @@ pub fn run(boundary: *shared.Boundary) void {
 
 fn runFallible(boundary: *shared.Boundary) !void {
     var state = State{ .boundary = boundary };
+    state.xkb_context = wayland.xkb.Context.init() catch return error.Xkb;
     const display = c.wl_display_connect(null) orelse return error.WaylandConnect;
     defer c.wl_display_disconnect(display);
     defer state.deinit();
@@ -115,7 +130,9 @@ fn runFallible(boundary: *shared.Boundary) !void {
     defer c.wl_registry_destroy(registry);
     if (c.wl_registry_add_listener(registry, &registry_listener, &state) != 0) return error.Listener;
     if (c.wl_display_roundtrip(display) < 0) return error.Dispatch;
-    if (state.compositor == null or state.xdg == null or state.dmabuf == null or state.syncobj == null) return error.RequiredGlobal;
+    if (state.compositor == null or state.xdg == null or state.dmabuf == null or state.syncobj == null or state.seat == null) return error.RequiredGlobal;
+    if (c.wl_seat_add_listener(state.seat.?, &seat_listener, &state) != 0) return error.Listener;
+    if (c.wl_display_roundtrip(display) < 0) return error.Dispatch;
     if (c.xdg_wm_base_add_listener(state.xdg.?, &xdg_listener, &state) != 0) return error.Listener;
     const feedback = c.zwp_linux_dmabuf_v1_get_default_feedback(state.dmabuf.?) orelse return error.Feedback;
     defer c.zwp_linux_dmabuf_feedback_v1_destroy(feedback);
@@ -245,12 +262,157 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
         state.syncobj = @ptrCast(c.wl_registry_bind(registry, name, &c.wp_linux_drm_syncobj_manager_v1_interface, 1));
         state.syncobj_name = name;
     }
+    if (std.mem.eql(u8, value, "wl_seat")) {
+        state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 10)));
+        state.seat_name = name;
+    }
 }
 fn globalRemove(data: ?*anyopaque, _: ?*c.wl_registry, name: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
-    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name) state.boundary.requestStop(.window);
+    if (name == state.compositor_name or name == state.xdg_name or name == state.dmabuf_name or name == state.syncobj_name or name == state.seat_name) state.boundary.requestStop(.window);
 }
 const registry_listener = c.wl_registry_listener{ .global = globalAdd, .global_remove = globalRemove };
+
+fn inputFailure(state: *State) void {
+    state.boundary.requestStop(.window);
+}
+
+fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (seat != state.seat) return state.boundary.requestStop(.window);
+    const keyboard_capability = (@as(u32, @intCast(c.WL_SEAT_CAPABILITY_KEYBOARD)) & capabilities) != 0;
+    if (keyboard_capability and state.keyboard == null) {
+        state.keyboard = c.wl_seat_get_keyboard(seat) orelse return state.boundary.requestStop(.window);
+        if (c.wl_keyboard_add_listener(state.keyboard.?, &keyboard_listener, state) != 0)
+            return state.boundary.requestStop(.window);
+    } else if (!keyboard_capability and state.keyboard != null) {
+        c.wl_keyboard_destroy(state.keyboard.?);
+        state.keyboard = null;
+        if (state.xkb_state) |*value| value.deinit();
+        state.xkb_state = null;
+        if (state.xkb_keymap) |*value| value.deinit();
+        state.xkb_keymap = null;
+        state.keyboard_semantic_modifiers = .{};
+    }
+}
+
+fn seatName(data: ?*anyopaque, seat: ?*c.wl_seat, name: [*c]const u8) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (seat != state.seat or name == null) return state.boundary.requestStop(.window);
+    if (std.mem.span(name).len > 64) state.boundary.requestStop(.window);
+}
+
+const seat_listener = c.wl_seat_listener{ .capabilities = seatCapabilities, .name = seatName };
+
+fn keyboardKeymap(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, format: u32, fd: i32, size: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard or fd < 0) return state.boundary.requestStop(.window);
+    defer closeDescriptor(fd);
+    if (format != 1 or size == 0 or size > 1024 * 1024) return state.boundary.requestStop(.window);
+    const bytes = std.posix.mmap(
+        null,
+        size,
+        std.posix.PROT{ .READ = true },
+        std.posix.MAP{ .TYPE = .PRIVATE },
+        fd,
+        0,
+    ) catch return state.boundary.requestStop(.window);
+    defer std.posix.munmap(bytes);
+    var keymap = if (state.xkb_context) |*context|
+        wayland.xkb.Keymap.fromBuffer(context, bytes) catch return state.boundary.requestStop(.window)
+    else
+        return state.boundary.requestStop(.window);
+    const keyboard_state = wayland.xkb.State.init(&keymap) catch {
+        keymap.deinit();
+        return state.boundary.requestStop(.window);
+    };
+    if (state.xkb_state) |*old| old.deinit();
+    if (state.xkb_keymap) |*old| old.deinit();
+    state.xkb_keymap = keymap;
+    state.xkb_state = keyboard_state;
+    state.keyboard_semantic_modifiers = .{};
+}
+
+fn keyboardEnter(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, surface: ?*c.wl_surface, keys: [*c]c.wl_array) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard or surface != state.surface or keys == null)
+        return state.boundary.requestStop(.window);
+    const key_array: *allowzero c.wl_array = &keys[0];
+    if (key_array.size != 0 and key_array.data == null) return state.boundary.requestStop(.window);
+    const bytes: []const u8 = if (key_array.size == 0)
+        &.{}
+    else
+        @as([*]const u8, @ptrCast(key_array.data))[0..key_array.size];
+    const entered = wayland.input.keyboardEnter(serial, bytes) catch return state.boundary.requestStop(.window);
+    if (entered.serial != serial) return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .focus = true }) catch inputFailure(state);
+}
+
+fn keyboardLeave(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, _: u32, surface: ?*c.wl_surface) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard or surface != state.surface)
+        return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .focus = false }) catch inputFailure(state);
+}
+
+fn keyboardKey(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, time: u32, key_value: u32, state_value: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard) return state.boundary.requestStop(.window);
+    const key_state: wayland.input.KeyState = switch (state_value) {
+        c.WL_KEYBOARD_KEY_STATE_PRESSED => .pressed,
+        c.WL_KEYBOARD_KEY_STATE_RELEASED => .released,
+        c.WL_KEYBOARD_KEY_STATE_REPEATED => .repeated,
+        else => return state.boundary.requestStop(.window),
+    };
+    if (key_value > std.math.maxInt(u32) - 8) return state.boundary.requestStop(.window);
+    const xkb_key = key_value + 8;
+    var text: [wayland.input.key_text_limit]u8 = @splat(0);
+    const keysym = if (state.xkb_state) |*keyboard_state|
+        keyboard_state.keySym(xkb_key)
+    else
+        return state.boundary.requestStop(.window);
+    const text_len = if (state.xkb_state) |*keyboard_state|
+        keyboard_state.keyUtf8(xkb_key, &text) catch return state.boundary.requestStop(.window)
+    else
+        return state.boundary.requestStop(.window);
+    state.boundary.publishInput(.{ .key = .{
+        .keycode = key_value,
+        .time = time,
+        .state = key_state,
+        .serial = serial,
+        .modifiers = state.keyboard_modifiers,
+        .semantic_modifiers = state.keyboard_semantic_modifiers,
+        .keysym = @fromBackingInt(@intCast(keysym)),
+        .text_len = @intCast(text_len),
+        .text = text,
+    } }) catch inputFailure(state);
+}
+
+fn keyboardModifiers(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, serial: u32, depressed: u32, latched: u32, locked: u32, group: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard) return state.boundary.requestStop(.window);
+    state.keyboard_modifiers = .{ .serial = serial, .depressed = depressed, .latched = latched, .locked = locked, .group = group };
+    if (state.xkb_state) |*keyboard_state| {
+        if (keyboard_state.updateModifiers(.{ .depressed = depressed, .latched = latched, .locked = locked, .group = group })) {}
+        state.keyboard_semantic_modifiers = keyboard_state.semanticModifiers();
+    }
+}
+
+fn keyboardRepeat(data: ?*anyopaque, keyboard_value: ?*c.wl_keyboard, rate: i32, delay: i32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (keyboard_value != state.keyboard or rate < 0 or delay < 0)
+        state.boundary.requestStop(.window);
+}
+
+const keyboard_listener = c.wl_keyboard_listener{
+    .keymap = keyboardKeymap,
+    .enter = keyboardEnter,
+    .leave = keyboardLeave,
+    .key = keyboardKey,
+    .modifiers = keyboardModifiers,
+    .repeat_info = keyboardRepeat,
+};
+
 fn ping(data: ?*anyopaque, wm: ?*c.xdg_wm_base, serial: u32) callconv(.c) void {
     const state: *State = @ptrCast(@alignCast(data.?));
     if (wm != state.xdg) state.boundary.requestStop(.window);

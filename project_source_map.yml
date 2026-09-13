@@ -47,7 +47,8 @@ experimental:
     bounded tab/split topology that prevents single-terminal architecture from
     becoming implicit product policy; canonical Session revisions now stream
     through current client/text/Canvas/Vulkan boundaries with bounded explicit-sync
-    ring reuse and cancellable observation; not part of the core gate
+    ring reuse and cancellable observation; physical xkb keyboard facts cross a
+    dedicated bounded Input owner into Session; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

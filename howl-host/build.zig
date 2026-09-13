@@ -120,6 +120,7 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     shared.addImport("host_c", host_c);
+    shared.addImport("howl_wayland", wayland.module("howl_wayland"));
     const test_module = b.createModule(.{
         .root_source_file = b.path("test/test.zig"),
         .target = target,
@@ -128,6 +129,7 @@ pub fn build(b: *std.Build) void {
     });
     test_module.addImport("shared", shared);
     test_module.addImport("host_c", host_c);
+    test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
     const tests = b.addTest(.{
         .name = "howl-host-runtime",
         .root_module = test_module,
@@ -146,8 +148,26 @@ pub fn build(b: *std.Build) void {
     });
     check.dependOn(&layout_tests.step);
 
+    const input_test_module = b.createModule(.{
+        .root_source_file = b.path("src/input_owner.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    input_test_module.addImport("howl_client", client);
+    input_test_module.addImport("howl_wayland", wayland.module("howl_wayland"));
+    input_test_module.addImport("host_c", host_c);
+    const input_tests = b.addTest(.{
+        .name = "howl-host-input",
+        .root_module = input_test_module,
+        .use_llvm = false,
+        .use_lld = false,
+    });
+    check.dependOn(&input_tests.step);
+
     const test_step = b.step("test", "Run native host runtime ownership proofs");
     test_step.dependOn(&b.addRunArtifact(tests).step);
     test_step.dependOn(&b.addRunArtifact(layout_tests).step);
+    test_step.dependOn(&b.addRunArtifact(input_tests).step);
     b.default_step = check;
 }

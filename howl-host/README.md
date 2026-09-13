@@ -13,7 +13,9 @@ Current foundation:
 - canonical Session revisions projected live through current howl-client,
   howl-text, terminal Canvas, and howl-vk.surface into the physical window;
 - three explicit-sync DMA-BUF slots rotated with exact compositor-release
-  ownership before reuse; closing Window cancels a blocked Session observation.
+  ownership before reuse; closing Window cancels a blocked Session observation;
+- physical Wayland/xkb keyboard input delivered by a dedicated bounded Input
+  owner so compositor dispatch never waits on Session action acknowledgements.
 
 The multiplexer is intentionally small. Its job is to keep multi-session
 presentation an architectural invariant while Session, VT, PTY, text, and the
@@ -24,5 +26,7 @@ The current live loop deliberately bounds presentation backlog by compositor
 release while canonical Session progress remains observer-independent. It is a
 correctness baseline, not the final latency scheduler.
 
-Next: wire physical input and begin measuring input-to-present latency, frame
-cadence, CPU/GPU cost, and memory slope before optimizing scheduling.
+Next: begin measuring input-to-present latency, frame cadence/jitter, CPU/GPU
+cost, and memory slope before optimizing scheduling. The current physical typing
+proof also makes per-keystroke Session publication/presentation churn directly
+measurable.
