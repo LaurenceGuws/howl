@@ -1,14 +1,18 @@
-//! Owns native-host keyboard delivery to one canonical Session endpoint.
+//! Owns native-host keyboard delivery and host-local pane focus.
 //!
 //! Window copies interpreted Wayland/xkb facts into Boundary. This owner alone
 //! performs potentially blocking Session action round trips so compositor
-//! dispatch never waits on endpoint I/O.
+//! dispatch never waits on endpoint I/O. In duet mode it owns one connection
+//! per pane and consumes F6 as the deliberately tiny focus-toggle canary.
 
 const std = @import("std");
 const client = @import("howl_client");
 const wayland = @import("howl_wayland");
 const c = @import("host_c");
+const layout = @import("layout.zig");
 const shared = @import("shared.zig");
+
+const focus_toggle_keysym: u32 = 0xffc3; // F6
 
 pub const Command = union(enum) {
     ignored,
@@ -24,8 +28,10 @@ pub fn run(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
     endpoint: []const u8,
+    endpoint_right: ?[]const u8,
+    mux: layout.Mux,
 ) void {
-    runFallible(boundary, allocator, endpoint) catch |failure| {
+    runFallible(boundary, allocator, endpoint, endpoint_right, mux) catch |failure| {
         std.debug.print("Input failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.input);
     };
@@ -36,24 +42,104 @@ fn runFallible(
     boundary: *shared.Boundary,
     allocator: std.mem.Allocator,
     endpoint: []const u8,
+    endpoint_right: ?[]const u8,
+    initial_mux: layout.Mux,
 ) !void {
-    var connection = try client.Connection.connect(allocator, endpoint);
-    defer connection.deinit();
+    const connection_count: usize = if (endpoint_right != null) 2 else 1;
+    var connections: [2]?client.Connection = .{ null, null };
+    var initialized_count: usize = 0;
+    defer {
+        var index = initialized_count;
+        while (index != 0) {
+            index -= 1;
+            connections[index].?.deinit();
+        }
+    }
+    connections[0] = try client.Connection.connect(allocator, endpoint);
+    initialized_count = 1;
+    if (endpoint_right) |right| {
+        connections[1] = try client.Connection.connect(allocator, right);
+        initialized_count = 2;
+    }
+
+    var mux = initial_mux;
+    var projection_storage: [layout.max_panes_per_tab]layout.Placement = undefined;
+    const projected = try mux.activeLayout(.{ .width = 1024, .height = 1024 }, &projection_storage);
+    if (projected.len != connection_count) return error.InputTopologyMismatch;
+    var pane_ids: [2]layout.PaneId = undefined;
+    for (projected, 0..) |placement, index| pane_ids[index] = placement.pane;
+    const initial_focus_index = focusedConnectionIndex(
+        &mux,
+        pane_ids[0..connection_count],
+    ) orelse return error.InputTopologyMismatch;
+    if (initial_focus_index >= connection_count) return error.InputTopologyMismatch;
+
+    var window_focused = false;
     while (!boundary.shouldStop()) {
         var consumed = false;
         while (boundary.takeInput()) |event| {
             consumed = true;
             switch (event) {
-                .focus => |focused| try client.actions.focus(
-                    &connection,
-                    @fromBackingInt(@as(u8, if (focused) 1 else 2)),
-                ),
-                .key => |key| try deliverKey(&connection, key),
+                .focus => |focused| {
+                    if (focused != window_focused) {
+                        const active = focusedConnectionIndex(
+                            &mux,
+                            pane_ids[0..connection_count],
+                        ) orelse return error.InputTopologyMismatch;
+                        try deliverFocus(&connections[active].?, focused);
+                        window_focused = focused;
+                    }
+                },
+                .key => |key| {
+                    if (connection_count == 2 and isFocusToggle(key)) {
+                        if (key.state == .pressed) {
+                            const previous = focusedConnectionIndex(
+                                &mux,
+                                pane_ids[0..connection_count],
+                            ) orelse return error.InputTopologyMismatch;
+                            const next_pane = mux.focusNext();
+                            const next = connectionIndexForPane(
+                                pane_ids[0..connection_count],
+                                next_pane,
+                            ) orelse return error.InputTopologyMismatch;
+                            if (window_focused and previous != next) {
+                                try deliverFocus(&connections[previous].?, false);
+                                try deliverFocus(&connections[next].?, true);
+                            }
+                        }
+                    } else {
+                        const active = focusedConnectionIndex(
+                            &mux,
+                            pane_ids[0..connection_count],
+                        ) orelse return error.InputTopologyMismatch;
+                        try deliverKey(&connections[active].?, key);
+                    }
+                },
             }
             if (boundary.shouldStop()) return;
         }
         if (!consumed) try waitInput(boundary);
     }
+}
+
+fn deliverFocus(connection: *client.Connection, focused: bool) !void {
+    try client.actions.focus(
+        connection,
+        @fromBackingInt(@as(u8, if (focused) 1 else 2)),
+    );
+}
+
+fn focusedConnectionIndex(mux: *const layout.Mux, pane_ids: []const layout.PaneId) ?usize {
+    return connectionIndexForPane(pane_ids, mux.focusedPane());
+}
+
+fn connectionIndexForPane(pane_ids: []const layout.PaneId, pane: layout.PaneId) ?usize {
+    for (pane_ids, 0..) |candidate, index| if (candidate == pane) return index;
+    return null;
+}
+
+fn isFocusToggle(key: wayland.input.Key) bool {
+    return @backingInt(key.keysym) == focus_toggle_keysym;
 }
 
 fn deliverKey(connection: *client.Connection, key: wayland.input.Key) !void {
@@ -194,6 +280,12 @@ fn makeKey(keysym: u32, state: wayland.input.KeyState, text: []const u8, modifie
     };
     @memcpy(result.text[0..text.len], text);
     return result;
+}
+
+test "F6 is the exact host focus toggle key" {
+    try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .pressed, "", .{})));
+    try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .released, "", .{})));
+    try std.testing.expect(!isFocusToggle(makeKey(0xffc2, .pressed, "", .{})));
 }
 
 test "plain printable key commits text only on press and repeat" {

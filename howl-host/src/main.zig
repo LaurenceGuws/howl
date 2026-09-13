@@ -43,8 +43,13 @@ pub fn main(init: std.process.Init) !void {
     defer boundary.deinit();
 
     const window_thread = try std.Thread.spawn(.{}, window.run, .{&boundary});
-    const input_endpoint = endpoint_right orelse endpoint;
-    const input_thread = std.Thread.spawn(.{}, input_owner.run, .{ &boundary, std.heap.c_allocator, input_endpoint }) catch |failure| {
+    const input_thread = std.Thread.spawn(.{}, input_owner.run, .{
+        &boundary,
+        std.heap.c_allocator,
+        endpoint,
+        endpoint_right,
+        mux,
+    }) catch |failure| {
         boundary.requestStop(.input);
         window_thread.join();
         return failure;

@@ -130,6 +130,25 @@ const Tab = struct {
         return retiring;
     }
 
+    fn collectPanes(
+        self: *const Tab,
+        node_index: u8,
+        output: *[max_panes_per_tab]PaneId,
+        count: *u8,
+    ) void {
+        switch (self.nodes[node_index]) {
+            .free => unreachable,
+            .pane => |pane| {
+                output[count.*] = pane;
+                count.* += 1;
+            },
+            .split => |split| {
+                self.collectPanes(split.first, output, count);
+                self.collectPanes(split.second, output, count);
+            },
+        }
+    }
+
     fn project(
         self: *const Tab,
         surface: Surface,
@@ -276,6 +295,23 @@ pub const Mux = struct {
         return true;
     }
 
+    /// Cycles active-tab focus in deterministic projection order.
+    /// A one-pane tab remains focused on its sole pane.
+    pub fn focusNext(self: *Mux) PaneId {
+        const tab = &self.tabs[self.active_index];
+        var panes: [max_panes_per_tab]PaneId = undefined;
+        var count: u8 = 0;
+        tab.collectPanes(tab.root, &panes, &count);
+        std.debug.assert(count == tab.pane_count and count != 0);
+        for (panes[0..count], 0..) |pane, index| {
+            if (pane != tab.focused) continue;
+            const next = panes[(index + 1) % count];
+            tab.focused = next;
+            return next;
+        }
+        unreachable;
+    }
+
     pub fn activeLayout(
         self: *const Mux,
         surface: Surface,
@@ -338,6 +374,18 @@ test "tabs own independent trees and stable identities" {
     try std.testing.expectEqual(@as(u8, 4), mux.paneCount());
     try std.testing.expect(try mux.switchTab(first_tab));
     try std.testing.expectEqual(first_split, mux.focusedPane());
+}
+
+test "focus next follows projection order and wraps" {
+    var mux = Mux.init();
+    const right = try mux.splitFocused(.horizontal);
+    try std.testing.expectEqual(right, mux.focusedPane());
+    try std.testing.expectEqual(paneId(1), mux.focusNext());
+    try std.testing.expectEqual(right, mux.focusNext());
+    try std.testing.expectEqual(right, mux.focusedPane());
+
+    var single = Mux.init();
+    try std.testing.expectEqual(paneId(1), single.focusNext());
 }
 
 test "closing focused pane collapses its parent and chooses a survivor" {
