@@ -38,9 +38,13 @@ const empty_plan = vk_surface.Plan{
 };
 
 pub const Prepared = struct {
+    rows: u16,
+    cols: u16,
     width: u16,
     height: u16,
     session_revision: u64,
+    leader_present: bool,
+    you_are_leader: bool,
     mode: union(enum) {
         generic: GenericPrepared,
         fast: FastPrepared,
@@ -242,9 +246,13 @@ pub const Scene = struct {
                 overlay_pending = true;
             }
             return .{
+                .rows = begin.rows,
+                .cols = begin.columns,
                 .width = width,
                 .height = height,
                 .session_revision = begin.revision,
+                .leader_present = begin.leader_present,
+                .you_are_leader = begin.you_are_leader,
                 .mode = .{ .fast = .{
                     .terminal = fast,
                     .plan = plan,
@@ -311,11 +319,47 @@ pub const Scene = struct {
         errdefer self.residency.discard();
         const plan = try self.builder.build(&self.residency, generic);
         return .{
+            .rows = begin.rows,
+            .cols = begin.columns,
             .width = width,
             .height = height,
             .session_revision = begin.revision,
+            .leader_present = begin.leader_present,
+            .you_are_leader = begin.you_are_leader,
             .mode = .{ .generic = .{ .plan = plan } },
         };
+    }
+
+    /// Abandons one prepared frame that will never be submitted. This is used
+    /// by geometry transactions that must replace an initial observation before
+    /// Vulkan ownership exists; accepted residency remains untouched.
+    pub fn discardPrepared(self: *Scene, prepared: Prepared) void {
+        switch (prepared.mode) {
+            .generic => self.residency.discard(),
+            .fast => |frame| if (frame.overlay_pending) self.overlay_residency.discard(),
+        }
+    }
+
+    /// Claims geometry only when no peer currently owns it, then resizes the
+    /// canonical Session. Reclaiming our own existing authority is harmless;
+    /// stealing another live client's authority is intentionally refused.
+    pub fn resizeCanonical(self: *Scene, current: Prepared, rows: u16, cols: u16) !void {
+        if (rows == 0 or cols == 0) return error.InvalidGeometry;
+        if (current.rows == rows and current.cols == cols) return;
+        if (current.leader_present and !current.you_are_leader)
+            return error.ResizeAuthorityUnavailable;
+        try client.actions.resize(&self.connection, rows, cols);
+    }
+
+    /// Restores geometry after this Scene has successfully claimed resize
+    /// authority earlier in the same Host transaction.
+    pub fn rollbackCanonical(self: *Scene, rows: u16, cols: u16) !void {
+        if (rows == 0 or cols == 0) return error.InvalidGeometry;
+        try client.actions.resize(&self.connection, rows, cols);
+    }
+
+    pub fn cellSize(self: *const Scene) canvas.Size {
+        return self.cell_size;
     }
 
     /// Arms and receives one raw observation synchronously.

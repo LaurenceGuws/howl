@@ -109,24 +109,18 @@ fn runFallible(
         prepared[scene_index] = try scenes[scene_index].?.prepare(0);
         session_revisions[scene_index] = prepared[scene_index].session_revision;
     }
-    var surface_width = prepared[0].width;
-    const surface_height = prepared[0].height;
-    if (scene_count == 2) {
-        if (prepared[1].height != surface_height) return error.DuetGeometry;
-        surface_width = std.math.add(u16, surface_width, prepared[1].width) catch
-            return error.DuetGeometry;
-    }
     var projected_layout: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
-    const placements = try mux.activeLayout(
-        .{ .width = surface_width, .height = surface_height },
+    const geometry = try establishInitialGeometry(
+        &scenes,
+        scene_count,
+        mux,
+        &prepared,
+        &session_revisions,
         &projected_layout,
     );
-    if (placements.len != scene_count) return error.DuetGeometry;
-    for (placements, 0..) |placement, scene_index| {
-        if (placement.rect.width != prepared[scene_index].width or
-            placement.rect.height != prepared[scene_index].height)
-            return error.DuetGeometry;
-    }
+    const placements = geometry.placements;
+    const surface_width = geometry.surface_width;
+    const surface_height = geometry.surface_height;
     if (feedback.device == 0 or feedback.fourcc != 0x34324241) return error.UnsupportedFeedback;
 
     var application = std.mem.zeroes(vk.VkApplicationInfo);
@@ -525,6 +519,139 @@ fn runFallible(
             generic_draw_count_total,
         },
     );
+}
+
+const InitialGeometry = struct {
+    surface_width: u16,
+    surface_height: u16,
+    placements: []const host_layout.Placement,
+};
+
+fn establishInitialGeometry(
+    scenes: *[2]?terminal_scene.Scene,
+    scene_count: usize,
+    mux: host_layout.Mux,
+    prepared: *[2]terminal_scene.Prepared,
+    session_revisions: *[2]u64,
+    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
+) !InitialGeometry {
+    if (scene_count == 0 or scene_count > scenes.len) return error.DuetGeometry;
+    const total_rows = prepared[0].rows;
+    const total_cols = prepared[0].cols;
+    if (total_rows == 0 or total_cols == 0) return error.DuetGeometry;
+    const cell_size = scenes[0].?.cellSize();
+    if (cell_size.width == 0 or cell_size.height == 0) return error.DuetGeometry;
+    for (1..scene_count) |scene_index|
+        if (!std.meta.eql(cell_size, scenes[scene_index].?.cellSize()))
+            return error.DuetGeometry;
+
+    var grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const grid = try mux.activeLayout(
+        .{ .width = total_cols, .height = total_rows },
+        &grid_storage,
+    );
+    if (grid.len != scene_count) return error.DuetGeometry;
+
+    var old_rows: [2]u16 = undefined;
+    var old_cols: [2]u16 = undefined;
+    var changed: [2]bool = @splat(false);
+    for (0..scene_count) |scene_index| {
+        old_rows[scene_index] = prepared[scene_index].rows;
+        old_cols[scene_index] = prepared[scene_index].cols;
+        const target = grid[scene_index].rect;
+        if (target.width == 0 or target.height == 0 or
+            target.width > std.math.maxInt(u16) or target.height > std.math.maxInt(u16))
+            return error.DuetGeometry;
+        const target_rows: u16 = @intCast(target.height);
+        const target_cols: u16 = @intCast(target.width);
+        if (old_rows[scene_index] == target_rows and old_cols[scene_index] == target_cols)
+            continue;
+        scenes[scene_index].?.discardPrepared(prepared[scene_index]);
+        scenes[scene_index].?.resizeCanonical(
+            prepared[scene_index],
+            target_rows,
+            target_cols,
+        ) catch |failure| {
+            rollbackInitialGeometry(
+                scenes,
+                changed,
+                old_rows,
+                old_cols,
+                scene_index,
+            ) catch return error.ResizeTransactionFailed;
+            return failure;
+        };
+        changed[scene_index] = true;
+    }
+
+    for (0..scene_count) |scene_index| {
+        if (!changed[scene_index]) continue;
+        const next = scenes[scene_index].?.prepare(session_revisions[scene_index]) catch |failure| {
+            rollbackInitialGeometry(
+                scenes,
+                changed,
+                old_rows,
+                old_cols,
+                scene_count,
+            ) catch return error.ResizeTransactionFailed;
+            return failure;
+        };
+        const target = grid[scene_index].rect;
+        if (next.rows != target.height or next.cols != target.width) {
+            rollbackInitialGeometry(
+                scenes,
+                changed,
+                old_rows,
+                old_cols,
+                scene_count,
+            ) catch return error.ResizeTransactionFailed;
+            return error.ResizeResultMismatch;
+        }
+        prepared[scene_index] = next;
+        session_revisions[scene_index] = next.session_revision;
+    }
+
+    const surface_width_u32 = std.math.mul(u32, total_cols, cell_size.width) catch
+        return error.DuetGeometry;
+    const surface_height_u32 = std.math.mul(u32, total_rows, cell_size.height) catch
+        return error.DuetGeometry;
+    if (surface_width_u32 == 0 or surface_height_u32 == 0 or
+        surface_width_u32 > std.math.maxInt(u16) or surface_height_u32 > std.math.maxInt(u16))
+        return error.DuetGeometry;
+
+    for (grid, pixel_storage[0..grid.len], 0..) |placed, *pixel, scene_index| {
+        const x = std.math.mul(u32, placed.rect.x, cell_size.width) catch return error.DuetGeometry;
+        const y = std.math.mul(u32, placed.rect.y, cell_size.height) catch return error.DuetGeometry;
+        const width = std.math.mul(u32, placed.rect.width, cell_size.width) catch return error.DuetGeometry;
+        const height = std.math.mul(u32, placed.rect.height, cell_size.height) catch return error.DuetGeometry;
+        pixel.* = .{
+            .pane = placed.pane,
+            .rect = .{ .x = x, .y = y, .width = width, .height = height },
+            .focused = placed.focused,
+        };
+        if (prepared[scene_index].width != width or prepared[scene_index].height != height)
+            return error.ResizeResultMismatch;
+    }
+    return .{
+        .surface_width = @intCast(surface_width_u32),
+        .surface_height = @intCast(surface_height_u32),
+        .placements = pixel_storage[0..grid.len],
+    };
+}
+
+fn rollbackInitialGeometry(
+    scenes: *[2]?terminal_scene.Scene,
+    changed: [2]bool,
+    rows: [2]u16,
+    cols: [2]u16,
+    end: usize,
+) !void {
+    var index = @min(end, scenes.len);
+    while (index != 0) {
+        index -= 1;
+        if (!changed[index]) continue;
+        try scenes[index].?.rollbackCanonical(rows[index], cols[index]);
+    }
 }
 
 fn fastPlacement(value: host_layout.Placement) terminal_fast.Placement {
