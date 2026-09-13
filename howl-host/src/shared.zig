@@ -17,6 +17,7 @@ pub const HostCommandKind = enum {
     grow_focused,
     shrink_focused,
     split_horizontal,
+    split_vertical,
     close_created,
 };
 
@@ -25,7 +26,10 @@ pub const HostCommand = struct {
     pane: u8,
 };
 
+pub const PaneSplitAxis = enum { horizontal, vertical };
+
 pub const PaneEndpoint = struct {
+    axis: PaneSplitAxis,
     len: u8,
     bytes: [pane_endpoint_capacity]u8,
 
@@ -255,10 +259,14 @@ pub const Boundary = struct {
     }
 
     /// Publishes one fully committed new-pane endpoint for Input attachment.
-    pub fn publishPaneEndpoint(self: *Boundary, endpoint: []const u8) error{ Stopping, PaneEndpointPending, InvalidPaneEndpoint }!void {
+    pub fn publishPaneEndpoint(
+        self: *Boundary,
+        endpoint: []const u8,
+        axis: PaneSplitAxis,
+    ) error{ Stopping, PaneEndpointPending, InvalidPaneEndpoint }!void {
         if (endpoint.len == 0 or endpoint.len > pane_endpoint_capacity or endpoint.len > std.math.maxInt(u8))
             return error.InvalidPaneEndpoint;
-        var copied = PaneEndpoint{ .len = @intCast(endpoint.len), .bytes = @splat(0) };
+        var copied = PaneEndpoint{ .axis = axis, .len = @intCast(endpoint.len), .bytes = @splat(0) };
         @memcpy(copied.bytes[0..endpoint.len], endpoint);
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {

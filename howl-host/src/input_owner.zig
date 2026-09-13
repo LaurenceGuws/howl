@@ -4,7 +4,7 @@
 //! performs potentially blocking Session action round trips so compositor
 //! dispatch never waits on endpoint I/O. In duet mode it owns one connection
 //! per pane. F6 toggles focus, F7/F8 move the focused divider, and F9 owns
-//! the bounded one-to-two-pane split canary, and F10 closes only that
+//! bounded left/right or top/bottom split canary, and F10 closes only that
 //! host-created second pane; these keys never enter a PTY.
 
 const std = @import("std");
@@ -19,6 +19,7 @@ const grow_pane_keysym: u32 = 0xffc4; // F7
 const shrink_pane_keysym: u32 = 0xffc5; // F8
 const split_pane_keysym: u32 = 0xffc6; // F9
 const close_pane_keysym: u32 = 0xffc7; // F10
+const split_vertical_keysym: u32 = 0xffc8; // F11
 
 pub const Command = union(enum) {
     ignored,
@@ -114,7 +115,10 @@ fn runFallible(
             ) orelse return error.InputTopologyMismatch;
             connections[1] = try client.Connection.connect(allocator, offered.text());
             initialized_count = 2;
-            const new_pane = try mux.splitFocused(.horizontal);
+            const new_pane = try mux.splitFocused(switch (offered.axis) {
+                .horizontal => .horizontal,
+                .vertical => .vertical,
+            });
             pane_ids[1] = new_pane;
             connection_count = 2;
             created_pane = true;
@@ -158,14 +162,14 @@ fn runFallible(
                                 close_pending = true;
                             }
                         }
-                    } else if (isSplitPane(key)) {
+                    } else if (hostSplitCommand(key)) |split_command| {
                         if (key.state == .pressed and connection_count == 1) {
                             const active = focusedConnectionIndex(
                                 &mux,
                                 pane_ids[0..connection_count],
                             ) orelse return error.InputTopologyMismatch;
                             try boundary.publishHostCommand(.{
-                                .kind = .split_horizontal,
+                                .kind = split_command,
                                 .pane = @intCast(active),
                             });
                         }
@@ -235,8 +239,12 @@ fn isClosePane(key: wayland.input.Key) bool {
     return @backingInt(key.keysym) == close_pane_keysym;
 }
 
-fn isSplitPane(key: wayland.input.Key) bool {
-    return @backingInt(key.keysym) == split_pane_keysym;
+fn hostSplitCommand(key: wayland.input.Key) ?shared.HostCommandKind {
+    return switch (@backingInt(key.keysym)) {
+        split_pane_keysym => .split_horizontal,
+        split_vertical_keysym => .split_vertical,
+        else => null,
+    };
 }
 
 fn hostResizeCommand(key: wayland.input.Key) ?shared.HostCommandKind {
@@ -400,9 +408,10 @@ test "F10 is the exact host-created-pane close key" {
 }
 
 test "F9 is the exact host split key" {
-    try std.testing.expect(isSplitPane(makeKey(split_pane_keysym, .pressed, "", .{})));
-    try std.testing.expect(isSplitPane(makeKey(split_pane_keysym, .released, "", .{})));
-    try std.testing.expect(!isSplitPane(makeKey(shrink_pane_keysym, .pressed, "", .{})));
+    try std.testing.expect(hostSplitCommand(makeKey(split_pane_keysym, .pressed, "", .{})) == .split_horizontal);
+    try std.testing.expect(hostSplitCommand(makeKey(split_pane_keysym, .released, "", .{})) == .split_horizontal);
+    try std.testing.expect(hostSplitCommand(makeKey(split_vertical_keysym, .pressed, "", .{})) == .split_vertical);
+    try std.testing.expect(hostSplitCommand(makeKey(shrink_pane_keysym, .pressed, "", .{})) == null);
 }
 
 test "F7 and F8 are exact host divider commands" {

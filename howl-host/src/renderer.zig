@@ -602,15 +602,20 @@ fn runFallible(
                         &projected_layout,
                     );
                 },
-                .split_horizontal => {
+                .split_horizontal, .split_vertical => {
                     if (scene_count != 1) continue;
-                    try addHorizontalPane(
+                    const axis: host_layout.SplitAxis = if (host_command.kind == .split_horizontal)
+                        .horizontal
+                    else
+                        .vertical;
+                    try addPane(
                         allocator,
                         boundary,
                         runtime_dir orelse return error.MissingRuntimeDirectory,
                         shell,
                         environ_map,
                         font_path,
+                        axis,
                         &spawned_session,
                         &mux,
                         &scenes,
@@ -941,13 +946,14 @@ fn removeCreatedPane(
     try boundary.publishPaneRetired();
 }
 
-fn addHorizontalPane(
+fn addPane(
     allocator: std.mem.Allocator,
     boundary: *shared.Boundary,
     runtime_dir: []const u8,
     shell: []const u8,
     environ_map: *const std.process.Environ.Map,
     font_path: []const u8,
+    axis: host_layout.SplitAxis,
     spawned_session: *?session_process.SessionProcess,
     mux: *host_layout.Mux,
     scenes: *[2]?terminal_scene.Scene,
@@ -997,7 +1003,7 @@ fn addHorizontalPane(
     try cancellation_registry.set(1, try scenes[1].?.cancellation());
 
     var candidate = mux.*;
-    const new_pane = try candidate.splitFocused(.horizontal);
+    const new_pane = try candidate.splitFocused(axis);
     if (candidate.focusedPane() != new_pane or candidate.paneCount() != 2)
         return error.SplitStateMismatch;
 
@@ -1021,7 +1027,10 @@ fn addHorizontalPane(
 
     scene_count.* = 2;
     next_ready_start.* = 0;
-    try boundary.publishPaneEndpoint(endpoint);
+    try boundary.publishPaneEndpoint(endpoint, switch (axis) {
+        .horizontal => .horizontal,
+        .vertical => .vertical,
+    });
 }
 
 fn applyDuetGeometryCommand(
@@ -1057,7 +1066,7 @@ fn applyDuetGeometryCommand(
     const cells: i32 = switch (command.kind) {
         .grow_focused => 1,
         .shrink_focused => -1,
-        .split_horizontal, .close_created => return error.HostCommandUnsupported,
+        .split_horizontal, .split_vertical, .close_created => return error.HostCommandUnsupported,
     };
     if (!(try candidate.resizeFocused(
         .{ .width = workspace_cols, .height = workspace_rows },
