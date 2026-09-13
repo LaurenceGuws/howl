@@ -72,6 +72,7 @@ const DuetReady = union(enum) {
     command: shared.HostCommand,
     window_size: shared.WindowSize,
     display_scale: shared.DisplayScale,
+    pointer_focus: shared.PointerFocus,
 };
 
 const GenericDraw = struct {
@@ -838,6 +839,18 @@ fn runFallible(
                     }
                 },
             },
+            .pointer_focus => |point| try focusPointerPane(
+                boundary,
+                point,
+                display_scale_120,
+                &mux,
+                &scene_panes,
+                scene_count,
+                workspace_rows,
+                workspace_cols,
+                cell_size.width,
+                cell_size.height,
+            ),
             .display_scale => |scale| {
                 if (scale.scale_120 == display_scale_120) continue;
                 const next_font_pixels = try scaledFontPixels(scale.scale_120);
@@ -1055,6 +1068,50 @@ fn rebuildScenesForScale(
     }
     replacement_count = 0;
     primary_graphics.invalidateAtlases();
+}
+
+fn focusPointerPane(
+    boundary: *shared.Boundary,
+    point: shared.PointerFocus,
+    scale_120: u32,
+    mux: *host_layout.Mux,
+    scene_panes: *const [2]?host_layout.PaneId,
+    scene_count: usize,
+    workspace_rows: u16,
+    workspace_cols: u16,
+    cell_width: u16,
+    cell_height: u16,
+) !void {
+    if (scale_120 == 0 or cell_width == 0 or cell_height == 0) return error.InvalidDisplayScale;
+    const x = try scaledPointerCoordinate(point.x, scale_120);
+    const y = try scaledPointerCoordinate(point.y, scale_120);
+    var storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const visible = try projectActivePixels(
+        mux,
+        workspace_rows,
+        workspace_cols,
+        cell_width,
+        cell_height,
+        &storage,
+    );
+    for (visible) |placement| {
+        const right = std.math.add(u32, placement.rect.x, placement.rect.width) catch
+            return error.DuetGeometry;
+        const bottom = std.math.add(u32, placement.rect.y, placement.rect.height) catch
+            return error.DuetGeometry;
+        if (x < placement.rect.x or x >= right or y < placement.rect.y or y >= bottom) continue;
+        const scene_index = sceneIndexForPane(scene_panes, scene_count, placement.pane) orelse
+            return error.SceneTopologyMismatch;
+        const changed = mux.focusPane(placement.pane) catch return error.SceneTopologyMismatch;
+        if (changed) try boundary.publishPaneFocus(@intCast(scene_index));
+        return;
+    }
+}
+
+fn scaledPointerCoordinate(logical: u16, scale_120: u32) !u32 {
+    const numerator = std.math.mul(u32, logical, scale_120) catch
+        return error.InvalidDisplayScale;
+    return numerator / scale_denominator;
 }
 
 fn scaledFontPixels(scale_120: u32) !u16 {
@@ -2057,6 +2114,7 @@ fn waitDuetReady(
             if (boundary.takeHostCommand()) |command| return .{ .command = command };
             if (boundary.takeWindowSize()) |size| return .{ .window_size = size };
             if (boundary.takeDisplayScale()) |scale| return .{ .display_scale = scale };
+            if (boundary.takePointerFocus()) |point| return .{ .pointer_focus = point };
         }
         for (0..scene_count) |offset| {
             const index = (start + offset) % scene_count;

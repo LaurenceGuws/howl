@@ -266,3 +266,22 @@ fn closeOffers(offers: [shared.slot_count]shared.SlotOffer) void {
         if (offer.release_timeline_fd >= 0) std.debug.assert(c.close(offer.release_timeline_fd) == 0);
     }
 }
+
+test "pointer focus is latest-wins and pane focus wakes Input" {
+    var value = try boundary();
+    defer value.deinit();
+    try value.publishPointerFocus(.{ .x = 11, .y = 22 });
+    try value.publishPointerFocus(.{ .x = 33, .y = 44 });
+    try expectReadable(value.controlFd());
+    try value.drainControlWake();
+    const point = value.takePointerFocus().?;
+    try std.testing.expectEqual(@as(u16, 33), point.x);
+    try std.testing.expectEqual(@as(u16, 44), point.y);
+    try std.testing.expect(value.takePointerFocus() == null);
+
+    try value.publishPaneFocus(1);
+    try expectReadable(value.inputFd());
+    try value.drainInputWake();
+    try std.testing.expectEqual(@as(u8, 1), value.takePaneFocus().?);
+    try std.testing.expect(value.takePaneFocus() == null);
+}

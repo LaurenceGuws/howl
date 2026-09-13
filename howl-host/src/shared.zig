@@ -47,6 +47,9 @@ pub const DisplayScale = struct {
     scale_120: u32,
 };
 
+/// Copies one logical surface click for Render-owned pane hit testing.
+pub const PointerFocus = struct { x: u16, y: u16 };
+
 pub const InputEvent = union(enum) {
     key: wayland.input.Key,
     focus: bool,
@@ -150,6 +153,8 @@ pub const Boundary = struct {
     tab_switched_pending: bool = false,
     window_size: ?WindowSize = null,
     display_scale: ?DisplayScale = null,
+    pointer_focus: ?PointerFocus = null,
+    pane_focus: ?u8 = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -289,7 +294,7 @@ pub const Boundary = struct {
         const result = self.host_commands[self.host_command_head];
         self.host_command_head = @intCast((@as(usize, self.host_command_head) + 1) % host_command_capacity);
         self.host_command_count -= 1;
-        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null;
+        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null or self.pointer_focus != null;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
@@ -316,7 +321,7 @@ pub const Boundary = struct {
             return null;
         };
         self.window_size = null;
-        const more = self.host_command_count != 0 or self.display_scale != null;
+        const more = self.host_command_count != 0 or self.display_scale != null or self.pointer_focus != null;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
         return result;
@@ -346,9 +351,56 @@ pub const Boundary = struct {
             return null;
         };
         self.display_scale = null;
-        const more = self.host_command_count != 0 or self.window_size != null;
+        const more = self.host_command_count != 0 or self.window_size != null or self.pointer_focus != null;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
+        return result;
+    }
+
+    /// Replaces the latest logical left-click for Render-owned pane hit testing.
+    pub fn publishPointerFocus(self: *Boundary, point: PointerFocus) error{Stopping}!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.pointer_focus = point;
+        self.mutex.unlock(self.io);
+        signal(self.control_fd);
+    }
+
+    /// Transfers the latest coalesced logical pointer-focus request.
+    pub fn takePointerFocus(self: *Boundary) ?PointerFocus {
+        self.mutex.lockUncancelable(self.io);
+        const result = self.pointer_focus orelse {
+            self.mutex.unlock(self.io);
+            return null;
+        };
+        self.pointer_focus = null;
+        const more = self.host_command_count != 0 or self.window_size != null or self.display_scale != null;
+        self.mutex.unlock(self.io);
+        if (more) signal(self.control_fd);
+        return result;
+    }
+
+    /// Publishes one Render-committed Session-slot focus for Input mirroring.
+    pub fn publishPaneFocus(self: *Boundary, scene_index: u8) error{Stopping}!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        self.pane_focus = scene_index;
+        self.mutex.unlock(self.io);
+        signal(self.input_fd);
+    }
+
+    /// Transfers one latest-wins Render-committed pane focus to Input.
+    pub fn takePaneFocus(self: *Boundary) ?u8 {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.pane_focus orelse return null;
+        self.pane_focus = null;
         return result;
     }
 

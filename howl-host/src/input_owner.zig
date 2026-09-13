@@ -91,6 +91,23 @@ fn runFallible(
     var tab_switch_pending = false;
     while (!boundary.shouldStop()) {
         var consumed = false;
+        if (boundary.takePaneFocus()) |focus_index_u8| {
+            consumed = true;
+            const focus_index: usize = focus_index_u8;
+            if (focus_index >= connection_count) return error.InputTopologyMismatch;
+            const previous = focusedConnectionIndex(
+                &mux,
+                pane_ids[0..connection_count],
+            ) orelse return error.InputTopologyMismatch;
+            const target = pane_ids[focus_index];
+            const focus_changed = mux.focusPane(target) catch return error.InputTopologyMismatch;
+            if (!focus_changed and mux.focusedPane() != target)
+                return error.InputTopologyMismatch;
+            if (window_focused and previous != focus_index) {
+                try deliverFocus(&connections[previous].?, false);
+                try deliverFocus(&connections[focus_index].?, true);
+            }
+        }
         if (boundary.takePaneRetired()) {
             consumed = true;
             if (connection_count != 2 or connections[1] == null or created_kind == .none)

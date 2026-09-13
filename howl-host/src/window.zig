@@ -81,6 +81,8 @@ const State = struct {
     viewporter: ?*c.wp_viewporter = null,
     seat: ?*c.wl_seat = null,
     keyboard: ?*c.wl_keyboard = null,
+    pointer: ?*c.wl_pointer = null,
+    pointer_position: ?shared.PointerFocus = null,
     surface: ?*c.wl_surface = null,
     xdg_surface: ?*c.xdg_surface = null,
     toplevel: ?*c.xdg_toplevel = null,
@@ -120,6 +122,7 @@ const State = struct {
         if (self.xkb_state) |*value| value.deinit();
         if (self.xkb_keymap) |*value| value.deinit();
         if (self.xkb_context) |*value| value.deinit();
+        if (self.pointer) |value| c.wl_pointer_destroy(value);
         if (self.keyboard) |value| c.wl_keyboard_destroy(value);
         if (self.seat) |value| c.wl_seat_destroy(value);
         if (self.frame_callback) |value| c.wl_callback_destroy(value);
@@ -343,7 +346,7 @@ fn globalAdd(data: ?*anyopaque, registry: ?*c.wl_registry, name: u32, interface:
         state.viewporter_name = name;
     }
     if (std.mem.eql(u8, value, "wl_seat")) {
-        state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 10)));
+        state.seat = @ptrCast(c.wl_registry_bind(registry, name, &c.wl_seat_interface, @min(version, 4)));
         state.seat_name = name;
     }
 }
@@ -375,6 +378,16 @@ fn seatCapabilities(data: ?*anyopaque, seat: ?*c.wl_seat, capabilities: u32) cal
         if (state.xkb_keymap) |*value| value.deinit();
         state.xkb_keymap = null;
         state.keyboard_semantic_modifiers = .{};
+    }
+    const pointer_capability = (@as(u32, @intCast(c.WL_SEAT_CAPABILITY_POINTER)) & capabilities) != 0;
+    if (pointer_capability and state.pointer == null) {
+        state.pointer = c.wl_seat_get_pointer(seat) orelse return state.boundary.requestStop(.window);
+        if (c.wl_pointer_add_listener(state.pointer.?, &pointer_listener, state) != 0)
+            return state.boundary.requestStop(.window);
+    } else if (!pointer_capability and state.pointer != null) {
+        c.wl_pointer_destroy(state.pointer.?);
+        state.pointer = null;
+        state.pointer_position = null;
     }
 }
 
@@ -493,6 +506,56 @@ const keyboard_listener = c.wl_keyboard_listener{
     .key = keyboardKey,
     .modifiers = keyboardModifiers,
     .repeat_info = keyboardRepeat,
+};
+
+const left_pointer_button: u32 = 0x110;
+
+fn pointerPosition(surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) ?shared.PointerFocus {
+    const x = c.wl_fixed_to_int(surface_x);
+    const y = c.wl_fixed_to_int(surface_y);
+    if (x < 0 or y < 0 or x > std.math.maxInt(u16) or y > std.math.maxInt(u16)) return null;
+    return .{ .x = @intCast(x), .y = @intCast(y) };
+}
+
+fn pointerEnter(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (pointer != state.pointer or surface != state.surface)
+        return state.boundary.requestStop(.window);
+    state.pointer_position = pointerPosition(surface_x, surface_y);
+}
+
+fn pointerLeave(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface: ?*c.wl_surface) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (pointer != state.pointer or surface != state.surface)
+        return state.boundary.requestStop(.window);
+    state.pointer_position = null;
+}
+
+fn pointerMotion(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, surface_x: c.wl_fixed_t, surface_y: c.wl_fixed_t) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (pointer != state.pointer) return state.boundary.requestStop(.window);
+    state.pointer_position = pointerPosition(surface_x, surface_y);
+}
+
+fn pointerButton(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, button: u32, button_state: u32) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (pointer != state.pointer) return state.boundary.requestStop(.window);
+    if (button != left_pointer_button or button_state != c.WL_POINTER_BUTTON_STATE_PRESSED) return;
+    const position = state.pointer_position orelse return;
+    state.boundary.publishPointerFocus(position) catch state.boundary.requestStop(.window);
+}
+
+fn pointerAxis(data: ?*anyopaque, pointer: ?*c.wl_pointer, _: u32, _: u32, _: c.wl_fixed_t) callconv(.c) void {
+    const state: *State = @ptrCast(@alignCast(data.?));
+    if (pointer != state.pointer) state.boundary.requestStop(.window);
+}
+
+const pointer_listener = c.wl_pointer_listener{
+    .enter = pointerEnter,
+    .leave = pointerLeave,
+    .motion = pointerMotion,
+    .button = pointerButton,
+    .axis = pointerAxis,
 };
 
 fn preferredScale(data: ?*anyopaque, scale: ?*c.wp_fractional_scale_v1, value: u32) callconv(.c) void {
