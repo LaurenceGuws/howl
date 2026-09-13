@@ -6,6 +6,8 @@ const vk = @import("abi.zig");
 
 /// Clipped surface-pixel rectangle supplied by a caller.
 pub const Rect = struct { x: i32, y: i32, width: u32, height: u32 };
+/// Places one local generic plan inside a larger logical surface.
+pub const Placement = struct { x: i32, y: i32, width: u32, height: u32 };
 /// Selects one of the three generic surface pipelines.
 pub const Kind = enum { solid, alpha_mask, rgba };
 const PipelineKind = enum { solid, alpha_mask, rgba };
@@ -302,15 +304,43 @@ pub const Context = struct {
     /// into persistently mapped bounded storage. Vertex positions and clips
     /// are validated and normalized in the caller's logical coordinate extent.
     pub fn stage(self: *Context, plan: Plan, atlas_pixels: []const u8, image_atlas_pixels: []const u8, coordinate_width: u32, coordinate_height: u32) Error!void {
-        try validatePlan(plan, coordinate_width, coordinate_height);
+        return self.stagePlaced(
+            plan,
+            atlas_pixels,
+            image_atlas_pixels,
+            coordinate_width,
+            coordinate_height,
+            .{ .x = 0, .y = 0, .width = coordinate_width, .height = coordinate_height },
+        );
+    }
+
+    /// Stages one local plan into this context while translating its vertices
+    /// into a larger logical surface. Resource atlases remain context-local.
+    pub fn stagePlaced(
+        self: *Context,
+        plan: Plan,
+        atlas_pixels: []const u8,
+        image_atlas_pixels: []const u8,
+        coordinate_width: u32,
+        coordinate_height: u32,
+        placement: Placement,
+    ) Error!void {
+        try validatePlacement(placement, coordinate_width, coordinate_height);
+        try validatePlan(plan, placement.width, placement.height);
         const mapped = self.mapped orelse return error.StagingMap;
         const vertices = std.mem.sliceAsBytes(plan.vertices);
         const indices = std.mem.sliceAsBytes(plan.indices);
-        if (coordinate_width == 0 or coordinate_height == 0 or vertices.len > vertex_bytes or indices.len > index_bytes or atlas_pixels.len != atlas_bytes or image_atlas_pixels.len != image_atlas_bytes) return error.Buffer;
+        if (vertices.len > vertex_bytes or indices.len > index_bytes or
+            atlas_pixels.len != atlas_bytes or image_atlas_pixels.len != image_atlas_bytes)
+            return error.Buffer;
         const staged = std.mem.bytesAsSlice(Vertex, mapped[0..vertex_bytes]);
+        const origin = [2]f32{ @floatFromInt(placement.x), @floatFromInt(placement.y) };
         for (plan.vertices, 0..) |vertex, index| {
             staged[index] = vertex;
-            staged[index].position = try pixelToNdc(vertex.position, coordinate_width, coordinate_height);
+            staged[index].position = try pixelToNdc(.{
+                vertex.position[0] + origin[0],
+                vertex.position[1] + origin[1],
+            }, coordinate_width, coordinate_height);
         }
         @memcpy(mapped[index_offset .. index_offset + indices.len], indices);
         if (plan.atlas_changed or !self.atlas_initialized)
@@ -370,38 +400,22 @@ pub const Context = struct {
             1,
             &attachment_barrier,
         );
-        if (recording.alpha_initialized) {
-            const atlas_range = vk.VkImageSubresourceRange{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
-            var atlas_barrier = vk.VkImageMemoryBarrier{
-                .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .oldLayout = if (self.atlas_initialized) vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL else vk.VK_IMAGE_LAYOUT_UNDEFINED,
-                .newLayout = vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
-                .image = self.atlas_image,
-                .subresourceRange = atlas_range,
-                .srcAccessMask = if (self.atlas_initialized) vk.VK_ACCESS_SHADER_READ_BIT else 0,
-                .dstAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT,
-            };
-            vk.vkCmdPipelineBarrier(command, if (self.atlas_initialized) vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT else vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &atlas_barrier);
-            var copy = vk.VkBufferImageCopy{
-                .bufferOffset = atlas_offset,
-                .bufferRowLength = atlas_extent,
-                .bufferImageHeight = atlas_extent,
-                .imageSubresource = .{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
-                .imageOffset = .{},
-                .imageExtent = .{ .width = atlas_extent, .height = atlas_extent, .depth = 1 },
-            };
-            vk.vkCmdCopyBufferToImage(command, self.staging_buffer, self.atlas_image, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-            atlas_barrier.srcAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT;
-            atlas_barrier.dstAccessMask = vk.VK_ACCESS_SHADER_READ_BIT;
-            atlas_barrier.oldLayout = vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            atlas_barrier.newLayout = vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_TRANSFER_BIT, vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &atlas_barrier);
-        }
-        if (recording.image_initialized) {
-            self.uploadAtlas(command, self.image_atlas_image, image_atlas_extent, image_atlas_offset, self.image_atlas_initialized);
-        }
+        self.recordAtlasTransfers(command, recording);
+        return recording;
+    }
+
+    /// Preflights one placed layer and records only its context-local atlas
+    /// transfers. Attachment acquisition remains owned by the primary context.
+    pub fn recordAuxiliaryPrelude(
+        self: *Context,
+        command: vk.VkCommandBuffer,
+        target: FrameTarget,
+        plan: Plan,
+        placement: Placement,
+    ) Error!Recording {
+        if (command == null) return error.InvalidPlan;
+        const recording = try self.preflightPlacedRecording(plan, placement, target);
+        self.recordAtlasTransfers(command, recording);
         return recording;
     }
 
@@ -436,6 +450,22 @@ pub const Context = struct {
         target: FrameTarget,
         plan: Plan,
     ) void {
+        self.recordGenericDrawsPlaced(
+            command,
+            target,
+            plan,
+            .{ .x = 0, .y = 0, .width = target.coordinate_width, .height = target.coordinate_height },
+        );
+    }
+
+    /// Records one already-staged local plan at its qualified surface placement.
+    pub fn recordGenericDrawsPlaced(
+        self: *const Context,
+        command: vk.VkCommandBuffer,
+        target: FrameTarget,
+        plan: Plan,
+        placement: Placement,
+    ) void {
         var buffers = [_]vk.VkBuffer{self.staging_buffer};
         var offsets = [_]vk.VkDeviceSize{0};
         vk.vkCmdBindVertexBuffers(command, 0, 1, &buffers, &offsets);
@@ -457,7 +487,8 @@ pub const Context = struct {
                     vk.vkCmdBindDescriptorSets(command, vk.VK_PIPELINE_BIND_POINT_GRAPHICS, self.layout, 0, 1, &self.descriptor, 0, null);
                 bound = pipeline_kind;
             }
-            var scissor = recordingScissor(item.clip, target);
+            const placed_clip = placedRect(item.clip, placement) catch unreachable;
+            var scissor = recordingScissor(placed_clip, target);
             vk.vkCmdSetScissor(command, 0, 1, &scissor);
             vk.vkCmdDrawIndexed(command, item.index_count, 1, item.first_index, 0, 0);
         }
@@ -567,6 +598,71 @@ pub const Context = struct {
             const bottom = std.math.add(u64, @intCast(item.clip.y), item.clip.height) catch return error.InvalidPlan;
             if (right > width or bottom > height) return error.InvalidPlan;
         }
+    }
+
+    fn preflightPlacedRecording(
+        self: *const Context,
+        plan: Plan,
+        placement: Placement,
+        target: FrameTarget,
+    ) Error!Recording {
+        try validatePlacement(placement, target.coordinate_width, target.coordinate_height);
+        try validatePlan(plan, placement.width, placement.height);
+        if (target.attachment_width == 0 or target.attachment_height == 0 or
+            target.attachment_width > std.math.maxInt(i32) or
+            target.attachment_height > std.math.maxInt(i32))
+            return error.InvalidPlan;
+        for (plan.commands) |item| {
+            const clip = try placedRect(item.clip, placement);
+            const projected = try physicalScissor(
+                clip,
+                target.coordinate_width,
+                target.coordinate_height,
+                target.attachment_width,
+                target.attachment_height,
+            );
+            if (projected.extent.width == 0 or projected.extent.height == 0)
+                return error.InvalidPlan;
+        }
+        return self.recordingFor(plan);
+    }
+
+    fn recordAtlasTransfers(
+        self: *Context,
+        command: vk.VkCommandBuffer,
+        recording: Recording,
+    ) void {
+        if (recording.alpha_initialized) {
+            const atlas_range = vk.VkImageSubresourceRange{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1 };
+            var atlas_barrier = vk.VkImageMemoryBarrier{
+                .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .oldLayout = if (self.atlas_initialized) vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL else vk.VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+                .image = self.atlas_image,
+                .subresourceRange = atlas_range,
+                .srcAccessMask = if (self.atlas_initialized) vk.VK_ACCESS_SHADER_READ_BIT else 0,
+                .dstAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT,
+            };
+            vk.vkCmdPipelineBarrier(command, if (self.atlas_initialized) vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT else vk.VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, vk.VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, null, 0, null, 1, &atlas_barrier);
+            var copy = vk.VkBufferImageCopy{
+                .bufferOffset = atlas_offset,
+                .bufferRowLength = atlas_extent,
+                .bufferImageHeight = atlas_extent,
+                .imageSubresource = .{ .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
+                .imageOffset = .{},
+                .imageExtent = .{ .width = atlas_extent, .height = atlas_extent, .depth = 1 },
+            };
+            vk.vkCmdCopyBufferToImage(command, self.staging_buffer, self.atlas_image, vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+            atlas_barrier.srcAccessMask = vk.VK_ACCESS_TRANSFER_WRITE_BIT;
+            atlas_barrier.dstAccessMask = vk.VK_ACCESS_SHADER_READ_BIT;
+            atlas_barrier.oldLayout = vk.VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            atlas_barrier.newLayout = vk.VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            vk.vkCmdPipelineBarrier(command, vk.VK_PIPELINE_STAGE_TRANSFER_BIT, vk.VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, null, 0, null, 1, &atlas_barrier);
+        }
+        if (recording.image_initialized)
+            self.uploadAtlas(command, self.image_atlas_image, image_atlas_extent, image_atlas_offset, self.image_atlas_initialized);
     }
 
     fn uploadAtlas(self: *Context, command: vk.VkCommandBuffer, image: vk.VkImage, extent: u16, offset: usize, initialized: bool) void {
@@ -1113,6 +1209,29 @@ fn findPacked(values: []const FrameBuilder.Packed, resource: ResourceGeneration)
     return null;
 }
 
+fn validatePlacement(placement: Placement, width: u32, height: u32) Error!void {
+    if (placement.x < 0 or placement.y < 0 or placement.width == 0 or placement.height == 0 or
+        width == 0 or height == 0)
+        return error.InvalidPlan;
+    const right = std.math.add(u64, @intCast(placement.x), placement.width) catch
+        return error.InvalidPlan;
+    const bottom = std.math.add(u64, @intCast(placement.y), placement.height) catch
+        return error.InvalidPlan;
+    if (right > width or bottom > height) return error.InvalidPlan;
+}
+
+fn placedRect(rect: Rect, placement: Placement) Error!Rect {
+    if (rect.x < 0 or rect.y < 0) return error.InvalidPlan;
+    const x = std.math.add(i64, placement.x, rect.x) catch return error.InvalidPlan;
+    const y = std.math.add(i64, placement.y, rect.y) catch return error.InvalidPlan;
+    return .{
+        .x = std.math.cast(i32, x) orelse return error.InvalidPlan,
+        .y = std.math.cast(i32, y) orelse return error.InvalidPlan,
+        .width = rect.width,
+        .height = rect.height,
+    };
+}
+
 /// Returns the exact physical scissor consumed by generic draw recording.
 fn recordingScissor(logical: Rect, target: FrameTarget) vk.VkRect2D {
     return physicalScissorValidated(
@@ -1607,6 +1726,61 @@ test "pixel coordinates convert to Vulkan NDC without inversion drift" {
         .indices = &indices,
         .commands = &.{.{ .kind = .solid, .first_index = 0, .index_count = 3, .clip = .{ .x = 0, .y = 0, .width = 100, .height = 80 } }},
     }, 100, 80);
+}
+
+
+test "placed generic layer translates local clips through the shared surface" {
+    var context = Context{};
+    const vertices = [_]Vertex{
+        .{ .position = .{ 0, 0 }, .uv = .{ 0, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 50, 0 }, .uv = .{ 1, 0 }, .color = .{ 1, 1, 1, 1 } },
+        .{ .position = .{ 50, 20 }, .uv = .{ 1, 1 }, .color = .{ 1, 1, 1, 1 } },
+    };
+    const indices = [_]u32{ 0, 1, 2 };
+    const plan = Plan{
+        .vertices = &vertices,
+        .indices = &indices,
+        .commands = &.{.{
+            .kind = .solid,
+            .first_index = 0,
+            .index_count = 3,
+            .clip = .{ .x = 0, .y = 0, .width = 50, .height = 20 },
+        }},
+    };
+    const placement = Placement{ .x = 50, .y = 0, .width = 50, .height = 20 };
+    const target = FrameTarget{
+        .image = @ptrFromInt(1),
+        .attachment = .{ .framebuffer = @ptrFromInt(1) },
+        .attachment_width = 200,
+        .attachment_height = 40,
+        .coordinate_width = 100,
+        .coordinate_height = 20,
+        .source_queue_family = vk.VK_QUEUE_FAMILY_IGNORED,
+        .graphics_queue_family = 0,
+        .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
+    };
+    const recording = try context.preflightPlacedRecording(plan, placement, target);
+    try std.testing.expect(recording.alpha_initialized and recording.image_initialized);
+    const translated = try placedRect(plan.commands[0].clip, placement);
+    try std.testing.expectEqual(
+        Rect{ .x = 50, .y = 0, .width = 50, .height = 20 },
+        translated,
+    );
+    try std.testing.expectEqual(
+        vk.VkRect2D{
+            .offset = .{ .x = 100, .y = 0 },
+            .extent = .{ .width = 100, .height = 40 },
+        },
+        try physicalScissor(translated, 100, 20, 200, 40),
+    );
+    try std.testing.expectError(
+        error.InvalidPlan,
+        context.preflightPlacedRecording(
+            plan,
+            .{ .x = 51, .y = 0, .width = 50, .height = 20 },
+            target,
+        ),
+    );
 }
 
 test "clear-only plan records pending atlas state and remains reusable" {

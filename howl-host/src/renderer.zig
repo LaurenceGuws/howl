@@ -26,6 +26,16 @@ const FastDraw = struct {
     changed: bool,
 };
 
+const GenericDraw = struct {
+    context: *surface.Context,
+    plan: surface.Plan,
+    placement: surface.Placement,
+    alpha_pixels: []const u8,
+    image_pixels: []const u8,
+    residency: *surface.ResidencyStore,
+    changed: bool,
+};
+
 const Slot = struct {
     image: vk.VkImage = null,
     memory: vk.VkDeviceMemory = null,
@@ -200,6 +210,15 @@ fn runFallible(
             if (fast_gpus[gpu_index]) |*value| value.deinit(device, &gpu_bytes);
         }
     }
+    var generic_contexts: [2]?surface.Context = .{ null, null };
+    defer {
+        var context_index = scene_count;
+        while (context_index != 0) {
+            context_index -= 1;
+            if (generic_contexts[context_index]) |*value|
+                value.deinit(device, &gpu_bytes);
+        }
+    }
     const plane_count = try modifierPlaneCount(physical, feedback.modifier);
     var acquire_handle: u32 = 0;
     if (c.drmSyncobjCreate(drm_fd, 0, &acquire_handle) != 0) return error.Syncobj;
@@ -253,8 +272,8 @@ fn runFallible(
     var slot_index: usize = 0;
     var previous_slot: ?usize = null;
     var changed: [2]bool = .{ true, scene_count == 2 };
-    var fast_presents: u64 = 0;
-    var generic_presents: u64 = 0;
+    var retained_draw_count: u64 = 0;
+    var generic_draw_count_total: u64 = 0;
     var duet_armed = false;
     var next_ready_start: usize = 0;
 
@@ -305,15 +324,17 @@ fn runFallible(
         var residency_commit: ?*surface.ResidencyStore = null;
         var fast_draw_storage: [2]FastDraw = undefined;
         var fast_draw_count: usize = 0;
+        var generic_draw_storage: [2]GenericDraw = undefined;
+        var generic_draw_count: usize = 0;
         if (scene_count == 1) {
             switch (prepared[0].mode) {
                 .generic => |generic| {
-                    generic_presents += 1;
+                    generic_draw_count_total += 1;
                     plan = generic.plan;
                     residency_commit = &scenes[0].?.residency;
                 },
                 .fast => |frame| {
-                    fast_presents += 1;
+                    retained_draw_count += 1;
                     if (fast_gpus[0] == null)
                         fast_gpus[0] = try terminal_fast.Gpu.init(
                             allocator,
@@ -338,38 +359,77 @@ fn runFallible(
                 },
             }
         } else {
-            fast_presents += 1;
             for (0..scene_count) |scene_index| {
-                const frame = switch (prepared[scene_index].mode) {
-                    .fast => |value| value,
-                    .generic => return error.DuetFastPathRequired,
-                };
-                if (frame.overlay_pending or frame.plan.commands.len != 0 or
-                    frame.plan.vertices.len != 0 or frame.plan.indices.len != 0)
-                    return error.DuetFastPathRequired;
-                if (fast_gpus[scene_index] == null)
-                    fast_gpus[scene_index] = try terminal_fast.Gpu.init(
-                        allocator,
-                        device,
-                        memory_properties,
-                        graphics.render_pass,
-                        &gpu_bytes,
-                        gpu_memory_limit,
-                        frame.terminal,
-                    );
-                if (changed[scene_index])
-                    try fast_gpus[scene_index].?.prepare(frame.terminal);
-                fast_draw_storage[scene_index] = .{
-                    .gpu = &fast_gpus[scene_index].?,
-                    .frame = frame.terminal,
-                    .placement = fastPlacement(placements[scene_index]),
-                    .changed = changed[scene_index],
-                };
+                const placement = surfacePlacement(placements[scene_index]);
+                switch (prepared[scene_index].mode) {
+                    .generic => |frame| {
+                        generic_draw_count_total += 1;
+                        if (generic_contexts[scene_index] == null)
+                            generic_contexts[scene_index] = try surface.Context.init(
+                                device,
+                                memory_properties,
+                                &gpu_bytes,
+                                gpu_memory_limit,
+                            );
+                        generic_draw_storage[generic_draw_count] = .{
+                            .context = &generic_contexts[scene_index].?,
+                            .plan = frame.plan,
+                            .placement = placement,
+                            .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
+                            .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
+                            .residency = &scenes[scene_index].?.residency,
+                            .changed = changed[scene_index],
+                        };
+                        generic_draw_count += 1;
+                    },
+                    .fast => |frame| {
+                        retained_draw_count += 1;
+                        if (fast_gpus[scene_index] == null)
+                            fast_gpus[scene_index] = try terminal_fast.Gpu.init(
+                                allocator,
+                                device,
+                                memory_properties,
+                                graphics.render_pass,
+                                &gpu_bytes,
+                                gpu_memory_limit,
+                                frame.terminal,
+                            );
+                        if (changed[scene_index])
+                            try fast_gpus[scene_index].?.prepare(frame.terminal);
+                        fast_draw_storage[fast_draw_count] = .{
+                            .gpu = &fast_gpus[scene_index].?,
+                            .frame = frame.terminal,
+                            .placement = fastPlacement(placements[scene_index]),
+                            .changed = changed[scene_index],
+                        };
+                        fast_draw_count += 1;
+                        if (frame.overlay_pending) {
+                            if (generic_contexts[scene_index] == null)
+                                generic_contexts[scene_index] = try surface.Context.init(
+                                    device,
+                                    memory_properties,
+                                    &gpu_bytes,
+                                    gpu_memory_limit,
+                                );
+                            generic_draw_storage[generic_draw_count] = .{
+                                .context = &generic_contexts[scene_index].?,
+                                .plan = frame.plan,
+                                .placement = placement,
+                                .alpha_pixels = scenes[scene_index].?.builder.alpha_pixels,
+                                .image_pixels = scenes[scene_index].?.builder.rgba_pixels,
+                                .residency = &scenes[scene_index].?.overlay_residency,
+                                .changed = changed[scene_index],
+                            };
+                            generic_draw_count += 1;
+                        }
+                    },
+                }
             }
-            fast_draw_count = scene_count;
         }
         const fast_draws = fast_draw_storage[0..fast_draw_count];
+        const generic_draws = generic_draw_storage[0..generic_draw_count];
         errdefer for (fast_draws) |draw| if (draw.changed) draw.gpu.discard();
+        errdefer for (generic_draws) |draw| if (draw.changed) draw.residency.discard();
         try render(
             &graphics,
             plan,
@@ -383,6 +443,7 @@ fn runFallible(
             clear_color,
             residency_commit,
             fast_draws,
+            generic_draws,
             wait_semaphore,
             get_semaphore_fd.?,
             drm_fd,
@@ -455,18 +516,27 @@ fn runFallible(
     queue_active = false;
     try waitWindowStopped(boundary);
     std.debug.print(
-        "Render live loop retired at present={d} sessions={d}/{d} fast={d} generic={d}\n",
+        "Render live loop retired at present={d} sessions={d}/{d} retained_draws={d} generic_draws={d}\n",
         .{
             present_revision,
             session_revisions[0],
             if (scene_count == 2) session_revisions[1] else 0,
-            fast_presents,
-            generic_presents,
+            retained_draw_count,
+            generic_draw_count_total,
         },
     );
 }
 
 fn fastPlacement(value: host_layout.Placement) terminal_fast.Placement {
+    return .{
+        .x = @intCast(value.rect.x),
+        .y = @intCast(value.rect.y),
+        .width = value.rect.width,
+        .height = value.rect.height,
+    };
+}
+
+fn surfacePlacement(value: host_layout.Placement) surface.Placement {
     return .{
         .x = @intCast(value.rect.x),
         .y = @intCast(value.rect.y),
@@ -777,6 +847,7 @@ fn render(
     clear_color: [4]f32,
     residency_commit: ?*surface.ResidencyStore,
     fast_draws: []const FastDraw,
+    generic_draws: []const GenericDraw,
     wait_semaphore: ?vk.VkSemaphore,
     get_semaphore_fd: vk.PFN_vkGetSemaphoreFdKHR,
     drm_fd: i32,
@@ -786,6 +857,14 @@ fn render(
     height: u16,
 ) !void {
     try graphics.stage(plan, alpha_pixels, image_pixels, width, height);
+    for (generic_draws) |draw| if (draw.changed) try draw.context.stagePlaced(
+        draw.plan,
+        draw.alpha_pixels,
+        draw.image_pixels,
+        width,
+        height,
+        draw.placement,
+    );
 
     if (vk.vkResetCommandBuffer(command, 0) != vk.VK_SUCCESS) return error.Command;
     var begin = std.mem.zeroes(vk.VkCommandBufferBeginInfo);
@@ -803,6 +882,17 @@ fn render(
         .destination_queue_family = vk.VK_QUEUE_FAMILY_EXTERNAL,
     };
     const recording = try graphics.recordPrelude(command, target, plan);
+    var auxiliary_recordings: [2]surface.Recording = undefined;
+    var auxiliary_recorded: [2]bool = @splat(false);
+    for (generic_draws, 0..) |draw, draw_index| if (draw.changed) {
+        auxiliary_recordings[draw_index] = try draw.context.recordAuxiliaryPrelude(
+            command,
+            target,
+            draw.plan,
+            draw.placement,
+        );
+        auxiliary_recorded[draw_index] = true;
+    };
     for (fast_draws) |draw| if (draw.changed) try draw.gpu.recordTransfers(command);
     graphics.beginPass(command, target, clear_color);
     for (fast_draws) |draw| try draw.gpu.recordDraw(
@@ -813,6 +903,8 @@ fn render(
         height,
     );
     graphics.recordGenericDraws(command, target, plan);
+    for (generic_draws) |draw|
+        draw.context.recordGenericDrawsPlaced(command, target, draw.plan, draw.placement);
     const completed_recording = graphics.endPass(command, target, recording);
     if (vk.vkEndCommandBuffer(command) != vk.VK_SUCCESS) return error.Command;
 
@@ -853,6 +945,11 @@ fn render(
     if (c.drmSyncobjWait(drm_fd, &handles, 1, try deadline(), 0, null) != 0) return error.RenderTimeout;
     graphics.complete(completed_recording);
     for (fast_draws) |draw| if (draw.changed) try draw.gpu.complete();
+    for (generic_draws, 0..) |draw, draw_index| if (draw.changed) {
+        std.debug.assert(auxiliary_recorded[draw_index]);
+        draw.context.complete(auxiliary_recordings[draw_index]);
+        try draw.residency.complete();
+    };
     if (residency_commit) |value| try value.complete();
     if (c.drmSyncobjTransfer(drm_fd, acquire_handle, acquire_point, temporary, 0, 0) != 0) return error.Syncobj;
     try waitTimeline(drm_fd, acquire_handle, acquire_point);
