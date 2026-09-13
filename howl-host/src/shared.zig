@@ -18,6 +18,8 @@ pub const HostCommandKind = enum {
     shrink_focused,
     split_horizontal,
     split_vertical,
+    new_tab,
+    next_tab,
     close_created,
 };
 
@@ -26,10 +28,10 @@ pub const HostCommand = struct {
     pane: u8,
 };
 
-pub const PaneSplitAxis = enum { horizontal, vertical };
+pub const PaneAttachKind = enum { split_horizontal, split_vertical, tab };
 
 pub const PaneEndpoint = struct {
-    axis: PaneSplitAxis,
+    kind: PaneAttachKind,
     len: u8,
     bytes: [pane_endpoint_capacity]u8,
 
@@ -129,6 +131,7 @@ pub const Boundary = struct {
     host_command_count: u8 = 0,
     pane_endpoint: ?PaneEndpoint = null,
     pane_retired_pending: bool = false,
+    tab_switched_pending: bool = false,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -262,11 +265,11 @@ pub const Boundary = struct {
     pub fn publishPaneEndpoint(
         self: *Boundary,
         endpoint: []const u8,
-        axis: PaneSplitAxis,
+        kind: PaneAttachKind,
     ) error{ Stopping, PaneEndpointPending, InvalidPaneEndpoint }!void {
         if (endpoint.len == 0 or endpoint.len > pane_endpoint_capacity or endpoint.len > std.math.maxInt(u8))
             return error.InvalidPaneEndpoint;
-        var copied = PaneEndpoint{ .axis = axis, .len = @intCast(endpoint.len), .bytes = @splat(0) };
+        var copied = PaneEndpoint{ .kind = kind, .len = @intCast(endpoint.len), .bytes = @splat(0) };
         @memcpy(copied.bytes[0..endpoint.len], endpoint);
         self.mutex.lockUncancelable(self.io);
         if (self.stop_requested) {
@@ -313,6 +316,31 @@ pub const Boundary = struct {
         defer self.mutex.unlock(self.io);
         if (!self.pane_retired_pending) return false;
         self.pane_retired_pending = false;
+        return true;
+    }
+
+    /// Publishes one committed active-tab change for Input routing.
+    pub fn publishTabSwitched(self: *Boundary) error{ Stopping, TabSwitchPending }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.tab_switched_pending) {
+            self.mutex.unlock(self.io);
+            return error.TabSwitchPending;
+        }
+        self.tab_switched_pending = true;
+        self.mutex.unlock(self.io);
+        signal(self.input_fd);
+    }
+
+    /// Consumes one committed active-tab change.
+    pub fn takeTabSwitched(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (!self.tab_switched_pending) return false;
+        self.tab_switched_pending = false;
         return true;
     }
 

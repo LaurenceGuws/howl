@@ -295,6 +295,14 @@ pub const Mux = struct {
         return true;
     }
 
+    /// Selects the next tab in retained display order and wraps.
+    /// A one-tab mux is unchanged.
+    pub fn nextTab(self: *Mux) bool {
+        if (self.tab_count < 2) return false;
+        self.active_index = (self.active_index + 1) % self.tab_count;
+        return true;
+    }
+
     pub fn closeActiveTab(self: *Mux) error{LastTab}!void {
         if (self.tab_count == 1) return error.LastTab;
         const index = self.active_index;
@@ -441,6 +449,20 @@ test "tabs own independent trees and stable identities" {
     try std.testing.expectEqual(@as(u8, 4), mux.paneCount());
     try std.testing.expect(try mux.switchTab(first_tab));
     try std.testing.expectEqual(first_split, mux.focusedPane());
+}
+
+test "next tab follows retained order and wraps" {
+    var mux = Mux.init();
+    const first = mux.activeTab();
+    const second = try mux.createTab();
+    try std.testing.expectEqual(second.tab, mux.activeTab());
+    try std.testing.expect(mux.nextTab());
+    try std.testing.expectEqual(first, mux.activeTab());
+    try std.testing.expect(mux.nextTab());
+    try std.testing.expectEqual(second.tab, mux.activeTab());
+
+    var single = Mux.init();
+    try std.testing.expect(!single.nextTab());
 }
 
 test "focus next follows projection order and wraps" {
