@@ -216,26 +216,28 @@ Uint8List _hostPacket({
   return bytes;
 }
 
-Uint8List _imageRefillPacket() {
+Uint8List _imageRefillPacket({
+  List<int> pixels = const <int>[
+    255,
+    0,
+    0,
+    255,
+    0,
+    255,
+    0,
+    255,
+    0,
+    0,
+    255,
+    255,
+    255,
+    255,
+    255,
+    255,
+  ],
+}) {
   const header = 64;
-  const pixels = <int>[
-    255,
-    0,
-    0,
-    255,
-    0,
-    255,
-    0,
-    255,
-    0,
-    0,
-    255,
-    255,
-    255,
-    255,
-    255,
-    255,
-  ];
+  assert(pixels.length == 16);
   final bytes = Uint8List(header + pixels.length);
   final data = ByteData.sublistView(bytes);
   bytes.setAll(0, const <int>[0x48, 0x49, 0x52, 0x31]);
@@ -515,6 +517,52 @@ void main() {
       }
     }
   });
+
+  test(
+    'external sRGB images round-trip through linear terminal composition',
+    () async {
+      final gray =
+          List<int>.filled(4 * 4, 32)
+            ..setAll(3, const <int>[255])
+            ..setAll(7, const <int>[255])
+            ..setAll(11, const <int>[255])
+            ..setAll(15, const <int>[255]);
+      final preload = await prepareNativeCanvasExternalUpload(
+        parseNativeHostImageRefill(_imageRefillPacket(pixels: gray)),
+      );
+      final prepared = await prepareNativeCanvasFrame(
+        null,
+        NativeCanvasFrame.parse(_externalRgbaCanvas()),
+        preloaded: <NativeCanvasPreloadedResource>[preload],
+      );
+      final recorder = ui.PictureRecorder();
+      final canvas = ui.Canvas(recorder);
+      NativeCanvasPainter(
+        lease: prepared.lease,
+        logicalWidth: 20,
+        logicalHeight: 20,
+      ).paint(canvas, const ui.Size(20, 20));
+      final image = await recorder.endRecording().toImage(20, 20);
+      try {
+        final raw = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
+        expect(raw, isNotNull);
+        final pixel = raw!.buffer.asUint8List(
+          raw.offsetInBytes + (10 * 20 + 10) * 4,
+          4,
+        );
+        expect(pixel[0], inInclusiveRange(30, 34));
+        expect(pixel[1], inInclusiveRange(30, 34));
+        expect(pixel[2], inInclusiveRange(30, 34));
+        expect(pixel[3], 255);
+      } finally {
+        image.dispose();
+        disposeNativeCanvasLease(prepared.lease);
+        for (final retired in prepared.retired) {
+          retired.dispose();
+        }
+      }
+    },
+  );
 
   test(
     'candidate residency replaces an older logical Canvas generation',

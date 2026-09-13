@@ -109,7 +109,13 @@ final class _RgbaSegment extends _PaintSegment {
     }
     canvas.save();
     canvas.clipRect(clip);
-    canvas.drawImageRect(image, source, destination, ui.Paint());
+    canvas.drawImageRect(
+      image,
+      source,
+      destination,
+      ui.Paint()
+        ..colorFilter = const ui.ColorFilter.srgbToLinearGamma(),
+    );
     canvas.restore();
   }
 }
