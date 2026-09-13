@@ -1354,7 +1354,8 @@ fn buildContentCommands(
         const line_columns = try contentLineColumnCount(begin.columns, row.line_geometry);
         for (cells[first..][0..line_columns], 0..) |cell, column| {
             if (cell.scalar_count == 0 or cell.x != 0 or cell.y != 0 or
-                cell.style_bits & content_style_invisible != 0)
+                cell.style_bits & content_style_invisible != 0 or
+                cell.style_bits & (content_style_underline | content_style_strike) == 0)
                 continue;
             const colors = try contentCellColors(cell, presentation);
             const physical = try contentCellRect(row_index, column, cell_size);
