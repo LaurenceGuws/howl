@@ -15,6 +15,9 @@ const maximum_clients: usize = 8;
 const maximum_request_payload: usize = protocol.maximum_request_payload_bytes;
 const input_buffer_bytes: usize = protocol.header_bytes + maximum_request_payload;
 const client_send_buffer_bytes: c_int = 64 * 1024;
+// Retain ordinary snapshot/result output across request cycles without letting
+// one unusually large response permanently multiply by every client slot.
+const client_output_retain_bytes: usize = 512 * 1024;
 const listen_backlog: u32 = 16;
 const lifecycle_poll_ms: i32 = 100;
 // Match Foot's bounded application synchronized-update hold. Canonical VT
@@ -235,8 +238,12 @@ const Client = struct {
     }
 
     fn resetOutput(self: *Client, allocator: std.mem.Allocator) void {
-        self.output.deinit(allocator);
-        self.output = .empty;
+        if (self.output.capacity > client_output_retain_bytes) {
+            self.output.deinit(allocator);
+            self.output = .empty;
+        } else {
+            self.output.clearRetainingCapacity();
+        }
         self.output_offset = 0;
     }
 
@@ -277,6 +284,14 @@ const Server = struct {
     synchronized_output_timed_out: bool = false,
     synchronized_output_pending: bool = false,
     burst_publication: BurstPublicationGate = .{},
+    // Rich snapshots are serialized synchronously on the endpoint thread, so
+    // retain bounded scratch across observer cuts instead of returning the
+    // same hot allocations to the allocator every frame.
+    snapshot_cells: std.ArrayList(howl.Cell) = .empty,
+    snapshot_body: std.ArrayList(u8) = .empty,
+    snapshot_compressed: std.Io.Writer.Allocating,
+    snapshot_flate_work: []u8,
+    snapshot_compressor: *std.compress.flate.Compress,
 
     // -------------------------------------------------------------------------
     // Construction and lifecycle loop
@@ -293,6 +308,10 @@ const Server = struct {
         errdefer howl.deinit(session);
         var listener = try Listener.init(listener_spec);
         errdefer listener.deinit();
+        const snapshot_flate_work = try allocator.alloc(u8, std.compress.flate.max_window_len);
+        errdefer allocator.free(snapshot_flate_work);
+        const snapshot_compressor = try allocator.create(std.compress.flate.Compress);
+        errdefer allocator.destroy(snapshot_compressor);
 
         return .{
             .allocator = allocator,
@@ -300,6 +319,9 @@ const Server = struct {
             .session = session,
             .listener = listener,
             .terminal_revision = howl.revision(session),
+            .snapshot_compressed = .init(allocator),
+            .snapshot_flate_work = snapshot_flate_work,
+            .snapshot_compressor = snapshot_compressor,
         };
     }
 
@@ -308,6 +330,11 @@ const Server = struct {
             if (client.*) |*active| active.deinit(self.allocator);
             client.* = null;
         }
+        self.snapshot_cells.deinit(self.allocator);
+        self.snapshot_body.deinit(self.allocator);
+        self.snapshot_compressed.deinit();
+        self.allocator.free(self.snapshot_flate_work);
+        self.allocator.destroy(self.snapshot_compressor);
         self.listener.deinit();
         howl.deinit(self.session);
         self.* = undefined;
@@ -890,98 +917,21 @@ const Server = struct {
         else
             observed_ns -| status.cursor_movement_timestamp_ns;
         var referenced_links: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
-        const cells = try self.allocator.alloc(howl.Cell, status.columns);
-        defer self.allocator.free(cells);
 
-        var body_bytes: usize = protocol.text_v1.record_header_bytes +
-            protocol.text_v1.presentation_bytes;
+        try self.snapshot_cells.resize(self.allocator, status.columns);
+        const cells = self.snapshot_cells.items;
+        self.snapshot_body.clearRetainingCapacity();
+        const body = &self.snapshot_body;
+        try self.appendPresentationRecord(body, cursor_age_ns);
+
+        // Copy each visible row and each cell's scalar payload exactly once.
+        // The old builder first walked the complete grid to size the body and
+        // then walked it again to encode the same facts. ArrayList growth is
+        // still bounded by the frozen 4 MiB text_v1 limit below.
         var row: u16 = 0;
         while (row < status.rows) : (row += 1) {
             const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-            var row_payload_bytes: usize = protocol.text_v1.row_header_bytes;
-            for (copied, 0..) |cell, column| {
-                var scalar_storage: [howl.maximum_cell_scalars]u21 = undefined;
-                const scalars: []const u21 = if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0)
-                    howl.copyCellScalars(
-                        self.session,
-                        status.history_offset,
-                        row,
-                        @intCast(column),
-                        &scalar_storage,
-                    )
-                else
-                    &.{};
-                if (scalars.len > protocol.text_v1.maximum_cell_scalars)
-                    return error.InvalidSnapshot;
-                if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
-                    if (scalars.len == 0 or scalars[0] != cell.codepoint)
-                        return error.InvalidSnapshot;
-                } else if (scalars.len != 0) return error.InvalidSnapshot;
-
-                const scalar_bytes = std.math.mul(usize, scalars.len, 4) catch
-                    return error.SnapshotTooLarge;
-                row_payload_bytes = std.math.add(
-                    usize,
-                    row_payload_bytes,
-                    protocol.text_v1.cell_header_bytes + scalar_bytes,
-                ) catch return error.SnapshotTooLarge;
-
-                if (cell.attrs.link_id != 0) {
-                    if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
-                        return error.InvalidSnapshot;
-                    const link_index: usize = @intCast(cell.attrs.link_id);
-                    if (!referenced_links[link_index]) {
-                        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
-                            return error.InvalidSnapshot;
-                        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
-                            return error.InvalidSnapshot;
-                        referenced_links[link_index] = true;
-                    }
-                }
-            }
-            const record_bytes = std.math.add(
-                usize,
-                protocol.text_v1.record_header_bytes,
-                row_payload_bytes,
-            ) catch return error.SnapshotTooLarge;
-            body_bytes = std.math.add(usize, body_bytes, record_bytes) catch
-                return error.SnapshotTooLarge;
-        }
-
-        var link_id: usize = 1;
-        while (link_id < referenced_links.len) : (link_id += 1) {
-            if (!referenced_links[link_id]) continue;
-            const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
-                return error.InvalidSnapshot;
-            const link_payload_bytes = std.math.add(
-                usize,
-                protocol.text_v1.hyperlink_header_bytes,
-                uri.len,
-            ) catch return error.SnapshotTooLarge;
-            body_bytes = std.math.add(
-                usize,
-                body_bytes,
-                protocol.text_v1.record_header_bytes + link_payload_bytes,
-            ) catch return error.SnapshotTooLarge;
-        }
-
-        if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
-            body_bytes > std.math.maxInt(u32))
-            return error.SnapshotTooLarge;
-
-        // `text_v1` has one semantic body. Build it once, then compress that
-        // exact body. Do not materialize a second uncompressed frame protocol: it
-        // creates compatibility branches and makes the server parse its own wire.
-        var body: std.ArrayList(u8) = .empty;
-        defer body.deinit(self.allocator);
-        try body.ensureTotalCapacity(self.allocator, body_bytes);
-
-        try self.appendPresentationRecord(&body, cursor_age_ns);
-
-        row = 0;
-        while (row < status.rows) : (row += 1) {
-            const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
-            const record = try self.beginTextRecord(&body, .row);
+            const record = try self.beginTextRecord(body, .row);
             var row_header: [protocol.text_v1.row_header_bytes]u8 = .{
                 @intFromBool(howl.rowWrapped(self.session, status.history_offset, row)),
                 richLineGeometry(howl.lineGeometry(self.session, status.history_offset, row)),
@@ -1001,50 +951,73 @@ const Server = struct {
                     )
                 else
                     &.{};
-                try self.appendTextCell(&body, cell, scalars);
+                if (scalars.len > protocol.text_v1.maximum_cell_scalars)
+                    return error.InvalidSnapshot;
+                if (cell.codepoint != 0 and cell.x == 0 and cell.y == 0) {
+                    if (scalars.len == 0 or scalars[0] != cell.codepoint)
+                        return error.InvalidSnapshot;
+                } else if (scalars.len != 0) return error.InvalidSnapshot;
+
+                if (cell.attrs.link_id != 0) {
+                    if (cell.attrs.link_id > protocol.text_v1.maximum_hyperlinks)
+                        return error.InvalidSnapshot;
+                    const link_index: usize = @intCast(cell.attrs.link_id);
+                    if (!referenced_links[link_index]) {
+                        const uri = howl.hyperlinkUri(self.session, cell.attrs.link_id) orelse
+                            return error.InvalidSnapshot;
+                        if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
+                            return error.InvalidSnapshot;
+                        referenced_links[link_index] = true;
+                    }
+                }
+                try self.appendTextCell(body, cell, scalars);
+                if (body.items.len > protocol.maximum_text_snapshot_bytes)
+                    return error.SnapshotTooLarge;
             }
-            try finishTextRecord(&body, record);
+            try finishTextRecord(body, record);
         }
 
-        link_id = 1;
+        var link_id: usize = 1;
         while (link_id < referenced_links.len) : (link_id += 1) {
             if (!referenced_links[link_id]) continue;
             const uri = howl.hyperlinkUri(self.session, @intCast(link_id)) orelse
                 return error.InvalidSnapshot;
-            const record = try self.beginTextRecord(&body, .hyperlink);
+            if (uri.len > protocol.text_v1.maximum_hyperlink_uri_bytes)
+                return error.InvalidSnapshot;
+            const record = try self.beginTextRecord(body, .hyperlink);
             var link_header: [protocol.text_v1.hyperlink_header_bytes]u8 = undefined;
             encodeU32(link_header[0..4], @intCast(link_id));
             link_header[4] = @truncate(uri.len >> 8);
             link_header[5] = @truncate(uri.len);
             try body.appendSlice(self.allocator, &link_header);
             try body.appendSlice(self.allocator, uri);
-            try finishTextRecord(&body, record);
+            try finishTextRecord(body, record);
+            if (body.items.len > protocol.maximum_text_snapshot_bytes)
+                return error.SnapshotTooLarge;
         }
-        std.debug.assert(body.items.len == body_bytes);
+        const body_bytes = body.items.len;
+        if (body_bytes == 0 or body_bytes > protocol.maximum_text_snapshot_bytes or
+            body_bytes > std.math.maxInt(u32))
+            return error.SnapshotTooLarge;
 
-        var compressed: std.Io.Writer.Allocating = .init(self.allocator);
-        defer compressed.deinit();
-        // Flate requires backing capacity before init; keep this explicit so a
-        // future allocator cleanup cannot reintroduce the debug-only assertion
-        // failure found during the compression experiment.
-        try compressed.ensureTotalCapacity(64);
-        const work = try self.allocator.alloc(u8, std.compress.flate.max_window_len);
-        defer self.allocator.free(work);
-        const compressor = try self.allocator.create(std.compress.flate.Compress);
-        defer self.allocator.destroy(compressor);
-        compressor.* = try std.compress.flate.Compress.init(
-            &compressed.writer,
-            work,
+        // Reinitialize compression state in retained storage. The writer buffer,
+        // DEFLATE work window, and compressor allocation survive between cuts.
+        self.snapshot_compressed.writer.end = 0;
+        try self.snapshot_compressed.ensureTotalCapacity(64);
+        self.snapshot_compressor.* = try std.compress.flate.Compress.init(
+            &self.snapshot_compressed.writer,
+            self.snapshot_flate_work,
             .zlib,
             .fastest,
         );
-        try compressor.writer.writeAll(body.items);
-        try compressor.finish();
+        try self.snapshot_compressor.writer.writeAll(body.items);
+        try self.snapshot_compressor.finish();
+        const compressed = self.snapshot_compressed.written();
 
         const encoded_bytes = std.math.add(
             usize,
             protocol.text_v1.compressed_header_bytes,
-            compressed.written().len,
+            compressed.len,
         ) catch return error.SnapshotTooLarge;
         if (encoded_bytes > protocol.maximum_text_snapshot_bytes)
             return error.SnapshotTooLarge;
@@ -1089,7 +1062,7 @@ const Server = struct {
 
         var raw_len: [protocol.text_v1.compressed_header_bytes]u8 = undefined;
         encodeU32(&raw_len, @intCast(body_bytes));
-        try self.appendSnapshotData(&client.output, &raw_len, compressed.written());
+        try self.appendSnapshotData(&client.output, &raw_len, compressed);
 
         const graphics_payload = try self.allocator.alloc(u8, graphics_counts.payload_bytes);
         defer self.allocator.free(graphics_payload);
