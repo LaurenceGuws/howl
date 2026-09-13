@@ -6,3 +6,6 @@ howl-probe*.jsonl
 howl-window-probe*.jsonl
 trace.jsonl
 temp/
+
+# FVM Version Cache
+.fvm/
