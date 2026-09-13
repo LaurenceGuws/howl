@@ -1014,6 +1014,14 @@ fn contentUsesMulticellAllocation(cell: View.Cell) bool {
         (cell.width > 1 and !cell.semantic_width);
 }
 
+fn contentUsesPlainGeometry(cell: View.Cell, line_geometry: u8) bool {
+    return line_geometry == 0 and cell.width == 1 and cell.height == 1 and
+        cell.x == 0 and cell.y == 0 and
+        cell.subscale_n == 0 and cell.subscale_d == 0 and
+        cell.vertical_align == 0 and cell.horizontal_align == 0 and
+        !cell.semantic_width;
+}
+
 fn contentIsContextualOperatorCell(
     cell: View.Cell,
     scalars: []const u32,
@@ -1494,17 +1502,27 @@ fn buildContentCommands(
                 }
             }
             const physical = try contentCellRect(row_index, column, cell_size);
-            const sizing = try contentCellSizing(row_index, column, cell, cell_size);
-            const allocation_clip = try contentCellVisibleClip(
-                sizing,
-                row_index,
-                row.line_geometry,
-                cell_size,
-                surface,
-            ) orelse continue;
+            const plain_geometry = contentUsesPlainGeometry(cell, row.line_geometry);
+            const sizing: ?ContentCellSizing = if (plain_geometry)
+                null
+            else
+                try contentCellSizing(row_index, column, cell, cell_size);
+            const allocation_clip = if (plain_geometry)
+                physical
+            else
+                try contentCellVisibleClip(
+                    sizing.?,
+                    row_index,
+                    row.line_geometry,
+                    cell_size,
+                    surface,
+                ) orelse continue;
 
             if (sequence.len == 1 and generated.classify(sequence[0]) != null) {
-                const sized_frame = try contentCellTransformRect(sizing.origin, sizing);
+                const sized_frame = if (plain_geometry)
+                    physical
+                else
+                    try contentCellTransformRect(sizing.?.origin, sizing.?);
                 const generated_raster = try resolveGeneratedAtlas(
                     atlas,
                     sequence[0],
@@ -1516,12 +1534,15 @@ fn buildContentCommands(
                 );
                 has_raster = true;
                 try appendContentInput(output, &used, .{ .alpha_mask = .{
-                    .destination = try contentLineTransformRect(
-                        sized_frame,
-                        row_index,
-                        row.line_geometry,
-                        cell_size,
-                    ),
+                    .destination = if (plain_geometry)
+                        sized_frame
+                    else
+                        try contentLineTransformRect(
+                            sized_frame,
+                            row_index,
+                            row.line_geometry,
+                            cell_size,
+                        ),
                     .clip = allocation_clip,
                     .resource = .{
                         .resource = placeholder_resource,
@@ -1549,7 +1570,11 @@ fn buildContentCommands(
                     cluster_scratch,
                     shaped_scratch,
                 );
-            const font_clip = if (contextual) blk: {
+            const font_clip = if (plain_geometry) blk: {
+                var row_clip = try contentCellRect(row_index, 0, cell_size);
+                row_clip.width = surface.width;
+                break :blk row_clip;
+            } else if (contextual) blk: {
                 var row_clip = try contentCellRect(row_index, 0, cell_size);
                 row_clip.width = surface.width;
                 break :blk try contentLineClip(
@@ -1561,7 +1586,7 @@ fn buildContentCommands(
                 ) orelse continue;
             } else try contentFontVisibleClip(
                 cell,
-                sizing,
+                sizing.?,
                 row_index,
                 row.line_geometry,
                 cell_size,
@@ -1612,17 +1637,20 @@ fn buildContentCommands(
                         .width = raster.width,
                         .height = raster.height,
                     };
-                    const sized_destination = try contentCellTransformRect(
-                        base_destination,
-                        sizing,
-                    );
+                    const sized_destination = if (plain_geometry)
+                        base_destination
+                    else
+                        try contentCellTransformRect(base_destination, sizing.?);
                     try appendContentInput(output, &used, .{ .alpha_mask = .{
-                        .destination = try contentLineTransformRect(
-                            sized_destination,
-                            row_index,
-                            row.line_geometry,
-                            cell_size,
-                        ),
+                        .destination = if (plain_geometry)
+                            sized_destination
+                        else
+                            try contentLineTransformRect(
+                                sized_destination,
+                                row_index,
+                                row.line_geometry,
+                                cell_size,
+                            ),
                         .clip = font_clip,
                         .resource = .{
                             .resource = placeholder_resource,
