@@ -21,6 +21,7 @@ const surface_pixel_bytes: usize = 16 * 1024 * 1024;
 pub const Prepared = struct {
     width: u16,
     height: u16,
+    session_revision: u64,
     revision: u64,
     plan: vk_surface.Plan,
 };
@@ -168,8 +169,12 @@ pub const Scene = struct {
         self.* = undefined;
     }
 
-    pub fn prepare(self: *Scene) !Prepared {
-        var rich = try client.rich.request(&self.connection, self.allocator, 0, 0);
+    pub fn cancellation(self: *const Scene) error{ SocketDuplicateFailed, SocketOptionFailed }!client.Cancellation {
+        return self.connection.cancellation();
+    }
+
+    pub fn prepare(self: *Scene, after_revision: u64) !Prepared {
+        var rich = try client.rich.request(&self.connection, self.allocator, after_revision, 0);
         defer rich.deinit();
         const view = try client.view.project(self.allocator, &rich);
         defer client.view.deinit(view);
@@ -238,6 +243,7 @@ pub const Scene = struct {
         return .{
             .width = width,
             .height = height,
+            .session_revision = begin.revision,
             .revision = generic.revision,
             .plan = plan,
         };

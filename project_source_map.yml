@@ -45,9 +45,9 @@ experimental:
     native Linux Vulkan performance canary: concrete Wayland window and
     explicit-sync DMA-BUF presentation, plus a deliberately small host-local
     bounded tab/split topology that prevents single-terminal architecture from
-    becoming implicit product policy; one canonical Session snapshot now crosses
-    current client/text/Canvas/Vulkan boundaries into physical presentation;
-    live observation is the next runtime step; not part of the core gate
+    becoming implicit product policy; canonical Session revisions now stream
+    through current client/text/Canvas/Vulkan boundaries with bounded explicit-sync
+    ring reuse and cancellable observation; not part of the core gate
   howl-vk: Vulkan experiments; not part of the core gate
   howl-wayland: Wayland experiments; not part of the core gate
   howl-web: >-

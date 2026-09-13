@@ -291,7 +291,6 @@ fn frameDone(data: ?*anyopaque, callback: ?*c.wl_callback, _: u32) callconv(.c) 
     if (callback) |value| c.wl_callback_destroy(value);
     state.frame_callback = null;
     std.debug.print("Window frame revision={d}\n", .{state.presented});
-    if (state.presented == 4) state.boundary.requestStop(null);
 }
 const frame_listener = c.wl_callback_listener{ .done = frameDone };
 fn feedbackDone(data: ?*anyopaque, _: ?*c.zwp_linux_dmabuf_feedback_v1) callconv(.c) void {

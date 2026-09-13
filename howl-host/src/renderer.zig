@@ -2,6 +2,7 @@
 
 const std = @import("std");
 const c = @import("renderer_c");
+const client = @import("howl_client");
 const shared = @import("shared.zig");
 const terminal_scene = @import("terminal_scene.zig");
 const howl_vk = @import("howl_vk");
@@ -17,6 +18,7 @@ const Slot = struct {
     plane_count: u8 = 0,
     planes: [shared.plane_limit]shared.Plane = undefined,
     external: bool = false,
+    release_point: u64 = 0,
     attachment: surface.Attachment = .{},
 
     fn deinit(self: *Slot, device: vk.VkDevice, drm_fd: i32) void {
@@ -58,8 +60,9 @@ fn runFallible(
     const feedback = try waitFeedback(boundary);
     var scene = try terminal_scene.Scene.init(allocator, endpoint, font_path);
     defer scene.deinit();
-    const terminal_frame = try scene.prepare();
-    std.debug.print("Session frame revision={d} surface={d}x{d}\n", .{
+    const terminal_frame = try scene.prepare(0);
+    std.debug.print("Prepared initial Session revision={d} Canvas frame={d} surface={d}x{d}\n", .{
+        terminal_frame.session_revision,
         terminal_frame.revision,
         terminal_frame.width,
         terminal_frame.height,
@@ -186,11 +189,44 @@ fn runFallible(
         if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) @panic("Render failed to quiesce Vulkan during cleanup");
     };
 
-    for (&slots, 0..) |*slot, index| {
-        queue_active = true;
+    queue_active = true;
+    var present_revision: u64 = 0;
+    var acquire_point: u64 = 0;
+    var session_revision = terminal_frame.session_revision;
+    var slot_index: usize = 0;
+    var previous_slot: ?usize = null;
+    var prepared = terminal_frame;
+
+    var cancellation = try scene.cancellation();
+    defer cancellation.deinit();
+    var watcher_done = std.atomic.Value(bool).init(false);
+    const watcher = try std.Thread.spawn(.{}, watchStop, .{ boundary, &cancellation, &watcher_done });
+    defer {
+        watcher_done.store(true, .release);
+        watcher.join();
+    }
+
+    while (!boundary.shouldStop()) {
+        var wait_semaphore: ?vk.VkSemaphore = null;
+        defer if (wait_semaphore) |value| vk.vkDestroySemaphore(device, value, null);
+        const slot = &slots[slot_index];
+        if (slot.external) {
+            try waitTimeline(drm_fd, slot.release_handle, slot.release_point);
+            wait_semaphore = try importRelease(
+                device,
+                drm_fd,
+                slot.release_handle,
+                slot.release_point,
+                import_semaphore_fd.?,
+            );
+        }
+
+        acquire_point = std.math.add(u64, acquire_point, 1) catch return error.RevisionOverflow;
+        present_revision = std.math.add(u64, present_revision, 1) catch return error.RevisionOverflow;
+        slot.release_point = std.math.add(u64, slot.release_point, 1) catch return error.RevisionOverflow;
         try render(
             &graphics,
-            terminal_frame.plan,
+            prepared.plan,
             scene.builder.alpha_pixels,
             scene.builder.rgba_pixels,
             device,
@@ -199,48 +235,81 @@ fn runFallible(
             command,
             slot,
             .{ 0, 0, 0, 1 },
-            if (index == 0) &scene.residency else null,
-            null,
+            &scene.residency,
+            wait_semaphore,
             get_semaphore_fd.?,
             drm_fd,
             acquire_handle,
-            index + 1,
-            terminal_frame.width,
-            terminal_frame.height,
+            acquire_point,
+            prepared.width,
+            prepared.height,
         );
-        try boundary.publishCompletion(.{ .revision = index + 1, .slot = @intCast(index), .acquire_point = index + 1, .release_point = 1 });
+        if (wait_semaphore) |value| {
+            vk.vkDestroySemaphore(device, value, null);
+            wait_semaphore = null;
+        }
+        try boundary.publishCompletion(.{
+            .revision = present_revision,
+            .slot = @intCast(slot_index),
+            .acquire_point = acquire_point,
+            .release_point = slot.release_point,
+        });
+        std.debug.print("Published Session revision={d} Canvas frame={d} present={d} slot={d} release={d}\n", .{
+            prepared.session_revision,
+            prepared.revision,
+            present_revision,
+            slot_index,
+            slot.release_point,
+        });
+
+        // Publishing the next slot lets KWin retire the previous one. Waiting
+        // here bounds presentation backlog without pacing canonical Session
+        // progress: Session continues independently while this observer waits.
+        if (previous_slot) |prior| {
+            try waitTimeline(drm_fd, slots[prior].release_handle, slots[prior].release_point);
+        }
+        previous_slot = slot_index;
+        slot_index = (slot_index + 1) % shared.slot_count;
+
+        const next = scene.prepare(session_revision) catch |failure| {
+            if (boundary.shouldStop()) break;
+            return failure;
+        };
+        if (next.width != terminal_frame.width or next.height != terminal_frame.height)
+            return error.GeometryChanged;
+        session_revision = next.session_revision;
+        prepared = next;
     }
-    try waitTimeline(drm_fd, slots[0].release_handle, 1);
-    const reuse_wait = try importRelease(device, drm_fd, slots[0].release_handle, 1, import_semaphore_fd.?);
-    defer vk.vkDestroySemaphore(device, reuse_wait, null);
-    try render(
-        &graphics,
-        terminal_frame.plan,
-        scene.builder.alpha_pixels,
-        scene.builder.rgba_pixels,
-        device,
-        queue,
-        family,
-        command,
-        &slots[0],
-        .{ 0, 0, 0, 1 },
-        null,
-        reuse_wait,
-        get_semaphore_fd.?,
-        drm_fd,
-        acquire_handle,
-        4,
-        terminal_frame.width,
-        terminal_frame.height,
-    );
-    try boundary.publishCompletion(.{ .revision = 4, .slot = 0, .acquire_point = 4, .release_point = 2 });
-    try waitTimeline(drm_fd, slots[0].release_handle, 2);
-    try waitTimeline(drm_fd, slots[1].release_handle, 1);
-    try waitTimeline(drm_fd, slots[2].release_handle, 1);
     if (vk.vkDeviceWaitIdle(device) != vk.VK_SUCCESS) return error.DeviceIdle;
     queue_active = false;
     try waitWindowStopped(boundary);
-    std.debug.print("Render ring complete revisions=4 slots=3\n", .{});
+    std.debug.print("Render live loop retired at present={d} session={d}\n", .{ present_revision, session_revision });
+}
+
+fn watchStop(
+    boundary: *shared.Boundary,
+    cancellation: *const client.Cancellation,
+    done: *std.atomic.Value(bool),
+) void {
+    var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
+    while (!done.load(.acquire)) {
+        descriptor.revents = 0;
+        const ready = c.poll(&descriptor, 1, 100);
+        if (ready == 0) continue;
+        if (ready < 0) {
+            if (std.c.errno(ready) == .INTR) continue;
+            boundary.requestStop(.render);
+            return;
+        }
+        if (boundary.shouldStop()) {
+            cancellation.cancel() catch boundary.requestStop(.render);
+            return;
+        }
+        boundary.drainRenderWake() catch {
+            boundary.requestStop(.render);
+            return;
+        };
+    }
 }
 
 fn waitFeedback(boundary: *shared.Boundary) !shared.Feedback {
