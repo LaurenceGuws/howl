@@ -10,15 +10,27 @@ pub const slot_count: usize = 3;
 pub const input_capacity: usize = 128;
 /// Bounds host-local control requests awaiting Render ownership.
 pub const host_command_capacity: usize = 16;
+/// Bounds one copied private Unix endpoint handed from Render to Input.
+pub const pane_endpoint_capacity: usize = 108;
 
 pub const HostCommandKind = enum {
     grow_focused,
     shrink_focused,
+    split_horizontal,
 };
 
 pub const HostCommand = struct {
     kind: HostCommandKind,
     pane: u8,
+};
+
+pub const PaneEndpoint = struct {
+    len: u8,
+    bytes: [pane_endpoint_capacity]u8,
+
+    pub fn text(self: *const PaneEndpoint) []const u8 {
+        return self.bytes[0..self.len];
+    }
 };
 
 pub const InputEvent = union(enum) {
@@ -110,6 +122,7 @@ pub const Boundary = struct {
     host_commands: [host_command_capacity]HostCommand = undefined,
     host_command_head: u8 = 0,
     host_command_count: u8 = 0,
+    pane_endpoint: ?PaneEndpoint = null,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -158,6 +171,11 @@ pub const Boundary = struct {
         closeDescriptor(self.window_fd);
         closeDescriptor(self.render_fd);
         self.* = undefined;
+    }
+
+    /// Borrows the process runtime IO used by Host-owned lifecycle helpers.
+    pub fn runtimeIo(self: *const Boundary) std.Io {
+        return self.io;
     }
 
     /// Borrows the Window-to-Render eventfd until `deinit`.
@@ -231,6 +249,35 @@ pub const Boundary = struct {
         const more = self.host_command_count != 0;
         self.mutex.unlock(self.io);
         if (more) signal(self.control_fd);
+        return result;
+    }
+
+    /// Publishes one fully committed new-pane endpoint for Input attachment.
+    pub fn publishPaneEndpoint(self: *Boundary, endpoint: []const u8) error{ Stopping, PaneEndpointPending, InvalidPaneEndpoint }!void {
+        if (endpoint.len == 0 or endpoint.len > pane_endpoint_capacity or endpoint.len > std.math.maxInt(u8))
+            return error.InvalidPaneEndpoint;
+        var copied = PaneEndpoint{ .len = @intCast(endpoint.len), .bytes = @splat(0) };
+        @memcpy(copied.bytes[0..endpoint.len], endpoint);
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.pane_endpoint != null) {
+            self.mutex.unlock(self.io);
+            return error.PaneEndpointPending;
+        }
+        self.pane_endpoint = copied;
+        self.mutex.unlock(self.io);
+        signal(self.input_fd);
+    }
+
+    /// Transfers one committed new-pane endpoint to Input.
+    pub fn takePaneEndpoint(self: *Boundary) ?PaneEndpoint {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        const result = self.pane_endpoint orelse return null;
+        self.pane_endpoint = null;
         return result;
     }
 

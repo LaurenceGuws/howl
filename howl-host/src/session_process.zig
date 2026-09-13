@@ -22,6 +22,7 @@ pub const SessionProcess = struct {
         io: std.Io,
         runtime_dir: []const u8,
         shell: []const u8,
+        environ_map: *const std.process.Environ.Map,
         rows: u16,
         cols: u16,
         identity: u32,
@@ -38,6 +39,7 @@ pub const SessionProcess = struct {
             sessiond_path,
             runtime_dir,
             shell,
+            environ_map,
             rows,
             cols,
             identity,
@@ -50,6 +52,7 @@ pub const SessionProcess = struct {
         sessiond_path: []const u8,
         runtime_dir: []const u8,
         shell: []const u8,
+        environ_map: *const std.process.Environ.Map,
         rows: u16,
         cols: u16,
         identity: u32,
@@ -83,6 +86,7 @@ pub const SessionProcess = struct {
         };
         var child = try std.process.spawn(io, .{
             .argv = &argv,
+            .environ_map = environ_map,
             .stdin = .ignore,
             .stdout = .ignore,
             .stderr = .inherit,

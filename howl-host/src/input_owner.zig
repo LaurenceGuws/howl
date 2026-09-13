@@ -3,7 +3,8 @@
 //! Window copies interpreted Wayland/xkb facts into Boundary. This owner alone
 //! performs potentially blocking Session action round trips so compositor
 //! dispatch never waits on endpoint I/O. In duet mode it owns one connection
-//! per pane and consumes F6 as the deliberately tiny focus-toggle canary.
+//! per pane. F6 toggles focus, F7/F8 move the focused divider, and F9 owns
+//! the bounded one-to-two-pane split canary; these keys never enter a PTY.
 
 const std = @import("std");
 const client = @import("howl_client");
@@ -15,6 +16,7 @@ const shared = @import("shared.zig");
 const focus_toggle_keysym: u32 = 0xffc3; // F6
 const grow_pane_keysym: u32 = 0xffc4; // F7
 const shrink_pane_keysym: u32 = 0xffc5; // F8
+const split_pane_keysym: u32 = 0xffc6; // F9
 
 pub const Command = union(enum) {
     ignored,
@@ -47,7 +49,7 @@ fn runFallible(
     endpoint_right: ?[]const u8,
     initial_mux: layout.Mux,
 ) !void {
-    const connection_count: usize = if (endpoint_right != null) 2 else 1;
+    var connection_count: usize = if (endpoint_right != null) 2 else 1;
     var connections: [2]?client.Connection = .{ null, null };
     var initialized_count: usize = 0;
     defer {
@@ -79,6 +81,29 @@ fn runFallible(
     var window_focused = false;
     while (!boundary.shouldStop()) {
         var consumed = false;
+        if (boundary.takePaneEndpoint()) |offered| {
+            consumed = true;
+            if (connection_count != 1 or connections[1] != null)
+                return error.InputTopologyMismatch;
+            const previous = focusedConnectionIndex(
+                &mux,
+                pane_ids[0..connection_count],
+            ) orelse return error.InputTopologyMismatch;
+            connections[1] = try client.Connection.connect(allocator, offered.text());
+            initialized_count = 2;
+            const new_pane = try mux.splitFocused(.horizontal);
+            pane_ids[1] = new_pane;
+            connection_count = 2;
+            const next = focusedConnectionIndex(
+                &mux,
+                pane_ids[0..connection_count],
+            ) orelse return error.InputTopologyMismatch;
+            if (next != 1) return error.InputTopologyMismatch;
+            if (window_focused and previous != next) {
+                try deliverFocus(&connections[previous].?, false);
+                try deliverFocus(&connections[next].?, true);
+            }
+        }
         while (boundary.takeInput()) |event| {
             consumed = true;
             switch (event) {
@@ -94,7 +119,18 @@ fn runFallible(
                 },
                 .key => |key| {
                     const host_resize = if (connection_count == 2) hostResizeCommand(key) else null;
-                    if (connection_count == 2 and isFocusToggle(key)) {
+                    if (isSplitPane(key)) {
+                        if (key.state == .pressed and connection_count == 1) {
+                            const active = focusedConnectionIndex(
+                                &mux,
+                                pane_ids[0..connection_count],
+                            ) orelse return error.InputTopologyMismatch;
+                            try boundary.publishHostCommand(.{
+                                .kind = .split_horizontal,
+                                .pane = @intCast(active),
+                            });
+                        }
+                    } else if (connection_count == 2 and isFocusToggle(key)) {
                         if (key.state == .pressed) {
                             const previous = focusedConnectionIndex(
                                 &mux,
@@ -154,6 +190,10 @@ fn connectionIndexForPane(pane_ids: []const layout.PaneId, pane: layout.PaneId) 
 
 fn isFocusToggle(key: wayland.input.Key) bool {
     return @backingInt(key.keysym) == focus_toggle_keysym;
+}
+
+fn isSplitPane(key: wayland.input.Key) bool {
+    return @backingInt(key.keysym) == split_pane_keysym;
 }
 
 fn hostResizeCommand(key: wayland.input.Key) ?shared.HostCommandKind {
@@ -308,6 +348,12 @@ test "F6 is the exact host focus toggle key" {
     try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .pressed, "", .{})));
     try std.testing.expect(isFocusToggle(makeKey(focus_toggle_keysym, .released, "", .{})));
     try std.testing.expect(!isFocusToggle(makeKey(0xffc2, .pressed, "", .{})));
+}
+
+test "F9 is the exact host split key" {
+    try std.testing.expect(isSplitPane(makeKey(split_pane_keysym, .pressed, "", .{})));
+    try std.testing.expect(isSplitPane(makeKey(split_pane_keysym, .released, "", .{})));
+    try std.testing.expect(!isSplitPane(makeKey(shrink_pane_keysym, .pressed, "", .{})));
 }
 
 test "F7 and F8 are exact host divider commands" {

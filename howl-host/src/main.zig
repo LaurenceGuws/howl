@@ -28,16 +28,17 @@ pub fn main(init: std.process.Init) !void {
     var owned_session: ?session_process.SessionProcess = null;
     defer if (owned_session) |*session| session.deinit();
 
+    const runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR");
+    const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
     const owned_mode = argv.len == 2;
     if (owned_mode) {
-        const runtime_dir = init.environ_map.get("XDG_RUNTIME_DIR") orelse
-            return error.MissingRuntimeDirectory;
-        const shell = init.environ_map.get("SHELL") orelse "/bin/sh";
+        const owned_runtime_dir = runtime_dir orelse return error.MissingRuntimeDirectory;
         owned_session = try session_process.SessionProcess.launchSibling(
             init.gpa,
             init.io,
-            runtime_dir,
+            owned_runtime_dir,
             shell,
+            init.environ_map,
             24,
             80,
             1,
@@ -88,6 +89,9 @@ pub fn main(init: std.process.Init) !void {
         endpoint_right,
         font_path,
         mux,
+        runtime_dir,
+        shell,
+        init.environ_map,
     }) catch |failure| {
         boundary.requestStop(.render);
         input_thread.join();

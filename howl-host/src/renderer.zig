@@ -5,6 +5,7 @@ const c = @import("renderer_c");
 const client = @import("howl_client");
 const host_layout = @import("layout.zig");
 const shared = @import("shared.zig");
+const session_process = @import("session_process.zig");
 const terminal_scene = @import("terminal_scene.zig");
 const terminal_fast = @import("terminal_fast.zig");
 const howl_vk = @import("howl_vk");
@@ -75,8 +76,21 @@ pub fn run(
     endpoint_right: ?[]const u8,
     font_path: []const u8,
     mux: host_layout.Mux,
+    runtime_dir: ?[]const u8,
+    shell: []const u8,
+    environ_map: *const std.process.Environ.Map,
 ) void {
-    runFallible(boundary, allocator, endpoint, endpoint_right, font_path, mux) catch |failure| {
+    runFallible(
+        boundary,
+        allocator,
+        endpoint,
+        endpoint_right,
+        font_path,
+        mux,
+        runtime_dir,
+        shell,
+        environ_map,
+    ) catch |failure| {
         std.debug.print("Render failure: {s}\n", .{@errorName(failure)});
         boundary.requestStop(.render);
     };
@@ -90,10 +104,15 @@ fn runFallible(
     endpoint_right: ?[]const u8,
     font_path: []const u8,
     initial_mux: host_layout.Mux,
+    runtime_dir: ?[]const u8,
+    shell: []const u8,
+    environ_map: *const std.process.Environ.Map,
 ) !void {
     var mux = initial_mux;
     const feedback = try waitFeedback(boundary);
-    const scene_count: usize = if (endpoint_right != null) 2 else 1;
+    var scene_count: usize = if (endpoint_right != null) 2 else 1;
+    var spawned_session: ?session_process.SessionProcess = null;
+    defer if (spawned_session) |*session| session.deinit();
     var scenes: [2]?terminal_scene.Scene = .{ null, null };
     var initialized_scene_count: usize = 0;
     defer {
@@ -142,7 +161,6 @@ fn runFallible(
         &session_revisions,
         &projected_layout,
     );
-    const placements = geometry.placements;
     const surface_width = geometry.surface_width;
     const surface_height = geometry.surface_height;
     const workspace_rows = geometry.grid_rows;
@@ -225,7 +243,7 @@ fn runFallible(
     defer graphics.deinit(device, &gpu_bytes);
     var fast_gpus: [2]?terminal_fast.Gpu = .{ null, null };
     defer {
-        var gpu_index = scene_count;
+        var gpu_index = initialized_scene_count;
         while (gpu_index != 0) {
             gpu_index -= 1;
             if (fast_gpus[gpu_index]) |*value| value.deinit(device, &gpu_bytes);
@@ -233,7 +251,7 @@ fn runFallible(
     }
     var generic_contexts: [2]?surface.Context = .{ null, null };
     defer {
-        var context_index = scene_count;
+        var context_index = initialized_scene_count;
         while (context_index != 0) {
             context_index -= 1;
             if (generic_contexts[context_index]) |*value|
@@ -299,9 +317,9 @@ fn runFallible(
     var next_ready_start: usize = 0;
 
     var cancellations: [2]client.Cancellation = undefined;
-    var cancellation_count: usize = 0;
+    var cancellation_count = std.atomic.Value(usize).init(0);
     defer {
-        var cancellation_index = cancellation_count;
+        var cancellation_index = cancellation_count.load(.acquire);
         while (cancellation_index != 0) {
             cancellation_index -= 1;
             cancellations[cancellation_index].deinit();
@@ -309,12 +327,13 @@ fn runFallible(
     }
     for (0..scene_count) |scene_index| {
         cancellations[scene_index] = try scenes[scene_index].?.cancellation();
-        cancellation_count += 1;
+        cancellation_count.store(scene_index + 1, .release);
     }
     var watcher_done = std.atomic.Value(bool).init(false);
     const watcher = try std.Thread.spawn(.{}, watchStop, .{
         boundary,
-        cancellations[0..scene_count],
+        &cancellations,
+        &cancellation_count,
         &watcher_done,
     });
     defer {
@@ -376,7 +395,7 @@ fn runFallible(
                     fast_draw_storage[0] = .{
                         .gpu = &fast_gpus[0].?,
                         .frame = frame.terminal,
-                        .placement = fastPlacement(placements[0]),
+                        .placement = fastPlacement(projected_layout[0]),
                         .changed = changed[0],
                     };
                     fast_draw_count = 1;
@@ -387,7 +406,7 @@ fn runFallible(
             }
         } else {
             for (0..scene_count) |scene_index| {
-                const placement = surfacePlacement(placements[scene_index]);
+                const placement = surfacePlacement(projected_layout[scene_index]);
                 switch (prepared[scene_index].mode) {
                     .generic => |frame| {
                         generic_draw_count_total += 1;
@@ -432,7 +451,7 @@ fn runFallible(
                         fast_draw_storage[fast_draw_count] = .{
                             .gpu = &fast_gpus[scene_index].?,
                             .frame = frame.terminal,
-                            .placement = fastPlacement(placements[scene_index]),
+                            .placement = fastPlacement(projected_layout[scene_index]),
                             .changed = changed[scene_index],
                         };
                         fast_draw_count += 1;
@@ -535,24 +554,56 @@ fn runFallible(
                 changed[ready_index] = true;
                 try scenes[ready_index].?.arm(session_revisions[ready_index]);
             },
-            .command => |host_command| {
-                if (scene_count != 2) return error.HostCommandUnsupported;
-                try applyDuetGeometryCommand(
-                    host_command,
-                    &mux,
-                    &geometry_controls,
-                    &geometry_owned,
-                    &scenes,
-                    scene_count,
-                    &prepared,
-                    &session_revisions,
-                    &changed,
-                    workspace_rows,
-                    workspace_cols,
-                    cell_size.width,
-                    cell_size.height,
-                    &projected_layout,
-                );
+            .command => |host_command| switch (host_command.kind) {
+                .grow_focused, .shrink_focused => {
+                    if (scene_count != 2) continue;
+                    try applyDuetGeometryCommand(
+                        host_command,
+                        &mux,
+                        &geometry_controls,
+                        &geometry_owned,
+                        &scenes,
+                        scene_count,
+                        &prepared,
+                        &session_revisions,
+                        &changed,
+                        workspace_rows,
+                        workspace_cols,
+                        cell_size.width,
+                        cell_size.height,
+                        &projected_layout,
+                    );
+                },
+                .split_horizontal => {
+                    if (scene_count != 1) continue;
+                    try addHorizontalPane(
+                        allocator,
+                        boundary,
+                        runtime_dir orelse return error.MissingRuntimeDirectory,
+                        shell,
+                        environ_map,
+                        font_path,
+                        &spawned_session,
+                        &mux,
+                        &scenes,
+                        &initialized_scene_count,
+                        &geometry_controls,
+                        &geometry_control_count,
+                        &geometry_owned,
+                        &prepared,
+                        &session_revisions,
+                        &changed,
+                        &cancellations,
+                        &cancellation_count,
+                        &scene_count,
+                        &next_ready_start,
+                        workspace_rows,
+                        workspace_cols,
+                        cell_size.width,
+                        cell_size.height,
+                        &projected_layout,
+                    );
+                },
             },
         }
     }
@@ -576,7 +627,6 @@ const InitialGeometry = struct {
     surface_height: u16,
     grid_rows: u16,
     grid_cols: u16,
-    placements: []const host_layout.Placement,
 };
 
 fn establishInitialGeometry(
@@ -693,7 +743,6 @@ fn establishInitialGeometry(
         .surface_height = @intCast(surface_height_u32),
         .grid_rows = total_rows,
         .grid_cols = total_cols,
-        .placements = pixel_storage[0..grid.len],
     };
 }
 
@@ -748,6 +797,92 @@ fn surfacePlacement(value: host_layout.Placement) surface.Placement {
     };
 }
 
+fn addHorizontalPane(
+    allocator: std.mem.Allocator,
+    boundary: *shared.Boundary,
+    runtime_dir: []const u8,
+    shell: []const u8,
+    environ_map: *const std.process.Environ.Map,
+    font_path: []const u8,
+    spawned_session: *?session_process.SessionProcess,
+    mux: *host_layout.Mux,
+    scenes: *[2]?terminal_scene.Scene,
+    initialized_scene_count: *usize,
+    controls: *[2]?client.Connection,
+    geometry_control_count: *usize,
+    geometry_owned: *[2]bool,
+    prepared: *[2]terminal_scene.Prepared,
+    session_revisions: *[2]u64,
+    changed: *[2]bool,
+    cancellations: *[2]client.Cancellation,
+    cancellation_count: *std.atomic.Value(usize),
+    scene_count: *usize,
+    next_ready_start: *usize,
+    workspace_rows: u16,
+    workspace_cols: u16,
+    cell_width: u16,
+    cell_height: u16,
+    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
+) !void {
+    if (scene_count.* != 1 or spawned_session.* != null or
+        initialized_scene_count.* != 1 or geometry_control_count.* != 1 or
+        cancellation_count.load(.acquire) != 1)
+        return error.SplitStateMismatch;
+    if (runtime_dir.len == 0 or shell.len == 0 or workspace_rows == 0 or workspace_cols < 2)
+        return error.SplitStateMismatch;
+
+    spawned_session.* = try session_process.SessionProcess.launchSibling(
+        allocator,
+        boundary.runtimeIo(),
+        runtime_dir,
+        shell,
+        environ_map,
+        workspace_rows,
+        workspace_cols,
+        2,
+    );
+    const endpoint = spawned_session.*.?.endpoint;
+
+    scenes[1] = try terminal_scene.Scene.init(allocator, endpoint, font_path);
+    initialized_scene_count.* = 2;
+    controls[1] = try client.Connection.connect(allocator, endpoint);
+    geometry_control_count.* = 2;
+    prepared[1] = try scenes[1].?.prepare(0);
+    session_revisions[1] = prepared[1].session_revision;
+    scenes[1].?.discardPrepared(prepared[1]);
+    try scenes[1].?.arm(session_revisions[1]);
+
+    cancellations[1] = try scenes[1].?.cancellation();
+    cancellation_count.store(2, .release);
+
+    var candidate = mux.*;
+    const new_pane = try candidate.splitFocused(.horizontal);
+    if (candidate.focusedPane() != new_pane or candidate.paneCount() != 2)
+        return error.SplitStateMismatch;
+
+    const committed = try commitLiveGeometryCandidate(
+        candidate,
+        mux,
+        controls,
+        geometry_owned,
+        scenes,
+        2,
+        prepared,
+        session_revisions,
+        changed,
+        workspace_rows,
+        workspace_cols,
+        cell_width,
+        cell_height,
+        pixel_storage,
+    );
+    if (!committed) return error.SplitGeometryRejected;
+
+    scene_count.* = 2;
+    next_ready_start.* = 0;
+    try boundary.publishPaneEndpoint(endpoint);
+}
+
 fn applyDuetGeometryCommand(
     command: shared.HostCommand,
     mux: *host_layout.Mux,
@@ -781,12 +916,51 @@ fn applyDuetGeometryCommand(
     const cells: i32 = switch (command.kind) {
         .grow_focused => 1,
         .shrink_focused => -1,
+        .split_horizontal => return error.HostCommandUnsupported,
     };
     if (!(try candidate.resizeFocused(
         .{ .width = workspace_cols, .height = workspace_rows },
         cells,
     ))) return;
 
+    const committed = try commitLiveGeometryCandidate(
+        candidate,
+        mux,
+        controls,
+        geometry_owned,
+        scenes,
+        scene_count,
+        prepared,
+        session_revisions,
+        changed,
+        workspace_rows,
+        workspace_cols,
+        cell_width,
+        cell_height,
+        pixel_storage,
+    );
+    if (!committed) return;
+}
+
+fn commitLiveGeometryCandidate(
+    candidate: host_layout.Mux,
+    mux: *host_layout.Mux,
+    controls: *[2]?client.Connection,
+    geometry_owned: *[2]bool,
+    scenes: *[2]?terminal_scene.Scene,
+    scene_count: usize,
+    prepared: *[2]terminal_scene.Prepared,
+    session_revisions: *[2]u64,
+    changed: *[2]bool,
+    workspace_rows: u16,
+    workspace_cols: u16,
+    cell_width: u16,
+    cell_height: u16,
+    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
+) !bool {
+    if (scene_count == 0 or scene_count > scenes.len or
+        workspace_rows == 0 or workspace_cols == 0 or cell_width == 0 or cell_height == 0)
+        return error.DuetGeometry;
     var grid_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
     const grid = try candidate.activeLayout(
         .{ .width = workspace_cols, .height = workspace_rows },
@@ -833,7 +1007,7 @@ fn applyDuetGeometryCommand(
                     prepared,
                     changed,
                 );
-                return;
+                return false;
             }
             return failure;
         };
@@ -894,7 +1068,7 @@ fn applyDuetGeometryCommand(
     }
     @memcpy(pixel_storage[0..grid.len], candidate_pixels[0..grid.len]);
     mux.* = candidate;
-    return;
+    return true;
 }
 
 fn settleRolledBackGeometry(
@@ -970,7 +1144,8 @@ fn waitDuetReady(
 
 fn watchStop(
     boundary: *shared.Boundary,
-    cancellations: []const client.Cancellation,
+    cancellations: *const [2]client.Cancellation,
+    cancellation_count: *const std.atomic.Value(usize),
     done: *std.atomic.Value(bool),
 ) void {
     var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
@@ -984,7 +1159,8 @@ fn watchStop(
             return;
         }
         if (boundary.shouldStop()) {
-            for (cancellations) |cancellation|
+            const count = @min(cancellation_count.load(.acquire), cancellations.len);
+            for (cancellations[0..count]) |cancellation|
                 cancellation.cancel() catch boundary.requestStop(.render);
             return;
         }
