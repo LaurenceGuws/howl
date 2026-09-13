@@ -536,6 +536,13 @@ pub const Context = struct {
         return recording;
     }
 
+    /// Forgets only atlas initialization state. The next `stage`/prelude pair
+    /// rewrites both complete atlases before drawing; physical owners remain.
+    pub fn invalidateAtlases(self: *Context) void {
+        self.atlas_initialized = false;
+        self.image_atlas_initialized = false;
+    }
+
     /// Commits atlas layout state after the caller has observed GPU completion.
     pub fn complete(self: *Context, recording: Recording) void {
         if (recording.alpha_initialized) self.atlas_initialized = true;
@@ -1789,6 +1796,10 @@ test "clear-only plan records pending atlas state and remains reusable" {
     const first = try context.preflightRecording(plan, 64, 64, 64, 64);
     try std.testing.expect(!context.atlas_initialized and !context.image_atlas_initialized);
     try std.testing.expect(first.alpha_initialized and first.image_initialized);
+    context.complete(first);
+    try std.testing.expect(context.atlas_initialized and context.image_atlas_initialized);
+    context.invalidateAtlases();
+    try std.testing.expect(!context.atlas_initialized and !context.image_atlas_initialized);
     context.complete(first);
     try std.testing.expect(context.atlas_initialized and context.image_atlas_initialized);
     const replacement = try context.preflightRecording(plan, 64, 64, 64, 64);

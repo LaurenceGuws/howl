@@ -17,6 +17,7 @@ pub const HostCommandKind = enum {
     grow_focused,
     shrink_focused,
     split_horizontal,
+    close_created,
 };
 
 pub const HostCommand = struct {
@@ -123,6 +124,7 @@ pub const Boundary = struct {
     host_command_head: u8 = 0,
     host_command_count: u8 = 0,
     pane_endpoint: ?PaneEndpoint = null,
+    pane_retired_pending: bool = false,
     stop_requested: bool = false,
     window_stopped: bool = false,
     render_stopped: bool = false,
@@ -279,6 +281,31 @@ pub const Boundary = struct {
         const result = self.pane_endpoint orelse return null;
         self.pane_endpoint = null;
         return result;
+    }
+
+    /// Publishes the committed retirement of the host-created second pane.
+    pub fn publishPaneRetired(self: *Boundary) error{ Stopping, PaneRetiredPending }!void {
+        self.mutex.lockUncancelable(self.io);
+        if (self.stop_requested) {
+            self.mutex.unlock(self.io);
+            return error.Stopping;
+        }
+        if (self.pane_retired_pending) {
+            self.mutex.unlock(self.io);
+            return error.PaneRetiredPending;
+        }
+        self.pane_retired_pending = true;
+        self.mutex.unlock(self.io);
+        signal(self.input_fd);
+    }
+
+    /// Consumes one committed dynamic-pane retirement notice.
+    pub fn takePaneRetired(self: *Boundary) bool {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (!self.pane_retired_pending) return false;
+        self.pane_retired_pending = false;
+        return true;
     }
 
     /// Appends one exact copied keyboard/focus occurrence for Input.

@@ -20,6 +20,44 @@ const empty_plan = surface.Plan{
     .atlas_changed = false,
 };
 
+const CancellationRegistry = struct {
+    io: std.Io,
+    mutex: std.Io.Mutex = .init,
+    slots: [2]?client.Cancellation = .{ null, null },
+
+    fn set(self: *CancellationRegistry, index: usize, cancellation: client.Cancellation) !void {
+        if (index >= self.slots.len) return error.CancellationSlot;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.slots[index] != null) return error.CancellationSlot;
+        self.slots[index] = cancellation;
+    }
+
+    fn clear(self: *CancellationRegistry, index: usize) void {
+        if (index >= self.slots.len) return;
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        if (self.slots[index]) |*value| value.deinit();
+        self.slots[index] = null;
+    }
+
+    fn cancelAll(self: *CancellationRegistry, boundary: *shared.Boundary) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (&self.slots) |*slot| if (slot.*) |value|
+            value.cancel() catch boundary.requestStop(.render);
+    }
+
+    fn deinit(self: *CancellationRegistry) void {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        for (&self.slots) |*slot| {
+            if (slot.*) |*value| value.deinit();
+            slot.* = null;
+        }
+    }
+};
+
 const FastDraw = struct {
     gpu: *terminal_fast.Gpu,
     frame: terminal_fast.Prepared,
@@ -316,24 +354,14 @@ fn runFallible(
     var observations_armed = false;
     var next_ready_start: usize = 0;
 
-    var cancellations: [2]client.Cancellation = undefined;
-    var cancellation_count = std.atomic.Value(usize).init(0);
-    defer {
-        var cancellation_index = cancellation_count.load(.acquire);
-        while (cancellation_index != 0) {
-            cancellation_index -= 1;
-            cancellations[cancellation_index].deinit();
-        }
-    }
-    for (0..scene_count) |scene_index| {
-        cancellations[scene_index] = try scenes[scene_index].?.cancellation();
-        cancellation_count.store(scene_index + 1, .release);
-    }
+    var cancellation_registry = CancellationRegistry{ .io = boundary.runtimeIo() };
+    defer cancellation_registry.deinit();
+    for (0..scene_count) |scene_index|
+        try cancellation_registry.set(scene_index, try scenes[scene_index].?.cancellation());
     var watcher_done = std.atomic.Value(bool).init(false);
     const watcher = try std.Thread.spawn(.{}, watchStop, .{
         boundary,
-        &cancellations,
-        &cancellation_count,
+        &cancellation_registry,
         &watcher_done,
     });
     defer {
@@ -593,10 +621,39 @@ fn runFallible(
                         &prepared,
                         &session_revisions,
                         &changed,
-                        &cancellations,
-                        &cancellation_count,
+                        &cancellation_registry,
                         &scene_count,
                         &next_ready_start,
+                        workspace_rows,
+                        workspace_cols,
+                        cell_size.width,
+                        cell_size.height,
+                        &projected_layout,
+                    );
+                },
+                .close_created => {
+                    if (scene_count != 2 or spawned_session == null or host_command.pane != 1)
+                        continue;
+                    try removeCreatedPane(
+                        boundary,
+                        &spawned_session,
+                        &mux,
+                        &scenes,
+                        &initialized_scene_count,
+                        &geometry_controls,
+                        &geometry_control_count,
+                        &geometry_owned,
+                        &prepared,
+                        &session_revisions,
+                        &changed,
+                        &fast_gpus,
+                        &generic_contexts,
+                        &graphics,
+                        &cancellation_registry,
+                        &scene_count,
+                        &next_ready_start,
+                        device,
+                        &gpu_bytes,
                         workspace_rows,
                         workspace_cols,
                         cell_size.width,
@@ -797,6 +854,93 @@ fn surfacePlacement(value: host_layout.Placement) surface.Placement {
     };
 }
 
+fn removeCreatedPane(
+    boundary: *shared.Boundary,
+    spawned_session: *?session_process.SessionProcess,
+    mux: *host_layout.Mux,
+    scenes: *[2]?terminal_scene.Scene,
+    initialized_scene_count: *usize,
+    controls: *[2]?client.Connection,
+    geometry_control_count: *usize,
+    geometry_owned: *[2]bool,
+    prepared: *[2]terminal_scene.Prepared,
+    session_revisions: *[2]u64,
+    changed: *[2]bool,
+    fast_gpus: *[2]?terminal_fast.Gpu,
+    generic_contexts: *[2]?surface.Context,
+    primary_graphics: *surface.Context,
+    cancellations: *CancellationRegistry,
+    scene_count: *usize,
+    next_ready_start: *usize,
+    device: vk.VkDevice,
+    gpu_bytes: *u64,
+    workspace_rows: u16,
+    workspace_cols: u16,
+    cell_width: u16,
+    cell_height: u16,
+    pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
+) !void {
+    if (scene_count.* != 2 or spawned_session.* == null or
+        initialized_scene_count.* != 2 or geometry_control_count.* != 2)
+        return error.CloseStateMismatch;
+
+    var candidate = mux.*;
+    var placement_storage: [host_layout.max_panes_per_tab]host_layout.Placement = undefined;
+    const current = try candidate.activeLayout(
+        .{ .width = workspace_cols, .height = workspace_rows },
+        &placement_storage,
+    );
+    if (current.len != 2) return error.CloseStateMismatch;
+    const target = current[1].pane;
+    const focus_changed = candidate.focusPane(target) catch return error.CloseStateMismatch;
+    if (!focus_changed and candidate.focusedPane() != target)
+        return error.CloseStateMismatch;
+    const retired = try candidate.closeFocused();
+    if (retired != target or candidate.paneCount() != 1)
+        return error.CloseStateMismatch;
+
+    const committed = try commitLiveGeometryCandidate(
+        candidate,
+        mux,
+        controls,
+        geometry_owned,
+        scenes,
+        1,
+        prepared,
+        session_revisions,
+        changed,
+        workspace_rows,
+        workspace_cols,
+        cell_width,
+        cell_height,
+        pixel_storage,
+    );
+    if (!committed) return;
+
+    if (fast_gpus[1]) |*value| value.deinit(device, gpu_bytes);
+    fast_gpus[1] = null;
+    for (generic_contexts) |*slot| {
+        if (slot.*) |*value| value.deinit(device, gpu_bytes);
+        slot.* = null;
+    }
+    primary_graphics.invalidateAtlases();
+    cancellations.clear(1);
+    controls[1].?.deinit();
+    controls[1] = null;
+    geometry_control_count.* = 1;
+    geometry_owned[1] = false;
+    scenes[1].?.deinit();
+    scenes[1] = null;
+    initialized_scene_count.* = 1;
+    session_revisions[1] = 0;
+    changed[1] = false;
+    spawned_session.*.?.deinit();
+    spawned_session.* = null;
+    scene_count.* = 1;
+    next_ready_start.* = 0;
+    try boundary.publishPaneRetired();
+}
+
 fn addHorizontalPane(
     allocator: std.mem.Allocator,
     boundary: *shared.Boundary,
@@ -814,8 +958,7 @@ fn addHorizontalPane(
     prepared: *[2]terminal_scene.Prepared,
     session_revisions: *[2]u64,
     changed: *[2]bool,
-    cancellations: *[2]client.Cancellation,
-    cancellation_count: *std.atomic.Value(usize),
+    cancellation_registry: *CancellationRegistry,
     scene_count: *usize,
     next_ready_start: *usize,
     workspace_rows: u16,
@@ -825,8 +968,7 @@ fn addHorizontalPane(
     pixel_storage: *[host_layout.max_panes_per_tab]host_layout.Placement,
 ) !void {
     if (scene_count.* != 1 or spawned_session.* != null or
-        initialized_scene_count.* != 1 or geometry_control_count.* != 1 or
-        cancellation_count.load(.acquire) != 1)
+        initialized_scene_count.* != 1 or geometry_control_count.* != 1)
         return error.SplitStateMismatch;
     if (runtime_dir.len == 0 or shell.len == 0 or workspace_rows == 0 or workspace_cols < 2)
         return error.SplitStateMismatch;
@@ -852,8 +994,7 @@ fn addHorizontalPane(
     scenes[1].?.discardPrepared(prepared[1]);
     try scenes[1].?.arm(session_revisions[1]);
 
-    cancellations[1] = try scenes[1].?.cancellation();
-    cancellation_count.store(2, .release);
+    try cancellation_registry.set(1, try scenes[1].?.cancellation());
 
     var candidate = mux.*;
     const new_pane = try candidate.splitFocused(.horizontal);
@@ -916,7 +1057,7 @@ fn applyDuetGeometryCommand(
     const cells: i32 = switch (command.kind) {
         .grow_focused => 1,
         .shrink_focused => -1,
-        .split_horizontal => return error.HostCommandUnsupported,
+        .split_horizontal, .close_created => return error.HostCommandUnsupported,
     };
     if (!(try candidate.resizeFocused(
         .{ .width = workspace_cols, .height = workspace_rows },
@@ -1144,8 +1285,7 @@ fn waitDuetReady(
 
 fn watchStop(
     boundary: *shared.Boundary,
-    cancellations: *const [2]client.Cancellation,
-    cancellation_count: *const std.atomic.Value(usize),
+    cancellations: *CancellationRegistry,
     done: *std.atomic.Value(bool),
 ) void {
     var descriptor = c.pollfd{ .fd = boundary.renderFd(), .events = c.POLLIN, .revents = 0 };
@@ -1159,9 +1299,7 @@ fn watchStop(
             return;
         }
         if (boundary.shouldStop()) {
-            const count = @min(cancellation_count.load(.acquire), cancellations.len);
-            for (cancellations[0..count]) |cancellation|
-                cancellation.cancel() catch boundary.requestStop(.render);
+            cancellations.cancelAll(boundary);
             return;
         }
         boundary.drainRenderWake() catch {
