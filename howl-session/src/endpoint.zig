@@ -28,7 +28,11 @@ const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 // cluster of tiny PTY writes. Wait briefly for that microburst to go quiet so
 // observers see the completed cut rather than arbitrary read boundaries.
 const burst_publication_quiet_ns: u64 = 1 * std.time.ns_per_ms;
-const burst_publication_max_ns: u64 = 8 * std.time.ns_per_ms;
+// In-place text/cursor updates may publish fast enough to feed high-refresh
+// native observers. Once a burst mutates the viewport, retain the wider bound
+// so scrolling bulk output stays coalesced.
+const burst_publication_fast_max_ns: u64 = 2 * std.time.ns_per_ms;
+const burst_publication_scroll_max_ns: u64 = 8 * std.time.ns_per_ms;
 // Snapshot graphics resources are fetched in a second request after their
 // manifest is observed. One client therefore retains exactly the resources
 // named by its most recently delivered snapshot until that client advances to
@@ -39,22 +43,31 @@ const snapshot_image_entries: usize = howl.maximum_images;
 const BurstPublicationGate = struct {
     started_ns: ?u64 = null,
     last_change_ns: ?u64 = null,
+    max_ns: u64 = 0,
 
-    fn note(self: *BurstPublicationGate, now_ns: u64) void {
-        if (self.started_ns == null) self.started_ns = now_ns;
+    fn note(self: *BurstPublicationGate, now_ns: u64, max_ns: u64) void {
+        std.debug.assert(max_ns >= burst_publication_quiet_ns);
+        if (self.started_ns == null) {
+            self.started_ns = now_ns;
+            self.max_ns = max_ns;
+        } else {
+            self.max_ns = @max(self.max_ns, max_ns);
+        }
         self.last_change_ns = now_ns;
     }
 
     fn reset(self: *BurstPublicationGate) void {
         self.started_ns = null;
         self.last_change_ns = null;
+        self.max_ns = 0;
     }
 
     fn ready(self: *BurstPublicationGate, now_ns: u64) bool {
         const started_ns = self.started_ns orelse return false;
         const last_change_ns = self.last_change_ns orelse return false;
+        std.debug.assert(self.max_ns != 0);
         if (now_ns -| last_change_ns < burst_publication_quiet_ns and
-            now_ns -| started_ns < burst_publication_max_ns)
+            now_ns -| started_ns < self.max_ns)
             return false;
         self.reset();
         return true;
@@ -64,14 +77,15 @@ const BurstPublicationGate = struct {
         const started_ns = self.started_ns orelse return null;
         const last_change_ns = self.last_change_ns orelse return null;
         const quiet_remaining = burst_publication_quiet_ns -| (now_ns -| last_change_ns);
-        const max_remaining = burst_publication_max_ns -| (now_ns -| started_ns);
+        std.debug.assert(self.max_ns != 0);
+        const max_remaining = self.max_ns -| (now_ns -| started_ns);
         const remaining = @min(quiet_remaining, max_remaining);
         if (remaining == 0) return 0;
         return @intCast((remaining + std.time.ns_per_ms - 1) / std.time.ns_per_ms);
     }
 };
 
-const TerminalPublication = enum { none, burst, immediate };
+const TerminalPublication = enum { none, burst_fast, burst_scroll, immediate };
 
 fn boundedPollTimeout(timeout_ms: i32, animation_wait_ms: ?u32, publication_wait_ms: ?u32) i32 {
     var result = if (timeout_ms < 0 or timeout_ms > lifecycle_poll_ms)
@@ -811,6 +825,7 @@ const Server = struct {
         self: *Server,
         terminal_changed: bool,
         burst_eligible: bool,
+        viewport_changed: bool,
         now_ns: u64,
     ) TerminalPublication {
         if (!howl.synchronizedOutput(self.session)) {
@@ -820,7 +835,8 @@ const Server = struct {
             self.synchronized_output_pending = false;
             if (release_pending) return .immediate;
             if (!terminal_changed) return .none;
-            return if (burst_eligible) .burst else .immediate;
+            if (!burst_eligible) return .immediate;
+            return if (viewport_changed) .burst_scroll else .burst_fast;
         }
 
         if (self.synchronized_output_timed_out)
@@ -857,9 +873,15 @@ const Server = struct {
         if (terminal_changed) self.terminal_revision = current_terminal_revision;
 
         var publish = false;
-        switch (self.terminalPublication(terminal_changed, burst_eligible, now_ns)) {
+        switch (self.terminalPublication(
+            terminal_changed,
+            burst_eligible,
+            result.viewport_changed,
+            now_ns,
+        )) {
             .none => {},
-            .burst => self.burst_publication.note(now_ns),
+            .burst_fast => self.burst_publication.note(now_ns, burst_publication_fast_max_ns),
+            .burst_scroll => self.burst_publication.note(now_ns, burst_publication_scroll_max_ns),
             .immediate => {
                 self.burst_publication.reset();
                 publish = true;
@@ -2022,24 +2044,32 @@ test "endpoint poll timeout follows animation and publication boundaries" {
     try std.testing.expectEqual(@as(i32, 0), boundedPollTimeout(5, null, 0));
 }
 
-test "burst publication waits for quiet and has a hard ceiling" {
-    var gate = BurstPublicationGate{};
+test "burst publication keeps fast and scrolling ceilings distinct" {
     const start: u64 = 10 * std.time.ns_per_ms;
-    gate.note(start);
-    try std.testing.expect(!gate.ready(start));
-    try std.testing.expectEqual(@as(?u32, 1), gate.waitMs(start));
-    try std.testing.expect(!gate.ready(start + burst_publication_quiet_ns - 1));
-    try std.testing.expect(gate.ready(start + burst_publication_quiet_ns));
-    try std.testing.expectEqual(@as(?u32, null), gate.waitMs(start + burst_publication_quiet_ns));
 
-    gate.note(start);
-    gate.note(start + 7 * std.time.ns_per_ms);
-    try std.testing.expect(!gate.ready(start + 7 * std.time.ns_per_ms));
-    try std.testing.expectEqual(@as(?u32, 1), gate.waitMs(start + 7 * std.time.ns_per_ms));
-    gate.note(start + burst_publication_max_ns - 1);
-    try std.testing.expect(gate.ready(start + burst_publication_max_ns));
-    try std.testing.expectEqual(@as(?u64, null), gate.started_ns);
-    try std.testing.expectEqual(@as(?u64, null), gate.last_change_ns);
+    var fast = BurstPublicationGate{};
+    fast.note(start, burst_publication_fast_max_ns);
+    try std.testing.expect(!fast.ready(start));
+    try std.testing.expectEqual(@as(?u32, 1), fast.waitMs(start));
+    fast.note(start + burst_publication_fast_max_ns - 1, burst_publication_fast_max_ns);
+    try std.testing.expect(!fast.ready(start + burst_publication_fast_max_ns - 1));
+    try std.testing.expect(fast.ready(start + burst_publication_fast_max_ns));
+
+    var scrolling = BurstPublicationGate{};
+    scrolling.note(start, burst_publication_scroll_max_ns);
+    scrolling.note(start + burst_publication_scroll_max_ns - 1, burst_publication_scroll_max_ns);
+    try std.testing.expect(!scrolling.ready(start + burst_publication_scroll_max_ns - 1));
+    try std.testing.expect(scrolling.ready(start + burst_publication_scroll_max_ns));
+
+    var promoted = BurstPublicationGate{};
+    promoted.note(start, burst_publication_fast_max_ns);
+    promoted.note(start + burst_publication_fast_max_ns - 1, burst_publication_scroll_max_ns);
+    try std.testing.expect(!promoted.ready(start + burst_publication_fast_max_ns));
+    try std.testing.expectEqual(burst_publication_scroll_max_ns, promoted.max_ns);
+    promoted.reset();
+    try std.testing.expectEqual(@as(?u64, null), promoted.started_ns);
+    try std.testing.expectEqual(@as(?u64, null), promoted.last_change_ns);
+    try std.testing.expectEqual(@as(u64, 0), promoted.max_ns);
 }
 
 test "interaction state exposes invisible input modes" {
@@ -2236,6 +2266,7 @@ test "synchronized output timeout fails observer publication open" {
 
     const idle: howl.Service = .{
         .changed = false,
+        .viewport_changed = false,
         .stream_closed = server.stream_closed,
         .child_exit = null,
         .write_pending = server.pty_write_pending,

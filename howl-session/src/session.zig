@@ -146,6 +146,8 @@ pub const CopyRowError = error{ InvalidRow, OutputTooSmall };
 /// Summarizes one bounded service turn without exposing PTY or VT ownership.
 pub const Service = struct {
     changed: bool,
+    /// True when this service turn changed visible-row or scroll/history state.
+    viewport_changed: bool,
     stream_closed: bool,
     child_exit: ?ChildExit,
     write_pending: bool,
@@ -480,12 +482,13 @@ const State = struct {
         consequence_policy: ConsequencePolicy,
     ) ServiceError!Service {
         const revision_before = self.terminal.semanticSequence();
+        var viewport_changed = false;
         if (consequence_policy == .headless) try self.drainConsequences();
         if (writable and self.writes.count != 0) try flushWrites(&self.transport, &self.writes);
         collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
-            error.WriteQueueFull => return self.serviceResult(revision_before, timestamp_ns),
+            error.WriteQueueFull => return self.serviceResult(revision_before, timestamp_ns, viewport_changed),
         };
-        try self.processBuffered(timestamp_ns, consequence_policy);
+        try self.processBuffered(timestamp_ns, consequence_policy, &viewport_changed);
         if (self.read_start == self.read_end and readable and !self.stream_closed) {
             const count = self.transport.read(&self.reads) catch |failure| switch (failure) {
                 error.Interrupted, error.WouldBlock => 0,
@@ -497,19 +500,20 @@ const State = struct {
             };
             self.read_start = 0;
             self.read_end = count;
-            try self.processBuffered(timestamp_ns, consequence_policy);
+            try self.processBuffered(timestamp_ns, consequence_policy, &viewport_changed);
         }
         switch (try self.transport.observeChild()) {
             .running => {},
             .exited => |value| self.child_exit = value,
         }
-        return self.serviceResult(revision_before, timestamp_ns);
+        return self.serviceResult(revision_before, timestamp_ns, viewport_changed);
     }
 
     fn processBuffered(
         self: *State,
         timestamp_ns: u64,
         consequence_policy: ConsequencePolicy,
+        viewport_changed: *bool,
     ) ServiceError!void {
         while (self.read_start < self.read_end) {
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
@@ -522,6 +526,7 @@ const State = struct {
             std.debug.assert(progress.consumed > 0);
             std.debug.assert(progress.consumed <= self.read_end - self.read_start);
             self.read_start += progress.consumed;
+            viewport_changed.* = viewport_changed.* or progress.summary.mutations.viewport;
             std.debug.assert(!progress.summary.titleChanged() or progress.summary.stateChanged());
             if (consequence_policy == .headless) try self.drainConsequences();
             collectReplies(&self.terminal, &self.writes) catch |failure| switch (failure) {
@@ -575,10 +580,16 @@ const State = struct {
         std.debug.assert(self.terminal.consequenceHead() == null);
     }
 
-    fn serviceResult(self: *State, revision_before: u64, timestamp_ns: u64) Service {
+    fn serviceResult(
+        self: *State,
+        revision_before: u64,
+        timestamp_ns: u64,
+        viewport_changed: bool,
+    ) Service {
         const animation = self.terminal.serviceAnimations(timestamp_ns);
         return .{
             .changed = self.terminal.semanticSequence() != revision_before,
+            .viewport_changed = viewport_changed,
             .stream_closed = self.stream_closed,
             .child_exit = self.child_exit,
             .write_pending = self.writes.count != 0,
@@ -697,6 +708,32 @@ test "headless session drains host consequences without an observer" {
     try std.testing.expectEqual(before.columns, after.columns);
     try std.testing.expect(state.terminal.consequenceHead() == null);
     try std.testing.expect(std.mem.indexOf(u8, state.terminal.replyBytes(), "default") != null);
+}
+
+test "service separates in-place text from viewport mutation" {
+    const session = try init(std.testing.allocator, std.testing.environ, .{
+        .shell = "/bin/sh",
+        .command = "sleep 30",
+        .rows = 2,
+        .columns = 4,
+        .history_rows = 8,
+    });
+    defer deinit(session);
+    const state = stateMut(session);
+
+    state.reads[0] = 'A';
+    state.read_start = 0;
+    state.read_end = 1;
+    const text = try state.service(false, false, 1, .headless);
+    try std.testing.expect(text.changed);
+    try std.testing.expect(!text.viewport_changed);
+
+    @memcpy(state.reads[0..2], "\n\n");
+    state.read_start = 0;
+    state.read_end = 2;
+    const scroll = try state.service(false, false, 2, .headless);
+    try std.testing.expect(scroll.changed);
+    try std.testing.expect(scroll.viewport_changed);
 }
 
 test "session services terminal animation without PTY readiness" {
