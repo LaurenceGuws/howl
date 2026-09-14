@@ -234,10 +234,10 @@ pub const Scene = struct {
         return self.connection.cancellation();
     }
 
-    /// Arms one raw long-poll observation without receiving it yet.
+    /// Arms one revision-relative delta observation without receiving it yet.
     pub fn arm(self: *Scene, after_revision: u64) !void {
         if (self.observation_pending) return error.ObservationPending;
-        try client.rich.sendRawRequest(&self.connection, after_revision, 0);
+        try self.raw_cache.sendDeltaRequest(&self.connection, after_revision, 0);
         self.observation_pending = true;
     }
 
@@ -246,7 +246,7 @@ pub const Scene = struct {
         return self.connection.readinessFd();
     }
 
-    /// Receives and projects exactly one previously armed raw observation.
+    /// Receives and projects exactly one previously armed delta/raw-fallback observation.
     pub fn receivePrepared(self: *Scene) !Prepared {
         if (!self.observation_pending) return error.ObservationNotPending;
         const rich = try self.raw_cache.receive(&self.connection);
