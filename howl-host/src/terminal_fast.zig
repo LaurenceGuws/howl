@@ -79,9 +79,9 @@ pub const Adapter = struct {
     tile_pixels: []u8,
     glyph_ready: [ascii_count]bool = @splat(false),
     glyphs: [ascii_count]CachedGlyph = undefined,
-    slots: [ascii_count]u16 = undefined,
-    rasters: [ascii_count]backend.GlyphRaster = undefined,
-    overlay_uploads: [ascii_count]surface.Upload = undefined,
+    slots: []u16,
+    rasters: []backend.GlyphRaster,
+    overlay_uploads: []surface.Upload,
 
     pub fn init(allocator: std.mem.Allocator, fonts: *text.FontSet) !Adapter {
         const metrics = fonts.metrics();
@@ -101,7 +101,14 @@ pub const Adapter = struct {
             u8,
             try std.math.mul(usize, ascii_count, tile_bytes),
         );
+        errdefer allocator.free(tile_pixels);
         @memset(tile_pixels, 0);
+        const slots = try allocator.alloc(u16, ascii_count);
+        errdefer allocator.free(slots);
+        const rasters = try allocator.alloc(backend.GlyphRaster, ascii_count);
+        errdefer allocator.free(rasters);
+        const overlay_uploads = try allocator.alloc(surface.Upload, ascii_count);
+        errdefer allocator.free(overlay_uploads);
         return .{
             .allocator = allocator,
             .fonts = fonts,
@@ -110,6 +117,9 @@ pub const Adapter = struct {
             .instances = &.{},
             .overlay_commands = &.{},
             .tile_pixels = tile_pixels,
+            .slots = slots,
+            .rasters = rasters,
+            .overlay_uploads = overlay_uploads,
         };
     }
 
@@ -123,6 +133,9 @@ pub const Adapter = struct {
         }
         if (self.overlay_commands.len != 0) self.allocator.free(self.overlay_commands);
         if (self.instances.len != 0) self.allocator.free(self.instances);
+        self.allocator.free(self.overlay_uploads);
+        self.allocator.free(self.rasters);
+        self.allocator.free(self.slots);
         self.allocator.free(self.tile_pixels);
         self.shape.deinit();
         self.* = undefined;
@@ -685,6 +698,39 @@ test "dense terminal adapter retains ordinary ASCII and overlays fixture overhan
         },
         else => return error.ExpectedOverhangOverlay,
     }
+}
+
+test "prepared dense borrows survive adapter value movement" {
+    const fonts = try text.FontSet.init(std.testing.allocator, .{
+        .primary = @import("test_fonts").primary_font,
+        .size = .{ .pixels = 16 },
+    });
+    defer fonts.deinit();
+    var original = try Adapter.init(std.testing.allocator, fonts);
+    const metrics = fonts.metrics();
+
+    var a_scalar = [_]u32{'A'};
+    var j_scalar = [_]u32{'J'};
+    var cells = [_]client.rich.Cell{ testCell(&a_scalar), testCell(&j_scalar) };
+    var rows = [_]client.rich.Row{.{ .wrapped = false, .line_geometry = 0, .cells = &cells }};
+    var snapshot = testSnapshot(&rows, 2, 19, false);
+    const width = try std.math.mul(u16, metrics.advance_width, 2);
+    const prepared = (try original.prepare(&snapshot, width, metrics.line_height)) orelse
+        return error.ExpectedDenseAdmission;
+    try std.testing.expectEqual(@as(usize, 1), prepared.slots.len);
+    try std.testing.expectEqual(@as(usize, 1), prepared.rasters.len);
+    try std.testing.expectEqual(@as(usize, 1), prepared.overlay_frame.uploads.len);
+
+    const expected_slot = prepared.slots[0];
+    const expected_raster_slot = prepared.rasters[0].slot;
+    const expected_upload_resource = prepared.overlay_frame.uploads[0].resource;
+    var moved = original;
+    original = undefined;
+    defer moved.deinit();
+
+    try std.testing.expectEqual(expected_slot, prepared.slots[0]);
+    try std.testing.expectEqual(expected_raster_slot, prepared.rasters[0].slot);
+    try std.testing.expectEqual(expected_upload_resource, prepared.overlay_frame.uploads[0].resource);
 }
 
 test "dense terminal adapter refuses semantics it cannot reproduce exactly" {
