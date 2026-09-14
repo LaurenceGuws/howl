@@ -253,6 +253,7 @@ final class _HowlTerminalState extends State<HowlTerminal> {
       observer = await NativeHostObserver.createPlatform(
         endpoint: widget.endpoint.toString(),
         presentation: nativePresentation,
+        armNextLiveObservation: true,
       );
       if (presentationChanged()) throw const _PresentationRestart();
       _presentationMaximumRows = observer.maximumRows;

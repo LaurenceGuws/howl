@@ -85,6 +85,7 @@ const PendingImage = struct {
 const Host = struct {
     allocator: std.mem.Allocator,
     connection: client.Connection,
+    raw_cache: client.rich.RawCache,
     cell_size: canvas.Size,
     fonts: *text.FontSet,
     content: *terminal.Content,
@@ -101,6 +102,7 @@ const Host = struct {
     pending_image: ?PendingImage = null,
     live_observe_pipeline: bool = false,
     armed_live_after_revision: ?u64 = null,
+    live_resync_required: bool = false,
     observation_scratch: []u8,
 };
 
@@ -271,6 +273,8 @@ pub export fn howl_native_host_create(
     const allocator = std.heap.c_allocator;
     var connection = client.Connection.connect(allocator, endpoint_ptr[0..endpoint_len]) catch return null;
     errdefer connection.deinit();
+    var raw_cache = client.rich.RawCache.init(allocator);
+    errdefer raw_cache.deinit();
     var fallback_storage: [2][]const u8 = undefined;
     var fallback_count: usize = 0;
     if (fallback_len != 0) {
@@ -314,6 +318,7 @@ pub export fn howl_native_host_create(
     host.* = .{
         .allocator = allocator,
         .connection = connection,
+        .raw_cache = raw_cache,
         .cell_size = .{ .width = cell_width, .height = cell_height },
         .fonts = fonts,
         .content = content,
@@ -519,6 +524,7 @@ pub export fn howl_native_host_destroy(raw: ?*HostHandle) void {
     host.composer.deinit();
     terminal.deinitContent(host.content);
     host.fonts.deinit();
+    host.raw_cache.deinit();
     host.connection.deinit();
     host.* = undefined;
     allocator.free(observation_scratch);
@@ -538,6 +544,7 @@ pub export fn howl_native_host_set_live_observe_pipeline(
     const raw_host = raw orelse return 2;
     const host: *Host = @ptrCast(@alignCast(raw_host));
     if (host.armed_live_after_revision != null) return 4;
+    if (host.live_resync_required) return 4;
     host.live_observe_pipeline = enabled == 1;
     return 0;
 }
@@ -584,19 +591,38 @@ fn receiveRich(
     after_revision: u64,
     history_offset: u32,
 ) !client.rich.Snapshot {
-    if (host.armed_live_after_revision) |armed_after| {
-        if (!host.live_observe_pipeline or history_offset != 0 or after_revision != armed_after)
-            return error.InvalidHost;
-        const snapshot = try client.rich.receive(&host.connection, allocator);
-        host.armed_live_after_revision = null;
-        return snapshot;
-    }
+    if (host.armed_live_after_revision != null) return error.InvalidHost;
     return client.rich.request(
         &host.connection,
         allocator,
         after_revision,
         history_offset,
     );
+}
+
+fn receiveLiveRich(
+    host: *Host,
+    after_revision: u64,
+    history_offset: u32,
+) !client.rich.View {
+    if (!host.live_observe_pipeline or history_offset != 0) return error.InvalidHost;
+    if (host.armed_live_after_revision) |armed_after| {
+        if (after_revision != armed_after) return error.InvalidHost;
+    } else {
+        // A new native live observer owns no reusable row baseline. Its Dart
+        // lifecycle starts at revision zero. An image-refill pause is the one
+        // bounded exception: decoding already advanced the private RawCache,
+        // while Dart deliberately retries the last *presented* revision after
+        // installing the requested resource. Resynchronize with one complete
+        // delta-lane fallback instead of guessing that stale caller revision.
+        if (after_revision != 0 and !host.live_resync_required)
+            return error.InvalidHost;
+        try host.raw_cache.sendDeltaRequest(&host.connection, 0, 0);
+        host.live_resync_required = false;
+    }
+    const snapshot = try host.raw_cache.receive(&host.connection);
+    host.armed_live_after_revision = null;
+    return snapshot;
 }
 
 fn observe(
@@ -611,10 +637,20 @@ fn observe(
     var scratch = std.heap.FixedBufferAllocator.init(host.observation_scratch);
     const frame_allocator = scratch.allocator();
 
-    var rich = try receiveRich(host, frame_allocator, after_revision, history_offset);
-    defer rich.deinit();
-    const begin = rich.begin;
-    const view = try client.view.project(frame_allocator, &rich);
+    const live = host.live_observe_pipeline and history_offset == 0;
+    var owned_rich: ?client.rich.Snapshot = null;
+    defer if (owned_rich) |*value| value.deinit();
+    var cached_rich: ?client.rich.View = null;
+    if (live) {
+        cached_rich = try receiveLiveRich(host, after_revision, history_offset);
+    } else {
+        owned_rich = try receiveRich(host, frame_allocator, after_revision, history_offset);
+    }
+    const begin = if (cached_rich) |value| value.begin else owned_rich.?.begin;
+    const view = if (cached_rich) |*value|
+        try client.view.projectView(frame_allocator, value)
+    else
+        try client.view.project(frame_allocator, &owned_rich.?);
     defer client.view.deinit(view);
 
     const surface = try surfaceSize(begin.rows, begin.columns, host.cell_size);
@@ -644,6 +680,7 @@ fn observe(
     }) catch |failure| switch (failure) {
         error.MissingExternalResource => {
             try prepareImageRefill(host, residency);
+            if (live) host.live_resync_required = true;
             return error.ImageRefillRequired;
         },
         else => return failure,
@@ -686,8 +723,9 @@ fn observe(
     const semantic_bytes: *[4]u8 = @ptrCast(output[60..64].ptr);
     std.mem.writeInt(u32, semantic_bytes, @intCast(semantic.bytes_written), .little);
     if (host.live_observe_pipeline and history_offset == 0) {
-        try client.rich.sendRequest(&host.connection, begin.revision, 0);
+        try host.raw_cache.sendDeltaRequest(&host.connection, begin.revision, 0);
         host.armed_live_after_revision = begin.revision;
+        host.live_resync_required = false;
     }
     return total;
 }
