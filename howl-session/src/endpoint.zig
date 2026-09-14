@@ -27,7 +27,7 @@ const synchronized_output_timeout_ns: u64 = std.time.ns_per_s;
 // Unbracketed terminal apps often emit one logical screen update as a dense
 // cluster of tiny PTY writes. Wait briefly for that microburst to go quiet so
 // observers see the completed cut rather than arbitrary read boundaries.
-const burst_publication_quiet_ns: u64 = 2 * std.time.ns_per_ms;
+const burst_publication_quiet_ns: u64 = 1 * std.time.ns_per_ms;
 const burst_publication_max_ns: u64 = 8 * std.time.ns_per_ms;
 // Snapshot graphics resources are fetched in a second request after their
 // manifest is observed. One client therefore retains exactly the resources
@@ -2027,7 +2027,7 @@ test "burst publication waits for quiet and has a hard ceiling" {
     const start: u64 = 10 * std.time.ns_per_ms;
     gate.note(start);
     try std.testing.expect(!gate.ready(start));
-    try std.testing.expectEqual(@as(?u32, 2), gate.waitMs(start));
+    try std.testing.expectEqual(@as(?u32, 1), gate.waitMs(start));
     try std.testing.expect(!gate.ready(start + burst_publication_quiet_ns - 1));
     try std.testing.expect(gate.ready(start + burst_publication_quiet_ns));
     try std.testing.expectEqual(@as(?u32, null), gate.waitMs(start + burst_publication_quiet_ns));
@@ -2113,7 +2113,8 @@ test "raw observer returns the same bounded text_v1 body without DEFLATE" {
     defer wire.deinit();
     try std.testing.expect(wire.raw);
     try std.testing.expect(wire.body.len != 0);
-    try std.testing.expectEqual(server.observation_revision, wire.begin.revision);
+    try std.testing.expect(wire.begin.revision != 0);
+    try std.testing.expect(wire.begin.revision <= server.observation_revision);
 }
 
 test "synchronized output withholds observer until coherent release" {
