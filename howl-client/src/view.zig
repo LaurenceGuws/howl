@@ -70,7 +70,7 @@ pub const Graphics = struct {
 };
 
 const maximum_view_bytes = protocol.maximum_text_snapshot_bytes * 2 +
-    protocol.graphics_v2.maximum_manifest_bytes * 2;
+    protocol.graphics_v2.maximum_manifest_bytes * 2 + std.math.maxInt(u16);
 
 const Impl = struct {
     allocator: std.mem.Allocator,
@@ -83,6 +83,7 @@ const Impl = struct {
     uris_offset: usize,
     images_offset: usize,
     placements_offset: usize,
+    changed_rows_offset: usize,
     row_count: usize,
     cell_count: usize,
     scalar_count: usize,
@@ -90,6 +91,8 @@ const Impl = struct {
     uri_bytes: usize,
     image_count: usize,
     placement_count: usize,
+    changed_rows_present: bool,
+    row_shift: ?u16,
     graphics_generation: u64,
     graphics_content_generation: u64,
     graphics_cell_pixel_width: u32,
@@ -157,11 +160,17 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     const images_offset = alignAfter(Image, uris_end);
     const images_end = try sectionEnd(Image, images_offset, source.graphics.images.len);
     const placements_offset = alignAfter(ImagePlacement, images_end);
-    const total_bytes = try sectionEnd(
+    const placements_end = try sectionEnd(
         ImagePlacement,
         placements_offset,
         source.graphics.placements.len,
     );
+    const changed_rows_offset = placements_end;
+    // The coarse presentation layer only retains a repair mask when v7 also
+    // supplied an explicit row rotation. RawCache may expose same-index change
+    // facts on ordinary frames, but those remain an internal decode detail.
+    const changed_rows_count = if (source.row_shift != null) source.rows.len else 0;
+    const total_bytes = try sectionEnd(bool, changed_rows_offset, changed_rows_count);
     if (total_bytes > maximum_view_bytes) return error.ViewTooLarge;
 
     const word_count = std.math.divCeil(usize, total_bytes, @sizeOf(u128)) catch unreachable;
@@ -182,6 +191,7 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         .uris_offset = uris_offset,
         .images_offset = images_offset,
         .placements_offset = placements_offset,
+        .changed_rows_offset = changed_rows_offset,
         .row_count = source.rows.len,
         .cell_count = counts.cells,
         .scalar_count = counts.scalars,
@@ -189,6 +199,8 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         .uri_bytes = counts.uri_bytes,
         .image_count = source.graphics.images.len,
         .placement_count = source.graphics.placements.len,
+        .changed_rows_present = source.row_shift != null,
+        .row_shift = source.row_shift,
         .graphics_generation = source.graphics.generation,
         .graphics_content_generation = source.graphics.content_generation,
         .graphics_cell_pixel_width = source.graphics.cell_pixel_width,
@@ -208,6 +220,12 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
         bytes,
         placements_offset,
         source.graphics.placements.len,
+    );
+    const output_changed_rows = mutableSliceAt(
+        bool,
+        bytes,
+        changed_rows_offset,
+        changed_rows_count,
     );
 
     var cell_index: usize = 0;
@@ -263,6 +281,7 @@ pub fn projectView(allocator: std.mem.Allocator, source: *const rich.View) Error
     }
     @memcpy(output_images, source.graphics.images);
     @memcpy(output_placements, source.graphics.placements);
+    if (source.row_shift != null) @memcpy(output_changed_rows, source.changed_rows.?);
 
     return @ptrCast(impl);
 }
@@ -325,6 +344,19 @@ pub fn graphics(snapshot: *const Snapshot) Graphics {
             impl.placement_count,
         ),
     };
+}
+
+/// Exact row-repair mask retained from one reusable rich observation. `null`
+/// means the source did not provide incremental row facts.
+pub fn changedRows(snapshot: *const Snapshot) ?[]const bool {
+    const impl = constImpl(snapshot);
+    if (!impl.changed_rows_present) return null;
+    return constSliceAt(bool, ownerBytes(impl), impl.changed_rows_offset, impl.row_count);
+}
+
+/// Explicit upward baseline rotation applied before `changedRows` repairs.
+pub fn rowShift(snapshot: *const Snapshot) ?u16 {
+    return constImpl(snapshot).row_shift;
 }
 
 pub const TextProjection = struct {
@@ -431,6 +463,14 @@ const Counts = struct {
 fn validateAndCount(source: *const rich.View) Error!Counts {
     if (source.rows.len != source.begin.rows) {
         return error.InvalidRichSnapshot;
+    }
+    if (source.changed_rows) |changed| {
+        if (changed.len != source.rows.len) return error.InvalidRichSnapshot;
+    } else if (source.row_shift != null) {
+        return error.InvalidRichSnapshot;
+    }
+    if (source.row_shift) |shift| {
+        if (shift == 0 or shift >= source.begin.rows) return error.InvalidRichSnapshot;
     }
     if (!validPresentation(source.presentation) or
         source.hyperlinks.len > protocol.text_v1.maximum_hyperlinks)
@@ -865,6 +905,45 @@ test "coarse view preserves rich semantics in one allocation" {
     deinit(snapshot);
     try std.testing.expectEqual(@as(usize, 1), allocator.deallocations);
     try std.testing.expectEqual(allocator.allocated_bytes, allocator.freed_bytes);
+}
+
+test "coarse view owns exact incremental row hints" {
+    var row_zero_cells = [_]rich.Cell{testCell(&.{'A'})};
+    var row_one_cells = [_]rich.Cell{testCell(&.{'B'})};
+    var rows_source = [_]rich.Row{
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_zero_cells },
+        .{ .wrapped = false, .line_geometry = 0, .cells = &row_one_cells },
+    };
+    var changed = [_]bool{ false, true };
+    const palette: [256]rich.Rgba = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0xff });
+    const source = rich.View{
+        .begin = testBegin(2, 1),
+        .presentation = testPresentation(palette),
+        .rows = &rows_source,
+        .hyperlinks = &.{},
+        .graphics = .{},
+        .changed_rows = &changed,
+        .row_shift = 1,
+    };
+    const snapshot = try projectView(std.testing.allocator, &source);
+    defer deinit(snapshot);
+
+    changed = .{ true, false };
+    try std.testing.expectEqual(@as(?u16, 1), rowShift(snapshot));
+    try std.testing.expectEqualSlices(bool, &.{ false, true }, changedRows(snapshot).?);
+
+    var malformed = source;
+    malformed.changed_rows = changed[0..1];
+    try std.testing.expectError(
+        error.InvalidRichSnapshot,
+        projectView(std.testing.allocator, &malformed),
+    );
+    malformed = source;
+    malformed.changed_rows = null;
+    try std.testing.expectError(
+        error.InvalidRichSnapshot,
+        projectView(std.testing.allocator, &malformed),
+    );
 }
 
 test "coarse view rejects unresolved hyperlink before allocation" {
