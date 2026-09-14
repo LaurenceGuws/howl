@@ -16,7 +16,7 @@ experimental:
   howl-client: >-
     reusable UI-agnostic native session client engine: portable local
     connection/framing, interaction state, canonical semantic actions including
-    mouse, one lossless rich text_v1 / revision-relative text_delta_v1
+    mouse, one lossless rich text_v1 / revision-relative text_delta_v2
     decoder, compact semantic snapshots, and
     an explicit-lifetime one-allocation coarse semantic view
   howl-cli: >-

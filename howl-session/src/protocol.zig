@@ -33,7 +33,7 @@ const std = @import("std");
 /// Howl currently has one protocol, not a compatibility matrix. Change this
 /// value when the wire contract changes instead of accumulating negotiation
 /// branches for clients we do not maintain.
-pub const framing_version: u8 = 6;
+pub const framing_version: u8 = 7;
 /// Exact byte width of every frame header.
 pub const header_bytes: usize = 12;
 /// Hard upper bound admitted for one frame payload.
@@ -85,7 +85,7 @@ pub const Kind = enum(u8) {
     snapshot_raw_data = 29,
     /// Requests a row-delta observation from `after_revision`, with raw fallback.
     observe_delta = 30,
-    /// Carries `text_delta_v1`: full presentation/hyperlinks plus full or reused rows.
+    /// Carries `text_delta_v2`: explicit row shift plus full or reused rows.
     snapshot_delta_data = 31,
 };
 
@@ -553,7 +553,7 @@ pub const ConsequenceReply = struct {
 /// There is deliberately one complete terminal-text representation: `text_v1`.
 /// Ordinary observations wrap it in bounded zlib/DEFLATE; complete-raw
 /// observations carry the same records directly. Revision-relative
-/// `text_delta_v1` is a separate framing-v6 transport and never masquerades as
+/// `text_delta_v2` is a separate framing-v7 transport and never masquerades as
 /// a standalone `text_v1` body.
 /// Every decompressed record starts with one fixed eight-byte header so clients
 /// can validate the body without depending on Zig struct layout.
@@ -561,6 +561,8 @@ pub const TextRecordKind = enum(u8) {
     presentation = 1,
     row = 2,
     hyperlink = 3,
+    /// Delta-only baseline rotation applied before row reuse markers.
+    row_shift = 4,
 };
 
 /// One self-delimiting `text_v1` record header. Reserved bytes are always zero.
@@ -655,6 +657,17 @@ pub const text_v1 = struct {
         pub const known: u16 = bold | dim | italic | blink | blink_fast |
             reverse | invisible | underline | strikethrough;
     };
+};
+
+/// Frozen delta-only additions layered over complete `text_v1` records.
+///
+/// Every framing-v7 `snapshot_delta_data` body carries exactly one row-shift
+/// record after presentation and before rows. Zero means no viewport movement;
+/// positive values rotate the named baseline upward before row reuse markers
+/// are interpreted. Complete raw/compressed `text_v1` bodies never carry it.
+pub const text_delta_v2 = struct {
+    /// Big-endian visible rows shifted upward from the named baseline.
+    pub const row_shift_bytes: usize = 2;
 };
 
 /// Frozen image-resource and visible-placement grammar introduced with framing v4.
@@ -1042,6 +1055,20 @@ pub fn decodeTextRecordHeader(
             return error.InvalidPayload,
         .payload_len = readU32(input[4..8]),
     };
+}
+
+/// Encodes the explicit framing-v7 delta baseline rotation.
+pub fn encodeTextRowShift(
+    output: *[text_delta_v2.row_shift_bytes]u8,
+    rows_up: u16,
+) void {
+    writeU16(output, rows_up);
+}
+
+/// Decodes the exact two-byte framing-v7 delta baseline rotation.
+pub fn decodeTextRowShift(input: []const u8) PayloadError!u16 {
+    if (input.len != text_delta_v2.row_shift_bytes) return error.InvalidPayload;
+    return readU16(input);
 }
 
 /// Encodes one semantic `text_v1` terminal color.
@@ -2087,6 +2114,12 @@ test "text_v1 record and color grammar is exact and hostile-safe" {
     bad_record = record;
     bad_record[0] = 0xff;
     try std.testing.expectError(error.InvalidPayload, decodeTextRecordHeader(&bad_record));
+
+    var shift: [text_delta_v2.row_shift_bytes]u8 = undefined;
+    encodeTextRowShift(&shift, 0x1234);
+    try std.testing.expectEqualSlices(u8, &.{ 0x12, 0x34 }, &shift);
+    try std.testing.expectEqual(@as(u16, 0x1234), try decodeTextRowShift(&shift));
+    try std.testing.expectError(error.InvalidPayload, decodeTextRowShift(shift[0..1]));
 
     var color: [text_v1.color_bytes]u8 = undefined;
     try encodeTextColor(&color, .{ .kind = .rgb, .value = 0x00ab_cdef });

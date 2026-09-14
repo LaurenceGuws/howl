@@ -293,6 +293,7 @@ const DeltaRowCache = struct {
     column_count: u16 = 0,
     history_offset: u32 = 0,
     revision: u64 = 0,
+    row_origin: ?u64 = null,
 
     fn deinit(self: *DeltaRowCache, allocator: std.mem.Allocator) void {
         self.clear(allocator);
@@ -1061,9 +1062,29 @@ const Server = struct {
             self.delta_rows.history_offset == status.history_offset and
             self.delta_rows.row_count == status.rows and
             self.delta_rows.column_count == status.columns;
+        const current_row_origin: ?u64 = if (status.alternate_screen or
+            status.history_offset > status.history_count)
+            null
+        else
+            @as(u64, status.history_row_base) + status.history_count - status.history_offset;
+        const shifted_rows: ?u16 = if (delta_reuse_allowed and
+            self.delta_rows.row_origin != null and current_row_origin != null and
+            current_row_origin.? > self.delta_rows.row_origin.?)
+        blk: {
+            const distance = current_row_origin.? - self.delta_rows.row_origin.?;
+            if (distance >= status.rows) break :blk null;
+            break :blk std.math.cast(u16, distance);
+        } else null;
         self.snapshot_body.clearRetainingCapacity();
         const body = &self.snapshot_body;
         try self.appendPresentationRecord(body, cursor_age_ns);
+        if (delta_reuse_allowed) {
+            const record = try self.beginTextRecord(body, .row_shift);
+            var shift_payload: [protocol.text_delta_v2.row_shift_bytes]u8 = undefined;
+            protocol.encodeTextRowShift(&shift_payload, shifted_rows orelse 0);
+            try body.appendSlice(self.allocator, &shift_payload);
+            try finishTextRecord(body, record);
+        }
 
         // Copy each visible row and each cell's scalar payload exactly once.
         // The old builder first walked the complete grid to size the body and
@@ -1074,12 +1095,25 @@ const Server = struct {
             const copied = try howl.copyRow(self.session, status.history_offset, row, cells);
             const wrapped = howl.rowWrapped(self.session, status.history_offset, row);
             const geometry = howl.lineGeometry(self.session, status.history_offset, row);
-            const cache: ?*DeltaRowCache.Entry = if (delta)
+            const destination_cache: ?*DeltaRowCache.Entry = if (delta)
                 &self.delta_rows.entries[@as(usize, row)]
             else
                 null;
-            const cached_cells: []howl.Cell = if (delta)
+            const destination_cells: []howl.Cell = if (delta)
                 self.delta_rows.rowCells(row, status.columns)
+            else
+                &.{};
+            const source_row: ?u16 = if (shifted_rows) |shift| blk: {
+                const shifted = std.math.add(u16, row, shift) catch break :blk null;
+                if (shifted >= status.rows) break :blk null;
+                break :blk shifted;
+            } else if (delta) row else null;
+            const source_cache: ?*const DeltaRowCache.Entry = if (source_row) |source|
+                &self.delta_rows.entries[@as(usize, source)]
+            else
+                null;
+            const source_cells: []const howl.Cell = if (source_row) |source|
+                self.delta_rows.rowCells(source, status.columns)
             else
                 &.{};
 
@@ -1087,10 +1121,10 @@ const Server = struct {
             // cell bytes are emitted. Complete lanes collect links while encoding.
             if (delta) for (copied) |cell| try self.noteSnapshotLink(cell, &referenced_links);
 
-            const reusable = if (cache) |value|
+            const reusable = if (source_cache) |value|
                 delta_reuse_allowed and value.valid and
                     value.wrapped == wrapped and value.geometry == geometry and
-                    rowCellsExactlyReusable(copied, cached_cells)
+                    rowCellsExactlyReusable(copied, source_cells)
             else
                 false;
             if (reusable) {
@@ -1132,8 +1166,8 @@ const Server = struct {
                 try finishTextRecord(body, record);
             }
 
-            if (cache) |value| {
-                @memcpy(cached_cells, copied);
+            if (destination_cache) |value| {
+                @memcpy(destination_cells, copied);
                 value.wrapped = wrapped;
                 value.geometry = geometry;
                 value.valid = true;
@@ -1251,7 +1285,10 @@ const Server = struct {
         client.output_offset = 0;
         client.snapshot_images.deinit(self.allocator);
         client.snapshot_images = snapshot_images;
-        if (delta) self.delta_rows.revision = self.observation_revision;
+        if (delta) {
+            self.delta_rows.revision = self.observation_revision;
+            self.delta_rows.row_origin = current_row_origin;
+        }
     }
 
     fn noteSnapshotLink(
@@ -2378,7 +2415,7 @@ test "delta observation falls back raw then reuses rows from exact requested bas
     try std.testing.expect(server.observation_revision > baseline_revision);
 
     // The same connection now requests exactly the cached baseline. Only row 0
-    // changed, so the other three rows are explicit text_delta_v1 reuse records.
+    // changed, so the other three rows are explicit text_delta_v2 reuse records.
     try sendDeltaObserve(&peer, &server, baseline_revision);
     var delta = try receiveWireSnapshot(&peer, &server);
     defer delta.deinit();
@@ -2386,7 +2423,7 @@ test "delta observation falls back raw then reuses rows from exact requested bas
     try std.testing.expect(delta.delta);
     try std.testing.expectEqual(@as(usize, 3), try zeroPayloadRowCount(delta.body));
 
-    // Complete raw remains a standalone text_v1 lane in framing v6.
+    // Complete raw remains a standalone text_v1 lane in framing v7.
     try sendRawObserve(&peer, &server, 0);
     var complete = try receiveWireSnapshot(&peer, &server);
     defer complete.deinit();
@@ -3002,7 +3039,7 @@ fn sendDeltaObserve(peer: *TestPeer, server: *Server, after_revision: u64) !void
 
 /// Receives one current compressed, complete-raw, or delta snapshot wire.
 ///
-/// Keep framing-v6 transport lanes validated here so every semantic
+/// Keep framing-v7 transport lanes validated here so every semantic
 /// endpoint test consumes the same raw `text_v1` record body.
 fn receiveWireSnapshot(peer: *TestPeer, server: *Server) !TestWireSnapshot {
     var begin_frame = try awaitFrame(peer, server);
@@ -3100,6 +3137,7 @@ fn receiveSnapshot(peer: *TestPeer, server: *Server) !TestSnapshot {
         const payload = wire.body[record.payload_start..record.end];
         switch (record.header.kind) {
             .presentation, .hyperlink => {},
+            .row_shift => if (!wire.delta) return error.MalformedTestSnapshot,
             .row => {
                 if (row_count >= wire.begin.rows) return error.MalformedTestSnapshot;
                 try appendTestTextRow(peer.allocator, wire.begin, payload, &text);
@@ -3178,6 +3216,7 @@ fn receiveTextSnapshot(peer: *TestPeer, server: *Server) !TestTextSnapshot {
     var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
     var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
     var phase: enum { presentation, rows, hyperlinks } = .presentation;
+    var row_shift_seen = false;
 
     var offset: usize = 0;
     while (offset < wire.body.len) {
@@ -3195,6 +3234,17 @@ fn receiveTextSnapshot(peer: *TestPeer, server: *Server) !TestTextSnapshot {
                 result.cursor_age_ns = readU64(payload[0..8]);
                 result.presentation_seen = true;
                 phase = .rows;
+            },
+            .row_shift => {
+                if (!wire.delta or phase != .rows or !result.presentation_seen or
+                    row_shift_seen or result.row_count != 0 or
+                    payload.len != protocol.text_delta_v2.row_shift_bytes)
+                    return error.MalformedTestSnapshot;
+                const rows_up = protocol.decodeTextRowShift(payload) catch
+                    return error.MalformedTestSnapshot;
+                if (rows_up >= begin.rows and rows_up != 0)
+                    return error.MalformedTestSnapshot;
+                row_shift_seen = true;
             },
             .row => {
                 if (phase != .rows or !result.presentation_seen or result.row_count >= begin.rows)
@@ -3220,7 +3270,8 @@ fn receiveTextSnapshot(peer: *TestPeer, server: *Server) !TestTextSnapshot {
         }
         offset = record.end;
     }
-    if (!result.presentation_seen or result.row_count != begin.rows)
+    if (!result.presentation_seen or result.row_count != begin.rows or
+        (wire.delta and !row_shift_seen) or (!wire.delta and row_shift_seen))
         return error.MalformedTestSnapshot;
     for (referenced, resolved) |needed, present| if (needed != present)
         return error.MalformedTestSnapshot;

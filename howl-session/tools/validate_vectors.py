@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent Howl session v6 wire-vector decoder and validator.
+"""Independent Howl session v7 wire-vector decoder and validator.
 
 This tool intentionally does not import, execute, or inspect the Zig
 implementation.  The duplicated constants below are the client-facing wire
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 MAGIC = b"HWLS"
-FRAMING_VERSION = 6
+FRAMING_VERSION = 7
 HEADER_BYTES = 12
 MAXIMUM_PAYLOAD_BYTES = 1024 * 1024
 MAXIMUM_TEXT_SNAPSHOT_BYTES = 4 * 1024 * 1024
@@ -80,7 +80,7 @@ RESULT_CODES = {
     5: "rejected",
 }
 
-TEXT_RECORD_KINDS = {1: "presentation", 2: "row", 3: "hyperlink"}
+TEXT_RECORD_KINDS = {1: "presentation", 2: "row", 3: "hyperlink", 4: "row_shift"}
 TEXT_COLOR_KINDS = {0: "default", 1: "indexed", 2: "rgb"}
 
 TEXT_PRESENTATION_BYTES = 1060
@@ -536,6 +536,8 @@ def new_snapshot(begin: dict, delta_request: dict | None = None, baseline: dict 
         "graphics": None,
         "delta_request": delta_request,
         "baseline": baseline,
+        "row_shift": None,
+        "reuse_rows": None,
     }
 
 
@@ -560,16 +562,31 @@ def decode_text_records(payload: bytes, snapshot: dict) -> list[dict]:
             decoded = decode_presentation(record_payload)
             snapshot["presentation"] = decoded
             snapshot["phase"] = "links" if snapshot["begin"]["rows"] == 0 else "rows"
+        elif name == "row_shift":
+            require(snapshot["body_encoding"] == "delta", "text_row_shift_encoding")
+            require(snapshot["phase"] == "rows" and snapshot["presentation"] is not None, "text_record_order")
+            require(snapshot["row_shift"] is None and not snapshot["text_rows"], "text_row_shift_duplicate")
+            require(len(record_payload) == 2, "text_row_shift_size")
+            rows_up = u16(record_payload)
+            require(rows_up == 0 or rows_up < snapshot["begin"]["rows"], "text_row_shift_range")
+            baseline = snapshot["baseline"]
+            require(baseline is not None, "snapshot_delta_baseline")
+            require(len(baseline["rows"]) == snapshot["begin"]["rows"], "snapshot_delta_baseline_rows")
+            snapshot["row_shift"] = rows_up
+            snapshot["reuse_rows"] = baseline["rows"][rows_up:] + [None] * rows_up
+            decoded = {"rows_up": rows_up}
         elif name == "row":
             require(snapshot["phase"] == "rows", "text_record_order")
+            if snapshot["body_encoding"] == "delta":
+                require(snapshot["row_shift"] is not None, "text_row_shift_missing")
             require(len(snapshot["text_rows"]) < snapshot["begin"]["rows"], "text_row_count")
             row_index = len(snapshot["text_rows"])
             if not record_payload:
                 require(snapshot["body_encoding"] == "delta", "text_row_reuse_encoding")
-                baseline = snapshot["baseline"]
-                require(baseline is not None, "snapshot_delta_baseline")
-                require(row_index < len(baseline["rows"]), "snapshot_delta_baseline_rows")
-                decoded = baseline["rows"][row_index]
+                reuse_rows = snapshot["reuse_rows"]
+                require(reuse_rows is not None and row_index < len(reuse_rows), "snapshot_delta_baseline_rows")
+                decoded = reuse_rows[row_index]
+                require(decoded is not None, "snapshot_delta_shift_exposed_reuse")
                 for cell in decoded["cells"]:
                     if cell["link_id"]:
                         snapshot["referenced_links"].add(cell["link_id"])
@@ -620,6 +637,7 @@ def finish_snapshot(snapshot: dict, end: dict) -> dict:
         require(inflater.eof and not inflater.unused_data and not inflater.unconsumed_tail, "snapshot_compression")
         require(len(body) == raw_len, "snapshot_raw_size")
     decode_text_records(body, snapshot)
+    require((encoding == "delta") == (snapshot["row_shift"] is not None), "text_row_shift_missing")
     require(snapshot["presentation"] is not None, "text_presentation_missing")
     require(len(snapshot["text_rows"]) == begin["rows"], "text_row_count")
     require(snapshot["referenced_links"] == set(snapshot["resolved_links"]), "text_unresolved_hyperlink")
@@ -929,7 +947,7 @@ def validate_case(case: dict) -> None:
 
 
 def validate_document(document: dict) -> int:
-    require(document.get("schema") == "howl.session.wire.v6/vectors", "document_schema")
+    require(document.get("schema") == "howl.session.wire.v7/vectors", "document_schema")
     cases = document.get("cases")
     require(isinstance(cases, list) and cases, "document_cases")
     seen = set()
@@ -942,7 +960,7 @@ def validate_document(document: dict) -> int:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("usage: validate_vectors.py protocol/v6-vectors.json", file=sys.stderr)
+        print("usage: validate_vectors.py protocol/v7-vectors.json", file=sys.stderr)
         return 2
     path = Path(argv[1])
     try:

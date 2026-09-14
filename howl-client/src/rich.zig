@@ -1,4 +1,4 @@
-//! Lossless native terminal snapshot model for `text_v1` and `text_delta_v1`.
+//! Lossless native terminal snapshot model for `text_v1` and `text_delta_v2`.
 //!
 //! This decoder preserves every transported terminal fact without choosing a
 //! renderer, CLI schema, JSON representation, font, or platform presentation.
@@ -98,6 +98,7 @@ pub const Snapshot = struct {
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
             .changed_rows = null,
+            .row_shift = null,
         };
     }
 
@@ -118,7 +119,6 @@ pub const Snapshot = struct {
     }
 };
 
-
 /// Borrows one complete decoded rich snapshot from a reusable raw-observation cache.
 ///
 /// Every slice remains valid only until the owning `RawCache` receives again or
@@ -133,6 +133,8 @@ pub const View = struct {
     /// Exact changed-row mask when supplied by a reusable raw cache. `null`
     /// means callers must treat every row as potentially changed.
     changed_rows: ?[]const bool = null,
+    /// Explicit framing-v7 upward baseline rotation applied before row reuse.
+    row_shift: ?u16 = null,
 };
 
 const CachedRowRecord = struct {
@@ -145,7 +147,7 @@ const CacheBaseline = struct {
     history_offset: u32,
 };
 
-/// Reuses already-validated row facts across framing-v6 raw/delta observations.
+/// Reuses already-validated row facts across framing-v7 raw/delta observations.
 ///
 /// Complete raw snapshots establish a standalone baseline. Explicit delta bodies
 /// may then reuse rows from the exact revision named by the ordered request; full
@@ -269,6 +271,8 @@ pub const RawCache = struct {
         @memset(self.changed_rows, false);
         var cache_mutated = false;
         errdefer if (cache_mutated) self.invalidateRows();
+        var row_shift_seen = false;
+        var rows_up: u16 = 0;
 
         var referenced: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
         var resolved: [protocol.text_v1.maximum_hyperlinks + 1]bool = @splat(false);
@@ -304,9 +308,24 @@ pub const RawCache = struct {
                     presentation_seen = true;
                     phase = .rows;
                 },
+                .row_shift => {
+                    if (!allow_row_reuse or phase != .rows or !presentation_seen or
+                        row_shift_seen or row_count != 0)
+                        return error.InvalidSnapshot;
+                    rows_up = try protocol.decodeTextRowShift(payload);
+                    if (rows_up >= begin.rows and rows_up != 0) return error.InvalidSnapshot;
+                    if (rows_up != 0) {
+                        for (self.row_records) |cached_record|
+                            if (cached_record.encoded.len == 0) return error.InvalidSnapshot;
+                        self.rotateRowsUp(rows_up);
+                        cache_mutated = true;
+                    }
+                    row_shift_seen = true;
+                },
                 .row => {
                     if (phase != .rows or !presentation_seen or row_count >= begin.rows)
                         return error.InvalidSnapshot;
+                    if (allow_row_reuse and !row_shift_seen) return error.InvalidSnapshot;
                     const row_index: usize = row_count;
                     const cached = self.row_records[row_index].encoded;
                     if (payload.len == 0) {
@@ -334,7 +353,8 @@ pub const RawCache = struct {
             }
             offset += record_len;
         }
-        if (!presentation_seen or row_count != begin.rows) return error.InvalidSnapshot;
+        if (!presentation_seen or row_count != begin.rows or allow_row_reuse != row_shift_seen)
+            return error.InvalidSnapshot;
         for (referenced[1..], resolved[1..]) |needed, seen| if (needed != seen)
             return error.InvalidSnapshot;
 
@@ -350,6 +370,7 @@ pub const RawCache = struct {
             .hyperlinks = self.hyperlinks,
             .graphics = self.graphics,
             .changed_rows = self.changed_rows,
+            .row_shift = if (rows_up == 0) null else rows_up,
         };
     }
 
@@ -404,6 +425,31 @@ pub const RawCache = struct {
         };
     }
 
+    fn rotateRowsUp(self: *RawCache, shift: u16) void {
+        std.debug.assert(shift > 0 and shift < self.rows.len);
+        const amount: usize = shift;
+        const retained = self.rows.len - amount;
+        for (0..amount) |index| self.clearCachedRow(index);
+        std.mem.copyForwards(Row, self.rows[0..retained], self.rows[amount..]);
+        std.mem.copyForwards(
+            CachedRowRecord,
+            self.row_records[0..retained],
+            self.row_records[amount..],
+        );
+        for (self.row_records[retained..]) |*record| record.* = .{};
+        for (self.rows[retained..]) |*row| row.* = undefined;
+    }
+
+    fn clearCachedRow(self: *RawCache, index: usize) void {
+        std.debug.assert(index < self.rows.len);
+        const record = &self.row_records[index];
+        if (record.encoded.len == 0) return;
+        deinitRows(self.allocator, self.rows[index .. index + 1]);
+        self.allocator.free(record.encoded);
+        self.allocator.free(record.link_ids);
+        record.* = .{};
+    }
+
     fn ensureGeometry(self: *RawCache, rows: u16, columns: u16) Error!void {
         if (rows == 0 or columns == 0) return error.InvalidSnapshot;
         if (self.rows.len == rows and self.columns == columns) return;
@@ -429,13 +475,7 @@ pub const RawCache = struct {
     }
 
     fn invalidateRows(self: *RawCache) void {
-        for (self.row_records, 0..) |*record, index| {
-            if (record.encoded.len == 0) continue;
-            deinitRows(self.allocator, self.rows[index .. index + 1]);
-            self.allocator.free(record.encoded);
-            self.allocator.free(record.link_ids);
-            record.* = .{};
-        }
+        for (self.row_records, 0..) |_, index| self.clearCachedRow(index);
         if (self.changed_rows.len != 0) @memset(self.changed_rows, true);
     }
 
@@ -503,7 +543,7 @@ pub fn sendRequest(
     try connection.send(.observe, &payload);
 }
 
-/// Sends one complete raw rich observation request. Framing v6 keeps this lane distinct
+/// Sends one complete raw rich observation request. Framing v7 keeps this lane distinct
 /// from ordinary compressed `observe`; text_v1 record bytes are unchanged.
 pub fn sendRawRequest(
     connection: *client.Connection,
@@ -896,6 +936,7 @@ fn decodeTextRecord(
             if (phase.* != .hyperlinks) return error.InvalidSnapshot;
             try hyperlinks.append(allocator, try decodeHyperlink(allocator, payload, referenced, resolved));
         },
+        .row_shift => return error.InvalidSnapshot,
     }
 }
 
@@ -1685,6 +1726,7 @@ test "raw cache accepts row reuse only in explicit delta bodies" {
     next_begin.terminal_revision = 2;
     const delta = try cache.decodeRaw(next_begin, delta_body, .{}, true);
     try std.testing.expectEqualSlices(bool, &.{ true, false }, delta.changed_rows.?);
+    try std.testing.expect(delta.row_shift == null);
     try std.testing.expectEqual(@as(u32, 'B'), delta.rows[0].cells[0].scalars[0]);
     try std.testing.expectEqual(@as(u32, 'Z'), delta.rows[1].cells[0].scalars[0]);
 
@@ -1698,18 +1740,98 @@ test "raw cache accepts row reuse only in explicit delta bodies" {
     );
 }
 
+test "raw cache applies explicit upward shift before row reuse" {
+    const allocator = std.testing.allocator;
+    var cache = RawCache.init(allocator);
+    defer cache.deinit();
+
+    const begin = protocol.SnapshotBegin{
+        .revision = 1,
+        .terminal_revision = 1,
+        .history_offset = 0,
+        .history_count = 0,
+        .history_row_base = 0,
+        .rows = 2,
+        .columns = 1,
+        .cursor_row = 0,
+        .cursor_column = 0,
+        .cursor_shape = 0,
+        .cursor_visible = true,
+        .cursor_blink = false,
+        .alternate_screen = false,
+        .stream_closed = false,
+        .child_exited = false,
+        .leader_present = false,
+        .you_are_leader = false,
+    };
+    const baseline_body = try testRawCacheBody(allocator, 'A', 'Z');
+    defer allocator.free(baseline_body);
+    const baseline = try cache.decodeRaw(begin, baseline_body, .{}, false);
+    const z_cells = baseline.rows[1].cells.ptr;
+
+    const shifted_body = try testRawCacheShiftedDeltaBody(allocator, 'B');
+    defer allocator.free(shifted_body);
+    var next_begin = begin;
+    next_begin.revision = 2;
+    next_begin.terminal_revision = 2;
+    next_begin.history_count = 1;
+    const shifted = try cache.decodeRaw(next_begin, shifted_body, .{}, true);
+    try std.testing.expectEqual(@as(?u16, 1), shifted.row_shift);
+    try std.testing.expectEqualSlices(bool, &.{ false, true }, shifted.changed_rows.?);
+    try std.testing.expectEqual(z_cells, shifted.rows[0].cells.ptr);
+    try std.testing.expectEqual(@as(u32, 'Z'), shifted.rows[0].cells[0].scalars[0]);
+    try std.testing.expectEqual(@as(u32, 'B'), shifted.rows[1].cells[0].scalars[0]);
+}
+
 fn testRawCacheDeltaBody(allocator: std.mem.Allocator, first: u32) ![]u8 {
     const full = try testRawCacheBody(allocator, first, 'Z');
     defer allocator.free(full);
     const presentation_record = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
+    const shift_record = protocol.text_v1.record_header_bytes + protocol.text_delta_v2.row_shift_bytes;
     const row_payload = protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + @sizeOf(u32);
     const row_record = protocol.text_v1.record_header_bytes + row_payload;
-    const body = try allocator.alloc(u8, presentation_record + row_record + protocol.text_v1.record_header_bytes);
-    @memcpy(body[0 .. presentation_record + row_record], full[0 .. presentation_record + row_record]);
-    protocol.encodeTextRecordHeader(body[presentation_record + row_record ..][0..protocol.text_v1.record_header_bytes], .{
+    const body = try allocator.alloc(u8, presentation_record + shift_record + row_record + protocol.text_v1.record_header_bytes);
+    @memcpy(body[0..presentation_record], full[0..presentation_record]);
+    var at = presentation_record;
+    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
+        .kind = .row_shift,
+        .payload_len = protocol.text_delta_v2.row_shift_bytes,
+    });
+    at += protocol.text_v1.record_header_bytes;
+    protocol.encodeTextRowShift(body[at..][0..protocol.text_delta_v2.row_shift_bytes], 0);
+    at += protocol.text_delta_v2.row_shift_bytes;
+    @memcpy(body[at..][0..row_record], full[presentation_record..][0..row_record]);
+    at += row_record;
+    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
         .kind = .row,
         .payload_len = 0,
     });
+    return body;
+}
+
+fn testRawCacheShiftedDeltaBody(allocator: std.mem.Allocator, bottom: u32) ![]u8 {
+    const full = try testRawCacheBody(allocator, 'Z', bottom);
+    defer allocator.free(full);
+    const presentation_record = protocol.text_v1.record_header_bytes + protocol.text_v1.presentation_bytes;
+    const shift_record = protocol.text_v1.record_header_bytes + protocol.text_delta_v2.row_shift_bytes;
+    const row_payload = protocol.text_v1.row_header_bytes + protocol.text_v1.cell_header_bytes + @sizeOf(u32);
+    const row_record = protocol.text_v1.record_header_bytes + row_payload;
+    const body = try allocator.alloc(u8, presentation_record + shift_record + protocol.text_v1.record_header_bytes + row_record);
+    @memcpy(body[0..presentation_record], full[0..presentation_record]);
+    var at = presentation_record;
+    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
+        .kind = .row_shift,
+        .payload_len = protocol.text_delta_v2.row_shift_bytes,
+    });
+    at += protocol.text_v1.record_header_bytes;
+    protocol.encodeTextRowShift(body[at..][0..protocol.text_delta_v2.row_shift_bytes], 1);
+    at += protocol.text_delta_v2.row_shift_bytes;
+    protocol.encodeTextRecordHeader(body[at..][0..protocol.text_v1.record_header_bytes], .{
+        .kind = .row,
+        .payload_len = 0,
+    });
+    at += protocol.text_v1.record_header_bytes;
+    @memcpy(body[at..][0..row_record], full[presentation_record + row_record ..][0..row_record]);
     return body;
 }
 

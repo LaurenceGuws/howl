@@ -12,7 +12,7 @@ This document is the client contract for framing version 6. All multi-byte
 integers are unsigned big-endian unless a field is
 explicitly described as signed. Reserved bytes and reserved bits must be zero.
 
-The tracked byte corpus is `protocol/v6-vectors.json`. A clean-room Python
+The tracked byte corpus is `protocol/v7-vectors.json`. A clean-room Python
 decoder that does not import, execute, or inspect the Zig implementation lives
 at `tools/validate_vectors.py`.
 
@@ -173,12 +173,12 @@ progress may continue while those already-copied bytes drain to the observer.
 text transport envelope; snapshot semantics, history selection, graphics
 manifests, revisions, and `text_v1` records are identical.
 
-`observe_delta` is the framing-v6 revision-relative lane. Its `after_revision`
+`observe_delta` is the framing-v7 revision-relative lane. Its `after_revision`
 names the caller's exact baseline. If the endpoint cannot prove that baseline
 against its bounded row mirror, it responds with ordinary `snapshot_raw_data`;
 that fallback is a complete standalone `text_v1` snapshot. When the baseline is
 proven, the endpoint may instead emit `snapshot_delta_data` carrying
-`text_delta_v1`. The endpoint retains one bounded delta-row baseline total, not
+`text_delta_v2`. The endpoint retains one bounded delta-row baseline total, not
 one copy per client. A valid client baseline can therefore still receive a
 complete raw fallback when another delta observer has advanced or replaced the
 endpoint cache; clients must treat that fallback as the normal resynchronization
@@ -228,7 +228,7 @@ Flag byte bits are:
 There are no font file names, glyph ids, GPU objects, Flutter types, or
 window-system concepts on this wire. Framing v4 added terminal graphics beside
 it rather than changing its record grammar. Framing v5 added a raw transport lane without changing the `text_v1` record
-grammar. Framing v6 adds explicit revision-relative `text_delta_v1` beside the
+grammar. Framing v7 adds explicit revision-relative `text_delta_v2` beside the
 unchanged complete representation.
 
 For ordinary `observe`, the `snapshot_data` payloads are transport chunks only.
@@ -251,28 +251,36 @@ larger-than-4-MiB raw body is invalid. Compression is therefore a transport
 choice, not part of the semantic `text_v1` grammar.
 
 For an accepted `observe_delta`, concatenate `snapshot_delta_data` payloads in
-order. The resulting bounded `text_delta_v1` body uses the same presentation,
-row, and hyperlink record headers and strict record order as `text_v1`, with one
-additional rule: a row record with zero payload means "reuse this row from the
-exact `after_revision` baseline." Zero-payload rows are invalid in complete
-`text_v1`. Presentation and hyperlink resolver records remain complete on every
-delta, and a client must reject delta data unless it owns the exact requested
-baseline revision, history offset, and geometry.
+order. The resulting bounded `text_delta_v2` body uses the same presentation,
+row, and hyperlink record headers as `text_v1`, plus exactly one delta-only
+`row_shift` record after presentation and before the first row. Its two-byte
+big-endian payload is the number of visible rows by which the exact
+`after_revision` baseline moves upward before row reuse is interpreted. Zero
+means no viewport movement; a positive shift must be smaller than the visible
+row count. After applying that rotation, a row record with zero payload means
+"reuse this same visible row from the rotated baseline." A newly exposed row
+therefore has no reusable source and must be sent in full. Zero-payload rows and
+`row_shift` records are invalid in complete `text_v1`. Presentation and
+hyperlink resolver records remain complete on every delta, and a client must
+reject delta data unless it owns the exact requested baseline revision, history
+offset, and geometry.
 
 After inflation or direct raw assembly, the body is a concatenation of
 self-delimiting records. The eight-byte record header is:
 
 | Offset | Bytes | Meaning |
 | --- | ---: | --- |
-| 0 | 1 | record kind: `1=presentation`, `2=row`, `3=hyperlink` |
+| 0 | 1 | record kind: `1=presentation`, `2=row`, `3=hyperlink`, `4=row_shift` (delta only) |
 | 1 | 3 | reserved, zero |
 | 4 | 4 | record payload length |
 
-Records may cross `snapshot_data` or `snapshot_raw_data` transport-chunk
-boundaries because those boundaries have no semantic meaning. Record order is strict: exactly one
-presentation record, exactly `snapshot_begin.rows` row records, then zero or
-more hyperlink resolver records. Every nonzero hyperlink id referenced by a row
-must resolve exactly once before `snapshot_end`.
+Records may cross `snapshot_data`, `snapshot_raw_data`, or
+`snapshot_delta_data` transport-chunk boundaries because those boundaries have
+no semantic meaning. Complete `text_v1` order is exactly one presentation
+record, exactly `snapshot_begin.rows` row records, then zero or more hyperlink
+resolver records. `text_delta_v2` inserts exactly one `row_shift` record between
+presentation and rows. Every nonzero hyperlink id referenced by a row must
+resolve exactly once before `snapshot_end`.
 
 ### Presentation record
 
@@ -647,7 +655,7 @@ The minimal client implementation order is:
 1. stream-safe 12-byte frame reader/writer and frame-version validation;
 2. empty `hello`, `welcome`, and connection-local client identity;
 3. request-driven `observe`, complete `observe_raw`, or revision-relative
-   `observe_delta`, with `text_v1` / `text_delta_v1` decoding;
+   `observe_delta`, with `text_v1` / `text_delta_v2` decoding;
 4. semantic key/mouse/focus plus paste/raw-byte input;
 5. explicit resize leadership, history offsets, and interaction-state queries as needed.
 
@@ -655,7 +663,7 @@ Before connecting a new language implementation, run the independent corpus:
 
 ```sh
 cd howl-session
-python3 tools/validate_vectors.py protocol/v6-vectors.json
+python3 tools/validate_vectors.py protocol/v7-vectors.json
 ```
 
 The validator is build-time evidence only. Python is not a Howl runtime

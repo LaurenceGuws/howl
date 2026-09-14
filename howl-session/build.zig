@@ -46,7 +46,7 @@ pub fn build(b: *std.Build) void {
     const wire_command = b.addSystemCommand(&.{
         "python3",
         "tools/validate_vectors.py",
-        "protocol/v6-vectors.json",
+        "protocol/v7-vectors.json",
     });
     wire_command.setName("howl-session wire vectors");
     wire_command.setCwd(b.path("."));

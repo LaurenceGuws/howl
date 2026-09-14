@@ -28,8 +28,8 @@ function feed(bytes) {
   new Uint8Array(w.memory.buffer, w.hw_input_ptr(), bytes.length).set(bytes);
   return w.hw_feed(bytes.length);
 }
-const welcome = Buffer.from('48574c530602000000000008000000000000002a', 'hex');
-const hello = '48574c530601000000000000';
+const welcome = Buffer.from('48574c530702000000000008000000000000002a', 'hex');
+const hello = '48574c530701000000000000';
 for (let split = 0; split <= welcome.length; split++) {
   assert.equal(w.hw_reset(), 1);
   assert.equal(Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len()).toString('hex'), hello);
@@ -69,7 +69,7 @@ assert.equal(w.hw_send_text(1), 0);
 const output = () => Buffer.from(w.memory.buffer, w.hw_output_ptr(), w.hw_output_len());
 function frame(kind, payload) {
   const result = Buffer.alloc(12 + payload.length);
-  result.write('HWLS', 0, 'ascii'); result[4] = 6; result[5] = kind;
+  result.write('HWLS', 0, 'ascii'); result[4] = 7; result[5] = kind;
   result.writeUInt32BE(payload.length, 8); Buffer.from(payload).copy(result, 12);
   return result;
 }
@@ -124,7 +124,7 @@ assert.equal(w.hw_send_mouse(1, 1, 0, 1, 0, 0, 0, 1, 0), 0);
 assert.equal(w.hw_request_interaction_state(), 1);
 assert.equal(output()[5], 12);
 assert.equal(output().length, 12);
-const interactionVector = Buffer.from('48574c53060d000000000014010203040506070800001ffd0403ff7f12340300', 'hex');
+const interactionVector = Buffer.from('48574c53070d000000000014010203040506070800001ffd0403ff7f12340300', 'hex');
 assert.equal(feed(interactionVector), 1);
 assert.equal(w.hw_phase(), 6);
 assert.equal(w.hw_control_ready(), 1);
@@ -233,7 +233,7 @@ payload = output().subarray(12); assert.equal(output()[5], 3);
 assert.equal(payload.readBigUInt64BE(0), 0n); assert.equal(payload.readUInt32BE(8), 37);
 assert.equal(w.hw_observe(1, 0), 0); // at most one outstanding operation
 assert.equal(w.hw_send_text(1), 0);
-const vectorCorpus = JSON.parse(await readFile('../howl-session/protocol/v6-vectors.json', 'utf8'));
+const vectorCorpus = JSON.parse(await readFile('../howl-session/protocol/v7-vectors.json', 'utf8'));
 const graphicsVector = vectorCorpus.cases.find(test => test.id === 'snapshot_graphics_manifest');
 assert.ok(graphicsVector?.hex);
 const graphicsSnapshot = Buffer.from(graphicsVector.hex, 'hex');
