@@ -1889,3 +1889,83 @@ test "terminal Canvas failed richer frame publishes warmed atlas only on recover
     try std.testing.expectEqual(first_generation + 1, render.terminal.contentUsage(content).resource_generation);
     try std.testing.expectEqual(@as(u64, 2), render.terminal.contentUsage(content).producer_revision);
 }
+
+test "terminal Canvas incremental rows are exact against complete projection" {
+    var baseline_scalars = [_][1]u32{
+        .{'A'}, .{'B'}, .{'C'}, .{'D'}, .{'E'}, .{'F'},
+    };
+    var baseline_cells: [6][1]client.rich.Cell = undefined;
+    var baseline_rows: [6]client.rich.Row = undefined;
+    for (&baseline_cells, &baseline_rows, 0..) |*cells, *row, index| {
+        cells.* = .{cell(&baseline_scalars[index], 1, 0)};
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var baseline_source = sourceSnapshot(&baseline_rows, 1);
+    baseline_source.begin.revision = 30;
+    baseline_source.begin.terminal_revision = 30;
+    const baseline_view = try client.view.project(std.testing.allocator, &baseline_source);
+    defer client.view.deinit(baseline_view);
+
+    const font = try contentFont();
+    defer font.deinit();
+    var cached_config = contentConfig(64);
+    cached_config.incremental_row_capacity = 6;
+    cached_config.incremental_command_capacity = 32;
+    const cached = try render.terminal.initContent(std.testing.allocator, font, cached_config);
+    defer render.terminal.deinitContent(cached);
+    const complete = try render.terminal.initContent(std.testing.allocator, font, contentConfig(64));
+    defer render.terminal.deinitContent(complete);
+
+    const cached_baseline = try render.terminal.takeContentUpdate(cached, baseline_view, null);
+    const complete_baseline = try render.terminal.takeContentUpdate(complete, baseline_view, null);
+    try std.testing.expectEqualDeep(cached_baseline.commands, complete_baseline.commands);
+    try std.testing.expectEqualDeep(cached_baseline.uploads, complete_baseline.uploads);
+
+    var shifted_scalars = [_][1]u32{
+        .{'B'}, .{'C'}, .{'D'}, .{'X'}, .{'F'}, .{'G'},
+    };
+    var shifted_cells: [6][1]client.rich.Cell = undefined;
+    var shifted_rows: [6]client.rich.Row = undefined;
+    for (&shifted_cells, &shifted_rows, 0..) |*cells, *row, index| {
+        cells.* = .{cell(&shifted_scalars[index], 1, 0)};
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var shifted_source = sourceSnapshot(&shifted_rows, 1);
+    shifted_source.begin.revision = 31;
+    shifted_source.begin.terminal_revision = 31;
+    var shifted_rich = shifted_source.view();
+    var changed = [_]bool{ false, false, false, true, false, true };
+    shifted_rich.changed_rows = &changed;
+    shifted_rich.row_shift = 1;
+    const shifted_view = try client.view.projectView(std.testing.allocator, &shifted_rich);
+    defer client.view.deinit(shifted_view);
+
+    const cached_shifted = try render.terminal.takeContentUpdate(cached, shifted_view, null);
+    const complete_shifted = try render.terminal.takeContentUpdate(complete, shifted_view, null);
+    try std.testing.expectEqualDeep(cached_shifted.commands, complete_shifted.commands);
+    try std.testing.expectEqualDeep(cached_shifted.uploads, complete_shifted.uploads);
+    try std.testing.expectEqualDeep(cached_shifted.removals, complete_shifted.removals);
+    try std.testing.expectEqual(cached_shifted.revision, complete_shifted.revision);
+
+    var inplace_scalars = shifted_scalars;
+    inplace_scalars[3] = .{'Y'};
+    var inplace_cells: [6][1]client.rich.Cell = undefined;
+    var inplace_rows: [6]client.rich.Row = undefined;
+    for (&inplace_cells, &inplace_rows, 0..) |*cells, *row, index| {
+        cells.* = .{cell(&inplace_scalars[index], 1, 0)};
+        row.* = .{ .wrapped = false, .line_geometry = 0, .cells = cells };
+    }
+    var inplace_source = sourceSnapshot(&inplace_rows, 1);
+    inplace_source.begin.revision = 32;
+    inplace_source.begin.terminal_revision = 32;
+    var inplace_rich = inplace_source.view();
+    changed = .{ false, false, false, true, false, false };
+    inplace_rich.changed_rows = &changed;
+    const inplace_view = try client.view.projectView(std.testing.allocator, &inplace_rich);
+    defer client.view.deinit(inplace_view);
+
+    const cached_inplace = try render.terminal.takeContentUpdate(cached, inplace_view, null);
+    const complete_inplace = try render.terminal.takeContentUpdate(complete, inplace_view, null);
+    try std.testing.expectEqualDeep(cached_inplace.commands, complete_inplace.commands);
+    try std.testing.expectEqualDeep(cached_inplace.uploads, complete_inplace.uploads);
+}

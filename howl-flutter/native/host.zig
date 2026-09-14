@@ -35,6 +35,9 @@ const maximum_non_command_packet_bytes: usize = host_header_bytes + global_heade
 // Maintained native and Web clients share one renderer-owned geometry and
 // command envelope. The private Host packet remains separately byte-bounded.
 const command_capacity: usize = presentation.maximum_canvas_commands;
+// Retain one bounded common interactive row-command window. Larger/richer
+// frames use the complete terminal projection path unchanged.
+const incremental_command_capacity: usize = 8 * 1024;
 const canvas_packet_budget: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
 const output_minimum_bytes: usize = canvas_packet_budget + selection_rows_capacity + semantic_capacity;
 const maximum_packet_bytes: usize = maximum_non_command_packet_bytes + command_capacity * command_record_bytes;
@@ -45,6 +48,8 @@ comptime {
         @compileError("native host fixed frame state exceeds its minimum output packet");
     if (command_capacity == 0)
         @compileError("native host output packet leaves no room for Canvas commands");
+    if (incremental_command_capacity == 0 or incremental_command_capacity > command_capacity)
+        @compileError("native host incremental command budget is invalid");
     if (maximum_packet_bytes > canvas_packet_budget)
         @compileError("native host frame bounds exceed its minimum output packet");
     if (canvas_packet_budget - maximum_packet_bytes >= command_record_bytes)
@@ -141,6 +146,8 @@ fn contentConfig(cell_width: u16, cell_height: u16, atlas_extent: u16) terminal.
         .shaped_capacity = 32,
         .raster_bytes = raster_bytes,
         .command_capacity = command_capacity,
+        .incremental_row_capacity = presentation.maximum_rows,
+        .incremental_command_capacity = incremental_command_capacity,
     };
 }
 

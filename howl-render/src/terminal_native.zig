@@ -98,6 +98,9 @@ pub const ContentConfig = struct {
     shaped_capacity: usize,
     raster_bytes: usize,
     command_capacity: usize,
+    /// Optional retained-row acceleration budget. Zero disables the cache.
+    incremental_row_capacity: u16 = 0,
+    incremental_command_capacity: usize = 0,
 };
 
 /// Supplies topology identity which terminal state cannot own.
@@ -197,6 +200,17 @@ const printable_ascii_first: u32 = 0x20;
 const printable_ascii_last: u32 = 0x7e;
 const printable_ascii_count: usize = printable_ascii_last - printable_ascii_first + 1;
 
+const IncrementalRowCommands = struct {
+    start: usize = 0,
+    count: usize = 0,
+};
+
+const IncrementalPlan = struct {
+    shift: u16,
+    repairs: []const bool,
+    y_delta: i32,
+};
+
 fn printableAsciiIndex(sequence: []const u32) ?usize {
     if (sequence.len != 1) return null;
     const scalar = sequence[0];
@@ -242,6 +256,18 @@ const ContentImpl = struct {
     shaped: []text.Glyph,
     raster: []u8,
     commands: []canvas.Input,
+    incremental_commands: []canvas.Input,
+    incremental_rows: []IncrementalRowCommands,
+    incremental_candidate_rows: []IncrementalRowCommands,
+    incremental_rows_count: u16 = 0,
+    incremental_columns_count: u16 = 0,
+    incremental_history_offset: u32 = 0,
+    incremental_alternate_screen: bool = false,
+    incremental_reverse_screen: bool = false,
+    incremental_palette: [256]client.rich.Rgba = undefined,
+    incremental_foreground: client.rich.Rgba = undefined,
+    incremental_background: client.rich.Rgba = undefined,
+    incremental_ready: bool = false,
     uploads: [1]canvas.ResourceUpload = undefined,
     external_resources: [maximum_external_images]canvas.ExternalResourceDeclaration = undefined,
     removals: [maximum_external_images]canvas.ResourceRemoval = undefined,
@@ -436,7 +462,8 @@ pub fn initContent(
 ) ContentInitError!*Content {
     if (config.cell_size.width == 0 or config.cell_size.height == 0 or
         config.shaped_capacity == 0 or config.raster_bytes == 0 or
-        config.command_capacity == 0)
+        config.command_capacity == 0 or
+        ((config.incremental_row_capacity == 0) != (config.incremental_command_capacity == 0)))
         return error.InvalidContentConfig;
 
     const impl = try allocator.create(ContentImpl);
@@ -453,6 +480,12 @@ pub fn initContent(
     errdefer allocator.free(raster);
     const commands = try allocator.alloc(canvas.Input, config.command_capacity);
     errdefer allocator.free(commands);
+    const incremental_commands = try allocator.alloc(canvas.Input, config.incremental_command_capacity);
+    errdefer allocator.free(incremental_commands);
+    const incremental_rows = try allocator.alloc(IncrementalRowCommands, config.incremental_row_capacity);
+    errdefer allocator.free(incremental_rows);
+    const incremental_candidate_rows = try allocator.alloc(IncrementalRowCommands, config.incremental_row_capacity);
+    errdefer allocator.free(incremental_candidate_rows);
 
     impl.* = .{
         .allocator = allocator,
@@ -464,6 +497,9 @@ pub fn initContent(
         .shaped = shaped,
         .raster = raster,
         .commands = commands,
+        .incremental_commands = incremental_commands,
+        .incremental_rows = incremental_rows,
+        .incremental_candidate_rows = incremental_candidate_rows,
     };
     return @ptrCast(impl);
 }
@@ -478,8 +514,14 @@ pub fn deinitContent(content: *Content) void {
     const shaped = impl.shaped;
     const raster = impl.raster;
     const commands = impl.commands;
+    const incremental_commands = impl.incremental_commands;
+    const incremental_rows = impl.incremental_rows;
+    const incremental_candidate_rows = impl.incremental_candidate_rows;
     impl.* = undefined;
     allocator.free(commands);
+    allocator.free(incremental_candidate_rows);
+    allocator.free(incremental_rows);
+    allocator.free(incremental_commands);
     allocator.free(raster);
     allocator.free(shaped);
     allocator.free(clusters);
@@ -495,6 +537,7 @@ pub fn deinitContent(content: *Content) void {
 /// generation. No cache reset occurs implicitly.
 pub fn resetContentCaches(content: *Content) AtlasError!void {
     const impl = contentImpl(content);
+    impl.incremental_ready = false;
     try resetAtlas(impl.atlas);
     resetShapeCache(impl.shape_cache);
 }
@@ -567,13 +610,29 @@ fn takeContentUpdateInner(
     image_bindings: []const ExternalImageBinding,
 ) ContentError!canvas.ProducerUpdate {
     const impl = contentImpl(content);
-    const surface = try contentSurfaceSize(View.begin(snapshot), impl.config.cell_size);
+    errdefer impl.incremental_ready = false;
+    const begin = View.begin(snapshot);
+    const surface = try contentSurfaceSize(begin, impl.config.cell_size);
+    const row_shift = View.rowShift(snapshot);
+    const wants_incremental = row_shift != null and row_shift.? != 0;
+    const incremental_plan = if (wants_incremental)
+        try planIncrementalRows(content, snapshot)
+    else
+        null;
+    const candidate_rows = if (wants_incremental and begin.rows <= impl.incremental_candidate_rows.len)
+        impl.incremental_candidate_rows[0..begin.rows]
+    else
+        null;
     const projection = try buildContentCommands(
         snapshot,
         impl.atlas,
         impl.shape_cache,
         surface,
         impl.commands,
+        incremental_plan,
+        impl.incremental_commands,
+        impl.incremental_rows,
+        candidate_rows,
         impl.config.cell_size,
         impl.config.box_drawing,
         impl.clusters,
@@ -713,6 +772,15 @@ fn takeContentUpdateInner(
         impl.resource_generation = next_resource_generation;
         impl.published_atlas_generation = atlas.generation;
         impl.published_atlas_entries = atlas_entries;
+    }
+    const incremental_enabled = wants_incremental and impl.incremental_commands.len != 0 and candidate_rows != null;
+    const incremental_eligible = incremental_plan != null or
+        (incremental_enabled and projection.default_background_end == 1 and
+            projection.background_end == 1 and try incrementalViewEligible(snapshot, null));
+    if (incremental_eligible) {
+        rememberIncrementalCommands(content, snapshot);
+    } else {
+        impl.incremental_ready = false;
     }
     return .{
         .revision = @fromBackingInt(@intCast(next_producer_revision)),
@@ -1303,6 +1371,156 @@ fn contentLineOffset(metrics: Metrics, cell_size: canvas.Size) i64 {
     return @divFloor(difference, 2);
 }
 
+fn sameIncrementalCellPresentation(
+    impl: *const ContentImpl,
+    presentation: *const View.Presentation,
+) bool {
+    return impl.incremental_reverse_screen == presentation.reverse_screen and
+        std.meta.eql(impl.incremental_palette, presentation.palette) and
+        std.meta.eql(impl.incremental_foreground, presentation.foreground) and
+        std.meta.eql(impl.incremental_background, presentation.background);
+}
+
+fn incrementalRowLayerEligible(
+    snapshot: *const View.Snapshot,
+    row_index: usize,
+) ContentError!bool {
+    const begin = View.begin(snapshot);
+    const presentation = View.presentation(snapshot);
+    const rows = View.rows(snapshot);
+    const cells = View.cells(snapshot);
+    if (presentation.reverse_screen or row_index >= rows.len) return false;
+    const row = rows[row_index];
+    if (row.line_geometry != 0 or row.cell_count != begin.columns) return false;
+    const first = @as(usize, row.cell_offset);
+    const count = @as(usize, row.cell_count);
+    const end = std.math.add(usize, first, count) catch return error.InvalidView;
+    if (end > cells.len) return error.InvalidView;
+    for (cells[first..end]) |cell| {
+        if (!contentUsesPlainGeometry(cell, row.line_geometry) or
+            cell.style_bits & (content_style_reverse | content_style_underline | content_style_strike) != 0 or
+            cell.background.kind != .default)
+            return false;
+    }
+    return true;
+}
+
+fn incrementalViewEligible(
+    snapshot: *const View.Snapshot,
+    changed_rows: ?[]const bool,
+) ContentError!bool {
+    const begin = View.begin(snapshot);
+    const rows = View.rows(snapshot);
+    const graphics = View.graphics(snapshot);
+    if (rows.len != begin.rows or graphics.images.len != 0 or graphics.placements.len != 0)
+        return false;
+    if (changed_rows) |changed| if (changed.len != rows.len) return error.InvalidView;
+    for (rows, 0..) |_, row_index| {
+        if (changed_rows) |changed| if (!changed[row_index]) continue;
+        if (!try incrementalRowLayerEligible(snapshot, row_index)) return false;
+    }
+    return true;
+}
+
+fn planIncrementalRows(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+) ContentError!?IncrementalPlan {
+    const impl = contentImpl(content);
+    if (!impl.incremental_ready or impl.incremental_commands.len == 0 or
+        impl.incremental_rows.len == 0)
+        return null;
+    const begin = View.begin(snapshot);
+    if (begin.rows == 0 or begin.rows > impl.incremental_rows.len or
+        begin.rows != impl.incremental_rows_count or
+        begin.columns != impl.incremental_columns_count or
+        begin.history_offset != impl.incremental_history_offset or
+        begin.alternate_screen != impl.incremental_alternate_screen)
+        return null;
+    const shift = View.rowShift(snapshot) orelse return null;
+    if (shift == 0) return null;
+    const repairs = View.changedRows(snapshot) orelse return null;
+    if (shift >= begin.rows or repairs.len != begin.rows or
+        !sameIncrementalCellPresentation(impl, View.presentation(snapshot)))
+        return null;
+    var repair_count: usize = 0;
+    for (repairs) |repair| if (repair) {
+        repair_count += 1;
+    };
+    if (repair_count > @max(@as(usize, 1), repairs.len / 3)) return null;
+    if (shift != 0) {
+        const exposed_first = @as(usize, begin.rows - shift);
+        for (repairs[exposed_first..]) |repair| if (!repair) return null;
+    }
+    if (!try incrementalViewEligible(snapshot, repairs)) return null;
+    const y_delta_value = std.math.mul(usize, shift, impl.config.cell_size.height) catch
+        return error.InvalidPresentationGeometry;
+    return .{
+        .shift = shift,
+        .repairs = repairs,
+        .y_delta = std.math.cast(i32, y_delta_value) orelse
+            return error.InvalidPresentationGeometry,
+    };
+}
+
+fn translateIncrementalGlyph(
+    value: canvas.Input,
+    y_delta: i32,
+) ContentError!canvas.Input {
+    return switch (value) {
+        .alpha_mask => |mask| blk: {
+            var shifted = mask;
+            shifted.destination.y = std.math.sub(i32, shifted.destination.y, y_delta) catch
+                return error.InvalidPresentationGeometry;
+            shifted.clip.y = std.math.sub(i32, shifted.clip.y, y_delta) catch
+                return error.InvalidPresentationGeometry;
+            break :blk .{ .alpha_mask = shifted };
+        },
+        else => error.InvalidView,
+    };
+}
+
+fn rememberIncrementalCommands(
+    content: *Content,
+    snapshot: *const View.Snapshot,
+) void {
+    const impl = contentImpl(content);
+    const begin = View.begin(snapshot);
+    if (begin.rows == 0 or begin.rows > impl.incremental_rows.len) {
+        impl.incremental_ready = false;
+        return;
+    }
+    var used: usize = 0;
+    for (impl.incremental_candidate_rows[0..begin.rows], 0..) |candidate, row_index| {
+        const end = std.math.add(usize, candidate.start, candidate.count) catch {
+            impl.incremental_ready = false;
+            return;
+        };
+        if (end > impl.commands.len or
+            candidate.count > impl.incremental_commands.len - @min(used, impl.incremental_commands.len))
+        {
+            impl.incremental_ready = false;
+            return;
+        }
+        @memcpy(
+            impl.incremental_commands[used .. used + candidate.count],
+            impl.commands[candidate.start..end],
+        );
+        impl.incremental_rows[row_index] = .{ .start = used, .count = candidate.count };
+        used += candidate.count;
+    }
+    const presentation = View.presentation(snapshot);
+    impl.incremental_rows_count = begin.rows;
+    impl.incremental_columns_count = begin.columns;
+    impl.incremental_history_offset = begin.history_offset;
+    impl.incremental_alternate_screen = begin.alternate_screen;
+    impl.incremental_reverse_screen = presentation.reverse_screen;
+    impl.incremental_palette = presentation.palette;
+    impl.incremental_foreground = presentation.foreground;
+    impl.incremental_background = presentation.background;
+    impl.incremental_ready = true;
+}
+
 const ContentProjection = struct {
     command_count: usize,
     default_background_end: usize,
@@ -1316,6 +1534,10 @@ fn buildContentCommands(
     shape_cache: *ShapeCache,
     surface: canvas.Size,
     output: []canvas.Input,
+    incremental_plan: ?IncrementalPlan,
+    incremental_commands: []const canvas.Input,
+    incremental_rows: []const IncrementalRowCommands,
+    row_ranges: ?[]IncrementalRowCommands,
     cell_size: canvas.Size,
     box_drawing: generated.BoxDrawingConfig,
     cluster_scratch: []u32,
@@ -1331,6 +1553,7 @@ fn buildContentCommands(
     const cells = View.cells(snapshot);
     const scalars = View.scalars(snapshot);
     if (rows.len != begin.rows) return error.InvalidView;
+    if (row_ranges) |ranges| if (ranges.len != rows.len) return error.InvalidView;
 
     const metrics = atlas_impl.fonts.metrics();
     const whole = contentSurfaceRect(surface);
@@ -1425,6 +1648,30 @@ fn buildContentCommands(
     const placeholder_resource = placeholderContentResource();
     var has_raster = false;
     for (rows, 0..) |row, row_index| {
+        const row_start = used;
+        if (incremental_plan) |plan| {
+            if (!plan.repairs[row_index]) {
+                const source_row = row_index + @as(usize, plan.shift);
+                if (source_row >= begin.rows or source_row >= incremental_rows.len)
+                    return error.InvalidView;
+                const cached = incremental_rows[source_row];
+                const cached_end = std.math.add(usize, cached.start, cached.count) catch
+                    return error.InvalidView;
+                if (cached_end > incremental_commands.len or
+                    cached.count > output.len - @min(used, output.len))
+                    return error.InvalidView;
+                for (incremental_commands[cached.start..cached_end]) |command| {
+                    output[used] = try translateIncrementalGlyph(command, plan.y_delta);
+                    used += 1;
+                }
+                has_raster = has_raster or cached.count != 0;
+                if (row_ranges) |ranges| ranges[row_index] = .{
+                    .start = row_start,
+                    .count = used - row_start,
+                };
+                continue;
+            }
+        }
         const first = @as(usize, row.cell_offset);
         const count = @as(usize, row.cell_count);
         const end = std.math.add(usize, first, count) catch return error.InvalidView;
@@ -1679,6 +1926,10 @@ fn buildContentCommands(
                     return error.InvalidPresentationGeometry;
             }
         }
+        if (row_ranges) |ranges| ranges[row_index] = .{
+            .start = row_start,
+            .count = used - row_start,
+        };
     }
     return .{
         .command_count = used,
